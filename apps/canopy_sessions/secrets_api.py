@@ -19,6 +19,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 
 from . import secrets
 from .schemas import SessionSecretOut, SessionSecretValueOut
@@ -50,12 +51,14 @@ def _out(row) -> dict:
 
 @router.get("/key", response=list[SessionSecretOut],
             summary="Secrets shared with the chat this key was issued for (names only)")
+@gate("runner")  # X-Canopy-Chat-Key
 def list_for_key(request: HttpRequest):
     return [_out(r) for r in secrets.live_secrets(_keyed(request))]
 
 
 @router.get("/key/{name}", response=SessionSecretValueOut,
             summary="PLAINTEXT — for `canopy secret exec` in the session holding this chat's key")
+@gate("runner")  # X-Canopy-Chat-Key; plaintext
 def value_for_key(request: HttpRequest, name: str):
     value = secrets.resolve_secret(_keyed(request), name, user=request.user)
     if value is None:

@@ -26,6 +26,7 @@ from django.utils import timezone
 from ninja import Router
 
 from apps.api.errors import TYPE_AUTH, ProblemError
+from apps.api.route_gates import gate
 
 from . import aws_iam_proof, device_keys
 from .models import Runner, RunnerAccessToken, RunnerDeviceKey
@@ -63,6 +64,9 @@ def _proven_key(request: HttpRequest) -> RunnerDeviceKey:
 
 @router.post("/", response={201: RunnerSessionOut}, auth=None,
              summary="Exchange a runner's device-key proof for its API token")
+# anonymous door; an ACTIVE key's proof is the authority
+# a box trading its approved device key's proof for an hour-long runner token
+@gate("device-proof", kind="ephemeral-credential")
 def create_runner_session(request: HttpRequest, payload: RunnerSessionIn):
     """Prove an approved device key (`X-Canopy-Aws-Proof` or `DPoP`, bound to
     this URL) and get a runner token: `Authorization: Bearer` for the runner

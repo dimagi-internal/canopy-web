@@ -21,9 +21,10 @@ from ninja.files import UploadedFile
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
+from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces import links as wslinks
 
 from . import redact
 from .models import (
@@ -147,6 +148,7 @@ def _get_owned_or_403(request: HttpRequest, slug: str) -> Session:
     response={201: SessionUploadOut},
     summary="Upload a Claude .jsonl transcript (multipart)",
 )
+@gate("self", kind="content")
 def upload_session(
     request: HttpRequest,
     file: UploadedFile = File(...),
@@ -311,6 +313,7 @@ def _teammate_ids(request) -> set[int]:
 
 
 @router.get("/", response=list[SessionListItemOut], summary="List shared sessions")
+@gate("authenticated")  # own + every link-visibility row, all tenants
 def list_sessions(
     request: HttpRequest, project: str = ""
 ) -> list[SessionListItemOut]:
@@ -398,6 +401,7 @@ def _get_owned_arc_or_403(request: HttpRequest, slug: str) -> SessionArc:
     response={201: ArcCreateOut},
     summary="Create an arc from owned sessions (ordered)",
 )
+@gate("self", kind="content")  # only own sessions
 def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
     slugs = [it.session_slug for it in payload.items]
     if len(set(slugs)) != len(slugs):
@@ -455,6 +459,7 @@ def create_arc(request: HttpRequest, payload: ArcCreateIn) -> Status:
 
 
 @router.get("/arcs", response=list[ArcListItemOut], summary="List arcs")
+@gate("authenticated")  # own + every link-visibility arc
 def list_arcs(request: HttpRequest, project: str = "") -> list[ArcListItemOut]:
     # Same rule as list_sessions: mine + everyone's link-shared.
     qs = (
@@ -477,6 +482,7 @@ def list_arcs(request: HttpRequest, project: str = "") -> list[ArcListItemOut]:
 
 
 @router.get("/arcs/{slug}", response=ArcDetailOut, summary="Get one arc (owner)")
+@gate("self")
 def get_arc(request: HttpRequest, slug: str) -> ArcDetailOut:
     arc = _get_owned_arc_or_403(request, slug)
     payload = _arc_list_payload(arc, is_owner=True)
@@ -485,6 +491,7 @@ def get_arc(request: HttpRequest, slug: str) -> ArcDetailOut:
 
 
 @router.patch("/arcs/{slug}", response=ArcListItemOut, summary="Update an arc (owner)")
+@gate("self", kind="content")
 def patch_arc(request: HttpRequest, slug: str, payload: ArcPatchIn) -> ArcListItemOut:
     arc = _get_owned_arc_or_403(request, slug)
     updates = payload.model_dump(exclude_unset=True)
@@ -502,6 +509,7 @@ def patch_arc(request: HttpRequest, slug: str, payload: ArcPatchIn) -> ArcListIt
 
 
 @router.delete("/arcs/{slug}", response={204: None}, summary="Delete an arc (owner)")
+@gate("self", kind="content")
 def delete_arc(request: HttpRequest, slug: str) -> Status:
     arc = _get_owned_arc_or_403(request, slug)
     arc.delete()
@@ -513,6 +521,7 @@ def delete_arc(request: HttpRequest, slug: str) -> Status:
     response=SessionRotateTokenOut,
     summary="Rotate arc share token (owner)",
 )
+@gate("self", setting=True)
 def rotate_arc_token(request: HttpRequest, slug: str) -> SessionRotateTokenOut:
     arc = _get_owned_arc_or_403(request, slug)
     token = arc.rotate_share_token(request.user)
@@ -525,6 +534,7 @@ def rotate_arc_token(request: HttpRequest, slug: str) -> SessionRotateTokenOut:
 
 
 @router.get("/{slug}", response=SharedSessionDetailOut, summary="Get one session (owner)")
+@gate("self")
 def get_session(request: HttpRequest, slug: str) -> SharedSessionDetailOut:
     session = _get_owned_or_403(request, slug)
     payload = _list_payload(session, is_owner=True)
@@ -538,6 +548,7 @@ def get_session(request: HttpRequest, slug: str) -> SharedSessionDetailOut:
 
 
 @router.patch("/{slug}", response=SessionListItemOut, summary="Update a session (owner)")
+@gate("self", kind="content")
 def patch_session(
     request: HttpRequest, slug: str, payload: SessionPatchIn
 ) -> SessionListItemOut:
@@ -565,6 +576,7 @@ def patch_session(
 
 
 @router.delete("/{slug}", response={204: None}, summary="Delete a session (owner)")
+@gate("self", kind="content")
 def delete_session(request: HttpRequest, slug: str) -> Status:
     session = _get_owned_or_403(request, slug)
     session.delete()
@@ -581,6 +593,7 @@ def delete_session(request: HttpRequest, slug: str) -> Status:
     response=SessionRotateTokenOut,
     summary="Rotate share token (owner)",
 )
+@gate("self", setting=True)
 def rotate_token(request: HttpRequest, slug: str) -> SessionRotateTokenOut:
     session = _get_owned_or_403(request, slug)
     token = session.rotate_share_token(request.user)
@@ -615,6 +628,7 @@ def _at(row, ws: str) -> bool:
     response=SharedViewOut,
     summary="Public read-only view of a shared session or arc",
 )
+@gate("token-link")  # auth=None; share token in path is the only key
 def public_share_view(request: HttpRequest, token: str, ws: str = "") -> SharedViewOut:
     """`ws` is the workspace the page's URL names (`/w/<ws>/share/<token>`): a
     share that lives in another workspace is not at that address (404)."""

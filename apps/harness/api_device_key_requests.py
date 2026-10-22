@@ -32,8 +32,9 @@ from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router
 
-from apps.common.token_hash import hash_token
 from apps.api.errors import TYPE_AUTH, ProblemError
+from apps.api.route_gates import gate
+from apps.common.token_hash import hash_token
 from apps.tokens.models import PersonalToken
 
 from . import device_keys
@@ -90,6 +91,9 @@ def _holds_key(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[dict, 
 
 @router.post("/", response={200: RunnerDeviceKeyCreatedOut, 201: RunnerDeviceKeyCreatedOut},
              auth=None, summary="A runner with a revoked token asks for a (pending) device key")
+# stranded box: lands pending, owner told
+# a stranded box (revoked token) asking for a key: lands `pending`, like the above
+@gate("owner-token-and-key", kind="runner-protocol")
 def request_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyRequestIn):
     """Prove a token of the runner's owner (revoked within 30 days is fine) and the
     key being registered; get a PENDING key and its `approve_url`. The owner is

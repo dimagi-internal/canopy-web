@@ -13,6 +13,7 @@ from ninja import Router
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
+from apps.api.route_gates import gate
 
 from . import reader, stats
 from .schemas import CapabilityCatalogOut, CapabilityDetailOut, PublicStatsOut
@@ -23,6 +24,7 @@ _KINDS = {"skill", "agent", "command"}
 
 
 @router.get("/overview", response=CapabilityCatalogOut)
+@gate("authenticated")  # canopy plugin catalog, not tenant data
 def overview(request: HttpRequest) -> dict:
     """Full capability catalog grouped by family (list shape — no markdown body)."""
     cat = reader.load_catalog(settings.CANOPY_PLUGIN_PATH)
@@ -38,6 +40,7 @@ def overview(request: HttpRequest) -> dict:
     auth=None,
     summary="Aggregate counts for the public explainer (anonymous)",
 )
+@gate("anonymous")
 def public_stats(request: HttpRequest) -> dict:
     """Anonymous, aggregates only.
 
@@ -52,6 +55,7 @@ def public_stats(request: HttpRequest) -> dict:
 
 
 @router.get("/{kind}/{name}", response=CapabilityDetailOut)
+@gate("authenticated")
 def detail(request: HttpRequest, kind: str, name: str) -> dict:
     """One capability with its full markdown body."""
     if kind not in _KINDS:

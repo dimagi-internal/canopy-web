@@ -129,6 +129,16 @@ def test_a_write_that_is_not_a_setting_records_nothing(fleet):
     assert not SettingChange.objects.exists()
 
 
+def test_a_setting_with_a_spelled_out_operation_id_is_audited_under_it():
+    """The audit follows the route's own `@gate(..., setting=True)`, and names the
+    operation as the schema (and MCP) does, even where the route spells it out."""
+    from apps.api.route_gates import gate_of
+    from apps.contacts.hcp_api import hcp_revoke_grant
+
+    assert gate_of(hcp_revoke_grant).setting
+    assert audit.operation_id(hcp_revoke_grant) == "hcp_revokeGrant"
+
+
 def test_a_persons_own_setting_is_theirs_alone(fleet):
     res = _patch(_session(fleet["viewer"]), "/api/me/presence-preference/", {"show_presence": False})
     assert res.status_code == 200, res.content

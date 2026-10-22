@@ -20,6 +20,7 @@ from ninja import Status
 from ninja.errors import HttpError
 
 from apps.api.errors import ProblemError
+from apps.api.route_gates import gate
 from apps.canopy_sessions.models import Attachment, Session
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -95,6 +96,15 @@ OPERATION_LABEL = "harness"
 
 
 @router.post("/runners/", response={201: RunnerOut})
+# member of the explicit/default workspace; any role
+@gate(
+    "member",
+    setting=True,
+    viewer_write=(
+        "pairing grants nothing by itself: a box serves only workspaces it is enrolled in (or below one) AND where its"
+        " owner holds agent.work (runner_tenant_slugs); pairing enrolls it in the pairing workspace only"
+    ),
+)
 def pair_runner(request: HttpRequest, payload: RunnerIn):
     if payload.kind not in dict(Runner.KIND_CHOICES):
         raise HttpError(422, f"unknown runner kind '{payload.kind}'")
@@ -153,6 +163,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
 
 @router.post("/runners/{runner_id}/credential", response=RunnerCredentialStatusOut,
              summary="Set a cloud runner's credential bundle (owner only)")
+@gate("runner-admin", setting=True)
 def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialIn):
     """Store the per-runner secrets a cloud runner fetches at startup — its Claude
     login (plus the secondary subscription and API key it fails over to).
@@ -178,6 +189,7 @@ def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: R
 
 @router.post("/runners/{runner_id}/credential/swap", response=RunnerCredentialStatusOut,
              summary="Swap the primary and fallback Claude logins")
+@gate("runner-admin", setting=True)
 def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
     """The fallback becomes the primary and the primary the fallback — each
     login keeps its name. The runner reads the new order the next time it
@@ -189,6 +201,7 @@ def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/logins", response=RunnerCredentialStatusOut,
              summary="Add a Claude login to a runner and start signing it in")
+@gate("runner-admin", setting=True)
 def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
     """A new full Claude login, last in the runner's cascade. The runner picks up
     the sign-in on its next poll (see `get_runner_mint`); the login reads
@@ -201,6 +214,7 @@ def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
 # The fixed paths are declared before `/logins/{key}`, which would match them.
 @router.put("/runners/{runner_id}/logins/order", response=RunnerCredentialStatusOut,
             summary="Set the order a runner tries its Claude logins in")
+@gate("runner-admin", setting=True)
 def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginOrderIn):
     """`keys` is every login on the runner, first to last. When the first hits
     its usage cap the runner moves to the next."""
@@ -214,6 +228,7 @@ def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: Run
 
 @router.post("/runners/{runner_id}/logins/report", response=RunnerCredentialStatusOut,
              summary="The runner reports which of its logins are signed in")
+@gate("runner", kind="runner-protocol")
 def report_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginReportIn):
     """Which logins the box holds and as which account."""
     runner = runner_or_404(request, runner_id)
@@ -224,6 +239,7 @@ def report_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: Ru
 
 @router.delete("/runners/{runner_id}/logins/{key}", response=RunnerCredentialStatusOut,
                summary="Remove a Claude login from a runner")
+@gate("runner-admin", setting=True)
 def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
     """The runner signs the login out on the box the next time it re-reads its
     credentials, within a few minutes."""
@@ -235,6 +251,7 @@ def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
 
 @router.get("/runners/{runner_id}/credential/status", response=RunnerCredentialStatusOut,
             summary="Which credential slots are set (masked — booleans, never values)")
+@gate("runner-admin")
 def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
     """The operator's read: which slots are filled, without putting a secret on a
     screen. Separate from the GET below, which returns REAL VALUES for the runner
@@ -249,6 +266,7 @@ def get_runner_credential_status(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.get("/runners/{runner_id}/credential", response=RunnerCredentialOut,
             summary="Fetch this runner's credential bundle (the runner, via its PAT)")
+@gate("runner")  # plaintext to the owner's token
 def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialOut:
     """A cloud runner fetches its own secrets to stage into its environment. Returns
     the actual token values over HTTPS, gated to the runner's owner (owner ==
@@ -261,6 +279,7 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
 @router.post("/runners/{runner_id}/turns/{turn_id}/github-token",
              response=TurnGitHubTokenOut,
              summary="One claimed turn's GitHub credential (its agent owner's)")
+@gate("runner", "runner-holds-agent", kind="runner-protocol")  # turn must be claimed by this box
 def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
     """The GitHub token and git identity for ONE turn this runner is executing:
     the turn's agent owner's token for that agent. canopy decides whose — the
@@ -314,6 +333,7 @@ def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.
 
 @router.get("/runners/{runner_id}/turns/{turn_id}/attachments/{attachment_id}/content",
             summary="An attachment from the chat a turn this runner holds belongs to")
+@gate("runner", "runner-holds-agent")  # an attachment of the chat a turn this box holds belongs to
 def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID,
                             attachment_id: uuid.UUID):
     """The bytes of a file a person sent in the chat this runner is serving, so
@@ -356,6 +376,7 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
 @router.get("/runners/{runner_id}/github-readiness",
             response=list[RunnerGitHubReadinessOut],
             summary="Can each agent this runner serves open a pull request?")
+@gate("runner")
 def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
     """Checked live against GitHub, per agent routed to this runner. A box calls
     this when it boots so a missing, expired or under-scoped token is a health
@@ -375,6 +396,7 @@ def runner_github_readiness(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.get("/runners/{runner_id}/agents", response=list[str],
             summary="The agents this runner runs: the ones it should prepare")
+@gate("runner")
 def runner_agents(request: HttpRequest, runner_id: uuid.UUID) -> list[str]:
     """Slugs of the agents this box RUNS (`routing.agents_routed_to`): the
     claim's own static gates, so a box prepares exactly what it can be handed.
@@ -389,6 +411,7 @@ def runner_agents(request: HttpRequest, runner_id: uuid.UUID) -> list[str]:
 
 @router.post("/runners/{runner_id}/mint", response=RunnerMintOut,
              summary="Ask a runner to start a browser sign-in")
+@gate("runner-admin", kind="action")
 def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
                       payload: RunnerMintStartIn | None = None):
     """Begin re-authenticating this runner's Claude subscription from a browser.
@@ -422,6 +445,7 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
 
 @router.get("/runners/{runner_id}/mint", response=RunnerMintOut | None,
             summary="The current sign-in attempt, if any")
+@gate("runner-admin")
 def get_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     """What the waiting human's screen renders: whether the URL is up yet, and
     how the attempt ended. Null when no sign-in has ever been started."""
@@ -431,6 +455,7 @@ def get_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.get("/runners/{runner_id}/mint/claim", response=RunnerMintClaimOut,
             summary="Work the RUNNER owes on a sign-in (polled)")
+@gate("runner")
 def claim_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     """Polled on the runner's existing tick, and polled rather than pushed for
     the same reason as `menu-answers`: a control frame published while the
@@ -454,6 +479,7 @@ def claim_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/mint/url", response=RunnerMintOut,
              summary="The runner reports the URL a human must open")
+@gate("runner", kind="runner-protocol")
 def post_runner_mint_url(request: HttpRequest, runner_id: uuid.UUID,
                          payload: RunnerMintUrlIn):
     runner = runner_or_404(request, runner_id)
@@ -465,6 +491,7 @@ def post_runner_mint_url(request: HttpRequest, runner_id: uuid.UUID,
 
 @router.post("/runners/{runner_id}/mint/code", response=RunnerMintOut,
              summary="A human submits the authorization code")
+@gate("runner-admin", kind="action")
 def post_runner_mint_code(request: HttpRequest, runner_id: uuid.UUID,
                           payload: RunnerMintCodeIn):
     """The one secret a human handles in this flow, and it is single-use."""
@@ -479,6 +506,7 @@ def post_runner_mint_code(request: HttpRequest, runner_id: uuid.UUID,
 
 @router.post("/runners/{runner_id}/mint/result", response=RunnerMintOut,
              summary="The runner reports the outcome (and delivers the token)")
+@gate("runner", kind="runner-protocol")
 def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
                             payload: RunnerMintResultIn):
     """The minted token arrives HERE, never in the browser — it goes straight
@@ -494,6 +522,7 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
 
 @router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,
              summary="Ask the runner's owner to approve a cloud sign-in from their phone")
+@gate("runner", kind="runner-protocol")  # pushes only to the runner's owner
 def post_sign_in_request(request: HttpRequest, runner_id: uuid.UUID, payload: SignInRequestIn):
     """The box started a device-code sign-in (`aws sso login --use-device-code`)
     and needs a person to approve it. This pushes the approval link to the
@@ -525,6 +554,7 @@ def post_sign_in_request(request: HttpRequest, runner_id: uuid.UUID, payload: Si
 
 @router.post("/runners/{runner_id}/sign-in-requests/{request_id}/result", response=SignInResultOut,
              summary="The box reports how a sign-in request ended")
+@gate("runner", kind="runner-protocol")
 def post_sign_in_request_result(request: HttpRequest, runner_id: uuid.UUID, request_id: uuid.UUID,
                                 payload: SignInResultIn):
     """`approved`, `failed` or `expired`. Takes the request off the owner's
@@ -543,6 +573,7 @@ def post_sign_in_request_result(request: HttpRequest, runner_id: uuid.UUID, requ
 
 @router.get("/sign-in-requests/mine", response=list[OpenSignInRequestOut],
             summary="Sign-ins your boxes are waiting on you to approve")
+@gate("self")  # only requests put in front of the caller
 def list_my_sign_in_requests(request: HttpRequest):
     """Only the caller's own: the requests their runners put in front of them
     that are still open, newest first. What the supervisor feed shows beside
@@ -563,6 +594,7 @@ def _admin_row(a) -> dict:
 
 @router.get("/runners/{runner_id}/admins", response=list[RunnerAdminOut],
             summary="Who may administer this runner")
+@gate("runner-admin")
 def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
     """Visible to anyone who can already administer the box — the answer to
     "who else can fix this", which is the question a stuck box raises."""
@@ -572,6 +604,7 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
              summary="Grant someone administration of this runner (owner only)")
+@gate("runner", setting=True)  # owner only (not RunnerAdmins)
 def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerAdminIn):
     """Granting stays with the OWNER, not with grantees.
 
@@ -598,6 +631,7 @@ def grant_runner_admin(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 
 @router.delete("/runners/{runner_id}/admins/{user_id}", response={204: None},
                summary="Revoke administration (owner only)")
+@gate("runner", setting=True)
 def revoke_runner_admin(request: HttpRequest, runner_id: uuid.UUID, user_id: int):
     runner = runner_or_404(request, runner_id)
     user = User.objects.filter(pk=user_id).first()
@@ -624,6 +658,7 @@ def _sees_enrollment(request: HttpRequest, runner: Runner, slug: str) -> bool:
 
 @router.get("/runners/{runner_id}/workspaces", response=list[RunnerEnrollmentOut],
             summary="The workspaces this runner serves (its enrollments)")
+@gate("runner-admin")  # an admin sees only workspaces it is a member of
 def list_runner_workspaces(request: HttpRequest, runner_id: uuid.UUID):
     """A runner serves a workspace only when it is ENROLLED there and its owner
     may run work there (editor and above) — `serving` says whether both hold.
@@ -638,6 +673,7 @@ def list_runner_workspaces(request: HttpRequest, runner_id: uuid.UUID):
 
 @router.post("/runners/{runner_id}/workspaces", response=RunnerEnrollmentOut,
              summary="Enroll this runner in a workspace so it serves its work")
+@gate("runner-admin", setting=True)  # + the runner's OWNER holds agent.work there (422)
 def enroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID,
                             payload: RunnerEnrollmentIn):
     """Opt the box in to a workspace's turns — its agents' (as routing assigns
@@ -664,6 +700,7 @@ def enroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID,
 
 @router.delete("/runners/{runner_id}/workspaces/{workspace}", response={204: None},
                summary="Stop this runner serving a workspace")
+@gate("runner-admin", setting=True)
 def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, workspace: str):
     """The box claims nothing more there from its next poll — unless a
     workspace above it is still enrolled, which covers it; a turn it already
@@ -677,6 +714,7 @@ def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, worksp
 
 @router.put("/runners/{runner_id}/flags", response=RunnerOut,
             summary="Declare what this runner's owner vouches for")
+@gate("runner-admin", setting=True)
 def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerFlagsIn):
     """Replace the runner's declared flags. `zdr`: this box uses only
     zero-data-retention keys for Claude. canopy cannot check a declaration; it
@@ -718,6 +756,7 @@ def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: Runner
 
 @router.put("/runners/{runner_id}/private", response=RunnerOut,
             summary="Make this runner its owner's private runner")
+@gate("runner", setting=True)  # owner only (not RunnerAdmins)
 def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerPrivateIn):
     """A private runner takes no fleet work: nothing routed, no workspace order, no
     source rule — only what its owner pins or binds to it, and the local sessions
@@ -757,6 +796,7 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 
 @router.put("/runners/{runner_id}/engine", response=RunnerOut,
             summary="Choose the session runtime a laptop runner opens new sessions in")
+@gate("runner-admin", setting=True)
 def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerEngineIn):
     """Set the runtime (`emdash`, `claude-desktop` or `claude-cli`) a laptop runner
     opens new sessions in. Takes effect on the runner's next heartbeat; sessions already
@@ -834,6 +874,7 @@ def _with_roots(request: HttpRequest, runners):
 
 
 @router.get("/runners/", response=list[RunnerOut], summary="List the fleet I can see")
+@gate("member")  # runner_read_q: the tenant's fleet
 def list_runners(request: HttpRequest):
     """The supervisor's runner status, and the fleet read every preflight makes.
 
@@ -872,6 +913,7 @@ def list_runners(request: HttpRequest):
 
 
 @router.patch("/runners/{runner_id}", response=RunnerOut)
+@gate("runner", kind="runner-protocol")
 def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCapabilitiesIn):
     """Replace a runner's capabilities (owner-gated via _runner_or_404).
 
@@ -923,6 +965,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
 
 
 @router.post("/runners/{runner_id}/retire", response=RetireOut)
+@gate("runner", setting=True)
 def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Retire a runner — a decommission, not a liveness state (see
     Runner.live_status). Idempotent by construction: _runner_or_404 already excludes
@@ -988,6 +1031,7 @@ def retire_runner(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/unretire", response=RunnerOut)
+@gate("runner", setting=True)
 def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Bring a retired runner back, keeping its identity — and therefore every
     RunnerBinding, assignment and session that points at it.
@@ -1012,6 +1056,7 @@ def unretire_runner(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/pause", response=RunnerOut)
+@gate("runner", setting=True)
 def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
     """Stop ROUTING work to this runner, without decommissioning it.
 
@@ -1058,6 +1103,7 @@ def pause_runner(request: HttpRequest, runner_id: uuid.UUID, payload: PauseIn):
 
 
 @router.post("/runners/{runner_id}/unpause", response=RunnerOut)
+@gate("runner", setting=True)
 def unpause_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Resume routing to a paused runner. The exact inverse of /pause — it clears
     the flag and nothing else, because /pause destroyed nothing to restore.
@@ -1101,6 +1147,7 @@ def _fleet_hold_out(hold: FleetHold, user) -> dict:
 
 
 @router.get("/fleet-hold", response=FleetHoldOut)
+@gate("authenticated")
 def get_fleet_hold(request: HttpRequest):
     """Is the whole fleet on hold? Readable by anyone signed in — a member whose turn
     is sitting queued should be able to see why."""
@@ -1108,6 +1155,7 @@ def get_fleet_hold(request: HttpRequest):
 
 
 @router.post("/fleet-hold", response=FleetHoldOut)
+@gate("superuser", "fleet-holder", setting=True)
 def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
     """Stop EVERY runner from starting anything — the fleet-wide sibling of
     /runners/{id}/pause (see FleetHold). Turns keep enqueuing and wait QUEUED with
@@ -1128,6 +1176,7 @@ def hold_fleet(request: HttpRequest, payload: FleetHoldIn):
 
 
 @router.post("/fleet-hold/release", response=FleetHoldOut)
+@gate("superuser", setting=True)
 def release_fleet_hold(request: HttpRequest):
     """Release the fleet hold; queued turns become claimable again. Wakes every
     tenant's runners so the backlog starts now rather than at each box's next poll.
@@ -1149,6 +1198,7 @@ def release_fleet_hold(request: HttpRequest):
 
 
 @router.post("/runners/{runner_id}/heartbeat", response=RunnerOut)
+@gate("runner", kind="runner-protocol")
 def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: HeartbeatIn):
     from . import runner_protocol
     from .api_device_keys import waiting_approval_url
@@ -1160,6 +1210,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
 
 
 @router.post("/runners/{runner_id}/refresh", response=RunnerOut)
+@gate("runner-admin", kind="action")
 def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     """Ask this runner to refresh itself at its next idle moment: re-run its
     bootstrap, which updates the canopy plugin and CLI, Claude Code, and each
@@ -1172,6 +1223,7 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.get("/runners/{runner_id}/usage-scope", response=UsageScopeOut)
+@gate("runner")
 def runner_usage_scope(request: HttpRequest, runner_id: uuid.UUID):
     """The repos this box scans for its usage report (its declared projects and the
     agents it serves), and whether a person asked for a full rescan."""
@@ -1182,6 +1234,7 @@ def runner_usage_scope(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/usage", response=UsageReportOut)
+@gate("runner", kind="runner-protocol")
 def post_runner_usage(request: HttpRequest, runner_id: uuid.UUID, payload: UsageReportIn):
     """The box's usage report: per Claude Code session, per UTC day, tokens and a
     little identity — never content. Each session's days replace what was held.
@@ -1194,6 +1247,7 @@ def post_runner_usage(request: HttpRequest, runner_id: uuid.UUID, payload: Usage
 
 
 @router.post("/runners/{runner_id}/usage-scan", response=MissingSessionsOut)
+@gate("runner-admin", kind="action")
 def request_usage_scan(request: HttpRequest, runner_id: uuid.UUID):
     """Check for missing sessions: ask the box for a FULL rescan of its transcripts
     (a durable ask it reads off `usage-scope` within a minute or so); the result
@@ -1207,6 +1261,7 @@ def request_usage_scan(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.get("/runners/{runner_id}/missing-sessions", response=MissingSessionsOut)
+@gate("runner-admin")
 def list_missing_sessions(request: HttpRequest, runner_id: uuid.UUID):
     """Sessions in known repos this box has on disk and canopy has no record of,
     newest first, each with where sending it up would file it. The runner's
@@ -1215,6 +1270,7 @@ def list_missing_sessions(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/missing-sessions", response=SendUpOut)
+@gate("runner-admin", kind="action")
 def send_up_missing_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: SendUpIn):
     """Send the chosen missing sessions up: each is filed as a session (where the
     report sweep files this box's sessions) and its transcript is requested from
@@ -1244,6 +1300,7 @@ def _missing_sessions(runner) -> MissingSessionsOut:
 
 
 @router.post("/runners/{runner_id}/claim", response={200: ClaimedTurnOut, 204: None})
+@gate("runner", kind="runner-protocol")
 def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     """Claim the next eligible turn. `paused` is an optional comma-separated list of
     agent slugs the caller has locally paused (per-agent pause) — the server skips

@@ -24,6 +24,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import AgentProject, AgentTask
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
 
 from . import checkins
@@ -127,6 +128,9 @@ def _save(request: HttpRequest, project: AgentProject, data: dict, checkin: Proj
 
 @project_router.get("/{slug}/projects/{ref}/checkins/", response=list[CheckinOut],
                     summary="List a project's check-ins")
+# A write is the project's owner (a member who owns it) or a workspace owner/admin
+# (integrations); a NEW channel on an agent's read list is integrations only.
+@gate("member")
 def list_project_checkins(request: HttpRequest, slug: str, ref: str) -> list[dict]:
     """The project's recurring meetings: cadence, lead, agents, channel (if any). Members."""
     project = _project(request, slug, ref)
@@ -135,6 +139,15 @@ def list_project_checkins(request: HttpRequest, slug: str, ref: str) -> list[dic
 
 @project_router.post("/{slug}/projects/{ref}/checkins/", response={201: CheckinOut},
                      summary="Add a check-in to a project")
+@gate(
+    "integrations",
+    "member",
+    setting=True,
+    viewer_write=(
+        "only the project's OWNER passes as a member (checkins.may_write); everyone else needs integrations, and "
+        "putting a new channel on an agent's read list always does"
+    ),
+)
 def create_project_checkin(request: HttpRequest, slug: str, ref: str, payload: CheckinIn):
     """The project's owner, or a workspace owner or admin. Checks the lead is in
     the workspace (and, with a channel, in the channel) and that the project's
@@ -152,12 +165,21 @@ def create_project_checkin(request: HttpRequest, slug: str, ref: str, payload: C
 
 @project_router.get("/{slug}/projects/{ref}/checkins/{name}", response=CheckinOut,
                     summary="Get one of a project's check-ins")
+@gate("member")
 def get_project_checkin(request: HttpRequest, slug: str, ref: str, name: str) -> dict:
     return checkin_out(_checkin_or_404(_project(request, slug, ref), name), request.user)
 
 
 @project_router.patch("/{slug}/projects/{ref}/checkins/{name}", response=CheckinOut,
                       summary="Change a project's check-in")
+@gate(
+    "integrations",
+    "member",
+    setting=True,
+    viewer_write=(
+        "only the project's OWNER passes as a member (checkins.may_write); a new channel needs integrations"
+    ),
+)
 def update_project_checkin(request: HttpRequest, slug: str, ref: str, name: str, payload: CheckinPatch) -> dict:
     """The project's owner, or a workspace owner or admin. Send only what changes
     (`channel: ""` takes the channel off); every check runs again."""
@@ -170,6 +192,15 @@ def update_project_checkin(request: HttpRequest, slug: str, ref: str, name: str,
 
 @project_router.delete("/{slug}/projects/{ref}/checkins/{name}", response={204: None},
                        summary="Delete a project's check-in")
+@gate(
+    "integrations",
+    "member",
+    setting=True,
+    viewer_write=(
+        "only the project's OWNER passes as a member (checkins.may_write); it removes only an allow-list entry the "
+        "check-in itself added"
+    ),
+)
 def delete_project_checkin(request: HttpRequest, slug: str, ref: str, name: str):
     """The project's owner, or a workspace owner or admin. Takes the channel off
     the agent's read allow-list only if this check-in put it there (and no other
@@ -184,6 +215,16 @@ def delete_project_checkin(request: HttpRequest, slug: str, ref: str, name: str)
 
 @project_router.post("/{slug}/projects/{ref}/checkins/{name}/run-now", response={202: CheckinRunOut},
                      summary="Run a project's check-in now (announces; never reads)")
+# announces (or queues the turn); never reads
+@gate(
+    "integrations",
+    "member",
+    kind="action",
+    viewer_write=(
+        "only the project's OWNER passes as a member (checkins.may_write); it announces in Slack (or queues the turn) "
+        "and never reads a channel"
+    ),
+)
 def run_project_checkin_now(request: HttpRequest, slug: str, ref: str, name: str):
     """The project's owner, or a workspace owner or admin. With a channel: posts
     the announcement now — the channel is read only if the lead presses Confirm
@@ -199,6 +240,7 @@ def run_project_checkin_now(request: HttpRequest, slug: str, ref: str, name: str
 
 @project_router.get("/{slug}/projects/{ref}/checkin-runs", response=list[CheckinTimelineRunOut],
                     summary="A project's check-in timeline")
+@gate("member")
 def list_project_checkin_runs(request: HttpRequest, slug: str, ref: str, limit: int = 50) -> list[dict]:
     """Every check-in run on the project, newest first: who took part, the read
     window, who confirmed it, the huddle, and what it proposed — tasks with their
@@ -238,6 +280,7 @@ def _huddle_projects(r: CheckinRun) -> list[dict]:
 
 
 @router.get("/", response=list[CheckinOut], summary="List check-ins across your projects")
+@gate("member")
 def list_checkins(request: HttpRequest) -> list[dict]:
     """Every check-in on a project in your workspaces — a navigation view; each
     one's record lives on its project's page."""
@@ -273,6 +316,7 @@ def _finish(request: HttpRequest, run_id: int, payload: CheckinRunFinishIn) -> C
 
 
 @router.get("/runs/{run_id}", response=CheckinRunOut, summary="Get one check-in run, with its material")
+@gate("member", "agent-login")  # material included: members, and the project agent's login
 def get_checkin_run(request: HttpRequest, run_id: int) -> dict:
     """One run: status, who took part, the read window and the channel material
     it read (members of the project's workspace, and the project agent's own login)."""
@@ -280,6 +324,9 @@ def get_checkin_run(request: HttpRequest, run_id: int) -> dict:
 
 
 @router.post("/runs/{run_id}/finished", response=CheckinRunOut, summary="Report a check-in run done")
+# the project agent's own login only
+# the project agent's turn reporting its check-in run done
+@gate("agent-login", kind="turn")
 def finish_checkin_run(request: HttpRequest, run_id: int, payload: CheckinRunFinishIn) -> dict:
     """The project agent's own login only. Marks the run done, records how many
     tasks it proposed, and (with a channel) posts one line in the announcement's

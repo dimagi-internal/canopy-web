@@ -2,7 +2,7 @@
 """Django Ninja router for /api/mail — domains, routes, agent mail, and the SNS doors.
 
 The workspace is in the path, the `apps/inbound` idiom. Domain and route writes
-are workspace settings (INTEGRATIONS: admin or owner), audited via route_gates.SETTINGS.
+are workspace settings (INTEGRATIONS: admin or owner), declared `setting=True` and so audited.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from ninja.errors import HttpError
 
 from apps.agents import access
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.events import audit
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -31,10 +32,10 @@ from .schemas import (
     AgentMailboxIn,
     AgentMailboxOut,
     MailDomainIn,
-    MailDomainShareIn,
     MailDomainListOut,
     MailDomainOut,
     MailDomainPatchIn,
+    MailDomainShareIn,
     MailMessageOut,
     MailReplyIn,
     MailResolveOut,
@@ -139,6 +140,7 @@ def _refuse_keeping(request, exc: domains.DomainError):
 
 
 @router.get("/domains/{workspace}", response=MailDomainListOut, summary="List mail domains")
+@gate("member")
 def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
     ws = _ws(request.user, workspace)
     items = [_domain_out(domains.refresh(d) if d.workspace_id == ws.pk else d, request.user, ws)
@@ -148,6 +150,7 @@ def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
 
 
 @router.post("/domains/{workspace}", response=MailDomainOut, summary="Add a mail domain (admin or owner)")
+@gate("integrations", setting=True)
 def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn) -> dict:
     ws = _admin_ws(request.user, workspace)
     try:
@@ -168,6 +171,16 @@ def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn)
 
 @router.post("/domains/{workspace}/{domain_id}/refresh", response=MailDomainOut,
              summary="Re-check a domain's DNS and verification now")
+# re-reads DNS/SES; may restart a FAILED SES verification
+@gate(
+    "member",
+    setting=True,
+    viewer_write=(
+        "re-checks DNS and SES verification and caches the answer; changes no configuration — restarting a "
+        "verification SES gave up on re-puts the same Easy DKIM origin and MAIL FROM attributes, only once the records"
+        " check out, at most every 10 min, and is audited"
+    ),
+)
 def refresh_mail_domain(request: HttpRequest, workspace: str, domain_id: int) -> dict:
     """Re-check now. When SES gave up verifying (DKIM or MAIL FROM FAILED: the records were
     not found within 72 hours) and those records now check out, this also restarts SES
@@ -192,6 +205,7 @@ def _iso(when) -> str | None:
 
 @router.patch("/domains/{workspace}/{domain_id}", response=MailDomainOut,
               summary="Change a domain's send cap, every-agent addresses, or lift its suspension (admin or owner)")
+@gate("integrations", setting=True)
 def update_mail_domain(request: HttpRequest, workspace: str, domain_id: int,
                        payload: MailDomainPatchIn) -> dict:
     ws = _admin_ws(request.user, workspace)
@@ -248,6 +262,7 @@ def _set_sign_in(user, ws, d: MailDomain, on: bool) -> None:
 
 @router.delete("/domains/{workspace}/{domain_id}", response={204: None},
                summary="Remove a mail domain (admin or owner)")
+@gate("integrations", setting=True)
 def remove_mail_domain(request: HttpRequest, workspace: str, domain_id: int):
     ws = _admin_ws(request.user, workspace)
     d = _domain(ws, domain_id)
@@ -258,6 +273,7 @@ def remove_mail_domain(request: HttpRequest, workspace: str, domain_id: int):
 
 @router.put("/domains/{workspace}/{domain_id}/routes", response=MailRouteOut,
             summary="Create or replace the route for one address (admin or owner)")
+@gate("integrations", setting=True)
 def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payload: MailRouteIn) -> dict:
     ws = _admin_ws(request.user, workspace)
     d = _usable_domain(ws, domain_id)
@@ -276,6 +292,7 @@ def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payloa
 
 @router.delete("/domains/{workspace}/{domain_id}/routes/{route_id}", response={204: None},
                summary="Remove an address's route (admin or owner)")
+@gate("integrations", setting=True)
 def delete_mail_route(request: HttpRequest, workspace: str, domain_id: int, route_id: int):
     ws = _admin_ws(request.user, workspace)
     r = _usable_domain(ws, domain_id).routes.filter(pk=route_id, workspace=ws).first()
@@ -301,6 +318,7 @@ def _owned_domain(workspace: str, domain_id: int) -> MailDomain:
 
 @router.put("/domains/{workspace}/{domain_id}/shares", response=MailDomainOut,
             summary="Share a domain with a workspace and everything below it (superuser)")
+@gate("superuser", setting=True)
 def share_mail_domain(request: HttpRequest, workspace: str, domain_id: int, payload: MailDomainShareIn) -> dict:
     _superuser(request.user)
     d = _owned_domain(workspace, domain_id)
@@ -321,6 +339,7 @@ def share_mail_domain(request: HttpRequest, workspace: str, domain_id: int, payl
 
 @router.delete("/domains/{workspace}/{domain_id}/shares/{share_workspace}", response=MailDomainOut,
                summary="Stop sharing a domain with a workspace (superuser)")
+@gate("superuser", setting=True)
 def unshare_mail_domain(request: HttpRequest, workspace: str, domain_id: int, share_workspace: str) -> dict:
     _superuser(request.user)
     d = _owned_domain(workspace, domain_id)
@@ -429,6 +448,7 @@ def _from_route(ws, slug: str, from_address: str | None) -> MailRoute | None:
 
 
 @router.get("/resolve", response=MailResolveOut, summary="Which mail backend serves an address or a thread")
+@gate("authenticated")  # 404 unless the caller is a member of the address's workspace
 def resolve_mail_address(request: HttpRequest, address: str = "", thread: str = "") -> dict:
     """`?address=` — the SES mailbox an address is; `?thread=` — the SES thread a turn's
     `thread_id` names (404 for a Gmail thread id, or one the caller may not see)."""
@@ -463,6 +483,7 @@ def _mailbox_out(request: HttpRequest, agent) -> dict:
 
 @router.get("/agents/{slug}/mailbox", response=AgentMailboxOut,
             summary="Where an agent's address lives: canopy-hosted, Google, or none")
+@gate("member")
 def get_agent_mailbox(request: HttpRequest, slug: str) -> dict:
     from apps.agents.gates import agent_for_read
 
@@ -471,6 +492,7 @@ def get_agent_mailbox(request: HttpRequest, slug: str) -> dict:
 
 @router.put("/agents/{slug}/mailbox", response=AgentMailboxOut,
             summary="Give an agent an address; on a canopy-hosted domain it is routed at once")
+@gate("agent-admin", setting=True)  # the route itself also needs integrations (domains.ensure_agent_route)
 def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) -> dict:
     """Set the agent's address (owner or agent admin). An address on one of the workspace's
     hosted domains gets its mailbox route in the same step when the caller may change the
@@ -491,6 +513,7 @@ def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) 
 
 
 @router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")
+@gate("member")
 def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False) -> dict:
     ws = _ws(request.user, workspace)
     qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
@@ -512,6 +535,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
 
 
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
+@gate("member")
 def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
     t = _thread(_ws(request.user, workspace), uuid)
     out = _thread_out(t, messages=True)
@@ -551,6 +575,7 @@ def _reply_recipients(t) -> list[str]:
 
 
 @router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")
+@gate("agent.work", kind="conversation")
 def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
@@ -571,6 +596,7 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
 
 
 @router.post("/send/{workspace}", response=MailMessageOut, summary="Start a new thread as an agent")
+@gate("agent.work", kind="conversation")
 def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict:
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
@@ -587,6 +613,7 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
 
 
 @router.post("/threads/{workspace}/{uuid}/state", response=MailThreadOut, summary="Mark a thread read/archived")
+@gate("agent.work", kind="conversation")
 def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, payload: MailThreadStateIn) -> dict:
     ws = _ws(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
@@ -616,6 +643,7 @@ def _notification_message(msg: dict) -> dict | None:
 
 @router.post("/ses/inbound/", auth=None, response={200: dict, 404: dict, 500: dict},
              url_name="ses_inbound", summary="SES receipt notifications (SNS HTTPS delivery)")
+@gate("host", kind="telemetry")  # auth=None; SNS signature + pinned cert host + pinned topic, 404 otherwise
 def ses_inbound(request: HttpRequest):
     """SNS posts `text/plain`, so the body is read raw rather than through a schema.
 
@@ -660,6 +688,7 @@ def ses_inbound(request: HttpRequest):
 
 @router.post("/ses/events/", auth=None, response={200: dict, 404: dict, 500: dict},
              summary="SES sending events (SNS HTTPS delivery)")
+@gate("host", kind="telemetry")  # auth=None; SNS signature + topic ARN verified, 404 otherwise
 def ses_events(request: HttpRequest):
     try:
         msg = json.loads(request.body or b"{}")

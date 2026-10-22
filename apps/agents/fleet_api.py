@@ -14,6 +14,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import DEFAULT_LIMIT_CAP, Page, clamp_limit, paginate
+from apps.api.route_gates import gate
 from apps.harness.api_turns import visible_turns_qs
 from apps.harness.models import Turn
 from apps.oauth_server.views import issuer
@@ -53,6 +54,7 @@ _ASK_RANK = Case(When(ask_kind=AgentTask.ASK_REVIEW, then=0),
 
 @router.get("/tasks/", response=list[AgentTaskOut],
             summary="Tasks across every agent you can see (the per-agent filters, plus agent)")
+@gate("member")
 def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
                      waiting: str = "", ask: str = "", batch: str = "", parent: str = "",
                      limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
@@ -75,6 +77,7 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
 
 @router.get("/me/tasks/", response=list[AgentTaskOut],
             summary="Tasks across every agent you can see, in every workspace you are in")
+@gate("member")  # list_fleet_tasks per organisation
 def list_my_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
                   waiting: str = "", ask: str = "", limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
     """The fleet task list as a user-level view: each organisation is read on
@@ -87,6 +90,7 @@ def list_my_tasks(request: HttpRequest, agent: str = "", project: str = "", stat
 
 
 @router.get("/me/agents/", response=Page[AgentOut], summary="Every agent you can see, in every workspace you are in")
+@gate("member")  # list_agents per organisation
 def list_my_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
     """The agent list as a user-level view: each organisation read on its own,
     every row carrying its workspace. By name."""
@@ -96,6 +100,7 @@ def list_my_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 
 @router.get("/projects/", response=list[AgentProjectOut],
             summary="Projects across every agent you can see")
+@gate("member")
 def list_fleet_projects(request: HttpRequest, status: str = "active",
                         repo_slug: str = "", scope: str = "") -> list[AgentProjectOut]:
     """Active by default; `status=` (empty for all), `repo_slug=` and `scope=`
@@ -110,6 +115,10 @@ def list_fleet_projects(request: HttpRequest, status: str = "active",
 
 @router.get("/me/projects/", response=list[AgentProjectOut],
             summary="The projects you own, across every workspace you are in")
+# User-level views (`/api/me/…`): the same list once per organisation
+# (`wsvc.each_organisation`), each run under that list's own gate.
+# the caller's own projects
+@gate("self")
 def list_my_projects(request: HttpRequest, status: str = "active") -> list[AgentProjectOut]:
     """A user-level view: each organisation is read on its own
     (`each_organisation`) and every row carries its workspace. Active by
@@ -138,6 +147,7 @@ def _project_rows(qs, *, status: str) -> list[AgentProjectOut]:
 
 @router.get("/agent-roster/", response=list[AgentRosterRowOut],
             summary="Every agent you can see, with what it is doing")
+@gate("member")  # counts over the same agents list_agents shows; turns through visible_turns_qs
 def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
     """One row per agent: open tasks and those waiting on a person, active
     projects, skills, schedules, and its turns — the last one and how it ended,
@@ -192,6 +202,7 @@ def _workspace_project_or_404(request: HttpRequest, workspace: str, handle: str)
 
 @router.get("/workspace-projects/", response=list[AgentProjectOut],
             summary="Workspace projects in every workspace you can see")
+@gate("member")
 def list_workspace_projects(request: HttpRequest, status: str = "") -> list[AgentProjectOut]:
     """Owned by a workspace rather than one agent, each with a steward agent that
     keeps it current. `status=` narrows; default all."""
@@ -209,6 +220,7 @@ def list_workspace_projects(request: HttpRequest, status: str = "") -> list[Agen
 
 @router.get("/mcp-servers/", response=list[McpServerOut],
             summary="The MCP servers you can add: workspace projects serving their own tools")
+@gate("member")
 def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     """A directory to browse, not a subscription: nothing here is added to anyone's
     sessions. Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
@@ -237,6 +249,7 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
 
 @router.post("/workspace-projects/", response={201: AgentProjectOut},
              summary="Create a workspace project, owned by the steward's workspace")
+@gate("agent.work", kind="content")  # the steward's write gate
 def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
     steward = agent_for_work(request, payload.steward.strip())
     require_workspace_editor(request, payload.workspace.strip(), steward)
@@ -253,12 +266,14 @@ def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
 
 @router.get("/workspace-projects/{workspace}/{handle}/", response=AgentProjectDetailOut,
             summary="Get a workspace project: fields, every agent's tasks in it, recent turns")
+@gate("member")
 def get_workspace_project(request: HttpRequest, workspace: str, handle: str) -> AgentProjectDetailOut:
     return project_detail(request, _workspace_project_or_404(request, workspace, handle))
 
 
 @router.patch("/workspace-projects/{workspace}/{handle}/", response=AgentProjectOut,
               summary="Update a workspace project (including handing it to another steward)")
+@gate("agent.work", kind="content")  # the steward's (and a new steward's) write gate
 def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
                             payload: AgentProjectPatch) -> AgentProjectOut:
     project = _workspace_project_or_404(request, workspace, handle)
@@ -284,6 +299,7 @@ def _kb_call(fn):
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/upload", response=KbUploadOut,
              summary="Get a presigned upload for a new knowledge base (the steward's curator)")
+@gate("agent.work", kind="content")  # the steward's write gate: its curator publishes
 def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUploadOut:
     """Step one of publishing: PUT the gzipped kb.sqlite to `url` with `headers`,
     then `POST …/kb/publish`. The bytes never pass through canopy."""
@@ -295,6 +311,7 @@ def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUpl
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/originals", response=KbOriginalsOut,
              summary="Get presigned uploads for the original files a knowledge base points at")
+@gate("agent.work", kind="content")
 def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, payload: KbOriginalsIn) -> KbOriginalsOut:
     """Before publishing a build: name the originals its items point at (sha256, size,
     type); the answer has a PUT for each one the project's store lacks. Stored by
@@ -309,6 +326,7 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
 
 @router.post("/workspace-projects/{workspace}/{handle}/kb/publish", response=AgentProjectOut,
              summary="Publish an uploaded knowledge base: the project then serves it as its MCP server")
+@gate("agent.work", kind="content")
 def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPublishIn) -> AgentProjectOut:
     """The project answers its tools at `mcp_path` from this upload from now on
     (every serving instance re-fetches it by its sha256); the previous one is deleted."""

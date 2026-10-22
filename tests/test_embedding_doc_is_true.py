@@ -56,7 +56,7 @@ def test_every_command_the_doc_names_exists(doc):
 
 
 def test_a_site_is_set_up_only_through_the_audited_routes():
-    """Registering a site and what it may do are settings (`route_gates.SETTINGS`):
+    """Registering a site and what it may do are settings (`@gate(..., setting=True)`):
     the routes validate and audit them; a management command would do neither."""
     retired = {"create_app_credential", "grant_app_frame_origin", "grant_app_agent"}
     assert not retired & set(get_commands())

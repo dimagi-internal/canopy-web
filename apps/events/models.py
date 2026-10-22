@@ -97,7 +97,7 @@ class SettingChange(models.Model):
     """One change to a setting — who made it, through what, and what changed.
 
     Written by ONE plumbing, `apps/events/audit.py`, which wraps every REST route
-    `apps/api/route_gates.py::SETTINGS` names. The web UI, the `canopy` CLI, a
+    declared `@gate(..., setting=True)` (`apps/api/route_gates.py`). The web UI, the `canopy` CLI, a
     script and an MCP tool all reach a setting through those routes (every MCP
     tool IS a route, called in-process), so no entry point can change a setting
     without leaving a row. A new write route cannot ship until it is classified

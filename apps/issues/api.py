@@ -12,6 +12,7 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
+from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -75,6 +76,7 @@ def _assign_workspace(request: HttpRequest, agent_slug: str):
 
 
 @router.post("/", response={200: OriginIssueOut, 201: OriginIssueOut}, summary="Upsert an origin record")
+@gate("content.write", kind="content")
 def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
     data = payload.model_dump()
     repo = data.pop("repo")
@@ -113,6 +115,7 @@ def upsert_issue(request: HttpRequest, payload: OriginIssueIn) -> Status:
 
 
 @router.get("/", response=Page[OriginIssueOut], summary="List origin records")
+@gate("member")
 def list_issues(
     request: HttpRequest,
     initiative: str | None = None,
@@ -130,11 +133,13 @@ def list_issues(
 
 
 @router.get("/{repo_slug}/{number}/", response=OriginIssueOut, summary="Get an origin record")
+@gate("member")
 def get_issue(request: HttpRequest, repo_slug: str, number: int) -> OriginIssueOut:
     return _out(_get_or_404(request, repo_slug, number))
 
 
 @router.delete("/{repo_slug}/{number}/", response={204: None}, summary="Delete an origin record (cleanup)")
+@gate("content.write", kind="content")
 def delete_issue(request: HttpRequest, repo_slug: str, number: int) -> Status:
     obj = _get_or_404(request, repo_slug, number)
     _require_editor(request, obj.workspace_id, "deleting")

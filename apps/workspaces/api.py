@@ -13,15 +13,16 @@ from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
-from apps.api.auth import session_auth
 from apps.admission.schemas import (
     AdmissionRuleIn,
     AdmissionRuleOut,
     AdmissionRulePatch,
+    AdmissionRulesOut,
     AdmissionSettingsIn,
     AdmissionSettingsOut,
-    AdmissionRulesOut,
 )
+from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.retention.schemas import (
     RetentionOut,
     RetentionPreviewOut,
@@ -55,9 +56,6 @@ from .schemas import (
     RunnerOrderIn,
     RunnerOrderRowOut,
     RunnerTopologyOut,
-    WorkspaceAnalyticsOut,
-    WorkspaceNetworkOut,
-    WorkspaceHealthOut,
     SharedVaultIn,
     SharedVaultOut,
     SystemAccountCreateIn,
@@ -65,7 +63,10 @@ from .schemas import (
     SystemAccountUpdateIn,
     SystemSenderIn,
     SystemSenderOut,
+    WorkspaceAnalyticsOut,
     WorkspaceCreateIn,
+    WorkspaceHealthOut,
+    WorkspaceNetworkOut,
     WorkspaceOut,
     WorkspaceParentIn,
 )
@@ -185,6 +186,7 @@ def _invite_out(inv: WorkspaceInvite, email_status: str | None = None, *,
 
 
 @router.post("/", response={201: WorkspaceOut}, summary="Create a workspace",)
+@gate("authenticated", "own", setting=True)  # can_create_workspace; OWN on `parent` when nesting
 def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status:
     # An invite-admitted user (cleared the OAuth gate via a live invite or an
     # existing membership, not the domain allowlist) must not be able to
@@ -219,6 +221,7 @@ def create_workspace(request: HttpRequest, payload: WorkspaceCreateIn) -> Status
 
 
 @router.get("/", response=list[WorkspaceOut], summary="List my workspaces",)
+@gate("authenticated")  # the caller's own memberships
 def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
     # Direct memberships PLUS workspaces held by inheritance (descendants of
     # one the caller owns or administers) — read through `services`, the sole authorizer.
@@ -240,12 +243,14 @@ def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
 
 
 @router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",)
+@gate("member")
 def get_workspace(request: HttpRequest, slug: str) -> WorkspaceOut:
     m = _membership_or_404(request.user, slug)
     return _m_out(m)
 
 
 @router.put("/{slug}/parent", response=WorkspaceOut, summary="Move a workspace in the tree (owner-only)",)
+@gate("own", setting=True)  # own both ends
 def set_workspace_parent(request: HttpRequest, slug: str, payload: WorkspaceParentIn) -> WorkspaceOut:
     """Nest `slug` under `parent`, or make it a root with `parent: null`.
 
@@ -343,6 +348,7 @@ def _access_request_or_404(m: WorkspaceMembership, request_id: int) -> Workspace
 
 @router.get("/requestable", response=list[RequestableWorkspaceOut],
             summary="Workspaces I may request an invitation to")
+@gate("authenticated")  # capability list: access_request_domains match
 def list_requestable_workspaces(request: HttpRequest) -> list[RequestableWorkspaceOut]:
     """A capability list, not a directory: only workspaces whose
     `access_request_domains` include the caller's login-email domain and that
@@ -358,6 +364,8 @@ def list_requestable_workspaces(request: HttpRequest) -> list[RequestableWorkspa
 
 @router.post("/{slug}/access-requests", response={200: AccessRequestOut, 201: AccessRequestOut},
              summary="Request an invitation to a workspace")
+# access_request_domains match, same 404 otherwise; joins nothing unless auto_approve_role
+@gate("authenticated", kind="request")
 def request_workspace_access(request: HttpRequest, slug: str, payload: AccessRequestIn) -> Status:
     """Ask this workspace's admins to let you in, with an optional note. Every
     admin and owner is emailed a link to the request. With the workspace's
@@ -375,6 +383,7 @@ def request_workspace_access(request: HttpRequest, slug: str, payload: AccessReq
 
 @router.get("/{slug}/access-requests", response=list[AccessRequestOut],
             summary="List access requests (admin or owner)")
+@gate("members.manage")
 def list_access_requests(request: HttpRequest, slug: str, status: str | None = None) -> list[AccessRequestOut]:
     """Newest first; `status` narrows to pending / approved / denied."""
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
@@ -387,6 +396,7 @@ def list_access_requests(request: HttpRequest, slug: str, status: str | None = N
 
 @router.get("/{slug}/access-requests/{request_id}", response=AccessRequestOut,
             summary="One access request (admin or owner)")
+@gate("members.manage")
 def get_access_request(request: HttpRequest, slug: str, request_id: int) -> AccessRequestOut:
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     return _access_request_out(_access_request_or_404(m, request_id), admin_view=True)
@@ -394,6 +404,7 @@ def get_access_request(request: HttpRequest, slug: str, request_id: int) -> Acce
 
 @router.post("/{slug}/access-requests/{request_id}/approve", response=AccessRequestOut,
              summary="Approve an access request at a role (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member on the granted role
 def approve_access_request(request: HttpRequest, slug: str, request_id: int,
                            payload: AccessRequestApproveIn) -> AccessRequestOut:
     """Creates the membership at `role` (default viewer) and emails the
@@ -412,6 +423,7 @@ def approve_access_request(request: HttpRequest, slug: str, request_id: int,
 
 @router.post("/{slug}/access-requests/{request_id}/deny", response=AccessRequestOut,
              summary="Deny an access request (admin or owner)")
+@gate("members.manage", setting=True)
 def deny_access_request(request: HttpRequest, slug: str, request_id: int,
                         payload: AccessRequestDenyIn) -> AccessRequestOut:
     """Grants nothing; emails the requester, with `reason` if given. 409 if the
@@ -427,6 +439,7 @@ def deny_access_request(request: HttpRequest, slug: str, request_id: int,
 
 @router.put("/{slug}/access-settings", response=WorkspaceOut,
             summary="Set how access requests are approved (owner-only)")
+@gate("own", setting=True)
 def set_access_settings(request: HttpRequest, slug: str, payload: AccessSettingsIn) -> WorkspaceOut:
     """`auto_approve_role`: "" (off — a person approves each request),
     "viewer" or "editor". Owner-only: it decides who gets in without anyone
@@ -439,6 +452,7 @@ def set_access_settings(request: HttpRequest, slug: str, payload: AccessSettings
 
 
 @router.delete("/{slug}/", response={204: None}, summary="Delete a workspace (owner-only)",)
+@gate("own", setting=True)
 def delete_workspace(request: HttpRequest, slug: str):
     """Delete an empty workspace. Owner-only, and never one that still owns agents.
 
@@ -483,6 +497,7 @@ def delete_workspace(request: HttpRequest, slug: str):
 
 # ---- members ----
 @router.get("/{slug}/members/", response=list[MemberOut], summary="List members (member-only)",)
+@gate("member")
 def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
     """Everyone in the workspace. Owners of a parent workspace own this one
     too, and are listed with `inherited: true`; they are changed on the parent."""
@@ -495,6 +510,7 @@ def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
 
 @router.delete("/{slug}/members/{user_id}/", response={204: None},
                summary="Remove a member (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def remove_member(request: HttpRequest, slug: str, user_id: int):
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, _target_role(slug, user_id))
@@ -507,6 +523,7 @@ def remove_member(request: HttpRequest, slug: str, user_id: int):
 
 @router.patch("/{slug}/members/{user_id}/", response=MemberOut,
               summary="Change a member's role (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: MemberRoleUpdateIn) -> MemberOut:
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, _target_role(slug, user_id), payload.role)
@@ -563,6 +580,10 @@ def _require_system_manage(request: HttpRequest, slug: str, role: str | None = N
 
 @router.get("/{slug}/system-accounts/", response=list[SystemAccountOut],
             summary="List system accounts (member-only)")
+# System accounts (apps/workspaces/system_accounts.py): listed to members
+# like the member list; managed like an editor is (members.manage +
+# may_manage_member at the account's role).
+@gate("member")
 def list_system_accounts(request: HttpRequest, slug: str) -> list[SystemAccountOut]:
     """Automated senders (e.g. CloudWatch alarm mail) that hold a member's
     standing here and can never sign in, with the addresses bound to each."""
@@ -574,6 +595,7 @@ def list_system_accounts(request: HttpRequest, slug: str) -> list[SystemAccountO
 
 @router.post("/{slug}/system-accounts/", response={201: SystemAccountOut},
              summary="Create a system account (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def create_system_account(request: HttpRequest, slug: str, payload: SystemAccountCreateIn) -> Status:
     """Creates a member that cannot sign in (editor by default, never above),
     and binds any `senders` given: aligned mail from a bound address, in THIS
@@ -597,6 +619,7 @@ def create_system_account(request: HttpRequest, slug: str, payload: SystemAccoun
 
 @router.get("/{slug}/system-accounts/{account_id}/", response=SystemAccountOut,
             summary="Get a system account (member-only)")
+@gate("member")
 def get_system_account(request: HttpRequest, slug: str, account_id: int) -> SystemAccountOut:
     m = _membership_or_404(request.user, slug)
     return _system_out(_system_or_404(m.workspace, account_id))
@@ -604,6 +627,7 @@ def get_system_account(request: HttpRequest, slug: str, account_id: int) -> Syst
 
 @router.patch("/{slug}/system-accounts/{account_id}/", response=SystemAccountOut,
               summary="Rename, re-role, disable or re-enable a system account (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def update_system_account(request: HttpRequest, slug: str, account_id: int,
                           payload: SystemAccountUpdateIn) -> SystemAccountOut:
     m = _require_system_manage(request, slug, payload.role)
@@ -618,6 +642,7 @@ def update_system_account(request: HttpRequest, slug: str, account_id: int,
 
 @router.delete("/{slug}/system-accounts/{account_id}/", response={204: None},
                summary="Delete a system account (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def delete_system_account(request: HttpRequest, slug: str, account_id: int):
     """Deletes it, its membership and its bindings. Its past turns lose their
     initiator; to keep the name on them, disable it instead."""
@@ -628,6 +653,7 @@ def delete_system_account(request: HttpRequest, slug: str, account_id: int):
 
 @router.post("/{slug}/system-accounts/{account_id}/senders/", response={201: SystemSenderOut},
              summary="Bind an inbound address to a system account (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def add_system_sender(request: HttpRequest, slug: str, account_id: int,
                       payload: SystemSenderIn) -> Status:
     m = _require_system_manage(request, slug)
@@ -642,6 +668,7 @@ def add_system_sender(request: HttpRequest, slug: str, account_id: int,
 
 @router.delete("/{slug}/system-accounts/{account_id}/senders/{sender_id}/", response={204: None},
                summary="Unbind an inbound address from a system account (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member
 def remove_system_sender(request: HttpRequest, slug: str, account_id: int, sender_id: int):
     m = _require_system_manage(request, slug)
     a = _system_or_404(m.workspace, account_id)
@@ -654,6 +681,7 @@ def remove_system_sender(request: HttpRequest, slug: str, account_id: int, sende
 
 # ---- invites ----
 @router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (admin or owner)",)
+@gate("members.manage", setting=True)
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
     """Creates the invite and emails its link to the address. `email_status`
     says whether the email went out; the link in `token` works either way.
@@ -668,6 +696,7 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
 
 
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
+@gate("member")  # tokens only to members.manage
 def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
     """Every member sees who has been invited; only an owner gets each invite's
     `token` (it is empty for everyone else)."""
@@ -688,6 +717,7 @@ def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
 
 @router.post("/{slug}/invites/{invite_id}/revoke", response={204: None},
              summary="Revoke an invite (admin or owner)")
+@gate("members.manage", setting=True)
 def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     try:
@@ -701,6 +731,7 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
 
 @router.post("/{slug}/invites/{invite_id}/reissue", response=InviteOut,
              summary="Send a fresh link for an invite (admin or owner)")
+@gate("members.manage", setting=True)
 def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut:
     """New token and a fresh expiry for an invite nobody has accepted or
     revoked — including one that has expired — emailed to the invited address.
@@ -730,6 +761,7 @@ def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut
 
 @router.get("/invites/{token}/preview", response=InvitePreviewOut, auth=None,
             summary="Preview an invite before login (pre-auth, minimal disclosure)")
+@gate("signed-link")  # auth=None; the invite token is the capability
 def preview_invite(request: HttpRequest, token: str) -> InvitePreviewOut:
     try:
         inv = WorkspaceInvite.objects.select_related("workspace").get(token=token)
@@ -752,6 +784,7 @@ def preview_invite(request: HttpRequest, token: str) -> InvitePreviewOut:
 
 @router.post("/invites/{token}/accept", response=WorkspaceOut,
              summary="Accept an invite by token")
+@gate("authenticated", "signed-link", setting=True)
 def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
     try:
         ws, role = invites.accept_invite(token=token, user=request.user)
@@ -763,6 +796,7 @@ def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
 
 @router.get("/{slug}/shared-vault", response=SharedVaultOut,
             summary="This tenant's shared 1Password vault (masked — never the key)")
+@gate("own")
 def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
     """Owner-only, matching the rest of workspace administration.
 
@@ -776,6 +810,7 @@ def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
 
 @router.put("/{slug}/shared-vault", response=SharedVaultOut,
             summary="Set the shared vault + its service-account token (write-only)")
+@gate("own", setting=True)
 def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) -> SharedVaultOut:
     """The key here must be scoped to the SHARED vault and nothing else.
 
@@ -793,6 +828,7 @@ def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) ->
 
 @router.get("/{slug}/runner-topology", response=RunnerTopologyOut,
             summary="Which runners serve which agents, across this workspace and every one below it")
+@gate("logs.read")  # root + each descendant where the caller holds it
 def runner_topology(request: HttpRequest, slug: str) -> RunnerTopologyOut:
     """This workspace and its descendants, each with its agents and their routing
     (the default ordered list and every source rule), plus every runner those
@@ -815,6 +851,7 @@ def _tree_reader(request: HttpRequest, slug: str):
 
 @router.get("/{slug}/health", response=WorkspaceHealthOut,
             summary="What is not set up right, across this workspace and every one below it")
+@gate("logs.read")  # same tree read; can_fix mirrors Agent.is_admin
 def workspace_health(request: HttpRequest, slug: str) -> WorkspaceHealthOut:
     """Every agent in the tree with its setup checklist (the same steps as its own
     Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
@@ -831,6 +868,7 @@ def workspace_health(request: HttpRequest, slug: str) -> WorkspaceHealthOut:
 
 @router.get("/{slug}/analytics", response=WorkspaceAnalyticsOut,
             summary="Turns, chats, messages, tokens and people over time, by agent, repository and person")
+@gate("logs.read")  # same tree read
 def workspace_analytics(request: HttpRequest, slug: str, days: int = 30,
                         tree: bool = True) -> WorkspaceAnalyticsOut:
     """Daily series plus per-agent, per-repository and per-person tables for the last
@@ -849,6 +887,7 @@ def workspace_analytics(request: HttpRequest, slug: str, days: int = 30,
 
 @router.get("/{slug}/network", response=WorkspaceNetworkOut,
             summary="Who talks to whom: people, contacts and agents linked by the threads they wrote in")
+@gate("logs.read")  # same tree read; thread titles only where the session ACL lets the viewer open them
 def workspace_network(request: HttpRequest, slug: str, days: int = 30,
                       tree: bool = True) -> WorkspaceNetworkOut:
     """People, contacts and agents over the last `days` (1-365) UTC days, each linked
@@ -866,6 +905,7 @@ def workspace_network(request: HttpRequest, slug: str, days: int = 30,
 
 @router.get("/{slug}/runner-order", response=list[RunnerOrderRowOut],
             summary="The workspace's default runner order: repo turns, and agents without their own")
+@gate("member")
 def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]:
     """Repo turns (a project dispatch — no agent) route by this list: rank 0 takes
     the turn while it is available, the next rank only once every better one is
@@ -894,6 +934,8 @@ def get_runner_order(request: HttpRequest, slug: str) -> list[RunnerOrderRowOut]
 
 @router.put("/{slug}/runner-order", response=list[RunnerOrderRowOut],
             summary="Replace the workspace's default runner order")
+# admin+; routes agents in every division below too; each runner's owner must be a member (422 otherwise)
+@gate("runners.route", setting=True)
 def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) -> list[RunnerOrderRowOut]:
     """Wholesale replace (index = rank). Workspace admins and owners
     (`runners.route`): the order routes agents in every workspace below this one
@@ -944,6 +986,7 @@ def set_runner_order(request: HttpRequest, slug: str, payload: RunnerOrderIn) ->
 
 @router.get("/{slug}/agent-topology", response=AgentTopologyOut,
             summary="Which agents can send which other agents work, across this workspace and every one below it")
+@gate("logs.read")  # same; grant/revoke flags mirror _may_manage_admins
 def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
     """Every agent in this workspace and its descendants, and for each ordered
     pair what the first gets when it sends the second work with its own canopy
@@ -964,6 +1007,7 @@ def agent_topology(request: HttpRequest, slug: str) -> AgentTopologyOut:
 
 @router.get("/{slug}/retention", response=RetentionOut,
             summary="How long this workspace keeps chat and turn content")
+@gate("member")  # read-only: everyone may know how long their chats are kept
 def get_retention(request: HttpRequest, slug: str) -> RetentionOut:
     """This workspace's retention rules and the ones it inherits from the
     workspaces above it and the deployment. Any member may read them; changing
@@ -977,6 +1021,7 @@ def get_retention(request: HttpRequest, slug: str) -> RetentionOut:
 
 @router.get("/{slug}/retention/preview", response=RetentionPreviewOut,
             summary="What the current rules would delete from this workspace right now")
+@gate("retention.manage")
 def retention_preview(request: HttpRequest, slug: str) -> RetentionPreviewOut:
     """Counts only, per rule, of what would be dropped from this workspace's
     own chats and turns if the rules were enforced now. Deletes nothing."""
@@ -1000,6 +1045,7 @@ def retention_preview(request: HttpRequest, slug: str) -> RetentionPreviewOut:
 
 @router.post("/{slug}/retention/rules", response={201: RetentionRuleOut},
              summary="Add a retention rule")
+@gate("retention.manage", setting=True)
 def create_retention_rule(request: HttpRequest, slug: str, payload: RetentionRuleIn):
     """Blank filters match anything; `keep_days` null keeps matching content
     forever. 422 if a rule with exactly these filters already exists, or the
@@ -1016,6 +1062,7 @@ def create_retention_rule(request: HttpRequest, slug: str, payload: RetentionRul
 
 @router.put("/{slug}/retention/rules/{rule_id}", response=RetentionRuleOut,
             summary="Change a retention rule")
+@gate("retention.manage", setting=True)
 def update_retention_rule(request: HttpRequest, slug: str, rule_id: int,
                           payload: RetentionRuleIn) -> RetentionRuleOut:
     """Replaces the rule's filters, retention and note."""
@@ -1033,6 +1080,7 @@ def update_retention_rule(request: HttpRequest, slug: str, rule_id: int,
 
 @router.delete("/{slug}/retention/rules/{rule_id}", response={204: None},
                summary="Remove a retention rule")
+@gate("retention.manage", setting=True)
 def delete_retention_rule(request: HttpRequest, slug: str, rule_id: int):
     """Content the rule would have expired falls back to the next rule that
     matches, or is kept forever."""
@@ -1053,6 +1101,7 @@ def delete_retention_rule(request: HttpRequest, slug: str, rule_id: int):
 
 @router.get("/{slug}/admission-rules", response=AdmissionRulesOut,
             summary="Which turns this workspace refuses before they run")
+@gate("member")  # read-only: anyone may know which turns are refused
 def list_admission_rules(request: HttpRequest, slug: str) -> AdmissionRulesOut:
     """This workspace's admission rules: each one's conditions, action, notices,
     whether it is on, and how often it has fired. Any member may read them;
@@ -1067,6 +1116,7 @@ def list_admission_rules(request: HttpRequest, slug: str) -> AdmissionRulesOut:
 
 @router.put("/{slug}/admission-settings", response=AdmissionSettingsOut,
             summary="Switch automatic replies to rejected senders on or off")
+@gate("admission.manage", setting=True)
 def set_admission_settings(request: HttpRequest, slug: str,
                            payload: AdmissionSettingsIn) -> AdmissionSettingsOut:
     """On, a rule with "automatic reply to the sender" replies on the sender's
@@ -1081,6 +1131,7 @@ def set_admission_settings(request: HttpRequest, slug: str,
 
 @router.post("/{slug}/admission-rules", response={201: AdmissionRuleOut},
              summary="Add an admission rule")
+@gate("admission.manage", setting=True)
 def create_admission_rule(request: HttpRequest, slug: str, payload: AdmissionRuleIn):
     """Blank conditions match anything, and at least one must be set. An
     `allow` rule exempts the turns it matches from every `reject` rule. 422 for
@@ -1097,6 +1148,7 @@ def create_admission_rule(request: HttpRequest, slug: str, payload: AdmissionRul
 
 @router.patch("/{slug}/admission-rules/{rule_id}", response=AdmissionRuleOut,
               summary="Change an admission rule, or switch it on or off")
+@gate("admission.manage", setting=True)
 def update_admission_rule(request: HttpRequest, slug: str, rule_id: int,
                           payload: AdmissionRulePatch) -> AdmissionRuleOut:
     """Only the fields sent change."""
@@ -1115,6 +1167,7 @@ def update_admission_rule(request: HttpRequest, slug: str, rule_id: int,
 
 @router.delete("/{slug}/admission-rules/{rule_id}", response={204: None},
                summary="Remove an admission rule")
+@gate("admission.manage", setting=True)
 def delete_admission_rule(request: HttpRequest, slug: str, rule_id: int):
     """A removed default is not re-seeded. Disabling it keeps it one toggle away."""
     from apps.admission import rules

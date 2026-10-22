@@ -12,6 +12,7 @@ from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import ProblemError
+from apps.api.route_gates import gate
 
 from . import github_app
 from .models import GitHubConnection
@@ -28,6 +29,7 @@ router = Router(auth=session_auth, tags=["tokens"])
 
 
 @router.get("/github", response=GitHubConnectionOut, summary="My GitHub connection")
+@gate("self")
 def github_connection(request: HttpRequest) -> GitHubConnectionOut:
     """Whether this deployment has GitHub set up, and whether I am connected.
 
@@ -47,6 +49,7 @@ def github_connection(request: HttpRequest) -> GitHubConnectionOut:
 
 
 @router.delete("/github", response={204: None}, summary="Disconnect GitHub (mine only)")
+@gate("self", setting=True)
 def github_disconnect(request: HttpRequest) -> Status:
     """Forget my grant.
 
@@ -65,6 +68,7 @@ def github_disconnect(request: HttpRequest) -> Status:
 
 @router.get("/github/installations", response=list[GitHubInstallationOut],
             summary="Where I have installed the app (the owner picker)")
+@gate("self")
 def github_installations(request: HttpRequest) -> list[GitHubInstallationOut]:
     """The accounts and orgs the caller can have a repo created in.
 

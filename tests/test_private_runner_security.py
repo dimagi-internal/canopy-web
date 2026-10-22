@@ -284,4 +284,6 @@ def test_a_1password_agent_resolves_without_a_device_proof_even_if_zk_is_on(worl
 
 def test_resolve_declares_the_license_principal():
     assert "license" in route_gates.VOCABULARY
-    assert "license" in route_gates.GATES["resolve_agent_credentials"]
+    from apps.agents.api_credentials import resolve_agent_credentials
+
+    assert "license" in route_gates.gate_of(resolve_agent_credentials).labels

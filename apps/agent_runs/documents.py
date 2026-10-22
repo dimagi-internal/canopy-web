@@ -40,6 +40,7 @@ from ninja.errors import HttpError
 from pydantic import Field
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.common.schemas import StrictModel
 
 from .models import AgentRun, AgentRunStep, AgentRunVerdict
@@ -256,6 +257,7 @@ def _stamp_terminal(run: AgentRun) -> None:
 
 
 @router.get("/", response=list[RunDocOut], summary="List run documents across agents")
+@gate("member")
 def list_run_docs(
     request: HttpRequest,
     kind: str | None = None,
@@ -287,6 +289,7 @@ def list_run_docs(
 
 
 @router.post("/", response={201: RunDocDetailOut}, summary="Start (or adopt) a run document")
+@gate("agent.work", kind="content")
 def create_run_doc(request: HttpRequest, payload: RunDocCreateIn) -> Status:
     from apps.agents.models import AgentProject
 
@@ -322,11 +325,13 @@ def create_run_doc(request: HttpRequest, payload: RunDocCreateIn) -> Status:
 
 
 @router.get("/{ext_id}/", response=RunDocDetailOut, summary="A run document with its state")
+@gate("member")
 def get_run_doc(request: HttpRequest, ext_id: str) -> RunDocDetailOut:
     return _out(_doc_or_404(request, ext_id), detail=True)
 
 
 @router.put("/{ext_id}/state/", response=RunDocDetailOut, summary="Write a run document's state")
+@gate("agent.work", kind="content")
 def put_run_doc_state(request: HttpRequest, ext_id: str, payload: RunDocStateIn) -> RunDocDetailOut:
     run = _doc_or_404(request, ext_id)
     _agent_for_write(request, run.agent.slug)

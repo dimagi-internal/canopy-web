@@ -16,6 +16,7 @@ from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
 from apps.passkeys import services, stepup
 from apps.passkeys.models import Passkey
 from apps.passkeys.schemas import (
@@ -50,12 +51,16 @@ def _status(request: HttpRequest) -> StepUpStatusOut:
 
 
 @router.get("/", response=list[PasskeyOut], summary="List my passkeys")
+@gate("self")
 def list_passkeys(request: HttpRequest) -> list[PasskeyOut]:
     return [_out(p) for p in Passkey.objects.filter(user=request.user)]
 
 
 @router.post("/register/begin", response=PasskeyOptionsOut,
              summary="Start registering a passkey for this device")
+# a SECOND passkey also needs a fresh step-up
+# passkeys: a ceremony's challenge, and the five-minute step-up it earns
+@gate("self", kind="ephemeral-credential")
 def begin_passkey_registration(request: HttpRequest, upgrade: bool = False) -> PasskeyOptionsOut:
     """Returns the options for navigator.credentials.create(). Browser session
     only; adding a SECOND passkey needs a fresh step-up with the first.
@@ -70,6 +75,7 @@ def begin_passkey_registration(request: HttpRequest, upgrade: bool = False) -> P
 
 @router.post("/register/finish", response={201: PasskeyOut},
              summary="Finish registering a passkey")
+@gate("self", setting=True)  # the second factor a step-up asks for
 def finish_passkey_registration(request: HttpRequest, payload: PasskeyRegisterIn) -> Status:
     """Verifies the authenticator's response and stores its public key. The
     registration required user verification, so it also opens a step-up window
@@ -85,6 +91,9 @@ def finish_passkey_registration(request: HttpRequest, payload: PasskeyRegisterIn
 
 # `int:` so the bare `/{id}` pattern cannot swallow `/step-up` (a 405 otherwise).
 @router.delete("/{int:passkey_id}", response={204: None}, summary="Delete one of my passkeys")
+# + a fresh step-up
+# the second factor a step-up asks for
+@gate("self", setting=True)
 def delete_passkey(request: HttpRequest, passkey_id: int) -> Status:
     stepup.require_recent_step_up(request)
     passkey = Passkey.objects.filter(pk=passkey_id, user=request.user).first()
@@ -103,12 +112,14 @@ def delete_passkey(request: HttpRequest, passkey_id: int) -> Status:
 
 @router.get("/step-up", response=StepUpStatusOut,
             summary="Is a passkey step-up in force on this browser session?")
+@gate("self")
 def passkey_step_up_status(request: HttpRequest) -> StepUpStatusOut:
     return _status(request)
 
 
 @router.post("/step-up/begin", response=PasskeyOptionsOut,
              summary="Start a passkey step-up (options for navigator.credentials.get)")
+@gate("self", kind="ephemeral-credential")  # passkeys: a ceremony's challenge, and the five-minute step-up it earns
 def begin_passkey_step_up(request: HttpRequest) -> PasskeyOptionsOut:
     stepup.require_browser(request, "a passkey step-up")
     options = services.begin_assertion(request)
@@ -123,6 +134,7 @@ def begin_passkey_step_up(request: HttpRequest) -> PasskeyOptionsOut:
 
 @router.post("/step-up/finish", response=StepUpStatusOut,
              summary="Finish a passkey step-up; opens a five-minute window")
+@gate("self", kind="ephemeral-credential")
 def finish_passkey_step_up(request: HttpRequest, payload: PasskeyAssertIn) -> StepUpStatusOut:
     stepup.require_browser(request, "a passkey step-up")
     try:

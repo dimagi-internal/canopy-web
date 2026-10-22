@@ -15,6 +15,7 @@ from pydantic import Field
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
 from apps.common.schemas import StrictModel
 
 from . import hcp_oauth
@@ -97,6 +98,7 @@ def _clean(redirect_uris, scopes, webhook_url):
 
 @router.get("/clients", response=list[HcpClientOut], operation_id="hcp_listClients",
             summary="HCP service: registered clients")
+@gate("superuser")
 def hcp_list_clients(request: HttpRequest):
     """Every application registered to ask people for HCP access. Superusers only."""
     _require_superuser(request)
@@ -105,6 +107,7 @@ def hcp_list_clients(request: HttpRequest):
 
 @router.post("/clients", response={201: HcpClientCreatedOut}, operation_id="hcp_registerClient",
              summary="HCP service: register a client")
+@gate("superuser", setting=True)  # puts its name before every person it asks
 def hcp_register_client(request: HttpRequest, payload: HcpClientIn):
     """Register an application. Returns its client_id, and its webhook secret
     once if a webhook URL is given. Superusers only."""
@@ -121,6 +124,7 @@ def hcp_register_client(request: HttpRequest, payload: HcpClientIn):
 
 @router.patch("/clients/{client_id}", response=HcpClientCreatedOut, operation_id="hcp_updateClient",
               summary="HCP service: change or disable a client")
+@gate("superuser", setting=True)
 def hcp_update_client(request: HttpRequest, client_id: str, payload: HcpClientPatch):
     """Change a client's registration, disable or re-enable it, or rotate its
     webhook secret (returned once). Narrowing allowed_scopes does not change grants

@@ -23,14 +23,14 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.common.csrf import csrf_rejected
 from apps.feedback import reactions
 from apps.feedback import rounds as frounds
 from apps.harness import artifact_origin
 from apps.storyboards import decisions as decision_rows
-from apps.storyboards import review_gate
+from apps.storyboards import review_gate, services
 from apps.storyboards import rounds as board_rounds
-from apps.storyboards import services
 from apps.storyboards.act_keys import act_key
 from apps.storyboards.models import Act, Entry, Storyboard
 from apps.storyboards.schemas import (
@@ -39,9 +39,9 @@ from apps.storyboards.schemas import (
     DecisionOut,
     NarrativeReadOut,
     NotesOut,
+    RoundCloseIn,
     RoundConsumeIn,
     RoundDetailOut,
-    RoundCloseIn,
     RoundOut,
     ShareTokenOut,
     StoryboardIn,
@@ -49,9 +49,9 @@ from apps.storyboards.schemas import (
     StoryboardOut,
     StoryboardPatchIn,
 )
+from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces import links as wslinks
 
 router = Router(tags=["storyboards"])
 
@@ -257,6 +257,7 @@ def _signals(boards) -> dict[int, dict]:
 
 
 @router.get("/", response=StoryboardListOut, auth=session_auth, summary="List storyboards")
+@gate("member")
 def list_storyboards(
     request: HttpRequest, session: str = "", turn: str = "", agent_project: str = ""
 ) -> dict:
@@ -294,6 +295,7 @@ def list_storyboards(
 
 
 @router.post("/", response=StoryboardOut, auth=session_auth, summary="Create a storyboard")
+@gate("content.write", kind="content")
 def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
     ws = wsvc.creation_workspace(request)
     if ws is None:
@@ -338,6 +340,7 @@ def create_storyboard(request: HttpRequest, payload: StoryboardIn) -> dict:
     auth=None,
     summary="Read a storyboard (public via ?t=<share_token>)",
 )
+@gate("token-link")  # auth=None; member or ?t=
 def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
     """Anonymous-capable; the handler self-enforces. See the module docstring.
     `ws` is the workspace the page's URL names; a board elsewhere 404s."""
@@ -352,6 +355,7 @@ def get_storyboard(request: HttpRequest, slug: str, ws: str = "") -> dict:
 
 
 @router.patch("/{slug}", response=StoryboardOut, auth=session_auth, summary="Edit a storyboard")
+@gate("content.write", kind="content")
 def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn) -> dict:
     board = _editable_or_404(request, slug)
     project = None
@@ -392,6 +396,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
     auth=session_auth,
     summary="Re-mint the share link, killing every link already sent",
 )
+@gate("content.write", setting=True)
 def rotate_token(request: HttpRequest, slug: str) -> dict:
     board = _editable_or_404(request, slug)
     board.rotate_share_token()
@@ -404,6 +409,7 @@ def rotate_token(request: HttpRequest, slug: str) -> dict:
     auth=session_auth,
     summary="Mint the share link if it does not exist yet",
 )
+@gate("content.write", setting=True)
 def ensure_token(request: HttpRequest, slug: str) -> dict:
     board = _editable_or_404(request, slug)
     board.ensure_share_token()
@@ -415,6 +421,16 @@ def ensure_token(request: HttpRequest, slug: str) -> dict:
     response={200: dict},
     auth=None,
     summary="Leave feedback on a storyboard (public via ?t=<share_token>)",
+)
+# ?t= with comment/suggest grant; ANY member bypasses the grant
+@gate(
+    "token-link",
+    "member",
+    kind="content",
+    viewer_write=(
+        "leaving a note on a board you can read is reader-tier, the same act a token holder with a comment grant may "
+        "do"
+    ),
 )
 def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws: str = "") -> dict:
     """The anonymous write L2 deferred, gated by the board's capability.
@@ -485,6 +501,7 @@ def leave_feedback(request: HttpRequest, slug: str, payload: AnonFeedbackIn, ws:
     auth=session_auth,
     summary="Open a feedback round on a storyboard",
 )
+@gate("content.write", kind="content")
 def open_storyboard_round(request: HttpRequest, slug: str, ws: str = "") -> dict:
     """Editors only. Pins every narrative's current version and adopts the notes
     left since the last round. Needs the board linked to a project in its own
@@ -503,6 +520,7 @@ def open_storyboard_round(request: HttpRequest, slug: str, ws: str = "") -> dict
     auth=session_auth,
     summary="Close a feedback round and hand it to the project's agent",
 )
+@gate("content.write", kind="content")
 def close_storyboard_round(
     request: HttpRequest, slug: str, number: int, payload: RoundCloseIn, ws: str = ""
 ) -> dict:
@@ -527,6 +545,7 @@ def close_storyboard_round(
     auth=session_auth,
     summary="Remove a note from the open feedback round",
 )
+@gate("content.write", kind="content")
 def delete_storyboard_round_note(request: HttpRequest, slug: str, note_id: int, ws: str = ""):
     """Editors only. Removes a test or spam note from the CURRENT OPEN round;
     a note in a closed or consumed round is the agent's record (409)."""
@@ -544,6 +563,7 @@ def delete_storyboard_round_note(request: HttpRequest, slug: str, note_id: int, 
     auth=session_auth,
     summary="Read a feedback round in full (members)",
 )
+@gate("member")
 def get_storyboard_round(request: HttpRequest, slug: str, number: int, ws: str = "") -> dict:
     """The agent's read of a round. Members only; a token holder 404s."""
     board = _owned_or_404(request, slug, ws)
@@ -559,6 +579,7 @@ def get_storyboard_round(request: HttpRequest, slug: str, number: int, ws: str =
     auth=session_auth,
     summary="Mark a closed round consumed and open the next one",
 )
+@gate("content.write", kind="content")
 def consume_storyboard_round(
     request: HttpRequest, slug: str, number: int, payload: RoundConsumeIn, ws: str = ""
 ) -> dict:
@@ -580,6 +601,17 @@ def consume_storyboard_round(
     response=DecisionOut,
     auth=None,
     summary="Confirm, change, write in or undo one decision (public via ?t=<share_token>)",
+)
+# inside an open round every edit is staged (members too); outside one a member applies immediately and a link holder is
+# refused (409)
+@gate(
+    "token-link",
+    "member",
+    kind="content",
+    viewer_write=(
+        "a member's ruling on a demo-set default is the reader-tier act the decision log exists for; it is attributed "
+        "and undoable (owner decision 2026-10-15)"
+    ),
 )
 def edit_storyboard_decision(
     request: HttpRequest, slug: str, key: str, payload: DecisionEditIn, ws: str = ""
@@ -642,6 +674,7 @@ def edit_storyboard_decision(
     auth=session_auth,
     summary="Read the notes left on this board (members only)",
 )
+@gate("member")  # members only; token holder 404s
 def list_notes(request: HttpRequest, slug: str) -> dict:
     """What came back. Members only, and 404 — never 403 — for everyone else.
 
@@ -684,6 +717,7 @@ def list_notes(request: HttpRequest, slug: str) -> dict:
     auth=None,
     summary="Read one narrative on this storyboard (public via ?t=<share_token>)",
 )
+@gate("token-link")  # auth=None; member or ?t=
 def get_board_narrative(request: HttpRequest, slug: str, narrative_slug: str, ws: str = "") -> dict:
     """The reviewer surface's read. Gated by the SAME token as the board.
 

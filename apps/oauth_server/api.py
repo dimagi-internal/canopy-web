@@ -13,6 +13,7 @@ from ninja import Router, Status
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
+from apps.api.route_gates import gate
 
 from .models import OAuthGrant
 from .schemas import McpClientOut, McpClientsOut
@@ -27,6 +28,7 @@ router = Router(auth=session_auth, tags=["tokens"])
 
 @router.get("/connected-apps", response=McpClientsOut,
             summary="MCP clients connected to my account")
+@gate("self")
 def list_connected_apps(request: HttpRequest) -> McpClientsOut:
     """The apps (Claude, an editor, …) you signed in to canopy's MCP server
     from, and the address to give a new one."""
@@ -43,6 +45,7 @@ def list_connected_apps(request: HttpRequest) -> McpClientsOut:
 
 @router.delete("/connected-apps/{grant_id}", response={204: None},
                summary="Disconnect an MCP client")
+@gate("self", setting=True)
 def disconnect_app(request: HttpRequest, grant_id: int) -> Status:
     """Revoke the app's access at once: its current token stops working and it
     cannot refresh. It must be signed in again to reconnect."""

@@ -18,6 +18,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.events import services
 from apps.events.models import Event
 from apps.events.schemas import EventBatchIn, EventListOut, EventRecordOut, McpCallListOut, SettingChangeListOut
@@ -44,6 +45,7 @@ def _out(ev: Event) -> dict:
 
 
 @router.post("/", response=EventRecordOut, summary="Record events (batch, coalescing)")
+@gate("events.write", kind="telemetry")  # in the pinned or default workspace
 def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
     """Repeats of ``(workspace, source, key)`` coalesce onto one row with a
     count, so a permanently-stuck retry loop stays one row instead of one row
@@ -89,6 +91,7 @@ def record_events(request: HttpRequest, payload: EventBatchIn) -> dict:
 
 
 @router.get("/", response=EventListOut, summary="List events")
+@gate("logs.read")  # non-admin gets no rows, not 403
 def list_events(
     request: HttpRequest,
     source: str | None = None,
@@ -127,6 +130,7 @@ def list_events(
 # connected site's traffic health.
 @router.get("/mcp-calls", response=McpCallListOut,
             summary="MCP tool calls made in your workspaces (admins), and your own")
+@gate("logs.read", "self")  # the workspace's calls for admins; your own always
 def list_mcp_calls(
     request: HttpRequest,
     tool: str | None = None,
@@ -172,6 +176,7 @@ def list_mcp_calls(
 # changes; anyone sees the changes they made themselves.
 @router.get("/setting-changes", response=SettingChangeListOut,
             summary="Changes to settings in your workspaces (admins), and your own")
+@gate("logs.read", "self")  # the workspace's changes for admins; your own always
 def list_setting_changes(
     request: HttpRequest,
     operation: str | None = None,

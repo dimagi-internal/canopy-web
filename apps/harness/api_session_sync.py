@@ -15,6 +15,7 @@ from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
+from apps.api.route_gates import gate
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -84,6 +85,15 @@ def _project_workspace_or_404(request: HttpRequest, ws_slug: str):
 
 
 @router.post("/runners/{runner_id}/resolve-session", response=ResolveSessionOut)
+# + membership of the agent / project workspace
+@gate(
+    "runner",
+    "member",
+    kind="runner-protocol",
+    viewer_write=(
+        "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent"
+    ),
+)
 def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: ResolveSessionIn):
     """Given (target, thread_key), tell THIS runner whether it can reuse an existing
     emdash session (it owns the live hint) or must spawn fresh + rehydrate context.
@@ -100,6 +110,14 @@ def resolve_session(request: HttpRequest, runner_id: uuid.UUID, payload: Resolve
 
 
 @router.post("/runners/{runner_id}/record-session", response=ResolveSessionOut)
+@gate(
+    "runner",
+    "member",
+    kind="runner-protocol",
+    viewer_write=(
+        "runner protocol; the runner gate (owner) is the real check, membership only scopes the agent"
+    ),
+)
 def record_session(request: HttpRequest, runner_id: uuid.UUID, payload: RecordSessionIn):
     """Upsert the durable link and point its live-session hint at THIS runner/host,
     after a session was created or reused for the thread. Returns the fresh resolution."""
@@ -167,6 +185,7 @@ def _record_session(request: HttpRequest, runner: Runner, payload: RecordSession
 
 
 @router.post("/runners/{runner_id}/sessions", response=SessionReportOut)
+@gate("runner", kind="runner-protocol")
 def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportSessionsIn):
     """The runner reports the open emdash sessions it can see. Wholesale per runner.
     Owner-gated via _runner_or_404 (404, not 403). Sessions are tenant-owned: a NEW
@@ -186,6 +205,7 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
 
 
 @router.get("/runners/{runner_id}/streams", response=StreamSyncOut)
+@gate("runner")
 def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     """Every session this runner backs, with what the server already holds of each.
 
@@ -276,6 +296,7 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/session-stream", response=StreamPostOut)
+@gate("runner", kind="runner-protocol")  # session must be bound to this runner
 def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: SessionStreamIn):
     """The runner ships live conversational events for a session it backs. For an
     origin=runner session, events carrying a transcript ordinal are PERSISTED as
@@ -296,6 +317,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
 
 
 @router.get("/runners/{runner_id}/backfills", response=BackfillSyncOut)
+@gate("runner")
 def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     """Sessions this runner has been asked to ship full history for."""
     runner = runner_or_404(request, runner_id)
@@ -311,6 +333,7 @@ def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.get("/runners/{runner_id}/closes", response=CloseSyncOut)
+@gate("runner")
 def list_closes(request: HttpRequest, runner_id: uuid.UUID):
     """Sessions this runner has been asked to close and has not closed yet.
 
@@ -335,6 +358,7 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/close-results", response=CloseResultsOut)
+@gate("runner", kind="runner-protocol")  # only this runner's bindings
 def post_close_results(request: HttpRequest, runner_id: uuid.UUID, payload: CloseResultsIn):
     """The runner reports what became of its attempts to close sessions.
 
@@ -366,6 +390,7 @@ def post_close_results(request: HttpRequest, runner_id: uuid.UUID, payload: Clos
 
 
 @router.get("/runners/{runner_id}/menu-answers", response=MenuAnswerSyncOut)
+@gate("runner")
 def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
     """Answers a human has given that this runner has not pressed yet.
 
@@ -397,6 +422,7 @@ def list_menu_answers(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/runners/{runner_id}/menu-answer-result", response=MenuAnswerResultOut)
+@gate("runner", kind="runner-protocol")
 def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
                             payload: MenuAnswerResultIn):
     """The runner reports what became of an answer, which retires it.
@@ -419,6 +445,7 @@ def post_menu_answer_result(request: HttpRequest, runner_id: uuid.UUID,
 
 
 @router.post("/runners/{runner_id}/session-menu", response=SessionMenuOut)
+@gate("runner", kind="runner-protocol")  # only a session this runner holds
 def post_session_menu(request: HttpRequest, runner_id: uuid.UUID, payload: SessionMenuIn):
     """A dialog the agent of one session on this runner is waiting on, or `menu:
     null` once it is not. A cloud runner's way to say what a laptop says inside
@@ -429,6 +456,7 @@ def post_session_menu(request: HttpRequest, runner_id: uuid.UUID, payload: Sessi
 
 
 @router.post("/runners/{runner_id}/admission-notices", response=AdmissionNoticeClaimOut)
+@gate("runner", kind="runner-protocol")  # + runner_may_hold_agent per notice
 def claim_admission_notices(request: HttpRequest, runner_id: uuid.UUID,
                             payload: AdmissionNoticeClaimIn):
     """Automatic replies to rejected senders that canopy-web could not send,
@@ -444,6 +472,7 @@ def claim_admission_notices(request: HttpRequest, runner_id: uuid.UUID,
 
 
 @router.post("/runners/{runner_id}/admission-notices/{notice_id}", response=MenuAnswerResultOut)
+@gate("runner", kind="runner-protocol")  # only a notice this runner holds
 def report_admission_notice(request: HttpRequest, runner_id: uuid.UUID, notice_id: int,
                             payload: AdmissionNoticeReportIn):
     """What this runner did with an automatic reply it was leased."""
@@ -454,6 +483,7 @@ def report_admission_notice(request: HttpRequest, runner_id: uuid.UUID, notice_i
 
 
 @router.post("/runners/{runner_id}/session-backfill", response=BackfillWriteOut)
+@gate("runner", kind="runner-protocol")  # session must be bound to this runner
 def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: SessionBackfillIn):
     """The runner ships a session's full transcript; the server writes Message rows
     once and clears the request. Runner-owned-binding gated."""

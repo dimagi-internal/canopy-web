@@ -36,6 +36,7 @@ from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read, agent_for_work
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.events import audit
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -193,6 +194,7 @@ def _capabilities_out(agent, retired: list[str] | None = None) -> AgentCapabilit
 
 @agents_router.get("/{slug}/capabilities", response=AgentCapabilitiesOut,
                    summary="An agent's declared capabilities, grants and live leases")
+@gate("member", "agent-login")
 def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilitiesOut:
     """What the agent declares (each capability's manifest and the stack Outputs
     resolved when it was published), whether its workspace grants each one, the
@@ -202,6 +204,7 @@ def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilities
 
 @agents_router.put("/{slug}/capabilities", response=AgentCapabilitiesOut,
                    summary="Publish an agent's declared capabilities (its whole list)")
+@gate("agent-admin", "agent-login", setting=True)  # the agent's deploy publishes
 def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabilitiesIn) -> AgentCapabilitiesOut:
     """The agent's deploy calls this (`canopy-runtime publish-capabilities`) with
     every capability its runtime.yaml declares. Each ec2-ephemeral stack's
@@ -228,6 +231,7 @@ def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabi
 
 @agents_router.post("/{slug}/capabilities/{name}/refresh", response=AgentCapabilityOut,
                     summary="Re-read a capability's stack Outputs")
+@gate("agent-admin", "agent-login", kind="action")  # re-reads the stack; nobody chooses a value
 def refresh_agent_capability(request: HttpRequest, slug: str, name: str) -> AgentCapabilityOut:
     """Reads the capability's stack Outputs again (DescribeStacks) and checks them
     against the contract, as a publish would; the sweep also does this about every
@@ -249,6 +253,7 @@ def refresh_agent_capability(request: HttpRequest, slug: str, name: str) -> Agen
 
 @agents_router.post("/{slug}/capabilities/{name}/terminate-orphans", response=CapabilityOrphansOut,
                     summary="Terminate a capability's orphaned instances now")
+@gate("integrations", "agent-admin", kind="action")
 def terminate_capability_orphans(request: HttpRequest, slug: str, name: str) -> CapabilityOrphansOut:
     """Runs the sweep's machine pass for one capability at once: terminates every
     instance tagged with it (and launched by this deployment) that has no live
@@ -274,6 +279,7 @@ def _slot_writer(request: HttpRequest, cap: AgentCapability) -> None:
 
 @agents_router.get("/{slug}/capabilities/{name}/slots", response=CapabilitySlotsOut,
                    summary="A pool capability's slots and their data (masked)")
+@gate("member", "agent-login")  # pool slot data: read masked by members; secret values leave only via the lease read
 def list_capability_slot_data(request: HttpRequest, slug: str, name: str) -> CapabilitySlotsOut:
     """Every declared slot of a `pool` capability: its `public` values, the NAMES
     of its secret keys (never a value — to anyone, admins included), who last
@@ -290,6 +296,7 @@ def list_capability_slot_data(request: HttpRequest, slug: str, name: str) -> Cap
 
 @agents_router.put("/{slug}/capabilities/{name}/slots/{slot}", response=CapabilitySlotDataOut,
                    summary="Set a pool slot's data (per-key upsert; secret half write-only)")
+@gate("integrations", "agent-login", setting=True)  # a slot's credentials
 def set_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: str,
                              payload: CapabilitySlotDataIn) -> CapabilitySlotDataOut:
     """Per key: a string writes it, null deletes it, a key left out is kept; a
@@ -318,6 +325,7 @@ def set_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: s
 
 @agents_router.delete("/{slug}/capabilities/{name}/slots/{slot}", response={204: None},
                       summary="Delete a pool slot's data")
+@gate("integrations", "agent-login", setting=True)  # a slot's credentials
 def delete_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: str):
     """Removes all of the slot's data, public and secret — also for a slot the
     manifest no longer declares (such data is kept, never delivered, until
@@ -337,6 +345,7 @@ def delete_capability_slot_data(request: HttpRequest, slug: str, name: str, slot
 # ---- grants -------------------------------------------------------------------
 
 @router.get("/grants", response=list[CapabilityGrantOut], summary="List capability grants")
+@gate("member")
 def list_capability_grants(request: HttpRequest, agent: str | None = None) -> list[CapabilityGrantOut]:
     """The grants in the caller's workspaces, optionally for one agent."""
     q = Q(workspace_id__in=wsvc.request_workspace_slugs(request))
@@ -346,6 +355,7 @@ def list_capability_grants(request: HttpRequest, agent: str | None = None) -> li
 
 
 @router.put("/grants", response=CapabilityGrantOut, summary="Grant an agent a capability (upsert)")
+@gate("integrations", setting=True)
 def set_capability_grant(request: HttpRequest, payload: CapabilityGrantIn) -> CapabilityGrantOut:
     """A workspace admin ALLOWS the agent to lease the capability in the agent's
     workspace, optionally lowering its limits (a grant may never raise them).
@@ -364,6 +374,7 @@ def set_capability_grant(request: HttpRequest, payload: CapabilityGrantIn) -> Ca
 
 
 @router.delete("/grants/{grant_id}", response={204: None}, summary="Revoke a capability grant")
+@gate("integrations", setting=True)
 def delete_capability_grant(request: HttpRequest, grant_id: int):
     """Revokes the grant and releases every live lease it allowed."""
     grant = (CapabilityGrant.objects.select_related("agent", "workspace")
@@ -383,6 +394,9 @@ def delete_capability_grant(request: HttpRequest, grant_id: int):
 # ---- leases -------------------------------------------------------------------
 
 @router.post("/leases", response=CapabilityLeaseOut, summary="Acquire a capability lease")
+# Leasing spends money: editor+ in the agent's workspace, or the agent itself.
+# cloud capabilities: a lease is a machine for one use, not configuration
+@gate("agent.work", "agent-login", kind="action")
 def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -> CapabilityLeaseOut:
     """Returns at once. Under the cap the machine is launched (`provisioning`;
     the launch's ClientToken is the lease id, so a retry never launches twice);
@@ -405,6 +419,7 @@ def acquire_capability_lease(request: HttpRequest, payload: CapabilityLeaseIn) -
 
 
 @router.get("/leases", response=CapabilityLeaseListOut, summary="List capability leases")
+@gate("member", "agent-login")  # a read, scoped to the caller's workspaces
 def list_capability_leases(request: HttpRequest, agent: str | None = None, capability: str | None = None,
                            status: str | None = None, since: dt.datetime | None = None,
                            limit: int = Query(100, ge=1, le=500)) -> CapabilityLeaseListOut:
@@ -428,6 +443,7 @@ def list_capability_leases(request: HttpRequest, agent: str | None = None, capab
 
 
 @router.get("/spend", response=CapabilitySpendOut, summary="Machine time by agent and capability")
+@gate("member", "agent-login")
 def capability_spend(request: HttpRequest, since: dt.datetime | None = None, until: dt.datetime | None = None,
                      agent: str | None = None, capability: str | None = None) -> CapabilitySpendOut:
     """Machine-seconds per agent and capability over [since, until) (default: the
@@ -445,6 +461,7 @@ def capability_spend(request: HttpRequest, since: dt.datetime | None = None, unt
 
 
 @router.get("/leases/{lease_id}", response=CapabilityLeaseOut, summary="Read (and heartbeat) a lease")
+@gate("agent.work", "agent-login")  # also the heartbeat
 def get_capability_lease(request: HttpRequest, lease_id: str,
                          wait_s: int = Query(0, ge=0, le=20)) -> CapabilityLeaseOut:
     """The heartbeat: a lease nobody reads for `idle_release_s` (and that runs no
@@ -463,6 +480,8 @@ def get_capability_lease(request: HttpRequest, lease_id: str,
 
 
 @router.delete("/leases/{lease_id}", response=CapabilityLeaseOut, summary="Release a lease")
+# cloud capabilities: a lease is a machine for one use, not configuration
+@gate("agent.work", "agent-login", kind="action")
 def release_capability_lease(request: HttpRequest, lease_id: str) -> CapabilityLeaseOut:
     """Terminates the machine → `released`. Idempotent: an ended lease is returned as it is."""
     lease = _lease(request, lease_id)
@@ -471,6 +490,7 @@ def release_capability_lease(request: HttpRequest, lease_id: str) -> CapabilityL
 
 @router.post("/leases/{lease_id}/force-release", response=CapabilityLeaseOut,
              summary="Force-release a lease (admin)")
+@gate("integrations", "agent-admin", kind="action")
 def force_release_capability_lease(request: HttpRequest, lease_id: str,
                                    payload: CapabilityForceReleaseIn) -> CapabilityLeaseOut:
     """A workspace admin's (or the agent's admins') release: ends the lease if it
@@ -486,6 +506,7 @@ def force_release_capability_lease(request: HttpRequest, lease_id: str,
 
 
 @router.post("/leases/{lease_id}/exec", response=CapabilityExecOut, summary="Run an allowed command on a lease")
+@gate("agent.work", "agent-login", kind="action")
 def exec_capability_lease(request: HttpRequest, lease_id: str, payload: CapabilityExecIn) -> CapabilityExecOut:
     """`argv[0]` must be on the capability's `exec.allow` (422 otherwise). The
     argv is sent over SSM through the capability stack's own exec document, which
@@ -505,6 +526,7 @@ def exec_capability_lease(request: HttpRequest, lease_id: str, payload: Capabili
 
 @router.get("/leases/{lease_id}/exec/{exec_id}", response=CapabilityExecStatusOut,
             summary="Read an exec's status and output")
+@gate("agent.work", "agent-login")
 def get_capability_exec(request: HttpRequest, lease_id: str, exec_id: str,
                         wait_s: int = Query(0, ge=0, le=20)) -> CapabilityExecStatusOut:
     """Read back from SSM every time (nothing is held in a web process), so an
@@ -522,6 +544,7 @@ def get_capability_exec(request: HttpRequest, lease_id: str, exec_id: str,
 
 @router.post("/leases/{lease_id}/uploads", response=CapabilityUploadsOut,
              summary="Presign uploads for a lease's machine")
+@gate("agent.work", "agent-login", kind="ephemeral-credential")
 def create_capability_uploads(request: HttpRequest, lease_id: str,
                               payload: CapabilityUploadsIn) -> CapabilityUploadsOut:
     """Presigned PUT URLs (valid `expires_in_s`, up to 1 h) under the lease's in/,
@@ -539,6 +562,7 @@ def create_capability_uploads(request: HttpRequest, lease_id: str,
 
 @router.get("/leases/{lease_id}/artifacts", response=CapabilityArtifactsOut,
             summary="List a lease's artifacts as presigned links")
+@gate("agent.work", "agent-login")
 def list_capability_artifacts(request: HttpRequest, lease_id: str, prefix: str = "") -> CapabilityArtifactsOut:
     """Presigned GETs (valid `expires_in_s`, up to 1 h) for everything the machine
     wrote under the lease's out/<prefix> (`out_prefix`). Readable after the lease

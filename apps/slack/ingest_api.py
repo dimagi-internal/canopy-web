@@ -19,6 +19,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -71,6 +72,9 @@ def _ingest_or_404(request: HttpRequest, ingest_id: str) -> SlackChannelIngest:
 
 
 @router.post("/", response={201: ChannelIngestOut}, summary="Ask to read a whole Slack channel for an agent")
+# approval post: a channel member who holds integrations, or the channel's creator)
+# asks the channel; the approval click is the grant
+@gate("agent-login", "agent-admin", kind="request")
 def create_channel_ingest(request: HttpRequest, payload: ChannelIngestIn):
     """Creates a PENDING ingest and posts ONE approval message in the channel.
 
@@ -91,6 +95,7 @@ def create_channel_ingest(request: HttpRequest, payload: ChannelIngestIn):
 
 
 @router.get("/", response=list[ChannelIngestOut], summary="Channel ingests you can see")
+@gate("agent-login", "agent-admin", "integrations")
 def list_channel_ingests(request: HttpRequest, agent: str = "", status: str = "") -> list[dict]:
     rows = (SlackChannelIngest.objects.select_related("agent", "workspace", "requested_by", "decided_by")
             .filter(workspace_id__in=wsvc.request_workspace_slugs(request)).order_by("-created_at"))
@@ -102,12 +107,14 @@ def list_channel_ingests(request: HttpRequest, agent: str = "", status: str = ""
 
 
 @router.get("/{ingest_id}", response=ChannelIngestOut, summary="One channel ingest: its status and progress")
+@gate("agent-login", "agent-admin", "integrations")
 def get_channel_ingest(request: HttpRequest, ingest_id: str) -> dict:
     return _out(_ingest_or_404(request, ingest_id))
 
 
 @router.get("/{ingest_id}/transcript", response=ChannelIngestTranscriptOut,
             summary="The channel as Markdown — the requesting agent's own login only")
+@gate("agent-login")  # nobody else, not even the owner
 def get_channel_ingest_transcript(request: HttpRequest, ingest_id: str, after: int = 0) -> dict:
     """Readable once approved (partial while `reading`, whole when `ready`).
     Nobody but the agent itself reads it here — not its owner, not an admin:
@@ -122,6 +129,9 @@ def get_channel_ingest_transcript(request: HttpRequest, ingest_id: str, after: i
 
 @router.post("/{ingest_id}/read-mark", response=ChannelIngestOut,
              summary="Record how far the agent has read the transcript")
+# the agent's own read position
+# moves the agent's own read position; grants nothing
+@gate("agent-login", kind="action")
 def mark_channel_ingest_read(request: HttpRequest, ingest_id: str, payload: ChannelIngestReadMarkIn) -> dict:
     """Moves `read_mark` forward to `mark` (never back, never past what is stored),
     so the next `GET …/transcript?after=<read_mark>` holds only what is new."""
@@ -138,6 +148,9 @@ def _agent_reads(request: HttpRequest, ingest_id: str) -> SlackChannelIngest:
 
 
 @router.post("/{ingest_id}/revoke", response=ChannelIngestOut, summary="Stop reading and delete the transcript")
+# self = its approver
+# revoking withdraws an agent's access to a channel
+@gate("agent-login", "agent-admin", "integrations", "self", setting=True)
 def revoke_channel_ingest(request: HttpRequest, ingest_id: str) -> dict:
     i = _ingest_or_404(request, ingest_id)
     if not ingest_svc.may_revoke(i, user=request.user):

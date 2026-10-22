@@ -47,10 +47,12 @@ from ninja import Router
 from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 
 from . import hcp, people
 from . import services as contact_services
 from .models import HcpIdempotencyKey, Person, PersonAuditEvent, PersonFact, PersonGrant
+
 
 class _HcpAuth:
     """A canopy session/PAT (via `session_auth`), or an HCP service access token —
@@ -355,6 +357,10 @@ def _render(fact: PersonFact, p: Principal, detail: str = "full") -> dict:
 
 @router.get("/.well-known/hcp-configuration", auth=None, operation_id="hcp_configuration",
             summary="HCP discovery document")
+# `self` = the person's own instance; `hcp-grant` = an agent, for the person
+# who started its turn, under that client's grant. A missing entry is 403.
+# the discovery document; names no person
+@gate("anonymous")
 def hcp_configuration(request: HttpRequest):
     """Appendix C: what this HCP instance supports."""
     base = request.build_absolute_uri("/api/hcp").rstrip("/")
@@ -367,6 +373,7 @@ def hcp_configuration(request: HttpRequest):
 @router.post("/v1/preferences/search", operation_id="hcp_searchPreferences",
              summary="HCP: recall what is relevant about the person you are serving")
 @hcp_route
+@gate("self", "hcp-grant", kind="action")
 def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str | None = None,
                            workspace: str | None = None):
     """Retrieve minimal, relevant preference entries from the person's HCP
@@ -393,6 +400,7 @@ def hcp_search_preferences(request: HttpRequest, payload: HcpSearchIn, turn: str
 @router.post("/v1/preferences/add", operation_id="hcp_addPreference",
              summary="HCP: remember something about the person you are serving")
 @hcp_route
+@gate("self", "hcp-grant", kind="person-data")
 def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None = None,
                        workspace: str | None = None):
     """Add a new preference entry (HCP 3.2.2) — Tier 1, about the person who
@@ -426,6 +434,7 @@ def hcp_add_preference(request: HttpRequest, payload: HcpAddIn, turn: str | None
 @router.post("/v1/preferences", operation_id="hcp_createEntry",
              summary="HCP: add a full HCPEntry (REST, 3.3.2)")
 @hcp_route
+@gate("self", "hcp-grant", kind="person-data")
 def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None = None,
                      workspace: str | None = None):
     """POST /v1/preferences: an HCPEntry (grouped or flat form) with the
@@ -470,6 +479,7 @@ def hcp_create_entry(request: HttpRequest, payload: HcpEntryIn, turn: str | None
 @router.get("/v1/preferences/{entry_id}", operation_id="hcp_getPreference",
             summary="HCP: one entry, by id")
 @hcp_route
+@gate("self", "hcp-grant")
 def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
                        version: int | None = None, turn: str | None = None):
     """GET /v1/preferences/{entryId} (3.3.6). `purpose` is required and logged.
@@ -490,6 +500,7 @@ def hcp_get_preference(request: HttpRequest, entry_id: str, purpose: str = "",
 @router.put("/v1/preferences/{entry_id}", operation_id="hcp_updatePreference",
             summary="HCP: correct an entry, preserving its history")
 @hcp_route
+@gate("self", "hcp-grant", kind="person-data")  # a category change: the person only
 def hcp_update_preference(request: HttpRequest, entry_id: str, payload: HcpUpdateIn,
                           turn: str | None = None):
     """Update an existing entry (HCP 3.2.3): a new version, same id, version + 1.
@@ -509,6 +520,7 @@ def hcp_update_preference(request: HttpRequest, entry_id: str, payload: HcpUpdat
 @router.delete("/v1/preferences/{entry_id}", operation_id="hcp_deletePreference",
                summary="HCP: forget an entry")
 @hcp_route
+@gate("self", "hcp-grant", kind="person-data")  # hardDelete: the person only
 def hcp_delete_preference(request: HttpRequest, entry_id: str, reason: str = "",
                           hardDelete: bool = False, turn: str | None = None):
     """Mark an entry deleted (HCP 3.2.4). `hardDelete=true` — the person only —
@@ -563,6 +575,7 @@ def _event_dict(e: PersonAuditEvent) -> dict:
 
 @router.get("/v1/audit", operation_id="hcp_listAudit", summary="HCP: my audit log")
 @hcp_route
+@gate("self")
 def hcp_list_audit(request: HttpRequest, cursor: str | None = None, limit: int = AUDIT_PAGE_DEFAULT,
                    actor: str | None = None, category: str | None = None,
                    eventType: str | None = None, since: str | None = None, until: str | None = None):
@@ -603,6 +616,7 @@ def audit_page(person: Person, *, cursor: str | None = None, limit: int = AUDIT_
 
 @router.get("/v1/grants", operation_id="hcp_listGrants", summary="HCP: who may read what about me")
 @hcp_route
+@gate("self", "hcp-grant")  # an agent sees only the grant it reads under
 def hcp_list_grants(request: HttpRequest, status: str = "active", turn: str | None = None):
     """The person: every grant (`status` = active | revoked | expired | all).
     An agent: only the grant it is reading under (4.1.5)."""
@@ -624,6 +638,7 @@ def grants_of(person: Person, status: str = "all") -> list[dict]:
 
 @router.delete("/v1/grants/{grant_id}", operation_id="hcp_revokeGrant", summary="HCP: revoke a grant")
 @hcp_route
+@gate("self", setting=True)
 def hcp_revoke_grant(request: HttpRequest, grant_id: str):
     """Revoke one client's access, immediately (HCP 4.2). The person only; never
     rate-limited. Nothing revives it — only a new act of yours grants again."""
@@ -641,6 +656,7 @@ def hcp_revoke_grant(request: HttpRequest, grant_id: str):
 
 @router.get("/v1/export", operation_id="hcp_export", summary="HCP: export everything held about me")
 @hcp_route
+@gate("self")
 def hcp_export(request: HttpRequest, include: str = "", exclude: str = ""):
     """Every entry's current version (soft-deleted ones included unless
     `exclude=deleted`), optionally every version (`include=versions`) and the

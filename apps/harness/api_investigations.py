@@ -21,6 +21,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, clamp_offset, paginate
+from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
 
 from . import auto_debug
@@ -47,6 +48,7 @@ def _investigation_or_404(request: HttpRequest, investigation_id: int) -> Failur
 
 @router.get("/", response=Page[FailureInvestigationOut],
             summary="List failure investigations")
+@gate("logs.read", "agent-admin")  # log readers, the debugger agent's admins, or the debugger's own login (Agent.user)
 def list_failure_investigations(request: HttpRequest, status: InvestigationStatus | None = None,
                                 limit: int = 50, offset: int = 0):
     """Turn failures canopy grouped by fingerprint and handed to the debugger
@@ -61,6 +63,7 @@ def list_failure_investigations(request: HttpRequest, status: InvestigationStatu
 
 @router.get("/{investigation_id}", response=FailureInvestigationOut,
             summary="Get one failure investigation")
+@gate("logs.read", "agent-admin")
 def get_failure_investigation(request: HttpRequest, investigation_id: int):
     """One investigation: the normalized failure, its latest raw note, the recent
     failed turns, the agents and runners it hit, and its debug turn."""
@@ -69,6 +72,7 @@ def get_failure_investigation(request: HttpRequest, investigation_id: int):
 
 @router.post("/{investigation_id}/resolve", response=FailureInvestigationOut,
              summary="Resolve a failure investigation")
+@gate("logs.read", "agent-admin", kind="content")
 def resolve_failure_investigation(request: HttpRequest, investigation_id: int,
                                   payload: ResolveInvestigationIn):
     """Mark the failure fixed, saying what was changed. If the same failure comes

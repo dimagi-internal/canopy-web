@@ -18,10 +18,11 @@ from ninja import Router, Schema, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
+from apps.tokens.models import AppCredential, EmbedAuditLog
 
 from . import embed_apps
 from .audit import record as audit
-from apps.tokens.models import AppCredential, EmbedAuditLog
 
 #: Published as `tokens_connected_apps_<name>` while this module lived in apps/tokens;
 #: those operationIds are MCP tool names and `generated.ts` keys, so they stay.
@@ -220,6 +221,7 @@ def _app_or_404(request: HttpRequest, slug: str, app_id: int) -> AppCredential:
 
 @connected_apps_router.get("/{slug}/connected-apps", response=list[ConnectedAppOut],
                            summary="Sites connected to this workspace")
+@gate("integrations")
 def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut]:
     """Every site this workspace has connected, with what each may do."""
     try:
@@ -230,6 +232,7 @@ def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut
 
 @connected_apps_router.post("/{slug}/connected-apps", response={201: ConnectedAppOut},
                             summary="Connect a site")
+@gate("own", setting=True)
 def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
     """Register a site in this workspace."""
     try:
@@ -254,6 +257,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
 
 @connected_apps_router.patch("/{slug}/connected-apps/{int:app_id}", response=ConnectedAppOut,
                              summary="Change what a connected site may do")
+@gate("own", setting=True)
 def update_connected_app(request: HttpRequest, slug: str, app_id: int,
                          payload: UpdateIn) -> ConnectedAppOut:
     app = _app_or_404(request, slug, app_id)
@@ -325,6 +329,7 @@ class ConnectionTestOut(Schema):
 
 @connected_apps_router.post("/{slug}/connected-apps/{int:app_id}/test", response=ConnectionTestOut,
                             summary="Test a connected site's settings")
+@gate("integrations", kind="action")
 def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> ConnectionTestOut:
     """Try this site's settings the way canopy uses them, from canopy's server.
 
@@ -347,6 +352,7 @@ def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> Connecti
     # key); the live probe can, because the HOST signs one for its own probe
     # principal. See apps/tokens/connection_test.py and live_probe.py.
     from apps.host_grants import live_probe
+
     from . import connection_test
 
     app = _app_or_404(request, slug, app_id)
@@ -371,6 +377,7 @@ def test_connected_app(request: HttpRequest, slug: str, app_id: int) -> Connecti
 
 @connected_apps_router.delete("/{slug}/connected-apps/{int:app_id}", response={204: None},
                               summary="Disconnect a site")
+@gate("own", setting=True)
 def disconnect_app(request: HttpRequest, slug: str, app_id: int) -> Status:
     """This workspace stops using the site. It stops verifying immediately.
 

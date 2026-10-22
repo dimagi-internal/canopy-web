@@ -113,6 +113,8 @@ a route instead — it then gets the settings audit and the acting cap for free.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 VOCABULARY: frozenset[str] = frozenset({
     "anonymous", "token-link", "authenticated", "self", "member",
     "content.write", "agent.work", "session.drive", "events.write", "logs.read",
@@ -124,6 +126,50 @@ VOCABULARY: frozenset[str] = frozenset({
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",
     "secret-request", "caller-token", "host-grant",
 })
+
+
+@dataclass(frozen=True)
+class Gate:
+    """What one route declares: who may call it, and what kind of write it is."""
+
+    labels: tuple[str, ...]
+    setting: bool = False
+    kind: str | None = None
+    viewer_write: str | None = None
+
+
+GATE_ATTR = "_canopy_gate"
+
+
+def gate(*labels: str, setting: bool = False, kind: str | None = None, viewer_write: str | None = None):
+    """Declare a route's gate on its view: ``@gate("agent.work", setting=True)``.
+
+    ``labels`` are from VOCABULARY. A write is either ``setting=True`` (the
+    settings audit records every call) or names its ``kind`` from WRITE_KINDS.
+    A write a plain ``member`` (a viewer) can make carries ``viewer_write=`` with
+    the reason. Put it directly above the ``def``; it only marks the function.
+    """
+    unknown = [label for label in labels if label not in VOCABULARY]
+    if not labels or unknown:
+        raise ValueError(f"@gate needs labels from route_gates.VOCABULARY, got {labels!r}")
+    if setting and kind is not None:
+        raise ValueError("@gate: a write is a setting or names its kind, not both")
+    if kind is not None and kind not in WRITE_KINDS:
+        raise ValueError(f"@gate: kind {kind!r} is not in route_gates.WRITE_KINDS")
+    if viewer_write is not None and not viewer_write.strip():
+        raise ValueError("@gate: viewer_write needs its reason")
+    declared = Gate(tuple(labels), setting, kind, viewer_write)
+
+    def mark(view):
+        setattr(view, GATE_ATTR, declared)
+        return view
+
+    return mark
+
+
+def gate_of(view) -> Gate | None:
+    """The gate a view declared (wrappers made with ``functools.wraps`` carry it)."""
+    return getattr(view, GATE_ATTR, None)
 
 GATES: dict[str, tuple[str, ...]] = {
     # --- apps/agents/api.py and its api_*.py siblings (routing, skills, board, credentials, readiness)

@@ -10,6 +10,8 @@ from django.conf import settings
 from django.http import Http404, HttpRequest
 from pydantic import ValidationError
 
+from apps.api.route_gates import gate
+
 log = logging.getLogger(__name__)
 from ninja import File, Form, Router, Status
 from ninja.files import UploadedFile
@@ -25,14 +27,13 @@ from apps.api.errors import (
     TYPE_VALIDATION,
     ProblemError,
 )
-
 from apps.feedback import reactions
 from apps.harness import artifact_origin
-from apps.runs.ddd import narrative_slug_from_run_id
 from apps.runs.aggregate import has_narrative_version
+from apps.runs.ddd import narrative_slug_from_run_id
+from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces import links as wslinks
 
 from . import storage
 from .drive_client import DriveNotConfigured
@@ -243,6 +244,7 @@ def _get_for_write(request: HttpRequest, wid: UUID) -> Walkthrough:
     response={201: WalkthroughDetailOut},
     summary="Upload a walkthrough (multipart)",
 )
+@gate("content.write", kind="content")  # creation_workspace + CONTENT_WRITE
 def upload_walkthrough(
     request: HttpRequest,
     file: UploadedFile = File(...),
@@ -493,6 +495,7 @@ def upload_walkthrough(
     response=list[WalkthroughListItemOut],
     summary="List walkthroughs",
 )
+@gate("member")
 def list_walkthroughs(
     request: HttpRequest,
     project: str = "",
@@ -547,6 +550,7 @@ def list_walkthroughs(
     auth=None,  # Public walkthroughs load with ?t=<share_token>, no session.
     summary="Get walkthrough detail",
 )
+@gate("token-link")  # auth=None; readable_by = member or ?t=
 def get_walkthrough(
     request: HttpRequest, wid: UUID, t: str = "", ws: str = ""
 ) -> WalkthroughDetailOut:
@@ -577,6 +581,7 @@ def get_walkthrough(
     response=WalkthroughDetailOut,
     summary="Update walkthrough (uploader or workspace owner)",
 )
+@gate("content.write", "own", kind="content")  # uploader (editor) or workspace owner
 def patch_walkthrough(
     request: HttpRequest,
     wid: UUID,
@@ -610,6 +615,7 @@ def patch_walkthrough(
     response=WalkthroughDetailOut,
     summary="Rotate the share token (uploader or workspace owner)",
 )
+@gate("content.write", "own", setting=True)  # uploader (editor) or workspace owner
 def rotate_walkthrough_token(request: HttpRequest, wid: UUID) -> WalkthroughDetailOut:
     """Mint a fresh share token, killing every previously shared public link.
 
@@ -635,6 +641,7 @@ def rotate_walkthrough_token(request: HttpRequest, wid: UUID) -> WalkthroughDeta
     response={204: None},
     summary="Delete walkthrough (uploader or workspace owner)",
 )
+@gate("content.write", "own", kind="content")  # uploader (editor) or workspace owner
 def delete_walkthrough(request: HttpRequest, wid: UUID) -> Status:
     _require_enabled()
     w = _get_for_write(request, wid)

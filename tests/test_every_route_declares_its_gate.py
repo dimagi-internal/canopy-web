@@ -1,20 +1,20 @@
-"""Fitness test: every REST route declares the gate it enforces.
+"""Fitness test: every REST route declares the gate it enforces, at the route.
 
-The manifest is `apps/api/route_gates.py`; read its docstring for the rule and
-the vocabulary. This file only holds the manifest to the code:
+The declaration is ``@gate(...)`` (`apps/api/route_gates.py`) directly above
+the view's ``def``; read that module's docstring for the rule and the
+vocabulary. This file only holds the declarations to the code:
 
-1. every operation in the OpenAPI schema has an entry (a new route fails CI
+1. every operation in the OpenAPI schema carries a gate (a new route fails CI
    until someone writes down who may call it);
-2. no entry names an operation that no longer exists (a manifest that rots is
-   one nobody reads);
-3. every label is in the closed vocabulary (a typo, or a new tier invented in
+2. every label is in the closed vocabulary (a typo, or a new tier invented in
    passing, is a review question, not a string);
-4. every write a plain member (a VIEWER) can make is listed in
-   `VIEWER_MAY_MUTATE` with its reason, and nothing else is.
+3. every write a plain member (a VIEWER) can make says why (``viewer_write=``),
+   and nothing else does;
+4. every write is a setting (audited) or names its kind, and no read is either.
 
 What it cannot check is that the labels are TRUE — that needs reading
-the view, which is the reviewer's job when the entry is added. It makes sure
-the entry is added.
+the view, which is the reviewer's job when the decorator is added. It makes
+sure the decorator is added.
 """
 from __future__ import annotations
 
@@ -38,15 +38,14 @@ def _schema_operations() -> dict[str, str]:
     return ops
 
 
-def _views_by_operation_id() -> dict[str, tuple[str, str]]:
-    """operationId -> (module, function name) of the view behind it."""
+def declared_gates() -> dict[str, route_gates.Gate | None]:
+    """operationId -> the gate its view declares (None when it declares none)."""
     api.get_openapi_schema()  # binds the routers
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, route_gates.Gate | None] = {}
     for bound in api._get_bound_routers():
         for path_view in bound.path_operations.values():
             for op in path_view.operations:
-                fn = op.view_func
-                out[api.get_openapi_operation_id(op)] = (fn.__module__, fn.__name__)
+                out[op.operation_id or api.get_openapi_operation_id(op)] = route_gates.gate_of(op.view_func)
     return out
 
 
@@ -55,69 +54,71 @@ def operations() -> dict[str, str]:
     return _schema_operations()
 
 
-def test_every_route_declares_its_gate(operations):
-    missing = sorted(set(operations) - set(route_gates.GATES))
+@pytest.fixture(scope="module")
+def gates() -> dict[str, route_gates.Gate]:
+    return declared_gates()
+
+
+def test_every_route_declares_its_gate(operations, gates):
+    assert set(gates) == set(operations)
+    missing = sorted(op for op, g in gates.items() if g is None)
     assert not missing, (
-        "These routes declare no gate. Read the view, then add each to "
-        "apps/api/route_gates.py::GATES with the gate it actually enforces "
-        f"(see the vocabulary there): {missing}"
+        "These routes declare no gate. Read the view, then put @gate(...) "
+        "(apps/api/route_gates.py) directly above its def, with the gate it actually "
+        f"enforces (see the vocabulary there): {missing}"
     )
 
 
-def test_manifest_names_only_live_routes(operations):
-    stale = sorted(set(route_gates.GATES) - set(operations))
-    assert not stale, f"route_gates.GATES names operations that no longer exist: {stale}"
-    stale_viewer = sorted(set(route_gates.VIEWER_MAY_MUTATE) - set(operations))
-    assert not stale_viewer, f"VIEWER_MAY_MUTATE names operations that no longer exist: {stale_viewer}"
+def test_gate_labels_are_in_the_vocabulary(gates):
+    bad = {op: g.labels for op, g in gates.items()
+           if g and (not g.labels or any(label not in route_gates.VOCABULARY for label in g.labels))}
+    assert not bad, f"Empty or unknown gate labels: {bad}"
 
 
-def test_gate_labels_are_in_the_vocabulary():
-    bad = {
-        op: [g for g in gates if g not in route_gates.VOCABULARY]
-        for op, gates in route_gates.GATES.items()
-        if not gates or not isinstance(gates, tuple) or any(g not in route_gates.VOCABULARY for g in gates)
-    }
-    assert not bad, f"Empty, non-tuple, or unknown gate labels: {bad}"
-
-
-def test_viewer_level_writes_are_deliberate(operations):
+def test_viewer_level_writes_are_deliberate(operations, gates):
     viewer_writes = {
         op for op, method in operations.items()
-        if method in MUTATING and "member" in route_gates.GATES.get(op, ())
+        if method in MUTATING and gates[op] and "member" in gates[op].labels
     }
-    unlisted = sorted(viewer_writes - set(route_gates.VIEWER_MAY_MUTATE))
+    unlisted = sorted(op for op in viewer_writes if not gates[op].viewer_write)
     assert not unlisted, (
         "These writes are open to any member, viewer included. If that is "
-        "intended, add each to VIEWER_MAY_MUTATE with a one-line reason; if "
-        f"not, gate the route and fix its entry: {unlisted}"
+        "intended, give each @gate(..., viewer_write=\"<one-line reason>\"); if "
+        f"not, gate the route and fix its labels: {unlisted}"
     )
-    not_viewer_writes = sorted(set(route_gates.VIEWER_MAY_MUTATE) - viewer_writes)
-    assert not not_viewer_writes, (
-        "VIEWER_MAY_MUTATE lists operations that are not member-gated writes "
-        f"(remove them): {not_viewer_writes}"
-    )
-    blank = sorted(op for op, why in route_gates.VIEWER_MAY_MUTATE.items() if not why.strip())
-    assert not blank, f"VIEWER_MAY_MUTATE entries need a reason: {blank}"
+    stray = sorted(op for op, g in gates.items() if g and g.viewer_write and op not in viewer_writes)
+    assert not stray, f"viewer_write= on routes that are not member-gated writes (remove it): {stray}"
 
 
-def test_every_write_says_whether_it_is_a_setting(operations):
-    """The settings audit (`apps/events/audit.py`) records exactly the routes in
-    SETTINGS. A write in neither list would change something with no decision
-    on whether it is audited; a write in both is a contradiction."""
+def test_every_write_says_whether_it_is_a_setting(operations, gates):
+    """The settings audit (`apps/events/audit.py`) records exactly the routes
+    declared ``setting=True``. A write that is neither a setting nor names its
+    kind would change something with no decision on whether it is audited."""
     writes = {op for op, method in operations.items() if method in MUTATING}
-    settings, other = route_gates.SETTINGS, set(route_gates.NOT_SETTINGS)
-    unclassified = sorted(writes - settings - other)
+    unclassified = sorted(op for op in writes if gates[op] and not gates[op].setting and not gates[op].kind)
     assert not unclassified, (
-        "These write routes don't say whether they change a setting. Add each to "
-        "apps/api/route_gates.py::SETTINGS (audited: every call writes a SettingChange) "
-        f"or NOT_SETTINGS with its WRITE_KINDS kind. When unsure, it is a setting: {unclassified}"
+        "These write routes don't say whether they change a setting. Give each "
+        "@gate(..., setting=True) (audited: every call writes a SettingChange) or "
+        f"@gate(..., kind=\"<a WRITE_KINDS kind>\"). When unsure, it is a setting: {unclassified}"
     )
-    both = sorted(settings & other)
-    assert not both, f"In both SETTINGS and NOT_SETTINGS: {both}"
-    stale = sorted((settings | other) - writes)
-    assert not stale, f"SETTINGS / NOT_SETTINGS name routes that are not live writes: {stale}"
-    bad = {op: k for op, k in route_gates.NOT_SETTINGS.items() if k not in route_gates.WRITE_KINDS}
-    assert not bad, f"NOT_SETTINGS kinds outside WRITE_KINDS: {bad}"
+    reads = sorted(op for op, g in gates.items() if op not in writes and g and (g.setting or g.kind))
+    assert not reads, f"setting= / kind= on routes that are not writes: {reads}"
+    bad = {op: g.kind for op, g in gates.items() if g and g.kind and g.kind not in route_gates.WRITE_KINDS}
+    assert not bad, f"kinds outside WRITE_KINDS: {bad}"
+
+
+def test_declarations_match_the_retired_tables(gates):
+    """MIGRATION ONLY: the decorators carry exactly what route_gates' tables held."""
+    import pathlib
+
+    snap = json.loads((pathlib.Path(__file__).parent / "fixtures" / "route_gates_snapshot.json").read_text())
+    derived = {
+        "gates": {op: list(g.labels) for op, g in sorted(gates.items())},
+        "viewer_may_mutate": {op: g.viewer_write for op, g in sorted(gates.items()) if g.viewer_write},
+        "settings": sorted(op for op, g in gates.items() if g.setting),
+        "not_settings": {op: g.kind for op, g in sorted(gates.items()) if g.kind},
+    }
+    assert derived == snap
 
 
 def _mcp_tools() -> dict:
@@ -144,8 +145,8 @@ def test_every_hand_written_mcp_tool_declares_its_gate():
         f"{sorted(tools - declared)}. If it is a plain write, make it a REST route instead.")
     assert not sorted(declared - tools), \
         f"HAND_TOOL_GATES names tools that do not exist: {sorted(declared - tools)}"
-    for name, (gates, kind) in route_gates.HAND_TOOL_GATES.items():
-        assert gates and set(gates) <= route_gates.VOCABULARY, name
+    for name, (labels, kind) in route_gates.HAND_TOOL_GATES.items():
+        assert labels and set(labels) <= route_gates.VOCABULARY, name
         assert kind == "read" or kind in route_gates.WRITE_KINDS, name
 
 

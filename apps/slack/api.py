@@ -13,6 +13,7 @@ from ninja.errors import HttpError
 
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -135,12 +136,14 @@ def _allow_out(a: SlackChannelIngestAllow) -> dict:
 
 
 @router.get("/{workspace}", response=SlackConfigOut, summary="This workspace's Slack connection")
+@gate("member")
 def get_config(request: HttpRequest, workspace: str) -> dict:
     return _out(_workspace_or_404(request.user, workspace))
 
 
 @router.put("/{workspace}/config-token", response=SlackSyncOut,
             summary="Let canopy manage the Slack app's slash commands (owner)")
+@gate("own", setting=True)
 def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigTokenIn) -> dict:
     """Takes the REFRESH token of a Slack app configuration token, then syncs
     the app's slash commands to the agents that are on for Slack."""
@@ -155,6 +158,7 @@ def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigT
 
 @router.delete("/{workspace}/config-token", response=SlackConfigOut,
                summary="Stop managing the Slack app's slash commands (owner)")
+@gate("own", setting=True)
 def clear_config_token(request: HttpRequest, workspace: str) -> dict:
     ws = _workspace_with(request.user, workspace, perms.OWN)
     commands.clear_config_token(_installation_or_409(ws))
@@ -163,6 +167,7 @@ def clear_config_token(request: HttpRequest, workspace: str) -> dict:
 
 @router.put("/{workspace}/history", response=SlackConfigOut,
             summary="Allow reading channel history, and how far back (admin or owner)")
+@gate("integrations", setting=True)
 def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -> dict:
     """The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
     whether it may read the channel's recent past at all, and the longest window."""
@@ -175,6 +180,7 @@ def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -
 
 @router.put("/{workspace}/channel-ingest", response=SlackConfigOut,
             summary="Allow this workspace's agents to ask to read a whole channel (owner)")
+@gate("own", setting=True)  # revoking withdraws an agent's access to a channel
 def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChannelIngestSwitchIn) -> dict:
     """The opt-in for permissioned whole-channel reads (`/api/slack-ingests/`).
 
@@ -188,6 +194,7 @@ def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChann
 
 @router.post("/{workspace}/channel-ingest/allowed", response=SlackConfigOut,
              summary="Allow-list one channel for one agent to read whole (admin or owner)")
+@gate("integrations", setting=True)  # an admin's standing grant of one channel to one agent
 def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChannelAllowIn) -> dict:
     """Explicit, standing permission: when this agent asks to read this channel
     (`POST /api/slack-ingests/`) canopy reads it at once — approved by you — and
@@ -209,6 +216,9 @@ def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackCha
 
 @router.delete("/{workspace}/channel-ingest/allowed/{allow_id}", response=SlackConfigOut,
                summary="Remove a channel from an agent's allow-list; revokes its reads (admin or owner)")
+# also revokes the reads the entry allowed
+# an admin's standing grant of one channel to one agent
+@gate("integrations", setting=True)
 def disallow_channel_ingest(request: HttpRequest, workspace: str, allow_id: str) -> dict:
     ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
     try:
@@ -223,6 +233,7 @@ def disallow_channel_ingest(request: HttpRequest, workspace: str, allow_id: str)
 
 
 @router.post("/{workspace}/sync", response=SlackSyncOut, summary="Sync slash commands now (admin or owner)")
+@gate("integrations", kind="action")
 def sync(request: HttpRequest, workspace: str) -> dict:
     ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
     return commands.sync_quietly(_installation_or_409(ws))
@@ -230,6 +241,7 @@ def sync(request: HttpRequest, workspace: str) -> dict:
 
 @router.post("/{workspace}/declare-agent", response=SlackDeclareAgentOut,
              summary="Declare the Slack app an agent (owner)")
+@gate("own", setting=True)
 def declare_agent(request: HttpRequest, workspace: str) -> dict:
     """Turn on Slack's own working indicator for this workspace's Slack app.
 

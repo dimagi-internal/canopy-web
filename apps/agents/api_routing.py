@@ -9,6 +9,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.harness import routing_audit
 from apps.harness import runners as harness_runners
 from apps.harness.actors import actor_of, normalize_actor
@@ -126,6 +127,7 @@ def _refuse_other_units(agent, runners) -> None:
 # ---- runner assignments (the routing-matrix UI's read/write surface) ----
 @router.get("/{slug}/runners", response=list[AgentRunnerOut],
             summary="List the agent's ordered runner assignments")
+@gate("member")
 def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
     agent = agent_for_read(request, slug)
     return [
@@ -147,6 +149,7 @@ def list_agent_runners(request: HttpRequest, slug: str) -> list[AgentRunnerOut]:
 
 @router.get("/{slug}/default-order", response=AgentDefaultOrderOut,
             summary="What the agent's work runs on when no rule matches")
+@gate("member")
 def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrderOut:
     """Its own ordered runner list when it has one; otherwise the default order of
     its workspace, or of the nearest workspace above it that has one, which the
@@ -182,6 +185,7 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
 
 @router.put("/{slug}/runners", response=list[AgentRunnerOut],
             summary="Replace the agent's ordered runner list (index = rank)")
+@gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered + holdable
 def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunnersIn) -> list[AgentRunnerOut]:
     """Replace the agent's ORDERED runner list (index = rank) — the single
     routing authority (spec 2026-07-24). Wholesale replace: the matrix UI saves
@@ -233,6 +237,7 @@ def replace_agent_runners(request: HttpRequest, slug: str, payload: AgentRunners
 # ---- per-source routing rules (the exceptions to the ordered list above) ----
 @router.get("/{slug}/runner-rules", response=list[AgentRunnerRuleOut],
             summary="List the agent's per-source routing rules")
+@gate("member")
 def list_agent_runner_rules(request: HttpRequest, slug: str) -> list[AgentRunnerRuleOut]:
     """The per-source overrides on top of the default ordered list (spec
     2026-07-27). One rule per source, max — the priority runner, and whether it is
@@ -306,6 +311,7 @@ def _refuse_new_auto(request: HttpRequest, agent, source: str, actor: str, turn_
 
 @router.put("/{slug}/runner-rules", response=list[AgentRunnerRuleOut],
             summary="Replace the agent's per-source routing rules")
+@gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered
 def replace_agent_runner_rules(
     request: HttpRequest, slug: str, payload: AgentRunnerRulesIn
 ) -> list[AgentRunnerRuleOut]:
@@ -410,6 +416,7 @@ def _rule_key_or_422(source: str, actor: str) -> tuple[str, str]:
 
 @router.put("/{slug}/runner-rules/{source}", response=list[AgentRunnerRuleOut],
             summary="Set one routing rule (a source, optionally one person's)")
+@gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered by caller
 def set_agent_runner_rule(
     request: HttpRequest, slug: str, source: str, payload: AgentRunnerRuleBodyIn, actor: str = "",
 ) -> list[AgentRunnerRuleOut]:
@@ -450,6 +457,7 @@ def set_agent_runner_rule(
 
 @router.delete("/{slug}/runner-rules/{source}", response={204: None},
                summary="Remove one routing rule")
+@gate("agent.work", setting=True)
 def delete_agent_runner_rule(request: HttpRequest, slug: str, source: str, actor: str = ""):
     """Remove the rule for `source` (and `actor`, when given). That work goes back
     to the next rule down and the agent's default order. Idempotent."""
@@ -494,6 +502,7 @@ def _actor_sources() -> list[str]:
 
 @router.get("/{slug}/actor-routes", response=list[AgentActorRouteOut],
             summary="List which people's work routes to which runners")
+@gate("member")
 def list_agent_actor_routes(request: HttpRequest, slug: str) -> list[AgentActorRouteOut]:
     """Per-person routing for this agent: for each person with a rule, the runners
     their work goes to (in preference order), whether that is strict, and on which
@@ -529,6 +538,7 @@ def list_agent_actor_routes(request: HttpRequest, slug: str) -> list[AgentActorR
 
 @router.put("/{slug}/actor-routes/{actor}", response=list[AgentActorRouteOut],
             summary="Route one person's work to specific runners")
+@gate("agent.work", "runner-admin", setting=True)  # every ADDED runner administered by caller
 def set_agent_actor_route(
     request: HttpRequest, slug: str, actor: str, payload: AgentActorRouteIn
 ) -> list[AgentActorRouteOut]:
@@ -587,6 +597,7 @@ def set_agent_actor_route(
 
 @router.delete("/{slug}/actor-routes/{actor}", response={204: None},
                summary="Remove one person's routing")
+@gate("agent.work", setting=True)
 def delete_agent_actor_route(request: HttpRequest, slug: str, actor: str):
     """Stop routing this person's work specially: their turns go back to the
     agent's source rules and default runner order. Touches no one else's rules.

@@ -37,11 +37,12 @@ from ninja.errors import HttpError
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_AUTH, ProblemError
+from apps.api.route_gates import gate
 from apps.events import activity
 from apps.passkeys import stepup
+from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
-from apps.workspaces import links as wslinks
 
 from . import aws_iam_proof, device_key_notify, device_keys, unit_pairing
 from .api_device_keys import ECDH_STORES
@@ -148,6 +149,7 @@ def _may_invite_into(request: HttpRequest, workspace: str) -> str:
 # Declared before `/{invitation_id}`, which would match it.
 @router.get("/check", response=RunnerInvitationCheckOut,
             summary="May you invite a runner into this workspace? (changes nothing)")
+@gate("agent.work")  # the same gates as create, changing nothing (up.sh's pre-check)
 def check_runner_invitation(request: HttpRequest, workspace: str):
     """The same gates as creating an invitation, without creating one: 404 not a
     member, 403 no permission to run work there. `up.sh` asks before it writes
@@ -158,6 +160,11 @@ def check_runner_invitation(request: HttpRequest, workspace: str):
 
 @router.post("/", response={201: RunnerInvitationOut},
              summary="Invite a new cloud runner to pair by its instance role")
+# member (else 404) with agent.work in the named workspace
+# a new cloud box's pairing invitation: asking for it, and its creator saying
+# yes (passkey-gated). Recorded as activity (runner.invited / .approved); the
+# runner it lets pair is a new row, not a changed setting.
+@gate("agent.work", kind="request")
 def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
     """Invite one box, named, bound to its EC2 instance role, into a workspace
     where you may run work. It pairs only once you approve it at `approve_url`
@@ -199,6 +206,7 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
 
 
 @router.get("/{invitation_id}", response=RunnerInvitationOut, summary="A pairing invitation and its state")
+@gate("self")  # the invitation's creator only
 def get_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
     """`pending` until you approve it, `approved` until the box pairs, then
     `consumed` with the runner's id; `expired` an hour after it was made."""
@@ -207,6 +215,11 @@ def get_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
 
 @router.post("/{invitation_id}/approve", response=RunnerInvitationOut,
              summary="Approve a pairing invitation (browser session + passkey step-up)")
+# its creator, browser session + passkey step-up; a token is refused
+# a new cloud box's pairing invitation: asking for it, and its creator saying
+# yes (passkey-gated). Recorded as activity (runner.invited / .approved); the
+# runner it lets pair is a new row, not a changed setting.
+@gate("self", kind="action")
 def approve_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
     """Let the invited box pair: it will be your runner, in the invitation's
     workspace, signing in with its instance role. Only the invitation's creator,
@@ -263,6 +276,10 @@ def _ecdh_of(payload: RunnerPairByRoleIn) -> tuple[dict, str]:
 
 @pair_router.post("", response={200: RunnerPairByRoleOut, 201: RunnerPairByRoleOut, 202: RunnerPairByRoleOut},
                   auth=None, summary="A new cloud box pairs by its instance role (no token)")
+# anonymous door: the box's instance-role proof, plus an invitation its creator
+# approved (or that role's existing, approved runner); one uniform 401 otherwise
+# the invited box pairing: only what its creator approved (runner.paired activity)
+@gate("invited-role", kind="runner-protocol")
 def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     """Prove this box's EC2 instance role (`proof`, bound to this URL). With an
     APPROVED, unexpired, unused invitation for that role and `name`: 201

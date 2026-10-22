@@ -10,6 +10,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_VALIDATION, ProblemError
+from apps.api.route_gates import gate
 
 from .models import NotificationPreference, PushSubscription, session_idle_minutes_for
 from .schemas import (
@@ -53,6 +54,7 @@ def _refuse_unsendable(endpoint: str) -> None:
 
 
 @router.get("/vapid-public-key", response=VapidKeyOut, summary="The VAPID public key")
+@gate("authenticated")
 def vapid_public_key(request: HttpRequest) -> VapidKeyOut:
     """The browser needs this to subscribe. Not a secret — it ships in the JS
     bundle anyway. 503 when unconfigured so a push-less deployment says so
@@ -63,6 +65,7 @@ def vapid_public_key(request: HttpRequest) -> VapidKeyOut:
 
 
 @router.post("/subscribe", response={201: None}, summary="Register this browser for push")
+@gate("self", kind="person-data")
 def subscribe(request: HttpRequest, payload: PushSubscribeIn):
     """Upsert on endpoint. The browser re-sends the same endpoint on every
     subscribe() call, and its keys rotate — so update rather than insert, and
@@ -85,6 +88,7 @@ def subscribe(request: HttpRequest, payload: PushSubscribeIn):
 
 
 @router.delete("/subscribe", response={204: None}, summary="Unregister this browser")
+@gate("self", kind="person-data")
 def unsubscribe(request: HttpRequest, payload: PushUnsubscribeIn):
     """Idempotent, and scoped to the caller: unsubscribing an endpoint you don't
     own is a silent no-op, not a 404 — no existence leak either way."""
@@ -93,6 +97,7 @@ def unsubscribe(request: HttpRequest, payload: PushUnsubscribeIn):
 
 
 @router.get("/preferences", response=NotificationPreferenceOut, summary="Your notification settings")
+@gate("self")
 def get_preferences(request: HttpRequest) -> NotificationPreferenceOut:
     """`session_idle_minutes`: how long a chat must stay quiet after its agent
     finishes before you are notified that it is done (0 = never)."""
@@ -100,6 +105,7 @@ def get_preferences(request: HttpRequest) -> NotificationPreferenceOut:
 
 
 @router.patch("/preferences", response=NotificationPreferenceOut, summary="Change your notification settings")
+@gate("self", setting=True)
 def set_preferences(request: HttpRequest, payload: NotificationPreferenceIn) -> NotificationPreferenceOut:
     """Set how many quiet minutes (0–1440, 0 = never) before a finished chat notifies you."""
     NotificationPreference.objects.update_or_create(

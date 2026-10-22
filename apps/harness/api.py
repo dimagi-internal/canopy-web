@@ -14,6 +14,7 @@ from apps.agents.gates import agent_for_read
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.pagination import Page, clamp_limit, paginate
+from apps.api.route_gates import gate
 from apps.canopy_sessions.models import Session
 from apps.huddles.models import CheckinRun
 from apps.workspaces import permissions as perms
@@ -498,6 +499,7 @@ def _runner_schedule_qs(runner: Runner):
 
 @router.get("/schedules/", response=Page[ScheduleOut],
             summary="Schedules this runner may fire (tenant-scoped)")
+@gate("runner")
 def sync_schedules(request: HttpRequest, runner_id: uuid.UUID, limit: int = 200) -> Page[ScheduleOut]:
     """The runner's schedule sync. It caches these locally, evaluates the cron
     itself, and POSTs /fire when a slot comes due.
@@ -516,6 +518,7 @@ def sync_schedules(request: HttpRequest, runner_id: uuid.UUID, limit: int = 200)
 
 @router.post("/schedules/{schedule_id}/fire", response={201: TurnOut, 202: ScheduleAnnouncedOut},
              summary="Report a due slot; the server materializes the turn")
+@gate("runner", kind="turn")
 def fire_schedule_route(
     request: HttpRequest, schedule_id: int, runner_id: uuid.UUID, payload: ScheduleFireIn
 ) -> Status:
@@ -552,6 +555,7 @@ def fire_schedule_route(
 
 
 @router.post("/runners/{runner_id}/drill", response=list[RunnerDrillOut])
+@gate("runner-admin", "agent-admin", kind="action")  # agent admin of each drilled agent unless runner owner
 def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: DrillIn):
     """Fan out a readiness drill. Runner side: the runner's owner or a
     `RunnerAdmin` (`_runner_admin_or_404`) — starting a drill only QUEUES pinned
@@ -595,6 +599,7 @@ def start_runner_drill(request: HttpRequest, runner_id: uuid.UUID, payload: Dril
 
 
 @router.get("/runners/{runner_id}/drills", response=list[RunnerDrillOut])
+@gate("runner-admin", "logs.read")
 def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
     # Readiness results are a log about the box: its owner and the admins it
     # granted read them (the same tier that STARTS drills), and so does a
@@ -612,6 +617,7 @@ def list_runner_drills(request: HttpRequest, runner_id: uuid.UUID):
 
 
 @router.post("/drills/{drill_id}/report", response=RunnerDrillOut)
+@gate("signed-link", "runner", kind="runner-protocol")  # ?t= link, the drilled agent's own login, or the owner
 def report_drill(request: HttpRequest, drill_id: int, payload: DrillReportIn, t: str = ""):
     """The drilled agent's callback: accepted with the run's signed report link
     (`t`), from the drilled agent's own login, or from the runner's owner."""

@@ -16,6 +16,7 @@ from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read, agent_for_work
+from apps.api.route_gates import gate
 from apps.harness import provenance
 from apps.harness.api_turns import visible_turns_qs
 from apps.workspaces import permissions as perms
@@ -64,6 +65,7 @@ def _parent_is_thread_message() -> bool:
 
 
 @router.post("/", response={200: ThreadOut, 201: ThreadOut}, summary="Open an agent thread")
+@gate("agent.work", kind="content")  # editor in the moderator agent's workspace
 def open_thread(request: HttpRequest, payload: ThreadIn):
     """Open a bounded conversation between 2–6 named agents, moderated by one of the
     caller's agents (its workspace becomes the thread's; opening needs the editor
@@ -107,6 +109,7 @@ def open_thread(request: HttpRequest, payload: ThreadIn):
 
 
 @router.get("/", response=list[ThreadOut], summary="List agent threads")
+@gate("member")  # threads in the caller's workspaces; no message content
 def list_threads(request: HttpRequest, parent_key: str | None = None, parent_value: str | None = None,
                  agent: str | None = None, status: str | None = None, limit: int = 50):
     """Threads the caller can see, newest first (max 50), without their messages.
@@ -135,6 +138,7 @@ def list_threads(request: HttpRequest, parent_key: str | None = None, parent_val
 
 
 @router.get("/{thread_id}", response=ThreadOut, summary="Get one agent thread")
+@gate("member", "session-acl", "turn-content")  # messages via visible turns; prompt/reply only with turn-content
 def get_thread(request: HttpRequest, thread_id: str):
     """One thread with its messages, in order: each message's turn status and, when
     you may read that turn's content, its prompt and the speaker's parsed reply
@@ -145,6 +149,7 @@ def get_thread(request: HttpRequest, thread_id: str):
 
 
 @router.post("/{thread_id}/close", response=ThreadOut, summary="Close an agent thread")
+@gate("agent.work", kind="content")  # editor in the thread's workspace
 def close_thread(request: HttpRequest, thread_id: str, payload: ThreadCloseIn):
     """The moderator ends the thread: `settled` (with an `outcome`, e.g.
     `{"result": "agreed", "proposal": {...}}`), `out_of_budget`, `timed_out` or

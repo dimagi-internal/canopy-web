@@ -21,10 +21,9 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.route_gates import gate
 from apps.feedback import services
 from apps.feedback.models import Feedback
-from apps.workspaces import permissions as perms
-from apps.workspaces import services as wsvc
 from apps.feedback.schemas import (
     FeedbackBatchIn,
     FeedbackIngestOut,
@@ -32,6 +31,8 @@ from apps.feedback.schemas import (
     FeedbackOut,
     FeedbackResolveIn,
 )
+from apps.workspaces import permissions as perms
+from apps.workspaces import services as wsvc
 
 router = Router(auth=session_auth, tags=["feedback"])
 
@@ -58,6 +59,7 @@ def _out(fb: Feedback) -> dict:
 
 
 @router.post("/", response=FeedbackIngestOut, summary="Ingest feedback (batch, idempotent)")
+@gate("content.write", kind="content")  # creation_workspace only — no role check
 def ingest_feedback(request: HttpRequest, payload: FeedbackBatchIn) -> dict:
     """Idempotent per ``(channel, source_ref)`` so re-reading a mailbox or a doc
     is safe. ``submitted_by`` is the CALLER (the agent's PAT user, or the logged
@@ -80,6 +82,7 @@ def ingest_feedback(request: HttpRequest, payload: FeedbackBatchIn) -> dict:
 
 
 @router.get("/", response=FeedbackListOut, summary="List feedback")
+@gate("member")
 def list_feedback(
     request: HttpRequest,
     target_kind: str | None = None,
@@ -95,6 +98,7 @@ def list_feedback(
 
 
 @router.post("/{feedback_id}/resolve", response=FeedbackOut, summary="Record a disposition")
+@gate("content.write", kind="content")  # scoped by CONTENT_WRITE slugs; 403 if merely visible
 def resolve_feedback(request: HttpRequest, feedback_id: int, payload: FeedbackResolveIn) -> dict:
     """How a decision turn records what it did. The only mutation — feedback is
     what somebody said, and editing that after the fact would make the pool
