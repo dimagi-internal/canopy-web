@@ -10,12 +10,13 @@ from typing import Any
 import requests
 from django.db import transaction
 from django.db.models import Case, IntegerField, Q, When
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse
 from ninja import Router, Status
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.errors import (
+    TYPE_AUTH,
     TYPE_CONFLICT,
     TYPE_FORBIDDEN,
     TYPE_NOT_FOUND,
@@ -2493,13 +2494,14 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
             # An APPROVED box that does not run this agent: a routing fact, not a
             # misused token, so the owner is not emailed (fizzy, canopy-web#1563).
             vault_alerts.unrouted_box_refused(agent, request, runner=unrouted)
-            return JsonResponse({"error": "device_proof_required", "reason": "not_routed",
-                                 "detail": refused}, status=401,
-                                headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
+            raise ProblemError(401, "Device proof required", type_=TYPE_AUTH, detail=refused,
+                               members={"error": "device_proof_required", "reason": "not_routed"},
+                               headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
         vault_alerts.device_proof_refused(agent, request, reason=refused or "no device proof")
-        return JsonResponse({"error": "device_proof_required", "reason": "no_valid_proof",
-                             "detail": refused or "no device proof"}, status=401,
-                            headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
+        raise ProblemError(401, "Device proof required", type_=TYPE_AUTH,
+                           detail=refused or "no device proof",
+                           members={"error": "device_proof_required", "reason": "no_valid_proof"},
+                           headers={"WWW-Authenticate": 'DPoP algs="ES256"'})
 
     wanted = _parse_refs(refs)
     zk_wrap = None
@@ -2512,8 +2514,12 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
         if zk_wrap is None and zk.needs_wrap(values):
             if device_key is not None:
                 zk.device_wrap_missing(agent, request, device_key)
-            return JsonResponse({"error": "zk_wrap_missing", "kv": agent.zk_kv,
-                                 "device_key": str(device_key.pk) if device_key else ""}, status=409)
+            raise ProblemError(
+                409, "Vault key not granted", type_=TYPE_CONFLICT,
+                detail=f"this device holds no vault-key wrap at kv {agent.zk_kv}; "
+                       "an admin must grant it",
+                members={"error": "zk_wrap_missing", "kv": agent.zk_kv,
+                         "device_key": str(device_key.pk) if device_key else ""})
     else:
         values = services.resolve_agent_credentials(agent, wanted)
     vault, op_token = services.resolve_agent_vault(agent)

@@ -21,18 +21,14 @@ import re
 
 from django.http import HttpRequest, HttpResponse
 
+from apps.api.errors import problem_response
 from apps.workspaces import services as wsvc
 
 _WS_RE = re.compile(r"^/api/w/(?P<ws>[^/]+)(?P<rest>/.*)$")
 
 
 def _problem_404(detail: str) -> HttpResponse:
-    body = (
-        b'{"type":"about:blank","title":"Not found","status":404,"detail":"'
-        + detail.encode()
-        + b'"}'
-    )
-    return HttpResponse(body, status=404, content_type="application/problem+json")
+    return problem_response(404, detail=detail)
 
 
 class WorkspaceResolveMiddleware:

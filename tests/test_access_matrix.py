@@ -229,7 +229,7 @@ def test_who_may_request_which_mode(w, role, may_auto, mode):
     r = c.post("/api/harness/turns/", body, content_type="application/json")
     if mode == "auto" and not may_auto:
         assert r.status_code == 403
-        assert "manual" in r.json()["title"]
+        assert "manual" in r.json()["detail"]
         return
     assert r.status_code == 201, r.content
     t = Turn.objects.get(pk=r.json()["id"])
@@ -309,11 +309,11 @@ def test_an_editor_may_route_but_not_set_auto(w, role):
     c = Client()
     c.force_login(w[role])
     r = _rules(c, [_rule(box, "auto")])
-    assert r.status_code == 403 and "turn_mode=auto" in r.json()["title"], r.content
+    assert r.status_code == 403 and "turn_mode=auto" in r.json()["detail"], r.content
     path = "/api/agents/agent/actor-routes/beth@dimagi.com"
     runners = [{"runner_id": str(box.id), "enabled": True}]
     r = c.put(path, {"runners": runners, "turn_mode": "auto"}, content_type="application/json")
-    assert r.status_code == 403 and "turn_mode=auto" in r.json()["title"], r.content
+    assert r.status_code == 403 and "turn_mode=auto" in r.json()["detail"], r.content
     for mode in ("manual", ""):
         r = c.put(path, {"runners": runners, "turn_mode": mode}, content_type="application/json")
         assert r.status_code == 200, r.content

@@ -20682,10 +20682,24 @@ export interface components {
         };
         /**
          * DeviceProofRequiredOut
-         * @description 401 from resolve: the agent requires a runner device proof (DPoP) and
-         *     the request carried none that verified against an active key.
+         * @description 401 from resolve (problem+json): the agent requires a runner device
+         *     proof (DPoP) and the request carried none that verified against an active
+         *     key. `error` and `reason` are extension members a runner branches on.
          */
         readonly DeviceProofRequiredOut: {
+            /** Type */
+            readonly type: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: number;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /** Instance */
+            readonly instance?: string | null;
             /**
              * Error
              * @constant
@@ -20697,18 +20711,27 @@ export interface components {
              * @enum {string}
              */
             readonly reason: "not_routed" | "no_valid_proof";
+        };
+        /**
+         * ZkWrapMissingOut
+         * @description 409 from resolve (problem+json): the agent is zero-knowledge and the
+         *     proving device holds no vault-key wrap at the current kv (its owner is
+         *     alerted). `error`, `kv` and `device_key` are extension members.
+         */
+        readonly ZkWrapMissingOut: {
+            /** Type */
+            readonly type: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: number;
             /**
              * Detail
              * @default
              */
             readonly detail: string;
-        };
-        /**
-         * ZkWrapMissingOut
-         * @description 409 from resolve: the agent is zero-knowledge and the proving device
-         *     holds no vault-key wrap at the current kv (its owner is alerted).
-         */
-        readonly ZkWrapMissingOut: {
+            /** Instance */
+            readonly instance?: string | null;
             /**
              * Error
              * @constant

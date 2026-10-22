@@ -214,8 +214,11 @@ def test_binding_on_and_no_proof_is_the_contract_401(fleet):
     _bind(fleet)
     res = _resolve(fleet)
     assert res.status_code == 401
-    assert res.json() == {"error": "device_proof_required", "reason": "no_valid_proof",
-                          "detail": "no device proof"}
+    body = res.json()
+    assert res["content-type"] == "application/problem+json" and body["status"] == 401
+    assert res["WWW-Authenticate"] == 'DPoP algs="ES256"'
+    assert {k: body[k] for k in ("error", "reason", "detail")} == {
+        "error": "device_proof_required", "reason": "no_valid_proof", "detail": "no device proof"}
     assert "pat-value" not in res.content.decode()
 
 
