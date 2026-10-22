@@ -5,7 +5,8 @@ cloud-ec2-fork, 2026-10-18: the box posted `claude_auth_required` to the flat
 workspace to file it in and it 422'd. Recorded or not, nothing but the admin
 event log reads `runner.credential` rows, so nobody would have been told.
 Now an alert posted with a runner token files in the runner's workspace, and
-the three credential alerts mail and push the runner's approvers once a day.
+the usage-cap and API-key-fallback alerts mail and push the runner's approvers
+once a day (a signed-out credential is the `runner_credential` alert instead).
 """
 from __future__ import annotations
 
@@ -51,10 +52,10 @@ def box(monkeypatch):
     return {"user": jj, "runner": runner, "ws_b": ws_b, "token": raw, "pushed": pushed}
 
 
-def _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"):
+def _alert(kind="claude_usage_exhausted", key="usage-exhausted:cloud-ec2-fork"):
     return {"items": [{
         "source": "runner.credential", "kind": kind, "level": "error", "key": key,
-        "summary": "The Claude credential (subscription-1) on cloud-ec2-fork is no longer signed in.",
+        "summary": "Every Claude credential on cloud-ec2-fork is at its usage cap.",
     }]}
 
 
@@ -89,7 +90,7 @@ def test_the_owners_pat_still_needs_a_workspace(box):
     assert res.status_code == 422
 
 
-def test_auth_required_event_mails_the_approvers(box):
+def test_a_credential_event_mails_the_approvers(box):
     _post(box, _alert())
     assert len(mail.outbox) == 2
     assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
@@ -113,10 +114,19 @@ def test_the_next_day_mails_again(box):
     assert len(mail.outbox) == 4
 
 
-@pytest.mark.parametrize("kind", ["claude_usage_exhausted", "claude_api_key_fallback"])
-def test_the_other_credential_alerts_mail_too(box, kind):
-    _post(box, _alert(kind=kind, key=f"{kind}:cloud-ec2-fork"))
+def test_the_api_key_fallback_mails_too(box):
+    _post(box, _alert(kind="claude_api_key_fallback", key="claude_api_key_fallback:cloud-ec2-fork"))
     assert len(mail.outbox) == 2
+
+
+def test_auth_required_is_recorded_but_not_mailed(box):
+    """A signed-out credential is the `runner_credential` alert now; its own
+    blocking notice replaces this mail (tests/test_alerts_runner_credential.py)."""
+    res = _post(box, _alert(kind="claude_auth_required", key="auth-required:cloud-ec2-fork"))
+    assert res.status_code == 200
+    assert Event.objects.get().kind == "claude_auth_required"
+    assert mail.outbox == []
+    assert box["pushed"] == []
 
 
 def test_other_kinds_do_not_mail(box):

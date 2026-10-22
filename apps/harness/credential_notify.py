@@ -7,13 +7,18 @@ usage cap (`claude_usage_exhausted`), and the step onto the metered API key
 event log reads `runner.credential` rows — so a box could sit dead for a day
 with its alert filed where no one looks.
 
-So each of the three, posted with the box's own runner token, also mails and
-Web-Pushes the runner's approvers (`device_key_notify.approvers`: its owner
-and explicit runner admins), deep-linking to that runner on /supervisor where
-its credentials are. Once per (runner, alert) per UTC day: the events API
-calls this only for an item that is news today (`events.services.record`'s
+So the last two, posted with the box's own runner token, also mail and
+Web-Push the runner's approvers (`device_key_notify.approvers`: its owner and
+explicit runner admins), deep-linking to that runner on /supervisor where its
+credentials are. Once per (runner, alert) per UTC day: the events API calls
+this only for an item that is news today (`events.services.record`'s
 `first_today`). BEST-EFFORT, like `device_key_notify`: a failed notice never
 fails the recording.
+
+`claude_auth_required` is no longer mailed here: a signed-out credential is the
+`runner_credential` alert (`alerts_runner_credential`), whose own blocking
+notice reaches the same people once, names the token by its label, and clears
+itself when the box's probe passes again.
 """
 from __future__ import annotations
 
@@ -24,19 +29,24 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-#: The alerts a box raises about its own Claude credentials, and the subject each
-#: mail carries.
+#: The credential alerts a box raises that are mailed, and the subject each mail
+#: carries. (`claude_auth_required` is the `runner_credential` alert instead.)
 CREDENTIAL_KINDS = {
-    "claude_auth_required": "{name} needs a Claude sign-in",
     "claude_usage_exhausted": "{name} is out of Claude usage",
     "claude_api_key_fallback": "{name} is on the metered API key",
 }
 
 
+def runner_path(runner) -> str:
+    """The runner's detail on /supervisor, app-relative (/supervisor is not a
+    tenant page, so it has no `/w/<ws>/` prefix)."""
+    return f"/supervisor?tab=runners&runner={runner.pk}"
+
+
 def runner_url(runner) -> str:
-    """The runner's detail on /supervisor, where its credentials are set."""
+    """`runner_path` on this deployment's public base URL."""
     base = (getattr(settings, "CANOPY_PUBLIC_BASE_URL", "") or "").rstrip("/")
-    return f"{base}/supervisor?tab=runners&runner={runner.pk}"
+    return f"{base}{runner_path(runner)}"
 
 
 def notify(runner, item: dict) -> dict:
@@ -58,8 +68,7 @@ def notify(runner, item: dict) -> dict:
         html = (f"<p>{escape(detail)}</p>"
                 f"<p><a href=\"{escape(link)}\">Open {escape(runner.name)}'s credentials</a></p>"
                 f"<p style=\"color:#78716c;font-size:13px\">{escape(foot)}</p>")
-        rel = link.split("://", 1)[-1]
-        rel = rel[rel.find("/"):] if "/" in rel else "/"
+        rel = runner_path(runner)
         for person in approvers(runner):
             if person.email:
                 message = EmailMultiAlternatives(subject=subject, body=text, to=[person.email])

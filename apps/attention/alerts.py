@@ -47,8 +47,10 @@ from .models import Alert, AlertEvent
 
 logger = logging.getLogger(__name__)
 
-#: Dotted paths of source modules. Empty until the first source lands.
-SOURCES: list[str] = []
+#: Dotted paths of source modules.
+SOURCES: list[str] = [
+    "apps.harness.alerts_runner_credential",
+]
 
 
 @dataclass(frozen=True)
