@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 def append_events(turn: Turn, events: list[dict]) -> int:
     from . import sensitivity
 
-    if any(e.get("kind") in sensitivity.RESULT_KINDS for e in events) and sensitivity.is_sensitive(turn):
+    sensitive = sensitivity.is_sensitive(turn)
+    if sensitive and any(e.get("kind") in sensitivity.RESULT_KINDS for e in events):
         # A sensitive conversation's tool results are never stored (spec
         # 2026-10-22-phi-agents-on-zdr-runners §4): the row keeps which call and
         # whether it failed, and so does the live frame built from it.
@@ -42,11 +43,22 @@ def append_events(turn: Turn, events: list[dict]) -> int:
         current = (
             TurnEvent.objects.filter(turn=turn).aggregate(m=Max("seq"))["m"] or 0
         )
+        # A sensitive conversation STORES metadata only (`sensitivity.redact_payload`):
+        # what the person and the agent said, and a tool's arguments, never rest here.
         rows = [
-            TurnEvent(turn=turn, seq=current + i + 1, kind=e["kind"], payload=e.get("payload", {}))
+            TurnEvent(turn=turn, seq=current + i + 1, kind=e["kind"],
+                      payload=(sensitivity.redact_payload(e.get("payload", {})) if sensitive
+                               else e.get("payload", {})))
             for i, e in enumerate(events)
         ]
         TurnEvent.objects.bulk_create(rows)
+    if sensitive:
+        # The live fan-out: the same rows with their (result-stripped) payloads, never
+        # saved. A receiver that would PERSIST or forward content refuses a sensitive
+        # turn itself (Message projection, title, Slack).
+        rows = [TurnEvent(id=r.id, turn=turn, seq=r.seq, kind=r.kind, ts=r.ts,
+                          payload=e.get("payload", {}))
+                for r, e in zip(rows, events)]
 
     # Fire AFTER commit so subscribers (apps/realtime) fan out durable rows and
     # never race the DB. Local import + on_commit avoids an import-time cycle and

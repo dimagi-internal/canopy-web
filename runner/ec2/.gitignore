@@ -2,3 +2,5 @@
 .runner.cfn.rendered.yaml
 .state.json
 .last-ip
+# up.sh writes <stack>-invitation.json beside the stack (wire.sh reads it): local state, not source
+*-invitation.json

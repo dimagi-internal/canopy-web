@@ -211,11 +211,18 @@ def _send_message(
                 turn = Turn.keyed(key, Turn.scope_for(session=session)).first()
                 return existing, turn
         index = transcript_ingest._next_index(session)
-        content = {"text": text}
+        from apps.harness import sensitivity
+
+        # A sensitive conversation's row says THAT the person spoke, not what they
+        # said (metadata only); the words reach the runner through the turn's
+        # prompt, which is held only until the turn ends (`closing.close_turn`).
+        sensitive = sensitivity.is_sensitive(session)
+        content = sensitivity.redact_text(text) if sensitive else {"text": text}
         if client_id:
             content["client_id"] = client_id
         message = Message.objects.create(
-            session=session, turn_index=index, role=Message.USER, plaintext=text, content=content,
+            session=session, turn_index=index, role=Message.USER,
+            plaintext="" if sensitive else text, content=content,
         )
         turn = _enqueue_chat_turn(
             session=session, message=message, text=text, user=user, client_id=client_id,

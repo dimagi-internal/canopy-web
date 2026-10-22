@@ -309,7 +309,13 @@ THE predicate; every surface below asks it, one test each in
   an empty success); a `tool_end`/`tool_result` event, a `TOOL_RESULT` `Message` and its
   live frame keep `{tool_use_id, is_error, withheld}`, never the result
   (`sensitivity.strip_result`, in `ledger.append_events`, `persist_transcript_rows` and
-  `post_session_stream`). The `TOOL_USE` row is kept.
+  `post_session_stream`).
+- **Metadata, never content:** every stored event and `Message` (the person's, the
+  agent's, a tool call's) keeps kind, tool name, argument names, ids, error flags, size and
+  hash only (`sensitivity.redact_payload`, `send.py`, `transcript_ingest`); the live frame
+  carries the words and nothing writes them. The prompt is wiped at the turn's end
+  (`closing.close_turn`), the result note withheld, and there is no owner-ask line, live
+  tail (`RunnerBinding.tail`) or autotitle. A reload shows metadata only.
 - **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
   `tool_input`; a receipt keeps no excerpt; `ui/update-model-context` is accepted and not
   kept (`apps/mcp_apps_host/mcp_apps_views.py`).
