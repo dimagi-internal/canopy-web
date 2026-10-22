@@ -586,7 +586,15 @@ class Turn(models.Model):
     origin_ref = models.JSONField(default=dict, blank=True)
     prompt = models.TextField(blank=True, default="")
     routing = models.CharField(max_length=15, choices=ROUTING_CHOICES, default=PREFER_LOCAL)
-    idempotency_key = models.CharField(max_length=128, unique=True)
+    # Unique per WORKSPACE, never globally (`uniq_turn_idempotency_key_per_scope`):
+    # the keys canopy mints are guessable (`sched:<id>:<slot>`, `task-<pk>-<i>`),
+    # so a global key let a member of one workspace pre-claim another's future
+    # key. Look a key up with `Turn.keyed(key, scope)`.
+    idempotency_key = models.CharField(max_length=128)
+    # The workspace the key is unique in: `tenant_slug` at creation, stamped by
+    # `save()`. A uniqueness scope only — never read as the turn's tenancy, which
+    # stays derived (`tenant_slug`). "" only for a row with no workspace at all.
+    idempotency_scope = models.CharField(max_length=64, blank=True, default="")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=QUEUED)
     claimed_by = models.ForeignKey(
         Runner, on_delete=models.SET_NULL, null=True, blank=True, related_name="turns"
@@ -776,6 +784,11 @@ class Turn(models.Model):
             models.Index(fields=["agent", "session_key"]),
         ]
         constraints = [
+            # Key first, so a lookup by key alone (a prefix scan) still uses it.
+            models.UniqueConstraint(
+                fields=["idempotency_key", "idempotency_scope"],
+                name="uniq_turn_idempotency_key_per_scope",
+            ),
             # One report per Claude session, carried over from AgentTurn's
             # uniq_agent_turn_session: re-running the close-out (e.g. once the
             # transcript finishes uploading) must update the turn, not add one.
@@ -881,6 +894,26 @@ class Turn(models.Model):
         if self.chat_session_id:
             return self.chat_session.workspace_id
         return self.workspace_id
+
+    @staticmethod
+    def scope_for(*, agent=None, session=None, workspace=None) -> str:
+        """The idempotency scope of a turn for this target — its workspace, as
+        `tenant_slug` would read it once the turn exists."""
+        if agent is not None:
+            return agent.workspace_id or ""
+        if session is not None:
+            return session.workspace_id or ""
+        return getattr(workspace, "pk", workspace) or ""
+
+    @classmethod
+    def keyed(cls, key: str, scope: str):
+        """The turn(s) holding `key` in `scope` — the only way to look a key up."""
+        return cls.objects.filter(idempotency_key=key, idempotency_scope=scope)
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not self.idempotency_scope:
+            self.idempotency_scope = self.tenant_slug or ""
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:  # pragma: no cover
         return f"turn:{self.target}:{self.status}:{self.id.hex[:8]}"

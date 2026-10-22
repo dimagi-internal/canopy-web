@@ -1,20 +1,22 @@
-"""An idempotency key replays a turn only to the target it was made for.
+"""An idempotency key is unique per workspace, and replays a turn only to the
+target it was made for.
 
-`Turn.idempotency_key` is globally unique and the keys canopy mints are
-guessable (`sched:<id>:<slot>`, `task-<pk>-<i>`, `checkin-run:<pk>`…). Before
-this, `enqueue_turn` returned whatever turn held the key, so an editor in
-workspace B could post A's key to `POST /api/harness/turns/` and read A's turn
-(prompt, origin_ref, result_note) back in the 200 — or claim a future key so
-A's scheduled turn collapsed onto B's.
+The keys canopy mints are guessable (`sched:<id>:<slot>`, `task-<pk>-<i>`,
+`checkin-run:<pk>`…). A key is therefore unique within the turn's workspace
+(`Turn.idempotency_scope`), never globally: a member of workspace B can neither
+read A's turn back by posting A's key, nor pre-claim one of A's future keys so
+that A's own producer finds it taken.
 """
 from __future__ import annotations
+
+import datetime as dt
 
 import pytest
 from django.test import Client
 
 from apps.agents.models import Agent
 from apps.harness import services
-from apps.harness.models import Turn
+from apps.harness.models import AgentSchedule, Turn
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 
@@ -46,19 +48,21 @@ def _post(client, slug, key, prompt="/x:turn"):
     )
 
 
-def test_another_tenants_key_is_a_conflict_that_reveals_nothing(two_tenants):
+def test_another_tenants_key_names_nothing_of_theirs(two_tenants):
+    """B posting A's key gets a fresh turn of B's own — A's stays untouched and unseen."""
     secret, _ = services.enqueue_turn(
         agent=two_tenants["agent_a"], origin=Turn.ORIGIN_CANOPY_SCHEDULER,
         idempotency_key="sched:42:2026-10-22T09:00", prompt="A's private brief",
         origin_ref={"secret": "a-only"},
     )
     res = _post(_as(two_tenants["editor_b"]), "idem-bravo", "sched:42:2026-10-22T09:00")
-    assert res.status_code == 409, res.content
+    assert res.status_code == 201, res.content
     body = res.content.decode()
     assert "A's private brief" not in body
     assert "a-only" not in body
     assert str(secret.pk) not in body
-    assert Turn.objects.count() == 1
+    assert res.json()["agent_slug"] == "idem-bravo"
+    assert Turn.objects.count() == 2
 
 
 def test_a_retry_to_the_same_target_replays_the_original(two_tenants):
@@ -72,15 +76,49 @@ def test_a_retry_to_the_same_target_replays_the_original(two_tenants):
     assert Turn.objects.count() == 1
 
 
-def test_a_preclaimed_key_does_not_swallow_the_real_turn(two_tenants):
-    """B posts a future key first; A's own enqueue must not return B's turn."""
+def test_a_preclaimed_key_does_not_stop_the_real_turn(two_tenants):
+    """B posts A's future key first; A's own enqueue still creates A's turn."""
     res = _post(_as(two_tenants["editor_b"]), "idem-bravo", "checkin-run:7", prompt="B's bait")
     assert res.status_code == 201, res.content
-    with pytest.raises(services.IdempotencyConflict):
-        services.enqueue_turn(
-            agent=two_tenants["agent_a"], origin=Turn.ORIGIN_CANOPY_SCHEDULER,
-            idempotency_key="checkin-run:7", prompt="A's check-in",
-        )
+    turn, created = services.enqueue_turn(
+        agent=two_tenants["agent_a"], origin=Turn.ORIGIN_CANOPY_SCHEDULER,
+        idempotency_key="checkin-run:7", prompt="A's check-in",
+    )
+    assert created is True
+    assert turn.agent == two_tenants["agent_a"]
+    assert turn.prompt == "A's check-in"
+    assert turn.idempotency_scope == two_tenants["agent_a"].workspace_id
+    assert Turn.objects.filter(idempotency_key="checkin-run:7").count() == 2
+
+
+def test_a_preclaimed_schedule_slot_still_fires(two_tenants):
+    """The schedule clock's own `exists()` pre-check looks inside A's workspace,
+    so B's turn holding `sched:<id>:<slot>` neither skips the supersede nor the turn."""
+    sched = AgentSchedule.objects.create(
+        agent=two_tenants["agent_a"], name="Weekly", prompt="/alpha:report",
+        cron="0 9 * * 5", timezone="UTC",
+    )
+    slot = dt.datetime(2026, 10, 23, 9, tzinfo=dt.UTC)
+    key = f"sched:{sched.id}:{slot.isoformat()}"
+    assert _post(_as(two_tenants["editor_b"]), "idem-bravo", key).status_code == 201
+    turn, created = services.fire_schedule(sched, slot)
+    assert created is True
+    assert turn.agent == two_tenants["agent_a"]
+    assert turn.prompt == "/alpha:report"
+
+
+def test_the_database_holds_a_key_unique_per_workspace(two_tenants):
+    """The database, not just the pre-check, holds a key unique per workspace."""
+    from django.db import IntegrityError, transaction
+
+    services.enqueue_turn(agent=two_tenants["agent_a"], origin=Turn.ORIGIN_API,
+                          idempotency_key="dup")
+    with pytest.raises(IntegrityError), transaction.atomic():
+        Turn.objects.create(agent=two_tenants["agent_a"], origin=Turn.ORIGIN_API,
+                            idempotency_key="dup")
+    # …while another workspace may hold the same key.
+    Turn.objects.create(agent=two_tenants["agent_b"], origin=Turn.ORIGIN_API,
+                        idempotency_key="dup")
 
 
 def test_same_workspace_other_agent_is_a_conflict_too(two_tenants):

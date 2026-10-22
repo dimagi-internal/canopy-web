@@ -95,7 +95,7 @@ def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str
         return "duplicate"
     agent = route.agent
     key = _turn_key(agent, existing.thread, existing)
-    if Turn.objects.filter(idempotency_key=key).exists():
+    if Turn.keyed(key, Turn.scope_for(agent=agent)).exists():
         return "duplicate"
     _wake(route, parsed, existing, existing.thread)
     return "agent"
