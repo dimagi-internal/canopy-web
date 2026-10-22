@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.agents.credentials import vault_members, zk
-from apps.agents.models import Agent, AgentAdmin, Vault, VaultLink, VaultMember
+from apps.agents.models import Agent, AgentAdmin, AgentLicense, Vault, VaultLink, VaultMember
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
@@ -77,6 +77,17 @@ def test_full_access_makes_a_member_and_owners_and_admins_manage(world):
     assert ms[world.owner.pk].role == "manage" and ms[admin.pk].role == "manage"
     assert ms[editor.pk].role == "use" and ms[editor.pk].sources == ["agent:ace"]
     assert viewer.pk not in ms
+
+
+def test_an_active_license_makes_a_member_through_the_link(world):
+    viewer = _user("vi")
+    _member(world.ws, viewer, WorkspaceMembership.VIEWER)
+    lic = AgentLicense.objects.create(agent=world.agent, user=viewer, status=AgentLicense.ACTIVE,
+                                      basis="approved by jj@dimagi.com")
+    assert vault_members.members(world.vault)[viewer.pk].sources == ["license:ace"]
+    lic.status = AgentLicense.REVOKED
+    lic.save()
+    assert viewer.pk not in vault_members.members(world.vault)
 
 
 def test_losing_full_access_drops_only_the_linked_membership(world):

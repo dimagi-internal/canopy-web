@@ -10,7 +10,7 @@ Who may open a vault is `credentials.vault_members.members(vault)`, the union of
 
 - **direct members** (`VaultMember`): people added by name. A direct member must be in the vault's workspace, and stays a member until a manager removes them;
 - **links** (`VaultLink`), re-read on every question:
-  - `agent`: everyone with full access to the agent (`access.roster`). The agent's owner and admins come in as `manage`, everyone else as the link's role;
+  - `agent`: everyone with full access to the agent (`access.roster`), plus everyone with an active license to use it locally (`AgentLicense`). The agent's owner and admins come in as `manage`, everyone else as the link's role;
   - `workspace_owners` / `workspace_admins`: the owners (or admins) of a workspace, inherited down the tree as those roles are.
 
 A person's role is the highest any source gives them: `manage` (see and edit values, change membership) or `use`. Every member carries their sources, so the vault's page says why each person is in it. A new agent vault starts with one `agent` link, so giving someone the agent gives them its vault.

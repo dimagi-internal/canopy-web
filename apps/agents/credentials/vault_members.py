@@ -6,8 +6,9 @@ with the member so a page can always say WHY someone can open it:
 * **direct** — a `VaultMember` row: a person added by name;
 * **linked** — a `VaultLink` rule, re-read on every question so it follows the
   set it names: everyone with full access to an agent (`access.roster`; the
-  agent's owner and admins come in as `manage`), or the owners / admins of a
-  workspace (inherited down the tree as those roles are).
+  agent's owner and admins come in as `manage`) and everyone holding an active
+  license to use it locally, or the owners / admins of a workspace (inherited
+  down the tree as those roles are).
 
 A person's role is the highest any source gives them: `manage` (see and edit
 values, change membership) above `use` (open the values from their own browser
@@ -26,7 +27,7 @@ from django.db import transaction
 from apps.workspaces import services as wsvc
 
 from .. import access
-from ..models import Agent, Vault, VaultLink, VaultMember
+from ..models import Agent, AgentLicense, Vault, VaultLink, VaultMember
 
 MANAGE, USE = VaultMember.MANAGE, VaultMember.USE
 _RANK = {USE: 0, MANAGE: 1}
@@ -76,6 +77,11 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
                 continue
             role = MANAGE if row["agent_role"] in (access.OWNER, access.ADMIN) else link.role
             _add(out, _UserRef(row["user_id"], row["email"]), role, source)
+        # A person licensed to use the agent locally (`AgentLicense`, canopy-web#1704)
+        # runs its tools on their own machine, so the link counts them too — an
+        # admin may approve a license for someone the caller list alone would not.
+        for lic in AgentLicense.objects.filter(agent=link.agent, status=AgentLicense.ACTIVE).select_related("user"):
+            _add(out, lic.user, link.role, f"license:{link.agent.slug}")
         return
     wanted = {"owner"} if link.kind == VaultLink.WORKSPACE_OWNERS else {"owner", "admin"}
     source = f"{link.kind}:{link.workspace.slug}"

@@ -18,6 +18,7 @@ function sourceLabel(source: string, slug: string): string {
   if (source === 'direct') return 'Added by name'
   const [kind, name] = source.split(':')
   if (kind === 'agent') return name === slug ? 'Full access to this agent' : `Full access to ${name}`
+  if (kind === 'license') return name === slug ? 'Licensed to use this agent' : `Licensed to use ${name}`
   if (kind === 'workspace_owners') return `Owner of ${name}`
   if (kind === 'workspace_admins') return `Admin of ${name}`
   return source
