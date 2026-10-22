@@ -66,7 +66,7 @@ def test_escalated_raises_action_alert(fleet, status):
                        "Couldn't confirm your message was delivered to the session.")
     assert r.scopes == ("workspace:dimagi", f"runner:{runner.pk}", "agent:ace")  # unknown runner skipped
     assert r.url == "/w/dimagi/agents/ace/turns"
-    assert r.fingerprint == f"{status}:3"
+    assert r.fingerprint == status
     assert src.SEVERITY == "action" and src.CONFIRM_WITHIN is None
 
 
@@ -100,3 +100,51 @@ def test_non_log_reader_sees_nothing(fleet):
     alerts.tick(timezone.now())
     alert = Alert.objects.get(kind=src.KIND)
     assert alerts.visible_actions(alert, fleet["member"]) == []
+
+
+def _repeat(inv, note="Same failure again. Details differ."):
+    """The real repeat path: `auto_debug._add_occurrence`, then the save its
+    caller makes."""
+    import types
+    import uuid
+
+    from apps.harness import auto_debug
+
+    auto_debug._add_occurrence(inv, types.SimpleNamespace(pk=uuid.uuid4()), note, "ace", "cloud-ec2-2",
+                               timezone.now())
+    inv.save()
+
+
+def test_dismiss_sticks_through_repeats_and_reopens_on_status_change(fleet):
+    inv = _inv(fleet)
+    alerts.tick(timezone.now())
+    alert = Alert.objects.get(kind=src.KIND)
+    alerts.act(alert, fleet["jj"], "dismiss")
+    _repeat(inv)
+    _repeat(inv)
+    alerts.tick(timezone.now())
+    alert.refresh_from_db()
+    assert inv.occurrences == 5
+    assert alert.status == Alert.DISMISSED  # a repeat is not a new fact
+    inv.status = FailureInvestigation.DEBUGGER_FAILED
+    inv.save()
+    alerts.tick(timezone.now())
+    alert.refresh_from_db()
+    assert alert.status == Alert.OPEN  # a status change is
+
+
+@pytest.mark.parametrize("status", ["open", "resolved"])
+def test_mark_resolved_refuses_once_the_investigation_moved_on(fleet, status):
+    """A debug turn took it back (`open`) or someone resolved it since the alert
+    was raised: the stale alert must not clobber that."""
+    inv = _inv(fleet)
+    alerts.tick(timezone.now())
+    alert = Alert.objects.get(kind=src.KIND)
+    FailureInvestigation.objects.filter(pk=inv.pk).update(status=status, resolution_note="by the debugger")
+    with pytest.raises(ValueError, match="no longer waiting on a person"):
+        alerts.act(alert, fleet["jj"], "mark_resolved")
+    inv.refresh_from_db()
+    assert inv.status == status and inv.resolution_note == "by the debugger"
+    alert.refresh_from_db()
+    assert alert.status == Alert.OPEN
+    assert not alert.events.filter(kind="acted").exists()  # rolled back with the refusal

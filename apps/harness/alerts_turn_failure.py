@@ -7,9 +7,25 @@ still logged as an error, and it spawns NO alert. Once it is a person's —
 failed) or `held` (the fleet-wide rate cap said no) — it raises an `action`
 alert in the investigation's workspace.
 
+That workspace is where the debugger records the investigation, which may not
+be the failing agent's own workspace. The alert lives there on purpose — a
+deliberate deviation from the spec's Tenancy line ("the subject's workspace"):
+`auto_debug.can_handle`, the only gate on its actions, is asked about that same
+workspace, so an agent-workspace member who is not a log reader there would
+see an alert with nothing to do on it. The agent and runners are still named
+in its scopes, so their pages show it to those who can act.
+
+The fingerprint is the investigation's `status` alone. A repeat of the same
+failure (`auto_debug._add_occurrence` bumps `occurrences`, refreshes the
+sample note) is not a new fact: a dismissed alert stays dismissed through
+repeats, and reopens only when the status changes (e.g. `held` → `escalated`).
+
 Resolves when the investigation leaves those statuses (a debugger or person
 resolved it, or it was reopened for a debug turn). `mark_resolved` is
-`auto_debug.resolve`, the same call the debugger's own endpoint makes.
+`auto_debug.resolve`, the same call the debugger's own endpoint makes; it
+refuses (`ValueError`, a 409 from the API) when the investigation has already
+left those statuses, so a stale alert cannot clobber a newer resolution or a
+debug turn that took it back.
 
 Offered only to people who may read and resolve investigations there
 (`auto_debug.can_handle`: log readers and the debugger's admins), because the
@@ -94,7 +110,7 @@ def reconcile(now) -> list[Raise]:
             url=investigation_path(inv),
             scopes=_scopes(inv),
             body=(inv.sample_note or "")[:1000],
-            fingerprint=f"{inv.status}:{inv.occurrences}",
+            fingerprint=inv.status,  # not occurrences: a repeat is not a new fact
         ))
     return out
 
@@ -118,5 +134,9 @@ def perform(alert, user, action_id) -> None:
     if action_id != "mark_resolved":
         raise ValueError(f"turn_failure has no handler for {action_id!r}")
     inv = _investigation_of(alert)
-    if inv is not None:
-        auto_debug.resolve(inv, note="Resolved from the alert", by=user)
+    if inv is None:
+        return  # gone: nothing left to resolve, and the alert closing is true
+    if inv.status not in RAISING_STATUSES:
+        raise ValueError(f"this investigation is no longer waiting on a person "
+                         f"(it is {inv.get_status_display().lower()}); nothing was changed")
+    auto_debug.resolve(inv, note="Resolved from the alert", by=user)
