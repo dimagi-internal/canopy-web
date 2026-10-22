@@ -106,8 +106,6 @@ Tests: `tests/test_runner_units.py`.
 
 ### Units on the box (`RunnerUnits`)
 
-Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`.
-
 - **Units.** The stack parameter `RunnerUnits` (`tree:dimagi,tree:marshellis,agent:eva`;
   empty = one unit `tree:<RunnerWorkspace>`) lists them; `cloud_runner.parse_units` names
   them. The tree unit of the box's own workspace keeps the **box's** name (so a box moved
