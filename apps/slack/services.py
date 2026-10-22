@@ -937,6 +937,12 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
     spends that box's credentials, which is exactly what its admin grant is for.
     Being a workspace member is not enough — the dimagi workspace auto-joins
     every dimagi.com address.
+
+    This is a deliberately STRICTER variant of the one placement rule
+    (`canopy_sessions.services.may_place`, which `move_queued_turns` still asks):
+    administering a box implies `may_place`, but an agent admin who does not
+    administer the box may move the chat from the web and not from a Slack
+    button, whose identity is a weaker principal than a browser session.
     """
     from apps.canopy_sessions import services as session_services
     from apps.harness import services as harness
