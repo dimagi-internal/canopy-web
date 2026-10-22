@@ -4,7 +4,7 @@ Migration 0097 copied each runner's slots into its `RunnerLogin` list, and
 nothing has read them since. Dropping the columns in the same release would
 break the code still serving during a deploy (its model still names them, so
 its writes would too). So this release stops naming them and gives each column
-a database default, which lets new rows be written without them; 0100 drops them.
+a database default, which lets new rows be written without them; 0101 drops them.
 """
 from django.db import migrations, models
 
