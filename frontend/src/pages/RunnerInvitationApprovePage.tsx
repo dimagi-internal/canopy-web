@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
 import {
   approveRunnerInvitation,
@@ -15,13 +15,17 @@ const STATUS_TEXT: Record<RunnerInvitationOut['status'], string> = {
   expired: 'Expired. Run up.sh again for a new invitation.',
 }
 
+/** How often the page re-reads an approved invitation until the box pairs. */
+const PAIR_POLL_MS = 5000
+
 /**
  * Approve a new cloud runner — the link `up.sh` prints and the invitation email
  * carries (`/w/:workspace/runner-invitations/:invitationId`).
  *
  * Shows what is being let in (name, workspace, instance role, who asked, when it
  * runs out — and, for a box of isolation units, every unit it pairs) and one
- * Approve button: one approval pairs every unit. The passkey step-up is the API client's: a
+ * Approve button: one approval pairs every unit. Once approved it says so, re-reads
+ * the invitation until the box pairs, then says that and links to the runner. The passkey step-up is the API client's: a
  * 403 `step_up_required` prompts for the passkey and retries, so this page has
  * no passkey code of its own. Only the invitation's creator can open it.
  */
@@ -52,6 +56,17 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
     }
   }, [invitationId])
 
+  // Approved but not yet paired: the box asks every 15s, so keep re-reading
+  // until it has (`consumed`) or the invitation runs out.
+  const waitingForBox = inv?.status === 'approved'
+  useEffect(() => {
+    if (!invitationId || !waitingForBox) return
+    const timer = setInterval(() => {
+      getRunnerInvitation(invitationId).then(setInv).catch(() => {})
+    }, PAIR_POLL_MS)
+    return () => clearInterval(timer)
+  }, [invitationId, waitingForBox])
+
   if (!invitationId) return null
   if (loadError) {
     return (
@@ -62,6 +77,7 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
   }
   if (!inv) return <div className="h-32 max-w-2xl animate-pulse rounded-lg bg-muted" />
   const units = inv.units ?? []
+  const pairedRunnerId = inv.runner_id ?? units.find((u) => u.runner_id)?.runner_id ?? null
 
   async function approve() {
     if (!inv) return
@@ -134,6 +150,26 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
           </p>
         )}
       </section>
+
+      {inv.status === 'approved' && (
+        <p role="status" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground">
+          Approved. Waiting for the box to pair; this page updates when it does.
+        </p>
+      )}
+      {inv.status === 'consumed' && (
+        <p role="status" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground">
+          Paired: {inv.name} is your runner now.
+          {pairedRunnerId && (
+            <>
+              {' '}
+              <Link to={`/supervisor?tab=runners&runner=${pairedRunnerId}`} className="text-primary hover:underline">
+                Open it in the supervisor
+              </Link>{' '}
+              to give it its Claude credentials.
+            </>
+          )}
+        </p>
+      )}
 
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
 
