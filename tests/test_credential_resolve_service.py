@@ -1,4 +1,4 @@
-"""`apps.agents.credential_resolve.resolve` at the service level: each refusal
+"""`apps.agents.credentials.credential_resolve.resolve` at the service level: each refusal
 is a typed `Refusal` (never an exception), and the read classification and
 license withholding that the route used to hold inline.
 
