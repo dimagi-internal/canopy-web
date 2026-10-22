@@ -277,9 +277,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   checks, how many agents it serves, when it last sent its usage report, and how
   many of its local sessions canopy has no record of — its admins open the list,
   ask for a rescan and send chosen sessions up). That table is THE runner table,
-  shared with Topology → Runners; a row opens why the box is in its state in its
-  own words, the fix for a known cause (`Runner.remedy`), its code against the
-  expected sha, every check's detail and the agents it serves.
+  shared with Topology → Runners; its checks column counts failing and warning
+  checks. A row opens a read-only summary that leads with "Manage runner" — the
+  supervisor's runner page, the one place a runner is changed — then why the box
+  is in its state in its own words, the fix for a known cause (`Runner.remedy`),
+  its code against the expected sha, every check's detail with a "Fix →" (an
+  agent's GitHub token on that agent, anything else on the runner page) and the
+  agents it serves.
   Every figure opens its source: a tile filters the agents table, a count opens
   the agent's page for it, a cell opens the setting it shows.
   An agent's row opens its steps — linked when the viewer is its owner or an admin
