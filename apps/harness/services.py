@@ -351,7 +351,8 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
     """Write an email turn from a BLOCKED contact as already cancelled."""
     from . import initiator as who
 
-    existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
+    scope = Turn.scope_for(agent=agent)
+    existing = Turn.keyed(idempotency_key, scope).first()
     if existing is not None:
         return _replay_email(existing, agent), False
     reason = contact.blocked_reason or "no reason given"
@@ -370,7 +371,7 @@ def _refused_email_turn(agent, contact, *, origin, idempotency_key, prompt,
                 result_note=f"not run: the sender is blocked ({reason})",
             )
     except IntegrityError:
-        replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
+        replay = Turn.keyed(idempotency_key, scope).first()
         if replay is not None:
             return _replay_email(replay, agent), False
         raise
@@ -431,12 +432,13 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
 
 
 class IdempotencyConflict(ProblemError):
-    """The idempotency key already names a turn for a DIFFERENT target.
+    """The idempotency key already names a turn for a DIFFERENT target in this
+    workspace.
 
-    Keys are globally unique and many are guessable (`sched:<id>:<slot>`,
-    `task-<pk>-<i>`, `checkin-run:<pk>`), so a replay is honoured only for the
-    target the key was made for; anything else is a 409 that says nothing about
-    the turn holding the key."""
+    Keys are unique per workspace (`Turn.idempotency_scope`) and many are
+    guessable (`sched:<id>:<slot>`, `task-<pk>-<i>`, `checkin-run:<pk>`), so a
+    replay is honoured only for the target the key was made for; anything else
+    is a 409 that says nothing about the turn holding the key."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -595,7 +597,10 @@ def enqueue_turn(
         raise ValueError("a turn targets exactly one of agent / project / session")
     if project and workspace is None:
         raise ValueError("a project turn needs a workspace")
-    existing = Turn.objects.filter(idempotency_key=idempotency_key).first()
+    # Looked up inside the target's workspace: another workspace holding the
+    # same key is no business of this one (and cannot pre-claim it).
+    scope = Turn.scope_for(agent=agent, session=session, workspace=workspace)
+    existing = Turn.keyed(idempotency_key, scope).first()
     if existing is not None:
         return _replay(existing, agent=agent, project=project, session=session,
                        workspace=workspace), False
@@ -633,6 +638,7 @@ def enqueue_turn(
                 workspace=workspace if project else None,
                 origin=origin,
                 idempotency_key=idempotency_key,
+                idempotency_scope=scope,
                 prompt=prompt,
                 origin_ref=origin_ref or {},
                 routing=routing,
@@ -656,7 +662,7 @@ def enqueue_turn(
             admission.at_enqueue(turn)
     except IntegrityError:
         # Only possible race: same idempotency key inserted concurrently.
-        replay = Turn.objects.filter(idempotency_key=idempotency_key).first()
+        replay = Turn.keyed(idempotency_key, scope).first()
         if replay is not None:
             return _replay(replay, agent=agent, project=project, session=session,
                            workspace=workspace), False

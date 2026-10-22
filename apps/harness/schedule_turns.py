@@ -126,7 +126,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
         return None, created
     key = f"sched:{schedule.id}:{slot.isoformat()}"
     with transaction.atomic():
-        if not Turn.objects.filter(idempotency_key=key).exists():
+        if not Turn.keyed(key, Turn.scope_for(agent=schedule.agent)).exists():
             supersede_open_turns(schedule, reason=f"superseded by slot {slot.isoformat()}")
         turn, created = enqueue_turn(
             agent=schedule.agent,

@@ -236,7 +236,7 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
     if live is not None:
         renew(live, private_runner=private_runner, now=now)
         return live, False
-    if Turn.objects.filter(idempotency_key=key).exists():
+    if Turn.keyed(key, Turn.scope_for(agent=agent)).exists():
         key = f"{key[:100]}-{uuid.uuid4().hex[:12]}"
     mode, basis = mode_for(agent, user, requested_mode)
     asker = who.for_request(request, via=Turn.ORIGIN_LOCAL)

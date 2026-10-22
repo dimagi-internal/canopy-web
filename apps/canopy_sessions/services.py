@@ -2251,7 +2251,7 @@ def _send_message(
             ).first()
             if existing is not None:
                 key = f"chat:{session.id.hex}:{client_id}"
-                turn = Turn.objects.filter(idempotency_key=key).first()
+                turn = Turn.keyed(key, Turn.scope_for(session=session)).first()
                 return existing, turn
         index = _next_index(session)
         content = {"text": text}
