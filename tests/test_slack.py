@@ -222,6 +222,24 @@ def test_someone_with_no_canopy_account_is_answered_as_a_contact(slack, installa
     assert "/w/" not in slack.said("chat.postMessage")[0]["text"]
 
 
+@pytest.mark.parametrize("stub", [True, False])
+def test_a_contacts_thread_session_is_made_by_the_one_constructor(slack, installation, hal,
+                                                                  settings, stub):
+    # `create_session(contact=...)`, as a widget contact's session is: the
+    # transcript stamp and the request's provenance come from there, not a copy.
+    from apps.canopy_sessions import services as session_services
+
+    settings.CHAT_STUB_EXECUTOR = stub
+    with mock.patch.object(session_services, "create_session",
+                           wraps=session_services.create_session) as made:
+        mention("hal who owns the budget?")
+    session = Session.objects.get()
+    assert made.call_args.kwargs["contact"] == session.contact is not None
+    assert session.created_by_id is None
+    assert session.provenance, "provenance.session_fields was skipped"
+    assert bool(session.metadata.get(session_services.TRANSCRIPT_SOURCED)) is (not stub)
+
+
 def test_the_same_slack_user_is_one_contact(slack, installation, hal):
     mention("hal one", ts="1700000000.000100")
     mention("hal two", ts="1700000100.000100")

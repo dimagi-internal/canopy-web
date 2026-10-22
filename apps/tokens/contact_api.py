@@ -483,10 +483,8 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
         metadata = session_services.host_metadata(payload.metadata)
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    metadata["embed_app"] = app.name          # server-owned: which site, from the token
-    reqs = getattr(request, "runner_requirements", ())
-    if reqs:
-        metadata["runner_requirements"] = list(reqs)   # server-owned: from the token
+    # Server-owned, from the token: which site, and its runner requirements.
+    session_services.stamp_host_metadata(metadata, request)
     # The same constructor a user's session goes through — so a contact's
     # conversation is recorded the same way (its transcript is its record under a
     # real runner) — with no `created_by`: there is no user, and leaving it null is
@@ -522,13 +520,10 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
         rows = rows.filter(status=Session.ACTIVE)
     elif state == "archived":
         rows = rows.filter(status=Session.ARCHIVED)
-    for field, value in (("metadata__source", source), ("metadata__origin_key", origin_key),
-                         ("metadata__opp_slug", opp_slug), ("metadata__opp_run_id", opp_run_id),
-                         ("page_state__resource", resource), ("page_state__path", page_path)):
-        if value:
-            rows = rows.filter(**{field: value})
-    from apps.canopy_sessions.services import with_opening
+    from apps.canopy_sessions.services import host_filters, with_opening
 
+    rows = host_filters(rows, source=source, origin_key=origin_key, opp_slug=opp_slug,
+                        opp_run_id=opp_run_id, resource=resource, page_path=page_path)
     return [_session_out(s) for s in with_opening(rows).order_by("-created_at")[:50]]
 
 

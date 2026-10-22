@@ -95,7 +95,7 @@ from .schemas import (
 #: Reserved, server-owned metadata key: the embedding app a session was created
 #: through. Named once so the writer (create) and the reader (list filter)
 #: cannot drift onto different spellings.
-EMBED_APP_KEY = "embed_app"
+EMBED_APP_KEY = services.EMBED_APP_KEY
 
 router = Router(auth=session_auth, tags=["chat"])
 
@@ -314,26 +314,12 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
         metadata = services.host_metadata(payload.metadata)
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    # `embed_app` is SERVER-OWNED: it records which registered embedding app
-    # created this session, and it is taken from the delegated token rather
-    # than the request body, so one host's widget cannot create or list under
-    # another host's name. A client-supplied value is discarded on every auth
-    # path — including a browser session, where there is no app at all, because
-    # otherwise the gate would only be as strong as the auth path a caller
-    # chose to use.
-    #
-    # `origin_key` is deliberately NOT touched. It is a finer, host-chosen
-    # scope (ace-web derives one per ace workspace from a membership-checked
-    # path) and it answers a different question; overriding it would break that
-    # for no gain. See tests/test_embed_session_provenance.py.
-    acting_app = getattr(request, "delegated_app", None)
-    if acting_app is not None:
-        metadata[EMBED_APP_KEY] = acting_app.name
-        # Server-owned like `embed_app`: the site's runner requirements (ZDR)
-        # ride the token, never the body.
-        reqs = getattr(request, "runner_requirements", ())
-        if reqs:
-            metadata["runner_requirements"] = list(reqs)
+    # `embed_app` and the site's runner requirements are SERVER-OWNED, from the
+    # delegated token (a client-supplied value was discarded by host_metadata on
+    # every auth path). `origin_key` is deliberately NOT touched: it is a finer,
+    # host-chosen scope (ace-web derives one per ace workspace from a
+    # membership-checked path). See tests/test_embed_session_provenance.py.
+    services.stamp_host_metadata(metadata, request)
     if payload.runner_id:
         from apps.harness.models import Runner
 
@@ -413,10 +399,8 @@ def _filtered_sessions(
     # tenancy still lets any member of the canopy workspace open a session by id.
     # An embedder that needs hard isolation maps its tenants onto separate canopy
     # workspaces instead.)
-    if source:
-        rows = rows.filter(metadata__source=source)
-    if origin_key:
-        rows = rows.filter(metadata__origin_key=origin_key)
+    rows = services.host_filters(rows, source=source, origin_key=origin_key, opp_slug=opp_slug,
+                                 opp_run_id=opp_run_id, resource=resource, page_path=page_path)
     # Which embedding app created the session — stamped server-side from the
     # delegated token at create (see create_session), so unlike `origin_key`
     # this one cannot have been chosen by whoever wrote the row.
@@ -438,26 +422,11 @@ def _filtered_sessions(
     elif embed_app:
         rows = rows.filter(**{f"metadata__{EMBED_APP_KEY}": embed_app})
 
-    # "The conversations I had on THIS page."
-    #
-    # Matched against the session's declared page state (page_state.py), which
-    # is the page's own account of what it was showing — `resource` for the kind
-    # of thing, `path` for the exact screen. A session that never declared a
-    # page matches neither, which is correct: it was not had on any page we know
-    # of, and guessing from the title would be canopy inventing provenance.
-    if resource:
-        rows = rows.filter(page_state__resource=resource)
-    if page_path:
-        rows = rows.filter(page_state__path=page_path)
     # The name an Open Sessions card shows for a runner session (an emdash task
     # name, or a cloud session's Claude UUID) — so it can be looked up by what
     # a person reads off the card, not only by the session id they never see.
     if session_key:
         rows = rows.filter(runner_binding__session_key=session_key)
-    if opp_slug:
-        rows = rows.filter(metadata__opp_slug=opp_slug)
-    if opp_run_id:
-        rows = rows.filter(metadata__opp_run_id=opp_run_id)
     # Free text over what a person reads off a card: the title, or the runner's
     # session_key (an emdash task name, or a cloud session's Claude UUID).
     if q:
