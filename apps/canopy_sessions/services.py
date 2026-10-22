@@ -1402,6 +1402,48 @@ def host_metadata(raw) -> dict:
     return out
 
 
+#: Where `stamp_host_metadata` records which embedding site a session belongs to.
+EMBED_APP_KEY = "embed_app"
+
+
+def stamp_host_metadata(metadata: dict, request) -> dict:
+    """Stamp the SERVER-OWNED host keys onto a new session's `metadata`, from the
+    request's delegated token — never from the body: `embed_app` (which site
+    created it, so one host's widget cannot create or list under another's name)
+    and the site's runner requirements (ZDR). A request with no acting site (a
+    browser, a PAT) stamps nothing. One rule for a user's and a contact's
+    session."""
+    from apps.harness import runner_requirements as rr
+
+    app = getattr(request, "delegated_app", None)
+    if app is None:
+        return metadata
+    metadata[EMBED_APP_KEY] = app.name
+    reqs = getattr(request, "runner_requirements", ())
+    if reqs:
+        metadata[rr.METADATA_KEY] = list(reqs)
+    return metadata
+
+
+def host_filters(rows, *, source: str = "", origin_key: str = "", opp_slug: str = "",
+                 opp_run_id: str = "", resource: str = "", page_path: str = ""):
+    """Narrow a session queryset by the filters a host lists with. Applied AFTER
+    each door's own ACL query, so a filter only ever narrows what that door
+    already allows. Empty string = no filter.
+
+    `source` / `origin_key` / `opp_*` match the host's own `metadata` (opaque to
+    canopy: `origin_key` is an embedder's tenant, stamped at create). `resource`
+    / `page_path` match the session's declared page state (page_state.py) — "the
+    conversations I had on THIS page"; a session that declared no page matches
+    neither, rather than canopy guessing provenance from a title."""
+    for field, value in (("metadata__source", source), ("metadata__origin_key", origin_key),
+                         ("metadata__opp_slug", opp_slug), ("metadata__opp_run_id", opp_run_id),
+                         ("page_state__resource", resource), ("page_state__path", page_path)):
+        if value:
+            rows = rows.filter(**{field: value})
+    return rows
+
+
 def _merge_metadata(session: Session, updates: dict) -> None:
     """Write `updates` into the session's metadata as it is IN THE ROW, not as
     the caller's copy remembers it. A read-modify-write of a stale in-memory

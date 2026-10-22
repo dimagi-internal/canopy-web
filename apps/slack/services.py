@@ -449,17 +449,13 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
         "slack_channel": inbound.channel_id,
         "slack_thread_ts": inbound.reply_thread_ts,
     }
-    if principal.user is not None:
-        return session_services.create_session(
-            workspace=agent.workspace, created_by=principal.user, agent=agent,
-            title=title[:200], metadata=metadata,
-        ), True
-    # No `created_by`, exactly like a widget contact's session (tokens.contact_api):
-    # null is what keeps it out of every member's list.
-    if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
-        metadata[session_services.TRANSCRIPT_SOURCED] = True
-    return Session.objects.create(
-        workspace=agent.workspace, agent=agent, contact=principal.contact,
+    # A contact has no account: `created_by` stays null, exactly like a widget
+    # contact's session (tokens.contact_api) — null is what keeps it out of every
+    # member's list. The one constructor either way, so a contact's thread is
+    # recorded (transcript stamp, provenance) the same as a member's.
+    return session_services.create_session(
+        workspace=agent.workspace, created_by=principal.user, agent=agent,
+        contact=principal.contact if principal.user is None else None,
         title=title[:200], metadata=metadata,
     ), True
 
