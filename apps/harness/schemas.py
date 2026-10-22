@@ -431,10 +431,6 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
-    # 1 = this runner checks out a turn's `agent_sha` (the commit a PHI-safe
-    # declaration covers) instead of main. Absent (older code) = 0: such a box is
-    # never handed a declared turn (`routing.profile_q`), since it would run main.
-    pins: int = 0
     # The box's data mode (`RUNNER_DATA_MODE`; "zdr" = one zero-data-retention key, a
     # locked profile on every turn). A person's `zdr` declaration counts only while
     # this says "zdr" (`runner_requirements.in_force`). Absent (older code) = "".
@@ -866,9 +862,6 @@ class ClaimedTurnOut(TurnOut):
     # `X-Canopy-Chat-Key` header, it reaches this chat's secrets and page and
     # nothing else. Null for a turn that is not a chat's.
     chat_key: str | None = None
-    # For a turn in a capability declared PHI-safe: the agent repo commit to run
-    # (the current `AgentDeclaration`'s SHA), checked out instead of main. "" otherwise.
-    agent_sha: str = ""
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so

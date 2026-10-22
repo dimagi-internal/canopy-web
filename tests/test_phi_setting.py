@@ -1,7 +1,6 @@
-"""An author's PHI-safe declaration (`data: phi`), and what it changes: the
-declaration is a person's, refused when structurally false; a phi capability, and
-any turn in a ZDR conversation, is confined for everyone; and the declared commit
-is what runs.
+"""The PHI-safe interface setting (`data: phi`), and what it changes: it is set by
+a person, audited like any setting, refused when structurally false; and a phi
+capability, and any turn in a ZDR conversation, is confined for everyone.
 
 Spec: docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §5.
 """
@@ -13,11 +12,11 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import access, declarations
+from apps.agents import access, phi
 from apps.agents.interface import InterfaceError, parse
-from apps.agents.models import Agent, AgentAdmin, AgentDeclaration
+from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
-from apps.events.models import Event
+from apps.events.models import SettingChange
 from apps.harness import initiator as who
 from apps.harness import services
 from apps.harness.models import RunnerAssignment, Turn
@@ -27,8 +26,6 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 M = WorkspaceMembership
-SHA = "a" * 40
-SHA2 = "b" * 40
 
 DATA = {"callers": ["contact", "member"], "sites": ["connect-labs"], "data": "phi",
         "tools": ["Read", "Grep", "Glob", "Skill", "ToolSearch",
@@ -76,10 +73,10 @@ def _put(c, slug, **body):
     return c.put(f"/api/agents/{slug}/interface", data=body, content_type="application/json")
 
 
-def _declare(agent, by, sha=SHA, doc=IFACE):
+def _declare(agent, by, doc=IFACE):
     agent.interface = parse(doc)
-    agent.save(update_fields=["interface"])
-    declarations.record(agent, sha=sha, by=by)
+    agent.interface_published_by = by
+    agent.save(update_fields=["interface", "interface_published_by"])
 
 
 # --- refused when structurally false ---------------------------------------------------
@@ -112,63 +109,52 @@ def test_data_takes_only_phi():
         parse({"capabilities": {"data": {**DATA, "data": "pii"}}})
 
 
-# --- a person's word, at a commit ------------------------------------------------------
+# --- a person's setting, audited --------------------------------------------------------
 
 
-def test_a_token_cannot_declare_phi(w):
+def test_a_token_cannot_set_phi(w):
     raw, _ = PersonalToken.create_for_user(user=w["owner"], label="cli")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    r = _put(c, "labsdata", source=SOURCE, declare_sha=SHA)
+    r = _put(c, "labsdata", source=SOURCE)
     assert r.status_code == 403, r.content
-    assert not AgentDeclaration.objects.exists()
     w["agent"].refresh_from_db()
-    assert w["agent"].interface == {}  # nothing was published either
+    assert w["agent"].interface == {}  # nothing was published
 
 
 def test_a_browser_without_a_fresh_passkey_is_asked_for_one(w):
-    r = _put(_client(w["owner"], stepped_up=False), "labsdata", source=SOURCE, declare_sha=SHA)
+    r = _put(_client(w["owner"], stepped_up=False), "labsdata", source=SOURCE)
     assert r.status_code == 403 and r.json()["error"] == "step_up_required"
-    assert not AgentDeclaration.objects.exists()
+    assert not SettingChange.objects.exists()
 
 
-def test_a_declaration_names_its_commit(w):
+def test_a_person_sets_it_and_the_change_is_audited(w):
     r = _put(_client(w["owner"]), "labsdata", source=SOURCE)
-    assert r.status_code == 422 and "declare_sha" in r.json()["detail"]
-    r = _put(_client(w["owner"]), "labsdata", source=SOURCE, declare_sha="main")
-    assert r.status_code == 422
-
-
-def test_a_person_declares_it_and_it_is_recorded(w):
-    r = _put(_client(w["owner"]), "labsdata", source=SOURCE, declare_sha=SHA)
     assert r.status_code == 200, r.content
-    [d] = r.json()["declarations"]
-    assert (d["capability"], d["data"], d["sha"], d["declared_by_email"]) == (
-        "data", "phi", SHA, "jj@dimagi.com")
-    decl = declarations.current(w["agent"], "data")
-    assert decl.declared_by == w["owner"] and "mcp__*canopy-web__site_call" in decl.profile["tools"]
-    assert Event.objects.filter(kind="agent.phi_declared").count() == 1
+    body = r.json()
+    assert body["interface"]["capabilities"]["data"]["data"] == "phi"
+    assert body["published_by_email"] == "jj@dimagi.com"
+    w["agent"].refresh_from_db()
+    assert phi.is_phi(w["agent"], "data")
+    [row] = SettingChange.objects.filter(operation="publish_interface")
+    assert (row.actor, row.via, row.target) == (w["owner"], "ui", "labsdata")
+    assert "data: phi" in row.request["body"]["source"]
 
 
-def test_redeclaring_keeps_the_history_and_withdrawing_stops_it_counting(w):
-    c = _client(w["owner"])
-    _put(c, "labsdata", source=SOURCE, declare_sha=SHA)
-    _put(c, "labsdata", source=SOURCE, declare_sha=SHA2)
-    assert declarations.current(w["agent"], "data").sha == SHA2
-    assert AgentDeclaration.objects.filter(agent=w["agent"]).count() == 2
-    assert declarations.covers(w["agent"], "data", SHA2)
-    assert not declarations.covers(w["agent"], "data", SHA)
-    # No phi capability any more: no step-up needed to narrow, and nothing counts.
+def test_turning_it_off_needs_no_passkey_and_is_audited(w):
+    _put(_client(w["owner"]), "labsdata", source=SOURCE)
     r = _put(_client(w["owner"], stepped_up=False), "labsdata",
              source="capabilities:\n  ask:\n    callers: [member]\n")
-    assert r.status_code == 200 and r.json()["declarations"] == []
-    assert declarations.current(w["agent"], "data") is None
-    assert Event.objects.filter(kind="agent.phi_withdrawn").count() == 1
+    assert r.status_code == 200, r.content
+    w["agent"].refresh_from_db()
+    assert not phi.is_phi(w["agent"], "data")
+    assert SettingChange.objects.filter(operation="publish_interface").count() == 2
 
 
-def test_unpublishing_withdraws_every_declaration(w):
+def test_unpublishing_turns_it_off(w):
     _declare(w["agent"], w["owner"])
     assert _client(w["owner"]).delete("/api/agents/labsdata/interface").status_code == 200
-    assert declarations.current(w["agent"], "data") is None
+    w["agent"].refresh_from_db()
+    assert not phi.is_phi(w["agent"], "data")
 
 
 # --- confined for everyone ---------------------------------------------------------------
@@ -238,7 +224,7 @@ def test_without_phi_nothing_changes(w):
     assert _turn(w, w["owner"], _site_session(w)).access == access.FULL
 
 
-# --- the declared commit runs ------------------------------------------------------------
+# --- any runner that confines runs it --------------------------------------------------
 
 
 def _runner(c, **beat):
@@ -258,100 +244,13 @@ def _enqueue(w, user):
     return t
 
 
-def test_a_phi_turn_is_stamped_with_the_declared_commit_at_enqueue(w):
-    _declare(w["agent"], w["owner"])
-    t = _enqueue(w, w["owner"])
-    assert (t.capability, t.agent_sha) == ("data", SHA)
-
-
-def test_only_a_runner_that_checks_out_the_commit_claims_it(w):
+def test_a_runner_that_confines_claims_a_phi_turn_and_runs_its_current_code(w):
     _declare(w["agent"], w["owner"])
     c = _client(w["owner"])
-    old = _runner(c, profiles=3, envelope=2)
-    RunnerAssignment.objects.create(agent=w["agent"], runner_id=old, rank=0)
+    rid = _runner(c, profiles=3, envelope=2)
+    RunnerAssignment.objects.create(agent=w["agent"], runner_id=rid, rank=0)
     _enqueue(w, w["owner"])
-    assert c.post(f"/api/harness/runners/{old}/claim").status_code == 204
-    assert c.post(f"/api/harness/runners/{old}/heartbeat",
-                  {"active_turn_ids": [], "degraded": False, "note": "", "profiles": 3,
-                   "envelope": 2, "pins": 1}, content_type="application/json").status_code == 200
-    r = c.post(f"/api/harness/runners/{old}/claim")
+    r = c.post(f"/api/harness/runners/{rid}/claim")
     assert r.status_code == 200, r.content
     body = r.json()
-    assert body["agent_sha"] == SHA and body["caller_context"]["profile"] == "confined"
-
-
-def test_the_claim_carries_the_declaration_then_current(w):
-    _declare(w["agent"], w["owner"])
-    c = _client(w["owner"])
-    rid = _runner(c, profiles=3, envelope=2, pins=1)
-    RunnerAssignment.objects.create(agent=w["agent"], runner_id=rid, rank=0)
-    _enqueue(w, w["owner"])
-    declarations.record(w["agent"], sha=SHA2, by=w["owner"])  # re-declared while queued
-    assert c.post(f"/api/harness/runners/{rid}/claim").json()["agent_sha"] == SHA2
-
-
-def test_pins_is_reported_never_set_by_hand(w):
-    c = _client(w["owner"])
-    rid = _runner(c)
-    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"pins": 1}},
-                content_type="application/json")
-    assert r.status_code == 422
-
-
-# --- what the interface page shows an author ------------------------------------------
-
-
-def test_a_declaration_links_its_commit_and_says_what_ran_last(w):
-    w["agent"].repo_url = "https://github.com/dimagi-internal/labsdata"
-    w["agent"].save(update_fields=["repo_url"])
-    _declare(w["agent"], w["owner"])
-    c = _client(w["owner"])
-    [d] = c.get("/api/agents/labsdata/interface").json()["declarations"]
-    assert d["commit_url"] == f"https://github.com/dimagi-internal/labsdata/commit/{SHA}"
-    assert (d["last_run_sha"], d["last_run_at"]) == (None, None)
-    rid = _runner(c, profiles=3, envelope=2, pins=1)
-    RunnerAssignment.objects.create(agent=w["agent"], runner_id=rid, rank=0)
-    _enqueue(w, w["owner"])
-    assert c.post(f"/api/harness/runners/{rid}/claim").status_code == 200
-    declarations.record(w["agent"], sha=SHA2, by=w["owner"])  # re-declared after it ran
-    [d] = c.get("/api/agents/labsdata/interface").json()["declarations"]
-    assert (d["sha"], d["last_run_sha"]) == (SHA2, SHA) and d["last_run_at"]
-
-
-class _Resp:
-    def __init__(self, status, body):
-        self.status_code, self.ok, self._body = status, 200 <= status < 300, body
-
-    def json(self):
-        return self._body
-
-
-def test_the_repo_head_is_read_with_the_agents_github_identity(w, monkeypatch):
-    from apps.agents.models import AgentDelegation
-    from apps.common.encryption import encrypt_secret
-
-    agent = w["agent"]
-    agent.repo_url, agent.repo_ref = "https://github.com/dimagi-internal/labsdata", "main"
-    agent.save(update_fields=["repo_url", "repo_ref"])
-    url = "/api/agents/labsdata/interface/repo-head"
-    assert _client(w["owner"]).get(url).json()["detail"] == (
-        "the agent has no GitHub identity to read its repository with")
-    AgentDelegation.objects.create(user=w["owner"], agent=agent, service=AgentDelegation.GITHUB,
-                                   secret_enc=encrypt_secret("github_pat_x"))
-    seen = {}
-
-    def get(u, headers, timeout):
-        seen.update(url=u, auth=headers["Authorization"])
-        return _Resp(200, {"sha": SHA2})
-
-    monkeypatch.setattr(declarations.requests, "get", get)
-    body = _client(w["owner"]).get(url).json()
-    assert (body["sha"], body["ref"], body["detail"]) == (SHA2, "main", "")
-    assert body["commit_url"].endswith(f"/commit/{SHA2}")
-    assert seen == {"url": "https://api.github.com/repos/dimagi-internal/labsdata/commits/main",
-                    "auth": "Bearer github_pat_x"}
-    monkeypatch.setattr(declarations.requests, "get", lambda *a, **k: _Resp(404, {}))
-    body = _client(w["owner"]).get(url).json()
-    assert body["sha"] == "" and "404" in body["detail"]
-    # The agent's admins only: it reads the repo as the agent.
-    assert _client(w["editor"]).get(url).status_code == 403
+    assert body["caller_context"]["profile"] == "confined" and "agent_sha" not in body

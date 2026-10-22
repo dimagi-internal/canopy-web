@@ -54,7 +54,7 @@ from datetime import timedelta
 from canopy_sdk import consumer, contract
 from django.utils import timezone
 
-from apps.agents import declarations
+from apps.agents import phi
 
 from . import execution
 
@@ -207,14 +207,13 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
-    # A ZDR conversation's data reaches only a capability its author declared
-    # PHI-safe AT THE COMMIT THAT IS RUNNING (spec 2026-10-22-phi-agents-on-zdr-
-    # runners §6). Withdrawn, re-declared at another SHA, or never declared: no call.
-    if "zdr" in effective and not declarations.covers(agent, turn.capability, turn.agent_sha):
+    # A ZDR conversation's data reaches only a capability its interface marks
+    # `data: phi` (spec 2026-10-22-phi-agents-on-zdr-runners §6).
+    if "zdr" in effective and not phi.is_phi(agent, turn.capability):
         raise GatewayRefusal(
             "undeclared",
-            f"{site} gives its real data only to a capability declared PHI-safe at the commit "
-            "that is running, and this turn's is not; ask the agent's owner to declare it")
+            f"{site} gives its real data only to a capability marked PHI-safe (`data: phi`), "
+            "and this turn's is not; ask the agent's owner to set it")
     return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                              ceiling=list(cap.get("ceiling") or []),
                              execution=execution.facts_for(turn, agent, session, effective))

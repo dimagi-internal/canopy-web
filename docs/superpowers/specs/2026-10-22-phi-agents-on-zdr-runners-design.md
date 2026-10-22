@@ -187,16 +187,16 @@ capabilities:
     data: phi            # new: this capability may serve a host's PHI
 ```
 
-- `data: phi` is accepted only from a person (passkey step-up), and records
-  `declared_by`, `declared_at` and the agent repo **commit SHA** it covers
-  (`AgentDeclaration`, one row per declaration, history kept as Events).
+- `data: phi` is accepted only from a person (passkey step-up). It is an interface
+  setting like any other: the settings audit records who set it, through what, and the
+  before and after.
 - **Refused when it is structurally false:** a `phi` capability's tool set may hold only
   the gateway's site tools, `current_page` and read-only local tools. Drive, email,
   memory, Slack, the web or a shell in the capability → the declaration is a 422 naming
   them.
-- **The declared commit is what runs.** For a turn in a `phi` capability the runner
-  checks out the declared SHA instead of `git pull main`; a repo that has moved on runs
-  the declared SHA until the author re-declares.
+- **No commit is pinned** (amended): the agent runs its current code. An earlier draft
+  had the runner check out a declared SHA; the owner chose a plain, audited setting
+  instead, accepting that code merged later inherits the setting.
 - The declaration is what an author claims; whether a host accepts it is the host's
   allowlist (§6).
 
@@ -259,6 +259,11 @@ the claims, or a named refusal.
 `zdr`) adds, per call: a valid statement; `agent` in labs' allowlist; a declaration whose
 SHA equals `agent_sha`; the runner's flags in force ⊇ {`zdr`}; requirements ⊇ {`zdr`}.
 Labs records the agent, SHA, runner and declarer on `AuditEvent` and `MCPAuditLog`.
+
+*Amended:* with no commit pinned (§5), the statement carries no `agent_sha` and the
+declaration no `sha`; `declaration` is the capability's `data: phi` setting with who last
+published the interface and when. The gateway refuses a `zdr` session whose capability
+is not `data: phi`; `phi_clearance` drops the SHA check (dimagi-canopy 0.13.0).
 
 **The side door closes.** Every agent's own connect-labs credential is a
 no-uservisit-data PAT. Real data is reachable only as a visitor, through the gateway.

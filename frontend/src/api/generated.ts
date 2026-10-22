@@ -3405,23 +3405,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/interface/repo-head": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** The agent repo's current commit — the one a PHI-safe declaration is offered */
-        readonly get: operations["interface_repo_head"];
-        readonly put?: never;
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/agents/{slug}/admins": {
         readonly parameters: {
             readonly query?: never;
@@ -18935,31 +18918,6 @@ export interface components {
             /** User Id */
             readonly user_id: number | null;
         };
-        /** AgentDeclarationOut */
-        readonly AgentDeclarationOut: {
-            /** Capability */
-            readonly capability: string;
-            /** Data */
-            readonly data: string;
-            /** Sha */
-            readonly sha: string;
-            /** Declared By Email */
-            readonly declared_by_email?: string | null;
-            /**
-             * Declared At
-             * Format: date-time
-             */
-            readonly declared_at: string;
-            /**
-             * Commit Url
-             * @default
-             */
-            readonly commit_url: string;
-            /** Last Run Sha */
-            readonly last_run_sha?: string | null;
-            /** Last Run At */
-            readonly last_run_at?: string | null;
-        };
         /** AgentInterfaceOut */
         readonly AgentInterfaceOut: {
             /** Interface */
@@ -18980,11 +18938,6 @@ export interface components {
              * @default []
              */
             readonly warnings: readonly string[];
-            /**
-             * Declarations
-             * @default []
-             */
-            readonly declarations: readonly components["schemas"]["AgentDeclarationOut"][];
         };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {
@@ -18994,21 +18947,6 @@ export interface components {
             readonly interface?: {
                 readonly [key: string]: unknown;
             } | null;
-            /** Declare Sha */
-            readonly declare_sha?: string | null;
-        };
-        /** AgentRepoHeadOut */
-        readonly AgentRepoHeadOut: {
-            /** Repo */
-            readonly repo: string;
-            /** Ref */
-            readonly ref: string;
-            /** Sha */
-            readonly sha: string;
-            /** Commit Url */
-            readonly commit_url: string;
-            /** Detail */
-            readonly detail: string;
         };
         /** AgentAdminOut */
         readonly AgentAdminOut: {
@@ -27964,11 +27902,6 @@ export interface components {
              */
             readonly midturn: number;
             /**
-             * Pins
-             * @default 0
-             */
-            readonly pins: number;
-            /**
              * Data Mode
              * @default
              */
@@ -28263,11 +28196,6 @@ export interface components {
             readonly mcp_token?: string | null;
             /** Chat Key */
             readonly chat_key?: string | null;
-            /**
-             * Agent Sha
-             * @default
-             */
-            readonly agent_sha: string;
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {
@@ -37579,28 +37507,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentInterfaceOut"];
-                };
-            };
-        };
-    };
-    readonly interface_repo_head: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentRepoHeadOut"];
                 };
             };
         };

@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.12.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.13.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.12.0/dimagi_canopy-0.12.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.13.0/dimagi_canopy-0.13.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -593,9 +593,8 @@ on this request, `ath` = the access token's hash, and the facts:
 | claim | value |
 | --- | --- |
 | `agent` | the agent's slug |
-| `agent_sha` | the agent repo commit the turn is executing |
 | `capability` | the capability the turn runs in |
-| `declaration` | `{data: "phi", sha, capability, declared_by, declared_at}` — the author's PHI-safe declaration in force — or `null` |
+| `declaration` | `{data: "phi", capability, declared_by, declared_at}` — the capability's `data: phi` interface setting and who last published it — or `null` |
 | `runner` | `{id, name, flags: [{flag, declared_by, declared_at}]}`, flags **in force** (declared by a person and matched by the box's own report) |
 | `runner_posture` | `{data_mode, config_hash}` from the box's latest heartbeat |
 | `requirements` | the conversation's runner requirements |
@@ -615,12 +614,12 @@ refusal = execution.phi_clearance(agents={"labsdata"})   # None, or the reason
 ```
 
 `phi_clearance(agents=, require=("zdr",))` is the whole rule: the agent is on your
-allowlist, its declaration is `phi` at exactly `agent_sha`, the runner's flags in force
+allowlist, its capability is marked `data: phi`, the runner's flags in force
 and its reported `data_mode` include `zdr`, and the conversation requires `zdr`. Record
-`agent`, `agent_sha`, `runner` and the declarer on your audit log. A view call (a person
+`agent`, `runner` and the declarer on your audit log. A view call (a person
 clicking in an MCP Apps View) carries no statement: no agent is executing. canopy's
-gateway itself refuses to call you at all for a `zdr` conversation whose capability has
-no declaration covering the executing commit. The two attestations — that the box's
+gateway itself refuses to call you at all for a `zdr` conversation whose capability is
+not marked `data: phi`. The two attestations — that the box's
 model key is zero-data-retention, and that the agent behaves as declared — are a
 person's word, recorded; the statement says whose.
 

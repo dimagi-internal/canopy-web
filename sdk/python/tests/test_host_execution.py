@@ -16,10 +16,9 @@ from canopy_sdk.stores import MemoryJtiStore
 from .helpers import CLIENT_ID, RESOURCE, World
 
 TOKEN = "host-access-token"
-SHA = "a" * 40
 FACTS = {
-    "agent": "labsdata", "agent_sha": SHA, "capability": "data",
-    "declaration": {"data": "phi", "sha": SHA, "capability": "data",
+    "agent": "labsdata", "capability": "data",
+    "declaration": {"data": "phi", "capability": "data",
                     "declared_by": "jj@dimagi.com", "declared_at": "2026-10-22T00:00:00+00:00"},
     "runner": {"id": "r-1", "name": "cloud-zdr-1",
                "flags": [{"flag": "zdr", "declared_by": "jj@dimagi.com", "declared_at": "x"}]},
@@ -66,7 +65,7 @@ def _refused(world, headers, **kw) -> str:
 def test_a_statement_verifies_and_clears_phi(world):
     ex = _verify(world, _headers(_statement(world)))
     assert isinstance(ex, Execution)
-    assert (ex.agent, ex.agent_sha, ex.turn, ex.session) == ("labsdata", SHA, "t-1", "s-1")
+    assert (ex.agent, ex.agent_sha, ex.turn, ex.session) == ("labsdata", "", "t-1", "s-1")
     assert ex.runner_flags == {"zdr"} and ex.requirements == ("zdr",)
     assert ex.phi_clearance(agents={"labsdata"}) is None
 
@@ -137,7 +136,6 @@ def test_another_token_type_is_not_a_statement(world):
     ({"agent": "ace"}, "agent_not_allowed"),
     ({"declaration": None}, "undeclared"),
     ({"declaration": {**FACTS["declaration"], "data": "pii"}}, "undeclared"),
-    ({"agent_sha": "b" * 40}, "sha_mismatch"),
     ({"runner": {**FACTS["runner"], "flags": []}}, "runner_flags"),
     ({"runner_posture": {"data_mode": ""}}, "runner_posture"),
     ({"requirements": []}, "requirements"),

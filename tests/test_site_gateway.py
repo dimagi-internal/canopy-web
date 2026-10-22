@@ -286,17 +286,13 @@ def test_a_zdr_conversation_with_no_claiming_runner_is_refused(w):
     assert exc.value.code == "runner_requirements"
 
 
-def _declared(w, sha="d" * 40):
-    """`connect` declared PHI-safe at `sha`, and the turn running `sha`: what a ZDR
-    conversation's data needs (spec 2026-10-22-phi-agents-on-zdr-runners §6)."""
-    from apps.agents import declarations
-
+def _declared(w):
+    """`connect` set PHI-safe: what a ZDR conversation's data needs (spec
+    2026-10-22-phi-agents-on-zdr-runners §6)."""
     caps = dict(IFACE["capabilities"])
     caps["connect"] = {**caps["connect"], "data": "phi"}
     w["agent"].interface = parse({"capabilities": caps})
     w["agent"].save(update_fields=["interface"])
-    declarations.record(w["agent"], sha=sha, by=w["owner"])
-    Turn.objects.filter(pk=w["turn"].pk).update(agent_sha=sha)
 
 
 def test_the_same_turn_on_a_zdr_runner_resolves(w):

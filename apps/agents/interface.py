@@ -243,12 +243,12 @@ _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 def _data(value, name: str, cap: dict) -> str:
     """`data:` — what a capability may serve. `phi` is an author's PHI-safe
     declaration, refused when its profile shows it is not (spec 2026-10-22-phi-
-    agents-on-zdr-runners §5; `apps/agents/declarations.py`)."""
-    from . import declarations
+    agents-on-zdr-runners §5; `apps/agents/phi.py`)."""
+    from . import phi
 
-    if value not in declarations.DATA_VALUES:
-        raise InterfaceError(f"{name}.data must be one of {sorted(declarations.DATA_VALUES)}")
-    refusals = declarations.structural_refusals(name, cap)
+    if value not in phi.DATA_VALUES:
+        raise InterfaceError(f"{name}.data must be one of {sorted(phi.DATA_VALUES)}")
+    refusals = phi.structural_refusals(name, cap)
     if refusals:
         raise InterfaceError("; ".join(refusals))
     return value

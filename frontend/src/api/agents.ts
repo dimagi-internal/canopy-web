@@ -804,27 +804,27 @@ export async function getAgentInterface(slug: string): Promise<AgentInterfaceOut
 
 // Save the interface as YAML (kept verbatim, comments and all). Owner/admin only;
 // a 422 carries the parser's reason, which the editor shows as-is. YAML with a
-// `data: phi` capability is a PHI-safe declaration: it needs `declareSha`, the
-// agent repo commit it covers, and a passkey step-up (the API client prompts).
-export async function saveAgentInterface(
-  slug: string,
-  source: string,
-  declareSha?: string,
-): Promise<AgentInterfaceOut> {
+// `data: phi` capability needs a passkey step-up (the API client prompts).
+export async function saveAgentInterface(slug: string, source: string): Promise<AgentInterfaceOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/interface', {
     params: { path: { slug } },
-    body: declareSha ? { source, declare_sha: declareSha } : { source },
+    body: { source },
   })
   return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
 }
 
-export type AgentRepoHeadOut = Schemas['AgentRepoHeadOut']
+export type SettingChangeOut = Schemas['SettingChangeOut']
 
-// The agent repo's current commit, offered as the one a declaration covers;
-// `sha` is "" (with `detail`) when canopy cannot read it.
-export async function getAgentRepoHead(slug: string): Promise<AgentRepoHeadOut> {
-  const res = await apiV2.GET('/api/agents/{slug}/interface/repo-head', { params: { path: { slug } } })
-  return unwrap(res, 'getAgentRepoHead') as unknown as AgentRepoHeadOut
+// The audited changes to this agent's interface, newest first: every save and
+// unpublish, from any client. Admins see everyone's; others see their own.
+export async function getAgentInterfaceHistory(slug: string): Promise<SettingChangeOut[]> {
+  const res = await apiV2.GET('/api/events/setting-changes', {
+    params: { query: { target: slug, limit: 50 } },
+  })
+  const items = (unwrap(res, 'getAgentInterfaceHistory') as unknown as { items: SettingChangeOut[] }).items
+  return items.filter(
+    (c) => (c.operation === 'publish_interface' || c.operation === 'unpublish_interface') && c.target === slug,
+  )
 }
 
 export async function unpublishAgentInterface(slug: string): Promise<AgentInterfaceOut> {

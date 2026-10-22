@@ -991,11 +991,7 @@ def profile_q(runner) -> Q:
     """
     if (int(runner.capabilities.get("profiles") or 0) >= PROFILES_VERSION
             and int(runner.capabilities.get("envelope") or 0) >= ENVELOPE_VERSION):
-        # A turn whose capability is declared PHI-safe runs the declared commit
-        # (`Turn.agent_sha`), so only a box that checks it out may hold one.
-        if int(runner.capabilities.get("pins") or 0) >= 1:
-            return Q()
-        return Q(agent_sha="")
+        return Q()
     return Q(capability="")
 
 

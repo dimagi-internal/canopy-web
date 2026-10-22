@@ -9,9 +9,8 @@ signed by canopy's published client key, saying:
 | claim | value |
 | --- | --- |
 | `agent` | slug |
-| `agent_sha` | the commit the turn is executing (`Turn.agent_sha`, stamped at claim) |
 | `capability` | the capability the turn runs in |
-| `declaration` | `{data, sha, capability, declared_by, declared_at}` or null |
+| `declaration` | `{data, capability, declared_by, declared_at}` — the capability's `data: phi` setting and who last published the interface holding it — or null |
 | `runner` | `{id, name, flags: [{flag, declared_by, declared_at}]}` — flags IN FORCE |
 | `runner_posture` | the latest heartbeat's `data_mode` and config hash |
 | `requirements` | the conversation's requirements |
@@ -26,7 +25,7 @@ own signed statement (`host_gateway._auth`). The host verifies with
 """
 from __future__ import annotations
 
-from apps.agents import declarations
+from apps.agents import phi
 from apps.harness import runner_requirements as rr
 
 
@@ -55,13 +54,10 @@ def posture_facts(runner) -> dict:
 
 def facts_for(turn, agent, session, requirements) -> dict:
     """Everything a statement for this turn says, before it is signed."""
-    decl = declarations.current(agent, turn.capability) if declarations.is_phi(
-        agent, turn.capability) else None
     return {
         "agent": agent.slug,
-        "agent_sha": turn.agent_sha or "",
         "capability": turn.capability or "",
-        "declaration": declarations.as_claim(decl),
+        "declaration": phi.as_claim(agent, turn.capability),
         "runner": runner_facts(turn.claimed_by),
         "runner_posture": posture_facts(turn.claimed_by),
         "requirements": sorted(requirements),
