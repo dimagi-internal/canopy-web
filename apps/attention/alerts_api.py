@@ -102,6 +102,21 @@ def _visible(request: HttpRequest, alert_id: int) -> Alert:
     raise ProblemError(404, "Alert not found", type_=TYPE_NOT_FOUND)
 
 
+def _history_visible(request: HttpRequest, alert_id: int) -> Alert:
+    """History is the audit trail (it must outlive the alert): visible when the
+    workspace is the caller's and the source offers them any action, whatever
+    the alert's status."""
+    alert = (Alert.objects.select_related("closed_by")
+             .filter(pk=alert_id, workspace_id__in=wsvc.request_member_slugs(request)).first())
+    if alert is not None:
+        try:
+            if alerts.source_for(alert.kind).actions(alert, request.user):
+                return alert
+        except LookupError:
+            pass
+    raise ProblemError(404, "Alert not found", type_=TYPE_NOT_FOUND)
+
+
 def _organisation(alert: Alert) -> str:
     return wsvc.tree_roots({alert.workspace_id}).get(alert.workspace_id, alert.workspace_id)
 
@@ -173,9 +188,9 @@ def undismiss_alert(request: HttpRequest, id: int) -> AlertOut:
 # same visibility as the alert itself: a stranger gets a 404
 @gate("self")
 def alert_history(request: HttpRequest, id: int) -> list[AlertEventOut]:
-    """Every change to the alert, oldest first: raised, changed, acted,
+    """Every change to the alert, oldest first (also once resolved): raised, changed, acted,
     notified, dismissed, undismissed, resolved, reopened."""
-    alert = _visible(request, id)
+    alert = _history_visible(request, id)
     return [AlertEventOut(at=e.at, kind=e.kind, actor_email=e.actor.email if e.actor else "",
                           action_id=e.action_id, payload=e.payload)
             for e in alert.events.select_related("actor").order_by("at", "pk")]

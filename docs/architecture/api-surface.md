@@ -361,7 +361,7 @@ A user-level view like attention (read once per organisation, rows carry `organi
 - `GET /api/me/alerts/?scope=&status=open|dismissed` (`list_alerts`) — `AlertOut[]` (`id, kind, severity, title, body, url, workspace, organisation, scopes, status, first_seen_at, last_seen_at, occurrences, closed_by_email, closed_at, actions[{id,label,closes,href}], last_notify`), `blocking` then `action` then `setup`, newest first. `scope` keeps rows whose `scopes` contain it. `dismissed` = dismissed in the last 7 days that the caller could dismiss. `last_notify` is the latest `notified` event as a line ("A asked B at 14:02" / "Notified B at 14:02"), else "".
 - `POST /api/me/alerts/{id}/act` `{action}` (`act_on_alert`) — runs an action still offered to the caller; a link action is followed in the browser, never run. **409** problem+json with `code: "action-not-offered"` when it is not (or no longer) offered.
 - `POST /api/me/alerts/{id}/undismiss` (`undismiss_alert`) — anyone currently offered `dismiss`; **409** `action-not-offered` otherwise.
-- `GET /api/me/alerts/{id}/history` (`alert_history`) — `AlertEventOut[]` (`at, kind, actor_email, action_id, payload`), oldest first.
+- `GET /api/me/alerts/{id}/history` (`alert_history`) — `AlertEventOut[]` (`at, kind, actor_email, action_id, payload`), oldest first; works for resolved alerts too (visible when the workspace is the caller's and the source offers them any action, whatever the status).
 
 ### User-level views (`/api/me/…`)
 

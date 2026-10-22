@@ -201,3 +201,31 @@ def test_unknown_kind_row_is_skipped_not_500(world):
     _alert(world.a, "ghost", kind="no_such_kind")
     world.source.offered = {world.ann.pk: [FIX]}
     assert _ids(world.ca.get("/api/me/alerts/")) == []
+
+
+def test_other_organisation_user_gets_404_on_every_by_id_route(world):
+    """The tenancy check: offered everything by the source, but not in org-a."""
+    al = _alert(world.a)
+    carol = _user("carol")
+    _ws("org-b", carol)
+    world.source.offered = {carol.pk: [FIX, alerts.DISMISS]}
+    cc = _client(carol)
+    assert _ids(cc.get("/api/me/alerts/")) == []
+    assert cc.post(f"/api/me/alerts/{al.pk}/act", {"action": "fix"}, content_type="application/json").status_code == 404
+    assert cc.get(f"/api/me/alerts/{al.pk}/history").status_code == 404
+    alerts.dismiss(al, world.ann)
+    assert cc.post(f"/api/me/alerts/{al.pk}/undismiss").status_code == 404
+    assert _ids(cc.get("/api/me/alerts/?status=dismissed")) == []
+    Alert.objects.filter(pk=al.pk).update(status=Alert.RESOLVED)
+    assert cc.get(f"/api/me/alerts/{al.pk}/history").status_code == 404
+
+
+def test_history_of_a_resolved_alert(world):
+    al = _alert(world.a)
+    world.source.offered = {world.ann.pk: [FIX]}
+    alerts.resolve(al, reason=Alert.REASON_SOURCE)
+    assert _ids(world.ca.get("/api/me/alerts/")) == []
+    resp = world.ca.get(f"/api/me/alerts/{al.pk}/history")
+    assert resp.status_code == 200 and [e["kind"] for e in resp.json()] == ["resolved"]
+    assert world.cb.get(f"/api/me/alerts/{al.pk}/history").status_code == 404  # offered nothing
+    assert _client(_user("eve")).get(f"/api/me/alerts/{al.pk}/history").status_code == 404
