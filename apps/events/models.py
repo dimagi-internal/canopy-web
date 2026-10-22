@@ -161,9 +161,10 @@ class SettingChange(models.Model):
     (`audit.redact`)."""
 
     changes = models.JSONField(default=list, blank=True)
-    """Before/after, when the route's handler reported them
-    (`audit.note_change`): ``[{"scope", "before", "after"}]``. Empty when the
-    handler doesn't — the request body is then the record of what was set."""
+    """Before/after: ``[{"scope", "before", "after"}]``. Each row the route wrote,
+    captured (``"<app_label>.<model>:<pk>"``, the fields that changed; a delete adds
+    ``also_deleted``), unless its handler reported its own (`audit.note_change`).
+    Empty when nothing it wrote changed — the request body is then the record."""
 
     created_at = models.DateTimeField(auto_now_add=True)
 

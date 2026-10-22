@@ -1,7 +1,7 @@
 # Settings audit
 
 Every change to a setting leaves one `SettingChange` row (`apps/events/models.py`) that
-names who made it, through what, what they sent and, where the route knows it, the
+names who made it, through what, what they sent and the
 state before and after. There is one plumbing for it, `apps/events/audit.py`. No route
 writes its own audit record.
 
@@ -40,13 +40,36 @@ once). When unsure, classify it as a setting.
 
 ## Before and after
 
-A handler that knows the state it replaced reports it with
-`audit.note_change(scope=, before=, after=)`. Routing does this (`apps/harness/routing_audit.py`)
-because its writes delete and re-create rows that carry no author, so the previous rule
-is otherwise gone. When every change a request noted is a no-op, such as re-sending a
-rule unchanged, nothing is recorded. A route that notes nothing still gets its row; the
-request body is then the record of what was set. Adding `note_change` to more handlers
-is how a setting gets a before/after.
+Every setting route gets a before/after without code of its own. While `audited` runs
+it, each row the route writes is captured (`apps/api/change_capture.py`) as one entry of
+`changes`: `{"scope": "<app_label>.<model>:<pk>", "before", "after"}` with only the
+fields that changed. A created row has `before: null` and its fields as `after`; a
+deleted row has its fields as `before`, `after: null`, and `also_deleted`
+(`{"app.Model": count}`) for what cascaded with it. A save that changed nothing is
+left out. The key and `auto_now` timestamps are not compared.
+
+- **What is seen:** `save()` (through `pre_save`/`post_save`), `Model.delete()`,
+  `QuerySet.delete()`, `QuerySet.update()` and `bulk_create()` (those four are wrapped
+  by `change_capture.install` on the first setting request). Deletes are not taken from delete
+  signals: any delete listener turns off Django's fast delete for its model always,
+  and deleting a workspace or an agent cascades through high-volume tables.
+- **What is not:** `bulk_update()`, raw SQL, and m2m `add`/`remove`. A route that
+  writes only that way reports with `note_change`.
+- **Not settings:** the audit's own rows, the logs and the rolling session
+  (`audit._NOT_SETTINGS`).
+- **Secrets:** a field whose name matches the body's secret pattern, any `*_enc`,
+  hash, digest or salt field, and binary fields are `[redacted]` (a secret-named
+  flag or number is shown). Long values are cut like the body.
+- At most 100 rows per request are listed; the rest are counted in a last
+  `{"scope": "more"}` entry.
+
+A handler that knows the state better reports it with
+`audit.note_change(scope=, before=, after=)`, and its notes replace the captured rows.
+Routing does this (`apps/harness/routing_audit.py`) because its writes delete and
+re-create rows, so a row-level record would read as a delete and a create. When every
+change a request noted is a no-op, such as re-sending a rule unchanged, nothing is
+recorded. A route whose writes changed nothing and that noted nothing still gets its
+row, with empty `changes`; the request body is then the record of what was set.
 
 ## Reading it
 
