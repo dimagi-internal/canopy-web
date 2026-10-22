@@ -254,6 +254,21 @@ def test_migration_turns_zk_off_only_for_1password_agents_holding_nothing(world)
     assert flags == {"bare": False, "holding": True, "wrapped": True, "keyed": True, "vault": True}
 
 
+def test_migration_moves_agents_with_no_1password_vault_onto_canopy_vault(world):
+    ws, jj = world["ws"], world["jj"]
+    Agent.objects.create(slug="novault", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD)
+    Agent.objects.create(slug="legacy", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD,
+                         op_vault="Agent-Legacy")
+    held = Agent.objects.create(slug="held", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD)
+    AgentCredential.objects.create(agent=held, name="x", value_enc="")
+    mig = importlib.import_module("apps.agents.migrations.0070_vaultless_agents_on_canopy_vault")
+    mig.forwards(django_apps, None)
+    rows = {a.slug: (a.credential_source, a.zk_enabled, a.zk_kv)
+            for a in Agent.objects.filter(slug__in=["novault", "legacy", "held"])}
+    assert rows["novault"] == (Agent.CANOPY_WEB, True, 0)
+    assert rows["legacy"][0] == Agent.ONEPASSWORD and rows["held"][0] == Agent.ONEPASSWORD
+
+
 def test_a_1password_agent_resolves_without_a_device_proof_even_if_zk_is_on(world):
     hal = world["hal"]
     Agent.objects.filter(pk=hal.pk).update(zk_enabled=True, zk_kv=0, credential_source=Agent.ONEPASSWORD)
