@@ -119,3 +119,28 @@ def _over(key: str, limit: int, window: int) -> bool:
         cache.add(key, 1, timeout=window)
         return False
     return count > limit
+
+
+# --- the site agents API ----------------------------------------------------
+#
+# `GET /api/sites/agents` is unauthenticated in the same way: the signed request
+# IS the credential. A site asks every few minutes, so both budgets are far above
+# real use; they bound the signature checks (and response builds) a flood can cause.
+
+
+class SiteAgentsRateLimitError(Exception):
+    """Raised when site agents API requests exceed a budget."""
+
+
+def check_site_agents_client(client_ip) -> None:
+    limit = int(getattr(settings, "SITE_AGENTS_CLIENT_LIMIT", 120))
+    window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
+    if _over(f"tokens:site-agents:ip:{client_ip or 'unknown'}", limit, window):
+        raise SiteAgentsRateLimitError(f"too many site agents requests ({limit} per {window}s)")
+
+
+def check_site_agents_issuer(name: str) -> None:
+    limit = int(getattr(settings, "SITE_AGENTS_ISSUER_LIMIT", 60))
+    window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
+    if _over(f"tokens:site-agents:iss:{name}", limit, window):
+        raise SiteAgentsRateLimitError(f"too many site agents requests for this site ({limit} per {window}s)")

@@ -7472,6 +7472,60 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/connected-apps/{app_id}/needs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What a connected site asks of agents, and who meets it
+         * @description The site's signed `site.json` — its pages and the scopes each grants, what
+         *     an agent must be to read real data there, and which agents it offers — beside
+         *     canopy's own site agents response for the site: per allowed agent, whether it meets the
+         *     site's `real_data.requires` and, if not, why. Fetched like the site's keys
+         *     (https only, bounded, cached) and fail-closed: an unreadable document is
+         *     `available: false` with its reason.
+         */
+        readonly get: operations["connected_app_needs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sites/agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The agents a connected site may show, signed
+         * @description Which agents this site may show, and on what terms — signed by canopy.
+         *
+         *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own
+         *     key (the one at its `jwks_url`): `iss` = its Connected-site name, `aud` =
+         *     this URL, at most 60 s, single-use `jti`; `canopy_agent` names one of its
+         *     agents when two workspaces registered the same name. The answer is
+         *     `application/jose`: a compact JWS signed with canopy's client key (its `kid`
+         *     in `/oauth/client.json`), payload `v`, `iss`, `aud`, `iat`, `exp`,
+         *     `version`, `site`, `runner_flags`, `agents`. Verify it with
+         *     `canopy_sdk.site_agents.fetch_site_agents`.
+         */
+        readonly get: operations["get_site_agents"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/timeline/": {
         readonly parameters: {
             readonly query?: never;
@@ -26936,6 +26990,72 @@ export interface components {
             /** Live Probe Ok */
             readonly live_probe_ok: boolean | null;
         };
+        /** AgentFitOut */
+        readonly AgentFitOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Offered */
+            readonly offered: boolean;
+            /** Real Data */
+            readonly real_data: boolean;
+            /** Ready */
+            readonly ready: boolean;
+            /** Meets Real Data */
+            readonly meets_real_data: boolean;
+            /** Why Not */
+            readonly why_not: readonly string[];
+        };
+        /** RealDataRequiresOut */
+        readonly RealDataRequiresOut: {
+            /**
+             * Phi Safe
+             * @default false
+             */
+            readonly phi_safe: boolean;
+            /**
+             * Runner Flag
+             * @default
+             */
+            readonly runner_flag: string;
+        };
+        /**
+         * SiteNeedsOut
+         * @description What a connected site asks of canopy's agents (its signed `site.json`).
+         */
+        readonly SiteNeedsOut: {
+            /** Url */
+            readonly url: string;
+            /** Available */
+            readonly available: boolean;
+            /** Reason */
+            readonly reason: string;
+            /** Fetched At */
+            readonly fetched_at: string | null;
+            /** Stale */
+            readonly stale: boolean;
+            /** Pages */
+            readonly pages: readonly components["schemas"]["SitePageOut"][];
+            readonly requires: components["schemas"]["RealDataRequiresOut"];
+            /** Uses Version */
+            readonly uses_version: string;
+            /** Site Agents Version */
+            readonly site_agents_version: string;
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentFitOut"][];
+            /** Not Allowed */
+            readonly not_allowed: readonly string[];
+        };
+        /** SitePageOut */
+        readonly SitePageOut: {
+            /** Key */
+            readonly key: string;
+            /** Title */
+            readonly title: string;
+            /** Scopes */
+            readonly scopes: readonly string[];
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -43928,6 +44048,47 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["ConnectionTestOut"];
                 };
+            };
+        };
+    };
+    readonly connected_app_needs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly app_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SiteNeedsOut"];
+                };
+            };
+        };
+    };
+    readonly get_site_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

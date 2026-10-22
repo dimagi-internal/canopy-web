@@ -88,3 +88,15 @@ export async function disconnectApp(slug: string, appId: number): Promise<void> 
   await unwrap<void>(res, 'Could not disconnect the site')
 }
 
+
+export type SiteNeeds = components['schemas']['SiteNeedsOut']
+export type AgentFit = components['schemas']['AgentFitOut']
+
+/** What the site asks of agents (its signed `site.json`), and per agent canopy
+ *  allows there whether it meets it. Fail-closed: `available: false` + reason. */
+export async function getConnectedAppNeeds(slug: string, appId: number): Promise<SiteNeeds> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/connected-apps/{app_id}/needs', {
+    params: { path: { slug, app_id: appId } },
+  })
+  return unwrap<SiteNeeds>(res, "Could not read what the site needs")
+}

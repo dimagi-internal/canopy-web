@@ -207,7 +207,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   - **inbound** — the Gmail push doorbell.
   - **email** — the workspace's own mail domain via SES: DNS records, per-address routes (agent / member forward / drop; the catch-all forwards or drops), daily send cap. Removing an address or the domain asks first and says existing threads are kept.
   - **connected-apps** ("Connected sites") — which websites may host one of
-    this workspace's agents.
+    this workspace's agents; per site, what it needs from agents (its signed
+    `site.json`: pages + scopes, what real data requires) and whether each
+    allowed agent meets it, with why not.
   - **secrets** — the workspace's SHARED 1Password vault (what every agent here
     reads, e.g. the Google OAuth clients), and the one screen that states the
     credential model whole: an agent's own vault is on the agent (Settings →

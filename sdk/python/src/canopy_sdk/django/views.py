@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from django.contrib.auth.decorators import login_required
-from django.http import Http404, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -129,6 +129,35 @@ def jwks(request):
     except Exception:  # noqa: BLE001 - a malformed key is a deployment fault
         log.exception("CANOPY_HOST['SIGNING_KEY'] could not be read")
         return _json({"keys": []}, 503)
+
+
+@require_GET
+def site_document(request):
+    """``site.json``: what this site asks of canopy's agents, signed with the
+    host's key (``canopy_sdk.site``). canopy reads it beside ``jwks.json``.
+    Unauthenticated, like the JWKS: it names pages and agents, never a person."""
+    from ..site import MEDIA_TYPE, SiteDocumentError, sign_site_document
+    from ..site import site_document as build
+
+    try:
+        config = conf.get_host_config()
+        if not config.app_name:
+            raise HostNotConfigured("CANOPY_HOST['APP_NAME'] is not set")
+        needs = conf.site_needs()
+        token = sign_site_document(config.signing_key, build(
+            config.app_name, pages=conf.site_pages(needs.get("titles")),
+            real_data=needs.get("real_data"), uses=needs.get("uses")))
+    except HostNotConfigured:
+        return _json({"error": "not_configured"}, 503)
+    except SiteDocumentError as exc:
+        log.error("CANOPY_HOST's site document is not valid: %s", exc)
+        return _json({"error": exc.code, "error_description": exc.message}, 503)
+    except Exception:  # noqa: BLE001 - a malformed key or a failing hook is a deployment fault
+        log.exception("canopy/site.json could not be built")
+        return _json({"error": "server_error"}, 503)
+    response = HttpResponse(token, content_type=MEDIA_TYPE)
+    response["Cache-Control"] = "max-age=60"
+    return response
 
 
 def _grant_config_or_404():

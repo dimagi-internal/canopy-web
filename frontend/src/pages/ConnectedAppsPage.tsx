@@ -9,12 +9,14 @@ import { relativeAge } from '@/lib/relativeAge'
 import {
   connectApp,
   disconnectApp,
+  getConnectedAppNeeds,
   listConnectedApps,
   testConnectedApp,
   updateConnectedApp,
   type ConnectedApp,
   type ConnectionCheck,
   type ConnectionTest,
+  type SiteNeeds,
 } from '@/api/connectedApps'
 import { WorkspaceApiError } from '@/api/workspaces'
 import { roleAllows } from '@/lib/workspaceRoles'
@@ -348,6 +350,129 @@ export function SiteHealthTable({
   )
 }
 
+function Tick({ on }: { on: boolean }): JSX.Element {
+  return <span className={on ? 'text-foreground' : 'text-muted-foreground'}>{on ? 'yes' : '—'}</span>
+}
+
+/**
+ * What the site asks of canopy's agents (its signed `site.json`, read beside its
+ * `jwks.json`) and, per agent this workspace allows there, whether it meets it.
+ * The fit is computed from the same site agents API the site reads (`/api/sites/agents`),
+ * so the two never disagree; every "no" names where in canopy to fix it.
+ */
+export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
+  if (!needs.available) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        What it needs: <span className="text-warning">not available</span> — {needs.reason}
+      </p>
+    )
+  }
+  const req = needs.requires
+  const asks = [req.phi_safe && 'PHI-safe', req.runner_flag && `a ready ${req.runner_flag} runner`]
+    .filter(Boolean)
+    .join(' and ')
+  return (
+    <div className="space-y-2">
+      {needs.stale && (
+        <p className="text-xs text-warning">
+          Showing the last copy canopy could verify; refreshing failed — {needs.reason}
+        </p>
+      )}
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-b border-border text-left text-muted-foreground">
+            <th className="py-1 pr-2 font-normal">Page</th>
+            <th className="py-1 pr-2 font-normal">Key</th>
+            <th className="py-1 pr-2 font-normal">Scopes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {needs.pages.map((p) => (
+            <tr key={p.key} className="border-b border-border align-top last:border-0">
+              <td className="py-1 pr-2 text-foreground">{p.title || p.key}</td>
+              <td className="py-1 pr-2 font-mono text-muted-foreground">{p.key}</td>
+              <td className="py-1 pr-2 font-mono text-muted-foreground">{p.scopes.join(' ')}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-xs text-muted-foreground">
+        Real data needs: {asks || 'nothing named'}.
+        {needs.uses_version && needs.uses_version !== needs.site_agents_version && (
+          <span className="ml-1 text-warning">
+            The site chose its agents against an older site agents version; it picks up the current one on its
+            next refresh.
+          </span>
+        )}
+      </p>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-b border-border text-left text-muted-foreground">
+            <th className="py-1 pr-2 font-normal">Agent</th>
+            <th className="py-1 pr-2 font-normal">Offered there</th>
+            <th className="py-1 pr-2 font-normal">Real data there</th>
+            <th className="py-1 pr-2 font-normal">Ready</th>
+            <th className="py-1 pr-2 font-normal">Meets real-data needs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {needs.agents.map((a) => (
+            <tr key={a.slug} className="border-b border-border align-top last:border-0">
+              <td className="py-1 pr-2 text-foreground">{a.name}</td>
+              <td className="py-1 pr-2"><Tick on={a.offered} /></td>
+              <td className="py-1 pr-2"><Tick on={a.real_data} /></td>
+              <td className="py-1 pr-2"><Tick on={a.ready} /></td>
+              <td className="py-1 pr-2">
+                {a.meets_real_data ? (
+                  <span className="text-success">yes</span>
+                ) : (
+                  <ul className={a.real_data ? 'text-destructive' : 'text-muted-foreground'}>
+                    {a.why_not.map((why) => (
+                      <li key={why}>{why}</li>
+                    ))}
+                  </ul>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {needs.not_allowed.length > 0 && (
+        <p className="text-xs text-destructive">
+          The site names {needs.not_allowed.join(', ')}, which this workspace does not allow on it
+          — it can never show them.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/** Loads and shows `SiteNeedsTable` for one site. */
+export function SiteNeedsSection({ slug, app }: { slug: string; app: ConnectedApp }): JSX.Element {
+  const [needs, setNeeds] = useState<SiteNeeds | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let live = true
+    getConnectedAppNeeds(slug, app.id)
+      .then((n) => live && setNeeds(n))
+      .catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)))
+    return () => {
+      live = false
+    }
+  }, [slug, app.id, app.jwks_url])
+
+  return (
+    <div className="space-y-2 border-t border-border pt-2">
+      <h3 className="text-xs font-medium text-foreground">What it needs from agents</h3>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {!needs && !error && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {needs && <SiteNeedsTable needs={needs} />}
+    </div>
+  )
+}
+
 /** "Test connection": runs canopy's conformance checks against this site's
  *  settings, from canopy's server, and shows the table. */
 export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedApp }): JSX.Element {
@@ -559,6 +684,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   }
                 />
               )}
+              {canTest && !app.revoked && <SiteNeedsSection slug={slug} app={app} />}
               {canTest && !app.revoked && <ConnectionTester slug={slug} app={app} />}
             </div>
           ))}
