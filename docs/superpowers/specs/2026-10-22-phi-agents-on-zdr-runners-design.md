@@ -371,7 +371,11 @@ Each step ships on its own and fails closed until the next lands.
    edit on an unsandboxed workflow and one that fetches another host, an edit saved
    without its preview, and a
    stored `TOOL_RESULT` / `tool_end` / receipt holding a row (§4) — and asserts each is
-   refused or empty.
+   refused or empty. Script: `scripts/e2e_phi_redteam.py` — a preflight (declaration,
+   box, dedication, self-declared flag) and, on a ZDR conversation a person opens from
+   Labs, the exits above plus a canary that must appear in nothing canopy stores. The
+   undeclared SHA no longer applies (no commit pin, §5); auto-debug is unit-tested only;
+   the `workflow:edit` exits join when that scope lands.
 
 ## Out of scope
 
