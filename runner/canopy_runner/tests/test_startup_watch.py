@@ -101,6 +101,37 @@ def test_an_ambiguous_name_matches_nothing():
     assert "question" not in s[0]
 
 
+@pytest.mark.parametrize("outcome", ["no_dialog", "answered"])
+def test_cancel_clears_the_marker_for_good(tmp_path, outcome):
+    """REGRESSION, eva 2026-10-22: Cancel on a stall marker hid it for one grace
+    window, then the next report re-derived it from "still no transcript". An
+    authoritative answer outcome must retire the watch, durably."""
+    from canopy_runner import hooks
+
+    path = tmp_path / "startup-watch.json"
+    startup_watch.configure(path)
+    startup_watch.note_created("eva", "c-goal-6a8f", now=lambda: CREATED)
+
+    hooks.note_answer_outcome("c-goal-6a8f", outcome)
+
+    s = [_session(project="eva")]
+    _attach(s, now=CREATED + 600)
+    assert "question" not in s[0]
+    assert json.loads(path.read_text()) == []
+
+
+@pytest.mark.parametrize("outcome", ["unreachable", "wrong_pane", "ambiguous_session"])
+def test_an_answer_that_never_looked_keeps_the_marker(outcome):
+    """No screen read means no evidence the session is unstuck."""
+    from canopy_runner import hooks
+
+    startup_watch.note_created("eva", "c-goal-6a8f", now=lambda: CREATED)
+    hooks.note_answer_outcome("c-goal-6a8f", outcome)
+    s = [_session(project="eva")]
+    _attach(s, now=CREATED + 600)
+    assert s[0]["question"]["source"] == "startup"
+
+
 def test_the_watch_survives_a_restart(tmp_path):
     path = tmp_path / "startup-watch.json"
     startup_watch.configure(path)

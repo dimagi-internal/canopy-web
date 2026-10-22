@@ -127,6 +127,25 @@ def _forget(keys) -> None:
         _created.pop(key, None)
 
 
+def forget_task(task: str) -> None:
+    """Stop watching `task`: a human answered its marker and the screen showed no
+    dialog afterwards (or the Escape landed).
+
+    Without this, Cancel on a stall marker could never clear it: the answer path
+    reconciles only the hook/screen menus, and the next report re-derived the
+    marker from "still no transcript" — so the button hid the panel for one grace
+    window and it came straight back. Keyed by name across projects, like the
+    answer itself (`hooks.note_answer_outcome`)."""
+    if not task:
+        return
+    with _lock:
+        _ensure_loaded()
+        keys = [k for k in _created if k[1] == task]
+        if keys:
+            _forget(keys)
+            _save()
+
+
 def attach_stall_markers(sessions: list[dict], *, has_transcript, now=None) -> None:
     """Set `question` to a startup-stall marker on each reported session canopy
     created that has not started, in place. Best-effort; never raises.
