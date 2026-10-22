@@ -87,6 +87,7 @@ INSTALLED_APPS = [
     "apps.issues",
     "apps.walkthroughs",
     "apps.tokens",
+    "apps.github_connect",
     "apps.reviews",
     "apps.runs",
     "apps.shareouts",
@@ -590,7 +591,7 @@ VAULT_KMS_REGION = env("VAULT_KMS_REGION", default=env("AWS_REGION", default="us
 # --- GitHub App (agent creation creates a real repo) -------------------------
 # A GitHub App authorized PER USER through the user-to-server web flow, so the
 # grant belongs to the human and reaches only the repos they chose plus the ones
-# canopy creates for them. See apps/tokens/github_app.py for why an App rather
+# canopy creates for them. See apps/github_connect/github_app.py for why an App rather
 # than an OAuth App, and why this is not a credential a runner can hold.
 #
 # The CLIENT ID is not a secret — GitHub publishes it and it appears in every

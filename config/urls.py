@@ -12,7 +12,7 @@ from apps.reviews.views import review_page
 from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
-from apps.tokens.github_views import github_connect_callback, github_connect_start
+from apps.github_connect.views import github_connect_callback, github_connect_start
 from apps.tokens.views_embed import embed_chat, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.tokens import views_mcp_oauth, views_oauth

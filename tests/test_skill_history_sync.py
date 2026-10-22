@@ -23,7 +23,7 @@ from django.utils import timezone
 
 from apps.agents import skill_history
 from apps.agents.models import Agent, SkillHistoryCommit, SkillHistorySync, SkillRevision
-from apps.tokens.github_app import GitHubAuthError
+from apps.github_connect.github_app import GitHubAuthError
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db

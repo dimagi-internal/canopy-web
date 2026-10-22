@@ -10,7 +10,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
-from apps.tokens.github_app import GitHubAuthError, GitHubNotConfigured
+from apps.github_connect.github_app import GitHubAuthError, GitHubNotConfigured
 
 from . import services
 from . import skill_history as history

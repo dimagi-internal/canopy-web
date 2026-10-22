@@ -543,7 +543,7 @@ back to the stored PAT; phase 2 removes the PAT).
 Spec: `docs/superpowers/specs/2026-10-21-turn-scoped-agent-token-design.md`
 (`tests/test_turn_agent_token.py`).
 
-### The per-user GitHub App (`apps/tokens/github_app.py`)
+### The per-user GitHub App (`apps/github_connect/github_app.py`)
 
 A public GitHub App (`canopy-agents`) authorized per user (user-to-server flow).
 It is canopy-web's OWN server-side GitHub access as a person — skill history
