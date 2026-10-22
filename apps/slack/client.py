@@ -135,6 +135,54 @@ def user_info(token: str, slack_user_id: str) -> dict:
     return call("users.info", token=token, data={"user": slack_user_id}).get("user") or {}
 
 
+def display_name(info: dict, default: str = "") -> str:
+    """The name a person reads for a `users.info` user: their full name, else
+    the display name they chose, else their handle, else `default`."""
+    profile = info.get("profile") or {}
+    return str(profile.get("real_name") or profile.get("display_name") or info.get("real_name")
+               or info.get("name") or default).strip()
+
+
+def user_name(token: str, slack_user_id: str) -> str:
+    """`display_name` of one user, falling back to their id when Slack will not
+    say (a deleted user, a foreign workspace's). A rate limit still raises."""
+    try:
+        info = user_info(token, slack_user_id)
+    except SlackApiError:
+        info = {}
+    return display_name(info, slack_user_id)
+
+
+def message_name(m: dict) -> str:
+    """A display name Slack sent with a message itself — a bot's post (canopy's
+    own relayed replies carry the agent's name), which `users.info` cannot name."""
+    return str(m.get("username") or (m.get("bot_profile") or {}).get("name") or "")
+
+
+#: Slack's page size for the conversations.* history calls.
+PAGE = 200
+
+
+def page(token: str, method: str, data: dict, cursor: str = "", *, limit: int = PAGE) -> tuple[list[dict], str]:
+    """One page of a cursor-paged `conversations.*` call: (messages, next cursor),
+    the cursor "" when there is no more."""
+    body = call(method, token=token, data={**data, "limit": limit, **({"cursor": cursor} if cursor else {})})
+    nxt = (body.get("response_metadata") or {}).get("next_cursor") or ""
+    return body.get("messages") or [], (nxt if body.get("has_more", True) else "")
+
+
+def paginate(token: str, method: str, data: dict, *, budget: int) -> list[dict]:
+    """Up to `budget` messages of a cursor-paged `conversations.*` call, page by page."""
+    out: list[dict] = []
+    cursor = ""
+    while len(out) < budget:
+        msgs, cursor = page(token, method, data, cursor, limit=min(PAGE, budget - len(out)))
+        out.extend(msgs)
+        if not cursor:
+            break
+    return out[:budget]
+
+
 def lookup_user_id(token: str, email: str) -> str:
     """The Slack user with this email, or "" (needs `users:read.email`)."""
     try:

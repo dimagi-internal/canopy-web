@@ -407,11 +407,11 @@ def post(turn: Turn) -> SlackTurnPost | None:
     Adopts the slash command's anchor when the turn carries one — see
     `adoption`.
     """
-    from .relay import _destination, _log_failure
+    from .relay import log_failure, turn_destination
 
     turn = _load(turn)
     adopt_ts, prefix = adoption(turn)
-    dest = _destination(turn)
+    dest = turn_destination(turn)
     if dest is None:
         return None
     installation, channel, thread_ts = dest
@@ -435,7 +435,7 @@ def post(turn: Turn) -> SlackTurnPost | None:
         record.save(update_fields=["slack_ts", "rendered"])
     except Exception as e:  # noqa: BLE001 — a status line must never fail the send or the append
         logger.exception("could not post a Slack status line")
-        _log_failure(installation, turn, channel, str(e))
+        log_failure(installation, turn, channel, str(e))
         return record
     # The runner may have claimed it while we were posting; the claim's own
     # signal found no ts yet and edited nothing, so catch up here. This also
@@ -447,13 +447,13 @@ def post(turn: Turn) -> SlackTurnPost | None:
 
 def refresh(turn: Turn) -> bool:
     """Re-render this turn's status line if it changed. Returns whether it edited."""
-    from .relay import _destination
+    from .relay import turn_destination
 
     record = SlackTurnPost.objects.filter(turn_id=turn.pk).exclude(slack_ts="").first()
     if record is None:
         return False
     turn = _load(turn)
-    dest = _destination(turn)
+    dest = turn_destination(turn)
     if dest is None:
         return False
     installation, _channel, thread_ts = dest

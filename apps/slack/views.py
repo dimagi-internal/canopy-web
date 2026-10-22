@@ -450,7 +450,7 @@ def _stopper_name(installation, slack_user_id: str) -> str:
             from apps.canopy_sessions.services import person_name
             return person_name(user)
         info = info or services.slack_profile(installation, slack_user_id)
-        return str((info.get("profile") or {}).get("real_name") or info.get("real_name") or "").strip()
+        return client.display_name(info)
     except Exception:  # noqa: BLE001 — a name is a nicety; the stop must not depend on it
         logger.exception("could not name who stopped")
         return ""
