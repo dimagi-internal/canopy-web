@@ -124,6 +124,29 @@ def parse_runner_requirements(value) -> tuple[str, ...]:
         raise ValueError(f"unknown runner requirement(s): {', '.join(sorted(unknown))}")
     return tuple(sorted(set(value)))
 
+
+#: The agent a host BOUND this arrival to — a page that chose its agent
+#: (``panel_context(..., agent=...)``). canopy then holds the token, and any host
+#: grant redeemed with it, to that one agent: a conversation with any other agent
+#: is refused. Absent = the site's whole allow-list, as before. Must equal the
+#: arrival's ``agent_slug`` field and be an agent the site offers.
+AGENT_CLAIM = "canopy_agent"
+#: Longest agent slug either side accepts in ``AGENT_CLAIM``.
+MAX_AGENT_SLUG_LENGTH = 100
+
+
+def parse_agent_claim(value) -> str:
+    """The claim's value, stripped. ``None`` / ``""`` -> ``""`` (unbound).
+
+    Raises ``ValueError`` for a non-string or an over-long slug: canopy refuses
+    the arrival rather than serve it unbound, which would widen what the host
+    narrowed."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > MAX_AGENT_SLUG_LENGTH:
+        raise ValueError(f"{AGENT_CLAIM} must be an agent slug")
+    return value.strip()
+
 #: What canopy requires before it spends an ID-JAG. ``scope`` is carried too, but
 #: the SCOPE is the host's to decide, so it is the host that requires it.
 ID_JAG_REQUIRED_CLAIMS: tuple[str, ...] = (

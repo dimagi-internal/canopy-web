@@ -203,12 +203,43 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
               reason="bad_runner_requirements", detail=str(exc)[:200])
         raise HttpError(400, f"bad_runner_requirements: {exc}")
 
+    # The agent the site BOUND this arrival to (a page that chose its agent), from
+    # the VERIFIED assertion. It must be the agent the request names — the one
+    # the site was resolved by and `_tenant_for` checks against its allow-list —
+    # so the token cannot be bound to one agent while the tenant check ran on
+    # another. Refused, never served unbound: unbound widens what the host narrowed.
+    try:
+        bound_slug = contract.parse_agent_claim(claims.get(contract.AGENT_CLAIM))
+    except ValueError as exc:
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="bad_agent", detail=str(exc)[:200])
+        raise HttpError(400, f"bad_agent: {exc}")
+    if bound_slug and bound_slug != (payload.agent_slug or "").strip():
+        audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+              reason="agent_mismatch",
+              detail=f"signed={bound_slug!r} named={payload.agent_slug!r}")
+        raise HttpError(400, f"agent_mismatch: the assertion is bound to {bound_slug!r}; "
+                             f"send agent_slug={bound_slug!r}")
+
     try:
         workspace = _tenant_for(app, payload.agent_slug)
     except HttpError:
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
               reason="not_granted", detail=f"agent={payload.agent_slug!r}")
         raise
+    bound_agent = None
+    if bound_slug:
+        from apps.agents.models import Agent
+
+        # `_tenant_for` just proved the site offers it; its own workspace's row
+        # only, as `delegation.offered_agent_ids` reads it.
+        bound_agent = Agent.objects.filter(slug=bound_slug,
+                                           workspace_id=app.workspace_id).first()
+        if bound_agent is None:
+            audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, ok=False,
+                  reason="not_granted", detail=f"agent={bound_slug!r}")
+            raise HttpError(403, f"not_granted: {app.name!r} does not offer an agent "
+                                 f"named {bound_slug!r}")
     # Only for an arrival that is going to be served: a refused one says
     # nothing about what the site is asking of the visitors it does serve.
     if list(runner_reqs) != (app.last_runner_requirements or []):
@@ -232,7 +263,8 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
 
     user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
     granted = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
-                                 contact=contact, user=user, runner_requirements=runner_reqs)
+                                 contact=contact, user=user, runner_requirements=runner_reqs,
+                                 agent=bound_agent)
     ttl = HOST_GRANT_REMINT_SECONDS if granted else CONTACT_TOKEN_TTL_SECONDS
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
@@ -242,19 +274,23 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
 
         raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl,
                                           assurance=DelegatedToken.ASSURANCE_HOST_SIGNED,
-                                          runner_requirements=runner_reqs)
+                                          runner_requirements=runner_reqs,
+                                          bound_agent=bound_agent)
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
               detail=f"contact={contact.identity} arrived as user {user.pk} "
-                     f"(assurance=host_signed) ttl={ttl}s host_grant={granted}")
+                     f"(assurance=host_signed) ttl={ttl}s host_grant={granted}"
+                     f"{f' agent={bound_slug}' if bound_slug else ''}")
         return ContactTokenOut(token=raw, expires_at=token.expires_at.isoformat(),
                                contact_id=contact.pk, display_name=contact.display_name,
                                kind="user", host_grant=granted)
 
     raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
                                     runner_requirements=runner_reqs,
-                                    verified_email=_trusted_email(app, claims))
+                                    verified_email=_trusted_email(app, claims),
+                                    bound_agent=bound_agent)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
-          detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}")
+          detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}"
+                 f"{f' agent={bound_slug}' if bound_slug else ''}")
     return ContactTokenOut(
         token=raw,
         expires_at=token.expires_at.isoformat(),
@@ -278,7 +314,7 @@ def _trusted_email(app, claims: dict) -> str:
 
 
 def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user,
-                       runner_requirements=()) -> bool:
+                       runner_requirements=(), agent=None) -> bool:
     """Redeem the site's ID-JAG, if it sent one. Never fails the arrival.
 
     Only ever called AFTER the arrival assertion verified, so the visitor it
@@ -298,7 +334,7 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     try:
         grant = host_grants.redeem(app, id_jag.strip(), subject=subject,
                                    contact=contact, user=user,
-                                   runner_requirements=runner_requirements)
+                                   runner_requirements=runner_requirements, agent=agent)
     except host_grants.HostGrantError as exc:
         log.warning("host grant refused for %s: %s", app.name, exc.code)
         host_grants.record_outcome(app, ok=False, subject=subject, code=exc.code,
@@ -346,11 +382,11 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
 
     contact = request.contact
     app = request.delegated_app
-    rows = (
+    rows = _bound(request, (
         Agent.objects.filter(embedding_apps__app=app, workspace_id=contact.workspace_id)
         .order_by("slug")
         .distinct()
-    )
+    ), "pk")
     return ContactMeOut(
         contact_id=contact.pk,
         display_name=contact.display_name,
@@ -422,6 +458,16 @@ def _tenant_for(app, agent_slug: str):
     return app.workspace
 
 
+def _bound(request: HttpRequest, rows, field: str = "agent_id"):
+    """`rows` narrowed to the one agent this contact's token is bound to (a page
+    that chose its agent — `ContactToken.bound_agent`), if it is. Every contact
+    door that names an agent or a conversation passes through this, so a token
+    minted on a data page for `labsdata` can neither start nor continue a
+    conversation with any other agent the site offers."""
+    bound = getattr(request, "bound_agent_id", None)
+    return rows.filter(**{field: bound}) if bound else rows
+
+
 def _session_or_404(request: HttpRequest, session_id):
     """This contact's session, or 404. Never anybody else's.
 
@@ -433,8 +479,8 @@ def _session_or_404(request: HttpRequest, session_id):
     from apps.canopy_sessions.models import Session
 
     session = (
-        Session.objects.select_related("agent")
-        .filter(contact_session_q(request.contact))
+        _bound(request, Session.objects.select_related("agent")
+               .filter(contact_session_q(request.contact)))
         .filter(pk=session_id)
         .first()
     )
@@ -471,11 +517,11 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
     contact = request.contact
     app = request.delegated_app
     agent = (
-        Agent.objects.filter(
+        _bound(request, Agent.objects.filter(
             slug=payload.agent_slug,
             embedding_apps__app=app,
             workspace_id=contact.workspace_id,
-        )
+        ), "pk")
         .first()
     )
     if agent is None:
@@ -519,7 +565,8 @@ def list_sessions(request: HttpRequest, source: str = "", origin_key: str = "",
     # stays closed.
     if state not in ("active", "archived", "all"):
         raise HttpError(422, "state must be one of: active, archived, all")
-    rows = Session.objects.select_related("agent").filter(contact_session_q(request.contact))
+    rows = _bound(request, Session.objects.select_related("agent")
+                  .filter(contact_session_q(request.contact)))
     if state == "active":
         rows = rows.filter(status=Session.ACTIVE)
     elif state == "archived":
@@ -718,7 +765,7 @@ def _turn_or_404(request: HttpRequest, turn_id: str):
         pk = _uuid.UUID(str(turn_id))
     except ValueError:
         raise HttpError(404, "turn not found") from None
-    mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
+    mine = _bound(request, Session.objects.filter(contact_session_q(request.contact))).values("pk")
     turn = (Turn.objects.select_related("chat_session", "initiator_user", "initiator_contact",
                                         "claimed_by")
             .filter(pk=pk, chat_session__in=mine).first())
@@ -744,7 +791,7 @@ def my_unclaimable(request: HttpRequest) -> list[dict]:
     from apps.canopy_sessions.models import Session
     from apps.harness import claim
 
-    mine = Session.objects.filter(contact_session_q(request.contact)).values("pk")
+    mine = _bound(request, Session.objects.filter(contact_session_q(request.contact))).values("pk")
     return claim.unclaimable_queued_turns(
         ws_slugs={request.contact.workspace_id}, turn_q=Q(chat_session__in=mine))
 

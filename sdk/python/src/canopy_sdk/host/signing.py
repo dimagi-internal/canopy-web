@@ -43,13 +43,19 @@ class MintFailed(RuntimeError):
 
 def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", email: str = "",
                            email_verified: bool = False, extra: dict | None = None,
-                           now: float | None = None) -> str:
+                           now: float | None = None, agent: str = "",
+                           runner_requirements=()) -> str:
     """A signed statement that ``subject`` is a real person on this host, now.
 
     ``email_verified=True`` is the host vouching for the address; canopy lets
     such a visitor in as their OWN canopy account only if exactly one canopy
     user holds that address verified and is a member of the site's workspace.
     Never claimed for an empty address.
+
+    ``agent`` BINDS the arrival to one agent (``contract.AGENT_CLAIM``): the
+    page chose it, and canopy holds the token and its host grant to it.
+    ``runner_requirements`` are the page's, added to the site-wide
+    ``config.runner_requirements`` — a page can raise the floor, never lower it.
     """
     if not config.assertions_enabled:
         raise HostNotConfigured("the canopy base URL and the host's app name are required")
@@ -69,11 +75,19 @@ def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", 
         "email": email or "",
         "email_verified": bool(email_verified and email),
     }
-    # After the dict is built so `extra` can neither forge nor drop it.
-    if config.runner_requirements:
-        claims[contract.RUNNER_REQUIREMENTS_CLAIM] = list(config.runner_requirements)
+    # After the dict is built so `extra` can neither forge nor drop them.
+    # The site's were validated when the config was built; the page's are new here.
+    requirements = sorted(set(config.runner_requirements)
+                          | set(contract.parse_runner_requirements(list(runner_requirements or ()))))
+    if requirements:
+        claims[contract.RUNNER_REQUIREMENTS_CLAIM] = list(requirements)
     else:
         claims.pop(contract.RUNNER_REQUIREMENTS_CLAIM, None)
+    agent = contract.parse_agent_claim(agent or None)
+    if agent:
+        claims[contract.AGENT_CLAIM] = agent
+    else:
+        claims.pop(contract.AGENT_CLAIM, None)
     # `kid` so canopy can pick this key out of the JWKS the host publishes;
     # without it a rotation has nothing to select on.
     return sign(claims, config.signing_key, headers={"kid": config.kid})
@@ -118,6 +132,7 @@ def issue_id_jag(config: HostConfig, subject: str, scopes, *, now: float | None 
 
 
 def arrival_payload(config: HostConfig, subject: str, *, scopes=(), agent_slug: str = "",
+                    bind_agent: bool = False, runner_requirements=(),
                     **assertion_kwargs) -> dict:
     """The body a host POSTs to canopy's arrival endpoint.
 
@@ -125,9 +140,19 @@ def arrival_payload(config: HostConfig, subject: str, *, scopes=(), agent_slug: 
     same request carries an ``id_jag``. Without either it is exactly the request
     it was before grants existed. A failed ID-JAG never fails the arrival: no
     grant is a working panel (the agent acts as itself); a failed mint is not.
+
+    ``bind_agent=True`` signs ``agent_slug`` into the assertion as well
+    (``contract.AGENT_CLAIM``), so the token and any grant it carries work for
+    that agent only — what a page that chose its own agent wants, since the
+    page's scopes were granted with that agent in mind. ``runner_requirements``
+    are the page's, on top of the site's.
     """
+    if bind_agent and not agent_slug:
+        raise ValueError("bind_agent needs the agent_slug to bind to")
     payload = {
-        contract.ARRIVAL_ASSERTION_FIELD: sign_visitor_assertion(config, subject, **assertion_kwargs),
+        contract.ARRIVAL_ASSERTION_FIELD: sign_visitor_assertion(
+            config, subject, agent=agent_slug if bind_agent else "",
+            runner_requirements=runner_requirements, **assertion_kwargs),
         # Names which canopy tenant this is for; a site name is unique only per
         # canopy workspace.
         contract.ARRIVAL_AGENT_FIELD: agent_slug or "",

@@ -18,9 +18,17 @@ def elsewhere(request):
     return render(request, "page.html", {"ids": []})
 
 
+def data(request):
+    return render(request, "data_page.html", {
+        "reqs": ["zdr"],
+        "panel": {"mode": "docked", "width": 560, "expandable": True, "initial_display": "expanded"},
+    })
+
+
 urlpatterns = [
     path("canopy/", include("canopy_sdk.django.urls")),
     path("o/token/", jwt_bearer_view(toolkit_token_view)),
     path("marketplace/network/", network, name="network"),
     path("elsewhere/", elsewhere, name="elsewhere"),
+    path("data/visits/", data, name="data"),
 ]

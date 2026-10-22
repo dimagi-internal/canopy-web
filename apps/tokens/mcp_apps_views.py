@@ -316,16 +316,14 @@ def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.Si
     a visitor's turn passes. Runner requirements do not apply: no runner touches
     a View call; canopy-web makes it directly.
     """
-    from .models import HostGrant
-
     app = row.app
     if not app.issues_host_grants():
         raise ViewRefusal("site_not_configured", f"{app.name} does not let canopy act for you there")
-    grants = HostGrant.objects.filter(app=app)
-    if viewer.contact is not None:
-        grant = grants.filter(contact=viewer.contact).order_by("-updated_at").first()
-    else:
-        grant = grants.filter(user=viewer.user).order_by("-updated_at").first()
+    # The viewer's grant for THIS conversation's agent (`host_grants.grant_for`).
+    from .host_grants import grant_for
+
+    grant = grant_for(app, agent=session.agent if session.agent_id else None,
+                      contact=viewer.contact, user=viewer.user if viewer.contact is None else None)
     if grant is None:
         raise ViewRefusal(GATES[6], host_gateway.BACK_ON_THE_PAGE)
     try:

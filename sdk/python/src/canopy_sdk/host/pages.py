@@ -31,6 +31,16 @@ A browser that names the wrong page therefore picks among read-only views of
 its own data, nothing more. That is the trust argument, and it is why key mode
 is safe without a signature — and why it refuses write scopes by default.
 
+**Which agent, under which runner requirements.** A page may also choose its
+agent and add runner requirements (``"labsdata"`` under ``["zdr"]`` on a page
+over real data, while the rest of the site keeps its default agent and no
+requirement). That choice travels with the page exactly as its scopes do, and
+for the same reason: the scopes were granted with that agent in mind, so a
+browser must not be able to keep one and swap the other. In signed mode it is
+inside the page token's signature (``issue(..., agent=, runner_requirements=)``);
+in key mode it is the registry's (``agents={key: {...}}``), never the browser's.
+``page()`` returns all three as one ``Page``.
+
 ``PageTokens`` was extracted from connect-labs ``connect_labs/labs/canopy.py``
 (HMAC-SHA256 over a timestamped payload, compared in constant time); key mode
 from canopy-web ``apps/tokens/self_host.py`` and ace-web
@@ -45,6 +55,9 @@ import json
 import re
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+
+from .. import contract
 
 MAX_TOKEN_LENGTH = 1024
 DEFAULT_MAX_AGE_SECONDS = 2 * 60 * 60
@@ -58,6 +71,30 @@ READ_ONLY_SUFFIX = ":read"
 SIGNED = "signed"
 KEY = "key"
 MODES = (SIGNED, KEY)
+
+
+@dataclass(frozen=True)
+class Page:
+    """What the page a mint names lets canopy do, and as which agent.
+
+    ``agent`` is ``""`` when the page did not choose one (the site's default
+    applies, unbound). ``runner_requirements`` are the PAGE's own, added to the
+    site's; ``()`` adds nothing."""
+
+    key: str
+    scopes: tuple[str, ...] = ()
+    agent: str = ""
+    runner_requirements: tuple[str, ...] = ()
+
+
+def _agent_choice(agent, runner_requirements, *, where: str) -> tuple[str, tuple[str, ...]]:
+    """A page's agent and requirements, validated — raising at the place the
+    host configured them, never discovered later as an arrival canopy refuses."""
+    try:
+        return (contract.parse_agent_claim(agent or None),
+                contract.parse_runner_requirements(list(runner_requirements or ())))
+    except ValueError as exc:
+        raise ValueError(f"{where}: {exc}") from None
 
 
 def _b64(data: bytes) -> str:
@@ -83,8 +120,20 @@ class PageRegistry:
 
     def __init__(self, pages: Mapping[str, Sequence[str]], *, scope_tools: Mapping | None = None,
                  patterns: Mapping[str, object] | None = None,
-                 writable_scopes: Sequence[str] = ()):
+                 writable_scopes: Sequence[str] = (),
+                 agents: Mapping[str, Mapping] | None = None):
         self.pages = {str(key): tuple(scopes) for key, scopes in (pages or {}).items()}
+        #: key -> (agent, runner_requirements): which agent a page chose, in key
+        #: mode, where the registry (not the browser) has to say so.
+        self.agents = {}
+        for key, choice in (agents or {}).items():
+            choice = dict(choice or {})
+            unknown = set(choice) - {"agent", "runner_requirements"}
+            if unknown:
+                raise ValueError(f"agents[{key!r}] has unknown keys: {sorted(unknown)}")
+            self.agents[str(key)] = _agent_choice(choice.get("agent"),
+                                                  choice.get("runner_requirements"),
+                                                  where=f"agents[{key!r}]")
         self.patterns = {str(key): (p if isinstance(p, re.Pattern) else re.compile(str(p)))
                          for key, p in (patterns or {}).items()}
         self.writable_scopes = frozenset(writable_scopes or ())
@@ -99,6 +148,9 @@ class PageRegistry:
         unregistered = set(self.patterns) - set(self.pages)
         if unregistered:
             raise ValueError(f"patterns name pages that are not registered: {sorted(unregistered)}")
+        unregistered = set(self.agents) - set(self.pages)
+        if unregistered:
+            raise ValueError(f"agents name pages that are not registered: {sorted(unregistered)}")
         if self.mode == KEY:
             for key, scopes in self.pages.items():
                 writes = [s for s in scopes
@@ -127,11 +179,20 @@ class PageRegistry:
         return self.pages.get(self.key_for(value), ())
 
     def scopes_for(self, value, user_id=None, **kwargs) -> tuple[str, ...]:
-        """THE entry point, in either mode: the scopes the page named by
-        ``value`` grants the visitor ``user_id``, or ``()``. In key mode
-        ``value`` is a page key (or path) and ``user_id`` is not needed — the
-        token runs as the visitor, whose own ACL applies at every tool."""
+        """The scopes the page named by ``value`` grants the visitor
+        ``user_id``, or ``()``. In key mode ``value`` is a page key (or path)
+        and ``user_id`` is not needed — the token runs as the visitor, whose
+        own ACL applies at every tool."""
         return self.scopes_for_key(value)
+
+    def page(self, value, user_id=None, **kwargs) -> Page | None:
+        """THE entry point, in either mode: the registered page ``value`` names
+        — its scopes, and the agent and requirements it chose — or ``None``."""
+        key = self.key_for(value)
+        if not key:
+            return None
+        agent, reqs = self.agents.get(key, ("", ()))
+        return Page(key=key, scopes=self.pages.get(key, ()), agent=agent, runner_requirements=reqs)
 
 
 class PageTokens(PageRegistry):
@@ -159,17 +220,31 @@ class PageTokens(PageRegistry):
     def scopes_for(self, value, user_id=None, **kwargs) -> tuple[str, ...]:
         return self.scopes(value, user_id, **kwargs)
 
+    def page(self, value, user_id=None, **kwargs) -> Page | None:
+        return self.read(value, user_id, **kwargs)
+
     def _sign(self, payload: str) -> str:
         return _b64(hmac.new(self._key, payload.encode(), hashlib.sha256).digest())
 
-    def issue(self, route: str, user_id, *, now: float | None = None) -> str:
-        """A token for this page and this user — or ``""`` for a page that is not
-        registered, or no user."""
-        if not route or route not in self.pages or user_id in (None, ""):
+    def issue(self, route: str, user_id, *, now: float | None = None, agent: str = "",
+              runner_requirements=()) -> str:
+        """A token for this page and this user — or ``""`` for no user, or a page
+        that is neither registered nor chose an agent or requirements.
+
+        ``agent`` / ``runner_requirements`` are the page's choice, signed in
+        beside the route so the mint reads them from here and nowhere else. A
+        page that grants no scopes may still choose them (a ZDR page with no
+        grant), so a route outside the registry gets a token when it does."""
+        agent, reqs = _agent_choice(agent, runner_requirements, where=f"page {route!r}")
+        if not route or user_id in (None, "") or (route not in self.pages
+                                                  and not (agent or reqs)):
             return ""
-        body = json.dumps({"p": route, "u": str(user_id),
-                           "t": int(time.time() if now is None else now)},
-                          separators=(",", ":"), sort_keys=True)
+        claims = {"p": route, "u": str(user_id), "t": int(time.time() if now is None else now)}
+        if agent:
+            claims["a"] = agent
+        if reqs:
+            claims["r"] = list(reqs)
+        body = json.dumps(claims, separators=(",", ":"), sort_keys=True)
         payload = _b64(body.encode())
         return f"{payload}.{self._sign(payload)}"
 
@@ -177,21 +252,35 @@ class PageTokens(PageRegistry):
         """The scopes the page named by ``raw`` grants ``user_id``, or ``()`` —
         never an error. Absent, forged, expired, another user's, or a page no
         longer registered all mean no grant; the panel carries on without one."""
+        page = self.read(raw, user_id, now=now)
+        return page.scopes if page is not None else ()
+
+    def read(self, raw, user_id, *, now: float | None = None) -> Page | None:
+        """The page ``raw`` names for ``user_id`` — or ``None`` for absent,
+        forged, expired or another user's. Scopes come from the registry NOW
+        (a page no longer registered grants none); the agent and requirements
+        come from the signature, since only the page that rendered knew them."""
         if not raw or not isinstance(raw, str) or len(raw) > MAX_TOKEN_LENGTH \
                 or user_id in (None, ""):
-            return ()
+            return None
         payload, sep, signature = raw.partition(".")
         if not sep or not hmac.compare_digest(signature.encode(), self._sign(payload).encode()):
-            return ()
+            return None
         try:
             claims = json.loads(_unb64(payload))
         except (ValueError, UnicodeDecodeError):
-            return ()
+            return None
         if not isinstance(claims, dict) or not hmac.compare_digest(
                 str(claims.get("u", "")).encode(), str(user_id).encode()):
-            return ()
+            return None
         issued = claims.get("t")
         current = time.time() if now is None else now
         if not isinstance(issued, int) or current - issued > self.max_age or issued - current > 60:
-            return ()
-        return self.pages.get(claims.get("p"), ())
+            return None
+        route = str(claims.get("p") or "")
+        try:
+            agent, reqs = _agent_choice(claims.get("a"), claims.get("r"), where="page token")
+        except ValueError:
+            return None
+        return Page(key=route, scopes=self.pages.get(route, ()), agent=agent,
+                    runner_requirements=reqs)

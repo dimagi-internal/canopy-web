@@ -318,3 +318,31 @@ class TestRunnerRequirements:
         claims = _read_claims(sign_visitor_assertion(
             world.config, "u-1", extra={contract.RUNNER_REQUIREMENTS_CLAIM: ["zdr"]}))
         assert contract.RUNNER_REQUIREMENTS_CLAIM not in claims
+
+
+class TestPerPageAgent:
+    def test_a_bound_arrival_signs_the_agent_and_the_pages_requirements(self, world):
+        payload = arrival_payload(world.config, "u-1", agent_slug="labsdata", bind_agent=True,
+                                  runner_requirements=["zdr"])
+        claims = _read_claims(payload[contract.ARRIVAL_ASSERTION_FIELD])
+        assert payload[contract.ARRIVAL_AGENT_FIELD] == "labsdata"
+        assert claims[contract.AGENT_CLAIM] == "labsdata"
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+
+    def test_an_unbound_arrival_names_the_agent_but_signs_no_binding(self, world):
+        payload = arrival_payload(world.config, "u-1", agent_slug="ace")
+        assert contract.AGENT_CLAIM not in _read_claims(payload[contract.ARRIVAL_ASSERTION_FIELD])
+
+    def test_binding_needs_an_agent(self, world):
+        with pytest.raises(ValueError):
+            arrival_payload(world.config, "u-1", bind_agent=True)
+
+    def test_extra_cannot_forge_a_binding(self, world):
+        claims = _read_claims(sign_visitor_assertion(world.config, "u-1",
+                                                     extra={contract.AGENT_CLAIM: "ace"}))
+        assert contract.AGENT_CLAIM not in claims
+
+    def test_page_requirements_union_with_the_sites(self, world):
+        cfg = _config(world, runner_requirements=("zdr",))
+        claims = _read_claims(sign_visitor_assertion(cfg, "u-1", runner_requirements=["zdr"]))
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]

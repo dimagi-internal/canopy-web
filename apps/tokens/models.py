@@ -596,6 +596,12 @@ class DelegatedToken(models.Model):
     #: signed `canopy_runner_requirements` claim). Stamped onto every session
     #: this token starts or sends into. Empty for canopy's own widget.
     runner_requirements = models.JSONField(default=list, blank=True)
+    #: The one agent the SITE bound this arrival to (its signed `canopy_agent`
+    #: claim — a page that chose its agent). Set, the token reaches that agent's
+    #: conversations only (`delegation.offered_for`); null, the site's whole
+    #: allow-list, as before the claim existed.
+    bound_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
+                                    blank=True, related_name="+")
 
     class Meta:
         db_table = "delegated_tokens"
@@ -603,12 +609,12 @@ class DelegatedToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
-              runner_requirements=()):
+              runner_requirements=(), bound_agent=None):
         from django.utils import timezone
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
-            runner_requirements=list(runner_requirements),
+            runner_requirements=list(runner_requirements), bound_agent=bound_agent,
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
@@ -875,18 +881,24 @@ class ContactToken(models.Model):
     #: to the token, not the contact: `Contact.email` only ever fills a blank, so
     #: it cannot say which address was verified most recently, or by whom.
     verified_email = models.CharField(max_length=254, blank=True, default="")
+    #: The agent the site bound this arrival to — the same field, for the same
+    #: reason, as `DelegatedToken.bound_agent`.
+    bound_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
+                                    blank=True, related_name="+")
 
     class Meta:
         db_table = "contact_tokens"
         ordering = ["-created_at"]
 
     @classmethod
-    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email=""):
+    def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email="",
+              bound_agent=None):
         from django.utils import timezone
 
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
+            bound_agent=bound_agent,
             verified_email=verified_email or "",
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
@@ -971,14 +983,27 @@ class HostGrant(models.Model):
     #: enforces these alongside the session's own and stamps them onto it.
     #: Replaced by each redemption: the latest arrival is the host's word.
     runner_requirements = models.JSONField(default=list, blank=True)
+    #: The agent the arrival that minted this grant was BOUND to (`canopy_agent`):
+    #: the page chose it, and granted these scopes with it in mind. Only that
+    #: agent's turns and Views reach the grant. Null = an unbound arrival, usable
+    #: by any agent the site offers — `host_grants.grant_for` prefers the bound one.
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="+")
     expires_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "host_grants"
+        # One grant per (site, visitor) for unbound arrivals, and one per agent
+        # for bound ones — so a data page's grant never overwrites the
+        # marketplace's, or the reverse.
         constraints = [
-            models.UniqueConstraint(fields=["app", "subject"], name="one_host_grant_per_visitor"),
+            models.UniqueConstraint(fields=["app", "subject"], condition=models.Q(agent__isnull=True),
+                                    name="one_host_grant_per_visitor"),
+            models.UniqueConstraint(fields=["app", "subject", "agent"],
+                                    condition=models.Q(agent__isnull=False),
+                                    name="one_bound_host_grant_per_visitor_agent"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - never shows the token
