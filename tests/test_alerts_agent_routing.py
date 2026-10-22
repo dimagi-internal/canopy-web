@@ -132,3 +132,37 @@ def test_actions_are_for_agent_editors(fleet):
     assert not acts[0].closes and acts[0].href == "/w/dimagi/agents/eva/settings"
     assert src.actions(a, fleet["viewer"]) == []
     assert src.CLOSING_ACTION_IDS == ("dismiss",)
+
+
+def test_only_rule_routes_do_not_count(fleet):
+    RunnerAssignment.objects.create(agent=fleet["eva"], runner=_runner(fleet, "box"), rank=0, source="email")
+    assert _raises()["agent:eva:routing"].title == "Eva has no runner to run on"
+
+
+def test_directed_only_runner_raises_its_own_reason(fleet):
+    box = _runner(fleet, "pinned-box")
+    box.capabilities = {"agents": [], "directed": True}
+    box.save(update_fields=["capabilities"])
+    RunnerAssignment.objects.create(agent=fleet["eva"], runner=box, rank=0)
+    r = _raises()["agent:eva:routing"]
+    assert r.title == "Eva's runners (pinned-box) only take directed turns"
+    Agent.objects.create(slug="hal", name="Hal", workspace=fleet["ws"], owner=fleet["jj"])
+    assert _raises()["agent:hal:routing"].digest() != r.digest()  # different reason, different fingerprint
+
+
+def test_inherited_directed_only_runner_raises_its_own_reason(fleet):
+    box = _runner(fleet, "pinned-box")
+    box.capabilities = {"agents": [], "directed": True}
+    box.save(update_fields=["capabilities"])
+    WorkspaceRunnerOrder.objects.create(workspace=fleet["ws"], runner=box, rank=0)
+    assert _raises()["agent:eva:routing"].title == "Eva's runners (pinned-box) only take directed turns"
+
+
+def test_cannot_hold_raises_its_own_reason(fleet):
+    stranger = _user("stranger")
+    box = Runner.objects.create(name="their-box", kind=Runner.CLOUD, host="their-box", owner=stranger,
+                                workspace=fleet["ws"], status=Runner.ONLINE,
+                                last_heartbeat_at=timezone.now(), capabilities={"agents": []})
+    WorkspaceRunnerOrder.objects.create(workspace=fleet["ws"], runner=box, rank=0)
+    r = _raises()["agent:eva:routing"]
+    assert r.title == "Eva can't use their-box: their owner can't hold its turns"

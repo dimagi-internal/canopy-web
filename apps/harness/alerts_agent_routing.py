@@ -3,10 +3,10 @@
 Configuration only, never liveness. Two conditions, both read from
 `topology.build` so the alert agrees with what the Topology page shows:
 
-- the agent has no runner to run on at all — no enabled route of its own and none
-  inherited from its workspace's order;
-- every runner its workspace order lists is dropped for it because it does not
-  declare the agent's repo (`follows.missing_repo`), so nothing is left.
+- the agent has no usable runner on its DEFAULT list (own or inherited). Its
+  reason is the most specific true one: no routes at all; the workspace order's
+  runners lack its repo (`follows.missing_repo`); their owners may not hold it
+  (`follows.cannot_hold`); or the listed runners are directed-only.
 
 A routed runner that is merely offline, stale or down is NOT a configuration
 problem and raises nothing; the runner's own alerts and the unclaimable-turns
@@ -49,19 +49,38 @@ def _join(names: list[str]) -> str:
 
 
 def _reason(agent: dict, runners: dict) -> tuple[str, str] | None:
-    """`(title, fingerprint)` if this agent cannot run, else None."""
-    effective = [r for r in agent["routes"]
-                 if r["enabled"] and not runners.get(r["runner_id"], {}).get("directed")]
-    if effective:
+    """`(title, fingerprint-reason)` if this agent cannot run, else None.
+
+    Only DEFAULT routes (`source == ""`) count, as on the Topology page; a
+    per-source or per-actor rule is an exception to the default list, not a
+    list of its own. When nothing is left, the reason is the most specific
+    true one: the workspace order's runners lack the repo, their owners may
+    not hold the agent, or the listed runners are directed-only."""
+    defaults = [r for r in agent["routes"] if r["enabled"] and r["source"] == ""]
+    if any(not runners.get(r["runner_id"], {}).get("directed") for r in defaults):
         return None
-    missing = ((agent["follows"] or {}).get("missing_repo")) or []
+    follows = agent["follows"] or {}
+    name = agent["name"]
+
+    def names(ids) -> list[str]:
+        return sorted(runners[pk]["name"] for pk in ids if pk in runners)
+
+    missing = names(follows.get("missing_repo") or [])
     if missing:
-        names = sorted(runners[pk]["name"] for pk in missing if pk in runners)
-        if names:
-            verb = "doesn't" if len(names) == 1 else "don't"
-            ids = ",".join(str(pk) for pk in sorted(missing))
-            return (f"{agent['name']}: {_join(names)} {verb} have its repo", f"missing-repo:{ids}")
-    return f"{agent['name']} has no runner to run on", "no-runner"
+        verb = "doesn't" if len(missing) == 1 else "don't"
+        ids = ",".join(str(pk) for pk in sorted(follows["missing_repo"]))
+        return f"{name}: {_join(missing)} {verb} have its repo", f"missing-repo:{ids}"
+    held = names(follows.get("cannot_hold") or [])
+    if held:
+        ids = ",".join(str(pk) for pk in sorted(follows["cannot_hold"]))
+        return (f"{name} can't use {_join(held)}: their owner can't hold its turns",
+                f"cannot-hold:{ids}")
+    directed_ids = sorted({r["runner_id"] for r in defaults} | set(follows.get("directed") or []))
+    directed = names(directed_ids)
+    if directed:
+        ids = ",".join(str(pk) for pk in directed_ids)
+        return (f"{name}'s runners ({_join(directed)}) only take directed turns", f"directed:{ids}")
+    return f"{name} has no runner to run on", "no-runner"
 
 
 def reconcile(now) -> list[Raise]:
