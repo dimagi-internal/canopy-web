@@ -7752,6 +7752,51 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who is waiting for a vault key this runner holds
+         * @description For every zero-knowledge agent whose CURRENT vault key this box holds and
+         *     someone is waiting for: its own wrap, the pending targets (vault members, and
+         *     machines whose person is a member), and the endorsements to check them against.
+         *     The box decides whom to trust; canopy-web only lists.
+         */
+        readonly get: operations["get_vault_keeper_work"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/{slug}/wraps": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A keeper's copies of an agent's vault key, for whoever was waiting
+         * @description `{kv, wraps}`. Refused (403 `zk_not_a_holder`) unless this box holds the
+         *     agent's current vault key, and (409 `zk_not_pending`) for any target that is not
+         *     waiting — a keeper only adds copies, never replaces one.
+         */
+        readonly post: operations["post_vault_keeper_wraps"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/": {
         readonly parameters: {
             readonly query?: never;
@@ -26676,6 +26721,35 @@ export interface components {
              */
             readonly retired: boolean;
         };
+        /** VaultKeeperAgentOut */
+        readonly VaultKeeperAgentOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Agent Id */
+            readonly agent_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Device Key */
+            readonly device_key: string;
+            /** Wrap */
+            readonly wrap: {
+                readonly [key: string]: unknown;
+            };
+            /** Pending */
+            readonly pending: readonly components["schemas"]["ZkTargetOut"][];
+            /** Endorsements */
+            readonly endorsements: readonly components["schemas"]["ZkEndorsementOut"][];
+        };
+        /** VaultKeeperOut */
+        readonly VaultKeeperOut: {
+            /** Agents */
+            readonly agents: readonly components["schemas"]["VaultKeeperAgentOut"][];
+        };
+        /** VaultKeeperGrantOut */
+        readonly VaultKeeperGrantOut: {
+            /** Granted */
+            readonly granted: number;
+        };
         /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
@@ -42884,6 +42958,55 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+        };
+    };
+    readonly get_vault_keeper_work: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperOut"];
+                };
+            };
+        };
+    };
+    readonly post_vault_keeper_wraps: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkWrapsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperGrantOut"];
                 };
             };
         };
