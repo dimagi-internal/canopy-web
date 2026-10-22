@@ -108,6 +108,32 @@ export function menuBlocksComposer(
   return (menu.options?.length ?? 0) > 0 || (menu.questions?.length ?? 0) > 0;
 }
 
+/**
+ * Patch a re-read session's runner liveness onto the meta the page holds,
+ * leaving everything else alone. The offline banner's recovery poll uses this:
+ * `runner_online` is authoritative for the banner, so it is the field that must
+ * be re-read — but the rest of the payload (title, history cursors, local
+ * edits) belongs to other code paths and must not be clobbered by a poll.
+ */
+export function withFreshLiveness<
+  T extends { runner_online?: boolean | null; runner_status?: string | null; runner_name?: string | null },
+>(prev: T | null, fresh: Pick<T, 'runner_online' | 'runner_status' | 'runner_name'>): T | null {
+  if (!prev) return prev
+  if (
+    prev.runner_online === fresh.runner_online &&
+    prev.runner_status === fresh.runner_status &&
+    prev.runner_name === fresh.runner_name
+  ) {
+    return prev
+  }
+  return {
+    ...prev,
+    runner_online: fresh.runner_online,
+    runner_status: fresh.runner_status,
+    runner_name: fresh.runner_name,
+  }
+}
+
 export function sendBlockReason(args: {
   runnerName: string | null | undefined;
   boundOffline: boolean;
