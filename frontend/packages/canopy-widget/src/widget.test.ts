@@ -952,3 +952,73 @@ describe('ask', () => {
     expect(String(sent('ask')[0].message.text)).toHaveLength(2000)
   })
 })
+
+describe('expanding the panel', () => {
+  const panelOf = (root: ShadowRoot) => root.querySelector('.panel') as HTMLElement
+
+  it('expands at the frame’s request, answers display, and remembers it per site', async () => {
+    const storage = memoryStorage()
+    const { widget, root, fromFrame, sent } = widgetHarness({ storage })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    expect(sent('init')[0].message.expandable).toBe(true)
+    expect(sent('init')[0].message.expanded).toBe(false)
+
+    await fromFrame({ source: SOURCE, type: 'expand', expanded: true })
+    expect(widget.isOpen()).toBe(true)
+    expect(widget.isExpanded()).toBe(true)
+    expect(panelOf(root).dataset.expanded).toBe('true')
+    expect(panelOf(root).dataset.mode).toBe('overlay')
+    expect(sent('display').at(-1)!.message.expanded).toBe(true)
+    expect(storage.data['canopy.widget.display.connect-labs']).toBe('expanded')
+
+    await fromFrame({ source: SOURCE, type: 'expand', expanded: false })
+    expect(widget.isExpanded()).toBe(false)
+    expect(panelOf(root).dataset.mode).toBe('overlay')
+    expect(storage.data['canopy.widget.display.connect-labs']).toBe('normal')
+  })
+
+  it('restores a remembered choice over the host default', () => {
+    const storage = memoryStorage({ 'canopy.widget.display.connect-labs': 'normal' })
+    const { widget } = widgetHarness({ storage, initialDisplay: 'expanded' })
+    expect(widget.isExpanded()).toBe(false)
+  })
+
+  it('starts expanded when the host says so and nothing is remembered', () => {
+    const { widget } = widgetHarness({ initialDisplay: 'expanded', mode: 'docked' })
+    expect(widget.isExpanded()).toBe(true)
+  })
+
+  it('collapses on Escape back to the mode it came from', () => {
+    const { widget, root } = widgetHarness({ mode: 'docked' })
+    widget.expand()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    expect(widget.isExpanded()).toBe(false)
+    expect(panelOf(root).dataset.mode).toBe('docked')
+    expect(widget.isOpen()).toBe(true)
+  })
+
+  it('a host call is not remembered as the visitor’s choice', () => {
+    const storage = memoryStorage()
+    const { widget } = widgetHarness({ storage })
+    widget.expand()
+    expect(widget.isExpanded()).toBe(true)
+    expect(storage.data['canopy.widget.display.connect-labs']).toBeUndefined()
+  })
+
+  it('cannot expand when the host turned it off, and says so in init', async () => {
+    const { widget, fromFrame, sent } = widgetHarness({ expandable: false })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    expect(sent('init')[0].message.expandable).toBe(false)
+    await fromFrame({ source: SOURCE, type: 'expand', expanded: true })
+    expect(widget.isExpanded()).toBe(false)
+  })
+
+  it('inline never expands', () => {
+    const slot = document.createElement('div')
+    slot.id = 'slot'
+    document.body.appendChild(slot)
+    const { widget } = widgetHarness({ mode: 'inline', target: '#slot' })
+    widget.expand()
+    expect(widget.isExpanded()).toBe(false)
+  })
+})

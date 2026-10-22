@@ -17,6 +17,13 @@
  *             whose workflow runner already docks its own chat with `mr-96`.
  *   inline  — fills a host-provided element, no launcher and always open. The
  *             host owns placement and sizing.
+ *
+ * Overlay and docked can also be EXPANDED: the panel grows to fill the window
+ * bar a 16px margin (all of it on a phone), for work that needs room — a wide
+ * table, a chart. It is a state on top of the mode, not a fourth mode, so
+ * collapsing returns to exactly the overlay or rail it came from. The visitor's
+ * choice is remembered per site through the same injected storage a dragged
+ * position uses.
  */
 
 import {
@@ -49,6 +56,12 @@ export interface ChromeOptions {
    *  `null` disables remembering without disabling dragging. */
   storage: Pick<Storage, 'getItem' | 'setItem'> | null
   title: string
+  /** Whether the panel may be expanded at all (overlay/docked only). */
+  expandable: boolean
+  /** Start expanded unless the visitor's remembered choice says otherwise. */
+  initialExpanded: boolean
+  /** Called whenever the panel expands or collapses. */
+  onDisplay: (expanded: boolean) => void
   /** Panel width for overlay/docked, in px. */
   width: number
   zIndex: number
@@ -67,6 +80,10 @@ export interface Chrome {
   dismiss(): void
   isDismissed(): boolean
   setHeight(px: number): void
+  /** Expand or collapse (a no-op inline, or when not expandable). `remember`
+   *  records it as the visitor's choice for this site. Expanding opens. */
+  setExpanded(expanded: boolean, remember?: boolean): void
+  isExpanded(): boolean
   /** Re-dress the launcher and the panel frame. The panel's CONTENTS are
    *  canopy's document and are re-themed over the handshake, not here. */
   setTheme(theme: SafeTheme): void
@@ -118,6 +135,18 @@ const STYLES = `
     width: 100%; height: 100%; border-radius: 0; border-width: 0;
     box-shadow: none; display: block;
   }
+  /* Expanded: !important because a dragged panel and a frame-requested height
+     are placed by INLINE styles, which would otherwise win — and must survive
+     untouched so collapsing puts the panel back exactly where it was. */
+  .panel[data-expanded="true"] {
+    inset: 16px !important; width: auto !important; height: auto !important;
+    border-width: 1px; border-radius: var(--canopy-radius, 12px);
+  }
+  @media (max-width: 640px) {
+    .panel[data-expanded="true"] { inset: 0 !important; border-radius: 0; border-width: 0; }
+  }
+  /* The bubble would sit on top of the expanded panel's corner. */
+  :host([data-expanded="true"]) .dock { display: none; }
   iframe { width: 100%; height: 100%; border: 0; display: block; }
   /* The launcher and its dismiss button travel together, so the X stays put
      relative to the bubble at any label length. Insets respect the phone's
@@ -199,6 +228,28 @@ function resolveTarget(target: string | Element | undefined): Element {
   return el
 }
 
+/** Per app, like a dragged position. */
+export function displayKeyFor(app: string): string {
+  return `canopy.widget.display.${app}`
+}
+
+function readExpanded(storage: Pick<Storage, 'getItem'> | null, key: string): boolean | null {
+  try {
+    const raw = storage?.getItem(key)
+    return raw === 'expanded' ? true : raw === 'normal' ? false : null
+  } catch {
+    return null
+  }
+}
+
+function writeExpanded(storage: Pick<Storage, 'setItem'> | null, key: string, expanded: boolean) {
+  try {
+    storage?.setItem(key, expanded ? 'expanded' : 'normal')
+  } catch {
+    // As for a position: forgetting the choice must never break making it.
+  }
+}
+
 export function createChrome(src: string, options: ChromeOptions): Chrome {
   const inline = options.mode === 'inline'
   const mount = inline ? resolveTarget(options.target) : document.body
@@ -243,6 +294,24 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   panel.dataset.open = String(inline)
   panel.setAttribute('part', 'panel')
   applyTheme(options.theme)
+
+  const expandable = options.expandable && !inline
+  const displayKey = displayKeyFor(options.app)
+  let expanded = false
+  function paintExpanded(next: boolean): void {
+    expanded = next
+    panel.dataset.expanded = String(next)
+    host.dataset.expanded = String(next)
+  }
+  // The visitor's remembered choice beats the host's default.
+  paintExpanded(expandable && (readExpanded(options.storage, displayKey) ?? options.initialExpanded))
+
+  // Esc collapses — here for focus on the host page; the frame has its own
+  // listener for focus inside it, since keys typed there never reach us.
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && expanded && api.isOpen()) api.setExpanded(false, true)
+  }
+  if (expandable) document.addEventListener('keydown', onKeydown)
 
   const iframe = document.createElement('iframe')
   iframe.src = src
@@ -444,6 +513,18 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       if (inline) return // the host owns layout here
       panel.style.height = `${px}px`
     },
+    setExpanded(next: boolean, remember = false) {
+      if (!expandable) return
+      if (remember) writeExpanded(options.storage, displayKey, next)
+      if (next && !api.isOpen()) api.open()
+      if (next === expanded) {
+        options.onDisplay(expanded) // still answered, so the frame's button is right
+        return
+      }
+      paintExpanded(next)
+      options.onDisplay(next)
+    },
+    isExpanded: () => expanded,
     setTheme: applyTheme,
     setLauncherVisible(visible: boolean) {
       if (!dock) return // inline has no launcher
@@ -454,6 +535,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       dock.dataset.suppressed = String(!visible)
     },
     destroy() {
+      document.removeEventListener('keydown', onKeydown)
       host.remove()
     },
   }

@@ -44,6 +44,9 @@ export interface AppBridgeHandlers {
   openLink(url: string): void;
   onSize?(size: { width?: number; height?: number }): void;
   onLog?(params: unknown): void;
+  /** The View asked for a display mode; resolves to the mode now in force.
+   *  Absent, the answer is always "inline". */
+  requestDisplayMode?(mode: string): string | Promise<string>;
 }
 
 export interface AppBridgeOptions {
@@ -109,6 +112,12 @@ export class AppBridge {
       caps.serverResources = {};
     }
     return caps;
+  }
+
+  /** Tell the View its host context changed (`displayMode`, dimensions…). */
+  notifyHostContext(changes: Record<string, unknown>): void {
+    if (this.closed || !this.initialized) return;
+    this.post({ jsonrpc: "2.0", method: "ui/notifications/host-context-changed", params: changes });
   }
 
   /** §Lifecycle 4: tell the View before tearing it down. Best effort. */
@@ -212,10 +221,14 @@ export class AppBridge {
         case "ping":
           this.respond(id, {});
           return;
-        case "ui/request-display-mode":
-          // Inline only (spec 2026-10-08 §7): the answer is the mode in force.
-          this.respond(id, { mode: "inline" });
+        case "ui/request-display-mode": {
+          // The answer is always the mode in force: inline unless the host
+          // offers more (spec 2026-10-08 §7) and grants this request.
+          const wanted = typeof params.mode === "string" ? params.mode : "";
+          const mode = h.requestDisplayMode ? await h.requestDisplayMode(wanted) : "inline";
+          this.respond(id, { mode });
           return;
+        }
         case "ui/open-link": {
           const url = typeof params.url === "string" ? params.url : "";
           if (!isHttps(url)) {

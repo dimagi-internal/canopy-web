@@ -145,7 +145,26 @@ describe('the handshake', () => {
       agent: 'labs-helper',
       metadata: { supplyPoint: 7 },
       actions: [{ name: 'recordCount' }],
+      // An older loader says nothing about expanding: not expandable.
+      expandable: false,
+      expanded: false,
     })
+  })
+
+  it('follows the host on whether the panel is expanded, and asks it to change', async () => {
+    const { link, fromHost, sent } = harness()
+    const seen: boolean[] = []
+    link.onDisplayChanged((e) => seen.push(e))
+    await fromHost({ source: SOURCE, type: 'init', token: 'tok', actions: [],
+                     expandable: true, expanded: true })
+    await expect(link.waitForInit()).resolves.toMatchObject({ expandable: true, expanded: true })
+    expect(link.isExpanded()).toBe(true)
+    link.requestExpand(false)
+    expect(sent('expand')[0]).toMatchObject({ message: { type: 'expand', expanded: false },
+                                              targetOrigin: HOST })
+    await fromHost({ source: SOURCE, type: 'display', expanded: false })
+    expect(link.isExpanded()).toBe(false)
+    expect(seen).toEqual([false])
   })
 
   it('rejects when the host could not mint, so the UI can say why', async () => {

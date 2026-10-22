@@ -149,6 +149,27 @@ describe("AppBridge", () => {
     expect(handlers.onSize).toHaveBeenCalledWith({ width: 300, height: 420 });
   });
 
+  it("asks the host for a display mode when it offers one, and answers what is in force", async () => {
+    const requestDisplayMode = vi.fn(async (mode: string) => (mode === "fullscreen" ? "fullscreen" : "inline"));
+    const { sent, fromProxy } = setup({ handlers: { requestDisplayMode } });
+    fromProxy({ jsonrpc: "2.0", id: 1, method: "ui/request-display-mode", params: { mode: "fullscreen" } });
+    fromProxy({ jsonrpc: "2.0", id: 2, method: "ui/request-display-mode", params: { mode: "pip" } });
+    await flush();
+    expect(requestDisplayMode).toHaveBeenCalledWith("fullscreen");
+    expect(sent.find((m) => m.id === 1)).toMatchObject({ result: { mode: "fullscreen" } });
+    expect(sent.find((m) => m.id === 2)).toMatchObject({ result: { mode: "inline" } });
+  });
+
+  it("tells an initialized View its host context changed, and nothing before", async () => {
+    const { bridge, sent, fromProxy } = setup();
+    bridge.notifyHostContext({ displayMode: "fullscreen" });
+    expect(sent).toHaveLength(0);
+    fromProxy({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    bridge.notifyHostContext({ displayMode: "fullscreen" });
+    expect(sent.at(-1)).toMatchObject({ method: "ui/notifications/host-context-changed",
+                                         params: { displayMode: "fullscreen" } });
+  });
+
   it("ui/message and update-model-context reach canopy", async () => {
     const { handlers, fromProxy } = setup();
     fromProxy({ jsonrpc: "2.0", id: 1, method: "ui/message",

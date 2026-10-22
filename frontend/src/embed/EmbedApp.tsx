@@ -3,6 +3,7 @@ import {
   type AppHost, type AppViewResource, type CallToolResult,
 } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
+import { Maximize2, Minimize2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Markdown } from '@/components/Markdown'
@@ -69,6 +70,37 @@ function renderMarkdown(text: string) {
     <Markdown className="text-sm leading-relaxed" linksInNewTab>
       {text}
     </Markdown>
+  )
+}
+
+/** Whether the host has the panel expanded, as it last said — the host owns
+ *  the panel's box, so the frame follows its answer rather than its own guess. */
+function useExpanded(link: HostLink): boolean {
+  const [expanded, setExpanded] = useState(() => link.isExpanded())
+  useEffect(() => link.onDisplayChanged(setExpanded), [link])
+  return expanded
+}
+
+/** Expand / collapse, beside ×. Drawn only when the host allows it (`init`). */
+function ExpandButton({ link, expandable }: { link: HostLink; expandable: boolean }) {
+  const expanded = useExpanded(link)
+  if (!expandable) return null
+  const label = expanded ? 'Collapse panel' : 'Expand panel'
+  return (
+    <button
+      type="button"
+      onClick={() => link.requestExpand(!expanded)}
+      aria-label={label}
+      aria-pressed={expanded}
+      title={expanded ? 'Collapse (Esc)' : 'Expand'}
+      className="rounded px-1.5 text-muted-foreground hover:text-foreground"
+    >
+      {expanded ? (
+        <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+      ) : (
+        <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+      )}
+    </button>
   )
 }
 
@@ -346,6 +378,19 @@ export function EmbedApp({ link, app }: Props) {
   const [asked, setAsked] = useState<string | null>(null)
   const [unsent, setUnsent] = useState<{ text: string; error: string; n: number } | null>(null)
   useEffect(() => link.onAsk(setAsked), [link])
+
+  // Esc collapses an expanded panel. Keys typed in here never reach the host
+  // page, so the frame listens for its own. Something that handles Esc first
+  // (a View shown full screen, a dialog) calls preventDefault and is left be.
+  useEffect(() => {
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !link.isExpanded()) return
+      link.requestExpand(false)
+    }
+    document.addEventListener('keydown', onKeydown)
+    return () => document.removeEventListener('keydown', onKeydown)
+  }, [link])
+  const expandable = init?.expandable === true
   useEffect(() => {
     if (asked === null) return
     if (phase.kind !== 'ready' && phase.kind !== 'chatting') return
@@ -416,6 +461,7 @@ export function EmbedApp({ link, app }: Props) {
           setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
         }
         onClose={() => link.requestClose()}
+        headerControls={<ExpandButton link={link} expandable={expandable} />}
       />
     )
   }
@@ -432,6 +478,7 @@ export function EmbedApp({ link, app }: Props) {
       link={link}
       contextPreamble={pendingContext}
       isContact={principal?.kind === 'contact'}
+      expandable={expandable}
     />
   )
 }
@@ -453,6 +500,7 @@ function EmbedStart({
   onClose,
   initialBody,
   initialError,
+  headerControls,
 }: {
   agent: EmbedAgent
   client: CanopyClient
@@ -463,6 +511,8 @@ function EmbedStart({
   /** A question the page asked that could not be sent: shown, not dropped. */
   initialBody?: string
   initialError?: string
+  /** Panel controls drawn before × (expand). */
+  headerControls?: React.ReactNode
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
   const [body, setBody] = useState(initialBody ?? '')
@@ -487,14 +537,17 @@ function EmbedStart({
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-[12px] text-muted-foreground">{agent.name}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="rounded px-2 text-muted-foreground hover:text-foreground"
-        >
-          ×
-        </button>
+        <span className="flex shrink-0 items-center gap-1">
+          {headerControls}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded px-2 text-muted-foreground hover:text-foreground"
+          >
+            ×
+          </button>
+        </span>
       </header>
 
       {history.length > 0 ? (
@@ -695,6 +748,7 @@ function EmbedChat({
   link,
   contextPreamble,
   isContact = false,
+  expandable = false,
 }: {
   sessionId: string
   /** The opening message, already sent over HTTP. Echoed once on mount. Empty
@@ -725,6 +779,8 @@ function EmbedChat({
    *  part of why a contact silently went without page state: the prop that knew
    *  the answer did not look like it was about routing. */
   isContact?: boolean
+  /** Whether the host lets the panel expand (its `init`). */
+  expandable?: boolean
 }) {
   // No tool calls ever arrive here: canopy withholds them from every widget
   // connection, decided by the token rather than asked for (consumers.py).
@@ -807,8 +863,11 @@ function EmbedChat({
   // A contact on a site canopy trusts for their email may opt in themself, in this
   // frame (ContactMemory.tsx); anywhere else it renders nothing.
   const contactMemory = useMemo(() => (isContact ? contactHcp(client.rest) : null), [client, isContact])
-  const appHost = useMemo(() => embedAppHost(client, sessionBase(isContact, sessionId)),
-                          [client, sessionId, isContact])
+  // Expanded, a View may use the panel's whole width and most of its height —
+  // a results table or a chart is why somebody expanded it.
+  const expanded = useExpanded(link)
+  const appHost = useMemo(() => embedAppHost(client, sessionBase(isContact, sessionId), expanded),
+                          [client, sessionId, isContact, expanded])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -938,6 +997,7 @@ function EmbedChat({
           >
             New chat
           </button>
+          <ExpandButton link={link} expandable={expandable} />
           <button
             type="button"
             onClick={() => link.requestClose()}
@@ -1024,7 +1084,7 @@ function EmbedChat({
 /** The embed panel's MCP Apps host: the same five routes as canopy's chat page,
  *  under `/api/contact/` for a contact (their whole surface) — through the
  *  panel's own client, so the visitor's token is what authorises every click. */
-function embedAppHost(client: CanopyClient, sessionPath: string): AppHost {
+function embedAppHost(client: CanopyClient, sessionPath: string, expanded = false): AppHost {
   const at = (callId: string) => `${sessionPath}/apps/${encodeURIComponent(callId)}`
   const send = <T,>(path: string, method: string, body: unknown) =>
     client.rest.json(path, { method, body: JSON.stringify(body) }) as Promise<T>
@@ -1038,6 +1098,12 @@ function embedAppHost(client: CanopyClient, sessionPath: string): AppHost {
     sendMessage: (callId, text) =>
       send<void>(`${at(callId)}/message`, 'POST', { text, client_id: newClientId() }).then(() => undefined),
     resolveUrl: (path) => (/^https?:\/\//.test(path) ? path : `${currentFrameBaseUrl()}${path}`),
-    maxWidth: 420,
+    // Narrow-panel sized, until the visitor expands the panel: then the View
+    // gets the panel's width (no cap) and most of the window's height.
+    ...(expanded
+      ? { maxHeight: Math.max(900, Math.round(window.innerHeight * 0.85)) }
+      : { maxWidth: 420 }),
+    // A View may ask to go full screen: it is drawn over the panel.
+    fullscreen: true,
   }
 }
