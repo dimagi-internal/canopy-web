@@ -613,6 +613,8 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
         # The caller-envelope version this code reads (2 = `profile: "confined"`);
         # canopy-web gives caller turns only to a box that reports it.
         "envelope": ENVELOPE_VERSION,
+        # This code checks out a declared turn's `agent_sha` (`_checkout_declared`).
+        "pins": 1,
     }
     # Omitted until the first inbox probe: absent is "unknown", [] is "none".
     readable = mailboxes_readable()
@@ -4744,6 +4746,35 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     return path
 
 
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _checkout_declared(cwd: pathlib.Path | None, slug: str, sha: str,
+                       env: dict | None = None) -> None:
+    """Put this turn's own worktree of the agent at `sha`, the commit its author
+    declared PHI-safe (`agent_sha` on the claim; spec 2026-10-22-phi-agents-on-
+    zdr-runners §5). Fetched by SHA when the clone lacks it; checked out with
+    --force (a phi capability writes nothing, so nothing is lost); verified. The
+    shared clone is never moved. Raises ConfineError: the turn is not run."""
+    if not _SHA_RE.match(sha or ""):
+        raise ConfineError("the declared commit is not a 40-hex SHA")
+    clone = pathlib.Path(AGENT_ROOT) / slug if slug else None
+    if (cwd is None or clone is None or not (pathlib.Path(cwd) / ".git").exists()
+            or pathlib.Path(cwd).resolve() == clone.resolve()):
+        raise ConfineError("no worktree of the agent of its own to run the declared commit in")
+    if not _git_quiet("-C", str(clone), "cat-file", "-e", f"{sha}^{{commit}}"):
+        _git_quiet("-C", str(clone), "fetch", "--quiet", "origin", sha, env=env)
+    _git_quiet("-C", str(cwd), "checkout", "--quiet", "--force", "--detach", sha)
+    try:
+        head = subprocess.run(["git", "-C", str(cwd), "rev-parse", "HEAD"], capture_output=True,
+                              text=True, timeout=30).stdout.strip()
+    except Exception:  # noqa: BLE001
+        head = ""
+    if head != sha:
+        raise ConfineError(f"could not check out the declared commit {sha[:12]} of {slug}")
+    _log(f"{slug}: running the declared commit {sha[:12]} in {cwd}")
+
+
 def _project_worktree(project: str, path: pathlib.Path, env: dict | None) -> None:
     """Best-effort, like the agent clone's pull: a repo that cannot be fetched
     leaves the plain directory every project turn got before."""
@@ -8492,6 +8523,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
         _TURN_ENV.confined = _capability(turn) if confined else None
+        if ZDR_MODE and not confined:
+            # A ZDR box runs only confined turns (spec 2026-10-22-phi-agents-on-zdr-
+            # runners §5: a phi capability is confined for everyone). canopy-web
+            # decides that; this is the box refusing to trust it blindly.
+            note = ("zdr_unconfined: a ZDR runner runs only turns confined to a capability "
+                    "declared PHI-safe; this turn's envelope is not confined")
+            _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
+            _log(f"turn {turn_id[:8]} NOT run — {note}")
+            return
         if confined:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
@@ -8549,6 +8589,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             off_disk_env = True
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(slug))
+        if turn.get("agent_sha"):
+            # A capability its author declared PHI-safe runs the declared commit,
+            # never main; a box that cannot check it out does not run the turn.
+            try:
+                _checkout_declared(cwd, slug, turn["agent_sha"], env=_agent_env(slug))
+            except ConfineError as exc:
+                _api("POST", f"/turns/{turn_id}/finish",
+                     {"status": "failed", "result_note": f"turn not run: {exc}"})
+                _log(f"turn {turn_id[:8]} NOT run — {exc}")
+                return
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
         if not confined:

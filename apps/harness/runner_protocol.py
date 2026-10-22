@@ -82,6 +82,7 @@ def heartbeat(runner: Runner, payload: HeartbeatIn) -> Runner:
         profiles=payload.profiles,
         envelope=payload.envelope,
         midturn=payload.midturn,
+        pins=payload.pins,
         data_mode=payload.data_mode,
         data_mode_hash=payload.data_mode_hash,
         health=payload.health.model_dump() if payload.health is not None else None,

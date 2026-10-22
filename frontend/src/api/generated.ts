@@ -18498,6 +18498,22 @@ export interface components {
             /** User Id */
             readonly user_id: number | null;
         };
+        /** AgentDeclarationOut */
+        readonly AgentDeclarationOut: {
+            /** Capability */
+            readonly capability: string;
+            /** Data */
+            readonly data: string;
+            /** Sha */
+            readonly sha: string;
+            /** Declared By Email */
+            readonly declared_by_email?: string | null;
+            /**
+             * Declared At
+             * Format: date-time
+             */
+            readonly declared_at: string;
+        };
         /** AgentInterfaceOut */
         readonly AgentInterfaceOut: {
             /** Interface */
@@ -18518,6 +18534,11 @@ export interface components {
              * @default []
              */
             readonly warnings: readonly string[];
+            /**
+             * Declarations
+             * @default []
+             */
+            readonly declarations: readonly components["schemas"]["AgentDeclarationOut"][];
         };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {
@@ -18527,6 +18548,8 @@ export interface components {
             readonly interface?: {
                 readonly [key: string]: unknown;
             } | null;
+            /** Declare Sha */
+            readonly declare_sha?: string | null;
         };
         /** AgentAdminOut */
         readonly AgentAdminOut: {
@@ -27229,6 +27252,11 @@ export interface components {
              */
             readonly midturn: number;
             /**
+             * Pins
+             * @default 0
+             */
+            readonly pins: number;
+            /**
              * Data Mode
              * @default
              */
@@ -27523,6 +27551,11 @@ export interface components {
             readonly mcp_token?: string | null;
             /** Chat Key */
             readonly chat_key?: string | null;
+            /**
+             * Agent Sha
+             * @default
+             */
+            readonly agent_sha: string;
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {
