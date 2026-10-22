@@ -143,11 +143,36 @@ def _agent_unit_slug(unit: dict) -> str | None:
     return str(unit.get("slug") or "")
 
 
+def prime_dedicated_agents(runners) -> None:
+    """Fill each of `runners`' `only_agent_slugs` cache — one query for them all,
+    so the claim and the fleet list ask every candidate without a query each."""
+    runners = [r for r in runners if r is not None and r.pk is not None]
+    rows = (Runner.only_agents.through.objects.filter(runner_id__in=[r.pk for r in runners])
+            .values_list("runner_id", "agent__slug")) if runners else []
+    slugs: dict = {}
+    for runner_id, slug in rows:
+        slugs.setdefault(runner_id, set()).add(slug)
+    for r in runners:
+        setattr(r, Runner.ONLY_AGENTS_CACHE, slugs.get(r.pk, set()))
+
+
+def dedicated_agent_slugs(runner: Runner) -> set[str] | None:
+    """The agents a person dedicated `runner` to (`Runner.only_agents`); None when
+    it is dedicated to none, which restricts nothing."""
+    return runner.only_agent_slugs() or None
+
+
+def _dedicated_refusal(runner: Runner, only: set[str]) -> str:
+    return f"{runner.name} runs only {', '.join(sorted(only))}"
+
+
 def prime_machine_units(runners) -> None:
     """Cache, on each of `runners`, the agent units of the OTHER live runners on
     its machine — one query for them all, so the claim and the coverage report
-    ask `unit_refusal` of every candidate without a query each."""
+    ask `unit_refusal` of every candidate without a query each. Primes their
+    dedicated agents too (`prime_dedicated_agents`), which `unit_refusal` also asks."""
     runners = [r for r in runners if r is not None]
+    prime_dedicated_agents(runners)
     machines = {r.machine_id for r in runners if r.machine_id}
     rows = list(Runner.objects.filter(machine_id__in=machines).exclude(status=Runner.RETIRED)
                 .values_list("pk", "name", "machine_id", "capabilities")) if machines else []
@@ -178,6 +203,7 @@ def unit_refusal(runner: Runner, slug: str) -> str:
     it does not:
 
       - it is an AGENT unit, and `slug` is not its agent;
+      - a person dedicated it to other agents (`dedicated_agent_slugs`);
       - another live runner on its machine is the agent unit for `slug`, so the
         agent's secrets stay in that unit.
 
@@ -188,6 +214,9 @@ def unit_refusal(runner: Runner, slug: str) -> str:
     own = _agent_unit_slug(runner.unit())
     if own is not None and slug != own:
         return f"{runner.name} is the agent unit for {own or '(no agent named)'}"
+    only = dedicated_agent_slugs(runner)
+    if only is not None and slug not in only:
+        return _dedicated_refusal(runner, only)
     sibling = machine_agent_units(runner).get(slug)
     if sibling and own != slug:
         return f"{slug} has its own unit on this machine ({sibling})"
@@ -198,11 +227,15 @@ def turn_unit_refusal(runner: Runner, turn) -> str:
     """`unit_refusal` for a whole turn: an agent unit refuses every turn that does
     not run AS its agent — another agent's, and one with no acting agent at all
     (a repo turn, an agentless chat) — and any runner refuses a turn whose agent
-    has its own unit elsewhere on its machine. "" when it takes the turn."""
+    has its own unit elsewhere on its machine. A runner a person dedicated to
+    some agents refuses the same way. "" when it takes the turn."""
     agent = turn.acting_agent
     own = _agent_unit_slug(runner.unit())
     if own is not None and (agent is None or agent.slug != own):
         return f"{runner.name} is the agent unit for {own or '(no agent named)'}"
+    only = dedicated_agent_slugs(runner)
+    if only is not None and agent is None:
+        return _dedicated_refusal(runner, only)
     return unit_refusal(runner, agent.slug) if agent is not None else ""
 
 
@@ -849,6 +882,10 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
         # no repo turns, no agentless chats (`turn_unit_refusal`). `ignore_unit`
         # is the unclaimable report's counterfactual only.
         q &= Q(agent__slug=own) | Q(chat_session__agent__slug=own)
+    only = None if ignore_unit else dedicated_agent_slugs(runner)
+    if only is not None:
+        # Likewise a runner a person dedicated to some agents (`Runner.only_agents`).
+        q &= Q(agent__slug__in=only) | Q(chat_session__agent__slug__in=only)
     return q
 
 

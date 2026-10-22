@@ -19,9 +19,11 @@ from django.utils import timezone
 from ninja import Status
 from ninja.errors import HttpError
 
+from apps.agents.models import Agent
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.canopy_sessions.models import Attachment, Session
+from apps.events import audit as events_audit
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
@@ -77,6 +79,7 @@ from .schemas import (
     RunnerMintStartIn,
     RunnerMintUrlIn,
     RunnerOut,
+    RunnerOnlyAgentsIn,
     RunnerPrivateIn,
     SendUpIn,
     SendUpOut,
@@ -856,6 +859,37 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     return _with_roots(request, out)
 
 
+@router.put("/runners/{runner_id}/only-agents", response=RunnerOut,
+            summary="Dedicate this runner to a list of agents")
+@gate("runner-admin", setting=True)
+def set_runner_only_agents(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerOnlyAgentsIn):
+    """Replace the agents this runner is dedicated to. Listed: it runs only their
+    turns and chats — no other agent's, no repo turn, no agentless chat — however
+    they reach it, a pin included. [] lifts the restriction. It never ADDS work:
+    an agent still routes here only through its runner list or the order it
+    follows. Each agent must be one the box may serve (in its tenant). Owner or a
+    runner administrator."""
+    runner = runner_admin_or_404(request, runner_id)
+    wanted = {s.strip() for s in payload.agents if s.strip()}
+    found = {a.slug: a for a in Agent.objects.filter(
+        slug__in=wanted, workspace_id__in=routing.runner_tenant_slugs(runner))}
+    missing = sorted(wanted - set(found))
+    if missing:
+        raise HttpError(422, f"{runner.name} cannot serve {', '.join(missing)}: no such agent "
+                             "in the workspaces it serves")
+    before = sorted(routing.dedicated_agent_slugs(runner) or ())
+    after = sorted(found)
+    if before != after:
+        runner.only_agents.set(found.values())
+    events_audit.note_change(scope=f"runner-only-agents:{runner.name}", before=before, after=after,
+                      workspace=runner.workspace)
+    out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
+           .prefetch_related("declared_flags").get(pk=runner.pk))
+    out.can_manage = out.owner_id in (request.user.id, None)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
+    return _with_roots(request, out)
+
+
 @router.put("/runners/{runner_id}/engine", response=RunnerOut,
             summary="Choose the session runtime a laptop runner opens new sessions in")
 @gate("runner-admin", setting=True)
@@ -964,6 +998,7 @@ def list_runners(request: HttpRequest):
         following = {r.pk for r in qs if routing.agents_following_runner(r) & set(offered)}
         qs = qs.filter(Q(agent_assignments__agent_id__in=offered) | Q(pk__in=following)).distinct()
     rows = list(qs[:50])
+    routing.prime_dedicated_agents(rows)
     open_by_runner = _open_sessions_by_runner([r.pk for r in rows])
     administered = harness_runners.administered_runner_ids(request.user, rows)
     for r in rows:

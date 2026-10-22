@@ -77,6 +77,16 @@ export async function setRunnerPrivate(runnerId: string, isPrivate: boolean): Pr
   return toRunner(unwrap(res, 'setRunnerPrivate'))
 }
 
+// Dedicate a runner to a list of agents: it then runs only their turns and chats.
+// [] lifts the restriction. Owner or a runner administrator.
+export async function setRunnerOnlyAgents(runnerId: string, agents: string[]): Promise<RunnerOut> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/only-agents', {
+    params: { path: { runner_id: runnerId } },
+    body: { agents },
+  })
+  return toRunner(unwrap(res, 'setRunnerOnlyAgents'))
+}
+
 // Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
 // Claude Code, agent provisioning) at its next idle moment. Durable: the box
 // reads `refresh_pending` off its own heartbeat, so this survives a dropped
