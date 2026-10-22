@@ -166,3 +166,39 @@ def test_a_failed_notice_never_fails_the_recording(box, monkeypatch):
     res = _post(box, _alert())
     assert res.status_code == 200
     assert Event.objects.count() == 1
+
+
+_SIGNED_OUT = {"checks": [{"name": "claude.probe.subscription-1", "status": "fail",
+                           "detail": "not signed in — someone has to sign it in again"}]}
+_AUTH_REQUIRED = {"source": "runner.credential", "kind": "claude_auth_required", "level": "error",
+                  "key": "auth-required:cloud-ec2-fork", "summary": "cloud-ec2-fork needs a Claude sign-in."}
+
+
+@pytest.mark.parametrize("skipped", ["retired", "private"])
+def test_auth_required_still_mails_a_runner_the_alert_source_skips(box, skipped):
+    """`alert_covers` uses the source's own runner filter (in a workspace, not
+    retired): a signed-out box the `runner_credential` reconcile skips raises no
+    alert, so it must keep its mail."""
+    from apps.harness import alerts_runner_credential, credential_notify
+
+    runner = box["runner"]
+    runner.health = _SIGNED_OUT
+    if skipped == "retired":
+        runner.status = Runner.RETIRED
+    else:
+        runner.workspace = None
+    runner.save()
+    assert alerts_runner_credential.reconcile(timezone.now()) == []
+    assert credential_notify.alert_covers(runner) is False
+    result = credential_notify.notify(runner, _AUTH_REQUIRED)
+    assert sorted(result["emailed"]) == ["ad@dimagi.com", "jj@dimagi.com"]
+
+
+def test_alert_covers_a_signed_out_runner_the_source_reconciles(box):
+    from apps.harness import alerts_runner_credential, credential_notify
+
+    box["runner"].health = _SIGNED_OUT
+    box["runner"].save(update_fields=["health"])
+    assert len(alerts_runner_credential.reconcile(timezone.now())) == 1
+    assert credential_notify.alert_covers(box["runner"]) is True
+    assert credential_notify.notify(box["runner"], _AUTH_REQUIRED)["emailed"] == []

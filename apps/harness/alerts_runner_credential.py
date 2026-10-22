@@ -32,7 +32,6 @@ from datetime import timedelta
 
 from apps.attention.alerts import DISMISS, Action, Raise
 
-from .credential_notify import runner_path
 from .models import Runner, RunnerLogin
 from .routing import agents_routed_to
 from .runners import _first_values, can_administer_runner
@@ -55,6 +54,31 @@ SIGNED_OUT_MARKERS = ("not signed in", "not logged in", "please run /login")
 _PROBED_AT = re.compile(r"\s*·\s*probed\s+\S+\s*$", re.IGNORECASE)
 
 _BOX_LOGIN = "box-login"
+
+
+def runner_path(runner) -> str:
+    """The runner's detail on /supervisor, app-relative (/supervisor is not a
+    tenant page, so it has no `/w/<ws>/` prefix). `credential_notify` links
+    its mail here too."""
+    return f"/supervisor?tab=runners&runner={runner.pk}"
+
+
+def watches(runner) -> bool:
+    """Is `runner` one this source reconciles? The same filter as `_runners()`:
+    not retired, and in a workspace (an alert needs one to live in).
+    `credential_notify.alert_covers` asks this, so a box the source skips still
+    gets its mail."""
+    return runner.status != Runner.RETIRED and runner.workspace_id is not None
+
+
+def _runners():
+    return Runner.objects.exclude(status=Runner.RETIRED).filter(workspace_id__isnull=False)
+
+
+def signed_out_checks(runner) -> list[dict]:
+    """The runner's `claude.probe.*` health checks that say it is signed out."""
+    return [c for c in ((runner.health or {}).get("checks") or [])
+            if isinstance(c, dict) and str(c.get("name", "")).startswith(PROBE_PREFIX) and is_signed_out(c)]
 
 
 def is_signed_out(check: dict) -> bool:
@@ -112,11 +136,8 @@ def _routed_slugs(runner) -> list[str]:
 
 def reconcile(now) -> list[Raise]:
     out: list[Raise] = []
-    runners = Runner.objects.exclude(status=Runner.RETIRED).filter(workspace_id__isnull=False)
-    for runner in runners:
-        checks = [c for c in ((runner.health or {}).get("checks") or [])
-                  if isinstance(c, dict) and str(c.get("name", "")).startswith(PROBE_PREFIX)]
-        dead = [c for c in checks if is_signed_out(c)]
+    for runner in _runners():
+        dead = signed_out_checks(runner)
         if not dead:
             continue
         scopes = (f"runner:{runner.pk}", f"workspace:{runner.workspace_id}",

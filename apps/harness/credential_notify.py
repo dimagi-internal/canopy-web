@@ -16,7 +16,8 @@ this only for an item that is news today (`events.services.record`'s
 fails the recording.
 
 `claude_auth_required` is mailed only where the `runner_credential` alert
-(`alerts_runner_credential`) cannot cover it: a runner whose health reports no
+(`alerts_runner_credential`) cannot cover it: a runner that source does not
+reconcile (private — no workspace — or retired), or one whose health reports no
 signed-out `claude.probe.*` check — a laptop, which posts no probe checks, or a
 box whose probe was inconclusive. Where such a check exists the alert's own
 blocking notice reaches the same people once, names the token by its label and
@@ -28,6 +29,8 @@ import logging
 from html import escape
 
 from django.conf import settings
+
+from .alerts_runner_credential import runner_path, signed_out_checks, watches
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +45,10 @@ CREDENTIAL_KINDS = {
 
 def alert_covers(runner) -> bool:
     """Does the `runner_credential` alert already cover this box's sign-out —
-    does its health report a signed-out `claude.probe.*` check?"""
-    from .alerts_runner_credential import PROBE_PREFIX, is_signed_out
-
-    checks = (getattr(runner, "health", None) or {}).get("checks") or []
-    return any(isinstance(c, dict) and str(c.get("name", "")).startswith(PROBE_PREFIX) and is_signed_out(c)
-               for c in checks)
-
-
-def runner_path(runner) -> str:
-    """The runner's detail on /supervisor, app-relative (/supervisor is not a
-    tenant page, so it has no `/w/<ws>/` prefix)."""
-    return f"/supervisor?tab=runners&runner={runner.pk}"
+    is it a runner that source reconciles (`watches`: in a workspace, not
+    retired) AND does its health report a signed-out `claude.probe.*` check?
+    A box the source skips keeps its mail."""
+    return watches(runner) and bool(signed_out_checks(runner))
 
 
 def runner_url(runner) -> str:
