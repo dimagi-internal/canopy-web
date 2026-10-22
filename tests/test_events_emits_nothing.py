@@ -17,9 +17,8 @@ cheap enough that logging is never a decision.
 """
 from __future__ import annotations
 
-import pathlib
+from tests._source import ROOT, iter_app_sources
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 APP = ROOT / "apps" / "events"
 
 # Tokens that would turn a write into work. `on_commit` is included because the
@@ -44,11 +43,11 @@ def test_the_app_has_no_signals_module():
 
 def test_no_module_connects_a_receiver_or_creates_an_item():
     offenders = []
-    for path in sorted(APP.rglob("*.py")):
-        text = path.read_text()
+    # Every file, tests and migrations included: a receiver is a side effect wherever it sits.
+    for src in iter_app_sources(("apps/events",), include_tests=True, include_migrations=True):
         for token in BANNED:
-            if token in text:
-                offenders.append(f"{path.relative_to(ROOT)}: {token}")
+            if token in src.text:
+                offenders.append(f"{src.rel}: {token}")
     assert offenders == [], f"apps/events grew a side effect: {offenders}"
 
 

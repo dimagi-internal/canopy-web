@@ -15,18 +15,18 @@ flagged.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-HELPER = REPO_ROOT / "apps" / "common" / "client_ip.py"
-SCAN_DIRS = ["apps", "config"]
+from tests._source import iter_app_sources
+
+HELPER = "apps/common/client_ip.py"
+SCAN_DIRS = ("apps", "config")
 NAMES = {"http_x_forwarded_for", "x-forwarded-for"}
 
 #: Modules that NAME the header without parsing it, each with its reason.
 ALLOWED = {
     # Carries the MCP client's header verbatim into the in-process request, so
     # the helper reads the ALB-appended value there too. Forwarding, not parsing.
-    REPO_ROOT / "apps" / "mcp" / "api_tools.py",
+    "apps/mcp/api_tools.py",
 }
 
 
@@ -40,21 +40,14 @@ def _reads(source: str) -> list[int]:
 
 
 def _production_files():
-    for d in SCAN_DIRS:
-        for path in sorted((REPO_ROOT / d).rglob("*.py")):
-            parts = set(path.parts)
-            if path == HELPER or path in ALLOWED or "migrations" in parts or "tests" in parts:
-                continue
-            if path.name.startswith("test_") or path.name == "tests.py":
-                continue
-            yield path
+    return iter_app_sources(SCAN_DIRS, exclude=(HELPER, *ALLOWED))
 
 
 def test_only_the_helper_reads_x_forwarded_for():
     offenders = [
-        f"{path.relative_to(REPO_ROOT)}:{line}"
-        for path in _production_files()
-        for line in _reads(path.read_text())
+        f"{src.rel}:{line}"
+        for src in _production_files()
+        for line in _reads(src.text)
     ]
     assert not offenders, (
         "These read X-Forwarded-For outside apps/common/client_ip.py:\n  "

@@ -232,9 +232,9 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
     new caller rather than waiting for the next audit to find it.
     """
     import ast
-    import pathlib
 
-    root = pathlib.Path(__file__).resolve().parent.parent
+    from tests._source import iter_app_sources
+
     allowed = {
         # The deliberate doors, and nothing else. Each is an explicit human
         # action; none can be reached as a side effect of writing a row. See
@@ -248,17 +248,14 @@ def test_ensure_member_is_no_longer_called_from_any_create_path():
         "apps/agents/agent_login.py",
     }
     offenders = []
-    for path in root.glob("apps/**/*.py"):
-        rel = str(path.relative_to(root))
-        if rel in allowed or "/migrations/" in rel or "/tests/" in rel:
-            continue
+    for src in iter_app_sources(("apps",), exclude=allowed):
+        rel = src.rel
         # Parsed, not grepped. A regex over source text also matches the word
         # inside a comment or docstring — and the comments explaining why this
         # rule exists necessarily quote the call they are about, so a text
         # search fails on the very files that document the fix. Only a real
         # Call node counts.
-        tree = ast.parse(path.read_text(), filename=rel)
-        for node in ast.walk(tree):
+        for node in ast.walk(src.tree):
             if not isinstance(node, ast.Call):
                 continue
             fn = node.func

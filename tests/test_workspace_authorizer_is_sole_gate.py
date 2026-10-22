@@ -37,18 +37,17 @@ caller. If you reach for it, say why in the same breath.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tests._source import iter_app_sources
 
 #: The one module allowed to decide workspace access. `member_role`,
 #: `has_role_at_least`, `is_member` and `membership` all live here, so every
 #: gate in the codebase reads the same rule from the same place.
-AUTHORIZER = REPO_ROOT / "apps" / "workspaces" / "services.py"
+AUTHORIZER = "apps/workspaces/services.py"
 
-SCAN_DIRS = ["apps"]
+SCAN_DIRS = ("apps",)
 
 WORKSPACE_KEYS = {"workspace", "workspace_id"}
 USER_KEYS = {"user", "user_id"}
@@ -93,25 +92,16 @@ def _bypass_lines(source: str) -> list[int]:
 
 
 def _production_files():
-    for d in SCAN_DIRS:
-        for path in sorted((REPO_ROOT / d).rglob("*.py")):
-            if path == AUTHORIZER:
-                continue
-            parts = set(path.parts)
-            if "migrations" in parts or "tests" in parts:
-                continue
-            if path.name.startswith("test_"):
-                continue
-            yield path
+    return iter_app_sources(SCAN_DIRS, exclude=(AUTHORIZER,))
 
 
 def test_only_the_authorizer_decides_workspace_access():
     """No production module outside `workspaces/services.py` may read a
     membership keyed by both a user and a workspace."""
     offenders: list[str] = []
-    for path in _production_files():
-        for line in _bypass_lines(path.read_text()):
-            offenders.append(f"{path.relative_to(REPO_ROOT)}:{line}")
+    for src in _production_files():
+        for line in _bypass_lines(src.text):
+            offenders.append(f"{src.rel}:{line}")
 
     assert not offenders, (
         "These read WorkspaceMembership by BOTH user and workspace — the signature of "

@@ -29,23 +29,15 @@ from __future__ import annotations
 
 import ast
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-APPS = ROOT / "apps"
+from tests._source import iter_app_sources
 
 _ROLE_ATTRS = {"OWNER", "ADMIN", "EDITOR", "VIEWER"}
 _BANNED_CALLS = {"has_role_at_least", "request_workspace_slugs_at_least"}
 
 
 def _production_modules():
-    for path in APPS.rglob("*.py"):
-        rel = path.relative_to(ROOT).as_posix()
-        if rel.startswith("apps/workspaces/"):
-            continue
-        if "/migrations/" in rel or "/tests/" in rel or path.name.startswith("test_"):
-            continue
-        yield rel, path
+    return iter_app_sources(("apps",), exclude=("apps/workspaces/",))
 
 
 def _call_name(node: ast.AST) -> str:
@@ -80,13 +72,12 @@ def _violations(tree: ast.AST) -> list[tuple[int, str]]:
 
 def test_no_module_outside_workspaces_names_a_role():
     found = []
-    for rel, path in _production_modules():
-        src = path.read_text()
+    for src in _production_modules():
         if not re.search(r"WorkspaceMembership|ROLE_RANK|has_role_at_least|"
-                         r"request_workspace_slugs_at_least|member_role", src):
+                         r"request_workspace_slugs_at_least|member_role", src.text):
             continue
-        for line, what in _violations(ast.parse(src)):
-            found.append(f"{rel}:{line}  {what}")
+        for line, what in _violations(src.tree):
+            found.append(f"{src.rel}:{line}  {what}")
     assert not found, (
         "Decide by CAPABILITY, not by role — ask apps/workspaces/permissions.py "
         "(perms.can / perms.request_slugs_with / perms.role_allows) and add a "
