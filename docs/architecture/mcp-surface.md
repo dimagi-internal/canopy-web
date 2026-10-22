@@ -15,7 +15,11 @@ call is a request to that route, dispatched **in-process** (Django's ASGI
 handler is the httpx transport; no socket, no loopback URL) **as the caller**
 (the principal rides in the ASGI scope under `canopy.mcp_principal`, which
 `BearerTokenAuthMiddleware` resolves to `request.user` and which no network
-request can set, because only that transport builds the scope). The web app
+request can set, because only that transport builds the scope). The caller's
+acting cap holds too (`apps/workspaces/role_cap.py`): the MCP request's
+`X-Canopy-Acts-As` and `X-Canopy-Turn-Id` are forwarded (`FORWARDED_HEADERS`)
+and a caller token's own turn is read from its claims, so a turn started as an
+editor or viewer cannot act at its full role through MCP. The web app
 calls the same API, so anything it can do an MCP client can do — same
 middleware, tenancy, ACL and RFC 7807 errors — and **a new route is on MCP the
 moment it exists; there is no step to forget.** Don't add a declarative

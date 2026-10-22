@@ -96,10 +96,16 @@ def cap_from(value) -> str:
 
 
 def _turn_cap(request, user) -> str:
+    return turn_cap(request.META.get("HTTP_X_CANOPY_TURN_ID", ""), user)
+
+
+def turn_cap(turn_id, user) -> str:
+    """The cap of turn `turn_id` when `user` started it as a lower role, else "".
+    Only the turn's own initiator: anyone else is judged as themselves."""
     import uuid
 
-    raw = request.META.get("HTTP_X_CANOPY_TURN_ID", "").strip()
-    if not raw:
+    raw = str(turn_id or "").strip()
+    if not raw or user is None or not getattr(user, "is_authenticated", False):
         return ""
     try:
         tid = uuid.UUID(raw)
