@@ -16,7 +16,7 @@ token; `apps.common.views_debug.is_machine`) is refused outright by
 `require_recent_step_up`, with a message that says why rather than one that
 invites a passkey prompt nothing can answer. Routes that let tokens through
 without a step-up (a PAT writing a credential from `canopy vault import`)
-decide that themselves, before calling this — see `apps/agents/api.py`.
+decide that themselves, before calling this — see `apps/agents/api_credentials.py`.
 """
 from __future__ import annotations
 

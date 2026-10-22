@@ -202,6 +202,12 @@ from apps.session_sharing.api import router as sessions_router  # noqa: E402
 from apps.session_sharing.api import share_router as session_share_router  # noqa: E402
 from apps.agents.a2a_api import router as a2a_router  # noqa: E402
 from apps.agents.api import router as agents_router  # noqa: E402
+from apps.agents.api import turns_router as agent_turns_router  # noqa: E402
+from apps.agents.api_board import router as agent_board_router  # noqa: E402
+from apps.agents.api_credentials import router as agent_credentials_router  # noqa: E402
+from apps.agents.api_readiness import router as agent_readiness_router  # noqa: E402
+from apps.agents.api_routing import router as agent_routing_router  # noqa: E402
+from apps.agents.api_skills import router as agent_skills_router  # noqa: E402
 from apps.agents.contributors_api import router as contributors_router  # noqa: E402
 from apps.agents.oauth_api import oauth_router as google_oauth_router  # noqa: E402
 from apps.agents.oauth_api import router as agent_google_router  # noqa: E402
@@ -286,6 +292,14 @@ api.add_router("/sessions", sessions_router)
 api.add_router("/agents", proposals_router)  # proposed projects + backings (layer 1, 2026-10-16)
 api.add_router("/agents", checkins_project_router)  # a project's check-ins + its timeline (2026-10-17)
 api.add_router("/agents", agents_router)
+# The rest of apps/agents' surface, split by subdomain. Mounted in the order the
+# routes were written in, which is the order of /api/openapi.json's paths.
+api.add_router("/agents", agent_routing_router)
+api.add_router("/agents", agent_turns_router)
+api.add_router("/agents", agent_skills_router)
+api.add_router("/agents", agent_board_router)
+api.add_router("/agents", agent_credentials_router)
+api.add_router("/agents", agent_readiness_router)
 # A2A Agent Card discovery — public in the login middleware; each route
 # self-enforces (apps/agents/a2a_api.py).
 api.add_router("/a2a", a2a_router)
