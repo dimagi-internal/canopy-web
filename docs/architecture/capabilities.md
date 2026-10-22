@@ -248,7 +248,7 @@ build them.
 
 | Route | |
 |---|---|
-| `GET /api/capabilities/leases?agent=&capability=&status=&since=&limit=` | → `{leases: [lease], truncated}`, newest first; `status` is one status, a comma list, or `live` (queued, provisioning, ready); `limit` 1–500 (default 100). Member, or the agent's own login. A read: no heartbeat |
+| `GET /api/capabilities/leases?agent=&capability=&status=&since=&limit=` | → `{leases: [lease], truncated}`, newest first; `status` is one status, a comma list, or `live` (queued, provisioning, ready); `limit` 1–500 (default 100). Member. A read: no heartbeat |
 | `GET /api/capabilities/spend?since=&until=&agent=&capability=` | → `{since, until, rows: [{agent, capability, leases, machine_seconds, live}], total_machine_seconds}`: machine time from `provisioning_at` to `ended_at` (or now), clipped to the window (default the last 7 days) |
 | `POST /api/capabilities/leases/{id}/force-release` | `{reason?}` → lease. Ends a live lease and terminates its machine **even if the lease already ended**. `integrations` or the agent's admins |
 | `POST /api/agents/{slug}/capabilities/{name}/terminate-orphans` | → `{agent, capability, orphans, gone}`: the sweep's machine pass, now. `integrations` or the agent's admins; 502 if EC2 cannot be listed |
@@ -350,7 +350,7 @@ its own values; there is no default or shared value across slots.
 | Route | Gate | Body → response |
 |---|---|---|
 | `PUT /api/agents/{slug}/capabilities/{name}/slots/{slot}` | workspace admin (`integrations`), or the agent's own login | `{"public": {k: v\|null}?, "secret": {k: v\|null}?}` → the masked slot |
-| `GET /api/agents/{slug}/capabilities/{name}/slots` | member, or the agent's own login | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order; 422 on an ec2-ephemeral capability |
+| `GET /api/agents/{slug}/capabilities/{name}/slots` | member | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order; 422 on an ec2-ephemeral capability |
 | `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent; also removes an undeclared slot's data |
 
 A **masked slot** is `{slot, declared, public, secret_keys, updated_at, updated_by, held,

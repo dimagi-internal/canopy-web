@@ -7,7 +7,7 @@ from django.core.cache import cache
 from apps.agents.models import Agent
 from apps.capabilities import aws, services
 from apps.workspaces.models import WorkspaceMembership as M
-from apps.workspaces.testing import a_member, a_user, a_workspace
+from apps.workspaces.testing import a_member, a_workspace
 
 from .fakes import FakeAws
 from .helpers import _acquire, _as, _grant, _json, _publish
@@ -30,7 +30,10 @@ def tenancy(world):
     viewer = a_member(ws, email="vi@dimagi.com", role=M.VIEWER)
     outsider_ws = a_workspace("elsewhere")
     outsider = a_member(outsider_ws, email="out@example.com", role=M.OWNER)
-    bot = a_user("ace@dimagi-ai.com")  # the agent's own login; not a member at all
+    # The agent's own login, a member as `create_agent_login` makes it — but a
+    # viewer, so a route that lets it act still proves the own-login stand-in
+    # for the editor role (a capped turn), not a side door past membership.
+    bot = a_member(ws, email="ace@dimagi-ai.com", role=M.VIEWER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner, user=bot)
     return {"ws": ws, "owner": owner, "editor": editor, "viewer": viewer, "outsider": outsider,
             "bot": bot, "agent": agent}

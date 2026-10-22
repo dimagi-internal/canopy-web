@@ -1133,10 +1133,10 @@ def _safe(fn, *args, **kwargs):
 
 # ---- reading leases: the list and the spend -----------------------------------
 
-def leases_for(workspace_slugs, *, agent_ids=(), agent: str | None = None, capability: str | None = None,
+def leases_for(workspace_slugs, *, agent: str | None = None, capability: str | None = None,
                statuses: list[str] | None = None, since: dt.datetime | None = None, limit: int = 100):
-    """Leases in the caller's workspaces (or of agents the caller IS), newest first."""
-    q = CapabilityLease.objects.filter(Q(workspace_id__in=list(workspace_slugs)) | Q(agent_id__in=list(agent_ids)))
+    """Leases in the caller's workspaces, newest first."""
+    q = CapabilityLease.objects.filter(workspace_id__in=list(workspace_slugs))
     if agent:
         q = q.filter(agent__slug=agent)
     if capability:
@@ -1148,13 +1148,13 @@ def leases_for(workspace_slugs, *, agent_ids=(), agent: str | None = None, capab
     return list(q.select_related("agent", "capability", "workspace").order_by("-created_at")[:max(1, min(limit, 500))])
 
 
-def spend(workspace_slugs, *, agent_ids=(), since: dt.datetime, until: dt.datetime, agent: str | None = None,
+def spend(workspace_slugs, *, since: dt.datetime, until: dt.datetime, agent: str | None = None,
           capability: str | None = None) -> list[dict]:
     """Machine-seconds by agent and capability over [since, until): each lease
     counts from `provisioning_at` (its launch) to `ended_at` (or now, while it
     holds a machine), clipped to the window. Queued time costs nothing."""
     q = CapabilityLease.objects.filter(
-        Q(workspace_id__in=list(workspace_slugs)) | Q(agent_id__in=list(agent_ids)),
+        workspace_id__in=list(workspace_slugs),
         provisioning_at__isnull=False, provisioning_at__lt=until,
     ).filter(Q(ended_at__isnull=True) | Q(ended_at__gt=since))
     if agent:

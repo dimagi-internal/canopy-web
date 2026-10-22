@@ -88,7 +88,7 @@ def _store_for(request, slug: str, *, write: bool = False) -> tuple[object, RunS
         agent = agent_for_work(request, slug, allow_own_login=True,
                                forbidden="changing an agent's runs requires the editor role or above")
     else:
-        agent = agent_for_read(request, slug, allow_own_login=True)
+        agent = agent_for_read(request, slug)
     return agent, resolver.get_run_store(agent)
 
 

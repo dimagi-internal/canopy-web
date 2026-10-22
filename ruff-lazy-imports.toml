@@ -17,7 +17,7 @@
 "apps/admission/runner_notices.py" = ["PLC0415"]  # 2
 "apps/admission/signals.py" = ["PLC0415"]  # 1
 "apps/agent_runs/api.py" = ["PLC0415"]  # 1
-"apps/agent_runs/documents.py" = ["PLC0415"]  # 7
+"apps/agent_runs/documents.py" = ["PLC0415"]  # 6
 "apps/agent_runs/resolver.py" = ["PLC0415"]  # 2
 "apps/agent_runs/stores.py" = ["PLC0415"]  # 15
 "apps/agents/access.py" = ["PLC0415"]  # 4
@@ -74,7 +74,6 @@
 "apps/canopy_sessions/status_feed.py" = ["PLC0415"]  # 7
 "apps/canopy_sessions/transcript_ingest.py" = ["PLC0415"]  # 9
 "apps/canopy_sessions/transcript_read.py" = ["PLC0415"]  # 8
-"apps/capabilities/api.py" = ["PLC0415"]  # 1
 "apps/capabilities/apps.py" = ["PLC0415"]  # 2
 "apps/capabilities/aws.py" = ["PLC0415"]  # 7
 "apps/capabilities/management/commands/capability_sweep.py" = ["PLC0415"]  # 1
