@@ -576,7 +576,7 @@ function TaskActions({
             }}
             // `basis-full` gives the field the whole row on a phone and pushes the
             // buttons below; from `sm` up they share a line.
-            className="min-h-11 w-full min-w-0 basis-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-muted-foreground disabled:opacity-50 sm:min-h-0 sm:w-auto sm:flex-1 sm:basis-auto dark:placeholder:text-foreground-secondary"
+            className="min-h-11 w-full min-w-0 basis-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground placeholder:text-placeholder disabled:opacity-50 sm:min-h-0 sm:w-auto sm:flex-1 sm:basis-auto"
             data-testid={`task-reply-${task.ext_id}`}
           />
           <button

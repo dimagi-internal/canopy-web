@@ -416,9 +416,9 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
       </header>
 
       {conflicted.length > 0 && (
-        <section aria-label="Needs your eye" className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+        <section aria-label="Needs your eye" className="rounded-xl border border-warning/40 bg-warning/5 p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            <AlertTriangle className="h-4 w-4 text-warning" />
             {conflicted.length === 1 ? 'One thing needs your eye' : `${conflicted.length} things need your eye`}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">

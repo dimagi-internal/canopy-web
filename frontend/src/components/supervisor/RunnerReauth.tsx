@@ -249,7 +249,7 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
       )}
 
       {status === 'done' && outcomeIsFresh && (
-        <p className="mt-2 text-sm text-emerald-600" data-testid="reauth-done">
+        <p className="mt-2 text-sm text-success" data-testid="reauth-done">
           Signed in. The runner is using the new token.
         </p>
       )}
