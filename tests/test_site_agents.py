@@ -18,7 +18,7 @@ from canopy_sdk.keys import generate_private_key, public_jwk, public_pem
 from canopy_sdk.stores import MemoryCache
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import Client
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.agents.interface import parse
@@ -126,6 +126,16 @@ def test_an_unknown_site_is_refused_like_any_other(w):
 def test_a_disconnected_site_is_unknown(w):
     AppCredential.objects.filter(pk=w["app"].pk).update(revoked_at=timezone.now())
     assert _ask(w).status_code == 401
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_a_site_reaches_the_endpoint_past_the_login_gate(w):
+    """The site holds no canopy session or PAT: its signed request is the whole
+    credential, so the login gate must let it reach the view (and refusals must
+    be the view's own, not the gate's)."""
+    assert _ask(w).status_code == 200
+    refused = Client().get("/api/sites/agents")
+    assert refused.status_code == 401 and "no_assertion" in refused.json()["detail"]
 
 
 def test_no_bearer_is_refused():
