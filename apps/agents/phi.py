@@ -9,9 +9,9 @@ A capability says `data: phi` on the published interface. That is accepted only
   `current_page`, `who_is_asking` and read-only local tools — no shell, no
   writes, nothing that leaves the box (Drive, email, memory, Slack, the web).
   Anything else is a 422 naming it;
-* **from a person**, in a browser behind a passkey step-up (`publish_interface`).
-  Like every interface save it is a setting change, audited with its before and
-  after (`apps/events/audit.py`).
+* **from the agent's owner or an admin** (`publish_interface`), from the browser or
+  a token, like any other interface change. Every interface save is a setting
+  change, audited with its before and after (`apps/events/audit.py`).
 
 What it buys, and what reads it:
 

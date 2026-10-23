@@ -122,6 +122,8 @@ describe('RunnerCredentials', () => {
     render(<RunnerCredentials runnerId="r1" />)
     fireEvent.click(await screen.findByTestId('cred-down-kk'))
     await waitFor(() => expect(api.orderRunnerCredentials).toHaveBeenCalledWith('r1', ['default', 'kk', 'tt']))
+    // The buttons are disabled while that save is in flight: a click then is ignored.
+    await waitFor(() => expect((screen.getByTestId('cred-up-tt') as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByTestId('cred-up-tt'))
     await waitFor(() => expect(api.orderRunnerCredentials).toHaveBeenLastCalledWith('r1', ['kk', 'tt', 'default']))
   })

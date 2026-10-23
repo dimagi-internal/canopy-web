@@ -139,18 +139,14 @@ describe('declaresPhi', () => {
 })
 
 describe('AgentInterfaceView — the PHI-safe setting', () => {
-  it('says what turning it on vouches for, and steps up to save it', async () => {
+  it('says what turning it on vouches for, and saves it without a passkey', async () => {
     getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null })
-    // The real client: the first PUT is refused for a passkey, the API client
-    // prompts, and the retry carries the same body.
+    // The real client: one PUT, no passkey prompt.
     saveAgentInterface.mockImplementation(realApi.saveAgentInterface)
     const bodies: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (r: Request) => {
       bodies.push(await r.clone().json())
-      return bodies.length === 1
-        ? new Response(JSON.stringify({ error: 'step_up_required', has_passkey: true, status: 403, detail: 'Confirm it’s you' }),
-          { status: 403, headers: { 'Content-Type': 'application/problem+json' } })
-        : new Response(JSON.stringify(PHI_ON), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify(PHI_ON), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }))
     const prompt = vi.fn().mockResolvedValue(undefined)
     setStepUpHandler(prompt)
@@ -163,9 +159,9 @@ describe('AgentInterfaceView — the PHI-safe setting', () => {
     expect(screen.queryByLabelText(/Commit/)).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Save and turn on PHI-safe' }))
-    await waitFor(() => expect(prompt).toHaveBeenCalledWith({ hasPasskey: true, detail: 'Confirm it’s you' }))
     expect((await screen.findByTestId('phi-safe')).textContent).toBe('PHI-safe')
-    expect(bodies).toEqual([{ source: PHI_SOURCE }, { source: PHI_SOURCE }])
+    expect(prompt).not.toHaveBeenCalled()
+    expect(bodies).toEqual([{ source: PHI_SOURCE }])
   })
 
   it('marks each PHI-safe capability in the table', async () => {

@@ -147,8 +147,8 @@ export function AgentInterfaceView({
         {draftPhi && (
           <p data-testid="phi-on" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-foreground">
             Every capability with <code>data: phi</code> is PHI-safe: you vouch that it reads a host&apos;s data only
-            through canopy&apos;s gateway and keeps none of it. Saving asks for your passkey and is logged with the
-            agent&apos;s other setting changes.
+            through canopy&apos;s gateway and keeps none of it. Saving is logged with the agent&apos;s other setting
+            changes.
           </p>
         )}
         {!draftPhi && phiNow.length > 0 && (
@@ -175,7 +175,6 @@ export function AgentInterfaceView({
           <button type="button" onClick={() => setDraft(null)} className="text-[12px] text-muted-foreground underline">
             Cancel
           </button>
-          {draftPhi && <span className="text-[11px] text-muted-foreground">Asks for your passkey.</span>}
         </div>
         {error && <p role="alert" className="m-0 whitespace-pre-wrap text-[12px] text-destructive">{error}</p>}
       </div>

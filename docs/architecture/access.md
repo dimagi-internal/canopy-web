@@ -162,7 +162,7 @@ Asked in this order; the first row that matches decides.
   rights (`basis: phi:<capability>`). Any turn in a conversation that requires ZDR
   runners must end in its phi door; anything else — full, another capability, or a
   caller the door does not list — is refused. The setting is an interface setting,
-  saved by a person from a browser behind a passkey (`publish_interface`) and audited
+  saved by the agent's owner or an admin, browser or token (`publish_interface`), and audited
   like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
   → Interface shows its history); a phi capability that holds a shell, writes, or any
   tool but the gateway's site tools, `current_page`, `who_is_asking` and read-only

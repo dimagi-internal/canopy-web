@@ -40,7 +40,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, mailbox, phi, services
+from . import access, creation, mailbox, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, zk
@@ -607,11 +607,10 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
         parsed = parse(doc)
     except InterfaceError as exc:
         raise HttpError(422, str(exc)) from exc
-    # A `data: phi` capability is a PERSON vouching that it handles a host's PHI
-    # safely: a browser behind a fresh passkey, never a token (spec
-    # 2026-10-22-phi-agents-on-zdr-runners §5). Turning it off needs neither.
-    if phi.phi_capabilities(parsed):
-        stepup.require_recent_step_up(request)
+    # `data: phi` needs nothing more than any other interface change: the agent's
+    # owner or an admin, from the browser or a token. What makes it safe is that
+    # `parse` refuses a phi capability that could leak, and the save is audited
+    # (spec 2026-10-22-phi-agents-on-zdr-runners §5).
     agent.interface = parsed
     agent.interface_source = source
     agent.interface_published_at = timezone.now()
