@@ -68,9 +68,12 @@ _BOX_LOGIN = "box-login"
 
 
 def runner_path(runner) -> str:
-    """The runner's detail on /supervisor, app-relative (/supervisor is not a
-    tenant page, so it has no `/w/<ws>/` prefix). `credential_notify` links
-    its mail here too."""
+    """The runner's own page, app-relative: `/w/<its workspace>/runners/<id>` — one
+    address for the box, wherever a link to it comes from (alerts, mail, the
+    runner tables). A runner with no workspace has no page; it opens on
+    /supervisor, which is not a tenant page."""
+    if runner.workspace_id:
+        return f"/w/{runner.workspace_id}/runners/{runner.pk}"
     return f"/supervisor?tab=runners&runner={runner.pk}"
 
 

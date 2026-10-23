@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from 'canopy-ui/ui'
+import { runnerHref } from '@/lib/scopedLinks'
 import {
   approveRunnerInvitation,
   getRunnerInvitation,
@@ -168,8 +169,8 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
           {pairedRunnerId && (
             <>
               {' '}
-              <Link to={`/supervisor?tab=runners&runner=${pairedRunnerId}`} className="text-primary hover:underline">
-                Open it in the supervisor
+              <Link to={runnerHref({ id: pairedRunnerId, workspace: inv.workspace })} className="text-primary hover:underline">
+                Open its page
               </Link>{' '}
               to give it its Claude credentials.
             </>

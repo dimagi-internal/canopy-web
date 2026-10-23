@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 //
+// The runner page's tabs (RunnerOverview.tsx, RunnerTabs.tsx) — what the supervisor's
+// one-column RunnerDetail used to hold, and the same rules about who sees what.
+//
 // The fleet list is workspace-scoped (apps/harness/api.py::_runner_read_q), so
 // this view can now open a runner the caller did NOT pair — a teammate's laptop,
 // or the box an agent identity routes through. Acting on one is still owner-only,
@@ -8,7 +11,6 @@
 // runner every action then 404s on" failure the split predicate had to give up.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
 
 import type { RunnerOut } from '@/api/harness'
 import type { AgentOut } from '@/api/agents'
@@ -29,6 +31,9 @@ vi.mock('@/api/harness', () => ({
   grantRunnerAdmin: vi.fn(),
   revokeRunnerAdmin: vi.fn(),
   listRunnerWorkspaces: vi.fn().mockResolvedValue([]),
+  setRunnerOnlyAgents: vi.fn(),
+  setRunnerDirected: vi.fn(),
+  setRunnerPrivate: vi.fn(),
   enrollRunnerWorkspace: vi.fn(),
   unenrollRunnerWorkspace: vi.fn(),
 }))
@@ -53,7 +58,15 @@ vi.mock('@/components/alerts/AlertList', () => ({
   ),
 }))
 
-const { RunnerDetail } = await import('./RunnerDetail')
+// The credentials list is RunnerCredentials.test.tsx's subject; here only who sees it.
+vi.mock('@/components/supervisor/RunnerCredentials', () => ({
+  RunnerCredentials: () => <div data-testid="runner-credentials" />,
+  boxLoginAccount: () => '',
+}))
+
+const { RunnerOverview } = await import('./RunnerOverview')
+const { RunnerAccessTab, RunnerCredentialsTab, RunnerRoutingTab, RunnerSettingsTab } = await import('./RunnerTabs')
+const { runnerTabs } = await import('./RunnerPage')
 
 function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
   return {
@@ -86,141 +99,115 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
 
 const agents: AgentOut[] = []
 
+function ctx(r: RunnerOut, over: { onChanged?: (r: RunnerOut) => void; onRetired?: () => void } = {}) {
+  return { runner: r, agents, onChanged: over.onChanged ?? (() => {}), onRetired: over.onRetired ?? (() => {}) }
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
 })
 
-describe('RunnerDetail', () => {
+describe('runner page — which tabs a viewer gets', () => {
+  it('offers Credentials only on a cloud box the viewer administers', () => {
+    const labels = (r: RunnerOut) => runnerTabs(r).map((t) => t.label)
+    expect(labels(runner({ kind: 'cloud' }))).toEqual(['Overview', 'Credentials', 'Routing', 'Access', 'Settings'])
+    // Membership is not administration: this workspace auto-joins a whole email
+    // domain, so following membership would hand out the fleet's credentials.
+    expect(labels(runner({ kind: 'cloud', can_administer: false, can_manage: false }))).not.toContain('Credentials')
+    expect(labels(runner({ kind: 'emdash' }))).not.toContain('Credentials')
+  })
+
+  it('marks Credentials when one needs signing in again', () => {
+    const t = runnerTabs(runner({ kind: 'cloud' }), true).find((x) => x.label === 'Credentials')
+    expect(t?.dot).toBe(true)
+  })
+})
+
+describe('Overview', () => {
   it('shows the alerts scoped to this runner, and nothing when there are none', () => {
-    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
+    render(<RunnerOverview {...ctx(runner())} />)
     const stub = screen.getByTestId('alert-list-stub')
     expect(stub.getAttribute('data-scope')).toBe('runner:r1')
     expect(stub.getAttribute('data-hide-empty')).toBe('true')
   })
 
   it('offers the drill control on a runner the caller paired', () => {
-    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
+    render(<RunnerOverview {...ctx(runner())} />)
     expect(screen.getByTestId('runner-drills')).toBeTruthy()
   })
 
   it('hides the readiness check from a member who neither paired nor administers it', () => {
-    render(
-      <RunnerDetail runner={runner({ can_manage: false, can_administer: false })} agents={agents} onBack={() => {}} />,
-    )
-    // Starting and listing drills are runner-admin routes; rendering the panel
-    // would only produce a 404 error message.
+    render(<RunnerOverview {...ctx(runner({ can_manage: false, can_administer: false }))} />)
     expect(screen.queryByTestId('runner-drills')).toBeNull()
   })
 
   it('offers the readiness check to a runner admin who did not pair it', () => {
-    // Owner decision 2026-10-04: readiness checks are a runner-ADMIN feature.
-    render(
-      <RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />,
-    )
+    render(<RunnerOverview {...ctx(runner({ can_manage: false, can_administer: true }))} />)
     expect(screen.getByTestId('runner-drills')).toBeTruthy()
   })
 
-  it('shows the credentials block to an administrator who did not pair it', () => {
-    // The defect this fixes: both were gated on can_manage, so the identity a
-    // cloud box RUNS AS could not sign it back in — the pairing command had been
-    // run by someone else. Administering and speaking-AS are different routes.
-    render(
-      <RunnerDetail
-        runner={runner({ can_manage: false, can_administer: true, kind: 'cloud' })}
-        agents={agents}
-        onBack={() => {}}
-      />,
-    )
+  it('says whose runner it is instead of just removing the controls', () => {
+    render(<RunnerOverview {...ctx(runner({ can_manage: false }))} />)
+    expect(screen.getByTestId('runner-detail-readonly').textContent).toContain('jjackson@dimagi.com')
+  })
+
+  it('tells an admin who is not the owner that they may declare the box a sensitive-data runner', () => {
+    render(<RunnerOverview {...ctx(runner({ can_manage: false, can_administer: true }))} />)
+    expect(screen.getByTestId('runner-detail-readonly').textContent).toMatch(/declare what it runs with/)
+  })
+
+  it('tells someone read-only that a runner admin can change what it declares', () => {
+    render(<RunnerOverview {...ctx(runner({ can_manage: false, can_administer: false }))} />)
+    expect(screen.getByTestId('runner-detail-readonly').textContent).toMatch(/or a runner admin\s+can change what it declares/)
+  })
+})
+
+describe('Credentials', () => {
+  it('shows the credentials to an administrator who did not pair it', () => {
+    // The defect this guards: both were gated on can_manage, so the identity a
+    // cloud box RUNS AS could not sign it back in.
+    render(<RunnerCredentialsTab {...ctx(runner({ can_manage: false, can_administer: true, kind: 'cloud' }))} />)
     expect(screen.getByTestId('runner-credentials')).toBeTruthy()
   })
 
   it('withholds credentials from a member with no grant', () => {
-    // Membership is not administration: this workspace auto-joins a whole email
-    // domain, so following membership would hand out the fleet's credentials.
-    render(
-      <RunnerDetail
-        runner={runner({ can_manage: false, can_administer: false, kind: 'cloud' })}
-        agents={agents}
-        onBack={() => {}}
-      />,
-    )
+    render(<RunnerCredentialsTab {...ctx(runner({ can_manage: false, can_administer: false, kind: 'cloud' }))} />)
     expect(screen.queryByTestId('runner-credentials')).toBeNull()
-  })
-
-  it('says whose runner it is instead of just removing the controls', () => {
-    render(<RunnerDetail runner={runner({ can_manage: false })} agents={agents} onBack={() => {}} />)
-    // "Nothing here" is indistinguishable from a broken page. Name the owner, so
-    // "ask them to declare the repo" is an available next step.
-    const note = screen.getByTestId('runner-detail-readonly')
-    expect(note.textContent).toContain('jjackson@dimagi.com')
-  })
-
-  it('tells an admin who is not the owner that they may declare the box a sensitive-data runner', () => {
-    render(<RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />)
-    const note = screen.getByTestId('runner-detail-readonly')
-    expect(note.textContent).toMatch(/declare what it runs with/)
-  })
-
-  it('tells someone read-only that a runner admin can change what it declares', () => {
-    render(<RunnerDetail runner={runner({ can_manage: false, can_administer: false })} agents={agents} onBack={() => {}} />)
-    const note = screen.getByTestId('runner-detail-readonly')
-    expect(note.textContent).toMatch(/or a runner admin\s+can change what it declares/)
   })
 })
 
 // The remote half of ~/.canopy/PAUSED — and the ONLY way to park a box from a
 // phone, where there is no shell on that macOS account to drop a sentinel in.
-describe('RunnerDetail — pause', () => {
+describe('Settings — pause', () => {
   it('pauses with the typed reason and re-renders from the server’s row', async () => {
     const paused = runner({ paused: true, paused_note: 'token limit', status: 'paused' })
     pauseRunner.mockResolvedValue(paused)
     const onChanged = vi.fn()
-
-    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} onChanged={onChanged} />)
-
+    render(<RunnerSettingsTab {...ctx(runner(), { onChanged })} />)
     fireEvent.click(screen.getByTestId('runner-pause-toggle'))
     fireEvent.change(screen.getByTestId('runner-pause-note'), { target: { value: 'token limit' } })
     await act(async () => {
       fireEvent.click(screen.getByTestId('runner-pause-confirm'))
     })
-
     expect(pauseRunner).toHaveBeenCalledWith('r1', 'token limit')
-    // The caller gets the SERVER's row, not an optimistic guess — a pause that
-    // only happened in the UI is the expensive failure here.
     await waitFor(() => expect(onChanged).toHaveBeenCalledWith(paused))
   })
 
   it('says when a usage-cap pause lifts on its own', () => {
-    render(
-      <RunnerDetail
-        runner={runner({
-          paused: true, status: 'paused',
-          paused_note: 'Claude usage cap — resumes 2026-10-08T08:30Z',
-          unpause_at: '2026-10-08T08:30:00Z',
-        })}
-        agents={agents}
-        onBack={() => {}}
-      />,
-    )
+    render(<RunnerSettingsTab {...ctx(runner({
+      paused: true, status: 'paused',
+      paused_note: 'Claude usage cap — resumes 2026-10-08T08:30Z',
+      unpause_at: '2026-10-08T08:30:00Z',
+    }))} />)
     expect(screen.getByTestId('runner-unpause-at').textContent).toContain('Resumes on its own')
   })
 
   it('offers Resume and the recorded reason once paused', async () => {
     unpauseRunner.mockResolvedValue(runner())
-
-    render(
-      <RunnerDetail
-        runner={runner({ paused: true, paused_note: 'token limit on this account', status: 'paused' })}
-        agents={agents}
-        onBack={() => {}}
-      />,
-    )
-
+    render(<RunnerSettingsTab {...ctx(runner({ paused: true, paused_note: 'token limit on this account', status: 'paused' }))} />)
     expect(screen.getByTestId('runner-pause-why').textContent).toContain('token limit on this account')
-    // No note box on the way out: a reason for a finished pause is stale text.
     expect(screen.queryByTestId('runner-pause-note')).toBeNull()
-
     await act(async () => {
       fireEvent.click(screen.getByTestId('runner-pause-toggle'))
     })
@@ -229,41 +216,27 @@ describe('RunnerDetail — pause', () => {
 
   it('says so when the call fails rather than looking paused', async () => {
     pauseRunner.mockRejectedValue(new Error('pauseRunner failed: 404'))
-
-    render(<RunnerDetail runner={runner()} agents={agents} onBack={() => {}} />)
+    render(<RunnerSettingsTab {...ctx(runner())} />)
     fireEvent.click(screen.getByTestId('runner-pause-toggle'))
     await act(async () => {
       fireEvent.click(screen.getByTestId('runner-pause-confirm'))
     })
-
     expect(screen.getByTestId('runner-pause-error').textContent).toContain('404')
   })
 
   it('is absent on a runner the caller did not pair — POST /pause would 404', () => {
-    render(<RunnerDetail runner={runner({ can_manage: false })} agents={agents} onBack={() => {}} />)
+    render(<RunnerSettingsTab {...ctx(runner({ can_manage: false }))} />)
     expect(screen.queryByTestId('runner-pause')).toBeNull()
   })
 })
 
-describe('RunnerDetail — Slack & chat sessions', () => {
-  it('says when a box is directed only', () => {
-    render(<RunnerDetail runner={runner({ directed: true, capabilities: { sessions: true } })} agents={agents} onBack={() => {}} />)
-    expect(screen.getByTestId('runner-directed').textContent).toContain('Directed only')
-  })
-
-  it('says nothing about it on an ordinary box', () => {
-    render(<RunnerDetail runner={runner({ capabilities: { sessions: true } })} agents={agents} onBack={() => {}} />)
-    expect(screen.queryByTestId('runner-directed')).toBeNull()
-  })
-
+describe('Settings — Slack & chat sessions', () => {
   it('lets the owner turn sessions on and re-renders from the server row', async () => {
     const on = runner({ capabilities: { agents: ['hal'], sessions: true } })
     setRunnerSessions.mockResolvedValue(on)
     const onChanged = vi.fn()
     const off = runner({ capabilities: { agents: ['hal'] } })
-
-    render(<RunnerDetail runner={off} agents={agents} onBack={() => {}} onChanged={onChanged} />)
-
+    render(<RunnerSettingsTab {...ctx(off, { onChanged })} />)
     expect(screen.getByTestId('runner-sessions').textContent).toContain('hidden from')
     await act(async () => {
       fireEvent.click(screen.getByTestId('runner-sessions-toggle'))
@@ -273,41 +246,27 @@ describe('RunnerDetail — Slack & chat sessions', () => {
   })
 
   it('shows the setting read-only to someone who did not pair the box', () => {
-    render(
-      <RunnerDetail
-        runner={runner({ can_manage: false, can_administer: false, capabilities: { sessions: true } })}
-        agents={agents}
-        onBack={() => {}}
-      />,
-    )
+    render(<RunnerSettingsTab {...ctx(runner({ can_manage: false, can_administer: false, capabilities: { sessions: true } }))} />)
     expect(screen.queryByTestId('runner-sessions-toggle')).toBeNull()
     expect(screen.getByTestId('runner-sessions-state').textContent).toBe('on')
   })
+
+  it('says when a box is directed only', () => {
+    render(<RunnerSettingsTab {...ctx(runner({ directed: true, capabilities: { sessions: true } }))} />)
+    expect(screen.getByTestId('runner-directed').textContent).toContain('Directed only')
+  })
+
+  it('says nothing about it on an ordinary box', () => {
+    render(<RunnerSettingsTab {...ctx(runner({ capabilities: { sessions: true } }))} />)
+    expect(screen.queryByTestId('runner-directed')).toBeNull()
+  })
 })
 
-// The fleet map (Settings → Topology) mounts this same component in its side
-// panel, without Back or the routing matrix — routing is edited on the agent.
-describe('RunnerDetail embedded in the fleet map', () => {
-  it('leaves out Back and the routing matrix when not given them', () => {
-    render(<RunnerDetail runner={runner()} />)
-    expect(screen.queryByTestId('runner-detail-back')).toBeNull()
-    expect(screen.queryByTestId('runner-priority')).toBeNull()
-    expect(screen.getByTestId('runner-pause')).toBeTruthy()
-  })
-
-  it('links the supervisor view to the runner on the map', () => {
-    render(
-      <MemoryRouter>
-        <RunnerDetail runner={runner()} agents={agents} onBack={() => {}} mapHref="/w/dimagi/settings/topology?runner=r1" />
-      </MemoryRouter>,
-    )
-    expect(screen.getByTestId('runner-detail-map').getAttribute('href')).toBe('/w/dimagi/settings/topology?runner=r1')
-  })
-
+describe('Settings — retire', () => {
   it('retires only after a second, explicit click', async () => {
     retireRunner.mockResolvedValue(undefined)
     const onRetired = vi.fn()
-    render(<RunnerDetail runner={runner()} onRetired={onRetired} />)
+    render(<RunnerSettingsTab {...ctx(runner(), { onRetired })} />)
     fireEvent.click(screen.getByTestId('runner-retire-toggle'))
     expect(retireRunner).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('runner-retire-confirm'))
@@ -316,7 +275,20 @@ describe('RunnerDetail embedded in the fleet map', () => {
   })
 
   it('offers no Retire on a box the caller may not manage', () => {
-    render(<RunnerDetail runner={runner({ can_manage: false })} onRetired={() => {}} />)
+    render(<RunnerSettingsTab {...ctx(runner({ can_manage: false }))} />)
     expect(screen.queryByTestId('runner-retire')).toBeNull()
+  })
+})
+
+describe('Routing and Access', () => {
+  it('lists every agent, each opening its own routing', () => {
+    const hal = { slug: 'hal', name: 'Hal', workspace: 'dimagi', turn_mode: 'manual' } as AgentOut
+    render(<RunnerRoutingTab {...ctx(runner())} agents={[hal]} />)
+    expect(screen.getByTestId('runner-priority-agent-hal')).toBeTruthy()
+  })
+
+  it('names the owner to someone who cannot change who administers it', () => {
+    render(<RunnerAccessTab {...ctx(runner({ can_manage: false, can_administer: false }))} />)
+    expect(screen.getByTestId('runner-access-readonly').textContent).toContain('jjackson@dimagi.com')
   })
 })

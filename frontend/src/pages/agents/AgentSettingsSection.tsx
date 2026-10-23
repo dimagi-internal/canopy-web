@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate, NavLink, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
-import { clsx } from 'clsx'
+import { Navigate, useLocation, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 
 import { getAgentSetup } from '@/api/agentCreation'
@@ -20,7 +19,8 @@ import { AgentSecretsPanel } from '@/pages/agents/AgentSecretsPanel'
 import { AgentSecurityPanel } from '@/pages/agents/AgentSecurityPanel'
 import { AgentSetupChecklist } from '@/components/agents/AgentSetupChecklist'
 import { DeleteAgentControl } from '@/components/agents/DeleteAgentControl'
-import { Section, Setting } from '@/pages/agents/sectionLayout'
+import { ObjectTabs } from '@/components/objectPage/ObjectTabs'
+import { Section, Setting } from '@/components/objectPage/settingsLayout'
 import {
   isSettingsTab,
   SETTINGS_TABS,
@@ -116,28 +116,12 @@ export function AgentSettingsSection() {
     <div className="max-w-5xl px-6 py-8">
       <WorkbenchSubHeader title="Settings" />
 
-      <nav aria-label="Agent settings" className="-mt-2 mb-6 flex gap-1 overflow-x-auto border-b border-border">
-        {SETTINGS_TABS.map((t) => (
-          <NavLink
-            key={t.tab}
-            to={`../${t.tab}`}
-            relative="path"
-            className={({ isActive }) =>
-              clsx(
-                'shrink-0 border-b-2 px-3 py-2 text-[13px] transition-colors',
-                isActive
-                  ? 'border-primary font-medium text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground-secondary',
-              )
-            }
-          >
-            {t.label}
-            {needs.has(t.tab) && (
-              <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-warning align-middle" aria-label="needs setting up" />
-            )}
-          </NavLink>
-        ))}
-      </nav>
+      <ObjectTabs
+        label="Agent settings"
+        relative="path"
+        className="-mt-2 mb-6"
+        tabs={SETTINGS_TABS.map((t) => ({ to: `../${t.tab}`, label: t.label, dot: needs.has(t.tab), dotLabel: 'needs setting up' }))}
+      />
 
       {current === 'overview' && (
         <>

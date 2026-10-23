@@ -139,7 +139,18 @@ export async function createWorkspaceVault(slug: string, name: string): Promise<
     params: { path: { slug } }, body: { name } }), 'Could not make the vault')
 }
 
-export async function attachWorkspaceVault(vaultId: string, to: { agent?: string; workspace?: string }):
+/** One workspace vault: its members (and why), what it serves, its secrets' names. */
+export async function getWorkspaceVault(vaultId: string): Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.GET('/api/vaults/{vault_id}', { params: { path: { vault_id: vaultId } } }),
+    'Could not load the vault')
+}
+
+export async function deleteWorkspaceVaultSecret(vaultId: string, name: string): Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.DELETE('/api/vaults/{vault_id}/secrets/{name}', {
+    params: { path: { vault_id: vaultId, name } } }), 'Could not delete the secret')
+}
+
+export async function attachWorkspaceVault(vaultId: string, to: { agent?: string; workspace?: string; runner?: string }):
     Promise<WorkspaceVaultOut> {
   return need<WorkspaceVaultOut>(await apiV2.POST('/api/vaults/{vault_id}/attachments', {
     params: { path: { vault_id: vaultId } }, body: to }), 'Could not attach the vault')

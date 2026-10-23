@@ -25,6 +25,14 @@ export async function listRunners(): Promise<RunnerOut[]> {
   return Array.from(unwrap(res, 'listRunners'), toRunner)
 }
 
+/** One runner, as its row in `listRunners` (the same visibility and flags). */
+export async function getRunner(runnerId: string): Promise<RunnerOut> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return toRunner(unwrap(res, 'getRunner'))
+}
+
 // Retire a runner — permanent (re-pairing mints a fresh row). The supervisor's
 // in-place resolve for a decommissioned runner stuck on a non-main branch.
 export async function retireRunner(runnerId: string): Promise<void> {

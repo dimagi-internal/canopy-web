@@ -1,5 +1,6 @@
 import type { JSX } from 'react'
-import { NavLink, Outlet, useOutletContext } from 'react-router-dom'
+import { Outlet, useOutletContext } from 'react-router-dom'
+import { ObjectTabs } from '@/components/objectPage/ObjectTabs'
 
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 
@@ -18,24 +19,7 @@ export function AgentSkillsPage(): JSX.Element {
   const ctx = useOutletContext<AgentOutletContext>()
   return (
     <div>
-      <nav aria-label="Skills views" className="flex gap-1 border-b border-border px-6 pt-6">
-        {TABS.map((t) => (
-          <NavLink
-            key={t.label}
-            to={t.to}
-            end={t.end}
-            className={({ isActive }) =>
-              `-mb-px border-b-2 px-3 py-2 text-[13px] ${
-                isActive
-                  ? 'border-primary text-foreground'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`
-            }
-          >
-            {t.label}
-          </NavLink>
-        ))}
-      </nav>
+      <ObjectTabs label="Skills views" tabs={TABS} className="px-6 pt-6" />
       <Outlet context={ctx} />
     </div>
   )

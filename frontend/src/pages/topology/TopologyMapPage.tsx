@@ -9,7 +9,8 @@ import { useAuth } from '@/auth/AuthProvider'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { AlertList } from '@/components/alerts/AlertList'
 import { RunnerDownloads } from '@/components/runners/RunnerDownloads'
-import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
+import { RunnerFacts } from '@/pages/runner/RunnerOverview'
+import { runnerHref } from '@/lib/scopedLinks'
 import {
   getAgentTopology,
   getRunnerTopology,
@@ -226,10 +227,6 @@ function FleetMapView({ slug }: { slug: string }): JSX.Element {
           fleet={fleet}
           selection={selection}
           onRefresh={refresh}
-          onRunnerChanged={(fresh) => {
-            setFleet((prev) => new Map(prev).set(fresh.id, fresh))
-            refresh()
-          }}
           busy={busy}
           error={actionError}
           onSelect={select}
@@ -768,7 +765,6 @@ function SidePanel({
   fleet,
   selection,
   onRefresh,
-  onRunnerChanged,
   busy,
   error,
   onSelect,
@@ -781,7 +777,6 @@ function SidePanel({
   fleet: Map<string, RunnerOut>
   selection: Selection
   onRefresh: () => void
-  onRunnerChanged: (r: RunnerOut) => void
   busy: boolean
   error: string | null
   onSelect: (s: Selection) => void
@@ -813,11 +808,6 @@ function SidePanel({
           detail={fleet.get(selection.id)}
           map={map}
           onSelect={onSelect}
-          onChanged={onRunnerChanged}
-          onRetired={() => {
-            onSelect(null)
-            onRefresh()
-          }}
         />
       ) : selection?.kind === 'order' ? (
         <WorkspaceOrderPanel
@@ -984,8 +974,6 @@ function RunnerPanel({
   detail,
   map,
   onSelect,
-  onChanged,
-  onRetired,
 }: {
   runner: TopologyRunnerOut
   /** The same runner as GET /harness/runners/ serves it — absent when the
@@ -993,12 +981,10 @@ function RunnerPanel({
   detail: RunnerOut | undefined
   map: FleetMap
   onSelect: (s: Selection) => void
-  onChanged: (r: RunnerOut) => void
-  onRetired: () => void
 }): JSX.Element {
   const users = [...map.agents.values()].filter((a) => a.routing?.routes.some((r) => r.runner_id === runner.id))
   const liveLink = (
-    <Link to={`/supervisor?tab=runners&runner=${runner.id}`} className="text-[12px] text-primary hover:underline">
+    <Link to={`/supervisor?tab=runners`} className="text-[12px] text-primary hover:underline">
       Live status →
     </Link>
   )
@@ -1006,17 +992,16 @@ function RunnerPanel({
     <>
       {detail ? (
         <div className="flex flex-col gap-2">
-          <div className="flex justify-end">{liveLink}</div>
-          {/* The supervisor's own runner detail: login, admins, flags, drills,
-              pause and retire, each shown only to whoever the server says may
-              use it. Routing is left to the agents, below and on the map. */}
-          <RunnerDetail
-            key={detail.id}
-            runner={detail}
-            onChanged={onChanged}
-            onRetired={onRetired}
-            agentWorkspace={(slug) => map.agents.get(slug)?.workspace}
-          />
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="m-0 font-mono text-[16px] font-semibold text-foreground">{runner.name}</h3>
+            {/* Every control for this box is on its own page; the map shows what it is
+                and who routes here, and edits an agent's routing on the agent. */}
+            <Link to={runnerHref(detail)} className="text-[12px] font-medium text-primary hover:underline"
+              data-testid="map-runner-open">
+              Open runner →
+            </Link>
+          </div>
+          <RunnerFacts runner={detail} />
         </div>
       ) : (
         <div className="flex flex-col gap-1">

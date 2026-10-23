@@ -395,3 +395,21 @@ def test_a_value_a_person_seals_drops_the_copy_kept_here(fleet, sts):
     entry.refresh_from_db()
     assert entry.value_enc == ""
     assert RunnerCredential.objects.get(runner=fleet["runner"]).updated_at > before
+
+
+# ── a runner has a page: one runner, read as the list reads it ────────────────
+
+def test_one_runner_reads_like_its_row_in_the_list(fleet):
+    res = fleet["client"].get(f"/api/harness/runners/{fleet['runner'].pk}/")
+    assert res.status_code == 200, res.content
+    body = res.json()
+    listed = next(r for r in fleet["client"].get("/api/harness/runners/").json() if r["id"] == body["id"])
+    assert body == listed
+    assert body["can_administer"] is True
+
+
+def test_one_runner_the_list_would_not_show_is_a_404(fleet):
+    sam = get_user_model().objects.create_user(username="sam", email="sam@dimagi.com")
+    other = Client()
+    other.force_login(sam)
+    assert other.get(f"/api/harness/runners/{fleet['runner'].pk}/").status_code == 404
