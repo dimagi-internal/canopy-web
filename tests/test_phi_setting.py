@@ -1,5 +1,5 @@
 """The PHI-safe interface setting (`data: phi`), and what it changes: it is set by
-a person, audited like any setting, refused when structurally false; and a phi
+the agent's owner or an admin (browser or token), audited like any setting, refused when structurally false; and a phi
 capability, and any turn in a ZDR conversation, is confined for everyone.
 
 Spec: docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §5.
@@ -112,19 +112,28 @@ def test_data_takes_only_phi():
 # --- a person's setting, audited --------------------------------------------------------
 
 
-def test_a_token_cannot_set_phi(w):
-    raw, _ = PersonalToken.create_for_user(user=w["owner"], label="cli")
+def test_an_admin_token_can_set_phi_and_it_is_audited(w):
+    raw, _ = PersonalToken.create_for_user(user=w["admin"], label="cli")
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
     r = _put(c, "labsdata", source=SOURCE)
-    assert r.status_code == 403, r.content
+    assert r.status_code == 200, r.content
     w["agent"].refresh_from_db()
-    assert w["agent"].interface == {}  # nothing was published
+    assert phi.is_phi(w["agent"], "data")
+    [row] = SettingChange.objects.filter(operation="publish_interface")
+    assert row.actor == w["admin"]
 
 
-def test_a_browser_without_a_fresh_passkey_is_asked_for_one(w):
+def test_a_browser_needs_no_passkey(w):
     r = _put(_client(w["owner"], stepped_up=False), "labsdata", source=SOURCE)
-    assert r.status_code == 403 and r.json()["error"] == "step_up_required"
-    assert not SettingChange.objects.exists()
+    assert r.status_code == 200, r.content
+
+
+def test_someone_who_is_not_an_admin_cannot_set_it(w):
+    raw, _ = PersonalToken.create_for_user(user=w["editor"], label="cli")
+    c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert _put(c, "labsdata", source=SOURCE).status_code == 403
+    w["agent"].refresh_from_db()
+    assert w["agent"].interface == {}
 
 
 def test_a_person_sets_it_and_the_change_is_audited(w):
@@ -140,7 +149,7 @@ def test_a_person_sets_it_and_the_change_is_audited(w):
     assert "data: phi" in row.request["body"]["source"]
 
 
-def test_turning_it_off_needs_no_passkey_and_is_audited(w):
+def test_turning_it_off_is_audited(w):
     _put(_client(w["owner"]), "labsdata", source=SOURCE)
     r = _put(_client(w["owner"], stepped_up=False), "labsdata",
              source="capabilities:\n  ask:\n    callers: [member]\n")

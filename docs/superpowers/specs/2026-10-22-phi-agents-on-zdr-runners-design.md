@@ -195,9 +195,9 @@ capabilities:
     data: phi            # new: this capability may serve a host's PHI
 ```
 
-- `data: phi` is accepted only from a person (passkey step-up). It is an interface
-  setting like any other: the settings audit records who set it, through what, and the
-  before and after.
+- `data: phi` is set by the agent's owner or an admin, from the browser or a token, like
+  any other interface setting: no passkey. The settings audit records who set it, through
+  what, and the before and after.
 - **Refused when it is structurally false:** a `phi` capability's tool set may hold only
   the gateway's site tools, `current_page` and read-only local tools. Drive, email,
   memory, Slack, the web or a shell in the capability → the declaration is a 422 naming
