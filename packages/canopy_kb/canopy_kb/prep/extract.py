@@ -34,7 +34,7 @@ KindFn = Callable[[str, dict], Optional[str]]
 def kind(url: str, row: dict) -> str | None:
     """The reader for a fetched file, from its content type. HTML is "page" (a curator
     narrows which hosts' pages it keeps with its own KindFn)."""
-    if row.get("status") != 200 or not row.get("file"):
+    if row.get("status") != 200 or not (row.get("file") or row.get("sha256")):  # bytes kept here, or stored
         return None
     ct = (row.get("ctype") or "").split(";")[0].strip()
     if "docs.google.com/document" in url and "html" in ct:

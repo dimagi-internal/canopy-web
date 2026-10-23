@@ -11,9 +11,9 @@ only what it would have asked on the machine that ran the last one:
   stable hash, kept on the row) keeps its row, sha and original;
 * a fetch that fails keeps the last good row: an outage is not a deletion.
 
-New bytes stay in memory for this run (`body`) and are stored as originals at the end
-(`new_originals`); bytes of an unchanged url come from the originals store, and only
-when a step that has no result for them yet needs them.
+New bytes go to the originals store as they arrive, in batches (`flush`: a first crawl
+is gigabytes, which no runner holds in memory); bytes of an unchanged url come from
+the originals store, and only when a step that has no result for them yet needs them.
 """
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from canopy_kb.prep.raw import UA, _stable, now, sha
 
 KEEP = (200, 401, 403, 404, 410)
 SECTION = "fetch"
+#: Bytes held in memory before new ones are stored and the cache dropped.
+HOLD_BYTES = 512 * 1024**2
 
 
 def stable(url: str, ctype: str, body: bytes) -> str:
@@ -39,8 +41,10 @@ class Fetch:
         self.cur = cur
         self.ua = ua
         self.index: dict[str, dict] = cur.state.section(SECTION)
-        self._bodies: dict[str, bytes] = {}     # sha256 -> bytes fetched this run
-        self._types: dict[str, str] = {}
+        self._bodies: dict[str, bytes] = {}     # sha256 -> bytes in hand (a cache)
+        self._new: dict[str, str] = {}          # sha256 -> content type, not yet stored
+        self._held = 0
+        self.stored = 0
         self._lock = threading.Lock()
         self._local = threading.local()
         self.counts = {"requests": 0, "not_modified": 0, "same_content": 0, "new": 0, "errors_kept": 0}
@@ -96,9 +100,7 @@ class Fetch:
                     if r.headers.get(h):
                         row[k] = r.headers[h]
                 if r.status_code == 200:
-                    with self._lock:
-                        self._bodies[digest] = body
-                        self._types[digest] = ctype
+                    self._hold(digest, body, ctype)
                 self._count("new")
                 break
             except Exception as e:  # noqa: BLE001 - a network error is retried, then recorded
@@ -112,6 +114,29 @@ class Fetch:
             self.index[url] = row
         return row
 
+    def _hold(self, digest: str, body: bytes, ctype: str | None = None) -> None:
+        with self._lock:
+            if digest not in self._bodies:
+                self._bodies[digest] = body
+                self._held += len(body)
+            if ctype is not None:
+                self._new[digest] = (ctype or "application/octet-stream").split(";")[0].strip()
+            full = self._held > HOLD_BYTES
+        if full:
+            self.flush()
+
+    def flush(self) -> int:
+        """Store the new bytes in hand as originals and drop the cache. Returns how many
+        the store did not have yet."""
+        with self._lock:
+            files = {d: (self._bodies[d], t) for d, t in self._new.items() if d in self._bodies}
+            self._new = {}
+        n = self.cur.put_originals(files) if files else 0
+        with self._lock:
+            self.stored += n
+            self._bodies, self._held = {}, 0
+        return n
+
     def _count(self, k: str) -> None:
         with self._lock:
             self.counts[k] += 1
@@ -121,30 +146,28 @@ class Fetch:
         digest = row.get("sha256")
         if not digest or row.get("status") != 200:
             return b""
-        if digest not in self._bodies:
+        body = self._bodies.get(digest)
+        if body is None:
             got = self.cur.originals([digest])
             if digest not in got:
                 raise KeyError(f"{row.get('url')}: original {digest[:12]} is not stored")
-            with self._lock:
-                self._bodies[digest] = got[digest]
-        return self._bodies[digest]
+            body = got[digest]
+            self._hold(digest, body)
+        return body
 
     def prefetch(self, rows: list[dict]) -> None:
         """Fetch the stored originals of many rows in one go (before a parallel step)."""
-        want = [r["sha256"] for r in rows if r.get("status") == 200 and r.get("sha256")
-                and r["sha256"] not in self._bodies]
-        if want:
-            got = self.cur.originals(want)
-            with self._lock:
-                self._bodies.update(got)
+        want = sorted({r["sha256"] for r in rows if r.get("status") == 200 and r.get("sha256")
+                       and r["sha256"] not in self._bodies})
+        for i in range(0, len(want), 200):
+            for d, b in self.cur.originals(want[i:i + 200]).items():
+                self._hold(d, b)
 
     def new_originals(self) -> dict[str, tuple[bytes, str]]:
-        """Bytes first seen this run, for the originals store."""
-        return {d: (b, (self._types.get(d) or "application/octet-stream").split(";")[0].strip())
-                for d, b in self._bodies.items() if d in self._types}
+        """New bytes in hand that are not stored yet."""
+        with self._lock:
+            return {d: (self._bodies[d], t) for d, t in self._new.items() if d in self._bodies}
 
     def forget_bodies(self) -> None:
-        """Drop bytes already stored (a long refresh holds only what it still needs)."""
-        with self._lock:
-            for d in [d for d in self._bodies if d not in self._types]:
-                self._bodies.pop(d)
+        """Store what is new, then drop the cache (a long refresh holds only what it uses)."""
+        self.flush()

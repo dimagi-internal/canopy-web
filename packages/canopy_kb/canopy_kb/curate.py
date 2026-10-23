@@ -474,10 +474,11 @@ class Curation:
         return self.store.put_originals(todo) if todo else 0
 
     # publishing
-    def publish(self, docs: dict[str, dict], text: Callable[[str], str], parts: dict[str, object], *,
-                max_removed: float = 0.02, allow_removals: bool = False) -> dict:
+    def publish(self, docs: dict[str, dict], text: Callable[[list[str]], dict[str, str]], parts: dict[str, object],
+                *, max_removed: float = 0.02, allow_removals: bool = False) -> dict:
         """Publish `docs` ({item id: record, text by reference}) and `parts`, sending only
-        what the host lacks; `text(item id)` gives a document's text when it must be sent.
+        what the host lacks; `text(item ids)` gives those documents' texts ({id: text}),
+        asked in batches, when they must be sent.
         The curation state goes with the commit, so the two never disagree. A publish that
         would remove more than `max_removed` of the documents stops, unless allowed: a
         source that failed is not a publisher that deleted everything."""
@@ -493,15 +494,22 @@ class Curation:
                                 "rerun with --allow-removals if they really are gone.")
         sent = 0
         if not plan["unchanged"]:
-            blobs: dict[str, bytes] = {}
-            for i in plan["upload_docs"]:
-                rec = docs[i]
-                blobs[state["docs"][i]] = encode(rec)
-                if "text_sha" in rec:
-                    blobs.setdefault(rec["text_sha"], encode(text(i)))
-            for n in plan["upload_parts"]:
-                blobs[state["parts"][n]] = encode(parts[n])
+            ids = list(plan["upload_docs"])
+            blobs: dict[str, bytes] = {state["parts"][n]: encode(parts[n]) for n in plan["upload_parts"]}
+            for i in ids:
+                blobs[state["docs"][i]] = encode(docs[i])
             sent = put_missing(self.store, blobs, RECORDS)
+            # the texts the host lacks, fetched and sent a batch at a time
+            want = {docs[i]["text_sha"]: i for i in ids if "text_sha" in docs[i]}
+            missing = [s for s in sorted(want) if s not in set().union(
+                *(self.store.have(RECORDS, b) for b in _batches(sorted(want))))] if want else []
+            for batch in _batches(missing, 200):
+                got = text([want[s] for s in batch])
+                texts = {s: encode(got[want[s]]) for s in batch}
+                bad = [want[s] for s in batch if sha(got[want[s]]) != s]
+                if bad:
+                    raise CurationError(f"{bad[0]}: its text is not the one its record names")
+                sent += put_missing(self.store, texts, RECORDS)
         root = self.state.upload(self.store)
         curation = {"sha": root, "base": self.state.root} if root != self.state.root else None
         if plan["unchanged"]:
