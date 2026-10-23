@@ -170,7 +170,7 @@ function RunnerDetail({ runner: r, workspace }: { runner: TopologyRunnerOut; wor
           <dt className="text-muted-foreground">Code</dt>
           <dd className="text-foreground-secondary">
             runs <span className="font-mono">{short(r.code_sha)}</span>, server expects <span className="font-mono">{short(r.expected_code_sha)}</span>
-            {r.code_current === false && <span className="block text-muted-foreground">It updates itself when it next checks in.</span>}
+            {r.code_current === false && <span className="block text-muted-foreground">It updates itself within about 30 minutes, after any turn in flight; still behind after that, it raises an alert.</span>}
           </dd>
           <dt className="text-muted-foreground">Its own checks</dt>
           <dd>

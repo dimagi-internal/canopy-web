@@ -42,6 +42,7 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | `turn_failure` | `apps/harness/alerts_turn_failure.py` (investigations `escalated`/`debugger_failed`/`held` only; lives in the investigation's — the debugger's — workspace, see below) | action | Failed turns |
 | `unclaimable_turns` | `apps/harness/alerts_unclaimable.py` | blocking | Stuck turns |
 | `device_key_pending` | `apps/harness/alerts_device_key.py` | blocking | Device key |
+| `runner_code` | `apps/harness/alerts_runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
 | `canopy_projects_off` | `apps/harness/alerts_project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
 | `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), or every routed runner is directed-only) | setup | Agent routing |
 
@@ -71,7 +72,8 @@ Per-source notes:
   it is a link (the alert closes when the next reconcile sees it fixed):
   `turn_failure` See failed turns · Mark resolved; `unclaimable_turns` Fix
   routing · Cancel turns; `device_key_pending` Approve key · Reject key;
-  `agent_cant_run` Fix routing (· Dismiss, the one kind that keeps it — an
+  `runner_code` Open runner (the fix is the command in its body, run on that
+  machine); `agent_cant_run` Fix routing (· Dismiss, the one kind that keeps it — an
   agent nobody means to run yet); `canopy_projects_off` Choose repos (·
   Dismiss, for a person who runs only agents and means canopy to be off in
   their repos). No other kind offers Dismiss.
@@ -141,5 +143,10 @@ severity dot (blocking red, action orange, setup grey) · source chip · title
   plain facts.
 - **Agent page** (`/w/:ws/agents/:slug`): `agent:<slug>` above every section,
   nothing when empty.
+- **Supervisor Runners tab** (`/supervisor?tab=runners`): every open alert you
+  can act on, below the fleet hold; its count (plus a fleet hold) is the menu
+  badge and the feed's one line. The queued-turns list below it is facts, not
+  an alert (`QueuedTurns`, with per-turn Cancel).
 - **Runner detail** (`/supervisor`, and Topology's runner panel):
-  `runner:<pk>` above the health list, which stays the raw facts.
+  `runner:<pk>` above the health list, which stays the raw facts (a quiet
+  box's last-reported code and branch included).

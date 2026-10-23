@@ -53,6 +53,7 @@ SOURCES: list[str] = [
     "apps.harness.alerts_turn_failure",
     "apps.harness.alerts_unclaimable",
     "apps.harness.alerts_device_key",
+    "apps.harness.alerts_runner_code",
     "apps.harness.alerts_agent_routing",
     "apps.harness.alerts_project_opt_in",
 ]
