@@ -10,7 +10,7 @@ vi.mock('@/api/chat', () => ({
 }))
 vi.mock('@/api/agents', () => ({ getAgent: async () => ({ name: 'Labs Data' }) }))
 
-const { ANSWER_POLL_MS, PrivateConversationGate, takeGateFetch } = await import('./PrivateConversationGate')
+const { ANSWER_POLL_MS, ANSWER_POLL_MAX_MS, PrivateConversationGate, takeGateFetch } = await import('./PrivateConversationGate')
 
 const PRIVATE = {
   id: 's1', sensitive: true, agent_slug: 'labsdata', started_by_name: 'Jonathan Jackson',
@@ -101,6 +101,39 @@ describe('PrivateConversationGate', () => {
       })
       expect(await screen.findByText('Jonathan Jackson declined your last request.')).toBeTruthy()
       expect(screen.getByTestId('private-ask')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('asks less often the longer it waits, and stops once the conversation is out of reach', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      getSession.mockResolvedValue({ ...PRIVATE, you_are_in_it: false, your_join_request: 'pending' })
+      gate()
+      await screen.findByTestId('private-asked')
+      const first = getSession.mock.calls.length
+      const after = async (ms: number) => {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(ms)
+        })
+        return getSession.mock.calls.length - first
+      }
+      expect(await after(ANSWER_POLL_MS + 10)).toBe(1)
+      // The next wait is twice as long: nothing at one more interval.
+      expect(await after(ANSWER_POLL_MS)).toBe(1)
+      expect(await after(ANSWER_POLL_MS + 10)).toBe(2)
+      // Never longer than the cap.
+      await after(ANSWER_POLL_MAX_MS * 3)
+      const capped = getSession.mock.calls.length
+      expect(await after(ANSWER_POLL_MAX_MS + 10)).toBe(capped - first + 1)
+      // A 404 (taken away, or never theirs): it says so and stops asking.
+      getSession.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }))
+      await after(ANSWER_POLL_MAX_MS + 10)
+      expect(screen.getByTestId('private-gone')).toBeTruthy()
+      const stopped = getSession.mock.calls.length
+      await after(ANSWER_POLL_MAX_MS * 4)
+      expect(getSession.mock.calls.length).toBe(stopped)
     } finally {
       vi.useRealTimers()
     }

@@ -24,11 +24,14 @@ from . import conversation_keys
 @receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="chat_sensitive_session_key")
 def _key_a_sensitive_session_at_birth(sender, instance, created, **kwargs):
     """A conversation born sensitive (a sensitive site's token, a sensitive parent)
-    gets its key before its first row (`conversation_keys.ensure_key`)."""
+    gets its key before its first row (`conversation_keys.ensure_key`): the one its
+    starter's browser made when one did (kept even for a conversation not sensitive
+    yet, so a later turn that makes it so seals to it), else one made here."""
     if not created:
         return
-    if sensitivity.is_sensitive(instance):
-        conversation_keys.ensure_key(instance)
+    offered = getattr(instance, "_offered_key", None)
+    if offered is not None or sensitivity.is_sensitive(instance):
+        conversation_keys.ensure_key(instance, offered=offered)
 
 
 @receiver(turn_events_appended, dispatch_uid="chat_project_messages")

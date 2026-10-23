@@ -184,8 +184,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # A sensitive conversation's live frames carry its words, so the socket is
         # its own people's alone, on a chat surface (`sensitivity.reads_content`):
         # a token, or a co-tenant who is not in it, reads the metadata over REST.
+        chat_surface = sensitivity.scope_is_chat_surface(self.scope)
         if not await database_sync_to_async(sensitivity.reads_content)(
-                session, chat_surface=sensitivity.scope_is_chat_surface(self.scope), user=user):
+                session, chat_surface=chat_surface, user=user):
+            await self.close(code=4003)
+            return
+        # One of its people who holds no copy of its key yet (given it before it
+        # became sensitive) is told why, then turned away (`sensitivity.hears_live`).
+        if not await database_sync_to_async(sensitivity.hears_live)(
+                session, chat_surface=chat_surface, user=user):
+            await self.accept()
+            await self.send_json({"event": "session.error",
+                                  "data": {"code": "needs_key", "message": sensitivity.NEEDS_KEY}})
             await self.close(code=4003)
             return
         self.session = session
@@ -316,6 +326,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 {"current_version": exc.current_version,
                  "current_body": exc.current_body if getattr(self, "_draft_words", False) else ""},
             )
+            return
+        if draft is None:
+            # A sensitive conversation keeps drafts in its people's browsers.
             return
         await self._broadcast_draft(draft)
 
@@ -490,7 +503,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
     async def access_recheck(self, message):
         """This person's access changed somewhere (they left a workspace, were
         taken off this chat), or the conversation became sensitive. Ask the
-        session ACL and `sensitivity.reads_content` again and close if the answer
+        session ACL and `sensitivity.hears_live` again and close if the answer
         is now no — an open tab would otherwise keep receiving a conversation they
         can no longer read."""
         workspaces = message.get("workspaces")
@@ -508,7 +521,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # Re-read the session: the requirement that made it sensitive was written
         # after this socket connected.
         session = await self._get_session(str(self.session.pk))
-        if session is None or not await database_sync_to_async(sensitivity.reads_content)(
+        if session is None or not await database_sync_to_async(sensitivity.hears_live)(
                 session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
                 user=self.user, contact=self.contact):
             await self._error("forbidden", "You no longer have access to this session.")

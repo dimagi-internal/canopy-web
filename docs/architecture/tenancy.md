@@ -330,17 +330,28 @@ THE predicate; every surface below asks it, one test each in
   `2026-10-23-sensitive-conversations-sealed-to-their-people` §2,
   `apps/canopy_sessions/conversation_keys.py`): canopy-web can WRITE a sensitive conversation
   and cannot read it back.
-  - *The key.* When a session becomes sensitive (born so — a sensitive site's token, a
-    sensitive parent — or by `services.add_runner_requirements`) it gets a P-256 key pair
-    (`SessionKey.public_jwk`). The private half is wrapped at once (ECDH-ES + HKDF-SHA256 +
-    AES-256-GCM, the vault's `wrapEcdhEs`, info `canopy-chat/v1/wrap|<conversation>|<user>`)
-    to the starter's vault key (`UserVaultKeyset.public_jwk`), stored as a
-    `SessionKeyWrap`, and dropped. A fork, successor or branch (`parent_session`) carries
+  - *The key.* A chat started from canopy's own chat surfaces (the chat page, the embedded
+    panel) carries a P-256 key pair its starter's BROWSER made (`SessionCreateIn.conversation_key`,
+    `sealedChat.ts::newConversationKey`): the public half, a fresh conversation id, and the
+    private half wrapped (ECDH-ES + HKDF-SHA256 + AES-256-GCM, the vault's `wrapEcdhEs`, info
+    `canopy-chat/v1/wrap|<conversation>|<user>`) to the starter's vault key
+    (`GET /my-vault-key`, checked against the key this browser last opened as theirs,
+    `trust.checkSelf`). canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
+    while the chat is ordinary, so if it becomes sensitive its words are sealed to a key
+    canopy-web never saw the private half of (`conversation_keys.check_offer`, `ensure_key`).
+    **The limit:** a session that becomes sensitive with no browser there — made from Slack,
+    MCP, a contact or a host's grant, or a chat that came with no key — gets a pair made on
+    the server, its private half wrapped to the starter and dropped at once (the `zk_seal`
+    stance: canopy-web saw it once). A fork, successor or branch (`parent_session`) carries
     the same key and every wrap (`copy_key`).
   - *Sealing.* Each stored message's words (`{plaintext, content}`; never a tool's result)
     go into `Message.sealed` as a `cc1:` ECIES envelope to the conversation's public key,
-    info and AAD `canopy-chat/v1/message|<conversation>|<turn_index>` (`sensitivity.seal`,
-    from `send.py` and `transcript_ingest`). No key canopy-web holds — the field key, the
+    info and AAD `canopy-chat/v1/message|<conversation>|<turn_index>|<role>`, the role also
+    named as `r` (`sensitivity.seal`, from `send.py` and `transcript_ingest`; an envelope
+    without `r` predates the role binding). The browser opens a row only where its envelope
+    says it belongs: the conversation, its index (`i == turn_index + d`, d in
+    [0, …`sealed_key.index_offsets`] — a fork's copied rows sit the recorded offset below the
+    index they were sealed at) and its speaker. No key canopy-web holds — the field key, the
     legacy `SECRET_KEY` key — opens it, and no private key is stored.
     `docs/vault/chat-v1/chat_v1_vectors.json` pins the bytes for both languages.
   - *Reading.* ONE gate hands the ciphertext out, `sensitivity.reads_content`: the
@@ -378,12 +389,29 @@ THE predicate; every surface below asks it, one test each in
     sensitive conversation keep no words at all.
   - *Multiplayer.* Adding someone is a browser act by someone in it: their browser unwraps
     its copy and wraps it to the newcomer's current vault key (`POST …/participants` with
-    `wrap`; the server checks the shape and `recipient_jkt`). Removing someone deletes their
-    wrap; the key is not rotated (they could have kept what they read). Nothing else makes
+    `wrap`; the server checks the shape and `recipient_jkt`). The key the server names for
+    them is never taken on its word: the browser wraps only to a key it already trusts for
+    that person (pinned in this browser) or one the adder accepts now, having seen its
+    fingerprint (`trust.trustPerson`, `PersonTrustPrompt`; then pinned) — the ZK vault's
+    rule. A key that does not match its thumbprint, or changed under a pinned person, stops
+    the add with a sentence; so does an adder's own copy gone stale ("ask someone else in it
+    to give you a fresh copy"). Removing someone deletes their wrap; the key is not rotated
+    (they could have kept what they read). Nothing else makes
     anyone one of its people: `participants.ensure_participant` adds nobody to a sensitive
     conversation who is not its creator and holds no wrap of its key, so no door — a Slack
     reply, a dispatch's asker — can. Asking to join is once an hour per conversation
     (`join_requests.TooSoon`, 429; `CANOPY_JOIN_REQUEST_REASK_SECONDS`).
+  - *Given it before it became sensitive.* A participant with no copy for their current
+    vault key is listed `needs_key` (People); anyone in it holding a current copy gives them
+    one in a click (`POST …/key-copies`, the same trust rule). Until they hold a copy the
+    live socket, whose frames carry the words, turns them away (`sensitivity.hears_live`,
+    asked at connect and on every re-check; `session.error` `needs_key`).
+  - *A new vault key.* Replacing one (Settings → Vault key → Start over) names the private
+    conversations at stake, unlocks the OLD key, opens every copy the person holds
+    (`GET /my-keys`), sets the new key, and stores each copy re-wrapped to it
+    (`PUT /my-keys`; `vault/conversationCopies.ts`). A copy the old key no longer opened, or
+    a starter who replaced their key elsewhere, is refreshed by anyone else in it
+    (`POST …/key-copies` takes the starter too).
   - *Rows from before it became sensitive.* Sealed in the transaction that makes it
     sensitive (`services.add_runner_requirements` → `conversation_keys.seal_existing`): the
     server holds the conversation's PUBLIC key, so it seals what it can no longer read back,
@@ -399,7 +427,11 @@ THE predicate; every surface below asks it, one test each in
     the panel. The unlock banner shows only when sealed rows are in view (history, scroll-back),
     never for a conversation whose messages all arrived live; its one click goes straight to
     the passkey (`unlockLocally`, `useVaultUnlock`), and a passphrase is asked only when the
-    passkey is absent or failed.
+    passkey is absent or failed. What arrived live is kept in the tab by place (turn index +
+    role), so a reconnect's snapshot — the same rows, sealed — still reads without an unlock
+    (`useSealedConversation`); a row with only its metadata reads "Sealing…". An MCP Apps View
+    loads again, in a fresh frame, once the key opens (`AppHost.inputRevision`), so its input
+    is the decrypted one.
   - *The keyset and the host.* `sealed_key.keyset` (the reader's vault public key and its
     seals) goes only to the person's browser: canopy's own signed-in page, or the panel's
     frame, whose fetches are `Sec-Fetch-Site: same-origin` (`sensitivity.request_is_panel_browser`).
@@ -409,8 +441,14 @@ THE predicate; every surface below asks it, one test each in
     opens it. Their seals would let a site that forged the browser's header try passphrases
     offline (a passkey seal cannot be attacked so); the header keeps them out of every
     ordinary server-to-server call, and is not a proof against a site that forges it.
-  - *Not covered:* a person's in-progress draft (`drafts.py`) is still under the field key
-    while they type — it is the composer's live state, read back to send it.
+  - *Drafts stay in the browser.* A sensitive conversation stores no draft: the keystroke
+    path stores nothing there (`drafts.update_draft` → None), the composer never mirrors
+    keystrokes (canopy-ui `localDrafts`), the text reaches canopy-web only inside the send,
+    and peers see no typing preview. Becoming sensitive empties every draft
+    (`drafts.forget_words`); a body kept under the field key before reads as nothing.
+  - *No files.* An upload into a sensitive conversation is refused (422; the composer shows
+    why): the agent reads a file on its box, which holds no key to the conversation, so a
+    file could only be kept where canopy-web could read it.
 - **Memory is off, both ways:** nothing is written (`hcp.refuse_if_sensitive`), and nothing is
   read into one — `hcp.memory_state` reads every feature as not effective in a sensitive
   session, `hcp.effective` / `hcp.require` refuse a sensitive turn (so the envelope's `person`

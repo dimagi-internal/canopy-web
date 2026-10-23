@@ -80,6 +80,11 @@ from .schemas import (
     PageActionSpec,
     PageStateIn,
     PageStateOut,
+    KeyCopyIn,
+    MyKeyCopiesIn,
+    MyKeyCopiesOut,
+    MyKeyCopyOut,
+    MyVaultKeyOut,
     ParticipantAddIn,
     ParticipantRecipientOut,
     ParticipantOut,
@@ -388,6 +393,14 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     # sentence the panel shows them (`conversation_keys.CannotHold`).
     if sensitivity.is_sensitive(Session(metadata=metadata)):
         _holder_or_422(user=request.user)
+    # A key pair made in the starter's browser: if this conversation is (or becomes)
+    # sensitive its words are sealed to it, and canopy-web never sees its private half.
+    offered = None
+    if payload.conversation_key is not None:
+        try:
+            offered = conversation_keys.check_offer(request.user, payload.conversation_key.model_dump(mode="json"))
+        except conversation_keys.WrapRefused as exc:
+            raise HttpError(422, str(exc)) from None
     if payload.runner_id:
         from apps.harness.models import Runner
 
@@ -417,7 +430,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     session = services.create_session(
         workspace=workspace, created_by=request.user, agent=agent,
         project=payload.project, title=payload.title, metadata=metadata,
-        parent=payload.parent,
+        parent=payload.parent, conversation_key=offered,
     )
     return _out(session)
 
@@ -789,6 +802,51 @@ def _transfer_request_or_404(request: HttpRequest, request_id: uuid.UUID):
     if req is None:
         raise HttpError(404, "transfer request not found")
     return req
+
+
+@router.get("/my-vault-key", response=MyVaultKeyOut, summary="My vault public key, to wrap a new chat's key to")
+@gate("self")
+def my_vault_key(request: HttpRequest):
+    """Your vault key's PUBLIC half and its thumbprint, for your browser to wrap a new
+    conversation's key to before it starts one (`SessionCreateIn.conversation_key`) —
+    also from the embedded panel, which has no browser session to read
+    `/api/vault/keyset` with. 404 when you have none."""
+    found = conversation_keys.recipient(request.user)
+    if found is None:
+        raise HttpError(404, "you have no vault key")
+    return {"user_id": str(found["user_id"]), "public_jwk": found["public_jwk"], "jkt": found["jkt"]}
+
+
+@router.get("/my-keys", response=list[MyKeyCopyOut],
+            summary="The private chats whose key I hold a copy of")
+@gate("self")
+def my_key_copies(request: HttpRequest):
+    """Before you replace your vault key: every sensitive conversation you hold a copy
+    of the key to (a wrap only your vault key opens — never what was said), so your
+    browser can re-wrap each to the new key while the old one is open, and name them
+    to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set."""
+    if not sensitivity.request_is_chat_surface(request):
+        raise HttpError(403, "your conversation keys are re-wrapped from your browser")
+    return conversation_keys.my_copies(request.user)
+
+
+@router.put("/my-keys", response=MyKeyCopiesOut,
+            summary="Store my private chats' keys, re-wrapped to my new vault key")
+@gate("self", setting=True)
+def put_my_key_copies(request: HttpRequest, payload: MyKeyCopiesIn):
+    """After `PUT /api/vault/keyset` with `replace`: your copies of your conversations'
+    keys, each re-wrapped in your browser to your NEW vault key. Replaces only copies
+    you already hold, and only to your current vault key; 422 (storing none) when one
+    is not."""
+    if not sensitivity.request_is_chat_surface(request):
+        raise HttpError(403, "your conversation keys are re-wrapped from your browser")
+    try:
+        n = conversation_keys.replace_my_copies(request.user, [
+            {"session_id": c.session_id, "wrap": c.wrap.model_dump(), "recipient_jkt": c.recipient_jkt}
+            for c in payload.copies])
+    except conversation_keys.WrapRefused as exc:
+        raise HttpError(422, str(exc)) from None
+    return {"stored": n}
 
 
 @router.get("/transfer-requests", response=list[TransferRequestOut],
@@ -1370,8 +1428,11 @@ def move_session(request: HttpRequest, session_id: uuid.UUID, payload: SessionMo
 
 
 def _participants(session: Session) -> list[dict]:
-    rows = session.participants.select_related("user").order_by("created_at")
-    return [serializers.participant_dto(p) for p in rows]
+    rows = list(session.participants.select_related("user").order_by("created_at"))
+    # Who in a sensitive conversation cannot read it yet, for its people to give a copy.
+    keyless = (conversation_keys.without_current_copy(session, [p.user_id for p in rows])
+               if sensitivity.is_sensitive(session) else set())
+    return [{**serializers.participant_dto(p), "needs_key": p.user_id in keyless} for p in rows]
 
 
 @router.get("/{session_id}/participants", response=list[ParticipantOut],
@@ -1438,12 +1499,15 @@ def participant_recipient(request: HttpRequest, session_id: uuid.UUID, email: st
     nobody with that email is in the workspace; 409 `no_vault_key` when they have no
     vault key yet (they could not read it)."""
     session = _session_or_404(request, session_id)
-    if not access.can_share(request.user, session):
-        raise HttpError(403, "only the chat's owner can share it")
     _in_it_or_403(request, session)
     target = get_user_model().objects.filter(email__iexact=email.strip()).first()
     if target is None or not wsvc.is_member(target, session.workspace_id):
         raise HttpError(404, "nobody with that email is in this workspace")
+    # Its owner asks before adding someone; anyone in it, before giving a copy of the key
+    # to someone already in it (`POST /{id}/key-copies`).
+    if not access.can_share(request.user, session) and not sensitivity.is_conversation_person(
+            session, user=target):
+        raise HttpError(403, "only the chat's owner can share it")
     found = conversation_keys.recipient(target)
     if found is None:
         raise ProblemError(409, "No vault key", type_=TYPE_CONFLICT,
@@ -1451,6 +1515,34 @@ def participant_recipient(request: HttpRequest, session_id: uuid.UUID, email: st
                                   "sensitive conversation; ask them to set one up first",
                            members={"error": "no_vault_key"})
     return {**found, "email": target.email}
+
+
+@router.post("/{session_id}/key-copies", response=list[ParticipantOut],
+             summary="Give someone in a private chat their copy of its key")
+@gate("session-acl", setting=True)  # in the conversation, holding a current copy
+def give_key_copy(request: HttpRequest, session_id: uuid.UUID, payload: KeyCopyIn):
+    """For someone ALREADY in a sensitive conversation who cannot read it: given it
+    before it became sensitive, or whose vault key changed since (its starter
+    included). Your browser opens your copy of the key and wraps it to their current
+    vault key (`GET /{id}/participants/recipient`); canopy-web stores the wrap. Anyone
+    in the conversation who holds a current copy may give one. It puts nobody in it:
+    404 when they are not in it."""
+    session = _session_or_404(request, session_id)
+    _in_it_or_403(request, session)
+    if not sensitivity.is_sensitive(session) or conversation_keys.key_of(session) is None:
+        raise HttpError(409, "this conversation has no key to give")
+    if not conversation_keys.has_current_wrap(session, request.user):
+        raise HttpError(409, "your own copy of its key is not for your current vault key; "
+                             "ask someone else in it to give you a fresh one first")
+    target = get_user_model().objects.filter(pk=payload.user_id).first()
+    if target is None or not sensitivity.is_conversation_person(session, user=target):
+        raise HttpError(404, "nobody with that id is in this conversation")
+    try:
+        conversation_keys.add_wrap(session, target, payload.wrap.model_dump(exclude={"recipient_jkt"}),
+                                   recipient_jkt=payload.wrap.recipient_jkt, by=request.user)
+    except conversation_keys.WrapRefused as exc:
+        raise HttpError(422, str(exc)) from None
+    return _participants(session)
 
 
 @router.delete("/{session_id}/participants/{user_id}", response=list[ParticipantOut],
@@ -1766,6 +1858,11 @@ def request_backfill(request: HttpRequest, session_id: uuid.UUID):
                            detail=str(exc)) from exc
 
 
+#: Why a private conversation takes no file (`upload_attachment`).
+ATTACHMENTS_REFUSED = ("files cannot be attached to a private conversation yet: canopy would have "
+                       "to keep them where it could read them. Paste the part that matters as text.")
+
+
 @router.post(
     "/{session_id}/attachments",
     response={201: AttachmentOut},
@@ -1782,6 +1879,12 @@ def upload_attachment(
     it. That ordering is also what lets the UI show a thumbnail before send.
     """
     session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
+    # A private conversation's words are sealed to its people, and its files would be
+    # its words too — but the agent reads a file on its box, which holds no key to the
+    # conversation. Until the box can open a sealed file, none is taken in one rather
+    # than kept where canopy-web could read it.
+    if sensitivity.is_sensitive(session):
+        raise HttpError(422, ATTACHMENTS_REFUSED)
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 

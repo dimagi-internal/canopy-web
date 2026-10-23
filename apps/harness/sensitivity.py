@@ -358,7 +358,7 @@ def seal(session, index: int, role: str, text: str, content: dict | None) -> tup
     if role == "tool_result":
         return "", strip_result(content, session=session, text=text or ""), None
     words = {"plaintext": text or "", "content": content}
-    return "", redact_payload(content), conversation_keys.seal_words(session, index, words)
+    return "", redact_payload(content), conversation_keys.seal_words(session, index, words, role=role)
 
 
 def call_of(content) -> dict:
@@ -452,6 +452,26 @@ def reads_content(session, *, chat_surface: bool, user=None, contact=None) -> bo
     if not is_sensitive(session):
         return True
     return chat_surface and is_conversation_person(session, user=user, contact=contact)
+
+
+def hears_live(session, *, chat_surface: bool, user=None, contact=None) -> bool:
+    """Whether this reader may be on the conversation's live socket, whose frames carry
+    its words in clear: `reads_content`, and — in a sensitive conversation with a key —
+    holding a copy of that key (`conversation_keys.holds_copy`). Someone given an
+    ordinary conversation that later became sensitive holds none until a browser in it
+    wraps them one, and until then reads only what they could open: nothing."""
+    if not reads_content(session, chat_surface=chat_surface, user=user, contact=contact):
+        return False
+    if not is_sensitive(session) or contact is not None:
+        return True
+    from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
+
+    return conversation_keys.holds_copy(session, user)
+
+
+#: Why the live socket turned someone in it away (`hears_live`).
+NEEDS_KEY = ("this private conversation is sealed to its people, and you have not been given "
+             "its key yet: ask someone in it to give you the key (People), then reload")
 
 
 def readable(messages, session, *, chat_surface: bool, user=None, contact=None) -> list:

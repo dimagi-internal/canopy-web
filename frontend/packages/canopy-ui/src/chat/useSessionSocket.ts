@@ -132,6 +132,13 @@ export interface UseSessionSocketOptions {
    * Without it a send on a dead socket is marked "not sent" instead.
    */
   resendOverHttp?: (text: string, clientId: string) => Promise<unknown>;
+  /**
+   * Keep the composer's draft in this browser: never mirror keystrokes to the server
+   * (`draft.update`), even with others present. For a conversation whose words the
+   * server must not hold — canopy's private (sensitive) conversations — where the text
+   * reaches the server only inside the send. Peers then see no "typing" preview.
+   */
+  localDrafts?: boolean;
 }
 
 /**
@@ -224,7 +231,10 @@ export function useSessionSocket({
   protocol = "canopy",
   sendOverHttp,
   resendOverHttp,
+  localDrafts = false,
 }: UseSessionSocketOptions): UseSessionSocketResult {
+  const localDraftsRef = useRef(localDrafts);
+  localDraftsRef.current = localDrafts;
   // The local draft a read-only principal types into (see `sendOverHttp`).
   const [localDraft, setLocalDraft] = useState<Draft | null>(null);
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
@@ -632,7 +642,7 @@ export function useSessionSocket({
       // flushed once by sendChat, which is the only moment the server actually
       // needs it. This is what makes single-player typing purely local — no
       // round trip, no echo, no version to disagree about.
-      if (!shouldSyncDraftLive(stateRef.current.presence_user_ids)) {
+      if (localDraftsRef.current || !shouldSyncDraftLive(stateRef.current.presence_user_ids)) {
         if (draftDebounceRef.current != null) {
           window.clearTimeout(draftDebounceRef.current);
           draftDebounceRef.current = null;
@@ -699,7 +709,7 @@ export function useSessionSocket({
   // mirrored while we were alone, so without this one catch-up flush their view
   // would sit empty until the next keystroke. Closes the only gap that skipping
   // live sync opens up.
-  const liveSync = shouldSyncDraftLive(state.presence_user_ids);
+  const liveSync = !localDrafts && shouldSyncDraftLive(state.presence_user_ids);
   useEffect(() => {
     if (!liveSync) return;
     const pending = pendingDraftBodyRef.current;

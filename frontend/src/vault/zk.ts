@@ -130,6 +130,19 @@ export async function importPrivateScalar(scalar: Uint8Array, pub: { x?: string;
   return subtle().importKey('jwk', { ...publicJwk(pub), d: b64u(scalar) }, ECDH, false, ['deriveBits'])
 }
 
+/** The public half that `scalar` really has — computed here, never taken from the
+ *  server: a PKCS#8 P-256 key with no public point, which WebCrypto completes. */
+export async function publicJwkOfScalar(scalar: Uint8Array): Promise<PublicJwk> {
+  if (scalar.length !== 32) throw new Error('a P-256 scalar is 32 bytes')
+  const prefix = hexToBytes('308141020100301306072a8648ce3d020106082a8648ce3d030107042730250201010420')
+  const der = new Uint8Array(prefix.length + 32)
+  der.set(prefix)
+  der.set(scalar, prefix.length)
+  const k = await subtle().importKey('pkcs8', der, ECDH, true, ['deriveBits'])
+  der.fill(0)
+  return publicJwk(await subtle().exportKey('jwk', k))
+}
+
 /** A fresh key pair whose scalar can be sealed (the person's keyset). */
 export async function generateKeyPair(): Promise<{ privateKey: CryptoKey; publicJwk: PublicJwk; scalar: Bytes }> {
   const pair = (await subtle().generateKey(ECDH, true, ['deriveBits'])) as CryptoKeyPair

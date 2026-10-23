@@ -67,6 +67,10 @@ export interface AppHost {
   /** Whether a View may go full screen (`ui/request-display-mode`): drawn over
    *  the surface with a close control. Absent, every View stays inline. */
   fullscreen?: boolean;
+  /** A change re-loads every View from scratch — `load` again and a fresh frame. For
+   *  what `load` returns changing under the host: a private conversation's call input
+   *  becomes readable once the person unlocks its key. Absent, a View loads once. */
+  inputRevision?: string | number;
 }
 
 export type AppResourceListener = (toolCallId: string, uri: string) => void;

@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.agents.sensitive_data import SENSITIVE_CANOPY_TOOLS
-from apps.canopy_sessions import drafts, serializers, transcript_ingest
+from apps.canopy_sessions import drafts, transcript_ingest
 from apps.canopy_sessions import send as chat_send
 from apps.canopy_sessions import services as chat_services
 from apps.canopy_sessions.models import Draft, Message, RunnerBinding, Session
@@ -288,24 +288,32 @@ def test_a_turn_born_without_a_parent_is_not_read_as_having_lost_one(w):
 # --- 7. drafts ----------------------------------------------------------------------------
 
 
-def test_a_sensitive_conversations_draft_is_stored_encrypted(w):
-    draft = drafts.update_draft(w["hot"], user=w["user"], expected_version=0, body=ROW)
-    stored = Draft.objects.get(pk=draft.pk).body
-    assert stored.startswith(drafts.SEALED_PREFIX) and ROW not in stored
-    assert drafts.body_of(draft) == ROW
-    assert serializers.draft_dto(draft)["body"] == ROW
-    assert serializers.draft_dto(draft, words=False)["body"] == ""
-    peer = serializers.peer_draft_dto(Draft.objects.select_related("author").get(pk=draft.pk),
-                                      words=False)
-    assert peer["body"] == "" and peer["typing"] is True
-    assert drafts.commit_draft(w["hot"], w["user"]) == ROW
+def test_a_sensitive_conversations_draft_stays_in_the_browser(w):
+    """Nothing a person types into a private conversation is kept until they send it: the
+    keystroke path stores nothing there (and the composer sends its text with the send)."""
+    assert drafts.update_draft(w["hot"], user=w["user"], expected_version=0, body=ROW) is None
+    assert not Draft.objects.filter(session=w["hot"]).exclude(body="").exists()
+    assert drafts.commit_draft(w["hot"], w["user"]) == ""
     plain = drafts.update_draft(w["cold"], user=w["user"], expected_version=0, body="hello")
     assert Draft.objects.get(pk=plain.pk).body == "hello"
 
 
-def test_the_retention_sweep_still_sees_an_encrypted_draft(w):
-    drafts.update_draft(w["hot"], user=w["user"], expected_version=0, body=ROW)
-    assert Draft.objects.filter(session=w["hot"]).exclude(body="").exists()
+def test_a_draft_typed_before_it_became_sensitive_is_forgotten_then(w):
+    from apps.canopy_sessions import services
+
+    drafts.update_draft(w["cold"], user=w["user"], expected_version=0, body=ROW)
+    services.add_runner_requirements(w["cold"], {"sensitive_data"})
+    assert not Draft.objects.filter(session=w["cold"]).exclude(body="").exists()
+
+
+def test_a_draft_stored_under_the_field_key_reads_as_nothing(w):
+    """canopy-web does not decrypt one: a body kept that way before reads as empty."""
+    from apps.common.encryption import encrypt_secret
+
+    d = drafts.draft_for(w["hot"], w["user"])
+    Draft.objects.filter(pk=d.pk).update(body=drafts.SEALED_PREFIX + encrypt_secret(ROW))
+    d.refresh_from_db()
+    assert drafts.body_of(d) == "" and drafts.commit_draft(w["hot"], w["user"]) == ""
 
 
 def test_provenance_records_which_parent_keys_resolved(w):

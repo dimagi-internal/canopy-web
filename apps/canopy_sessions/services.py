@@ -19,7 +19,7 @@ from apps.harness.models import Turn, TurnEvent, TurnTranscript
 from apps.realtime import groups
 
 from . import activity as session_activity
-from . import conversation_keys
+from . import conversation_keys, drafts
 from . import transcript_read
 from .models import Message, RunnerBinding, Session
 
@@ -162,6 +162,8 @@ def add_runner_requirements(session: Session, reqs) -> None:
                 # in this transaction: its rows sealed, its turns' words withheld.
                 conversation_keys.seal_existing(s)
                 _withhold_what_it_kept(s)
+                # What its people had typed and not sent stays in their browsers now.
+                drafts.forget_words(s)
                 # Every open socket on it re-asks `reads_content`: a token's, or a
                 # co-tenant's who is not in it, closes now rather than reading on.
                 transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))
@@ -217,7 +219,8 @@ def recheck_sockets(session_id, *, user_ids=()) -> None:
 
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
-                   metadata: dict | None = None, contact=None, parent=None) -> Session:
+                   metadata: dict | None = None, contact=None, parent=None,
+                   conversation_key: dict | None = None) -> Session:
     """One way to start a conversation, whoever starts it. A USER owns it (a
     participant row, SP3 multiplayer); a CONTACT has no account, so the session
     records them on `contact` instead and has no creator — which is what keeps
@@ -239,12 +242,16 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
     if not getattr(settings, "CHAT_STUB_EXECUTOR", True):
         meta.setdefault(TRANSCRIPT_SOURCED, True)
     with transaction.atomic():
-        session = Session.objects.create(
+        session = Session(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
             title=title, metadata=meta, contact=contact,
             # What opened it (request + `parent`): apps/harness/provenance.py.
             **provenance.session_fields(parent=parent),
         )
+        # A key pair its starter's browser made (`conversation_keys.check_offer`), kept by
+        # the birth signal in place of one made here.
+        session._offered_key = conversation_key
+        session.save(force_insert=True)
         if created_by is not None:
             ensure_participant(session, created_by, SessionParticipant.OWNER)
             _inherit_participants(session, created_by)

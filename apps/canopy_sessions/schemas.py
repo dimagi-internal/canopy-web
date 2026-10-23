@@ -12,6 +12,30 @@ from pydantic import AliasChoices, Field, field_validator
 from apps.harness.schemas import Origin, ParentIn, TurnOut, normalize_origin
 
 
+class ConversationKeyWrapIn(Schema):
+    """A conversation key's private half wrapped to a vault key: `{alg: "ecdh-es", epk,
+    n, ct}`."""
+    alg: Literal["ecdh-es"]
+    epk: str
+    n: str
+    ct: str
+
+
+class ConversationKeyIn(Schema):
+    """A key pair for this conversation, made in your browser: its public half, and its
+    private half wrapped to YOUR current vault key (info `canopy-chat/v1/wrap|<conversation>|<your
+    user id>`). If the conversation is, or later becomes, sensitive its words are sealed
+    to this key, and canopy-web never sees the private half. Sent by canopy's own chat
+    surfaces; leave it out otherwise."""
+    #: A fresh UUID the browser chose: bound into the wrap and every envelope as the
+    #: conversation's id (`SealedKeyOut.conversation`).
+    conversation: uuid.UUID
+    public_jwk: dict
+    wrap: ConversationKeyWrapIn
+    #: Thumbprint of the vault key `wrap` is for.
+    recipient_jkt: str
+
+
 class SessionCreateIn(Schema):
     agent_slug: str | None = None
     # An agentless PROJECT chat: the repo checkout to drive. Mutually exclusive
@@ -27,6 +51,8 @@ class SessionCreateIn(Schema):
     # What this session was opened from (apps/harness/schemas.ParentIn) — the
     # same as the X-Canopy-Parent-* headers. Optional, never checked.
     parent: ParentIn | None = None
+    # A key pair the starter's browser made (`conversation_keys.check_offer`).
+    conversation_key: ConversationKeyIn | None = None
 
 
 class SendIn(Schema):
@@ -301,6 +327,10 @@ class SealedKeyOut(Schema):
     #: Some of its words are still under canopy's earlier field key and read again
     #: once `manage.py reseal_sensitive_conversations` moves them.
     needs_migration: bool = False
+    #: How far a fork's copied rows sit below the index their envelopes name: an
+    #: envelope at row `turn_index` must say `i == turn_index + d` for d in [0, *these].
+    #: Null for a fork made before this was recorded.
+    index_offsets: list[int] | None = []
 
 
 class MessagePageOut(Schema):
@@ -620,6 +650,11 @@ class ParticipantOut(Schema):
     display_name: str
     role: str
     joined_at: str | None = None
+    #: A sensitive conversation only: they hold no copy of its key for their current
+    #: vault key (given it before it became sensitive, or their vault key changed), so
+    #: they cannot read it and are not on its live socket. Anyone in it can give them
+    #: one from their browser (`POST /{id}/key-copies`).
+    needs_key: bool = False
 
 
 class SealedKeyWrapIn(Schema):
@@ -641,6 +676,50 @@ class ParticipantAddIn(Schema):
     email: str
     role: Literal["editor", "viewer"] = "editor"
     wrap: SealedKeyWrapIn | None = None
+
+
+class KeyCopyIn(Schema):
+    """Someone already in a sensitive conversation, given their copy of its key from your
+    browser: `wrap` is the key wrapped to their current vault key
+    (`GET /{id}/participants/recipient`)."""
+    user_id: int
+    wrap: SealedKeyWrapIn
+
+
+class MyKeyCopyOut(Schema):
+    """One sensitive conversation whose key you hold a copy of: what your browser needs
+    to re-wrap it to a new vault key, and enough to name it to you."""
+    session_id: str
+    conversation: str
+    public_jwk: dict
+    wrap: dict
+    recipient_jkt: str
+    agent_name: str = ""
+    workspace: str = ""
+    started_at: dt.datetime | None = None
+
+
+class MyVaultKeyOut(Schema):
+    """Your vault key's public half (`GET /my-vault-key`)."""
+    user_id: str
+    public_jwk: dict
+    jkt: str
+
+
+class MyKeyCopyIn(Schema):
+    session_id: uuid.UUID
+    wrap: ConversationKeyWrapIn
+    recipient_jkt: str
+
+
+class MyKeyCopiesIn(Schema):
+    """Your copies of your conversations' keys, re-wrapped in your browser to the vault
+    key you just set up (`PUT /api/vault/keyset` with `replace`)."""
+    copies: list[MyKeyCopyIn]
+
+
+class MyKeyCopiesOut(Schema):
+    stored: int
 
 
 class ParticipantRecipientOut(Schema):

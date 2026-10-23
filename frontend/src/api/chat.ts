@@ -11,6 +11,7 @@
  * reuse the generated OpenAPI schema so the two can't drift.
  */
 
+import { newConversationKey, type ConversationKeyOffer } from "@/vault/sealedChat";
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
 import { ApiError } from "./problem";
@@ -28,6 +29,19 @@ export type SlashCommand = components["schemas"]["SlashCommandOut"];
 /** The shared `ApiError` (./problem) under its old name; callers branch on
  *  `.status` and `.code` (the problem type's tail, e.g. "not-found"). */
 export { ApiError as ChatApiError };
+
+/** A key pair for a chat this browser starts (`newConversationKey`), or null when it
+ *  cannot make one — no vault key, or one this browser does not recognise as yours. The
+ *  chat then starts as before, and a server-made key is the fallback if it turns private. */
+export async function browserConversationKey(
+  mine: () => Promise<{ user_id: string; public_jwk: Record<string, unknown>; jkt: string }>,
+): Promise<ConversationKeyOffer | null> {
+  try {
+    return await newConversationKey(await mine());
+  } catch {
+    return null;
+  }
+}
 
 // Still raw fetch (not apiV2): several routes here (the session's secrets, the
 // MCP Apps View plumbing) are not in the generated schema. Errors go through the
@@ -67,12 +81,15 @@ export interface CreateSessionInput {
   runnerId?: string;
 }
 
-export function createSession(
+export async function createSession(
   input: CreateSessionInput = {},
 ): Promise<ChatSession> {
   const path = input.workspace
     ? `/api/w/${input.workspace}/canopy-sessions/`
     : "/api/canopy-sessions/";
+  // The conversation's key is made HERE: if it is, or becomes, private its words are
+  // sealed to it, and canopy-web never sees the private half (vault/sealedChat.ts).
+  const conversationKey = await browserConversationKey(myVaultKey);
   return request<ChatSession>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -82,6 +99,7 @@ export function createSession(
       project: input.project ?? "",
       metadata: input.metadata ?? {},
       runner_id: input.runnerId ?? null,
+      ...(conversationKey ? { conversation_key: conversationKey } : {}),
     }),
   });
 }
@@ -456,6 +474,40 @@ export function addParticipant(id: string, email: string, role: "editor" | "view
 export function participantRecipient(id: string, email: string): Promise<ParticipantRecipient> {
   return request<ParticipantRecipient>(
     `/api/canopy-sessions/${encodeURIComponent(id)}/participants/recipient?email=${encodeURIComponent(email)}`);
+}
+
+/** Give someone already in a private chat their copy of its key — they were given the
+ *  chat before it became private, or replaced their vault key. `wrap` is made in this
+ *  browser (vault/sealedChat.ts::wrapForRecipient). */
+export function giveKeyCopy(id: string, userId: number, wrap: SealedKeyWrapIn): Promise<Participant[]> {
+  return request<Participant[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/key-copies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId, wrap }),
+  });
+}
+
+export type MyKeyCopy = components["schemas"]["MyKeyCopyOut"];
+export type MyVaultKey = components["schemas"]["MyVaultKeyOut"];
+
+/** Every private chat whose key I hold a copy of (to re-wrap before replacing my vault key). */
+export function myKeyCopies(): Promise<MyKeyCopy[]> {
+  return request<MyKeyCopy[]>("/api/canopy-sessions/my-keys");
+}
+
+/** Store my copies, re-wrapped to my NEW vault key. */
+export function putMyKeyCopies(copies: { session_id: string; wrap: { alg: "ecdh-es"; epk: string; n: string; ct: string };
+                                         recipient_jkt: string }[]): Promise<{ stored: number }> {
+  return request<{ stored: number }>("/api/canopy-sessions/my-keys", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ copies }),
+  });
+}
+
+/** My vault key's public half, for this browser to wrap a new chat's key to. */
+export function myVaultKey(): Promise<MyVaultKey> {
+  return request<MyVaultKey>("/api/canopy-sessions/my-vault-key");
 }
 
 /** Owner removes someone; anyone can remove themselves. */

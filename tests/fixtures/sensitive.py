@@ -68,7 +68,7 @@ def open_sealed(sealed: str, session, person_priv, user) -> dict:
     scalar = unwrap(wrap.wrap, person_priv, conversation_keys.wrap_info(key.conversation, user.pk))
     conv = ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
     body = json.loads(unb64u(sealed[len(conversation_keys.PREFIX):]))
-    words = unwrap(body, conv, conversation_keys.message_info(body["c"], body["i"]))
+    words = unwrap(body, conv, conversation_keys.message_info(body["c"], body["i"], body.get("r")))
     return json.loads(words)
 
 
@@ -90,7 +90,7 @@ def browser_said(messages, sealed_key: dict, person_priv, user_id) -> str:
     for m in messages:
         if m.get("sealed"):
             body = json.loads(unb64u(m["sealed"][len(conversation_keys.PREFIX):]))
-            words = json.loads(unwrap(body, conv, conversation_keys.message_info(body["c"], body["i"])))
+            words = json.loads(unwrap(body, conv, conversation_keys.message_info(body["c"], body["i"], body.get("r"))))
             out.append(words["plaintext"])
         else:
             out.append(m["plaintext"])

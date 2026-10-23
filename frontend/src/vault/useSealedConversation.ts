@@ -25,15 +25,28 @@ export type SealedState =
 export const LOCKED_TEXT = 'Sealed — unlock to read this conversation.'
 /** What a row shows when your key does not open it. */
 export const UNOPENED_TEXT = 'This message could not be opened with your key.'
+/** What a row of a private conversation shows while its words are not sealed to the
+ *  conversation's key yet (kept under canopy's earlier key, or written before it had
+ *  one): something is there, and is on its way to being readable. */
+export const SEALING_TEXT = 'Sealing…'
 
-type Row = { sealed?: string | null; plaintext: string; content: Record<string, unknown> }
+type Row = { sealed?: string | null; plaintext: string; content: Record<string, unknown>;
+             turn_index?: number; role?: string }
+
+const placeOf = (m: Row) => `${m.turn_index ?? ''}|${m.role ?? ''}`
+const openedKey = (m: Row & { sealed: string }) => `${placeOf(m)}|${m.sealed}`
+const isProse = (m: Row) => m.role === 'user' || m.role === 'assistant'
+const isMetadataOnly = (m: Row) => (m.content as { redacted?: unknown } | undefined)?.redacted === "sensitive"
 
 /**
  * A sensitive conversation's rows as this person reads them: the server sends them
  * sealed (`MessageOut.sealed`) with the reader's own wrap (`sealed_key`); once
  * `unlock()` has opened the vault key, every row — the snapshot, scroll-back, and
- * any that arrive later — is decrypted here, in the browser, and nowhere else.
- * Live frames carry the words already and pass through untouched.
+ * any that arrive later — is decrypted here, in the browser, and nowhere else, and
+ * only where its envelope says it belongs (its index and speaker).
+ * Live frames carry the words already and pass through untouched — and are kept for
+ * the life of the tab, by place, so a reconnect's snapshot (which carries the same
+ * rows sealed) reads them still, without asking to unlock.
  */
 export function useSealedConversation<M extends Row>(
   sealedKey: SealedKey | null | undefined,
@@ -49,6 +62,8 @@ export function useSealedConversation<M extends Row>(
   const [error, setError] = useState<string | null>(null)
   const [, setVersion] = useState(0)
   const opened = useRef(new Map<string, Words | null>())
+  // The words of rows that arrived live in this tab, by place (turn index + role).
+  const heard = useRef(new Map<string, Words>())
   const keyRef = useRef<ConversationKey | null>(null)
   keyRef.current = key
   const conversation = sealedKey?.conversation ?? null
@@ -59,17 +74,35 @@ export function useSealedConversation<M extends Row>(
     setKey(null)
     setError(null)
   }, [conversation])
+  // What was heard is reset as the conversation changes, in the render itself: an effect
+  // would run after this render has already recorded the new conversation's rows.
+  const heardFor = useRef(conversation)
+  if (heardFor.current !== conversation) {
+    heardFor.current = conversation
+    heard.current = new Map()
+  }
+
+  // Remember what arrived live, before a snapshot replaces it with its sealed copy.
+  if (sealedKey) {
+    for (const m of messages) {
+      if (isSealed(m.sealed) || m.turn_index === undefined || isMetadataOnly(m)) continue
+      if (m.plaintext || (m.content && Object.keys(m.content).length)) {
+        heard.current.set(placeOf(m), { plaintext: m.plaintext, content: m.content })
+      }
+    }
+  }
 
   useEffect(() => {
     if (!key) return
-    const todo = messages.map((m) => m.sealed).filter((s): s is string => isSealed(s) && !opened.current.has(s))
+    const todo = messages.filter((m): m is M & { sealed: string } =>
+      isSealed(m.sealed) && !opened.current.has(openedKey(m as M & { sealed: string })))
     if (!todo.length) return
     let live = true
-    void Promise.all(todo.map(async (s) => {
+    void Promise.all(todo.map(async (m) => {
       try {
-        opened.current.set(s, await openSealed(s, key))
+        opened.current.set(openedKey(m), await openSealed(m.sealed, key, { index: m.turn_index, role: m.role }))
       } catch {
-        opened.current.set(s, null)
+        opened.current.set(openedKey(m), null)
       }
     })).then(() => live && setVersion((v) => v + 1))
     return () => {
@@ -91,19 +124,37 @@ export function useSealedConversation<M extends Row>(
     }
   }, [sealedKey, opening, unlockVault])
 
-  const shown = useMemo(() => !messages.some((m) => isSealed(m.sealed)) ? messages : messages.map((m) => {
-    if (!isSealed(m.sealed)) return m
-    if (!opened.current.has(m.sealed)) return { ...m, plaintext: m.plaintext || LOCKED_TEXT }
-    const words = opened.current.get(m.sealed)
-    return words ? withWords(m, words) : { ...m, plaintext: UNOPENED_TEXT }
+  const shown = useMemo(() => {
+    if (!sealedKey) return messages
+    let changed = false
+    const out = messages.map((m) => {
+      const next = shownRow(m)
+      if (next !== m) changed = true
+      return next
+    })
+    return changed ? out : messages
+    function shownRow(m: M): M {
+      if (!isSealed(m.sealed)) {
+        // A private conversation's row with only its metadata: sealed words still to come.
+        return isProse(m) && !m.plaintext && isMetadataOnly(m) ? { ...m, plaintext: SEALING_TEXT } : m
+      }
+      const k = openedKey(m as M & { sealed: string })
+      if (!opened.current.has(k)) {
+        const live = heard.current.get(placeOf(m))
+        return live ? withWords(m, live) : { ...m, plaintext: m.plaintext || LOCKED_TEXT }
+      }
+      const words = opened.current.get(k)
+      return words ? withWords(m, words) : { ...m, plaintext: UNOPENED_TEXT }
+    }
     // `opened` is a ref; the version bump above is what re-runs this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [messages, key, opened.current.size])
+  }, [messages, key, sealedKey, opened.current.size])
 
   const state: SealedState = !sealedKey ? 'plain'
     : key ? 'open'
       : opening ? 'opening'
         : whyNot(sealedKey) ?? (error ? 'error' : 'locked')
-  const hasSealed = messages.some((m) => isSealed(m.sealed))
+  // Something sealed this browser cannot show yet: neither opened nor heard live here.
+  const hasSealed = messages.some((m) => isSealed(m.sealed) && !heard.current.has(placeOf(m)))
   return { state, messages: shown, unlock, error, key, keyRef, hasSealed }
 }

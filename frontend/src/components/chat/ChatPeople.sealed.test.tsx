@@ -3,21 +3,51 @@
 // the adder's browser opens its own copy and wraps it to the newcomer's vault key — and
 // the panel unlocks a vault key with no request to canopy (it has no browser session).
 // The REAL crypto runs; only the REST calls and WebAuthn are mocked.
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   getSession: vi.fn(), participantRecipient: vi.fn(), addParticipant: vi.fn(),
-  listParticipants: vi.fn(), removeParticipant: vi.fn(),
+  listParticipants: vi.fn(), removeParticipant: vi.fn(), giveKeyCopy: vi.fn(),
 }))
 vi.mock('@/api/chat', () => api)
 vi.mock('@/vault/useVaultUnlock', () => ({ useVaultUnlock: () => ({ unlock: vi.fn(), element: null }) }))
 
-const { addPerson } = await import('./ChatPeople')
+const { addPerson, giveKey, STALE_OWN_COPY } = await import('./ChatPeople')
+const trust = await import('@/vault/trust')
 const { wrapInfo } = await import('@/vault/sealedChat')
 const { unlockLocally } = await import('@/vault/localUnlock')
 const zk = await import('@/vault/zk')
 
-afterEach(() => vi.clearAllMocks())
+// This browser's pins (trust.ts), fresh for each test.
+beforeEach(() => {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+  })
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+  vi.unstubAllGlobals()
+})
+
+/** A sensitive conversation I hold a current copy of, and `them` to add. */
+async function world() {
+  const me = await zk.generateKeyPair()
+  const them = await zk.generateKeyPair()
+  const conv = await zk.generateKeyPair()
+  api.getSession.mockResolvedValue({ sensitive: true, sealed_key: {
+    conversation: 'conv-1', public_jwk: conv.publicJwk, current: true,
+    wrap: await zk.wrapEcdhEs(conv.scalar, me.publicJwk, wrapInfo('conv-1', '7')) } })
+  api.participantRecipient.mockResolvedValue({ user_id: 9, email: 'peer@dimagi.com', public_jwk: them.publicJwk,
+                                               jkt: await zk.jkt(them.publicJwk) })
+  api.addParticipant.mockResolvedValue([])
+  api.giveKeyCopy.mockResolvedValue([])
+  const unlock = async () => ({ userId: '7', privateKey: me.privateKey, publicJwk: me.publicJwk })
+  return { me, them, conv, unlock }
+}
 
 describe('addPerson', () => {
   it("wraps the conversation key to the newcomer's vault key, in this browser", async () => {
@@ -30,6 +60,8 @@ describe('addPerson', () => {
     api.participantRecipient.mockResolvedValue({ user_id: 9, email: 'peer@dimagi.com', public_jwk: them.publicJwk,
                                                  jkt: await zk.jkt(them.publicJwk) })
     api.addParticipant.mockResolvedValue([])
+    // Pinned before: no question asked.
+    trust.pinPerson(9, await zk.jkt(them.publicJwk), 'peer@dimagi.com')
     await addPerson('s1', 'peer@dimagi.com', 'editor',
       async () => ({ userId: '7', privateKey: me.privateKey, publicJwk: me.publicJwk }))
     const [sid, email, role, wrap] = api.addParticipant.mock.calls[0]
@@ -39,6 +71,66 @@ describe('addPerson', () => {
     const opened = await zk.unwrapEcdhEs(wrap, them.privateKey, them.publicJwk, wrapInfo('conv-1', 9))
     expect(Array.from(opened)).toEqual(Array.from(conv.scalar))
     await expect(zk.unwrapEcdhEs(wrap, me.privateKey, me.publicJwk, wrapInfo('conv-1', 9))).rejects.toThrow()
+  })
+
+  it('never wraps to a key it has not been told to trust: the fingerprint is the question', async () => {
+    const { them, unlock } = await world()
+    const fp = zk.fingerprint(await zk.jkt(them.publicJwk))
+    // The default refuses, saying which fingerprint to check.
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock)).rejects.toThrow(fp)
+    expect(api.addParticipant).not.toHaveBeenCalled()
+    // Declined in the prompt: nothing shared.
+    const no = vi.fn(async () => false)
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, no)).rejects.toThrow(/Not added/)
+    expect(no).toHaveBeenCalledWith(expect.objectContaining({ email: 'peer@dimagi.com',
+      verdict: expect.objectContaining({ status: 'new' }) }))
+    expect(api.addParticipant).not.toHaveBeenCalled()
+    // Accepted: added, and pinned, so the next add asks nothing.
+    await addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, async () => true)
+    expect(api.addParticipant).toHaveBeenCalledTimes(1)
+    const asked = vi.fn(async () => true)
+    await addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, asked)
+    expect(asked).not.toHaveBeenCalled()
+  })
+
+  it('stops when a trusted person\'s key changed, or the key does not match its thumbprint', async () => {
+    const { them, unlock } = await world()
+    trust.pinPerson(9, 'an-older-thumbprint', 'peer@dimagi.com')
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock)).rejects.toThrow(/changed/)
+    const confirm = vi.fn(async (_who: { email: string; verdict: unknown }) => false)
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, confirm)).rejects.toThrow()
+    expect(confirm.mock.calls[0]![0].verdict).toMatchObject({ status: 'changed', was: 'an-older-thumbprint' })
+    api.participantRecipient.mockResolvedValue({ user_id: 9, email: 'peer@dimagi.com', public_jwk: them.publicJwk,
+                                                 jkt: 'not-its-thumbprint' })
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, async () => true))
+      .rejects.toThrow(/does not match its fingerprint/)
+    expect(api.addParticipant).not.toHaveBeenCalled()
+  })
+
+  it('says what to do when your own copy is stale, instead of a crypto error', async () => {
+    const { unlock } = await world()
+    api.getSession.mockResolvedValue({ sensitive: true, sealed_key: {
+      conversation: 'conv-1', public_jwk: {}, current: false, wrap: { alg: 'ecdh-es', epk: '', n: '', ct: '' } } })
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock)).rejects.toThrow(STALE_OWN_COPY)
+    // A copy marked current that still does not open says the same.
+    const { conv } = await world()
+    const other = await zk.generateKeyPair()
+    api.getSession.mockResolvedValue({ sensitive: true, sealed_key: {
+      conversation: 'conv-1', public_jwk: conv.publicJwk, current: true,
+      wrap: await zk.wrapEcdhEs(conv.scalar, other.publicJwk, wrapInfo('conv-1', '7')) } })
+    await expect(addPerson('s1', 'peer@dimagi.com', 'editor', unlock, undefined, async () => true))
+      .rejects.toThrow(STALE_OWN_COPY)
+  })
+
+  it('gives someone already in it their copy, by the same rule', async () => {
+    const { them, conv, unlock } = await world()
+    await giveKey('s1', { user_id: 9, email: 'peer@dimagi.com' }, unlock, undefined, async () => true)
+    const [sid, userId, wrap] = api.giveKeyCopy.mock.calls[0]
+    expect([sid, userId]).toEqual(['s1', 9])
+    const opened = await zk.unwrapEcdhEs(wrap, them.privateKey, them.publicJwk, wrapInfo('conv-1', 9))
+    expect(Array.from(opened)).toEqual(Array.from(conv.scalar))
+    await expect(giveKey('s1', { user_id: 10, email: 'peer@dimagi.com' }, unlock, undefined, async () => true))
+      .rejects.toThrow(/not the person/)
   })
 
   it('adds to an ordinary conversation with no key and no unlock', async () => {

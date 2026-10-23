@@ -10,6 +10,7 @@
  * the seal in this browser. A frame the browser will not let use passkeys falls back
  * to the passphrase, and the panel offers to read the conversation in canopy itself.
  */
+import { rememberSelf } from './trust'
 import type { Unlocked, UnlockChoice, UnlockPrompt } from './operations'
 import { rememberedSecretKey } from './operations'
 import { PrfUnsupportedError } from './prf'
@@ -63,8 +64,12 @@ export async function unlockLocally(ks: KeysetInHand, prompt: UnlockPrompt): Pro
   const byPass = seals.filter((s): s is PassphraseSeal => s.alg === '2skd')
   if (!byPasskey.length && !byPass.length) throw new Error('Your vault key has no way to unlock it here.')
   const pub = ks.public_jwk as Jwk
-  const done = async (scalar: Uint8Array): Promise<Unlocked> =>
-    ({ userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar })
+  const done = async (scalar: Uint8Array): Promise<Unlocked> => {
+    // Pinned as this person's own key, so a key the server later names as theirs is
+    // checked against it (`trust.checkSelf`).
+    await rememberSelf(ks.user_id, pub, scalar).catch(() => undefined)
+    return { userId: ks.user_id, privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
+  }
   if (byPasskey.length) {
     try {
       const touch = await prfLocally(ks, byPasskey)

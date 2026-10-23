@@ -30,12 +30,13 @@ import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
-import { useAttachments } from './chat/useAttachments'
+import { PRIVATE_NO_FILES, useAttachments } from './chat/useAttachments'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { PrivateConversationGate } from '@/components/chat/PrivateConversationGate'
 import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
 import { addPerson } from '@/components/chat/ChatPeople'
+import { usePersonTrust } from '@/vault/PersonTrustPrompt'
 import { privateTitle } from '@/components/chat/privateConversation'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { useSealedConversation } from '@/vault/useSealedConversation'
@@ -97,8 +98,10 @@ function ChatPageInner({
   const sealedKeyRef = useRef<ConversationKey | null>(null)
   // A host's `resources/updated`, relayed on the socket, fanned out to the Views.
   const appUpdates = useMemo(() => createAppResourceUpdates(), [])
+  // Whether the conversation key is open in this tab: a View loads again when it opens.
+  const [keyOpen, setKeyOpen] = useState(false)
   const appHost = useMemo(
-    () => sealedAppHost(appHostFor(id, appUpdates), () => sealedKeyRef.current), [id, appUpdates])
+    () => sealedAppHost(appHostFor(id, appUpdates), () => sealedKeyRef.current, keyOpen), [id, appUpdates, keyOpen])
   // The agent asked for one of its secrets: a card that seals it in this
   // browser. Once stored, a value-free note tells the agent to carry on.
   const secretRequestHost = useMemo<SecretRequestHost>(() => ({
@@ -112,12 +115,12 @@ function ChatPageInner({
   onTitleChangeRef.current = onTitleChange
   // Your memory in this session lives in the ⋯ menu; null hides it.
   const memory = useSessionMemory(id)
-  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } = useAttachments(id)
-
   // Session meta seeds the scroll-back cursor (the WS `session.state` snapshot
   // doesn't carry it — it's frozen to the tail page it was built from). Called
   // once the fetch lands, after `paging` below exists.
   const { meta, setMeta, metaError, agentName } = useSessionMeta(id, (m) => paging.seed(m))
+  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
+    useAttachments(id, meta?.sensitive ? PRIVATE_NO_FILES : undefined)
   // Who is asking to join this private conversation, as the socket last said.
   const [liveJoinRequests, setLiveJoinRequests] = useState<JoinRequest[] | null>(null)
 
@@ -128,6 +131,8 @@ function ChatPageInner({
     sessionId: id,
     wsUrl,
     protocol: 'ag-ui',
+    // A private conversation's draft stays in this browser until it is sent.
+    localDrafts: Boolean(meta?.sensitive),
     // `app.resource_updated`: a resource a View subscribed to changed at its host.
     // `session.join_requests`: someone asked to join (or was answered), live.
     onUnknownEvent: useCallback((frame: { event: string; data?: unknown }) => {
@@ -155,15 +160,19 @@ function ChatPageInner({
   // A sensitive conversation arrives sealed: the words are opened here, with the
   // person's vault key, and nowhere else (vault/sealedChat.ts).
   const vault = useVaultUnlock()
+  // Before its key is wrapped to someone new to this browser: their fingerprint, checked.
+  const personTrust = usePersonTrust()
   const sealed = useSealedConversation(
     (meta?.sealed_key ?? null) as SealedKey | null, socket.state.messages, vault.unlock)
   // Adding someone who asked is this browser's act: it wraps them the conversation key.
   const joinActions = useMemo<JoinRequestActions>(() => ({
     list: () => listJoinRequests(id),
-    add: (email) => addPerson(id, email, 'editor', vault.unlock),
+    add: (email) => addPerson(id, email, 'editor', vault.unlock, undefined, personTrust.confirm),
     decline: declineJoinRequest,
-  }), [id, vault.unlock])
+  }), [id, vault.unlock, personTrust.confirm])
   sealedKeyRef.current = sealed.key
+  const keyIsOpen = Boolean(sealed.key)
+  useEffect(() => setKeyOpen(keyIsOpen), [keyIsOpen])
   const panelState = useMemo(
     () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
     [socket.state, sealed.messages],
@@ -444,7 +453,7 @@ function ChatPageInner({
       {meta?.sensitive && <PrivateConversationNote />}
       {meta?.sensitive && (
         <JoinRequests sessionId={id} actions={joinActions} live={liveJoinRequests}
-          canDecide={meta.my_role === 'owner'} />
+          canDecide={meta.my_role === 'owner'} unlockElement={personTrust.element} />
       )}
       <SealedConversationBanner
         state={sealed.state}
