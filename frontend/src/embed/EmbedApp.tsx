@@ -3,7 +3,7 @@ import {
   type AppHost, type AppViewResource, type CallToolResult,
 } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Maximize2, Minimize2, Pin, PinOff } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Markdown } from '@/components/Markdown'
@@ -105,6 +105,34 @@ function ExpandButton({ link, expandable }: { link: HostLink; expandable: boolea
       ) : (
         <Maximize2 className="h-3.5 w-3.5" aria-hidden />
       )}
+    </button>
+  )
+}
+
+function useSnapped(link: HostLink): boolean {
+  const [snapped, setSnapped] = useState(() => link.isSnapped())
+  useEffect(() => link.onSnapChanged(setSnapped), [link])
+  return snapped
+}
+
+/** Snap a docked rail into the page (the page makes room) or float it over the
+ *  page again. Drawn only when the host allows it, and not while expanded —
+ *  an expanded panel covers the page whichever way it is set. */
+function SnapButton({ link, snappable }: { link: HostLink; snappable: boolean }) {
+  const snapped = useSnapped(link)
+  const expanded = useExpanded(link)
+  if (!snappable || expanded) return null
+  const label = snapped ? 'Float over the page' : 'Snap into the page'
+  return (
+    <button
+      type="button"
+      onClick={() => link.requestSnap(!snapped)}
+      aria-label={label}
+      aria-pressed={snapped}
+      title={label}
+      className="rounded px-1.5 text-muted-foreground hover:text-foreground"
+    >
+      {snapped ? <PinOff className="h-3.5 w-3.5" aria-hidden /> : <Pin className="h-3.5 w-3.5" aria-hidden />}
     </button>
   )
 }
@@ -396,6 +424,7 @@ export function EmbedApp({ link, app }: Props) {
     return () => document.removeEventListener('keydown', onKeydown)
   }, [link])
   const expandable = init?.expandable === true
+  const snappable = init?.snappable === true
   useEffect(() => {
     if (asked === null) return
     if (phase.kind !== 'ready' && phase.kind !== 'chatting') return
@@ -466,7 +495,12 @@ export function EmbedApp({ link, app }: Props) {
           setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
         }
         onClose={() => link.requestClose()}
-        headerControls={<ExpandButton link={link} expandable={expandable} />}
+        headerControls={
+          <>
+            <SnapButton link={link} snappable={snappable} />
+            <ExpandButton link={link} expandable={expandable} />
+          </>
+        }
       />
     )
   }
@@ -484,6 +518,7 @@ export function EmbedApp({ link, app }: Props) {
       contextPreamble={pendingContext}
       isContact={principal?.kind === 'contact'}
       expandable={expandable}
+      snappable={snappable}
     />
   )
 }
@@ -754,6 +789,7 @@ function EmbedChat({
   contextPreamble,
   isContact = false,
   expandable = false,
+  snappable = false,
 }: {
   sessionId: string
   /** The opening message, already sent over HTTP. Echoed once on mount. Empty
@@ -786,6 +822,8 @@ function EmbedChat({
   isContact?: boolean
   /** Whether the host lets the panel expand (its `init`). */
   expandable?: boolean
+  /** Whether the host lets the docked rail snap into its page (its `init`). */
+  snappable?: boolean
 }) {
   // No tool calls ever arrive here: canopy withholds them from every widget
   // connection, decided by the token rather than asked for (consumers.py).
@@ -1028,6 +1066,7 @@ function EmbedChat({
           >
             New chat
           </button>
+          <SnapButton link={link} snappable={snappable} />
           <ExpandButton link={link} expandable={expandable} />
           <button
             type="button"

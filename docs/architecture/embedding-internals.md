@@ -175,12 +175,25 @@ from either document (a full-screen View takes the first Esc). Tests:
 
 Overlay and docked panels have a resize grip (`part=resize`). Overlay: the
 top-left corner, away from the bubble; the drag keeps the bottom-right fixed.
-Docked: the left edge, width only (height stays 100vh, never set inline). Sizes
+Docked: the same corner, with the rail on the window's bottom edge — shorter
+than the window it gets `top: auto` and an inline height (`data-short`); at the
+window's height the inline height is removed, so it is the 100vh CSS rail again. Sizes
 stay within `MIN_PANEL` and the window (`dragging.resizePanel`), are remembered
 per `app` (`canopy.widget.size.<app>`), and are reported to the host's
 `onResize` (a docked rail overlays the page, so a host that reserved a column
 follows it). A visitor-chosen size makes the frame's `resize` request a no-op.
-Inline (host-sized) has no grip; expanded hides it. Tests: `dragging.test.ts` / `widget.test.ts` § resizing.
+Inline (host-sized) has no grip; expanded hides it.
+
+A docked rail can be SNAPPED into the page (`chrome.ts` `syncReserve`): it pads
+the host's `snapTarget` (default `document.documentElement`) by its width while
+it is snapped AND open AND not expanded, restoring the element's own inline
+`padding-right` exactly when any of those stops (or on `destroy`). Every path
+that changes the rail calls the one `syncReserve`, which reads state rather than
+being told. The frame asks (`snap`, frame→host); the host answers with
+`display` carrying `snapped` (absent from an older loader = unchanged), and
+`init` carries `snappable`/`snapped`. Remembered per `app`
+(`canopy.widget.snap.<app>`). Tests: `widget.test.ts` § snapping,
+`src/embed/{hostLink,EmbedApp}.test.ts(x)`. Tests: `dragging.test.ts` / `widget.test.ts` § resizing.
 
 ## Live host-grant probe
 

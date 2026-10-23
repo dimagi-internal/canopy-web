@@ -64,6 +64,9 @@ export type FrameMessage =
    *  The host decides: it answers with `display` either way, so the frame's
    *  button always shows what is actually on screen. */
   | { source: typeof SOURCE; type: 'expand'; expanded: boolean }
+  /** The user pressed the docked rail's snap control: reserve its width in the
+   *  page, or float over it again. Answered with `display`, like `expand`. */
+  | { source: typeof SOURCE; type: 'snap'; snapped: boolean }
 
 /** host → frame */
 export type HostMessage =
@@ -83,10 +86,15 @@ export type HostMessage =
       expandable?: boolean
       /** Whether the panel is expanded right now (a remembered choice). */
       expanded?: boolean
+      /** Whether the rail may be snapped into the page (docked only). Absent
+       *  (an older loader) = false. */
+      snappable?: boolean
+      /** Whether it is snapped right now (a remembered choice). */
+      snapped?: boolean
     }
   /** The panel's size changed: expanded (most of the viewport) or not. Sent
    *  after every `expand` and whenever the host expands or collapses itself. */
-  | { source: typeof SOURCE; type: 'display'; expanded: boolean }
+  | { source: typeof SOURCE; type: 'display'; expanded: boolean; snapped?: boolean }
   | { source: typeof SOURCE; type: 'token'; id: string; token: string }
   | { source: typeof SOURCE; type: 'token-error'; id: string; message: string }
   | { source: typeof SOURCE; type: 'context'; id: string; context: Record<string, unknown> }
@@ -123,7 +131,7 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
   // arriving here is not something to interpret — the host is the only party
   // that issues those, so seeing one means something is impersonating it.
   return [
-    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize', 'expand',
+    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize', 'expand', 'snap',
   ].includes(m.type)
 }
 
