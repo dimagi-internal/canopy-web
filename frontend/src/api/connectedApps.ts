@@ -100,3 +100,24 @@ export async function getConnectedAppNeeds(slug: string, appId: number): Promise
   })
   return unwrap<SiteNeeds>(res, "Could not read what the site needs")
 }
+
+export type SiteDiscovery = components['schemas']['SiteDiscoveryOut']
+export type SiteFacts = components['schemas']['SiteFactsOut']
+
+/** The facts a site declares about itself in its signed `site.json` — origins,
+ *  keys URL, sign-in issuer, MCP server — for an owner to adopt. Read-only:
+ *  nothing changes until the owner saves them through `connectApp` /
+ *  `updateConnectedApp`. `address` may be the site's address, its keys URL or the
+ *  document's; with `appId` it is optional (canopy looks beside the site's keys). */
+export async function discoverSite(
+  slug: string,
+  opts: { address?: string; appId?: number },
+): Promise<SiteDiscovery> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/connected-apps/discover', {
+    params: {
+      path: { slug },
+      query: { address: opts.address ?? '', ...(opts.appId !== undefined ? { app_id: opts.appId } : {}) },
+    },
+  })
+  return unwrap<SiteDiscovery>(res, "Could not read the site's own documents")
+}

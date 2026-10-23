@@ -15,7 +15,23 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
                 "scopes": ["workflow:read", "workflow:act", "data:read"]}],
      "real_data": {"requires": {"handles_sensitive": true, "runner_flag": "sensitive_data"}},
      "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
-              "version": "<site agents version chosen against>"}}
+              "version": "<site agents version chosen against>"},
+     "site": {"origins": ["https://labs.connect.dimagi.com"],
+              "jwks_url": "https://labs.connect.dimagi.com/labs/canopy/jwks.json",
+              "issuer": "https://labs.connect.dimagi.com",
+              "mcp_resource": "https://labs.connect.dimagi.com/mcp/"}}
+
+``site`` (optional) is the site's own facts — the values canopy's Connected
+sites form otherwise has someone type: the origins that frame the panel, where
+its keys are, its OAuth issuer and its MCP server. canopy never applies them on
+its own: the site's owner in canopy reads them back ("Fill from the site") and
+saves them, because a site must not be able to change its own trusted origins.
+The Django host fills the block from settings it already has.
+
+canopy finds the document beside the site's registered JWKS, or — knowing only
+the site's address — at ``WELL_KNOWN_PATH`` on its origin (mount
+``canopy_sdk.django.views.site_document`` there) or at ``canopy/site.json``
+under the address it was given (the SDK's default mount).
 
 Both halves are here: ``site_document`` / ``sign_site_document`` the site's,
 ``verify_site_document`` canopy's.
@@ -25,6 +41,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from . import contract
 from .contract import ContractError
@@ -36,6 +53,9 @@ SITE_TYP = "canopy-site+jwt"
 MEDIA_TYPE = "application/jose"
 #: The file name, beside the site's ``jwks.json``.
 SITE_DOCUMENT_NAME = "site.json"
+#: Where a site that publishes its document at its origin's root serves it, so
+#: canopy can find it from the site's address alone.
+WELL_KNOWN_PATH = "/.well-known/canopy-site.json"
 _JWKS_NAME = "jwks.json"
 
 
@@ -88,6 +108,50 @@ def _requires(value) -> dict:
     return out
 
 
+def _url(value, what: str) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise SiteDocumentError("malformed", f"{what} must be a URL")
+    value = value.strip()
+    parts = urlsplit(value)
+    if parts.scheme not in ("https", "http") or not parts.netloc:
+        raise SiteDocumentError("malformed", f"{what} must be an http(s) URL, not {value!r}")
+    return value
+
+
+def _origin(value) -> str:
+    url = _url(value, "site.origins[]").rstrip("/")
+    parts = urlsplit(url)
+    if parts.path or parts.query or parts.fragment:
+        raise SiteDocumentError("malformed", f"site.origins: {value!r} is not an origin "
+                                             "(scheme, host and optional port only)")
+    return url
+
+
+def _site(value) -> dict:
+    """The ``site`` block, validated; ``{}`` when absent or empty."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SiteDocumentError("malformed", "site must be a mapping")
+    extra = set(value) - set(SITE_FACTS)
+    if extra:
+        raise SiteDocumentError("malformed", f"site: unknown key(s) {sorted(extra)}")
+    origins = value.get("origins") or []
+    if not isinstance(origins, (list, tuple)):
+        raise SiteDocumentError("malformed", "site.origins must be a list of origins")
+    out = {"origins": list(dict.fromkeys(_origin(o) for o in origins if o)),
+           "jwks_url": _url(value.get("jwks_url"), "site.jwks_url"),
+           "issuer": _url(value.get("issuer"), "site.issuer"),
+           "mcp_resource": _url(value.get("mcp_resource"), "site.mcp_resource")}
+    return out if any(out.values()) else {}
+
+
+#: The keys of ``site``, in order.
+SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource")
+
+
 def _normalize(claims: Mapping) -> dict:
     """Validated and in canonical shape; raises ``SiteDocumentError``."""
     pages = []
@@ -104,20 +168,27 @@ def _normalize(claims: Mapping) -> dict:
         raise SiteDocumentError("malformed", "uses must be a mapping")
     agents = _strings(uses.get("agents"), "uses.agents")
     real_agents = _strings(uses.get("real_data_agents"), "uses.real_data_agents")
-    return {"pages": pages, "real_data": {"requires": _requires(real.get("requires"))},
+    body = {"pages": pages, "real_data": {"requires": _requires(real.get("requires"))},
             "uses": {"agents": agents, "real_data_agents": real_agents,
                      "version": str(uses.get("version") or "")}}
+    site = _site(claims.get("site"))
+    if site:
+        body["site"] = site
+    return body
 
 
 def site_document(site_name: str, *, pages: Sequence[Mapping] = (), real_data: Mapping | None = None,
-                  uses: Mapping | None = None, now: float | None = None) -> dict:
+                  uses: Mapping | None = None, site: Mapping | None = None,
+                  now: float | None = None) -> dict:
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
     ``real_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
-    ``{"agents", "real_data_agents", "version"}``."""
+    ``{"agents", "real_data_agents", "version"}``, ``site`` as ``{"origins",
+    "jwks_url", "issuer", "mcp_resource"}`` (each optional; left out when empty)."""
     name = str(site_name or "").strip()
     if not name:
         raise SiteDocumentError("not_configured", "the document needs the site's Connected-site name")
-    body = _normalize({"pages": list(pages), "real_data": real_data or {}, "uses": uses or {}})
+    body = _normalize({"pages": list(pages), "real_data": real_data or {}, "uses": uses or {},
+                       "site": site})
     return {"v": SITE_DOCUMENT_VERSION, "iss": name, "iat": int(time.time() if now is None else now),
             **body}
 
@@ -135,6 +206,17 @@ class SitePage:
 
 
 @dataclass(frozen=True)
+class SiteFacts:
+    """The ``site`` block: what the site says about itself, for canopy's owner to
+    adopt (never applied without them)."""
+
+    origins: tuple[str, ...] = ()
+    jwks_url: str = ""
+    issuer: str = ""
+    mcp_resource: str = ""
+
+
+@dataclass(frozen=True)
 class SiteNeeds:
     """A site's verified ``site.json``."""
 
@@ -148,6 +230,8 @@ class SiteNeeds:
     uses_real_data_agents: tuple[str, ...] = ()
     #: The site agents version the site chose its settings against.
     uses_version: str = ""
+    #: The site's own facts (its ``site`` block), or None when it declares none.
+    site: SiteFacts | None = None
     claims: dict = field(repr=False, default_factory=dict)
 
     @classmethod
@@ -161,7 +245,11 @@ class SiteNeeds:
             real_data_requires=body["real_data"]["requires"],
             uses_agents=tuple(body["uses"]["agents"]),
             uses_real_data_agents=tuple(body["uses"]["real_data_agents"]),
-            uses_version=body["uses"]["version"], claims=dict(claims))
+            uses_version=body["uses"]["version"],
+            site=(SiteFacts(origins=tuple(body["site"]["origins"]), jwks_url=body["site"]["jwks_url"],
+                            issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"])
+                  if body.get("site") else None),
+            claims=dict(claims))
 
 
 def verify_site_document(token: str, keys: Sequence, *, site_name: str,

@@ -244,3 +244,102 @@ def test_site_document_url_sits_beside_the_jwks():
             == "https://labs.example.org/canopy/site.json")
     assert site_mod.site_document_url("https://labs.example.org/keys") == ""
     assert site_mod.site_document_url("") == ""
+
+
+# --- naming the tenant, refusals, links (0.16) ---------------------------------------
+
+
+def test_request_names_the_workspace_directly(world):
+    token = wire.request_assertion(SITE, world.host_key, URL, workspace="connect")
+    claims = wire.verify_request(token, [public_pem(world.host_key)], audiences=[URL])
+    assert claims["canopy_workspace"] == "connect" and "canopy_agent" not in claims
+    both = wire.verify_request(wire.request_assertion(SITE, world.host_key, URL, workspace="connect",
+                                                      agent="labsdata"),
+                               [public_pem(world.host_key)], audiences=[URL])
+    assert (both["canopy_workspace"], both["canopy_agent"]) == ("connect", "labsdata")
+
+
+def test_an_overlong_workspace_is_refused_before_signing(world):
+    with pytest.raises(ValueError):
+        wire.request_assertion(SITE, world.host_key, URL, workspace="w" * 65)
+
+
+@pytest.mark.parametrize("detail,code", [
+    ("unknown_issuer: no connected site named 'connect-labs'", "unknown_issuer"),
+    ("ambiguous_issuer: more than one workspace has a site named 'connect-labs'", "ambiguous_issuer"),
+    ("workspace_mismatch: agent 'ace' is not an agent of workspace 'connect'", "workspace_mismatch"),
+    ("", "refused"),
+    ("Something Else Went Wrong", "refused"),
+])
+def test_a_refusal_carries_canopys_code_not_unreachable(world, detail, code):
+    def get(url, **kw):
+        raise FetchError(f"{url} answered 409: {detail}", status=409, detail=detail)
+
+    with pytest.raises(wire.SiteAgentsError) as exc:
+        wire.fetch_site_agents(CANOPY, SITE, world.host_key, world.resolver, get=get)
+    assert exc.value.code == code and exc.value.status == 409
+    assert wire.SiteAgentsError.from_dict(exc.value.as_dict()).code == code
+
+
+def test_fetch_site_agents_sends_the_workspace(world):
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, CONTENT)
+    get, seen = _served(world, token)
+    wire.fetch_site_agents(CANOPY, SITE, world.host_key, world.resolver, workspace="connect", get=get)
+    sent = jwt.decode(seen["headers"]["Authorization"].removeprefix("Bearer "),
+                      options={"verify_signature": False})
+    assert sent["canopy_workspace"] == "connect"
+
+
+def test_the_answer_links_the_sites_page_and_each_problems_fix(world):
+    content = {**CONTENT, "site": {**CONTENT["site"],
+                                   "settings_url": "https://canopy.example/w/connect/settings/connected-apps#site-7"},
+               "agents": [{**CONTENT["agents"][1], "problem_links": [
+                   {"text": "ACE has no capability naming connect-labs",
+                    "url": "https://canopy.example/w/connect/agents/ace/settings#reach"}]}]}
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, content)
+    got = wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+    assert got.site_settings_url.endswith("/settings/connected-apps#site-7")
+    ace = got.agent("ace")
+    assert ace.problem_links == (wire.AgentProblem("ACE has no capability naming connect-labs",
+                                                   "https://canopy.example/w/connect/agents/ace/settings#reach"),)
+    assert ace.problems == ("ACE has no capability naming connect-labs",)
+
+
+def test_an_answer_from_an_older_canopy_has_no_links(world):
+    token = wire.sign_site_agents(world.client.client_key, CLIENT_ID, SITE, CONTENT)
+    got = wire.verify_site_agents(token, client_id=CLIENT_ID, site_name=SITE, client_keys=world.resolver)
+    assert got.site_settings_url == "" and got.agent("ace").problem_links == ()
+
+
+SITE_FACTS = {"origins": ["https://labs.example.org/", "https://labs.example.org"],
+              "jwks_url": "https://labs.example.org/canopy/jwks.json",
+              "issuer": "https://labs.example.org", "mcp_resource": "https://labs.example.org/mcp/"}
+
+
+def test_site_document_declares_the_sites_own_facts(world):
+    token = site_mod.sign_site_document(world.host_key, site_mod.site_document(SITE, pages=PAGES,
+                                                                               site=SITE_FACTS))
+    got = site_mod.verify_site_document(token, [world.host_key.public_key()], site_name=SITE)
+    assert got.site == site_mod.SiteFacts(origins=("https://labs.example.org",),
+                                          jwks_url="https://labs.example.org/canopy/jwks.json",
+                                          issuer="https://labs.example.org",
+                                          mcp_resource="https://labs.example.org/mcp/")
+
+
+def test_a_document_without_a_site_block_has_none(world):
+    token = site_mod.sign_site_document(world.host_key, site_mod.site_document(SITE, pages=PAGES))
+    got = site_mod.verify_site_document(token, [world.host_key.public_key()], site_name=SITE)
+    assert got.site is None and "site" not in got.claims
+
+
+@pytest.mark.parametrize("site", [
+    {"origins": ["https://labs.example.org/app"]},
+    {"origins": "https://labs.example.org"},
+    {"jwks_url": "ftp://labs.example.org/jwks.json"},
+    {"issuer": 7},
+    {"made_up": "x"},
+])
+def test_a_malformed_site_block_is_refused(site):
+    with pytest.raises(site_mod.SiteDocumentError) as exc:
+        site_mod.site_document(SITE, site=site)
+    assert exc.value.code == "malformed"

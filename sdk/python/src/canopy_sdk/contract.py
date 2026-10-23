@@ -147,6 +147,29 @@ def parse_agent_claim(value) -> str:
         raise ValueError(f"{AGENT_CLAIM} must be an agent slug")
     return value.strip()
 
+
+#: The canopy WORKSPACE (tenant) a host's signed request or assertion is for —
+#: its slug. A Connected-site name is unique only within a workspace, so canopy
+#: needs the tenant beside it; this names it directly, where ``AGENT_CLAIM``
+#: (and the arrival's ``agent_slug``) name it only through an agent, which a
+#: tenant can delete or move. When both are sent, canopy selects by this one and
+#: refuses (``workspace_mismatch``) if the agent is not in that workspace.
+WORKSPACE_CLAIM = "canopy_workspace"
+#: Longest workspace slug either side accepts in ``WORKSPACE_CLAIM``.
+MAX_WORKSPACE_SLUG_LENGTH = 64
+
+
+def parse_workspace_claim(value) -> str:
+    """The claim's value, stripped. ``None`` / ``""`` -> ``""`` (not named).
+
+    Raises ``ValueError`` for a non-string or an over-long slug."""
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > MAX_WORKSPACE_SLUG_LENGTH:
+        raise ValueError(f"{WORKSPACE_CLAIM} must be a workspace slug")
+    return value.strip()
+
+
 #: What canopy requires before it spends an ID-JAG. ``scope`` is carried too, but
 #: the SCOPE is the host's to decide, so it is the host that requires it.
 ID_JAG_REQUIRED_CLAIMS: tuple[str, ...] = (

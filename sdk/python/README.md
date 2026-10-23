@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.15.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.16.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.15.0/dimagi_canopy-0.15.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.16.0/dimagi_canopy-0.16.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -41,14 +41,14 @@ library, address-pinned.
 
 | Module | For | Key names |
 |---|---|---|
-| `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
+| `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `AGENT_CLAIM`, `WORKSPACE_CLAIM`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
 | `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`), `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
-| `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `SiteAgent`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError`, `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
-| `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds`, `site_document_url` |
+| `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `site_settings_url`, `SiteAgent` + `problem_links` of `AgentProblem`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError` (`code`, `status`), `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
+| `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`), `site_document_url`, `WELL_KNOWN_PATH` |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `execution.verify_execution(request)`, `site_agents.current()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `execution.verify_execution(request)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
@@ -62,7 +62,8 @@ CANOPY_HOST = {
     "SIGNING_KEY": env("CANOPY_SIGNING_KEY"),     # Ed25519 or P-256 PEM — never RSA/HMAC
     "CANOPY_BASE_URL": "https://canopy.dimagi.com",
     "APP_NAME": "connect-labs",                   # your Connected-site name in canopy
-    "AGENT_SLUG": "ace",
+    "WORKSPACE": "connect",                       # the canopy workspace it is registered in
+    "AGENT_SLUG": "ace",                          # the default agent
     # The grant: all four present turns it on.
     "CLIENT_ID": "https://canopy.dimagi.com/oauth/client.json",
     "ISSUER": "https://labs.connect.dimagi.com",
@@ -76,11 +77,14 @@ CANOPY_HOST = {
 
 ```python
 # urls.py
+from canopy_sdk.django import views as canopy_views
 from canopy_sdk.django.views import jwt_bearer_view
 from oauth2_provider.views import TokenView       # if you already run django-oauth-toolkit
 
 urlpatterns += [
-    path("canopy/", include("canopy_sdk.django.urls")),   # jwks.json, panel-token/, token/
+    path("canopy/", include("canopy_sdk.django.urls")),   # jwks.json, site.json, panel-token/, token/
+    # so canopy finds site.json from your address alone (registration by address):
+    path(".well-known/canopy-site.json", canopy_views.site_document),
     path("o/token/", jwt_bearer_view(TokenView.as_view())),  # jwt-bearer here, the rest to DOT
 ]
 ```
@@ -445,10 +449,42 @@ if current is None:
 agent = current.agent("labsdata") if current else None
 if agent and agent.ready and agent.handles_sensitive and agent.ready_with_flag("sensitive_data"):
     ...                             # may be shown over real data
-reasons = agent.problems if agent else ()   # plain sentences, each naming where to fix it in canopy
+reasons = agent.problem_links if agent else ()   # AgentProblem(text, url): render each as a link
+agent.url if agent else ""          # the agent's page in canopy
+current.site_settings_url           # this site's page in canopy: allow agents, keys, test
 flags = current.runner_flags        # every flag canopy knows, with its meaning — not a constant
 current.version                     # record it with each settings save
+
+error = site_agents.last_error()    # why the last refresh failed, or None after a success
+site_agents.refresh()               # a "re-read now" button: raises SiteAgentsError
 ```
+
+Never build a canopy URL yourself: every one a host shows is in the answer
+(`site_settings_url`, `SiteAgent.url`, `SiteAgent.problem_links[].url`).
+
+**Which tenant.** A Connected-site name is unique only within a canopy
+workspace. Set `CANOPY_HOST["WORKSPACE"]` to the workspace's slug: the SDK signs
+it as `canopy_workspace` into every site agents request and visitor assertion,
+and canopy selects the site's registration by it. Without it canopy falls back
+to the agent (`AGENT_SLUG`), which stops working the moment that agent is
+deleted or moved to another workspace. With both, they must agree (a moved
+agent is refused with `workspace_mismatch`, not silently re-routed). The site
+agents request sends the workspace alone when it is set. The cache is per
+tenant selector, so a change takes effect on the next read.
+
+**When it fails.** `current()` returns the last good copy (stale) or None;
+`last_error()` says why, as a `SiteAgentsError`: `code` and a `message` safe to
+show your operator, and `status` when canopy answered. The codes a host acts on:
+
+| code | meaning |
+|---|---|
+| `not_configured` | this host lacks `SIGNING_KEY`, `CANOPY_BASE_URL` or `APP_NAME` |
+| `unreachable` | canopy could not be reached at all (network, DNS, TLS) |
+| `unknown_issuer` | canopy has no Connected site by `APP_NAME` in the tenant named |
+| `ambiguous_issuer` | several workspaces have one by that name — set `WORKSPACE` |
+| `workspace_mismatch` | `WORKSPACE` and the agent name different workspaces |
+| `bad_signature` | canopy's registered keys for the site do not verify your key |
+| `refused` | canopy refused without naming a code (`status` says how) |
 
 Outside Django: `canopy_sdk.site_agents.fetch_site_agents(canopy_url, site_name, signing_key,
 ClientKeyResolver(), client_id=...)` → `SiteAgents`, or `SiteAgentsError(code)`. It GETs
@@ -460,7 +496,16 @@ redirects) and checks the signature, `typ`, `iss`, `aud` (your site name),
 `canopy/site.json` beside `canopy/jwks.json`: your `PAGE_SCOPES` (titled by
 `PAGE_TITLES`) and what `SITE_NEEDS` returns, signed with your key. canopy's
 Connected sites page reads it and shows, per agent, whether it meets your
-`real_data.requires` and why not:
+`real_data.requires` and why not.
+
+It also carries a `site` block — your own facts, which canopy's owner would
+otherwise type: `origins` (`CANOPY_HOST["ORIGINS"]`, else the origin of `ISSUER`,
+else the address canopy fetched the document from), `jwks_url` (`JWKS_URL`, else
+the SDK's `jwks.json` route), `issuer` and `mcp_resource` (`ISSUER` and
+`RESOURCE`, while the grant is on). canopy's Connected sites page reads them
+when its owner clicks "Fill from the site" and saves them only on the owner's
+confirm. Mount `views.site_document` at `/.well-known/canopy-site.json` too
+(above) so the site's address alone is enough to find it.
 
 ```python
 def site_needs():
@@ -566,11 +611,13 @@ with the host's key (EdDSA, ES256 or RS256 — asymmetric only; `kid` = the key'
 RFC 7638 thumbprint), `iss` = the host's Connected-site name, `sub` = the host's
 OWN id for its signed-in user (never anything the browser sent), `aud` = canopy's
 base URL, `iat`, `exp` ≤ 120s after `iat`, a single-use `jti`; optional `name`,
-`email`, `email_verified`, `canopy_runner_requirements` and `canopy_agent`.
+`email`, `email_verified`, `canopy_runner_requirements`, `canopy_agent` and
+`canopy_workspace`.
 
 | claim | meaning |
 |---|---|
 | `canopy_runner_requirements` | optional list of flags (today only `sensitive_data`). `CANOPY_HOST["RUNNER_REQUIREMENTS"]`, plus the page's own. canopy runs the visitor's conversations only on runners whose owner declared every listed flag; unknown values are refused. |
+| `canopy_workspace` | optional workspace slug (`CANOPY_HOST["WORKSPACE"]`): which canopy workspace's registration of `iss` is meant. canopy selects by it, and refuses with 409 `workspace_mismatch` when the body's `agent_slug` is not an agent of that workspace. Absent = the workspace of `agent_slug`, or the one live site by that name. |
 | `canopy_agent` | optional agent slug: the page BOUND this arrival to one agent. Must equal the body's `agent_slug` (else 400 `agent_mismatch`) and be on the site's allow-list (else 403). canopy holds the minted token and the host grant redeemed with it to that agent. Absent = the site's whole allow-list. |
 
 ### 1. Host issues an ID-JAG at arrival

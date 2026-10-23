@@ -373,3 +373,202 @@ def test_a_non_member_cannot_read_a_sites_needs(w):
     client.force_login(stranger)
     response = client.get(f"/api/workspaces/connect/connected-apps/{w['app'].pk}/needs")
     assert response.status_code == 404
+
+
+# --- naming the tenant by workspace ------------------------------------------------
+
+
+def _second_tenant_with_the_same_name():
+    other_owner = get_user_model().objects.create_user("x", "x@dimagi.com", "pw")
+    other = Workspace.objects.create(slug="other", display_name="Other", created_by=other_owner)
+    Agent.objects.create(slug="other-agent", name="Other", workspace=other)
+    AppCredential.create_credential(name=SITE, created_by=other_owner, workspace=other)
+
+
+def test_the_signed_workspace_tells_two_tenants_apart_with_no_agent(w):
+    _second_tenant_with_the_same_name()
+    assert _ask(w).status_code == 409
+    assert _agents(w, workspace="connect").tenant == "connect"
+
+
+def test_the_workspace_keeps_working_when_the_agent_that_named_it_is_gone(w):
+    """The audit's failure: a host named its tenant through its default agent,
+    the agent was deleted, and the site agents API answered nothing. Naming the
+    workspace does not depend on any one agent."""
+    _second_tenant_with_the_same_name()
+    AppCredentialAgent.objects.filter(agent__slug="ace").delete()
+    Agent.objects.filter(slug="ace").delete()
+    assert _ask(w, agent="ace").status_code == 401           # through the agent: nothing
+    assert _agents(w, workspace="connect").slugs == ("bare", "labsdata")
+
+
+def test_a_workspace_and_an_agent_that_disagree_are_refused_not_picked(w):
+    _second_tenant_with_the_same_name()
+    response = _ask(w, workspace="connect", agent="other-agent")
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail.startswith("workspace_mismatch") and "'other'" not in detail, \
+        "the refusal names what to fix, not where the agent really is"
+    # A missing agent answers exactly as another workspace's: nothing to probe.
+    missing = _ask(w, workspace="connect", agent="no-such-agent")
+    assert missing.status_code == 409
+    assert missing.json()["detail"] == detail.replace("other-agent", "no-such-agent")
+
+
+def test_a_workspace_that_has_not_registered_the_site_is_unknown(w):
+    _second_tenant_with_the_same_name()
+    AppCredential.objects.filter(workspace_id="other").delete()
+    response = _ask(w, workspace="other")
+    assert response.status_code == 401 and "unknown_issuer" in response.json()["detail"]
+
+
+# --- links a host renders ------------------------------------------------------------
+
+
+def test_the_site_block_links_this_sites_page_in_canopy(w):
+    got = _agents(w)
+    assert got.site_settings_url.endswith(f"/w/connect/settings/connected-apps#site-{w['app'].pk}")
+    assert got.site_settings_url.startswith("http")
+
+
+def test_every_problem_comes_with_the_url_that_fixes_it(w):
+    bare = _agents(w).agent("bare")
+    assert bare.problems and len(bare.problem_links) == len(bare.problems)
+    for problem, link in zip(bare.problems, bare.problem_links):
+        assert link.text == problem
+        assert link.url.startswith("http") and "/w/connect/agents/bare/settings#" in link.url
+    reach = next(p for p in bare.problem_links if "no capability naming" in p.text)
+    assert reach.url.endswith("#reach")
+
+
+# --- filling a Connected site from the site's own document -----------------------------
+
+
+FACTS = {"origins": ["https://labs.example.org"], "jwks_url": "https://labs.example.org/canopy/jwks.json",
+         "issuer": "https://labs.example.org", "mcp_resource": "https://labs.example.org/mcp/"}
+
+
+def _serve_site_json(monkeypatch, signer, *, at="https://labs.example.org/.well-known/canopy-site.json",
+                     facts=FACTS, published=None, name=SITE):
+    """The site serves its signed document at `at` (only) and its keys at the
+    jwks_url it names (`published`, default the signer's own)."""
+    calls = []
+
+    def get(url):
+        calls.append(url)
+        if url != at:
+            from canopy_sdk.fetch import FetchError
+
+            raise FetchError(f"{url} answered 404", status=404)
+        return site_doc.sign_site_document(signer, site_doc.site_document(name, pages=PAGES,
+                                                                          site=facts))
+
+    monkeypatch.setattr(site_needs, "_get", get)
+    monkeypatch.setattr("apps.embedding.jwks._fetch",
+                        lambda url: [{**public_jwk(published or signer), "use": "sig"}])
+    return calls
+
+
+def _discover(w, user=None, **params):
+    client = Client()
+    client.force_login(user or w["owner"])
+    return client.get("/api/workspaces/connect/connected-apps/discover", params)
+
+
+def test_a_new_site_is_found_from_its_address_alone(w, monkeypatch):
+    calls = _serve_site_json(monkeypatch, generate_private_key("EdDSA"))
+    response = _discover(w, address="https://labs.example.org")
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert body["url"] == "https://labs.example.org/.well-known/canopy-site.json"
+    assert calls == ["https://labs.example.org/.well-known/canopy-site.json"]
+    assert body["name"] == SITE and body["site"] == FACTS
+    assert body["signed_by"] == "published_keys" and body["registered_keys_verify"] is None
+    assert body["current"] is None
+
+
+def test_the_sdks_default_mount_is_found_too(w, monkeypatch):
+    calls = _serve_site_json(monkeypatch, generate_private_key("EdDSA"),
+                             at="https://labs.example.org/labs/canopy/site.json")
+    body = _discover(w, address="https://labs.example.org/labs/").json()
+    assert body["url"] == "https://labs.example.org/labs/canopy/site.json"
+    assert calls == ["https://labs.example.org/labs/site.json",
+                     "https://labs.example.org/.well-known/canopy-site.json",
+                     "https://labs.example.org/labs/canopy/site.json"]
+
+
+def test_a_registered_site_is_checked_against_its_own_keys_and_says_what_would_change(w, monkeypatch):
+    _serve_site_json(monkeypatch, w["key"])
+    before = AppCredential.objects.get(pk=w["app"].pk)
+    body = _discover(w, address="https://labs.example.org", app_id=w["app"].pk).json()
+    assert body["signed_by"] == "registered_keys" and body["registered_keys_verify"] is True
+    assert body["current"]["origins"] == [] and body["current"]["jwks_url"] == ""
+    assert body["changes"] == ["origins", "jwks_url", "issuer", "mcp_resource"]
+    after = AppCredential.objects.get(pk=w["app"].pk)
+    assert (after.allowed_frame_origins, after.jwks_url, after.host_issuer) == \
+        (before.allowed_frame_origins, before.jwks_url, before.host_issuer), "a read never applies"
+
+
+def test_adopting_the_facts_is_the_ordinary_audited_update(w, monkeypatch):
+    from apps.events.models import SettingChange
+
+    _serve_site_json(monkeypatch, w["key"])
+    body = _discover(w, address="https://labs.example.org", app_id=w["app"].pk).json()
+    monkeypatch.setattr("apps.host_grants.outbound.check_url", lambda url, what: url)
+    monkeypatch.setattr("apps.embedding.jwks._refuse_private", lambda host: None)
+    client = Client()
+    client.force_login(w["owner"])
+    site = body["site"]
+    response = client.patch(f"/api/workspaces/connect/connected-apps/{w['app'].pk}",
+                            data={"origins": site["origins"], "jwks_url": site["jwks_url"],
+                                  "host_issuer": site["issuer"],
+                                  "host_mcp_resource": site["mcp_resource"]},
+                            content_type="application/json")
+    assert response.status_code == 200, response.content
+    assert response.json()["origins"] == FACTS["origins"]
+    assert SettingChange.objects.filter(operation="update_connected_app").exists()
+
+
+def test_a_document_signed_by_neither_the_registered_nor_the_named_keys_is_refused(w, monkeypatch):
+    _serve_site_json(monkeypatch, generate_private_key("EdDSA"), published=generate_private_key("EdDSA"))
+    response = _discover(w, address="https://labs.example.org", app_id=w["app"].pk)
+    assert response.status_code == 422 and response.json()["detail"].startswith("bad_signature")
+
+
+def test_another_sites_document_is_refused_for_this_site(w, monkeypatch):
+    _serve_site_json(monkeypatch, w["key"], name="someone-else")
+    response = _discover(w, address="https://labs.example.org", app_id=w["app"].pk)
+    assert response.status_code == 422 and response.json()["detail"].startswith("bad_issuer")
+
+
+def test_a_document_that_declares_no_facts_says_how_to_get_them(w, monkeypatch):
+    _serve_site_json(monkeypatch, w["key"], facts=None)
+    response = _discover(w, address="https://labs.example.org", app_id=w["app"].pk)
+    assert response.status_code == 422 and response.json()["detail"].startswith("no_facts")
+    assert "0.16" in response.json()["detail"]
+
+
+def test_nowhere_to_find_it_lists_where_canopy_looked(w, monkeypatch):
+    _serve_site_json(monkeypatch, w["key"], at="https://elsewhere.example.org/site.json")
+    detail = _discover(w, address="https://labs.example.org").json()["detail"]
+    assert detail.startswith("unreachable") and ".well-known/canopy-site.json" in detail
+
+
+def test_only_an_owner_reads_a_site_to_fill_it(w, monkeypatch):
+    _serve_site_json(monkeypatch, w["key"])
+    admin = get_user_model().objects.create_user("ad", "ad@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=admin, workspace=w["ws"], role=WorkspaceMembership.ADMIN)
+    stranger = get_user_model().objects.create_user("s2", "s2@dimagi.com", "pw")
+    assert _discover(w, user=admin, address="https://labs.example.org").status_code == 403
+    assert _discover(w, user=stranger, address="https://labs.example.org").status_code == 404
+
+
+def test_candidate_urls_from_whatever_the_owner_has():
+    assert site_needs.candidate_urls("https://labs.example.org/canopy/site.json") == \
+        ["https://labs.example.org/canopy/site.json"]
+    assert site_needs.candidate_urls("https://labs.example.org/canopy/jwks.json") == \
+        ["https://labs.example.org/canopy/site.json"]
+    assert site_needs.candidate_urls("labs.example.org") == \
+        ["https://labs.example.org/.well-known/canopy-site.json",
+         "https://labs.example.org/canopy/site.json"]
+    assert site_needs.candidate_urls("") == []

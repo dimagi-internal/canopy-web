@@ -21,12 +21,16 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
+import jwt
 from canopy_sdk import fetch as sdk_fetch
 from canopy_sdk import site as wire
+from canopy_sdk.jose import unverified_claims
 from django.core.cache import cache
 
 from apps.embedding import assertions
+from apps.embedding import jwks as jwks_mod
 
 FRESH_SECONDS = 600
 STALE_SECONDS = 24 * 60 * 60
@@ -137,3 +141,149 @@ def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]
     allowed = {a["slug"] for a in content["agents"]}
     named = list(dict.fromkeys([*document.uses_agents, *document.uses_real_data_agents]))
     return rows, [s for s in named if s not in allowed]
+
+
+# --- the site's own facts: filling a Connected site from its document ----------------
+#
+# A Connected site's registration is a copy of facts the site already knows —
+# its origins, where its keys are, its OAuth issuer, its MCP server — and its
+# `site.json` (SDK 0.16+) declares them in a `site` block. `discover` reads that
+# block so the owner can ADOPT the values instead of typing them. It only reads:
+# the values reach the registration solely through the ordinary, audited
+# update/create routes, after the owner has seen them — a site must never be
+# able to change its own trusted origins by publishing a document.
+
+
+@dataclass(frozen=True)
+class Discovery:
+    """What a site's own document says about it, and how canopy believes it."""
+
+    #: Where the document was read.
+    url: str
+    #: The site's Connected-site name (`iss`).
+    name: str
+    facts: wire.SiteFacts
+    #: `registered_keys` — verified with the keys canopy already holds for the
+    #: site; `published_keys` — with the keys at the `jwks_url` the document
+    #: itself declares (a site not yet registered, or one whose keys moved).
+    signed_by: str
+    #: Whether canopy's registered keys verify it (None: none registered).
+    registered_keys_verify: bool | None
+    #: Every URL tried, in order (the last one is `url`).
+    tried: tuple[str, ...] = ()
+
+
+def candidate_urls(address: str) -> list[str]:
+    """Where a site's `site.json` may be, given whatever address an owner has:
+    the document itself, its JWKS (`document_url`), or just the site's address —
+    then the address's own `…/site.json` (an SDK mount typed in), the origin's
+    `.well-known/canopy-site.json` (`wire.WELL_KNOWN_PATH`), and the SDK's default
+    mount `…/canopy/site.json`."""
+    url = (address or "").strip()
+    if not url:
+        return []
+    if "://" not in url:
+        url = f"https://{url}"
+    parts = urlsplit(url)
+    if not parts.netloc:
+        return []
+    path = parts.path.rstrip("/")
+    if path.endswith(f"/{wire.SITE_DOCUMENT_NAME}"):
+        return [url]
+    beside = document_url(url)
+    if beside:
+        return [beside]
+    origin = f"{parts.scheme}://{parts.netloc}"
+    out = [f"{origin}{path}/{wire.SITE_DOCUMENT_NAME}"] if path else []
+    out += [f"{origin}{wire.WELL_KNOWN_PATH}", f"{origin}{path}/canopy/{wire.SITE_DOCUMENT_NAME}"]
+    return list(dict.fromkeys(out))
+
+
+def _published_keys(jwks_url: str, token: str) -> list:
+    try:
+        kid = str((jwt.get_unverified_header(token) or {}).get("kid") or "")
+    except Exception:  # noqa: BLE001 - the verifier refuses it with its own reason
+        kid = ""
+    if not jwks_url.startswith("https://"):
+        raise wire.SiteDocumentError("bad_jwks_url", f"the keys the document names ({jwks_url}) "
+                                                     "are not at an https URL")
+    try:
+        # `keys_for` refuses private address space itself, as for any site's keys.
+        return jwks_mod.keys_for(jwks_url, kid=kid)
+    except jwks_mod.JwksError as exc:
+        raise wire.SiteDocumentError("keys_unreachable", f"could not read the keys the document "
+                                                         f"names ({jwks_url}): {exc}") from exc
+
+
+def _verifies(token: str, keys: list, name: str) -> bool:
+    try:
+        wire.verify_site_document(token, keys, site_name=name, algorithms=assertions.ALLOWED_ALGORITHMS)
+    except wire.SiteDocumentError as exc:
+        if exc.code == "bad_signature":
+            return False
+        raise
+    return True
+
+
+def discover(address: str = "", *, app=None) -> Discovery:
+    """Read and verify the site's own document and return its `site` facts.
+    Raises `wire.SiteDocumentError` (`no_address`, `unreachable`, `bad_issuer`,
+    `bad_signature`, `no_facts`, …) with a reason the owner can act on.
+
+    `address` may be the site's address, its JWKS URL or the document's own; for
+    a registered `app` it defaults to beside its keys, then its first origin.
+    Fresh every time (no cache): the owner is about to act on what it says.
+    """
+    if not (address or "").strip() and app is not None:
+        address = document_url(app.jwks_url) or next(iter(app.frame_origins()), "")
+    candidates = candidate_urls(address)
+    if not candidates:
+        raise wire.SiteDocumentError("no_address", "give the site's address (https://…), the URL "
+                                                   "of its keys, or of its site.json")
+    tried: list[str] = []
+    token, url, failures = "", "", []
+    for candidate in candidates:
+        tried.append(candidate)
+        try:
+            token, url = _get(candidate), candidate
+            break
+        except sdk_fetch.FetchError as exc:
+            failures.append(str(exc))
+    if not token:
+        raise wire.SiteDocumentError(
+            "unreachable", "no site.json at " + "; ".join(failures) + ". Serve the SDK's "
+            f"canopy/site.json (dimagi-canopy 0.16+), and mount it at {wire.WELL_KNOWN_PATH} "
+            "so the site's address alone finds it — or give the URL of its keys")
+    try:
+        claims = unverified_claims(token)
+        unverified = wire.SiteNeeds.from_claims(claims)
+    except wire.SiteDocumentError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - ContractError: not a token at all
+        raise wire.SiteDocumentError("malformed", f"{url} is not a signed site document") from exc
+    name = str(claims.get("iss") or "").strip()
+    if app is not None and name != app.name:
+        raise wire.SiteDocumentError("bad_issuer", f"the document at {url} is {name!r}'s, not "
+                                                   f"{app.name!r}'s")
+    if unverified.site is None:
+        raise wire.SiteDocumentError("no_facts", f"the document at {url} declares none of the "
+                                                 "site's own facts — upgrade the site to "
+                                                 "dimagi-canopy 0.16, whose site.json fills them")
+    registered: bool | None = None
+    if app is not None and (app.public_keys or app.jwks_url):
+        try:
+            registered = _verifies(token, assertions.keys_for_app(app, token), name)
+        except assertions.AssertionError_:
+            registered = False
+    published = False
+    if not registered and unverified.site.jwks_url:
+        published = _verifies(token, _published_keys(unverified.site.jwks_url, token), name)
+    if not (registered or published):
+        raise wire.SiteDocumentError(
+            "bad_signature", f"the document at {url} is not signed by "
+            + ("the keys canopy has registered for this site or " if registered is False else "")
+            + "the keys it names" + (f" ({unverified.site.jwks_url})" if unverified.site.jwks_url
+                                     else " — it names no jwks_url"))
+    return Discovery(url=url, name=name, facts=unverified.site,
+                     signed_by="registered_keys" if registered else "published_keys",
+                     registered_keys_verify=registered, tried=tuple(tried))

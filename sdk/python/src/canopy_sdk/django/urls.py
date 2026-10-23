@@ -7,6 +7,12 @@ host's RFC 8414 metadata. The ``.well-known`` documents must be served at the
 site root (RFC 8414 / 9728), so they are not in this include; mount
 ``views.authorization_server_metadata_view`` and
 ``views.protected_resource_metadata_view`` there if the host serves none.
+
+So canopy can find ``site.json`` from the site's address alone (an owner
+registering the site types only that), also mount ``views.site_document`` at
+the root::
+
+    path(".well-known/canopy-site.json", canopy_views.site_document)
 """
 from django.urls import path
 

@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 
 from canopy_sdk import consumer, contract
+from canopy_sdk.jose import unverified_claims
 from django.conf import settings
 from django.core.cache import cache
 
@@ -174,6 +175,21 @@ def _spend_jti(app, claims: dict) -> None:
         raise AssertionError_("replayed", "this assertion has already been used")
 
 
+def workspace_named(token: str) -> str:
+    """The tenant the assertion names (`canopy_workspace`), read WITHOUT trusting
+    it — like `iss`, it only selects which registration's keys to check, and the
+    signature then covers it. Raises `AssertionError_("bad_workspace")` for a
+    claim that is not a slug."""
+    try:
+        claims = unverified_claims(token)
+    except contract.ContractError:
+        return ""  # `verify` refuses the token itself, with its own reason
+    try:
+        return contract.parse_workspace_claim(claims.get(contract.WORKSPACE_CLAIM))
+    except ValueError as exc:
+        raise AssertionError_("bad_workspace", str(exc)) from exc
+
+
 def issuer_of(token: str, *, agent_slug: str = ""):
     """The app an assertion CLAIMS to be from, before anything is verified.
 
@@ -181,29 +197,35 @@ def issuer_of(token: str, *, agent_slug: str = ""):
     the issuer is a base64 decode, verifying is a signature check, and a budget
     spent after the expensive half has not saved anything.
 
-    `iss` names a site only within a tenant, so the tenant comes from the agent
-    the host names (`embed_apps.resolve_site`). The app returned is not yet
-    trusted — only named. Nothing may act on it until `verify` succeeds, and it
-    is verified against THAT tenant's registered keys.
+    `iss` names a site only within a tenant, so the tenant comes from the
+    workspace the assertion names (`canopy_workspace`) or, failing that, the
+    agent the host names (`embed_apps.resolve_site`, which refuses the two
+    disagreeing). The app returned is not yet trusted — only named. Nothing may
+    act on it until `verify` succeeds, and it is verified against THAT tenant's
+    registered keys.
     """
-    from .embed_apps import AmbiguousSite, resolve_site
+    from .embed_apps import AmbiguousSite, SiteTenantMismatch, resolve_site
 
     name = _unverified_issuer(token)
+    workspace = workspace_named(token)
     try:
-        app = resolve_site(name, agent_slug)
+        app = resolve_site(name, agent_slug, workspace)
     except AmbiguousSite as exc:
         raise AssertionError_("ambiguous_issuer", str(exc)) from exc
+    except SiteTenantMismatch as exc:
+        raise AssertionError_(exc.code, str(exc)) from exc
     if app is None:
         # Same wording whether the app is unknown, revoked, or registered only
         # by some other tenant: an app name is not a secret, but distinguishing
         # them tells a prober which of their guesses are real somewhere.
         raise AssertionError_("unknown_issuer", f"no connected site named {name!r}"
-                              + (f" for agent {agent_slug!r}" if agent_slug else ""))
+                              + (f" in workspace {workspace!r}" if workspace
+                                 else f" for agent {agent_slug!r}" if agent_slug else ""))
     return app
 
 
 def verify_for_issuer(token: str, *, agent_slug: str = ""):
-    """Resolve the app from `iss` (and the named agent), then verify.
-    Returns `(app, claims)`."""
+    """Resolve the app from `iss` (and the named workspace or agent), then
+    verify. Returns `(app, claims)`."""
     app = issuer_of(token, agent_slug=agent_slug)
     return app, verify(token, app=app)

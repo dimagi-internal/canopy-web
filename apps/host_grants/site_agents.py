@@ -43,7 +43,7 @@ from apps.agents import sensitive_data
 from apps.agents.models import Agent, AgentBootstrapReport
 from apps.agents.setup import runner_takers
 from apps.embedding import assertions
-from apps.embedding.embed_apps import AmbiguousSite, resolve_site
+from apps.embedding.embed_apps import AmbiguousSite, SiteTenantMismatch, resolve_site
 from apps.harness.models import Runner
 from apps.harness.routing import unit_refusal
 from apps.harness.runner_requirements import MEANINGS, SENSITIVE_DATA, in_force
@@ -73,19 +73,25 @@ def audiences() -> list[str]:
 
 def site_for_request(token: str):
     """The site a request CLAIMS to be from — named, not yet trusted. Resolved as
-    every site name is (`embed_apps.resolve_site`), with the agent the request
-    signs in as the tie-breaker between tenants sharing a name."""
+    every site name is (`embed_apps.resolve_site`), with the workspace the
+    request names (`canopy_workspace`) — or, without one, the agent it names —
+    telling apart tenants sharing a name."""
     try:
         claims = unverified_claims(token)
     except contract.ContractError as exc:
         raise SiteAgentsRefused("malformed", exc.message, 400) from exc
     name = str(claims.get("iss") or "").strip()
-    agent = claims.get(contract.AGENT_CLAIM)
-    agent = agent.strip() if isinstance(agent, str) else ""
     try:
-        app = resolve_site(name, agent)
+        agent = contract.parse_agent_claim(claims.get(contract.AGENT_CLAIM))
+        workspace = contract.parse_workspace_claim(claims.get(contract.WORKSPACE_CLAIM))
+    except ValueError as exc:
+        raise SiteAgentsRefused("malformed", str(exc), 400) from exc
+    try:
+        app = resolve_site(name, agent, workspace)
     except AmbiguousSite as exc:
         raise SiteAgentsRefused("ambiguous_issuer", str(exc), 409) from exc
+    except SiteTenantMismatch as exc:
+        raise SiteAgentsRefused(exc.code, str(exc), 409) from exc
     if app is None:
         # One wording for unknown, revoked and another tenant's: a prober learns
         # nothing about which names are real.
@@ -172,21 +178,23 @@ def agent_entry(app, agent: Agent) -> dict:
     available = sorted(set().union(*(in_force(r) for r in takers))) if takers else []
     ready_with = {f: any(f in in_force(r) for r in ready_runners) for f in sorted(contract.RUNNER_FLAGS)}
     settings_url = scoped_url(agent.workspace_id, f"/agents/{agent.slug}/settings")
+    reach, running = f"{settings_url}#reach", f"{settings_url}#running"
 
-    problems = []
+    # `(sentence, where it is fixed)`. The sentence keeps naming the place too:
+    # `problems` is what a host that predates `problem_links` shows.
+    found: list[tuple[str, str]] = []
     if not capabilities:
-        problems.append(
-            f"{agent.name} has no capability naming {app.name} in `sites:` — publish one on its "
-            f"interface: canopy › {settings_url}#reach")
+        found.append((f"{agent.name} has no capability naming {app.name} in `sites:` — publish "
+                      f"one on its interface: canopy › {reach}", reach))
     if not takers:
-        problems.append(f"no runner takes {agent.name}'s turns: canopy › {settings_url}#running")
+        found.append((f"no runner takes {agent.name}'s turns: canopy › {running}", running))
     elif not ready_runners:
         names = ", ".join(sorted(r.name for r in takers))
-        problems.append(f"no runner that takes {agent.name}'s turns is ready now ({names}): "
-                        f"canopy › {settings_url}#running")
+        found.append((f"no runner that takes {agent.name}'s turns is ready now ({names}): "
+                      f"canopy › {running}", running))
     if any(c["handles_sensitive"] for c in capabilities) and not ready_with.get(SENSITIVE_DATA):
-        problems.append(f"no ready runner with {SENSITIVE_DATA} for {agent.name}: "
-                        f"canopy › {settings_url}#running")
+        found.append((f"no ready runner with {SENSITIVE_DATA} for {agent.name}: "
+                      f"canopy › {running}", running))
     return {
         "slug": agent.slug,
         "name": agent.name,
@@ -197,7 +205,8 @@ def agent_entry(app, agent: Agent) -> dict:
         "capabilities": capabilities,
         "runners": {"flags_available": available, "ready_with": ready_with},
         "ready": bool(capabilities) and bool(ready_runners),
-        "problems": problems,
+        "problems": [text for text, _url in found],
+        "problem_links": [{"text": text, "url": url} for text, url in found],
     }
 
 
@@ -210,10 +219,18 @@ def listed_agents(app) -> list[Agent]:
                 .order_by("slug"))
 
 
+def site_settings_url(app) -> str:
+    """This connected site's own place in canopy's UI: its card on the
+    workspace's Connected sites page, where its owner allows agents, changes its
+    keys and URLs, and tests it."""
+    return scoped_url(app.workspace_id, f"/settings/connected-apps#site-{app.pk}")
+
+
 def site_agents_content(app) -> dict:
     """`site`, `runner_flags` and `agents` — everything `version` covers."""
     return {
-        "site": {"name": app.name, "tenant": app.workspace_id},
+        "site": {"name": app.name, "tenant": app.workspace_id,
+                 "settings_url": site_settings_url(app)},
         "runner_flags": runner_flags(),
         "agents": [agent_entry(app, a) for a in listed_agents(app)],
     }
