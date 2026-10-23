@@ -213,6 +213,32 @@ Agent turns are tenant-gated through `routing.agent_tenant_q` (no NULL-workspace
 leg — always AND it with `agent__isnull=False`), repo turns through
 `Turn.workspace`, session turns through `chat_session.workspace`.
 
+## Opted-in projects (`ProjectOptIn`)
+
+Canopy is opt-in per repo, and the choice is part of the person's account
+(`apps/harness/models.py::ProjectOptIn`, `GET|PUT /api/me/canopy-projects/`,
+Settings → Canopy projects), never config on a box. A person picks **every repo**
+(`everything`) or **only the repos they name** (`projects`). With no row the
+answer is nothing. Every repo outside the choice is plain Claude Code.
+
+- **One gate.** `Runner.project_names()` is what the box holds
+  (`observed_projects()`, its own report) ∩ what its OWNER opted into
+  (`Runner.opts_in`). Every repo-turn route (`runner_target_q`, the workspace
+  order, project chats, a pinned repo turn) and the usage scan's `scope` read it.
+  A runner with no owner opts into nothing.
+- **Mirroring.** `session_sync.session_home` files no new session from a repo
+  outside the opt-in, both in the ~10s report sweep and when missing sessions are
+  sent up. `/streams` and `/backfills` stop listing such a session's transcript.
+  A session mirrored before its repo left the opt-in stays, but nothing more of it
+  ships. `usage.record` keeps no unmatched usage from such a repo, whatever an
+  older box sends.
+- **Agents are always canopy.** An agent's own repo is checked against
+  `observed_projects()` (`cannot_serve`, the inherited order), never the opt-in.
+- **`everything`** also covers a task emdash could not place in a repo (blank
+  project). A chosen list covers only the repos it names.
+- Migration `harness.0104` gave every existing runner owner `everything`. A
+  person who pairs a box after it starts at nothing until they choose.
+
 ## Which agents a box may hold
 
 `apps/agents/services.py::runner_may_hold_agent(runner, agent)` — true only when

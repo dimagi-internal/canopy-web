@@ -105,6 +105,32 @@ def _no_stale_unclaimable_memo():
 
 
 @pytest.fixture(autouse=True)
+def _runner_owners_use_canopy_everywhere(request):
+    """A runner's owner opts every repo into canopy (`ProjectOptIn.everything`),
+    as migration 0104 did for every runner owner who existed — so a suite about
+    routing or sessions is not also about the opt-in. The real default is
+    nothing; a test of the opt-in itself marks `explicit_opt_in` to see it."""
+    if request.node.get_closest_marker("explicit_opt_in"):
+        yield
+        return
+    try:
+        from django.db.models.signals import post_save
+
+        from apps.harness.models import ProjectOptIn, Runner
+    except Exception:  # a suite with no Django (runner/*)
+        yield
+        return
+
+    def _opt_in(sender, instance, created, **kwargs):
+        if created and instance.owner_id:
+            ProjectOptIn.objects.get_or_create(user_id=instance.owner_id, defaults={"everything": True})
+
+    post_save.connect(_opt_in, sender=Runner, dispatch_uid="test-runner-owner-opt-in")
+    yield
+    post_save.disconnect(sender=Runner, dispatch_uid="test-runner-owner-opt-in")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_plugin_json(monkeypatch):
     """No test reaches GitHub for a plugin.json name (apps/plugins/services.py):
     the agents API names each agent's plugin, so every agent list would. Here

@@ -193,11 +193,12 @@ def test_existing_sessions_are_not_refiled_when_the_default_changes(runner, jj, 
     assert _session("t2").workspace_id == "marshellis"
 
 
-def test_a_runner_with_no_owner_files_in_its_own_workspace(dimagi):
+def test_a_runner_with_no_owner_files_nothing(dimagi):
+    """No owner, no opt-in (`ProjectOptIn`): nothing on the box is canopy's."""
     r = Runner.objects.create(name="box", kind=Runner.EMDASH, host="box", owner=None,
                               workspace=dimagi)
     _report(r, "t1")
-    assert _session("t1").workspace_id == "dimagi"
+    assert not Session.objects.filter(runner_binding__session_key="t1").exists()
 
 
 # ---- setting the default ---------------------------------------------------
