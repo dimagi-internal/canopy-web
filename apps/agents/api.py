@@ -11,8 +11,12 @@ a harness view, so its operationId (= MCP tool name) is qualified by this
 module's app label (`agents_list_turns`), and moving it would change it."""
 from __future__ import annotations
 
+import copy
+
 import requests
+import yaml
 from django.http import HttpRequest
+from django.utils import timezone
 from ninja import Router, Status
 from ninja.errors import HttpError
 
@@ -40,7 +44,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, mailbox, services
+from . import access, creation, mailbox, phi, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, zk
@@ -82,6 +86,7 @@ from .schemas import (
     AgentSyncOut,
     AgentTurnIn,
     AgentTurnOut,
+    CapabilityPhiIn,
     CredentialSourceIn,
     DeviceBindingIn,
     RepoCheckIn,
@@ -589,9 +594,6 @@ def get_interface(request: HttpRequest, slug: str):
             summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
 @gate("agent-admin", setting=True)
 def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
-    import yaml
-    from django.utils import timezone
-
     agent = agent_for_admin(request, slug)
     if (payload.source is None) == (payload.interface is None):
         raise HttpError(422, "send exactly one of `source` (YAML) or `interface` (a mapping)")
@@ -603,6 +605,12 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
             doc = yaml.safe_load(source) or {}
         except yaml.YAMLError as exc:
             raise HttpError(422, f"not valid YAML: {exc}") from exc
+    return _save_interface(request, agent, doc, source)
+
+
+def _save_interface(request: HttpRequest, agent, doc, source: str) -> dict:
+    """The one way an interface is saved — the YAML editor and the PHI-safe switch
+    both come here, so they are validated and audited alike."""
     try:
         parsed = parse(doc)
     except InterfaceError as exc:
@@ -618,6 +626,42 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
     agent.save(update_fields=["interface", "interface_source", "interface_published_at",
                               "interface_published_by", "updated_at"])
     return _interface_out(agent)
+
+
+@router.put("/{slug}/interface/capabilities/{name}/phi", response=AgentInterfaceOut,
+            summary="Turn PHI-safe on or off for one capability: writes or removes its `data: phi` in the saved YAML")
+@gate("agent-admin", setting=True)
+def set_capability_phi(request: HttpRequest, slug: str, name: str, payload: CapabilityPhiIn):
+    # The switch is the YAML path with the typing done for you: it edits the saved
+    # source in place (comments kept, `phi.with_phi`) and saves it through
+    # `_save_interface` — same parse, same audit — so the YAML and
+    # the switch never disagree. An interface saved as a mapping (no source) is
+    # edited as a mapping.
+    agent = agent_for_admin(request, slug)
+    caps = (agent.interface or {}).get("capabilities") or {}
+    if name not in caps:
+        raise HttpError(404, f"{agent.slug} has no capability {name!r} in its saved interface")
+    before = phi.phi_capabilities(agent.interface)
+    source = agent.interface_source or ""
+    if source.strip():
+        try:
+            source = phi.with_phi(source, name, payload.phi_safe)
+        except phi.SourceEditError as exc:
+            raise HttpError(422, f"{exc} — edit the YAML instead") from exc
+        doc = yaml.safe_load(source) or {}
+    else:
+        doc = copy.deepcopy(agent.interface)
+        cap = doc["capabilities"][name]
+        if payload.phi_safe:
+            cap["data"] = phi.PHI
+        else:
+            cap.pop("data", None)
+    out = _save_interface(request, agent, doc, source)
+    audit.note_change(scope=f"interface:{agent.slug}/{name}",
+                      before={"phi_capabilities": before},
+                      after={"phi_capabilities": phi.phi_capabilities(agent.interface)},
+                      summary=f"PHI-safe {'on' if payload.phi_safe else 'off'} for {agent.slug}/{name}")
+    return out
 
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,

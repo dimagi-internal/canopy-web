@@ -803,14 +803,24 @@ export async function getAgentInterface(slug: string): Promise<AgentInterfaceOut
 }
 
 // Save the interface as YAML (kept verbatim, comments and all). Owner/admin only;
-// a 422 carries the parser's reason, which the editor shows as-is. YAML with a
-// `data: phi` capability needs a passkey step-up (the API client prompts).
+// a 422 carries the parser's reason, which the editor shows as-is.
 export async function saveAgentInterface(slug: string, source: string): Promise<AgentInterfaceOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/interface', {
     params: { path: { slug } },
     body: { source },
   })
   return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
+}
+
+// The PHI-safe switch for one capability: canopy writes (or removes) its
+// `data: phi` in the saved YAML and saves it the way saveAgentInterface does, so
+// the editor and the switch always agree.
+export async function setCapabilityPhi(slug: string, name: string, phiSafe: boolean): Promise<AgentInterfaceOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/interface/capabilities/{name}/phi', {
+    params: { path: { slug, name } },
+    body: { phi_safe: phiSafe },
+  })
+  return unwrap(res, 'setCapabilityPhi') as unknown as AgentInterfaceOut
 }
 
 export type SettingChangeOut = Schemas['SettingChangeOut']
@@ -823,7 +833,10 @@ export async function getAgentInterfaceHistory(slug: string): Promise<SettingCha
   })
   const items = (unwrap(res, 'getAgentInterfaceHistory') as unknown as { items: SettingChangeOut[] }).items
   return items.filter(
-    (c) => (c.operation === 'publish_interface' || c.operation === 'unpublish_interface') && c.target === slug,
+    (c) =>
+      ((c.operation === 'publish_interface' || c.operation === 'unpublish_interface') && c.target === slug) ||
+      // The switch's row names the capability too: "<slug> / <capability>".
+      (c.operation === 'set_capability_phi' && c.target.startsWith(`${slug} / `)),
   )
 }
 

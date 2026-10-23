@@ -263,3 +263,125 @@ def test_a_runner_that_confines_claims_a_phi_turn_and_runs_its_current_code(w):
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["caller_context"]["profile"] == "confined" and "agent_sha" not in body
+
+
+# --- the switch: one capability, the same setting the YAML holds -------------------------
+
+SWITCHABLE = """# who may read a host's data
+capabilities:
+  data:
+    # the site's data door
+    callers: [contact, member]
+    sites: [connect-labs]
+    tools: [Read, Grep, "mcp__*canopy-web__current_page"]
+  ask:
+    callers: [member]
+    tools: [Read, Bash]
+"""
+
+
+def _switch(c, slug, name, on):
+    return c.put(f"/api/agents/{slug}/interface/capabilities/{name}/phi",
+                 data={"phi_safe": on}, content_type="application/json")
+
+
+def _publish_source(w, source):
+    r = _put(_client(w["owner"]), "labsdata", source=source)
+    assert r.status_code == 200, r.content
+    w["agent"].refresh_from_db()
+
+
+def test_with_phi_writes_one_line_and_keeps_every_comment():
+    on = phi.with_phi(SWITCHABLE, "data", True)
+    assert on.splitlines()[3] == "    data: phi"
+    assert "# the site's data door" in on and on.startswith("# who may read")
+    assert phi.with_phi(on, "data", False) == SWITCHABLE
+    assert phi.with_phi(on, "data", True) == on  # already on: unchanged
+
+
+def test_with_phi_refuses_a_layout_it_cannot_edit_by_line():
+    flow = 'capabilities: {data: {callers: [member], sites: [connect-labs]}}\n'
+    with pytest.raises(phi.SourceEditError):
+        phi.with_phi(flow, "data", True)
+    with pytest.raises(phi.SourceEditError):
+        phi.with_phi(SWITCHABLE, "nope", True)
+
+
+def test_the_switch_is_an_ordinary_edit_no_passkey_from_a_browser_or_a_token(w):
+    _publish_source(w, SWITCHABLE)
+    r = _switch(_client(w["owner"], stepped_up=False), "labsdata", "data", True)
+    assert r.status_code == 200, r.content
+    raw, _ = PersonalToken.create_for_user(user=w["owner"], label="cli")
+    r = _switch(Client(HTTP_AUTHORIZATION=f"Bearer {raw}"), "labsdata", "data", False)
+    assert r.status_code == 200, r.content
+    w["agent"].refresh_from_db()
+    assert not phi.is_phi(w["agent"], "data")
+
+
+def test_the_switch_writes_the_yaml_and_the_yaml_says_what_the_switch_did(w):
+    _publish_source(w, SWITCHABLE)
+    r = _switch(_client(w["owner"]), "labsdata", "data", True)
+    assert r.status_code == 200, r.content
+    w["agent"].refresh_from_db()
+    assert phi.is_phi(w["agent"], "data") and not phi.is_phi(w["agent"], "ask")
+    source = w["agent"].interface_source
+    assert "    data: phi" in source and "# the site's data door" in source
+    # Saving that YAML back, untouched, through the YAML path changes nothing.
+    stored = w["agent"].interface
+    r = _put(_client(w["owner"]), "labsdata", source=r.json()["source"])
+    assert r.status_code == 200
+    assert r.json()["interface"] == stored
+
+
+def test_the_switch_is_audited_with_what_it_changed(w):
+    _publish_source(w, SWITCHABLE)
+    _switch(_client(w["owner"]), "labsdata", "data", True)
+    [row] = SettingChange.objects.filter(operation="set_capability_phi")
+    assert (row.actor, row.target) == (w["owner"], "labsdata / data")
+    [change] = row.changes
+    assert change["scope"] == "interface:labsdata/data"
+    assert change["before"] == {"phi_capabilities": []}
+    assert change["after"] == {"phi_capabilities": ["data"]}
+
+
+def test_turning_the_switch_off_takes_the_line_out(w):
+    _publish_source(w, SWITCHABLE)
+    saved = w["agent"].interface_source
+    _switch(_client(w["owner"]), "labsdata", "data", True)
+    r = _switch(_client(w["owner"], stepped_up=False), "labsdata", "data", False)
+    assert r.status_code == 200, r.content
+    w["agent"].refresh_from_db()
+    assert not phi.is_phi(w["agent"], "data")
+    assert w["agent"].interface_source == saved
+
+
+def test_the_switch_refuses_a_capability_that_could_leak_and_saves_nothing(w):
+    _publish_source(w, SWITCHABLE)
+    saved = w["agent"].interface_source
+    r = _switch(_client(w["owner"]), "labsdata", "ask", True)
+    assert r.status_code == 422 and "Bash" in r.json()["detail"]
+    w["agent"].refresh_from_db()
+    assert w["agent"].interface_source == saved
+    assert not SettingChange.objects.filter(operation="set_capability_phi").exists()
+
+
+def test_an_interface_saved_as_a_mapping_is_switched_as_a_mapping(w):
+    cap = {k: v for k, v in DATA.items() if k != "data"}
+    r = _client(w["owner"]).put("/api/agents/labsdata/interface", content_type="application/json",
+                                data={"interface": {"capabilities": {"data": cap}}})
+    assert r.status_code == 200, r.content
+    r = _switch(_client(w["owner"]), "labsdata", "data", True)
+    assert r.status_code == 200, r.content
+    w["agent"].refresh_from_db()
+    assert phi.is_phi(w["agent"], "data") and w["agent"].interface_source == ""
+
+
+def test_the_switch_names_a_capability_the_interface_has(w):
+    _publish_source(w, SWITCHABLE)
+    assert _switch(_client(w["owner"]), "labsdata", "nope", True).status_code == 404
+
+
+def test_only_the_agents_admins_flip_the_switch(w):
+    _publish_source(w, SWITCHABLE)
+    assert _switch(_client(w["editor"]), "labsdata", "data", True).status_code in (403, 404)
+    assert _switch(_client(w["admin"]), "labsdata", "data", True).status_code == 200

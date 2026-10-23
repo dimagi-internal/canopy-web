@@ -3,6 +3,7 @@ import {
   getAgentInterface,
   getAgentInterfaceHistory,
   saveAgentInterface,
+  setCapabilityPhi,
   unpublishAgentInterface,
   type AgentInterfaceOut,
   type SettingChangeOut,
@@ -57,8 +58,22 @@ function phiCapabilities(iface: unknown): string[] {
 // `data: phi`, off when it did not or it unpublished.
 function phiAfter(c: SettingChangeOut): boolean {
   if (c.operation === 'unpublish_interface') return false
+  if (c.operation === 'set_capability_phi') {
+    const after = (c.changes?.[0]?.after ?? {}) as { phi_capabilities?: string[] }
+    return (after.phi_capabilities ?? []).length > 0
+  }
   const body = (c.request?.body ?? {}) as { source?: string; interface?: unknown }
   return body.source != null ? declaresPhi(body.source) : phiCapabilities(body.interface).length > 0
+}
+
+// What one audited change was, in a word or three.
+function changeLabel(c: SettingChangeOut): string {
+  if (c.operation === 'unpublish_interface') return 'Unpublished'
+  if (c.operation === 'set_capability_phi') {
+    const on = Boolean((c.request?.body as { phi_safe?: boolean } | undefined)?.phi_safe)
+    return `PHI-safe ${on ? 'on' : 'off'} for ${c.target.split(' / ')[1] ?? 'a capability'}`
+  }
+  return 'Saved'
 }
 
 // The agent's declared interface: who may make it do what. LIVE STATE held by
@@ -233,13 +248,29 @@ export function AgentInterfaceView({
                     ))}
                   </td>
                   <td className="py-1.5 align-top text-[12px]">
-                    {c.data === 'phi' ? (
-                      <span data-testid="phi-safe" className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
-                        PHI-safe
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {c.data === 'phi' ? (
+                        <span data-testid="phi-safe" className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
+                          PHI-safe
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                      {canEdit && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={c.data === 'phi'}
+                          aria-label={`PHI-safe for ${n}`}
+                          data-testid="phi-switch"
+                          disabled={busy}
+                          onClick={() => void run(() => setCapabilityPhi(agentSlug, n, c.data !== 'phi'))}
+                          className="text-[11px] text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+                        >
+                          {c.data === 'phi' ? 'Turn off' : 'Turn on'}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )
@@ -312,9 +343,7 @@ export function AgentInterfaceView({
                   <td className="py-1 text-foreground-secondary">{new Date(c.created_at).toLocaleString()}</td>
                   <td className="py-1 text-foreground-secondary">{c.actor_email || 'someone'}</td>
                   <td className="py-1 text-foreground-secondary">{c.via}</td>
-                  <td className="py-1 text-foreground-secondary">
-                    {c.operation === 'unpublish_interface' ? 'Unpublished' : 'Saved'}
-                  </td>
+                  <td className="py-1 text-foreground-secondary">{changeLabel(c)}</td>
                   <td className="py-1">{phiAfter(c) ? 'on' : 'off'}</td>
                 </tr>
               ))}
