@@ -14,6 +14,8 @@ import types
 
 import pytest
 
+from _bundles import bundle
+
 CAP = "You've hit your weekly limit · resets 11pm (UTC)"
 
 
@@ -168,18 +170,18 @@ def _api_log(cr, monkeypatch, replies=None):
 
 def test_staging_probes_before_the_first_ready_beat(cr, monkeypatch):
     calls = _api_log(cr, monkeypatch, {
-        ("GET", "/runners/rid/credential"): (200, {"claude_token": "tok-1", "logins": []})})
+        ("GET", "/runners/rid/credential"): (200, bundle("tok-1", logins=[]))})
     monkeypatch.setattr(cr, "_reconcile_logins", lambda *a: None)
     monkeypatch.setattr(cr, "box_login_ready", lambda **kw: False)
     monkeypatch.setattr(cr, "_probe_entry", lambda entry: _probe(entry[0], "capped"))
     assert cr.fetch_and_stage_credential("rid") is True
-    assert cr._PROBES["subscription-1"]["status"] == "capped"
+    assert cr._PROBES["token:1"]["status"] == "capped"
     # …and reported at once: the next beat is otherwise after the bootstrap (up
     # to 40 min), and wire.sh is waiting on exactly these checks.
     beats = [c for c in calls if c[1] == "/runners/rid/heartbeat"]
     assert len(beats) == 1
     names = [ch["name"] for ch in beats[0][2]["health"]["checks"]]
-    assert "claude.probe.subscription-1" in names
+    assert "claude.probe.token:1" in names
 
 
 def test_every_probe_check_says_when_it_was_taken(cr):
@@ -297,10 +299,10 @@ def test_the_cap_park_note_carries_the_self_pause_prefix(cr, monkeypatch):
 
 def test_reread_probes_only_changed_entries(cr, monkeypatch):
     monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")
-    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
-    cr._record_probe(_probe("subscription-1", "ok"))
+    cr._CLAUDE_CREDS[:] = [("token:1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    cr._record_probe(_probe("token:1", "ok"))
     _api_log(cr, monkeypatch, {("GET", "/runners/rid/credential"): (
-        200, {"claude_token": "tok-1", "claude_token_secondary": "tok-2", "logins": []})})
+        200, bundle("tok-1", "tok-2", logins=[]))})
     monkeypatch.setattr(cr, "_reconcile_logins", lambda *a: None)
     monkeypatch.setattr(cr, "box_login_ready", lambda **kw: False)
     started = []
@@ -315,9 +317,9 @@ def test_reread_probes_only_changed_entries(cr, monkeypatch):
     monkeypatch.setattr(cr.threading, "Thread", FakeThread)
     assert cr._reload_claude_credentials() is True
     assert len(started) == 1
-    assert cr._PROBE_PENDING == {"subscription-2"}
+    assert cr._PROBE_PENDING == {"token:2"}
     # An unchanged entry keeps what it last proved.
-    assert cr._PROBES["subscription-1"]["status"] == "ok"
+    assert cr._PROBES["token:1"]["status"] == "ok"
 
 
 def test_a_request_made_while_probing_is_queued_not_dropped(cr, monkeypatch):
@@ -335,21 +337,21 @@ def test_a_bundle_restaged_unchanged_is_proved_again(cr, monkeypatch):
     """wire.sh on a running box writes the same values: it is waiting to hear
     whether they work, so an old result must not stand in."""
     monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")
-    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    cr._CLAUDE_CREDS[:] = [("token:1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
     cr._BUNDLE_STAMP["updated_at"] = "2026-10-18T10:00:00Z"
-    cr._record_probe(_probe("subscription-1", "ok"))
+    cr._record_probe(_probe("token:1", "ok"))
     _api_log(cr, monkeypatch, {("GET", "/runners/rid/credential"): (
-        200, {"claude_token": "tok-1", "logins": [], "updated_at": "2026-10-19T10:00:00Z"})})
+        200, bundle("tok-1", logins=[], updated_at="2026-10-19T10:00:00Z"))})
     monkeypatch.setattr(cr, "_reconcile_logins", lambda *a: None)
     monkeypatch.setattr(cr, "box_login_ready", lambda **kw: False)
     asked = []
     monkeypatch.setattr(cr, "_probe_in_background", lambda labels: asked.append(list(labels)))
     assert cr._reload_claude_credentials() is False
-    assert asked == [["subscription-1"]]
-    assert "subscription-1" not in cr._PROBES
+    assert asked == [["token:1"]]
+    assert "token:1" not in cr._PROBES
     # A re-read that finds the same stamp asks nothing.
     assert cr._reload_claude_credentials() is False
-    assert asked == [["subscription-1"]]
+    assert asked == [["token:1"]]
 
 
 def test_adopting_the_box_login_probes_it(cr, monkeypatch):
@@ -469,18 +471,18 @@ def test_the_tick_reprobes_a_cap_once_its_reset_passes(cr, monkeypatch):
 
 def test_a_replaced_value_keeps_its_failing_check_until_reprobed(cr, monkeypatch):
     monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")
-    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
-    cr._record_probe(_probe("subscription-1", "dead"))
+    cr._CLAUDE_CREDS[:] = [("token:1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    cr._record_probe(_probe("token:1", "dead"))
     _api_log(cr, monkeypatch, {("GET", "/runners/rid/credential"): (
-        200, {"claude_token": "tok-NEW", "logins": []})})
+        200, bundle("tok-NEW", logins=[]))})
     monkeypatch.setattr(cr, "_reconcile_logins", lambda *a: None)
     monkeypatch.setattr(cr, "box_login_ready", lambda **kw: False)
     monkeypatch.setattr(cr, "_probe_in_background", lambda labels: None)
     assert cr._reload_claude_credentials() is True
-    assert cr._HEALTH["claude.probe.subscription-1"]["status"] == "fail"
-    assert "subscription-1" not in cr._PROBES, "readiness forgets the old answer"
-    cr._record_probe(_probe("subscription-1", "ok"))
-    assert cr._HEALTH["claude.probe.subscription-1"]["status"] == "ok"
+    assert cr._HEALTH["claude.probe.token:1"]["status"] == "fail"
+    assert "token:1" not in cr._PROBES, "readiness forgets the old answer"
+    cr._record_probe(_probe("token:1", "ok"))
+    assert cr._HEALTH["claude.probe.token:1"]["status"] == "ok"
 
 
 def test_reprobe_keeps_the_check_until_the_new_answer(cr, monkeypatch):

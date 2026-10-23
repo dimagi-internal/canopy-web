@@ -11,7 +11,10 @@ import json
 
 import pytest
 
-BUNDLE = {"claude_token": "tok-1", "claude_token_secondary": "tok-2", "claude_api_key": "sk-ant-zdr"}
+from _bundles import bundle
+
+BUNDLE = bundle("tok-1", "tok-2", api_key="sk-ant-zdr")
+NO_KEY = bundle("tok-1", "tok-2")
 
 
 @pytest.fixture()
@@ -41,14 +44,14 @@ def _stage(cr, cred):
 
 
 def test_the_cascade_is_the_one_zdr_key_never_a_login_or_a_subscription(sensitive):
-    assert sensitive._cascade_from(BUNDLE) == [("api-key", "ANTHROPIC_API_KEY", "sk-ant-zdr")]
-    assert sensitive._cascade_from({k: v for k, v in BUNDLE.items() if k != "claude_api_key"}) == []
+    assert sensitive._cascade_from(BUNDLE) == [("api-key:k", "ANTHROPIC_API_KEY", "sk-ant-zdr")]
+    assert sensitive._cascade_from(NO_KEY) == []
     assert sensitive._adopt_box_login() is False
 
 
 def test_an_ordinary_box_keeps_its_cascade(ordinary, monkeypatch):
     monkeypatch.setattr(ordinary, "box_login_ready", lambda *a, **k: False)
-    assert [c[0] for c in ordinary._cascade_from(BUNDLE)] == ["subscription-1", "subscription-2", "api-key"]
+    assert [c[0] for c in ordinary._cascade_from(BUNDLE)] == ["token:1", "token:2", "api-key:k"]
 
 
 def test_a_sensitive_data_turn_never_bypasses_permissions(sensitive, ordinary):
@@ -88,7 +91,7 @@ def test_a_confined_turns_rules_narrow_the_profile_and_never_widen_it(sensitive)
 
 
 def test_readiness_needs_the_zdr_key(sensitive):
-    _stage(sensitive, {k: v for k, v in BUNDLE.items() if k != "claude_api_key"})
+    _stage(sensitive, NO_KEY)
     ok, note = sensitive.sensitive_data_readiness()
     assert not ok and "API keys" in note
     _stage(sensitive, BUNDLE)

@@ -12,6 +12,8 @@ import calendar
 
 import pytest
 
+from _bundles import bundle
+
 CAP_TEXT = "You've hit your weekly limit · resets Aug 3, 11pm (UTC)"
 
 
@@ -193,15 +195,15 @@ def test_retry_without_a_session_stays_fresh(cr, monkeypatch):
 # --- mid-run reload: rescuing a box without restarting it --------------------
 def test_exhausted_cascade_rereads_credentials_before_giving_up(cr, monkeypatch):
     """Credentials are staged into the process at start-up, so an operator who
-    rescues a stuck box with `canopy runner credential` would otherwise have to
+    rescues a stuck box by signing in a new token would otherwise have to
     restart the service for the fix to land."""
     monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
     cr._CLAUDE_CREDS.clear()
-    cr._CLAUDE_CREDS.append(("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "old"))
+    cr._CLAUDE_CREDS.append(("token:1", "CLAUDE_CODE_OAUTH_TOKEN", "old"))
     cr._apply_claude_credential(0)
     cr._CLAUDE_CRED_RUNNER_ID = "r-1"
 
-    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"claude_token": "rescued"}))
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, bundle("rescued")))
     calls = []
 
     def fake_once(prompt, turn_id, emit, **kw):
@@ -217,10 +219,10 @@ def test_exhausted_cascade_rereads_credentials_before_giving_up(cr, monkeypatch)
 def test_reload_that_finds_the_same_values_does_not_loop(cr, monkeypatch):
     """The guard against spinning forever on an unchanged bundle."""
     cr._CLAUDE_CREDS.clear()
-    cr._CLAUDE_CREDS.append(("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "same"))
+    cr._CLAUDE_CREDS.append(("token:1", "CLAUDE_CODE_OAUTH_TOKEN", "same"))
     cr._apply_claude_credential(0)
     cr._CLAUDE_CRED_RUNNER_ID = "r-1"
-    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"claude_token": "same"}))
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, bundle("same")))
     monkeypatch.setattr(cr, "_execute_once", lambda *a, **k: (False, CAP_TEXT, ""))
     ok, text, _ = cr.execute_prompt("p", "turn-abcdef12", lambda e: None)
     assert ok is False
