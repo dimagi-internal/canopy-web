@@ -21,7 +21,6 @@ from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.handoff import suppressed_tasks
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.canopy_sessions.staleness import stale_cutoff
 from apps.workspaces import services as wsvc
@@ -771,6 +770,8 @@ def replace_reported_sessions(
         # also serves every page (SLOW_REQUEST, 2026-10-03). Same predicate as the
         # per-task lookup below, keyed by (task, project) for the same reason.
         candidates: dict[tuple[str, str], RunnerBinding] = {}
+        from apps.canopy_sessions.handoff import suppressed_tasks  # noqa: PLC0415 — cycle: handoff -> harness.services -> channels.email -> session_sync
+
         handed_off = suppressed_tasks(runner) if deduped else set()
         if deduped:
             host_match_all = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
