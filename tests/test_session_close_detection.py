@@ -13,9 +13,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from django.contrib.auth import get_user_model
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness.models import Runner, Turn
+from apps.harness.models import ProjectOptIn, Runner, Turn
 from apps.harness.session_sync import replace_reported_sessions
 from apps.slack import share
 from tests.fixtures.slack import mention
@@ -31,7 +32,8 @@ def _reported(task, project="canopy-web"):
 
 @pytest.fixture
 def runner(ws):
-    return Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL, host="mbp")
+    owner = get_user_model().objects.create(username="laptop-owner")
+    return Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL, host="mbp", owner=owner)
 
 
 def _session(runner, ws, task="slack"):
@@ -154,6 +156,7 @@ def _ship(runner, alice, session_id, transcript_id, text, capture, index=64):
 @pytest.fixture
 def closed_shared(slack, shared, runner, ws, alice, django_capture_on_commit_callbacks):
     Runner.objects.filter(pk=runner.pk).update(owner=alice)
+    ProjectOptIn.objects.get_or_create(user=alice, defaults={"everything": True})
     runner.refresh_from_db()
     _ship(runner, alice, shared.id, "transcript-sep21", "build share to slack",
           django_capture_on_commit_callbacks)
@@ -201,6 +204,7 @@ def test_a_live_sessions_new_transcript_does_not_fork(
         slack, shared, runner, ws, alice, django_capture_on_commit_callbacks):
     """`/clear` in a live task changes its transcript; the thread should follow it."""
     Runner.objects.filter(pk=runner.pk).update(owner=alice)
+    ProjectOptIn.objects.get_or_create(user=alice, defaults={"everything": True})
     runner.refresh_from_db()
     _ship(runner, alice, shared.id, "before-clear", "hi", django_capture_on_commit_callbacks)
     _ship(runner, alice, shared.id, "after-clear", "hi again", django_capture_on_commit_callbacks)

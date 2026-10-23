@@ -149,7 +149,8 @@ def resolve_pin(request: HttpRequest, payload: TurnIn, agent):
             # turns route by declaration as before.
             raise HttpError(
                 403,
-                f"runner {pinned.name} does not declare the repo {payload.project!r}; "
+                f"runner {pinned.name} does not declare the repo {payload.project!r}, or its "
+                "owner has not opted it into canopy (Settings → Canopy projects); "
                 "pin a runner that does, or dispatch without a runner",
             )
         if agent is not None:

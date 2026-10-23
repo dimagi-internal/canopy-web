@@ -115,7 +115,7 @@ def cannot_serve(runner: Runner, slug: str) -> str:
         return said
     caps = runner.capabilities or {}
     if (runner.kind == Runner.EMDASH and runner.engine == Runner.ENGINE_EMDASH
-            and "projects" in caps and slug not in runner.project_names()):
+            and "projects" in caps and slug not in runner.observed_projects()):
         return f"{runner.name} has no emdash project '{slug}'"
     if slug in (caps.get(UNPREPARED) or []):
         return f"{runner.name} could not set '{slug}' up (no clone of it on the box)"
@@ -399,7 +399,7 @@ def inherited_orders(agent_ids) -> dict:
         for r in orders[source]:
             if r.directed_only():
                 inh.directed.append(r)
-            elif r.kind == Runner.EMDASH and agent.slug not in r.project_names():
+            elif r.kind == Runner.EMDASH and agent.slug not in r.observed_projects():
                 inh.missing_repo.append(r)
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)

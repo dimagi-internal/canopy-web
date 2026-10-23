@@ -10263,6 +10263,35 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/canopy-projects/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get the repos canopy works in for you
+         * @description Whether canopy works in every repo on your boxes, or only the ones you
+         *     named. A repo outside it is plain Claude Code: canopy routes no repo turn
+         *     to it, mirrors no session or transcript from it, and reads no usage from it.
+         *     An agent's own repo is always canopy's. Unset: nothing.
+         */
+        readonly get: operations["get_project_opt_in"];
+        /**
+         * Set the repos canopy works in for you
+         * @description Replace your choice: `everything`, or exactly `projects`. Takes effect on
+         *     every runner you own at once. Sessions already mirrored from a repo you
+         *     remove stay in canopy, but nothing more of them is sent.
+         */
+        readonly put: operations["set_project_opt_in"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/failure-investigations/": {
         readonly parameters: {
             readonly query?: never;
@@ -30065,6 +30094,43 @@ export interface components {
             readonly summary: string;
         };
         /**
+         * ProjectOptInOut
+         * @description Response for GET/PUT /api/me/canopy-projects/.
+         */
+        readonly ProjectOptInOut: {
+            /**
+             * Everything
+             * @description Canopy works in every repo on your boxes.
+             */
+            readonly everything: boolean;
+            /**
+             * Projects
+             * @description The repos canopy works in when `everything` is false. Every other repo is plain Claude Code: nothing from it is routed, mirrored or read.
+             */
+            readonly projects: readonly string[];
+            /**
+             * Available
+             * @description Repos your own runners report holding, plus any you named — what to choose from.
+             */
+            readonly available: readonly string[];
+        };
+        /**
+         * ProjectOptInIn
+         * @description Request body for PUT /api/me/canopy-projects/.
+         */
+        readonly ProjectOptInIn: {
+            /**
+             * Everything
+             * @default false
+             */
+            readonly everything: boolean;
+            /**
+             * Projects
+             * @default []
+             */
+            readonly projects: readonly string[];
+        };
+        /**
          * FailureInvestigationOut
          * @description One kind of turn failure and what the debugger agent did about it.
          */
@@ -47247,6 +47313,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDrillOut"];
+                };
+            };
+        };
+    };
+    readonly get_project_opt_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectOptInOut"];
+                };
+            };
+        };
+    };
+    readonly set_project_opt_in: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectOptInIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectOptInOut"];
                 };
             };
         };

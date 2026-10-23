@@ -352,13 +352,36 @@ class Runner(models.Model):
         unit = (self.capabilities or {}).get("unit")
         return unit if isinstance(unit, dict) else {}
 
+    def observed_projects(self) -> list[str]:
+        """Every repo this box reports it holds (emdash's projects table, a cloud
+        box's configured list), whether or not its owner uses canopy there. Only
+        an AGENT's repo is checked against this: an agent is canopy by definition.
+        Empties are stripped: a session turn has project="", so a stray "" here
+        would let a non-session runner match it via `project__in`."""
+        return [p for p in (self.capabilities or {}).get("projects", []) if p]
+
+    #: Where `project_names` caches the owner's opt-in (`ProjectOptIn`) on this
+    #: instance: routing asks the same runner many times per claim.
+    OPT_IN_CACHE = "_project_opt_in"
+
     def project_names(self) -> list[str]:
-        """The repos this runner declares it can drive. Like `agents`, this is a
-        self-declared ROUTING hint, not a security boundary — the workspace is the
-        gate, and the two intersect (b4f5ead). Empties are stripped: a session turn
-        has project="", so a stray "" here would let a non-session runner match it
-        via `project__in`."""
-        return [p for p in self.capabilities.get("projects", []) if p]
+        """The repos this runner may drive for canopy: what it holds AND its owner
+        opted into (`ProjectOptIn`, docs/architecture/runners.md § Opted-in
+        projects). A repo outside the opt-in is not canopy's — no repo turn routes
+        to it, no session or transcript is mirrored from it, no usage is read from
+        it. A runner with no owner opts into nothing (fails closed). Like `agents`
+        this is a routing fact, not a security boundary — the workspace is the
+        gate, and the two intersect."""
+        return [p for p in self.observed_projects() if self.opts_in(p)]
+
+    def opts_in(self, project: str) -> bool:
+        """Whether this runner's owner uses canopy in `project` (`ProjectOptIn`),
+        held or not — the question for a session the box reports."""
+        opt_in = getattr(self, self.OPT_IN_CACHE, None)
+        if opt_in is None:
+            opt_in = ProjectOptIn.for_user_id(self.owner_id)
+            setattr(self, self.OPT_IN_CACHE, opt_in)
+        return opt_in.covers(project)
 
     def refresh_pending(self) -> bool:
         """Asked to refresh, and has not bootstrapped since."""
@@ -1921,6 +1944,46 @@ class RunnerAppPreference(models.Model):
             return cls.SUPERVISOR
         row = cls.objects.filter(user=user).first()
         return row.opens_on if row and row.opens_on in cls.PAGES else cls.SUPERVISOR
+
+
+class ProjectOptIn(models.Model):
+    """Which of a person's repos canopy works in — part of their account, never
+    local config on a box.
+
+    A person may use canopy for everything (`everything`), or only for the repos
+    they name (`projects`); every other repo on their boxes is plain Claude Code
+    and canopy leaves it alone. No row opts into NOTHING: canopy is opt-in.
+    Enforced at one place, `Runner.project_names`, which every repo-routing,
+    session-mirroring and usage read goes through. An agent's own repo is outside
+    this choice — an agent is canopy by definition.
+    """
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                                related_name="project_opt_in")
+    everything = models.BooleanField(default=False)
+    projects = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "project_opt_ins"
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"project-opt-in:{self.user_id}:{'all' if self.everything else len(self.projects)}"
+
+    def covers(self, project: str) -> bool:
+        """`everything` covers even a task emdash could not place in a repo; a
+        chosen list covers only the repos it names."""
+        return self.everything or (bool(project) and project in (self.projects or []))
+
+    @classmethod
+    def for_user_id(cls, user_id) -> ProjectOptIn:
+        """The person's opt-in; unsaved and empty (nothing) when they have none."""
+        row = cls.objects.filter(user_id=user_id).first() if user_id else None
+        return row if row is not None else cls(user_id=user_id, everything=False, projects=[])
+
+    @staticmethod
+    def clean_names(names) -> list[str]:
+        return sorted({str(n).strip() for n in (names or []) if str(n).strip()})
 
 
 #: How long a pairing invitation stays open: long enough for `up.sh` to bring a

@@ -265,6 +265,7 @@ from apps.harness.api_device_key_requests import router as device_key_requests_r
 from apps.harness.api_device_keys import router as device_keys_router  # noqa: E402
 from apps.harness.api_investigations import router as investigations_router  # noqa: E402
 from apps.harness.api_local import local_turns_router, private_runners_router  # noqa: E402
+from apps.harness.api_project_opt_in import router as project_opt_in_router  # noqa: E402
 from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
 from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
 from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
@@ -389,6 +390,7 @@ api.add_router("/private-runners", private_runners_router)
 api.add_router("", workspace_vaults_router)  # workspace vaults: /workspaces/{slug}/vaults, /vaults/{id}
 api.add_router("/harness", vault_keeper_router)  # the keeper's calls, under the runner's own path
 api.add_router("/harness", harness_router)
+api.add_router("/me/canopy-projects", project_opt_in_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).
 api.add_router("/harness/failure-investigations", investigations_router)
 # Canopy Vault: hardware-bound runner keys behind the DPoP device proof (#1538).

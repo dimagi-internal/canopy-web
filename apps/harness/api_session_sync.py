@@ -204,6 +204,15 @@ def report_sessions(request: HttpRequest, runner_id: uuid.UUID, payload: ReportS
     return SessionReportOut(count=count, skipped=len(skipped))
 
 
+def _is_canopys(runner, binding) -> bool:
+    """Whether this box may ship this session's transcript: an agent's session, one
+    canopy itself started with no repo, or one in a repo the box's owner opted into
+    (`Runner.opts_in`). A session mirrored before its repo left the opt-in stays,
+    but nothing more of it ships."""
+    project = binding.session.emdash_project
+    return bool(binding.session.agent_id) or not project or runner.opts_in(project)
+
+
 @router.get("/runners/{runner_id}/streams", response=StreamSyncOut)
 @gate("runner")
 def list_streams(request: HttpRequest, runner_id: uuid.UUID):
@@ -291,7 +300,7 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
          # a runner reading a different transcript must discard them rather than
          # resume against them (issue #615).
          "transcript_id": b.transcript_id}
-        for b in bindings
+        for b in bindings if _is_canopys(runner, b)
     ]}
 
 
@@ -328,7 +337,7 @@ def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     return {"backfills": [
         {"session_id": str(b.session_id), "session_key": b.session_key,
          "project": b.session.emdash_project}
-        for b in bindings
+        for b in bindings if _is_canopys(runner, b)
     ]}
 
 

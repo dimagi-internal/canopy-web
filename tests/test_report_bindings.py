@@ -31,7 +31,7 @@ def _user():
 def test_report_creates_session_and_binding():
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
-    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL)
+    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL, owner=jj)
     n = replace_reported_sessions(runner, ws, [_reported("feat-x", [{"role": "assistant", "text": "hi"}])])
     assert n == 1
     b = RunnerBinding.objects.get(runner=runner, session_key="feat-x")
@@ -42,7 +42,7 @@ def test_report_creates_session_and_binding():
 def test_report_is_idempotent_and_updates_tail():
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
-    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL)
+    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL, owner=jj)
     replace_reported_sessions(runner, ws, [_reported("feat-x", [{"role": "user", "text": "a"}])])
     replace_reported_sessions(runner, ws, [_reported("feat-x", [{"role": "assistant", "text": "b"}])])
     assert Session.objects.filter(runner_binding__session_key="feat-x").count() == 1
@@ -56,7 +56,7 @@ def test_dropped_session_keeps_both_its_session_and_its_runner():
     going stale, not the FK going null."""
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
-    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL)
+    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL, owner=jj)
     replace_reported_sessions(runner, ws, [_reported("feat-x", [])])
     seen_when_live = RunnerBinding.objects.get(session_key="feat-x").live_seen_at
 
@@ -75,7 +75,7 @@ def test_a_dropped_session_reappearing_revives_the_same_row():
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
     runner = Runner.objects.create(
-        name="laptop", workspace=ws, location=Runner.LOCAL, host="jj@air"
+        name="laptop", workspace=ws, location=Runner.LOCAL, host="jj@air", owner=jj
     )
     replace_reported_sessions(runner, ws, [_reported("feat-x", [])])
     original = RunnerBinding.objects.get(session_key="feat-x")
@@ -95,8 +95,8 @@ def test_recovery_of_a_released_binding_is_host_scoped():
     row — it gets its own session."""
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
-    air = Runner.objects.create(name="air", workspace=ws, location=Runner.LOCAL, host="jj@air")
-    mini = Runner.objects.create(name="mini", workspace=ws, location=Runner.LOCAL, host="jj@mini")
+    air = Runner.objects.create(name="air", workspace=ws, location=Runner.LOCAL, owner=jj, host="jj@air")
+    mini = Runner.objects.create(name="mini", workspace=ws, location=Runner.LOCAL, owner=jj, host="jj@mini")
 
     replace_reported_sessions(air, ws, [_reported("feat-x", [])])
     replace_reported_sessions(air, ws, [])  # air releases it
@@ -115,8 +115,8 @@ def test_recovery_does_not_fuse_two_runners_with_blank_host():
     non-blank host, so a blank host never matches. Runner B gets its OWN session."""
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
-    a = Runner.objects.create(name="a", workspace=ws, location=Runner.LOCAL, host="")
-    b = Runner.objects.create(name="b", workspace=ws, location=Runner.LOCAL, host="")
+    a = Runner.objects.create(name="a", workspace=ws, location=Runner.LOCAL, owner=jj, host="")
+    b = Runner.objects.create(name="b", workspace=ws, location=Runner.LOCAL, owner=jj, host="")
 
     replace_reported_sessions(a, ws, [_reported("feat-x", [])])
     binding_a = RunnerBinding.objects.get(runner=a, session_key="feat-x")
@@ -171,7 +171,7 @@ def _ws_runner():
     jj = _user()
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
     runner = Runner.objects.create(
-        name="laptop", workspace=ws, location=Runner.LOCAL, host="jj@air"
+        name="laptop", workspace=ws, location=Runner.LOCAL, host="jj@air", owner=jj
     )
     return ws, runner
 

@@ -91,6 +91,9 @@ def record(runner, sessions: list[dict], *, full: bool = False) -> dict:
     """Store a box's report: each session's days replace what was held for it.
     `full` (a requested rescan, on its last chunk) settles the ask."""
     stored = matched = 0
+    # The box scans only `scope`, but the server holds the line too: a session
+    # canopy has no record of, in a repo its owner has not opted into, is not kept.
+    allowed = set(scope(runner))
     with transaction.atomic():
         for s in sessions:
             cs = str(s.get("claude_session") or "")[:64]
@@ -98,6 +101,9 @@ def record(runner, sessions: list[dict], *, full: bool = False) -> dict:
             if not cs or not days:
                 continue
             session, turn = _match(cs)
+            repo = str(s.get("repo") or "")
+            if session is None and turn is None and repo not in allowed and not runner.opts_in(repo):
+                continue
             who = _attribution(runner, str(s.get("repo") or "")[:100], session, turn)
             # A session's first prompt is its title here; a sensitive one's is the
             # host's data (spec 2026-10-22-phi-agents-on-zdr-runners §4).

@@ -535,14 +535,17 @@ def session_home(runner, project: str, fallback=None):
     else `fallback` (the runner's workspace). The one rule, for the report sweep and
     a missing session sent up from Health (`events.usage.send_up`).
 
-    None when the project names an agent outside the runner's tenant: such a
-    session is not filed at all (callers skip it)."""
+    None when the project names an agent outside the runner's tenant, or is a
+    repo the runner's owner has not opted into (`Runner.opts_in`): such a
+    session is not canopy's and is not filed at all (callers skip it)."""
     owner = _agent_for_project(project, runner)
     if owner is FOREIGN_AGENT:
         return None
     if owner is not None:
         # A session targets an agent XOR a project (chat_session_not_agent_and_project).
         return owner, "", owner.workspace
+    if not runner.opts_in(project):
+        return None  # plain Claude Code: the owner did not opt this repo into canopy
     from apps.canopy_sessions.filing import filing_workspace
 
     return None, project, filing_workspace(runner, fallback if fallback is not None else runner.workspace,
@@ -710,14 +713,16 @@ def replace_reported_sessions(
                 # workspace cannot answer.
                 filed = session_home(runner, project, workspace)
                 if filed is None:
-                    # Another tree's agent's work: filed nowhere, and said once.
+                    # Another tree's agent's work, or a repo the owner did not opt
+                    # into: filed nowhere, and said once.
                     if skipped is not None:
                         skipped.append(s.emdash_task)
                     if project not in foreign_logged:
                         foreign_logged.add(project)
-                        logger.warning(
-                            "runner %s reported a session for agent %r outside its tenant; "
-                            "not filed", runner.name, project)
+                        logger.info(
+                            "runner %s reported a session in %r, which is not canopy's "
+                            "(another tenant's agent, or not opted in); not filed",
+                            runner.name, project)
                     continue
                 owner, filed_project, home = filed
                 session = Session.objects.create(

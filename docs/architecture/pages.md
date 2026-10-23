@@ -505,7 +505,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   edits reuse the agent rail's `ScheduleEditor`.
 - **`/settings`** — your account: runners you administer (each linking to
   `/supervisor?tab=runners&runner=<id>`, where a box's Claude login and admins
-  live), Runner app (the page the Canopy Runner desktop window opens on —
+  live), Canopy projects (every repo, or only the ones you tick — the rest stay plain
+  Claude Code, `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens on —
   Supervisor or IDE, also settable from the app's right-click menu → Opens on; it loads `/runner-app/`, a bare view that redirects to the
   choice, `RunnerAppPreference`), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
   plus the MCP address and `claude mcp add` line), personal access tokens, and
