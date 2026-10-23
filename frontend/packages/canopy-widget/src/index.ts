@@ -152,6 +152,14 @@ export interface CanopyWidgetOptions {
   /** How the panel starts: `'normal'` (default) or `'expanded'`. A visitor's
    *  own remembered choice on this site wins over it. */
   initialDisplay?: 'normal' | 'expanded'
+  /** Whether a `docked` rail offers the visitor a control to snap it into the
+   *  page — the page reflows beside it instead of being covered (default true;
+   *  docked only). The visitor's choice is remembered per site. */
+  snappable?: boolean
+  /** What a snapped rail pads to make room: a selector or element. Defaults to
+   *  the root element, which suits a page that scrolls normally; a page whose
+   *  layout is fixed-position names its scrolling container. */
+  snapTarget?: string | Element
   /** Called when the visitor resizes the panel by its corner (overlay) or its
    *  left edge (docked), and once at load when a remembered size is restored.
    *  A docked rail is drawn OVER the page, so a host that set aside a column
@@ -182,6 +190,11 @@ export interface CanopyWidget {
   expand(): void
   collapse(): void
   isExpanded(): boolean
+  /** Snap a docked rail into the page, or float it back over it. No-ops
+   *  outside docked or when `snappable` is false; not remembered. */
+  snap(): void
+  unsnap(): void
+  isSnapped(): boolean
   /** What the agent may read off this page. Pulled when a session opens, not
    *  subscribed to — see `canopy-client/bridge` for why. */
   provideContext(provider: ContextProvider): void
@@ -268,8 +281,10 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     expandable: options.expandable ?? true,
     initialExpanded: options.initialDisplay === 'expanded',
     // Before `ready` there is nobody to tell; `init` carries the state.
-    onDisplay: (expanded) => {
-      if (frameReady) post({ source: SOURCE, type: 'display', expanded })
+    snappable: options.snappable ?? true,
+    snapTarget: options.snapTarget,
+    onDisplay: (expanded, snapped) => {
+      if (frameReady) post({ source: SOURCE, type: 'display', expanded, snapped })
     },
     onToggle: (open) => post({ source: SOURCE, type: 'visibility', open }),
     onResize: (size) => options.onResize?.(size),
@@ -364,6 +379,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
             theme,
             expandable: (options.expandable ?? true) && mode !== 'inline',
             expanded: chrome.isExpanded(),
+            snappable: (options.snappable ?? true) && mode === 'docked',
+            snapped: chrome.isSnapped(),
           })
           // After init, never inside it: `init` carries the token and is the
           // one message whose shape the frame validates strictly. The view is
@@ -451,6 +468,11 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
         chrome.setExpanded(message.expanded === true, true)
         return
       }
+      case 'snap': {
+        // Likewise the visitor's own control, so remembered.
+        chrome.setSnapped(message.snapped === true, true)
+        return
+      }
     }
   }
 
@@ -469,6 +491,9 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     expand: () => chrome.setExpanded(true),
     collapse: () => chrome.setExpanded(false),
     isExpanded: () => chrome.isExpanded(),
+    snap: () => chrome.setSnapped(true),
+    unsnap: () => chrome.setSnapped(false),
+    isSnapped: () => chrome.isSnapped(),
     setLauncherVisible: (visible: boolean) => chrome.setLauncherVisible(visible),
     ask(text: string) {
       const question = String(text ?? '').trim().slice(0, MAX_ASK_CHARS)

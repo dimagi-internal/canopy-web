@@ -791,22 +791,43 @@ describe('resizing the panel by its corner', () => {
     expect(panel.style.height).toBe(chosen)
   })
 
-  it('a docked rail resizes by width only, and tells the host', () => {
+  it('a docked rail resizes by its corner too, sitting on the window\'s bottom', () => {
     const storage = memoryStorage()
     const onResize = vi.fn()
     const { root } = widgetHarness({ mode: 'docked', app: 'canopy-web', storage, width: 400, open: true, onResize })
     const panel = root.querySelector('.panel') as HTMLElement
 
-    resize(root.querySelector('.resize')!, [600, 300], [450, 100])
+    resize(root.querySelector('.resize')!, [600, 0], [450, 100])
 
     expect(panel.style.width).toBe('550px')
-    // The rail's height stays the window's (100vh in CSS), never pinned inline.
-    expect(panel.style.height).toBe('')
-    expect(onResize).toHaveBeenLastCalledWith({ width: 550, height: window.innerHeight })
-    expect(JSON.parse(storage.data['canopy.widget.size.canopy-web']).width).toBe(550)
+    // Starts full height (the window's), so dragging the corner down 100px
+    // drops its top by that much; its bottom stays on the window's edge.
+    expect(panel.style.height).toBe(`${window.innerHeight - 100}px`)
+    expect(panel.style.top).toBe('auto')
+    expect(panel.dataset.short).toBe('true')
+    expect(onResize).toHaveBeenLastCalledWith({ width: 550, height: window.innerHeight - 100 })
+    expect(JSON.parse(storage.data['canopy.widget.size.canopy-web'])).toEqual({
+      width: 550,
+      height: window.innerHeight - 100,
+    })
   })
 
-  it('restores a docked width and reports it, so the host can lay out for it', () => {
+  it('a docked rail dragged back to the top is a full-height rail again', () => {
+    const { root } = widgetHarness({ mode: 'docked', width: 400, open: true })
+    const panel = root.querySelector('.panel') as HTMLElement
+    const grip = root.querySelector('.resize')!
+
+    resize(grip, [600, 0], [600, 200])
+    expect(panel.dataset.short).toBe('true')
+    resize(grip, [600, 200], [600, -50])
+
+    // No inline height: the CSS rail (100vh), so it follows the window.
+    expect(panel.style.height).toBe('')
+    expect(panel.style.top).toBe('')
+    expect(panel.dataset.short).toBe('false')
+  })
+
+  it('restores a docked size and reports it, so the host can lay out for it', () => {
     const storage = memoryStorage({
       'canopy.widget.size.canopy-web': JSON.stringify({ width: 520, height: 480 }),
     })
@@ -814,13 +835,95 @@ describe('resizing the panel by its corner', () => {
     const { root } = widgetHarness({ mode: 'docked', app: 'canopy-web', storage, onResize })
     const panel = root.querySelector('.panel') as HTMLElement
     expect(panel.style.width).toBe('520px')
-    expect(panel.style.height).toBe('')
-    expect(onResize).toHaveBeenCalledWith({ width: 520, height: window.innerHeight })
+    expect(panel.style.height).toBe('480px')
+    expect(onResize).toHaveBeenCalledWith({ width: 520, height: 480 })
   })
 
   it('an inline panel has no grip — the host sizes it', () => {
     document.body.innerHTML = '<div id="slot"></div>'
     expect(widgetHarness({ mode: 'inline', target: '#slot' }).root.querySelector('.resize')).toBeNull()
+  })
+})
+
+describe('snapping a docked rail into the page', () => {
+  afterEach(() => {
+    document.documentElement.style.paddingRight = ''
+  })
+
+  it('reserves the rail\'s width on the page while open, and gives it back on close', async () => {
+    const storage = memoryStorage()
+    const { widget, fromFrame, sent } = widgetHarness({ mode: 'docked', width: 560, open: true, storage })
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    expect(sent('init')[0].message).toMatchObject({ snappable: true, snapped: false })
+    document.documentElement.style.paddingRight = '3px' // the page's own value
+
+    await fromFrame({ source: SOURCE, type: 'snap', snapped: true })
+
+    expect(document.documentElement.style.paddingRight).toBe('560px')
+    expect(sent('display').at(-1)!.message).toMatchObject({ snapped: true })
+    expect(storage.data['canopy.widget.snap.connect-labs']).toBe('snapped')
+
+    widget.close()
+    expect(document.documentElement.style.paddingRight).toBe('3px')
+    widget.open()
+    expect(document.documentElement.style.paddingRight).toBe('560px')
+  })
+
+  it('follows the rail\'s width as it is dragged', async () => {
+    const { root, fromFrame } = widgetHarness({ mode: 'docked', width: 400, open: true })
+    await fromFrame({ source: SOURCE, type: 'snap', snapped: true })
+    const grip = root.querySelector('.resize')!
+    const at = (type: string, x: number) => {
+      const e = new Event(type) as Event & { clientX: number; clientY: number; pointerId: number }
+      e.clientX = x
+      e.clientY = 300
+      e.pointerId = 1
+      grip.dispatchEvent(e)
+    }
+    at('pointerdown', 600)
+    at('pointermove', 450)
+    at('pointerup', 450)
+    expect(document.documentElement.style.paddingRight).toBe('550px')
+  })
+
+  it('lets go while expanded, and takes the room back on collapse', async () => {
+    const { widget, fromFrame } = widgetHarness({ mode: 'docked', width: 500, open: true })
+    await fromFrame({ source: SOURCE, type: 'snap', snapped: true })
+    widget.expand()
+    expect(document.documentElement.style.paddingRight).toBe('')
+    widget.collapse()
+    expect(document.documentElement.style.paddingRight).toBe('500px')
+  })
+
+  it('pads the element the host names, and restores it on destroy', () => {
+    document.body.innerHTML = '<div id="scroller"></div>'
+    const scroller = document.getElementById('scroller')!
+    const { widget } = widgetHarness({ mode: 'docked', width: 480, open: true, snapTarget: '#scroller' })
+    widget.snap()
+    expect(scroller.style.paddingRight).toBe('480px')
+    expect(document.documentElement.style.paddingRight).toBe('')
+    widget.destroy()
+    expect(scroller.style.paddingRight).toBe('')
+  })
+
+  it('restores a remembered snap', () => {
+    const storage = memoryStorage({ 'canopy.widget.snap.connect-labs': 'snapped' })
+    const { widget } = widgetHarness({ mode: 'docked', width: 520, open: true, storage })
+    expect(widget.isSnapped()).toBe(true)
+    expect(document.documentElement.style.paddingRight).toBe('520px')
+  })
+
+  it('is docked only, and off when the host says so', async () => {
+    const overlay = widgetHarness({ open: true })
+    overlay.widget.snap()
+    expect(overlay.widget.isSnapped()).toBe(false)
+    await overlay.fromFrame({ source: SOURCE, type: 'ready' })
+    expect(overlay.sent('init')[0].message.snappable).toBe(false)
+
+    const off = widgetHarness({ mode: 'docked', snappable: false, open: true })
+    off.widget.snap()
+    expect(off.widget.isSnapped()).toBe(false)
+    expect(document.documentElement.style.paddingRight).toBe('')
   })
 })
 

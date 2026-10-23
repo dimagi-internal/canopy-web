@@ -27,9 +27,16 @@
  *
  * Overlay and docked panels can also be RESIZED. An overlay panel by its
  * top-left corner — the one away from the bubble, so it grows up and to the
- * left and stays attached to it; a docked rail by its left edge, in width only
- * (it is always full height). The size is remembered per site like a position;
+ * left and stays attached to it; a docked rail by the same corner, pinned to
+ * the window's bottom-right — drag the corner back to the top and it is full
+ * height again. The size is remembered per site like a position;
  * expanding overrides it without forgetting it.
+ *
+ * A docked rail can also be SNAPPED into the page: instead of being drawn over
+ * the page's right edge, it reserves its width there (padding on the host's
+ * `snapTarget`, the root element unless the host names another), so the page
+ * reflows beside it. It follows the rail's width as the visitor drags it, and
+ * lets go whenever the rail is closed or expanded. Remembered per site.
  */
 
 import {
@@ -72,8 +79,14 @@ export interface ChromeOptions {
   expandable: boolean
   /** Start expanded unless the visitor's remembered choice says otherwise. */
   initialExpanded: boolean
-  /** Called whenever the panel expands or collapses. */
-  onDisplay: (expanded: boolean) => void
+  /** Whether a docked rail may be snapped into the page (docked only). */
+  snappable: boolean
+  /** What a snapped rail pads to make room: a selector or element, default
+   *  the root element. A page whose layout is fixed-position names its
+   *  scrolling container here. */
+  snapTarget?: string | Element
+  /** Called whenever the panel expands, collapses, snaps or floats. */
+  onDisplay: (expanded: boolean, snapped: boolean) => void
   /** Called when the visitor resizes the panel (and when a remembered size is
    *  restored), so a host that laid out around a docked rail can follow it. */
   onResize: (size: { width: number; height: number }) => void
@@ -99,6 +112,10 @@ export interface Chrome {
    *  records it as the visitor's choice for this site. Expanding opens. */
   setExpanded(expanded: boolean, remember?: boolean): void
   isExpanded(): boolean
+  /** Snap a docked rail into the page, or float it over (a no-op otherwise).
+   *  `remember` records it as the visitor's choice for this site. */
+  setSnapped(snapped: boolean, remember?: boolean): void
+  isSnapped(): boolean
   /** Re-dress the launcher and the panel frame. The panel's CONTENTS are
    *  canopy's document and are re-themed over the handshake, not here. */
   setTheme(theme: SafeTheme): void
@@ -145,6 +162,8 @@ const STYLES = `
     right: 0; top: 0; bottom: 0; width: var(--w);
     height: 100vh; border-radius: 0; border-width: 0 0 0 1px;
   }
+  /* Snapped into the page it is part of the layout, not floating over it. */
+  .panel[data-snapped="true"] { box-shadow: none; }
   .panel[data-mode="inline"] {
     position: static; right: auto; bottom: auto;
     width: 100%; height: 100%; border-radius: 0; border-width: 0;
@@ -177,12 +196,10 @@ const STYLES = `
     border-top-left-radius: 3px;
     opacity: .7; transition: opacity .12s ease;
   }
-  .panel[data-mode="docked"] .resize {
-    bottom: 0; width: 8px; height: auto; cursor: ew-resize;
-  }
-  .panel[data-mode="docked"] .resize::before {
-    top: 50%; left: 2px; width: 4px; height: 40px; margin-top: -20px;
-    border: 0; border-radius: 2px; background: currentColor;
+  /* A rail made shorter than the window gets a top edge and corner, so it
+     reads as a panel rather than a rail cut off. */
+  .panel[data-mode="docked"][data-short="true"] {
+    border-width: 1px 0 0 1px; border-top-left-radius: var(--canopy-radius, 12px);
   }
   .resize:hover::before, .panel[data-resizing="true"] .resize::before { opacity: 1; }
   .panel[data-theme="light"] .resize { color: rgba(0,0,0,.45); }
@@ -276,6 +293,11 @@ function resolveTarget(target: string | Element | undefined): Element {
   return el
 }
 
+/** Per app, like the expanded choice. */
+export function snapKeyFor(app: string): string {
+  return `canopy.widget.snap.${app}`
+}
+
 /** Per app, like a dragged position. */
 export function displayKeyFor(app: string): string {
   return `canopy.widget.display.${app}`
@@ -354,6 +376,42 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   // The visitor's remembered choice beats the host's default.
   paintExpanded(expandable && (readExpanded(options.storage, displayKey) ?? options.initialExpanded))
 
+  // --- snapping -------------------------------------------------------------
+  const snappable = options.snappable && options.mode === 'docked'
+  const snapKey = snapKeyFor(options.app)
+  let snapped = false
+  try {
+    snapped = snappable && options.storage?.getItem(snapKey) === 'snapped'
+  } catch {
+    // A lost choice is a floating rail, which is where it starts anyway.
+  }
+  panel.dataset.snapped = String(snapped)
+  /** The element whose padding holds the rail's space, and its own padding
+   *  before we touched it — put back exactly when the rail lets go. */
+  let reserved: { el: HTMLElement; before: string } | null = null
+  function snapTargetEl(): HTMLElement {
+    const t = options.snapTarget
+    const el = typeof t === 'string' ? document.querySelector(t) : t
+    return (el as HTMLElement | null | undefined) ?? document.documentElement
+  }
+  /** Make the page's room match what is on screen now. Read from the panel's
+   *  state rather than told, so every path that changes it calls one thing. */
+  function syncReserve(): void {
+    const holds = snapped && panel.dataset.open === 'true' && !expanded
+    panel.dataset.snapped = String(holds)
+    if (!holds) {
+      if (reserved) reserved.el.style.paddingRight = reserved.before
+      reserved = null
+      return
+    }
+    if (!reserved) {
+      const el = snapTargetEl()
+      reserved = { el, before: el.style.paddingRight }
+    }
+    const width = panel.offsetWidth || parseFloat(panel.style.width) || options.width
+    reserved.el.style.paddingRight = `${width}px`
+  }
+
   // Esc collapses — here for focus on the host page; the frame has its own
   // listener for focus inside it, since keys typed there never reach us.
   const onKeydown = (event: KeyboardEvent) => {
@@ -390,11 +448,24 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   const sizeKey = sizeKeyFor(options.app)
   const docked = options.mode === 'docked'
   let sizedByVisitor = false
-  /** A docked rail takes only the width: its height is the window's. */
+  /** A docked rail sits on the window's bottom edge: shorter than the window
+   *  it drops its top (`top: auto`), and at the window's height it goes back
+   *  to the CSS rail, so it stays full height as the window changes. */
   function applySize(size: Size): void {
     panel.style.width = `${size.width}px`
-    if (!docked) panel.style.height = `${size.height}px`
-    options.onResize({ width: size.width, height: docked ? window.innerHeight : size.height })
+    if (!docked) {
+      panel.style.height = `${size.height}px`
+    } else if (size.height >= window.innerHeight) {
+      panel.style.removeProperty('height')
+      panel.style.removeProperty('top')
+      panel.dataset.short = 'false'
+    } else {
+      panel.style.height = `${size.height}px`
+      panel.style.top = 'auto'
+      panel.dataset.short = 'true'
+    }
+    syncReserve()
+    options.onResize({ width: size.width, height: Math.min(size.height, docked ? window.innerHeight : size.height) })
   }
   /** The most an overlay panel may take, given where its bottom-right sits.
    *  Falls back to the window when there is no layout to measure (a closed
@@ -402,7 +473,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   function roomFor(rect: DOMRect | null): Size {
     const right = rect?.right || window.innerWidth - (docked ? 0 : 16)
     const bottom = rect?.bottom || window.innerHeight - (docked ? 0 : 84)
-    return { width: right - EDGE_MARGIN_PX, height: bottom - EDGE_MARGIN_PX }
+    // A rail may reach the top of the window: that is what full height is.
+    return { width: right - EDGE_MARGIN_PX, height: docked ? bottom : bottom - EDGE_MARGIN_PX }
   }
   if (!inline) {
     const saved = readSavedSize(options.storage, sizeKey)
@@ -415,7 +487,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     const grip = document.createElement('div')
     grip.className = 'resize'
     grip.setAttribute('part', 'resize')
-    grip.title = docked ? 'Drag to change the width' : 'Drag to resize'
+    grip.title = 'Drag to resize'
     panel.appendChild(grip)
 
     let from: Point | null = null
@@ -427,7 +499,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       anchor = panel.getBoundingClientRect()
       start = {
         width: anchor.width || panel.offsetWidth || options.width,
-        height: anchor.height || panel.offsetHeight || 500,
+        height: anchor.height || panel.offsetHeight || (docked ? window.innerHeight : 500),
       }
       panel.dataset.resizing = 'true'
       grip.setPointerCapture?.(event.pointerId)
@@ -436,7 +508,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       if (!from) return
       const size = resizePanel(
         start,
-        { x: event.clientX - from.x, y: docked ? 0 : event.clientY - from.y },
+        { x: event.clientX - from.x, y: event.clientY - from.y },
         roomFor(anchor),
       )
       applySize(size)
@@ -456,8 +528,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       if (panel.style.width) {
         writeSavedSize(options.storage, sizeKey, {
           width: parseFloat(panel.style.width),
-          // A rail's height is the window's; the number only satisfies the shape.
-          height: parseFloat(panel.style.height) || start.height,
+          // A full-height rail has no inline height: it is the window's.
+          height: parseFloat(panel.style.height) || window.innerHeight,
         })
       }
     }
@@ -612,6 +684,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       placePanel()
       launcher?.setAttribute('aria-expanded', 'true')
       if (dock && options.mode === 'docked') dock.dataset.covered = 'true'
+      syncReserve()
       options.onToggle(true)
     },
     close() {
@@ -621,6 +694,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       panel.dataset.open = 'false'
       launcher?.setAttribute('aria-expanded', 'false')
       if (dock) dock.dataset.covered = 'false'
+      syncReserve()
       options.onToggle(false)
     },
     toggle() {
@@ -654,13 +728,28 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       if (remember) writeExpanded(options.storage, displayKey, next)
       if (next && !api.isOpen()) api.open()
       if (next === expanded) {
-        options.onDisplay(expanded) // still answered, so the frame's button is right
+        options.onDisplay(expanded, snapped) // still answered, so the frame's button is right
         return
       }
       paintExpanded(next)
-      options.onDisplay(next)
+      syncReserve()
+      options.onDisplay(next, snapped)
     },
     isExpanded: () => expanded,
+    setSnapped(next: boolean, remember = false) {
+      if (!snappable) return
+      if (remember) {
+        try {
+          options.storage?.setItem(snapKey, next ? 'snapped' : 'floating')
+        } catch {
+          // Forgetting the choice must never break making it.
+        }
+      }
+      snapped = next
+      syncReserve()
+      options.onDisplay(expanded, snapped)
+    },
+    isSnapped: () => snapped,
     setTheme: applyTheme,
     setLauncherVisible(visible: boolean) {
       if (!dock) return // inline has no launcher
@@ -672,6 +761,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     },
     destroy() {
       document.removeEventListener('keydown', onKeydown)
+      if (reserved) reserved.el.style.paddingRight = reserved.before
+      reserved = null
       host.remove()
     },
   }

@@ -47,6 +47,10 @@ export interface HostInit {
   expandable?: boolean
   /** Whether it is expanded now. */
   expanded?: boolean
+  /** Whether the host lets this docked rail snap into its page. */
+  snappable?: boolean
+  /** Whether it is snapped now. */
+  snapped?: boolean
 }
 
 type Pending = { resolve: (v: never) => void; reject: (e: Error) => void }
@@ -93,6 +97,12 @@ export interface HostLink {
   /** Whether the panel is expanded, as the host last said. */
   isExpanded(): boolean
   onDisplayChanged(listener: (expanded: boolean) => void): () => void
+  /** Ask the host to snap the rail into its page (or float it back). Answered
+   *  with `display`, which is what `onSnapChanged` reports. */
+  requestSnap(snapped: boolean): void
+  /** Whether the rail is snapped, as the host last said. */
+  isSnapped(): boolean
+  onSnapChanged(listener: (snapped: boolean) => void): () => void
   /** Stop listening. The frame normally lives as long as its document, so
    *  nothing in the app calls this — but a link that cannot be torn down
    *  cannot be tested in isolation either, and an untestable listener is how
@@ -130,6 +140,8 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
   const themeListeners = new Set<(theme: unknown) => void>()
   const displayListeners = new Set<(expanded: boolean) => void>()
   let expanded = false
+  const snapListeners = new Set<(snapped: boolean) => void>()
+  let snapped = false
 
   /** The parent's origin, learned from the first accepted message. Until then
    *  there is nothing to reply to — every outbound message except `ready` is a
@@ -190,8 +202,11 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
           theme: data.theme,
           expandable: data.expandable === true,
           expanded: data.expanded === true,
+          snappable: data.snappable === true,
+          snapped: data.snapped === true,
         })
         expanded = data.expanded === true
+        snapped = data.snapped === true
         actionSpecs = Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : []
         return
       case 'token':
@@ -237,6 +252,11 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
       case 'display':
         expanded = data.expanded === true
         displayListeners.forEach((l) => l(expanded))
+        // Absent from an older loader's `display`: leave it as it was.
+        if (typeof data.snapped === 'boolean') {
+          snapped = data.snapped
+          snapListeners.forEach((l) => l(snapped))
+        }
         return
       case 'theme':
         themeListeners.forEach((l) => l(data.theme))
@@ -295,6 +315,12 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     onDisplayChanged(listener) {
       displayListeners.add(listener)
       return () => displayListeners.delete(listener)
+    },
+    requestSnap: (next) => send({ type: 'snap', snapped: next }),
+    isSnapped: () => snapped,
+    onSnapChanged(listener) {
+      snapListeners.add(listener)
+      return () => snapListeners.delete(listener)
     },
     dispose() {
       window.removeEventListener('message', onMessage)

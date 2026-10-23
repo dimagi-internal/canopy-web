@@ -148,6 +148,8 @@ describe('the handshake', () => {
       // An older loader says nothing about expanding: not expandable.
       expandable: false,
       expanded: false,
+      snappable: false,
+      snapped: false,
     })
   })
 
@@ -165,6 +167,24 @@ describe('the handshake', () => {
     await fromHost({ source: SOURCE, type: 'display', expanded: false })
     expect(link.isExpanded()).toBe(false)
     expect(seen).toEqual([false])
+  })
+
+  it('follows the host on whether the rail is snapped, and asks it to change', async () => {
+    const { link, fromHost, sent } = harness()
+    const seen: boolean[] = []
+    link.onSnapChanged((v) => seen.push(v))
+    await fromHost({ source: SOURCE, type: 'init', token: 'tok', actions: [],
+                     snappable: true, snapped: false })
+    await expect(link.waitForInit()).resolves.toMatchObject({ snappable: true, snapped: false })
+    link.requestSnap(true)
+    expect(sent('snap')[0]).toMatchObject({ message: { type: 'snap', snapped: true },
+                                            targetOrigin: HOST })
+    await fromHost({ source: SOURCE, type: 'display', expanded: false, snapped: true })
+    expect(link.isSnapped()).toBe(true)
+    // An older loader's `display` says nothing about snapping: unchanged.
+    await fromHost({ source: SOURCE, type: 'display', expanded: true })
+    expect(link.isSnapped()).toBe(true)
+    expect(seen).toEqual([true])
   })
 
   it('rejects when the host could not mint, so the UI can say why', async () => {

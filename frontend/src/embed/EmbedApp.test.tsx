@@ -39,6 +39,9 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     requestExpand: () => undefined,
     isExpanded: () => false,
     onDisplayChanged: () => () => undefined,
+    requestSnap: () => undefined,
+    isSnapped: () => false,
+    onSnapChanged: () => () => undefined,
     dispose: () => undefined,
     ...overrides,
   }
@@ -110,6 +113,53 @@ const created = () =>
       c.init?.method === 'POST' &&
       (/\/canopy-sessions\/$/.test(c.url) || /\/contact\/sessions$/.test(c.url)),
   )
+
+describe('snapping the rail into the page', () => {
+  it('offers snap only when the host allows it, and asks the host', async () => {
+    const requestSnap = vi.fn()
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [], snappable: true }),
+          requestSnap,
+        })}
+        app="canopy-web"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Snap into the page' }))
+    expect(requestSnap).toHaveBeenCalledWith(true)
+  })
+
+  it('offers to float it again once snapped', async () => {
+    const requestSnap = vi.fn()
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [], snappable: true, snapped: true }),
+          isSnapped: () => true,
+          requestSnap,
+        })}
+        app="canopy-web"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Float over the page' }))
+    expect(requestSnap).toHaveBeenCalledWith(false)
+  })
+
+  it('has no snap control while expanded, or for a host that did not allow it', async () => {
+    render(
+      <EmbedApp
+        link={fakeLink({
+          waitForInit: async () => ({ token: 't', agent: 'hal', actions: [], snappable: true, expandable: true }),
+          isExpanded: () => true,
+        })}
+        app="canopy-web"
+      />,
+    )
+    await screen.findByRole('button', { name: 'Collapse panel' })
+    expect(screen.queryByRole('button', { name: 'Snap into the page' })).toBeNull()
+  })
+})
 
 describe('expanding the panel', () => {
   it('offers expand only when the host allows it, and asks the host', async () => {

@@ -517,24 +517,34 @@ no launcher to reopen it with.
 **Other options:** `theme` (above); `agent: 'labs-helper'` skips the picker; `metadata: {…}`
 stamps opaque data on sessions the widget creates; `onInvalidate(resource)` is
 called when data your page shows has changed (§5a); `dismissible`, `storage`,
-`csrfCookieName`, `csrfToken` as above; `onResize` (below); plus `width`, `title`, `open: true`.
+`csrfCookieName`, `csrfToken` as above; `onResize`, `snappable`, `snapTarget` (below); plus `width`, `title`, `open: true`.
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `expand()`, `collapse()`, `isExpanded()`,
+`snap()`, `unsnap()`, `isSnapped()`,
 `setPageState()`, `registerAction()`, `unregisterAction()`, `setTheme()`,
 `setLauncherVisible()`, `ask()`, `destroy()`, and the older `provideContext()` (§5).
 
 ### A bigger panel for data work
 
-A visitor can resize the panel. In `overlay` they drag its top-left corner: it
-grows up and to the left, staying attached to the bubble. In `docked` they drag
-the rail's left edge (the handle mid-height) to change its width. Either way it
+A visitor can resize the panel by dragging its top-left corner. In `overlay` it
+grows up and to the left, staying attached to the bubble. In `docked` the rail
+stays on the window's bottom-right: the corner changes its width and height, and
+dragged back to the top it is a full-height rail again. Either way it
 stays between a usable minimum and the window's edge, is remembered per site in
 `storage`, and once set wins over the height the panel would pick for itself.
 
-A docked rail is drawn over your page, so if you set aside a column for it, pass
-`onResize` to follow its width (it is also called once at load with a
-remembered size):
+A docked rail is drawn over your page. Its header has a **snap** control (the
+pin) that snaps it into the page instead: the rail reserves its width as
+`padding-right` on the root element, so the page reflows beside it, follows the
+width as the visitor drags it, and gives the room back when the panel closes or
+expands. The visitor's choice is remembered per site. `snappable: false` removes
+the control; `snapTarget` (a selector or element) pads something other than the
+root — for a page that scrolls inside a fixed-height container; `snap()`,
+`unsnap()` and `isSnapped()` drive it from your page.
+
+If you would rather lay out around the rail yourself, pass `onResize` to follow
+its width (it is also called once at load with a remembered size):
 
 ```js
 canopy.init({ /* … */ mode: 'docked',
