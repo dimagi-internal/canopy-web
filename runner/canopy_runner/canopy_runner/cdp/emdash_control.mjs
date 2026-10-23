@@ -32,6 +32,7 @@
 import { chromium } from 'playwright-core';
 import { isSidebarLabel, pickInSection } from './sidebar_section.mjs';
 import { asTyped } from './typed_text.mjs';
+import { draftWithoutOurs, hasForeignLead, squash } from './composer_check.mjs';
 
 
 // WHICH terminal is "the" terminal. Injected as source into page.evaluate calls
@@ -532,7 +533,6 @@ try {
     // the whole text or a lone placeholder, never pressed it again: ACE's chat
     // follow-up sat unsent, twice (turn 50bfdf45, 2026-10-14, investigation 2).
     const PASTE_SETTLE_MS = 500;
-    const squash = (s) => (s || '').replace(/[\s│|]+/g, '');
     const PASTED = /^\[Pasted text #\d+[^\]]*\]$/;
     const PASTED_LEAD = /^(?:\[Pasted text #\d+[^\]]*\]\s*)+/;
     const stillOurs = (body, typed) => {
@@ -543,12 +543,55 @@ try {
       const tail = lead ? squash(typed.trim().slice(lead[0].length)) : '';
       return !!tail && squash(body).includes(tail);
     };
-    const submit = async (body) => {
+    // Take our message back off the END of the line, leaving the human's draft as
+    // they left it. Deletes only while the line still ends in our words, re-reading
+    // between batches, so it stops at their text rather than counting into it.
+    // False means it could not (a collapsed paste, or the line changed under us).
+    const takeBackOurs = async (body, typed) => {
+      const want = draftWithoutOurs(body, typed);
+      if (want === null) return false;
+      for (let round = 0; round < 10; round++) {
+        const cur = await readComposer();
+        if (!cur.found) return false;
+        const line = squash(cur.typed);
+        if (line === want) return true;
+        if (line.length < want.length || !line.startsWith(want)) return false;
+        await ensureFocus(task);
+        // Squashed length counts no spaces, so one batch never overshoots.
+        const extra = [...line.slice(want.length)].length;
+        for (let k = 0; k < extra; k++) await page.keyboard.press('Backspace');
+      }
+      return false;
+    };
+
+    // Returns null once sent, or {line, when, restored} when a human's text turned
+    // out to be in the composer after all — the caller hands that back as a
+    // `collision`, so the human is asked (the "Clear & send" dialog) and nothing
+    // of theirs is submitted. `guard` is off only for "Clear & send", where the
+    // human already chose to discard the line.
+    const submit = async (body, guard) => {
       await ensureFocus(task);
+      if (guard) {
+        // The first read can see an empty composer that is not (turn 64cada76,
+        // 2026-10-23: Jonathan's draft, missed). Look again at the last moment.
+        const now = await readComposer();
+        if (now.found && !isEmpty(now.typed)) return { line: now.typed, when: 'before-type' };
+      }
       // A lone "?", "!" or "/" is a key binding in an empty prompt, not text — see
       // typed_text.mjs. The recheck below squashes whitespace, so it still matches.
       await page.keyboard.insertText(asTyped(body));   // atomic commit, not char-by-char
       await page.waitForTimeout(PASTE_SETTLE_MS);
+      if (guard) {
+        // And once more after typing, BEFORE Enter: a draft both reads missed now
+        // sits in front of our message, and Enter would send the two as one line.
+        // See composer_check.mjs.
+        const typed = await readComposer();
+        if (typed.found && hasForeignLead(body, typed.typed)) {
+          const restored = await takeBackOurs(body, typed.typed);
+          const after = await readComposer();
+          return { line: after.found ? after.typed : typed.typed, when: 'after-type', restored };
+        }
+      }
       await page.keyboard.press('Enter');
       // Only ever called on a composer that was empty (or just cleared), so
       // anything typed in it now is this message — for a multi-line body matched by
@@ -561,6 +604,7 @@ try {
         await ensureFocus(task);
         await page.keyboard.press('Enter');
       }
+      return null;
     };
 
     if (clearFirst) {
@@ -580,14 +624,18 @@ try {
         await page.keyboard.press('End');
         for (let k = 0; k < n; k++) await page.keyboard.press('Backspace');
       }
-      await submit(text);
+      await submit(text, false);
       out({ ok: true, action: 'sent-cleared', task });
     } else if (!isEmpty(composer.typed)) {
       // Don't touch it — hand the collision back to the runner to ask the human.
       out({ ok: true, action: 'collision', task, line: composer.typed });
     } else {
-      await submit(text);
-      out({ ok: true, action: 'sent', task });
+      const late = await submit(text, true);
+      // `pre` is what the first read saw, so a late collision says WHICH read missed.
+      const pre = { found: composer.found, typed: composer.typed };
+      if (late) out({ ok: true, action: 'collision', task, line: late.line,
+                      when: late.when, restored: late.restored, pre });
+      else out({ ok: true, action: 'sent', task, pre });
     }
 
   } else if (command === 'interrupt') {
