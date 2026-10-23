@@ -134,6 +134,18 @@ def test_every_heartbeat_says_so(cloud_runner, monkeypatch):
     assert cloud_runner._heartbeat_body([])["profiles"] == 2
 
 
+def test_a_chat_turn_delivers_the_persons_question_not_the_entry(cr, monkeypatch):
+    """An entry without a thread (labsdata's `/labsdata:answer-data`) replaced a chat
+    question outright; the agent answered "Nothing was asked yet"."""
+    mod, calls = cr
+    monkeypatch.setattr(mod, "_chat_session_id", lambda turn: "5e55-1")
+    cap = {**CAP, "entry": "/labsdata:answer-data"}
+    mod._run_turn("r-1", _turn(prompt="why is %1st<3d 100%?", origin_ref={},
+                               caller_context={"profile": "confined", "capability": cap,
+                                               "conversation": {}}))
+    assert calls["exec"]["prompt"] == "why is %1st<3d 100%?"
+
+
 def test_no_host_credential_ever_rides_the_profile(tmp_path, monkeypatch):
     """A visitor's host credential never reaches a runner (host grant contract
     v1): canopy-web's gateway attaches it server-side. Even if a claim response

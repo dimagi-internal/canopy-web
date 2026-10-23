@@ -9456,15 +9456,16 @@ def _confined_prompt(turn: dict) -> str:
         return prompt
     tid = str(((turn.get("caller_context") or {}).get("conversation") or {}).get("thread_id")
               or (turn.get("origin_ref") or {}).get("thread_id") or "")
+    if _chat_session_id(turn) and not tid:
+        # A chat or Slack turn's prompt is the person's own question, delivered as
+        # they typed it — as the laptop runner does. Substituting the entry dropped
+        # the question (labsdata, 2026-10-23: "Nothing was asked yet") and showed
+        # the entry command as the person's line. The canopy plugin's prompt hook
+        # names the entry as the capability's procedure, so the agent still follows
+        # it; the profile confines the session either way.
+        return prompt
     if "{thread_id}" in entry and not tid:
-        # A thread-bound entry is how an EMAIL caller's session starts. A chat or
-        # Slack turn has no thread, and its prompt is the person's own question —
-        # which the laptop runner delivers as-is on that path. Refusing here
-        # broke every confined chat turn on this box; substituting an entry with
-        # no thread would silently drop the question. The profile confines the
-        # session either way. Anything that is not a chat turn still refuses.
-        if _chat_session_id(turn):
-            return prompt
+        # A thread-bound entry is how an EMAIL caller's session starts.
         raise ConfineError(f"capability '{cap.get('name')}' starts on a thread, and this turn has none")
     return entry.replace("{thread_id}", tid)
 
