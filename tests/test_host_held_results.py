@@ -3,8 +3,9 @@ facts plus a `resource_link` to an artifact the HOST keeps; canopy carries the l
 never the data; the person's View and the agent read it back from the host, as
 themselves.
 
-Driven end to end against a real FastMCP host that uses the SDK's own host half
-(`canopy_sdk.django.artifacts`: the store, `mount_fastmcp`, the ACL hook), reached
+Driven end to end against a real FastMCP host that keeps its own results with standard
+MCP (`tests.fixtures.host_results`: a small store, `resources/read` on its scheme, the
+host's ACL hook) — keeping results is the host's business, not the SDK's — reached
 in-process through the gateway — so what canopy keeps, what a View receives and
 what `site_read` returns are what a real Labs would produce. The canary at the end
 checks that nothing canopy stores for a sensitive conversation holds a row.
@@ -19,8 +20,6 @@ import pytest
 from asgiref.sync import async_to_sync, sync_to_async
 from canopy_sdk import resources
 from canopy_sdk import site as site_doc
-from canopy_sdk.django import artifacts
-from canopy_sdk.host.artifacts import summarize_rows
 from canopy_sdk.keys import generate_private_key, public_pem
 from django.contrib.auth.models import User
 from django.test import Client
@@ -43,6 +42,7 @@ from apps.realtime.groups import session_group
 from apps.tokens.models import HostGrant
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures import site_gateway as sg
+from tests.fixtures.host_results import META_KEY, ResultStore, facts
 from tests.fixtures.sensitive import vault_key
 
 pytestmark = pytest.mark.django_db
@@ -75,28 +75,27 @@ def caller_subject():
 
 
 class ResultsHost:
-    """A Labs in miniature, built on the SDK's host half: `data_query` returns facts and a
-    `labs-result://` link (`artifacts.save`); `resources/read` on the scheme answers as
-    the reader (`artifacts.mount_fastmcp`); the View is `ui://labs/data-result`."""
+    """A Labs in miniature, keeping its own results: `data_query` returns facts and a
+    `labs-result://` link (`store.save`); `resources/read` on the scheme answers as the
+    reader (`store.mount`); the View is `ui://labs/data-result`."""
 
-    def __init__(self):
+    def __init__(self, store: ResultStore):
         self.seen: list[dict] = []
+        self.store = store
         server = FastMCP("labs")
 
         @server.tool(meta={"ui": {"resourceUri": VIEW, "visibility": ["model", "app"]}})
         async def data_query(sql: str):
-            owner = caller_subject()
-            link = await sync_to_async(artifacts.save, thread_sensitive=True)(
-                "query", {"columns": ["name", "visits"], "rows": ROWS, "sql": sql}, owner=owner,
-                name="Visits by worker", description="2 rows")
-            facts = summarize_rows(["name", "visits"], ROWS, sample=1)
-            return [TextContent(type="text", text=json.dumps(facts)), ResourceLink.model_validate(link)]
+            link = store.save("query", {"columns": ["name", "visits"], "rows": ROWS, "sql": sql},
+                              owner=caller_subject(), name="Visits by worker", description="2 rows")
+            told = facts(["name", "visits"], ROWS, sample=1)
+            return [TextContent(type="text", text=json.dumps(told)), ResourceLink.model_validate(link)]
 
         @server.resource(VIEW, mime_type="text/html;profile=mcp-app")
         def view() -> str:
             return "<!doctype html><html><body>results</body></html>"
 
-        artifacts.mount_fastmcp(server)
+        store.mount(server, caller_subject)
         self.inner = server.http_app(path="/mcp/", stateless_http=True, json_response=True)
 
     async def app(self, scope, receive, send):
@@ -115,10 +114,8 @@ class ResultsHost:
 
 
 @pytest.fixture()
-def host(monkeypatch, settings):
-    settings.CANOPY_HOST = {"ARTIFACTS": {"SCHEME": "labs-result", "MAY_READ": may_read,
-                                          "READER": caller_subject, "NOTIFY": False}}
-    h = ResultsHost()
+def host(monkeypatch):
+    h = ResultsHost(ResultStore("labs-result", may_read=may_read))
     monkeypatch.setattr(host_gateway, "_transport_override", httpx2.ASGITransport(app=h.app))
     return h
 
@@ -312,7 +309,7 @@ def test_a_sensitive_view_gets_the_links_only_and_reads_the_rows_as_its_viewer(w
         assert r.status_code == 200, r.content
         [content] = r.json()["contents"]
         assert json.loads(content["text"])["rows"][0] == [SENTINEL, 12]
-        assert content["_meta"]["canopy/artifact"]["kind"] == "query"
+        assert content["_meta"][META_KEY]["kind"] == "query"
     r = through(host, lambda: post(client_for(w["vera"]), base(w) + "/read", {"uri": link["uri"]}))
     assert r.status_code == 403 and "forbidden" in r.json()["detail"]
 
@@ -341,14 +338,14 @@ def test_site_read_reads_as_the_visitor_and_audits_only_the_uri(w, host):
     assert read["site"] == "connect-labs" and read["uri"].startswith(uri)
     [content] = read["contents"]
     assert json.loads(content["text"])["rows"] == [[SENTINEL, 12]]
-    assert artifacts.read(uri, reader="u-42").owner == "u-42"   # the visitor's, at the host
+    assert host.store.read(uri, "u-42").owner == "u-42"   # the visitor's, at the host
     [audit] = MCPAuditLog.objects.filter(tool="site_read")
     assert uri in audit.args_summary and SENTINEL not in audit.args_summary and audit.ok
 
 
 def test_site_read_of_someone_elses_result_is_the_hosts_refusal(w, host):
     sg.grant(w)
-    theirs = artifacts.save("query", {"rows": ROWS}, owner="sub-vera")["uri"]
+    theirs = host.store.save("query", {"rows": ROWS}, owner="sub-vera", name="r")["uri"]
     with sg.visitor(w), pytest.raises(Exception, match="forbidden"):
         sg.call(host, "site_read", {"uri": theirs})
 
@@ -375,7 +372,7 @@ def _sensitive(w):
 def test_site_read_is_a_tool_a_sensitive_capability_holds(w, host):
     _sensitive(w)
     sg.grant(w)
-    uri = artifacts.save("query", {"rows": ROWS}, owner="u-42")["uri"]
+    uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]
     with sg.visitor(w):
         names = {t.name for t in async_to_sync(mcp.list_tools)()}
     assert {"site_tools", "site_call", "site_read"} <= names
@@ -396,7 +393,7 @@ def test_site_read_is_refused_outside_the_requirements_and_never_reaches_the_hos
         w["agent"].save(update_fields=["interface"])
     if breach == "runner":
         RunnerFlag.objects.filter(runner=box).delete()
-    uri = artifacts.save("query", {"rows": ROWS}, owner="u-42")["uri"]
+    uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]
     # Refused by the caller token itself (an undeclared capability's sensitive turn
     # stands for nothing) or by the gateway — either way before any request.
     with pytest.raises(Exception):  # noqa: B017 - which door refuses is not the point
@@ -526,13 +523,10 @@ def test_nothing_canopy_stores_for_a_sensitive_conversation_holds_a_row(w, host,
                 content_type="application/json")
     assert put.status_code == 200
 
+    # The HOST keeps it — that is the whole design — in its own store, not canopy's database.
+    assert any(k.owner == "sub-owner" for k in host.store.rows.values())
     hits = []
     for model in apps.get_models():
-        # The HOST's own store: the fake host shares this test's database. The row is
-        # meant to be there — that is the whole design.
-        if model._meta.db_table == "canopy_host_artifact":
-            assert model.objects.filter(owner="sub-owner").exists()
-            continue
         for row in model.objects.all().values():
             if SENTINEL in json.dumps(row, default=str):
                 hits.append(model.__name__)

@@ -51,18 +51,10 @@
         # the SDK's jwks.json route), issuer (ISSUER) and mcp_resource (RESOURCE).
         "ORIGINS": [],               # optional override: every origin that frames the panel
         "JWKS_URL": "",              # optional override: where canopy should read your keys
-        # Host-held results (canopy_sdk.django.artifacts, SDK 0.18): a tool returns facts
-        # plus a resource_link to an artifact this host keeps. SCHEME is declared in
-        # site.json's site.resource_schemes automatically (canopy keeps only links under a
-        # declared scheme). Absent = the helper is off.
-        "ARTIFACTS": {
-            "SCHEME": "labs-result",  # your own URI scheme, never http(s)/data/ui/...
-            "TTL": 86400,             # seconds an artifact lives (default a day)
-            "MAY_READ": None,         # (reader_subject, artifact) -> bool: your ACL for a non-owner
-            "ON_READ": None,          # (artifact, reader_subject) -> payload | None: recompute on read
-            "READER": None,           # () -> subject | None; default: the DPoPGate's delegated principal
-            "NOTIFY": True,           # tell canopy when artifacts.update() changes one
-        },
+        # The URI schemes of the links this site's tools return (MCP resource_link to a
+        # result the host keeps, in its own MCP server). Declared in site.json's
+        # site.resource_schemes; canopy keeps a link only under a declared scheme.
+        "RESOURCE_SCHEMES": [],     # e.g. ["labs-result"]
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -280,19 +272,12 @@ def site_facts_overrides() -> dict:
     return {"origins": [str(o) for o in origins if o], "jwks_url": str(cfg.get("JWKS_URL") or "")}
 
 
-def artifacts_settings() -> dict:
-    """``ARTIFACTS`` as set (``{}`` when the helper is off)."""
-    value = raw().get("ARTIFACTS") or {}
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
 def resource_schemes() -> list[str]:
-    """The URI schemes ``site.json`` declares: the artifacts helper's ``SCHEME`` and
-    any ``RESOURCE_SCHEMES`` a host's own resources use."""
-    extra = raw().get("RESOURCE_SCHEMES") or []
-    extra = [extra] if isinstance(extra, str) else list(extra)
-    scheme = artifacts_settings().get("SCHEME")
-    return list(dict.fromkeys(str(s) for s in ([scheme] if scheme else []) + extra if s))
+    """The URI schemes ``site.json`` declares (``RESOURCE_SCHEMES``): the schemes of the
+    links this host's tools return to results it keeps."""
+    value = raw().get("RESOURCE_SCHEMES") or []
+    value = [value] if isinstance(value, str) else list(value)
+    return list(dict.fromkeys(str(s) for s in value if s))
 
 
 def panel_options() -> dict:

@@ -24,6 +24,9 @@ import { resolvePrincipal, type Principal } from './principal'
 import { ContactMemory } from './ContactMemory'
 import { contactHcp, embedMemorySource } from './sessionMemory'
 import { PRIVATE_LABEL, PrivateMark } from '@/components/chat/privateConversation'
+import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
+import { addPerson, type PeopleApi } from '@/components/chat/ChatPeople'
+import type { JoinRequest } from '@/api/chat'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -862,6 +865,8 @@ function EmbedChat({
   // second frame that could land nowhere.
   // The host's `resources/updated` for this panel's Views, relayed on the socket.
   const appUpdates = useMemo(() => createAppResourceUpdates(), [])
+  // Who is asking to join this private conversation, as the socket last said.
+  const [liveJoinRequests, setLiveJoinRequests] = useState<JoinRequest[] | null>(null)
   const onUnknownEvent = useCallback(
     (frame: { event: string; data?: unknown }) => {
       // A resource a View in this panel subscribed to changed at its host: the
@@ -869,6 +874,11 @@ function EmbedChat({
       const update = appResourceUpdate(frame)
       if (update) {
         appUpdates.emit(update.toolCallId, update.uri)
+        return
+      }
+      const asking = joinRequestsFrame(frame)
+      if (asking) {
+        setLiveJoinRequests(asking)
         return
       }
       if (frame.event === 'page.invalidate') {
@@ -949,15 +959,18 @@ function EmbedChat({
   const [sealedKey, setSealedKey] = useState<SealedKey | null>(null)
   // Unknown (null) until the session is read: memory's switches wait for it.
   const [sensitive, setSensitive] = useState<boolean | null>(null)
+  // Its owner answers a request to join (`can_share`); its other people see it.
+  const [myRole, setMyRole] = useState<string | null>(null)
   const sealedRows = socket.state.messages.some((m) => typeof m.sealed === 'string')
   useEffect(() => {
     if (isContact) return
     let live = true
-    void client.rest.json<{ sealed_key?: SealedKey | null; sensitive?: boolean }>(
+    void client.rest.json<{ sealed_key?: SealedKey | null; sensitive?: boolean; my_role?: string | null }>(
       `/api/canopy-sessions/${encodeURIComponent(sessionId)}`)
       .then((d) => {
         if (!live) return
         setSealedKey(d.sealed_key ?? null)
+        setMyRole(d.my_role ?? null)
         setSensitive(Boolean(d.sensitive || d.sealed_key))
       })
       .catch(() => live && setSensitive((v) => v ?? false))
@@ -972,6 +985,26 @@ function EmbedChat({
   }, [sealedKey, unlocker.prompt])
   const sealed = useSealedConversation(sealedKey, socket.state.messages, unlockVault)
   const keyRef = sealed.keyRef
+  // Someone asking to join: the panel adds them itself — the same re-wrap canopy's
+  // chat page does (unlock from the keyset, open the conversation key, wrap it to
+  // them, `POST participants`), through the frame's own token.
+  const joinActions = useMemo<JoinRequestActions>(() => {
+    const base = `/api/canopy-sessions/${encodeURIComponent(sessionId)}`
+    const people: PeopleApi = {
+      getSession: (id) => client.rest.json(`/api/canopy-sessions/${encodeURIComponent(id)}`),
+      participantRecipient: (id, email) => client.rest.json(
+        `/api/canopy-sessions/${encodeURIComponent(id)}/participants/recipient?email=${encodeURIComponent(email)}`),
+      addParticipant: (id, email, role, wrap) => client.rest.json(
+        `/api/canopy-sessions/${encodeURIComponent(id)}/participants`,
+        { method: 'POST', body: JSON.stringify(wrap ? { email, role, wrap } : { email, role }) }),
+    }
+    return {
+      list: () => client.rest.json<JoinRequest[]>(`${base}/join-requests`),
+      add: (email) => addPerson(sessionId, email, 'editor', unlockVault, people),
+      decline: (requestId) => client.rest.json(
+        `/api/canopy-sessions/join-requests/${encodeURIComponent(requestId)}/decline`, { method: 'POST' }),
+    }
+  }, [client, sessionId, unlockVault])
   // How this person's vault key opens here, for the banner's words; and whether this
   // frame may use a passkey at all (Chrome says, through its permissions policy).
   const unlockMethod = (sealedKey?.keyset?.seals ?? []).some((x) => (x as { alg?: string }).alg === 'prf')
@@ -1145,6 +1178,10 @@ function EmbedChat({
           </a>
         ) : undefined}
       />
+      {sensitive && !isContact && (
+        <JoinRequests sessionId={sessionId} actions={joinActions} live={liveJoinRequests}
+          canDecide={myRole === 'owner'} />
+      )}
       <div className="min-h-0 flex-1">
         <ChatPanel
           // MCP Apps: a Connected site's View for a tool result, acting as this

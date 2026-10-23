@@ -35,8 +35,8 @@ saves them, because a site must not be able to change its own trusted origins.
 The Django host fills the block from settings it already has.
 
 ``site.resource_schemes`` (optional, SDK 0.18+) names the URI schemes of the
-artifacts the site's tools link to (``canopy_sdk.resources``; the Django host fills
-it from ``CANOPY_HOST["ARTIFACTS"]["SCHEME"]``). Unlike the rest of the block canopy
+results the site's tools link to (``canopy_sdk.resources``; the Django host fills
+it from ``CANOPY_HOST["RESOURCE_SCHEMES"]``). Unlike the rest of the block canopy
 reads it LIVE, with no owner adopting it: it widens nothing — it is the list of
 addresses canopy will keep from this site's own tool results (in a sensitive
 conversation, the only thing it keeps), and a link under any other scheme is
@@ -245,7 +245,7 @@ class SiteFacts:
     jwks_url: str = ""
     issuer: str = ""
     mcp_resource: str = ""
-    #: The URI schemes of the artifacts this site's tools link to (``canopy_sdk.resources``).
+    #: The URI schemes of the results this site's tools link to (``canopy_sdk.resources``).
     resource_schemes: tuple[str, ...] = ()
 
 

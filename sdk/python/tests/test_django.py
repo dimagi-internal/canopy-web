@@ -653,3 +653,30 @@ def test_page_agents_must_name_registered_pages(spa):
     settings = {**conf.raw(), "PAGE_AGENTS": {"nowhere": {"agent": "labsdata"}}}
     with override_settings(CANOPY_HOST=settings), pytest.raises(ValueError, match="not registered"):
         conf.page_registry()
+
+
+# --- link schemes: the SDK declares them and relays updates; a host keeps its own results ---
+
+
+def test_site_json_declares_the_hosts_link_schemes_and_nothing_else_derives_one(host):
+    from canopy_sdk import site as site_mod
+
+    cfg = {**conf.raw(), "RESOURCE_SCHEMES": ["labs-result", "labs-result", "labs-draft"],
+           # A 0.18 setting left behind declares nothing any more.
+           "ARTIFACTS": {"SCHEME": "old-result"}}
+    with override_settings(CANOPY_HOST=cfg):
+        response = Client().get("/canopy/site.json")
+    got = site_mod.verify_site_document(response.content.decode(), [host.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert got.site.resource_schemes == ("labs-result", "labs-draft")
+
+
+def test_kept_results_are_not_the_sdks(host):
+    import importlib
+
+    from django.db import connection
+
+    for gone in ("canopy_sdk.host.artifacts", "canopy_sdk.django.artifacts"):
+        with pytest.raises(ImportError):
+            importlib.import_module(gone)
+    assert "canopy_host_artifact" not in connection.introspection.table_names()

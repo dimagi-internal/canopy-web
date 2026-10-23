@@ -77,6 +77,10 @@ ROUND_TRIP_FRAMES = [
                           "author": {"name": "Jon", "user_id": 7},
                           "text": "from jj", "sent_at": "2026-09-26T12:00:00+00:00",
                           "state": "queued"}]}},
+    {"event": "session.join_requests",
+     "data": {"requests": [{"id": "5b1d", "session_id": "8f2e", "requested_by": "ada@dimagi.com",
+                            "requested_by_name": "Ada", "status": "pending", "decided_by": "",
+                            "decided_at": None, "created_at": "2026-10-23T12:00:00+00:00"}]}},
     {"event": "session.stop", "data": {"state": "failed"}},
     {"event": "session.activity", "data": {"state": "working"}},
     {"event": "session.subagents", "data": {"subagents": [{

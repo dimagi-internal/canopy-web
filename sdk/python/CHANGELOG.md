@@ -2,6 +2,27 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.19.0 — 2026-10-23
+
+**Breaking: kept results moved out of the SDK; a host keeps its own MCP results; the SDK
+only declares link schemes and relays updates.** Keeping a tool's result is the host's
+MCP business, not canopy's: a host returns facts plus a standard MCP `resource_link` to a
+result it keeps, and answers `resources/read` on its own scheme (README, "Host-held
+results").
+
+- Removed: `canopy_sdk.host.artifacts` (`Artifacts`, `ArtifactRefused`,
+  `MemoryArtifactStore`, `ArtifactStore`, `current_subject`, `summarize_rows`, the
+  module-level helpers); `canopy_sdk.django.artifacts` (`save`, `read`,
+  `resource_handler`, `template`, `mount_fastmcp`, `update`, `notify_updated`, `sweep`,
+  `DjangoArtifactStore`); `manage.py canopy_artifacts_sweep`; the `Artifact` model; the
+  `CANOPY_HOST["ARTIFACTS"]` settings (now ignored).
+- Migration `canopy_host.0003_drop_artifact` drops the `canopy_host_artifact` table. Its
+  rows were 24-hour results, so nothing is carried over.
+- Kept: `CANOPY_HOST["RESOURCE_SCHEMES"]` is now the only source of `site.json`'s
+  `site.resource_schemes` (no longer derived from `ARTIFACTS["SCHEME"]`), and
+  `canopy_sdk.resources` (`resource_link`, `check_scheme`, `notify_updated` — the signed
+  "resources updated" POST to canopy — and canopy's checks) is unchanged.
+
 ## 0.18.0 — 2026-10-23
 
 **Host-held results** (spec `2026-10-23-host-held-results-design`): a tool returns facts

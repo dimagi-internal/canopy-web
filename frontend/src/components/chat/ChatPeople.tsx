@@ -6,6 +6,8 @@ import {
   participantRecipient,
   removeParticipant,
   type Participant,
+  type ParticipantRecipient,
+  type SealedKeyWrapIn,
 } from "@/api/chat";
 import { openConversationKey, wrapForRecipient, type SealedKey } from "@/vault/sealedChat";
 import type { Unlocked } from "@/vault/operations";
@@ -40,15 +42,27 @@ const SHARE_ROLES: RoleOption[] = [
  * conversation key, and wraps it to their vault key, which is what the server stores.
  */
 export async function addPerson(sessionId: string, email: string, role: "editor" | "viewer",
-                                unlock: () => Promise<Unlocked>): Promise<Participant[]> {
-  const session = await getSession(sessionId);
+                                unlock: () => Promise<Unlocked>, api: PeopleApi = APP_PEOPLE_API,
+                                ): Promise<Participant[]> {
+  const session = await api.getSession(sessionId);
   const sealedKey = (session.sealed_key ?? null) as SealedKey | null;
-  if (!session.sensitive || !sealedKey) return addParticipant(sessionId, email, role);
+  if (!session.sensitive || !sealedKey) return api.addParticipant(sessionId, email, role);
   if (!sealedKey.wrap) throw new Error("You hold no key to this conversation, so you cannot give it to anyone.");
-  const recipient = await participantRecipient(sessionId, email);
+  const recipient = await api.participantRecipient(sessionId, email);
   const key = await openConversationKey(sealedKey, await unlock());
-  return addParticipant(sessionId, email, role, await wrapForRecipient(key, recipient));
+  return api.addParticipant(sessionId, email, role, await wrapForRecipient(key, recipient));
 }
+
+/** The three routes `addPerson` calls, through whichever credentials the surface has:
+ *  the app's session cookie here, the embedded panel's own token there. */
+export interface PeopleApi {
+  getSession: (id: string) => Promise<{ sensitive?: boolean | null; sealed_key?: unknown }>;
+  participantRecipient: (id: string, email: string) => Promise<ParticipantRecipient>;
+  addParticipant: (id: string, email: string, role: "editor" | "viewer",
+                   wrap?: SealedKeyWrapIn) => Promise<Participant[]>;
+}
+
+const APP_PEOPLE_API: PeopleApi = { getSession, participantRecipient, addParticipant };
 
 export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRole: string | null }) {
   const vault = useVaultUnlock();

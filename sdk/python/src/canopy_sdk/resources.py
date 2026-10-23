@@ -2,7 +2,7 @@
 canopy that one of them changed (spec ``2026-10-23-host-held-results-design``).
 
 A host's tool returns FACTS for the model and one or more MCP ``resource_link``
-content items (MCP 2025-06-18) naming artifacts the HOST keeps — a result set, a
+content items (MCP 2025-06-18) naming results the HOST keeps — a result set, a
 chart spec, a draft edit. canopy carries the links, never the data: in a sensitive
 conversation it stores the links alone, and a View or the agent reads each one back
 from the host, as the person, with ``resources/read``.
@@ -36,7 +36,7 @@ RESOURCE_LINK = "resource_link"
 #: A scheme's grammar (RFC 3986 §3.1), lower case, and short.
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]{0,31}$")
 #: Schemes that already mean something to a browser, a client or another protocol.
-#: A host's artifacts live under a scheme of its own, so a stored link can never be
+#: A host's results live under a scheme of its own, so a stored link can never be
 #: a web address, an inline payload or a script.
 RESERVED_SCHEMES = frozenset({
     "about", "blob", "chrome", "data", "file", "filesystem", "ftp", "http", "https",
@@ -75,14 +75,14 @@ class ResourceError(Exception):
 
 
 def check_scheme(scheme: str) -> str:
-    """``scheme`` lower-cased if a host may hold artifacts under it, else ``ResourceError``."""
+    """``scheme`` lower-cased if a host may keep results under it, else ``ResourceError``."""
     value = str(scheme or "").strip().lower().rstrip(":/")
     if not _SCHEME.match(value):
         raise ResourceError("bad_scheme", f"{scheme!r} is not a URI scheme (a letter, then letters, "
                                           "digits, '+', '-' or '.'; at most 32)")
     if value in RESERVED_SCHEMES:
         raise ResourceError("reserved_scheme", f"{value!r} already means something to a browser or "
-                                               "client; give your artifacts a scheme of your own")
+                                               "client; give your results a scheme of your own")
     return value
 
 

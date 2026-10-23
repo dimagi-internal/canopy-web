@@ -1090,12 +1090,14 @@ caller token scoped to **agent ∩ visitor** — the visitor's own canopy
 permissions (none, for a contact), limited to the tools the agent's declared
 interface lists. The owner's token is never used there.
 
-## 8b. Return facts + artifacts: results your host keeps
+## 8b. Return facts + a `resource_link` to a result you keep, using standard MCP
 
 A tool that produces data — a query's rows, a chart, a draft edit — should not put
 the data in its result. Return **facts** for the model (how many rows, the columns,
-a few samples, what the query was) and an MCP **`resource_link`** (MCP 2025-06-18
-tool-result content) naming an **artifact your host keeps**:
+a few samples, what the query was) and a standard MCP **`resource_link`** (MCP
+2025-06-18 tool-result content) naming a **result your host keeps**, which your MCP
+server answers `resources/read` for. Keeping it is your host's own MCP business —
+canopy needs only the link, and a declared scheme:
 
 ```json
 {"content": [
@@ -1125,50 +1127,51 @@ is dropped. Declare your own scheme (`labs-result`), never `http(s)`, `data`, `u
 or `file`. canopy reads the declaration live from your signed document, with no
 owner step.
 
-**With the Python SDK** (`dimagi-canopy` ≥ 0.18) it is a line. Turn the helper on —
-`migrate` adds its table, and `canopy/site.json` declares the scheme for you:
+**A minimal host** — no SDK storage; a store of your own and two MCP handlers
+(FastMCP 2.12+ shown, any MCP server works the same way):
 
 ```python
-CANOPY_HOST = {...,
-    "ARTIFACTS": {"SCHEME": "labs-result", "TTL": 86400,          # a day
-                  "MAY_READ": "myapp.canopy.may_read"}}         # who besides the owner
-```
+import json, secrets
+from fastmcp import FastMCP
+from fastmcp.exceptions import ResourceError
+from mcp.types import ResourceLink, TextContent
 
-```python
-import json
-from mcp.types import TextContent
-from canopy_sdk.django import artifacts
-from canopy_sdk.host.artifacts import summarize_rows
+mcp = FastMCP("labs")
+RESULTS = {}   # yours: a table with an owner and an expiry, a cache, object storage...
 
 @mcp.tool
 def data_query(sql: str):
     columns, rows = run_query(sql)                          # as the visitor, under your ACL
-    link = artifacts.save("query", {"columns": columns, "rows": rows, "sql": sql},
-                          tool_call_id=request_id(), name="Visits by worker",
-                          description=f"{len(rows)} rows")
-    facts = {**summarize_rows(columns, rows, sample=5), "sql": sql}
+    rid = secrets.token_urlsafe(18)                          # unguessable
+    RESULTS[rid] = {"owner": current_subject(), "columns": columns, "rows": rows}
+    facts = {"row_count": len(rows), "columns": columns, "sample": rows[:5], "sql": sql}
+    link = ResourceLink(type="resource_link", uri=f"labs-result://{rid}", name="Visits by worker",
+                        mimeType="application/json", description=f"{len(rows)} rows")
     return [TextContent(type="text", text=json.dumps(facts)), link]
 
-artifacts.mount_fastmcp(mcp)    # resources/read on labs-result://… as the reader
+@mcp.resource("labs-result://{rid}{?page,page_size}", mime_type="application/json")
+def result(rid: str, page: str = "1", page_size: str = "100"):
+    kept = RESULTS.get(rid)
+    if kept is None or not may_read(current_subject(), kept):   # the owner, or your ACL
+        raise ResourceError("not found")
+    start = (int(page) - 1) * int(page_size)                    # a table pages here,
+    return json.dumps({**kept, "rows": kept["rows"][start:start + int(page_size)]})  # never in chat
 ```
 
-The artifact belongs to the subject the call ran as (the visitor's `sub`, from the
-SDK's DPoP gate); `resources/read` lets the owner read it, anyone your `MAY_READ`
-admits (a colleague on the same conversation), and nobody else, with a named refusal
-(`not_found`, `expired`, `forbidden`). A table pages through the URI
-(`labs-result://<id>?page=2&page_size=100`), never through the chat. Run
-`manage.py canopy_artifacts_sweep` on a schedule. Without FastMCP, answer
-`resources/read` for your scheme with `artifacts.resource_handler(uri)`. Every
-setting, the framework-free form and the read answer's `_meta`:
-[SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--artifacts).
+`current_subject()` is whoever the MCP request acts for (on a delegated request, the
+visitor's `sub`). Expire results on your own schedule. Then **declare the scheme** in
+your signed `site.json`'s `site.resource_schemes` — with the Python SDK
+(`dimagi-canopy` ≥ 0.19) that is `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]`,
+or `site_document(..., site={"resource_schemes": ["labs-result"]})` without Django.
+[SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--a-link).
 
 **Live updates.** A View may `resources/subscribe` to a link. canopy holds the
 subscription (its gateway's MCP sessions last one request), so your host tells canopy
-when an artifact changes: `artifacts.update(uri, payload)` does it, or
-`artifacts.notify_updated([uri])` for a change made elsewhere — a POST to
-`/api/sites/resources-updated` with a JWT signed by your site key (`typ`
-`canopy-resources-updated+jwt`, `iss` = `sub` = your Connected-site name, `aud` =
-that URL, 60 s, single-use `jti`, `uris`). canopy sends each subscribed View
+when a result changes — a POST to `/api/sites/resources-updated` with a JWT signed by
+your site key (`typ` `canopy-resources-updated+jwt`, `iss` = `sub` = your
+Connected-site name, `aud` = that URL, 60 s, single-use `jti`, `uris`);
+`canopy_sdk.resources.notify_updated(canopy_url, site_name, site_key, [uri],
+workspace=...)` builds and sends it. canopy sends each subscribed View
 `notifications/resources/updated` — the URI, never data — and the View re-reads it
 as its viewer.
 

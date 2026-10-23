@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clsx } from 'clsx'
 import { useParams } from 'react-router-dom'
 import {
@@ -19,7 +19,10 @@ import {
   detachSession,
   sendMessage,
   appHostFor,
+  declineJoinRequest,
+  listJoinRequests,
   type ChatSession,
+  type JoinRequest,
 } from '@/api/chat'
 import { ChatSessionMenu } from '@/components/chat/ChatSessionMenu'
 import { MessageContextMenu } from '@/components/chat/MessageContextMenu'
@@ -31,7 +34,8 @@ import { useAttachments } from './chat/useAttachments'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { PrivateConversationGate } from '@/components/chat/PrivateConversationGate'
-import { JoinRequestsBanner } from '@/components/chat/JoinRequestsBanner'
+import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
+import { addPerson } from '@/components/chat/ChatPeople'
 import { privateTitle } from '@/components/chat/privateConversation'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { useSealedConversation } from '@/vault/useSealedConversation'
@@ -114,6 +118,8 @@ function ChatPageInner({
   // doesn't carry it — it's frozen to the tail page it was built from). Called
   // once the fetch lands, after `paging` below exists.
   const { meta, setMeta, metaError, agentName } = useSessionMeta(id, (m) => paging.seed(m))
+  // Who is asking to join this private conversation, as the socket last said.
+  const [liveJoinRequests, setLiveJoinRequests] = useState<JoinRequest[] | null>(null)
 
   // AG-UI on the wire, canopy frames in memory: `fromAgui` turns the protocol
   // back into the same `WsEvent`s the reducer has always consumed, and
@@ -123,9 +129,12 @@ function ChatPageInner({
     wsUrl,
     protocol: 'ag-ui',
     // `app.resource_updated`: a resource a View subscribed to changed at its host.
+    // `session.join_requests`: someone asked to join (or was answered), live.
     onUnknownEvent: useCallback((frame: { event: string; data?: unknown }) => {
       const update = appResourceUpdate(frame)
       if (update) appUpdates.emit(update.toolCallId, update.uri)
+      const asking = joinRequestsFrame(frame)
+      if (asking) setLiveJoinRequests(asking)
     }, [appUpdates]),
     // A socket send with no receipt is resent here, under the same client_id,
     // so it cannot become a second turn (see canopy-ui's sendChat).
@@ -148,6 +157,12 @@ function ChatPageInner({
   const vault = useVaultUnlock()
   const sealed = useSealedConversation(
     (meta?.sealed_key ?? null) as SealedKey | null, socket.state.messages, vault.unlock)
+  // Adding someone who asked is this browser's act: it wraps them the conversation key.
+  const joinActions = useMemo<JoinRequestActions>(() => ({
+    list: () => listJoinRequests(id),
+    add: (email) => addPerson(id, email, 'editor', vault.unlock),
+    decline: declineJoinRequest,
+  }), [id, vault.unlock])
   sealedKeyRef.current = sealed.key
   const panelState = useMemo(
     () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
@@ -427,7 +442,10 @@ function ChatPageInner({
         </div>
       </div>
       {meta?.sensitive && <PrivateConversationNote />}
-      {meta?.sensitive && meta.my_role === 'owner' && <JoinRequestsBanner sessionId={id} />}
+      {meta?.sensitive && (
+        <JoinRequests sessionId={id} actions={joinActions} live={liveJoinRequests}
+          canDecide={meta.my_role === 'owner'} />
+      )}
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
