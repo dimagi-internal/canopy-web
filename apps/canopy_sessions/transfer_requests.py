@@ -118,7 +118,7 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
         req = TransferRequest.objects.create(
             session=session, to_runner=target, from_runner=binding.runner, requested_by=user,
             brief=brief, status=TransferRequest.APPROVED, decided_by=user,
-            decided_at=timezone.now(), turn_id=turn.id,
+            decided_at=timezone.now(), turn_id=turn.id if turn else None,
             note=("same owner on both runners — no approval needed" if same_owner
                   else "requester administers the target — no approval needed"),
         )
@@ -159,7 +159,7 @@ def approve(*, req: TransferRequest, user, initiator=None):
         raise ValueError(f"this request is already {req.status}")
     binding, turn = _transfer(req, user, initiator)
     req.status, req.decided_by, req.decided_at, req.turn_id = (
-        TransferRequest.APPROVED, user, timezone.now(), turn.id)
+        TransferRequest.APPROVED, user, timezone.now(), turn.id if turn else None)
     req.save(update_fields=["status", "decided_by", "decided_at", "turn_id"])
     _fire(req)
     return binding, turn

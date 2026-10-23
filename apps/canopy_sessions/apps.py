@@ -14,9 +14,17 @@ class CanopySessionsConfig(AppConfig):
         from apps.common import ticks
 
         ticks.register("canopy_sessions.purge_expired_secrets", _purge_expired_secrets, 60)
+        # A transfer whose source never answers goes on without its snapshot.
+        ticks.register("canopy_sessions.settle_handoffs", _settle_handoffs, 30)
 
 
 def _purge_expired_secrets() -> None:
     from .secrets import purge_expired
 
     purge_expired()
+
+
+def _settle_handoffs() -> None:
+    from .handoff import settle_overdue  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    settle_overdue()

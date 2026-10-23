@@ -770,6 +770,9 @@ def replace_reported_sessions(
         # also serves every page (SLOW_REQUEST, 2026-10-03). Same predicate as the
         # per-task lookup below, keyed by (task, project) for the same reason.
         candidates: dict[tuple[str, str], RunnerBinding] = {}
+        from apps.canopy_sessions.handoff import suppressed_tasks  # noqa: PLC0415 — cycle: handoff -> harness.services -> channels.email -> session_sync
+
+        handed_off = suppressed_tasks(runner) if deduped else set()
         if deduped:
             host_match_all = Q(runner__isnull=True) & Q(host=runner.host) & ~Q(host="")
             for row in (RunnerBinding.objects.select_for_update(of=("self",))
@@ -807,6 +810,11 @@ def replace_reported_sessions(
             binding = candidates.get((s.emdash_task, project))
             if binding is None and project:
                 binding = candidates.pop((s.emdash_task, ""), None)
+            if binding is None and (s.emdash_task, project) in handed_off:
+                # A task this box transferred away and has not closed yet (it
+                # closes once the target restores the work, `handoff.py`). Filing
+                # it would make a ghost of the session that moved.
+                continue
             if binding is None:
                 binding = _unlinked_chat_binding(runner, s, project)
             if binding is None:

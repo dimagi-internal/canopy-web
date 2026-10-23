@@ -179,7 +179,7 @@ export function ChatSessionsPanel({
         })
         return
       }
-      setTransferNote({ text: `Moved to ${result?.runner}.`, error: false })
+      setTransferNote({ text: `Moved to ${result?.runner}.${handoffNote(result)}`, error: false })
       void listSessions(showArchived ? 'all' : 'active').then(setSessions)
     },
     [showArchived],
@@ -464,3 +464,13 @@ export function ChatSessionsPanel({
 }
 
 export default ChatSessionsPanel
+
+/** What came with a move, in one clause: the source is packing its work, or it
+ * could not and the session starts with NO SNAPSHOT (apps/canopy_sessions/handoff.py). */
+export function handoffNote(result: TransferResult | null): string {
+  const h = result?.handoff
+  if (!h) return ''
+  if (h.capture_status === 'pending') return ` ${h.source_runner} is packing its work; the session continues once it has.`
+  if (h.capture_status === 'captured') return ' Its work came with it.'
+  return ` NO SNAPSHOT — ${h.capture_note || 'the old runner did not hand its work over'}.`
+}

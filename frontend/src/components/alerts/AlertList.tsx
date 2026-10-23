@@ -27,6 +27,7 @@ export const KIND_LABEL: Record<string, string> = {
   device_key_pending: 'Device key',
   agent_cant_run: 'Agent routing',
   canopy_projects_off: 'Canopy projects',
+  transfer_left_open: 'Transfers',
 }
 
 const SEVERITIES: { id: AlertSeverity; label: string; dot: string }[] = [

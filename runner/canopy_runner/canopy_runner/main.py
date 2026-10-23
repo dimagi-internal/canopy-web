@@ -39,6 +39,7 @@ from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
 from . import activity, private_runner, refresh, session_interrupt, slash_commands, streams, usage_report
+from . import transfer
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -723,6 +724,9 @@ def _report_sweep(cfg: Config, client: Client) -> None:
     _step("stream sync", streams.sync_session_streams, cfg, client)
     _step("menu answers", streams.drain_menu_answers, cfg, client)
     _step("closes", streams.drain_closes, cfg, client)
+    # A transfer off this box: pack the session's work, close its task once the
+    # target has it (transfer.py). Here, above the pause gate, like closes.
+    _step("handoffs", transfer.drain, cfg, client)
     _step("backfills", streams.drain_backfills, cfg, client)
     _step("usage report", usage_report.maybe_report, cfg, client)
     _step("slash commands", slash_commands.maybe_report,

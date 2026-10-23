@@ -79,7 +79,7 @@ from pathlib import Path
 
 from canopy_transcript.result_note import cap, turn_url
 
-from . import caller, session_naming
+from . import caller, session_naming, transfer
 from .cancel import CANCELLED_TURNS
 
 logger = logging.getLogger("canopy_runner.desktop")
@@ -1255,6 +1255,7 @@ class TurnRun:
             name = session_naming.build_task_name(self.target, self.turn)
             wt = make_worktree(self.cfg, repo, base, name)
             prepare_settings(self.cfg, wt)
+            transfer.restore_into(self.cfg, self.client, self.turn, wt)
             channel = wt / CHANNEL
             channel.mkdir(exist_ok=True)
             summary = self.plan.get("summary") or ""
@@ -1324,6 +1325,8 @@ class TurnRun:
         name = session_naming.build_task_name(self.target, self.turn)
         wt = make_worktree(self.cfg, repo, base, name)
         prepare_settings(self.cfg, wt)
+        # A transfer's work, restored before the agent sees its first prompt.
+        transfer.restore_into(self.cfg, self.client, self.turn, wt)
         (wt / CHANNEL).mkdir(exist_ok=True)
         summary = self.plan.get("summary") or ""
         if summary:

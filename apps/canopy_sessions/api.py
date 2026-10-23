@@ -28,7 +28,9 @@ from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
 from apps.harness import provenance, sensitivity
+from apps.harness import routing as harness_routing
 from apps.harness import runner_requirements as rr
+from apps.harness.models import Turn
 from apps.realtime import groups
 from apps.workspaces import services as wsvc
 
@@ -41,6 +43,7 @@ from . import (
     doors,
     feed,
     filing,
+    handoff,
     page_actions,
     page_state,
     placement,
@@ -52,6 +55,7 @@ from . import (
     status_feed,
     transcript_ingest,
     transcript_read,
+    transfer_requests,
 )
 from . import activity as session_activity
 from . import join_requests
@@ -100,6 +104,9 @@ from .schemas import (
     SessionTitleIn,
     StreamStateOut,
     TransferDecisionIn,
+    HandoffOut,
+    TransferAllIn,
+    TransferAllOut,
     TransferIn,
     TransferOut,
     TransferRequestOut,
@@ -414,7 +421,7 @@ def _filtered_sessions(
     resource: str = "", page_path: str = "", session_key: str = "",
     q: str = "", repo: str = "", branch: str = "", pr: str = "",
     since: dt.datetime | None = None,
-    until: dt.datetime | None = None,
+    until: dt.datetime | None = None, runner: str = "",
 ):
     """Every session the caller may see, narrowed by the list filters, with
     `_last_msg_at`, `_activity` (= `last_activity_at`, computed in SQL) and
@@ -474,6 +481,10 @@ def _filtered_sessions(
     # a person reads off the card, not only by the session id they never see.
     if session_key:
         rows = rows.filter(runner_binding__session_key=session_key)
+    # The box it is on, by id or name — what to move off a runner (`/transfer-all`).
+    if runner:
+        box = transfer_requests.resolve_runner(runner)
+        rows = rows.filter(runner_binding__runner=box) if box is not None else rows.none()
     # Free text over what a person reads off a card: the title, or the runner's
     # session_key (an emdash task name, or a cloud session's Claude UUID).
     if q:
@@ -517,7 +528,7 @@ def list_sessions(
     origin_key: str = "", embed_app: str = "",
     resource: str = "", page_path: str = "", reply: bool = False,
     session_key: str = "", q: str = "", repo: str = "", branch: str = "", pr: str = "",
-    since: dt.datetime | None = None, until: dt.datetime | None = None,
+    since: dt.datetime | None = None, until: dt.datetime | None = None, runner: str = "",
 ):
     """The sessions you can see: waiting on you first, then running, then most
     recent activity — at most `limit` (≤ 500) of them, with no paging.
@@ -525,7 +536,9 @@ def list_sessions(
     Filters: `q` (title or session_key contains), `repo` (the repo it ran in or
     worked on — a name or owner/name), `branch` (any branch its transcript saw),
     `pr` (a PR it created or asked to merge — N, owner/name#N or a URL),
-    `since` / `until` (last activity in [since, until)). To reach EVERY session
+    `since` / `until` (last activity in [since, until)), `runner` (the runner it
+    is on, by id or name — `?runner=<name>&state=active` is every open session on
+    a box, what `POST /transfer-all` moves). To reach EVERY session
     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
     """
     # The ONE unified list (Plan 4): every session the caller can see in their
@@ -544,7 +557,7 @@ def list_sessions(
         request, state=state, source=source, opp_slug=opp_slug, opp_run_id=opp_run_id,
         origin_key=origin_key, embed_app=embed_app, resource=resource,
         page_path=page_path, session_key=session_key, q=q, repo=repo,
-        branch=branch, pr=pr, since=since, until=until,
+        branch=branch, pr=pr, since=since, until=until, runner=runner,
     ).order_by("-created_at")
 
     # Every row says which mode drove it — the list shows it on each card, so an
@@ -750,7 +763,7 @@ def _transfer_request_out(req, transfer=None) -> dict:
             "session_id": str(req.session_id),
             "runner": binding.runner.name if binding.runner_id else "",
             "transferred_from": binding.transferred_from.name if binding.transferred_from_id else "",
-            "index_offset": binding.index_offset, "turn_id": str(turn.id),
+            "index_offset": binding.index_offset, "turn_id": str(turn.id) if turn else "",
         }
     return out
 
@@ -838,6 +851,72 @@ def cancel_transfer_request(request: HttpRequest, request_id: uuid.UUID):
     except ValueError as exc:
         raise HttpError(422, str(exc))
     return _transfer_request_out(req)
+
+
+# ---- moving every session off one runner at once ----
+# Declared above the `/{session_id}` routes so `/transfer-all` is never read as a
+# session id.
+
+@router.post("/transfer-all", response=TransferAllOut,
+             summary="Move every open session on one runner to another")
+@gate("session-acl", kind="conversation")  # each session: access.can_write, then the transfer's own rules
+def transfer_all(request: HttpRequest, payload: TransferAllIn):
+    """Move every open session you can act in from `from_runner` to `to_runner`,
+    each with its work (see `transfer`), and say what happened to each one.
+
+    The way to empty a box — an account out of Claude tokens, a laptop going
+    away, load moving to the cloud. `dry_run` lists what would move first. Each
+    session is its own transfer, so one that cannot move (a turn executing, a
+    session the target cannot run) is reported `refused` with the reason and the
+    rest still move. Discovery alone is `GET /api/canopy-sessions/?runner=<name>`.
+    """
+    source = transfer_requests.resolve_runner(payload.from_runner)
+    target = transfer_requests.resolve_runner(payload.to_runner)
+    if source is None:
+        raise HttpError(404, f"no runner {payload.from_runner!r}")
+    if target is None:
+        raise HttpError(404, f"no runner {payload.to_runner!r}")
+    rows = (_filtered_sessions(request, state="active")
+            .filter(runner_binding__runner=source).order_by("created_at"))
+    if payload.session_ids:
+        rows = rows.filter(pk__in=[_uuid_or_422(x) for x in payload.session_ids])
+    results = []
+    for session in rows:
+        key = session.runner_binding.session_key if session.runner_binding else ""
+        out = {"session_id": str(session.id), "title": session.title or "", "session_key": key,
+               "status": "", "error": "", "turn_id": "", "handoff": None}
+        results.append(out)
+        if not access.can_write(request.user, session):
+            out.update(status="refused", error="you can read this session but not act in it")
+            continue
+        if payload.dry_run:
+            busy = Turn.objects.filter(chat_session=session,
+                                       status__in=list(harness_routing.EXECUTING)).exists()
+            out.update(status="refused" if busy else "would_move",
+                       error="a turn is still executing — stop the session first" if busy else "")
+            continue
+        try:
+            req, moved = transfer_requests.request(
+                session=session, runner_value=str(target.id), brief=payload.brief,
+                user=request.user, initiator=who.for_request(request, via="transfer"))
+        except (LookupError, RuntimeError, FileExistsError, ValueError) as exc:
+            out.update(status="refused", error=str(exc))
+            continue
+        if moved is None:
+            out.update(status="pending", error="waiting on an administrator of the target")
+            continue
+        _binding, turn = moved
+        h = session.handoffs.select_related("source_runner", "target_runner").first()
+        out.update(status="moved", turn_id=str(turn.id) if turn else "",
+                   handoff=handoff.summary(h) if h is not None else None)
+    return {"from_runner": source.name, "to_runner": target.name, "results": results}
+
+
+def _uuid_or_422(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        raise HttpError(422, f"not a session id: {value!r}")
 
 
 # ---- join requests: asking to be added to a private conversation ----
@@ -1508,7 +1587,47 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
             "index_offset": 0, "turn_id": "", "status": "pending", "request_id": req.id,
             "approvers": sorted(u.email for u in transfer_requests.approvers(req.to_runner)),
         }
+    return _moved_out(session, moved, req)
+
+
+@router.get("/{session_id}/handoffs", response=list[HandoffOut],
+            summary="What each transfer of this session carried")
+@gate("session-acl")  # read
+def list_handoffs(request: HttpRequest, session_id: uuid.UUID):
+    """Every transfer of this session, newest first: what the source packed (or
+    why it could not — NO SNAPSHOT), whether the target restored it and `git
+    status` matched, and whether the source's task was closed."""
+    session = _session_or_404(request, session_id)
+    return [handoff.summary(h) for h in
+            session.handoffs.select_related("source_runner", "target_runner")[:50]]
+
+
+@router.post("/{session_id}/handoffs/{handoff_id}/restore", response=HandoffOut,
+             summary="Restore a snapshot that arrived after its transfer")
+@gate("session-acl", kind="conversation")  # write
+def restore_handoff(request: HttpRequest, session_id: uuid.UUID, handoff_id: uuid.UUID):
+    """A source that was asleep at the transfer packs its work when it is back.
+    This puts that snapshot into the session now: a turn on the session's
+    current runner restores it — into a worktree with no uncommitted changes
+    only; the report says otherwise and leaves the worktree alone. 409 while a
+    turn is queued or running in the session."""
+    session = _session_or_404(request, session_id, write=True)
+    h = get_object_or_404(session.handoffs.select_related("source_runner", "target_runner"),
+                          pk=handoff_id)
+    try:
+        handoff.restore_late(h, user=request.user,
+                             initiator=who.for_request(request, via="transfer"))
+    except RuntimeError as exc:
+        raise HttpError(409, str(exc))
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    h.refresh_from_db()
+    return handoff.summary(h)
+
+
+def _moved_out(session, moved, req) -> dict:
     binding, turn = moved
+    h = session.handoffs.select_related("source_runner", "target_runner").first()
     return {
         "session_id": str(session.id),
         "runner": binding.runner.name if binding.runner_id else "",
@@ -1516,9 +1635,10 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
             binding.transferred_from.name if binding.transferred_from_id else ""
         ),
         "index_offset": binding.index_offset,
-        "turn_id": str(turn.id),
+        "turn_id": str(turn.id) if turn else "",
         "status": "moved",
         "request_id": req.id,
+        "handoff": handoff.summary(h) if h is not None else None,
     }
 
 
