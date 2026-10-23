@@ -612,6 +612,25 @@ def visible_transcript(session, *, full: bool = False):
     return rows, has_more, oldest
 
 
+class BackfillRefusedError(Exception):
+    """This session's transcript is never asked for: its box is a sensitive-data
+    runner (`runner_requirements.is_sensitive_data_box`)."""
+
+
+SENSITIVE_BOX_BACKFILL_REFUSAL = (
+    "This session's runner is a sensitive-data box: it keeps its transcripts to itself "
+    "and deletes each turn's when the turn ends, so its history is never asked for.")
+
+
+def backfill_refused(binding) -> bool:
+    """Whether a backfill must never be asked of this binding's box: a
+    sensitive-data runner ships no transcript, whatever the session."""
+    from apps.harness import runner_requirements
+
+    runner = getattr(binding, "runner", None) if binding is not None else None
+    return runner is not None and runner_requirements.is_sensitive_data_box(runner)
+
+
 def request_backfill(session) -> str:
     """The client asked for full history. 'requested' if a reachable runner is
     bound (signal it, and `backfill_pending` stays true until it ships the last
@@ -630,10 +649,14 @@ def request_backfill(session) -> str:
     Asking unconditionally is now cheap in the way that matters: the write is
     ordinal-keyed, so a re-ship of rows we already hold costs one existence probe
     and zero inserts. `ready` survives in the client's vocabulary
-    (`backfillAction`) for old servers."""
+    (`backfillAction`) for old servers.
+
+    Raises BackfillRefusedError when the bound box is a sensitive-data runner."""
     from apps.canopy_sessions.models import RunnerBinding
 
     binding = RunnerBinding.objects.select_related("runner").filter(session=session).first()
+    if backfill_refused(binding):
+        raise BackfillRefusedError(SENSITIVE_BOX_BACKFILL_REFUSAL)
     # A runner only has to be REACHABLE to ship a transcript — not ready to run
     # turns (`Runner.is_reachable`). Gating on ONLINE alone made backfill
     # impossible whenever emdash's CDP port was down: the runner marks itself

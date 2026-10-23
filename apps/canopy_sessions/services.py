@@ -280,6 +280,7 @@ def transcript_sourced(session) -> bool:
 RESET_OK = "ok"
 RESET_NO_BINDING = "no_binding"            # nothing knows which box/worktree it came from
 RESET_RUNNER_UNREACHABLE = "runner_unreachable"   # transient: retry when it's back
+RESET_SENSITIVE_BOX = "sensitive_data_runner"     # its box never ships a transcript
 
 
 def _reset_blocker(session) -> tuple[str, object]:
@@ -301,6 +302,9 @@ def _reset_blocker(session) -> tuple[str, object]:
         return RESET_NO_BINDING, None
     # Reachable is enough to READ A FILE — mirrors request_backfill, which never
     # needs emdash's CDP port.
+    if transcript_read.backfill_refused(binding):
+        # Dropping the rows would lose them: a sensitive-data box ships nothing back.
+        return RESET_SENSITIVE_BOX, binding
     if not binding.runner.is_reachable:
         return RESET_RUNNER_UNREACHABLE, binding
     return RESET_OK, binding

@@ -22,6 +22,7 @@ from ninja.files import UploadedFile
 
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
+from apps.api.errors import ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
@@ -1430,7 +1431,13 @@ def detach_session(request: HttpRequest, session_id: uuid.UUID):
 @gate("session-acl", kind="conversation")  # READ gate on a POST
 def request_backfill(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    return {"status": transcript_read.request_backfill(session)}
+    # A sensitive-data runner's session is refused (409): that box keeps its
+    # transcripts to itself (`transcript_read.backfill_refused`).
+    try:
+        return {"status": transcript_read.request_backfill(session)}
+    except transcript_read.BackfillRefusedError as exc:
+        raise ProblemError(409, "History is not asked of a sensitive-data runner",
+                           detail=str(exc)) from exc
 
 
 @router.post(

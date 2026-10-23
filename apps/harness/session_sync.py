@@ -26,6 +26,7 @@ from apps.workspaces import services as wsvc
 
 from .models import ProjectOptIn, Runner, Turn
 from .routing import EXECUTING, runner_tenant_slugs
+from .runner_requirements import is_sensitive_data_box
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +493,15 @@ def _session_tenant(runner) -> set[str]:
     return cached
 
 
+def _sensitive_box(runner) -> bool:
+    """`is_sensitive_data_box(runner)`, read once per runner object, like the tenant."""
+    cached = getattr(runner, "_sensitive_box_cache", None)
+    if cached is None:
+        cached = is_sensitive_data_box(runner)
+        runner._sensitive_box_cache = cached
+    return cached
+
+
 def _agent_for_project(project: str, runner):
     """The agent a reported emdash PROJECT belongs to; None when it names no
     agent; `FOREIGN_AGENT` when it names an agent outside the runner's tenant.
@@ -537,7 +547,12 @@ def session_home(runner, project: str, fallback=None):
 
     None when the project names an agent outside the runner's tenant, or is a
     repo the runner's owner has not opted into (`Runner.opts_in`): such a
-    session is not canopy's and is not filed at all (callers skip it)."""
+    session is not canopy's and is not filed at all (callers skip it). None, too,
+    for anything a sensitive-data box reports: its sessions are canopy's own
+    confined turns, and one canopy has no record of is a leftover it deletes,
+    never a session to file and ask the box to ship."""
+    if _sensitive_box(runner):
+        return None
     owner = _agent_for_project(project, runner)
     if owner is FOREIGN_AGENT:
         return None

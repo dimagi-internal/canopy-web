@@ -675,9 +675,26 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
 - **A locked profile on every turn**: `claude -p --permission-mode dontAsk` with a
   settings document that denies Bash, file writes, the web, subagents and scheduling,
   allows only read tools and canopy-web's MCP, and disables bypass and auto mode. ACP
-  is not used. Telemetry, error reporting and non-essential model calls are off.
-- **Nothing kept**: a turn's caller envelope and profiles are deleted when it ends,
-  and a confined turn's transcript too.
+  is not used. Telemetry, error reporting, non-essential model calls and the canopy
+  plugin's fleet auto-update are off. Only confined turns run, each with its own
+  permission layer (a turn whose layer cannot be built is not run).
+- **canopy-web's MCP alone**: `--strict-mcp-config` with a per-turn config holding one
+  server, canopy-web at this box's `CANOPY_BASE_URL`, with the turn's caller token as
+  its bearer. It is named `plugin_canopy_canopy-web`, so tool names match the canopy
+  plugin's (`mcp__plugin_canopy_canopy-web__*`).
+- **Nothing kept**: when a turn ends, however it ends, the box deletes its caller
+  envelope, profiles and MCP config and, for every session the turn opened (one per
+  credential it tried), the transcript, its sidecar directory (`tool-results/`), todos
+  and file history, plus the turn's stderr logs and the box-wide
+  `~/.claude/canopy/session-log.jsonl` and `~/.claude/history.jsonl`. At start it
+  sweeps whatever a crashed turn left (envelopes, profiles, every transcript: nothing
+  on the box is ever resumed).
+- **No transcript leaves the box** except a confined turn's turn-end rows, which
+  canopy-web seals: no live stream, no backfill, and the usage report carries token
+  counts with blank titles. canopy-web refuses the rest too: a session it has no
+  record of is not kept or listed as missing, and send-up, backfill and reset are
+  refused (409).
+- **The claim log** names who and where a turn came from, never its prompt.
 - **Egress locked** (below): sensitive-data mode locks every unit. A unit whose lock is not
   holding reports `ready: false`.
 - **It says so.** Every heartbeat carries `data_mode` and a config hash (which covers

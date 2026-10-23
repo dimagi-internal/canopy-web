@@ -1211,13 +1211,29 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
     if resume_session_id:
         cmd += ["--resume", resume_session_id]
     else:
-        cmd += ["--session-id", str(uuid.uuid4())]
+        session_id = str(uuid.uuid4())
+        cmd += ["--session-id", session_id]
+        # Every session a turn opens, not only the one it ends on: a credential
+        # failover (`execute_prompt`) or a resume fallback (`run_claude`) starts
+        # another, and a sensitive-data turn deletes each one's transcript
+        # (`_sensitive_data_forget_turn`).
+        opened = getattr(_TURN_ENV, "session_ids", None)
+        if opened is not None:
+            opened.append(session_id)
     # A confined turn's native permission layer (see `_native_settings`). Deny rules
     # hold under --dangerously-skip-permissions; the flag above stays because this
     # box has no human to answer a prompt.
     settings = getattr(_TURN_ENV, "settings", None)
     if settings:
         cmd += ["--settings", str(settings)]
+    if SENSITIVE_DATA_MODE:
+        # canopy-web's MCP and nothing else (`_sensitive_data_mcp_config`): no
+        # plugin's, project's or user's server is loaded. With no config written,
+        # the turn has no MCP server at all.
+        mcp_config = getattr(_TURN_ENV, "mcp_config", None)
+        if mcp_config:
+            cmd += ["--mcp-config", str(mcp_config)]
+        cmd += ["--strict-mcp-config"]
     return cmd
 
 
@@ -3546,7 +3562,19 @@ SENSITIVE_DATA_ENV = {
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
     "DISABLE_AUTOUPDATER": "1",
+    # The canopy plugin's SessionStart hook (fleet_session_start_update.py) would
+    # otherwise git-fetch its marketplaces at the start of every turn.
+    "CANOPY_FLEET_AUTOUPDATE": "0",
 }
+#: The name the turn's canopy-web MCP server is given in its `--mcp-config`. The
+#: canopy plugin's own server is `canopy-web` in plugin `canopy`, whose tools Claude
+#: Code names `mcp__plugin_canopy_canopy-web__<tool>`; giving the strict config's
+#: server this name keeps every tool name, so the allow list above, a capability's
+#: own rules and the agents' skills read the same.
+SENSITIVE_DATA_MCP_SERVER = "plugin_canopy_canopy-web"
+#: What a confined session with no token of its own sends (the canopy plugin's
+#: headers helper sends the same): canopy-web refuses it, as it should.
+CONFINED_NO_MCP_TOKEN = "cct_missing-confined-session-token"
 #: The only tools a sensitive-data turn may call (dontAsk: anything unlisted is
 #: refused, never asked). canopy-web's MCP is the only MCP server, and it reaches a host's data
 #: through canopy's gateway, as the visitor.
@@ -3717,24 +3745,116 @@ def _sensitive_data_settings_file(turn: dict, confined_path: str | None) -> str:
     return str(path)
 
 
-def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, cli_session_id: str,
-                     confined: bool) -> None:
-    """After a sensitive-data turn: delete what it left on disk that can hold what it read --
-    the caller envelope, its profiles and, for a confined turn (never resumed), its
-    transcript. A conversation's own transcript stays only while the conversation
-    can resume it, and is swept with the session's work directory."""
+def _sensitive_data_mcp_config(turn: dict) -> str:
+    """Write this sensitive-data turn's MCP config and return the path: canopy-web's
+    server alone (spec 2026-10-22-sensitive-data-agents §1), passed with
+    `--strict-mcp-config` so no other server loads.
+
+    It reproduces what the canopy plugin's own server does for a confined session:
+    the same server and tool names (`SENSITIVE_DATA_MCP_SERVER`), and the session's
+    own caller token from its profile as the bearer, never a person's PAT. The URL
+    is this box's canopy-web (`BASE_URL`), the one host its egress lock lets out.
+    Raises ConfineError: a sensitive-data turn whose MCP cannot be pinned is not run."""
+    token = str(turn.get("mcp_token") or "") or CONFINED_NO_MCP_TOKEN
+    doc = {"mcpServers": {SENSITIVE_DATA_MCP_SERVER: {
+        "type": "http", "url": f"{BASE_URL.rstrip('/')}/api/mcp/",
+        "headers": {"Authorization": f"Bearer {token}"}}}}
+    path = PROFILE_ROOT / f"cloud-{turn['id']}.mcp.json"
+    try:
+        _write_private(path, doc)
+    except OSError as exc:
+        raise ConfineError(f"could not write the sensitive-data MCP config: {exc}") from exc
+    return str(path)
+
+
+#: What a sensitive-data turn leaves under PROFILE_ROOT, by suffix after `cloud-<turn>`.
+_SENSITIVE_DATA_PROFILE_SUFFIXES = (".json", ".settings.json", ".sensitive-data-settings.json",
+                                    ".mcp.json")
+
+
+def _claude_home() -> pathlib.Path:
+    """The Claude config directory whose `projects` holds transcripts."""
+    return CLAUDE_PROJECTS_HOME.parent
+
+
+def _unlink_or_rmtree(path: pathlib.Path) -> None:
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+    except OSError as exc:
+        _log(f"warn: sensitive-data mode: could not delete {path}: {exc}")
+
+
+def _sensitive_data_box_wide() -> list[pathlib.Path]:
+    """Files every session on this box appends to, whatever turn it is, that can
+    hold what a turn read. On a sensitive-data box every turn is sensitive, so they
+    go whole: the canopy plugin's PostToolUse hook logs each MCP call's arguments
+    to `canopy/session-log.jsonl` (it has no switch to turn that off), and Claude
+    Code keeps prompt history in `history.jsonl`."""
+    home = _claude_home()
+    return [home / "canopy" / "session-log.jsonl", home / "history.jsonl"]
+
+
+def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_ids,
+                                confined: bool) -> None:
+    """After a sensitive-data turn, however it ended: delete what it left on disk that
+    can hold what it read -- the caller envelope, its profiles and MCP config, the
+    box-wide logs (`_sensitive_data_box_wide`) and, for a confined turn (never
+    resumed), every session it opened (`session_ids`: one per credential it tried):
+    each one's transcript, its sidecar directory (`tool-results/` holds whole tool
+    outputs), its todos, file history and session env, and the turn's stderr logs.
+    A turn-id scratch directory goes whole. A conversation's own transcript stays
+    only while the conversation can resume it, and is swept with the session's work
+    directory."""
     if not SENSITIVE_DATA_MODE:
         return
     paths = [CALLER_ROOT / f"{turn_id}.json"]
-    paths += [PROFILE_ROOT / f"cloud-{turn_id}{suffix}"
-              for suffix in (".json", ".settings.json", ".sensitive-data-settings.json")]
-    if confined and cli_session_id and cwd is not None:
-        paths.append(CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{cli_session_id}.jsonl")
+    paths += [PROFILE_ROOT / f"cloud-{turn_id}{suffix}" for suffix in _SENSITIVE_DATA_PROFILE_SUFFIXES]
+    paths += _sensitive_data_box_wide()
+    if confined:
+        workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
+        project = CLAUDE_PROJECTS_HOME / _encode_project_dir(workdir)
+        home = _claude_home()
+        sids = [session_ids] if isinstance(session_ids, str) else list(session_ids or ())
+        for sid in dict.fromkeys(s for s in sids if s and re.fullmatch(r"[0-9A-Za-z-]{1,64}", s)):
+            paths += [project / f"{sid}.jsonl", project / sid,
+                      home / "file-history" / sid, home / "session-env" / sid]
+            paths += sorted((home / "todos").glob(f"{glob.escape(sid)}*"))
+        paths += [workdir / "stderr.log", workdir / "stderr.resume-retry.log"]
+        if workdir == pathlib.Path(WORK_DIR) / turn_id[:8]:
+            paths.append(workdir)  # a scratch directory nothing else uses
     for path in paths:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            _log(f"warn: sensitive-data mode: could not delete {path}: {exc}")
+        _unlink_or_rmtree(path)
+
+
+def sensitive_data_sweep_leftovers() -> int:
+    """At start, before any turn: what a turn that died with the process (a crash, a
+    kill, a reboot) left behind, which its own cleanup never reached. Every caller
+    envelope, every turn profile, every transcript and session sidecar under
+    CLAUDE_PROJECTS_HOME, the todos, file history and session envs, the box-wide
+    logs and the stderr logs under WORK_DIR.
+
+    Transcripts go whole because nothing on a sensitive-data box resumes one: the box
+    runs only confined turns (`_run_turn` refuses the rest), a chat's included, and a
+    confined turn never resumes and is never resumed. Returns how many were removed."""
+    if not SENSITIVE_DATA_MODE:
+        return 0
+    home = _claude_home()
+    found: list[pathlib.Path] = []
+    found += sorted(CALLER_ROOT.glob("*.json")) + sorted(PROFILE_ROOT.glob("cloud-*"))
+    for parent in (CLAUDE_PROJECTS_HOME, home / "todos", home / "file-history", home / "session-env"):
+        found += sorted(parent.glob("*")) if parent.is_dir() else []
+    found += [p for p in _sensitive_data_box_wide() if p.exists()]
+    work = pathlib.Path(WORK_DIR)
+    for pattern in ("*/stderr*.log", "sessions/*/stderr*.log", "agents/*/*/stderr*.log"):
+        found += sorted(work.glob(pattern))
+    for path in found:
+        _unlink_or_rmtree(path)
+    if found:
+        _log(f"sensitive-data mode: removed {len(found)} leftover(s) from before this start")
+    return len(found)
 
 # No time limit on an ACP turn, like `claude -p`. A wall-clock deadline (5400s)
 # killed ACE's full `/ace:run bednet-check-2-visit` on cloud-ec2-2 while it was
@@ -8738,6 +8858,8 @@ def _sync_session_streams(runner_id: str) -> None:
     history, because the turn-end ship and the backfill both still run.
     """
     global _LAST_STREAM_ACTIVITY
+    if SENSITIVE_DATA_MODE:
+        return  # a sensitive-data box keeps its transcripts to itself (spec §4)
     ct = _transcript_core()
     if ct is None:
         return
@@ -8813,7 +8935,10 @@ def _sync_session_streams(runner_id: str) -> None:
 def _drain_backfills(runner_id: str) -> None:
     """Ship a session's FULL history when the server asks for it, with ordinals,
     so it upsert-fills the older rows around anything the live stream already
-    persisted."""
+    persisted. Never on a sensitive-data box, which keeps its transcripts to itself
+    (canopy-web neither asks one nor takes one)."""
+    if SENSITIVE_DATA_MODE:
+        return
     ct = _transcript_core()
     if ct is None:
         return
@@ -8857,13 +8982,18 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
     the live view — at the turn-claim cadence a viewer would watch the reply
     arrive in POLL_SECONDS-sized lumps. Backfills are request-driven and rare,
     so they ride the slower clock and one cheap GET is all an idle tick costs.
+
+    A sensitive-data box ships no transcript, live or whole: only its usage report
+    (token counts, titles blank) and its slash commands.
     """
     try:
         if with_backfills:
-            _drain_backfills(runner_id)
+            if not SENSITIVE_DATA_MODE:
+                _drain_backfills(runner_id)
             _maybe_report_usage(runner_id)
             _maybe_report_slash_commands(runner_id)
-        _sync_session_streams(runner_id)
+        if not SENSITIVE_DATA_MODE:
+            _sync_session_streams(runner_id)
     except Exception as exc:  # noqa: BLE001 — never take the main loop down
         _log(f"session view sync error: {exc}")
 
@@ -9114,7 +9244,9 @@ def _provenance_brief(turn: dict) -> str:
     """`origin=… who=… credential=… client=… parent=…` from the claimed turn (the
     server's TurnOut.initiator / provenance / parent_*), mirroring the laptop
     runner's canopy_runner/whois.py — this file is stdlib-only and cannot import
-    it. `-` for anything an older server did not send."""
+    it. `-` for anything an older server did not send. No `prompt_head` on a
+    sensitive-data box: the prompt is the host's data, and this line goes to the
+    journal."""
     ini = turn.get("initiator") or {}
     person = ini.get("user") or ini.get("contact") or {}
     ident = person.get("email") or ini.get("agent") or ""
@@ -9132,9 +9264,11 @@ def _provenance_brief(turn: dict) -> str:
     def v(x):
         x = str(x or "").strip()
         return json.dumps(x) if any(c in x for c in ' "=\n') else (x or "-")
-    head = json.dumps(str(turn.get("prompt") or "")[:80])
-    return (f"origin={v(turn.get('origin'))} who={v(who)} credential={v(cred_s)} "
-            f"client={v(client)} parent={v(parent)} prompt_head={head}")
+    brief = (f"origin={v(turn.get('origin'))} who={v(who)} credential={v(cred_s)} "
+             f"client={v(client)} parent={v(parent)}")
+    if SENSITIVE_DATA_MODE:
+        return brief
+    return f"{brief} prompt_head={json.dumps(str(turn.get('prompt') or '')[:80])}"
 
 
 def _lineage_env(turn: dict) -> dict:
@@ -9227,8 +9361,14 @@ ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
+    # What a sensitive-data turn's cleanup needs, filled in as the turn gets that
+    # far; the cleanup itself runs in the `finally` below, however the turn ends.
+    forget = {"cwd": None, "confined": False, "cli_session_id": ""}
+    _TURN_ENV.session_ids = []
+    _TURN_ENV.mcp_config = None
     try:
         confined = _capability(turn) is not None
+        forget["confined"] = confined
         # Decided FIRST, before any environment is built: a confined (caller's)
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
@@ -9300,6 +9440,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _TURN_ENV.extra["CANOPY_AGENT_ENV_FILE"] = str(env_path)
             off_disk_env = True
         cwd = _turn_cwd(turn, turn_id, env=_agent_env(slug))
+        forget["cwd"] = cwd
         resume_id = turn.get("_resume_id") or None
         prompt = turn.get("prompt", "")
         if not confined:
@@ -9334,9 +9475,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
 
         if SENSITIVE_DATA_MODE:
             # Every sensitive-data turn runs under the locked profile, a confined one with its
-            # own rules folded in. Without it, the turn is not run.
+            # own rules folded in, and with canopy-web's MCP alone. Without any of them, the
+            # turn is not run. `_native_settings` is best-effort on an ordinary box
+            # (profile_guard is the fail-closed layer there); here a confined turn without
+            # its own layer would run under the whole default allow list, so it does not run.
             try:
+                if confined and not _TURN_ENV.settings:
+                    raise ConfineError("the turn's own permission layer could not be built "
+                                       "(see the runner log)")
                 _TURN_ENV.settings = _sensitive_data_settings_file(turn, _TURN_ENV.settings)
+                _TURN_ENV.mcp_config = _sensitive_data_mcp_config(turn)
             except ConfineError as exc:
                 _api("POST", f"/turns/{turn_id}/finish",
                      {"status": "failed", "result_note": f"a sensitive-data turn was not run: {exc}"})
@@ -9386,8 +9534,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             lease_stop.set()
             with _SESSION_HOOKS_LOCK:
                 _SESSION_HOOKS.pop(turn_id, None)
+        forget["cli_session_id"] = cli_session_id
         _TURN_ENV.extra = {}
         _TURN_ENV.settings = None
+        _TURN_ENV.mcp_config = None
         _TURN_ENV.confined = None
         _TURN_ENV.chat_session = ""
         if cli_session_id and cwd is not None:
@@ -9408,10 +9558,6 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                         fn(runner_id, turn, cli_session_id)
                 except Exception as exc:  # noqa: BLE001
                     _log(f"warn: could not {step} for {turn_id[:8]}: {exc}")
-        # AFTER the rows above shipped: a confined sensitive-data turn's transcript is deleted
-        # here, and it is how its reply reaches the asker. canopy-web keeps the words
-        # sealed for the conversation's own people (`sensitivity.seal`).
-        _sensitive_data_forget_turn(str(turn_id), cwd, cli_session_id, confined)
         # ALWAYS over REST. #448 fixed turns being orphaned when the WebSocket
         # died mid-turn and the finish frame raised; the worker never touches the
         # socket at all, so that failure class is now structurally impossible
@@ -9465,6 +9611,19 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     except Exception as exc:  # noqa: BLE001 — a worker must never take the loop down
         _log(f"turn {turn_id[:8]} worker crashed: {exc}")
     finally:
+        # A sensitive-data turn's leftovers go however it ended: refused, unconfinable,
+        # failed, raised or done. AFTER the rows above shipped, on the way that got
+        # there: they are how a confined turn's reply reaches the asker, and canopy-web
+        # keeps the words sealed for the conversation's own people (`sensitivity.seal`).
+        try:
+            _sensitive_data_forget_turn(
+                str(turn_id), forget["cwd"],
+                [*(getattr(_TURN_ENV, "session_ids", None) or []), forget["cli_session_id"]],
+                forget["confined"])
+        except Exception as exc:  # noqa: BLE001 — the secrets below must still go
+            _log(f"warn: sensitive-data cleanup for {str(turn_id)[:8]} failed: {exc}")
+        _TURN_ENV.session_ids = None
+        _TURN_ENV.mcp_config = None
         # The turn's secrets end with it — done, failed, raised, stopped or timed out.
         remove_turn_env(str(turn_id))
         _remove_agent_token(str(turn_id))
@@ -9864,6 +10023,8 @@ def main() -> None:
     _RUNNER_ID = runner_id
     # No turn runs yet: any per-turn env a previous process left is nobody's.
     sweep_turn_envs()
+    # Nor, on a sensitive-data box, anything a turn the last process ran left.
+    sensitive_data_sweep_leftovers()
     if UNIT:
         # A unit's key was registered by canopy-pair; it has no instance role to enroll.
         enrollment = threading.Thread(target=lambda: None, daemon=True)
