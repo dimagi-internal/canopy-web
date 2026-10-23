@@ -7630,10 +7630,12 @@ export interface paths {
         };
         /**
          * What a connected site asks of agents, and who meets it
-         * @description The site's signed `site.json` — its pages and the scopes each grants, what
-         *     an agent must be to read real data there, and which agents it offers — beside
-         *     canopy's own site agents response for the site: per allowed agent, whether it meets the
-         *     site's `real_data.requires` and, if not, why. Fetched like the site's keys
+         * @description The site's signed `site.json` — which agents it offers, which of them it
+         *     lets work with its sensitive data and what such an agent must be, and its
+         *     pages with the scopes each grants (the site's own description; canopy never
+         *     enforces it) — beside canopy's own site agents response for the site: per
+         *     allowed agent the site lets near its sensitive data, whether it can handle it
+         *     now and, if not, why. Fetched like the site's keys
          *     (https only, bounded, cached) and fail-closed: an unreadable document is
          *     `available: false` with its reason.
          */
@@ -27594,19 +27596,28 @@ export interface components {
             readonly slug: string;
             /** Name */
             readonly name: string;
+            /** Url */
+            readonly url: string;
             /** Offered */
             readonly offered: boolean;
-            /** Real Data */
-            readonly real_data: boolean;
+            /** Sensitive Data */
+            readonly sensitive_data: boolean;
             /** Ready */
             readonly ready: boolean;
-            /** Meets Real Data */
-            readonly meets_real_data: boolean;
+            /** Can Handle Sensitive Data */
+            readonly can_handle_sensitive_data: boolean | null;
             /** Why Not */
-            readonly why_not: readonly string[];
+            readonly why_not: readonly components["schemas"]["FitReasonOut"][];
         };
-        /** RealDataRequiresOut */
-        readonly RealDataRequiresOut: {
+        /** FitReasonOut */
+        readonly FitReasonOut: {
+            /** Text */
+            readonly text: string;
+            /** Url */
+            readonly url: string;
+        };
+        /** SensitiveDataRequiresOut */
+        readonly SensitiveDataRequiresOut: {
             /**
              * Handles Sensitive
              * @default false
@@ -27635,7 +27646,7 @@ export interface components {
             readonly stale: boolean;
             /** Pages */
             readonly pages: readonly components["schemas"]["SitePageOut"][];
-            readonly requires: components["schemas"]["RealDataRequiresOut"];
+            readonly requires: components["schemas"]["SensitiveDataRequiresOut"];
             /** Uses Version */
             readonly uses_version: string;
             /** Site Agents Version */

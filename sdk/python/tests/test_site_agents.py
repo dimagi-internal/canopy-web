@@ -213,8 +213,8 @@ def test_fetch_site_agents_refuses_a_forged_answer(world):
 
 PAGES = [{"key": "labs:workflow:run", "title": "A workflow run",
           "scopes": ["workflow:read", "workflow:act", "data:read"]}]
-NEEDS = {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
-         "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"], "version": "abc"}}
+NEEDS = {"sensitive_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
+         "uses": {"agents": ["ace", "labsdata"], "sensitive_data_agents": ["labsdata"], "version": "abc"}}
 
 
 def test_site_document_round_trips(world):
@@ -222,8 +222,17 @@ def test_site_document_round_trips(world):
     token = site_mod.sign_site_document(world.host_key, doc)
     needs = site_mod.verify_site_document(token, [world.host_key.public_key()], site_name=SITE)
     assert needs.pages[0].scopes == ("workflow:read", "workflow:act", "data:read")
-    assert needs.real_data_requires == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
-    assert needs.uses_real_data_agents == ("labsdata",) and needs.uses_version == "abc"
+    assert needs.sensitive_data_requires == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
+    assert needs.uses_sensitive_data_agents == ("labsdata",) and needs.uses_version == "abc"
+
+
+def test_site_document_speaks_of_sensitive_data_not_real_data():
+    doc = site_mod.site_document(SITE, pages=PAGES, **NEEDS)
+    assert doc["sensitive_data"] == {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}}
+    assert doc["uses"]["sensitive_data_agents"] == ["labsdata"]
+    assert "real_data" not in doc and "real_data_agents" not in doc["uses"]
+    with pytest.raises(TypeError):
+        site_mod.site_document(SITE, real_data={"requires": {}})  # the old name is gone
 
 
 def test_site_document_refusals(world):
@@ -235,7 +244,7 @@ def test_site_document_refusals(world):
         site_mod.verify_site_document(token, [world.host_key.public_key()], site_name="other")
     assert exc.value.code == "bad_issuer"
     with pytest.raises(site_mod.SiteDocumentError) as exc:
-        site_mod.site_document(SITE, real_data={"requires": {"runner_flag": "made-up"}})
+        site_mod.site_document(SITE, sensitive_data={"requires": {"runner_flag": "made-up"}})
     assert exc.value.code == "malformed"
 
 

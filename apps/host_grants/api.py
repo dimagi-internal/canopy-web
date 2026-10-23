@@ -87,26 +87,38 @@ class SitePageOut(Schema):
     scopes: list[str]
 
 
-class RealDataRequiresOut(Schema):
+class SensitiveDataRequiresOut(Schema):
     #: The site asks for a capability that handles sensitive data (`data: sensitive`).
     handles_sensitive: bool = False
     #: The runner flag the site asks for ("" for none).
     runner_flag: str = ""
 
 
+class FitReasonOut(Schema):
+    #: Why the agent cannot handle the site's sensitive data yet.
+    text: str
+    #: The page in canopy that fixes it ("" when there is none).
+    url: str
+
+
 class AgentFitOut(Schema):
     slug: str
     name: str
+    #: The agent's page in canopy.
+    url: str
     #: The site says it offers this agent.
     offered: bool
-    #: The site says it lets this agent read real data.
-    real_data: bool
+    #: The site says it lets this agent work with its sensitive data.
+    sensitive_data: bool
     #: canopy's site agents API says it can serve the site now.
     ready: bool
-    #: It meets the site's `real_data.requires` and is ready.
-    meets_real_data: bool
-    #: Why not, each naming where in canopy to fix it.
-    why_not: list[str]
+    #: Only when `sensitive_data`: the agent meets the site's `sensitive_data.requires`
+    #: and is ready. None when the site does not allow it sensitive data — there is
+    #: nothing to meet.
+    can_handle_sensitive_data: bool | None
+    #: Why it cannot yet, each with where in canopy to fix it. Empty unless
+    #: `can_handle_sensitive_data` is false.
+    why_not: list[FitReasonOut]
 
 
 class SiteNeedsOut(Schema):
@@ -121,7 +133,7 @@ class SiteNeedsOut(Schema):
     fetched_at: str | None
     stale: bool
     pages: list[SitePageOut]
-    requires: RealDataRequiresOut
+    requires: SensitiveDataRequiresOut
     #: The site agents version the site chose its settings against, and canopy's now.
     uses_version: str
     site_agents_version: str
@@ -140,10 +152,12 @@ def _iso(ts: float | None) -> str | None:
                   summary="What a connected site asks of agents, and who meets it")
 @gate("integrations")
 def connected_app_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNeedsOut:
-    """The site's signed `site.json` — its pages and the scopes each grants, what
-    an agent must be to read real data there, and which agents it offers — beside
-    canopy's own site agents response for the site: per allowed agent, whether it meets the
-    site's `real_data.requires` and, if not, why. Fetched like the site's keys
+    """The site's signed `site.json` — which agents it offers, which of them it
+    lets work with its sensitive data and what such an agent must be, and its
+    pages with the scopes each grants (the site's own description; canopy never
+    enforces it) — beside canopy's own site agents response for the site: per
+    allowed agent the site lets near its sensitive data, whether it can handle it
+    now and, if not, why. Fetched like the site's keys
     (https only, bounded, cached) and fail-closed: an unreadable document is
     `available: false` with its reason."""
     try:
@@ -156,13 +170,13 @@ def connected_app_needs(request: HttpRequest, slug: str, app_id: int) -> SiteNee
     content = site_agents.site_agents_content(app)
     document = needs.document
     rows, not_allowed = site_needs.fit(document, content) if document else ([], [])
-    requires = dict(document.real_data_requires) if document else {}
+    requires = dict(document.sensitive_data_requires) if document else {}
     return SiteNeedsOut(
         url=needs.url, available=document is not None, reason=needs.reason,
         fetched_at=_iso(needs.fetched_at), stale=needs.stale,
         pages=[SitePageOut(key=p.key, title=p.title, scopes=list(p.scopes))
                for p in (document.pages if document else ())],
-        requires=RealDataRequiresOut(**requires),
+        requires=SensitiveDataRequiresOut(**requires),
         uses_version=document.uses_version if document else "",
         site_agents_version=wire.content_version(content),
         agents=[AgentFitOut(**r) for r in rows], not_allowed=not_allowed)
