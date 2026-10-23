@@ -287,6 +287,12 @@ Every browser-facing address canopy-web serves. The SPA route table is
   per-person drafts, presence, streamed reply). A send enqueues a session
   `Turn` that a session-capable runner drives in the agent's emdash session.
   `docs/superpowers/specs/2026-07-22-reusable-chat-kit-design.md`.
+  A PRIVATE (sensitive) conversation opens behind an interstitial
+  (`PrivateConversationGate`, also /ide's pane): one of its people presses
+  "Open it" (remembered for the tab); anyone else who can see it may only ask
+  its starter to add them, and its owner sees the request on Home and above the
+  chat (`JoinRequestsBanner`). Every list names one "Private conversation ·
+  <starter>" with a lock (`components/chat/privateConversation.tsx`).
 - **`/huddles`** (+ `/:id`) — agents syncing in rounds, led by one of them.
   The detail page is a grid (column per member, row per round; leader's
   critique above the round it shaped; co-sign arcs tying joint proposals), then

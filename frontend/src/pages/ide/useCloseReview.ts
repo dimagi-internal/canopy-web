@@ -2,6 +2,7 @@ import { listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { describeSelection } from '@/widget/pageState'
 import { usePageAction } from '@/widget/usePageAction'
 import { usePageState } from '@/widget/usePageState'
+import { listTitle } from '@/components/chat/privateConversation'
 
 /**
  * /ide's half of the close review (spec 2026-10-16-ide-close-review-design.md).
@@ -37,7 +38,7 @@ export function toCandidate(s: ChatSession): ReviewCandidate {
   const reply = (s.last_reply ?? '').trim()
   return {
     id: s.id,
-    title: s.title?.trim() || '(untitled)',
+    title: listTitle(s, s.title?.trim() || '(untitled)'),
     project: s.emdash_project || s.project || '',
     agent: s.agent_slug ?? '',
     runner: s.runner_name ?? '',

@@ -106,6 +106,19 @@ class TransferDecisionIn(Schema):
     note: str = ""
 
 
+class JoinRequestOut(Schema):
+    """A request to be added to a private conversation. Who asked and how it was
+    decided; never anything the conversation said."""
+    id: uuid.UUID
+    session_id: uuid.UUID
+    requested_by: str
+    requested_by_name: str
+    status: str
+    decided_by: str = ""
+    decided_at: dt.datetime | None = None
+    created_at: dt.datetime
+
+
 class TransferRequestOut(Schema):
     id: uuid.UUID
     session_id: uuid.UUID
@@ -351,6 +364,14 @@ class SessionOut(Schema):
     #: It holds a host's sensitive data (`harness.sensitivity`): read back only by
     #: its own people, never shared, exported, mirrored or reviewed.
     sensitive: bool = False
+    #: A sensitive conversation only: whether you are one of its people (its
+    #: starter, a participant, its contact) — `sensitivity.is_conversation_person`.
+    #: Someone else who can list it sees that it exists, never what it says, and
+    #: may ask to be added. Null for an ordinary conversation.
+    you_are_in_it: bool | None = None
+    #: Who started it, by name ("" when a runner or an agent did): a list shows a
+    #: private conversation by this, since it keeps no title. Not content.
+    started_by_name: str = ""
     # The supervisor feed's two fields, filled only when the list is asked for
     # them (`?reply=true`) — every other list caller would pay for text it never
     # shows. The agent's most recent reply, WHOLE — sent only when it is the
@@ -418,6 +439,9 @@ class SessionDetailOut(SessionOut):
     # (canopy_sessions.access). The page reads it to decide whether to offer
     # sharing and the composer — the server enforces both regardless.
     my_role: str | None = None
+    #: A private conversation you are not in: your latest request to be added
+    #: (`pending` / `declined` / …), or "" when you have not asked.
+    your_join_request: str = ""
     # May YOU move this session to another workspace (`POST /{id}/move`)? The
     # person whose session it is — its creator, or for a runner-discovered one
     # the runner's owner — and never an agent's session (canopy_sessions.filing).

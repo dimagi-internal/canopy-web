@@ -11,6 +11,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { StateDot, type DotTone } from '@/components/sessions/StateDot'
 import { folderKey, shortAge } from '@/pages/ide/ideTree'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
+import { PrivateMark } from '@/components/chat/privateConversation'
 
 // HOME — what is waiting on you, across every workspace you are in.
 //
@@ -40,6 +41,7 @@ const KIND_LABEL: Record<string, string> = {
   task: 'Task',
   session: 'Chat',
   access_request: 'Access',
+  join_request: 'Private chat',
 }
 
 export function HomePage(): JSX.Element {
@@ -303,7 +305,7 @@ export function HomePage(): JSX.Element {
             {hidden.map((item) => (
               <div key={item.key} className="flex items-center gap-3 border-t border-border px-3 py-2 text-[13px] first:border-t-0">
                 <KindBadge kind={item.kind} />
-                <Link to={item.url} className="min-w-0 flex-1 truncate text-foreground-secondary hover:text-primary">{item.title}</Link>
+                <Link to={item.url} className="min-w-0 flex-1 truncate text-foreground-secondary hover:text-primary">{item.private && <PrivateMark className="mr-1" />}{item.title}</Link>
                 <button type="button" onClick={() => void onUnhide([item.key])} className="shrink-0 text-[12px] text-primary hover:underline">
                   Show again
                 </button>
@@ -446,6 +448,7 @@ function SessionRow({ item, workspaceName, showAgent = true, onHide }: {
         title={[item.title, item.reason, item.body].filter(Boolean).join('\n\n')}
         className="truncate text-foreground hover:text-primary"
       >
+        {item.private && <PrivateMark className="mr-1" />}
         {item.title}
         {asking && <span className="ml-2 text-[11px] text-warning">needs an answer</span>}
         {item.state === 'running_auto' && <span className="ml-2 text-[11px] text-muted-foreground">auto</span>}
@@ -491,7 +494,7 @@ function AttentionRow({ item, workspaceName, onAct, onHide }: {
         <KindBadge kind={item.kind} />
         <div className="min-w-48 flex-1">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <Link to={item.url} className="text-[13px] font-medium text-foreground hover:text-primary">{item.title}</Link>
+            <Link to={item.url} className="text-[13px] font-medium text-foreground hover:text-primary">{item.private && <PrivateMark className="mr-1" />}{item.title}</Link>
             <span className="text-[12px] text-warning">{item.reason}</span>
           </div>
           {item.body && <p className="mt-0.5 line-clamp-2 text-[12px] text-foreground-secondary">{item.body}</p>}

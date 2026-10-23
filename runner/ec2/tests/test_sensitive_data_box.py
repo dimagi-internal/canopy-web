@@ -413,3 +413,119 @@ def test_a_restart_keeps_a_conversation_still_within_its_day(load_cloud_runner, 
               _leave(mod.CLAUDE_PROJECTS_HOME / "-elsewhere" / "x.jsonl")]
     mod.sensitive_data_sweep_leftovers()
     assert all(p.exists() for p in kept) and not any(p.exists() for p in beside)
+
+
+# ── a confined turn's reply, shown as it is written ─────────────────────────
+def _transcript(mod, cwd, sid):
+    path = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(cwd) / f"{sid}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+    return path
+
+
+def _say(path, role, text):
+    rec = {"type": role, "message": {"role": role, "content": [{"type": "text", "text": text}]}}
+    with path.open("a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def _posts(mod, monkeypatch):
+    posts = []
+    monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: posts.append((p, b)) or (200, {}))
+    return posts
+
+
+def test_a_running_confined_turn_ships_its_rows_as_they_are_written(
+        load_cloud_runner, monkeypatch, tmp_path):
+    """Through the turn-end ship's own route and transcript id, a few rows at a time,
+    each row once — so canopy-web shows them live and the turn-end ship adds nothing."""
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    posts = _posts(mod, monkeypatch)
+    path = _transcript(mod, tmp_path, "cli-1")
+    tail = mod._TurnTail("r-1", "5e55-1", tmp_path)
+    assert tail.tick() == 0  # no session announced yet
+    tail.follow("cli-1")
+    _say(path, "user", "how many visits?")
+    _say(path, "assistant", "Looking now.")
+    assert tail.tick() == 2
+    _say(path, "assistant", "There were 12.")
+    assert tail.tick() == 1
+    assert tail.tick() == 0
+    sent = [(p, b["transcript_id"], b["session_id"], e["kind"], e["payload"]["text"], e["index"])
+            for p, b in posts for e in b["events"]]
+    assert [s[:5] for s in sent] == [
+        ("/runners/r-1/session-stream", "cli-1", "5e55-1", "user", "how many visits?"),
+        ("/runners/r-1/session-stream", "cli-1", "5e55-1", "assistant", "Looking now."),
+        ("/runners/r-1/session-stream", "cli-1", "5e55-1", "assistant", "There were 12."),
+    ]
+    # The ordinals the turn-end ship gives the same rows, so it is a no-op for them.
+    ct = mod._transcript_core()
+    whole = [r["index"] for r in ct.conversational_messages(ct.read_records(path), -1)]
+    assert [s[5] for s in sent] == whole
+
+
+def test_a_resumed_conversation_does_not_ship_its_earlier_turns_again(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    path = _transcript(mod, tmp_path, "kept-1")
+    _say(path, "user", "an earlier question")
+    _say(path, "assistant", "an earlier answer")
+    tail = mod._TurnTail("r-1", "5e55-1", tmp_path, resumed="kept-1")
+    posts = _posts(mod, monkeypatch)
+    tail.follow("kept-1")
+    _say(path, "user", "and now?")
+    assert tail.tick() == 1
+    [(_p, body)] = posts
+    assert [e["payload"]["text"] for e in body["events"]] == ["and now?"]
+    assert body["events"][0]["index"] == ct_index(mod, path, 2)
+
+
+def ct_index(mod, path, record):
+    ct = mod._transcript_core()
+    return next(r["index"] for r in ct.conversational_messages(ct.read_records(path), -1)
+                if r["index"] >= ct.compose_index(record, 0))
+
+
+def test_a_failed_post_is_shipped_again_next_tick(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    path = _transcript(mod, tmp_path, "cli-1")
+    tail = mod._TurnTail("r-1", "5e55-1", tmp_path)
+    tail.follow("cli-1")
+    _say(path, "assistant", "hello")
+    monkeypatch.setattr(mod, "_api", lambda *a, **k: (502, {}))
+    assert tail.tick() == 0
+    posts = _posts(mod, monkeypatch)
+    assert tail.tick() == 1 and len(posts) == 1
+
+
+def test_a_confined_chat_turn_tails_while_it_runs_and_stops_before_the_ship(
+        load_cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setenv("RUNNER_NAME", "cloud-sensitive-1")
+    monkeypatch.setenv("RUNNER_DATA_MODE", "sensitive_data")
+    mod = load_cloud_runner()
+    calls = _wire(mod, monkeypatch, tmp_path)
+    order = []
+
+    class _Tail:
+        def __init__(self, runner_id, session_id, cwd, resumed=""):
+            order.append(("tail", session_id))
+
+        def follow(self, sid):
+            order.append(("follow", sid))
+
+        def start(self):
+            order.append("start")
+
+        def stop(self):
+            order.append("stop")
+
+    def fake_execute(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        mod._announce_session(turn_id, "cli-1")
+        return True, "ok", "cli-1"
+
+    monkeypatch.setattr(mod, "_TurnTail", _Tail)
+    monkeypatch.setattr(mod, "execute_prompt", fake_execute)
+    monkeypatch.setattr(mod, "_ship_transcript_rows", lambda *a: order.append("ship"))
+    mod._run_turn("r-1", _turn(origin_ref={"chat_session_id": "5e55-1"}))
+    assert _finish(calls)[0]["status"] == "done"
+    assert order == [("tail", "5e55-1"), "start", ("follow", "cli-1"), "stop", "ship"]

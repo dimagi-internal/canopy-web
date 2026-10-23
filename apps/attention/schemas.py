@@ -25,6 +25,9 @@ class AttentionRowOut(Schema):
     last_activity_at: dt.datetime
     actions: list[str] = Field(default_factory=list)
     target: dict[str, str] = Field(default_factory=dict)
+    # A private (sensitive) conversation: the title names who started it, never
+    # what it says, and a client draws it locked.
+    private: bool = False
 
 
 class AttentionOut(Schema):
