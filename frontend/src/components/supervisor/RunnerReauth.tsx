@@ -160,7 +160,11 @@ export function RunnerReauth({ runnerId, slot = 'box', loginKey = '', isSet = fa
     actedThisVisit.current = true
     const m = await submitRunnerMintCode(runnerId, code)
     setCode('')
-    onSignedIn?.()
+    // Not onSignedIn here: a submit only hands the code to the runner, which
+    // finishes a poll tick or two later. Calling it now closed "+ Token"'s panel
+    // on Finish, before the token existed — the row vanished with no
+    // "Finishing…" and a reload in that window showed no token. The `done`
+    // effect above calls it once the token has actually landed.
     return m
   })
 

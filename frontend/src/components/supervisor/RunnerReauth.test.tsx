@@ -87,6 +87,24 @@ describe('RunnerReauth', () => {
     await waitFor(() => expect(screen.queryByTestId('reauth-code')).toBeNull())
   })
 
+  it('tells the parent only once the runner has finished, not on Finish', async () => {
+    // "+ Token" closes its panel on onSignedIn. Firing it on submit made the row
+    // vanish while the runner was still exchanging the code.
+    api.getRunnerMint.mockResolvedValue(mint({ status: 'awaiting_code', slot: 'token', authorize_url: URL_ }))
+    api.submitRunnerMintCode.mockResolvedValue(mint({ status: 'completing', slot: 'token' }))
+    const onSignedIn = vi.fn()
+    render(<RunnerReauth runnerId="r1" slot="token" onSignedIn={onSignedIn} />)
+    await waitFor(() => expect(screen.getByTestId('reauth-code')).toBeTruthy())
+
+    fireEvent.change(screen.getByTestId('reauth-code'), { target: { value: 'the-code' } })
+    await act(async () => { fireEvent.click(screen.getByTestId('reauth-submit')) })
+    expect(screen.getByTestId('reauth-completing')).toBeTruthy()
+    expect(onSignedIn).not.toHaveBeenCalled()
+
+    api.getRunnerMint.mockResolvedValue(mint({ status: 'done', slot: 'token' }))
+    await waitFor(() => expect(onSignedIn).toHaveBeenCalledTimes(1), { timeout: 5_000 })
+  })
+
   it('says so when a runner never picks the request up', async () => {
     // The common real failure: this is a box we already suspect is unhealthy, so
     // spinning forever hides the one thing the operator needs to know.
