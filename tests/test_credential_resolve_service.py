@@ -55,7 +55,7 @@ def alerts(monkeypatch):
     monkeypatch.setattr(cr.vault_alerts, "unrouted_box_refused",
                         lambda agent, request, runner: sent.append(("unrouted", runner)))
     monkeypatch.setattr(cr.vault_alerts, "device_proof_refused",
-                        lambda agent, request, reason: sent.append(("refused", reason)))
+                        lambda agent, request, reason, runner=None: sent.append(("refused", reason)))
     return sent
 
 

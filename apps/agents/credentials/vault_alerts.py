@@ -147,7 +147,9 @@ def device_proof_refused(agent, request, *, reason: str, runner=None):
         return raise_alert(
             agent, "device-proof", user=request.user, runner=runner,
             turn_id=request.META.get("HTTP_X_CANOPY_TURN_ID", "")[:120],
-            detail=f"resolve by {_who(request.user)} refused: {reason}"[:500])
+            detail=(f"resolve by {_who(request.user)}"
+                    + (f" on {runner.name}" if runner is not None else "")
+                    + f" refused: {reason}")[:500])
     except Exception:  # noqa: BLE001
         logger.exception("vault device-proof alert failed for %s", agent.slug)
         return None
@@ -234,9 +236,23 @@ def recipients(agent) -> list:
             if g.user.is_active and agent.is_admin(g.user)]
 
 
-def _link(agent) -> str:
+#: Where each kind's action is: the Security tab's section that holds it, not the top of
+#: the old one-page Settings. A refused device proof or a missing key wrap is fixed among
+#: the agent's machines (approve, grant, revoke); the rest are read in the alert list,
+#: beside the read history.
+_ACT_AT = {"device-proof": ("cred-device-keys", "Review {slug}\u2019s approved machines"),
+           "zk-wrap-missing": ("cred-device-keys", "Review {slug}\u2019s approved machines")}
+_DEFAULT_ACT = ("cred-alerts", "See {slug}\u2019s vault alerts and credential read history")
 
-    return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings#credentials")
+
+def _link(agent, kind: str = "") -> str:
+
+    anchor, _ = _ACT_AT.get(kind, _DEFAULT_ACT)
+    return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings/security#{anchor}")
+
+
+def _link_label(agent, kind: str) -> str:
+    return _ACT_AT.get(kind, _DEFAULT_ACT)[1].format(slug=agent.slug)
 
 
 #: What each kind watches for and what the owner should do, in plain words. The
@@ -260,10 +276,13 @@ _WHY = {
               "few times, not dozens; a burst can mean a loop or someone harvesting them. "
               "Check which box and turn the reads came from."),
     "device-proof": ("Canopy refused this read because the agent only hands its secrets to "
-                     "approved devices, and the caller could not prove it was one: no proof, "
-                     "or a key nobody approved. If that was your own box, approve its device "
-                     "key; if not, someone holds a token without the device. (A known box "
-                     "that simply does not run the agent is refused without this alert.)"),
+                     "approved devices, and the caller could not prove it was one. Nothing "
+                     "was handed out. \"No device proof\" means the request carried none at "
+                     "all: your token used away from a machine's device key — a script, a test "
+                     "run, a fresh install — not a box waiting for approval. A proof from a key "
+                     "nobody approved means a machine to approve, if it is yours. If you do "
+                     "not recognise either, revoke the token. (A known box that simply does "
+                     "not run the agent is refused without this alert.)"),
     "zk-wrap-missing": ("Canopy refused this read because the device has not been granted "
                         "this agent's vault key. Grant the device if it should run the "
                         "agent."),
@@ -276,18 +295,19 @@ def _notify(agent, alert) -> dict:
 
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
     try:
-        link = _link(agent)
+        link = _link(agent, alert.kind)
+        act = _link_label(agent, alert.kind)
         label = dict(alert.KIND_CHOICES).get(alert.kind, alert.kind)
         subject = f"Canopy vault alert · {agent.name or agent.slug}: {label}"
         why = _WHY.get(alert.kind, "")
         text = (f"{alert.detail}\n\n" + (f"{why}\n\n" if why else "")
-                + f"See {agent.slug}'s credential read history: {link}\n\n"
+                + f"{act}: {link}\n\n"
                 f"At most one alert of this kind per agent per hour. You are getting this "
                 f"because you own {agent.slug} on Canopy.\n")
         html = (f"<p>{escape(alert.detail)}</p>"
                 + (f"<p>{escape(why)}</p>" if why else "")
-                + f'<p><a href="{escape(link)}">See {escape(agent.slug)}&rsquo;s credential read '
-                f"history</a></p><p style=\"color:#78716c;font-size:13px\">At most one alert of "
+                + f'<p><a href="{escape(link)}">{escape(act)}</a></p>'
+                f"<p style=\"color:#78716c;font-size:13px\">At most one alert of "
                 f"this kind per agent per hour. You are getting this because you own "
                 f"{escape(agent.slug)} on Canopy.</p>")
         rel = link.split("://", 1)[-1]

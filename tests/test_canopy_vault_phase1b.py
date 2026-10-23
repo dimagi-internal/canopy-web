@@ -264,7 +264,8 @@ def test_a_refused_device_proof_alerts_the_owner_once_an_hour(fleet, sts):
     [alert] = _alerts("device-proof")
     assert alert.occurrences == 1 and alert.notified["emailed"] == ["jj@dimagi.com"]
     assert len(mail.outbox) == 1 and "Eva" in mail.outbox[0].subject
-    assert "/w/connect/agents/eva/settings#credentials" in mail.outbox[0].body
+    assert "/w/connect/agents/eva/settings/security#cred-device-keys" in mail.outbox[0].body
+    assert "Review eva\u2019s approved machines" in mail.outbox[0].body
     assert _resolve(fleet).status_code == 401
     alert.refresh_from_db()
     assert alert.occurrences == 2 and len(mail.outbox) == 1  # debounced
@@ -280,6 +281,21 @@ def _resolve_as_box(fleet, turn=""):
     if turn:
         headers["HTTP_X_CANOPY_TURN_ID"] = turn
     return Client().get(RESOLVE, **headers)
+
+
+def test_a_refused_device_proof_names_the_box_the_request_names(fleet, sts):
+    _bind(fleet)
+    assert _resolve_as_box(fleet, turn="turn-1").status_code == 401
+    [alert] = _alerts("device-proof")
+    assert alert.runner_id == fleet["runner"].pk
+    assert f"on {fleet['runner'].name} refused" in alert.detail
+    assert f"on {fleet['runner'].name} refused" in mail.outbox[0].body
+
+
+def test_other_alerts_link_to_the_alert_list_on_the_security_tab(fleet):
+    assert _resolve_as_box(fleet).status_code == 200  # a no-turn alert
+    assert "/w/connect/agents/eva/settings/security#cred-alerts" in mail.outbox[0].body
+    assert "See eva\u2019s vault alerts and credential read history" in mail.outbox[0].body
 
 
 def test_a_box_read_without_a_turn_id_alerts(fleet):

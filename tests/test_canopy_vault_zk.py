@@ -954,7 +954,7 @@ def test_a_pending_device_notifies_each_holder_once_after_the_grace_then_clears(
     # Past it: the one holder (jj, member wrap at kv 1) is told, with the deep link.
     assert zk_notify.sweep(t0 + zk_notify.GRACE) == 1
     assert [m.to for m in mailoutbox] == [["jj@dimagi.com"]]
-    assert "/agents/eva/settings#cred-zk" in mailoutbox[0].body
+    assert "/agents/eva/settings/security#cred-zk" in mailoutbox[0].body
     assert "box" in mailoutbox[0].subject
     # Once per target.
     assert zk_notify.sweep(t0 + 2 * zk_notify.GRACE) == 0
