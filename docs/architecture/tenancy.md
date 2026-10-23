@@ -316,6 +316,11 @@ THE predicate; every surface below asks it, one test each in
   carries the words and nothing writes them. The prompt is wiped at the turn's end
   (`closing.close_turn`), the result note withheld, and there is no owner-ask line, live
   tail (`RunnerBinding.tail`) or autotitle. A reload shows metadata only.
+- **Delivered live:** a confined turn (a caller's, e.g. a site visitor in the widget) on a
+  ZDR box leaves no transcript, so its reply, tool calls and outcomes reach the session
+  socket as the ledger's live frames (`sensitivity.reply_is_live_only`, read by
+  `realtime.signals._session_chat_events`); every other transcript-sourced turn replies
+  through its transcript, so a reply never arrives twice.
 - **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
   `tool_input`; a receipt keeps no excerpt; `ui/update-model-context` is accepted and not
   kept (`apps/mcp_apps_host/mcp_apps_views.py`).
