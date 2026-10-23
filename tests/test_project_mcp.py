@@ -67,8 +67,10 @@ def _publish(world, s3, tmp_path, client=None, original=None):
     assert up.status_code == 200, up.content
     body = _kb_gz(tmp_path, original)
     s3.objects[up.json()["key"]] = body  # what the curator's PUT to the signed url does
+    head = AgentProject.objects.get(handle="givewell-kb").kb_version
     return client.post("/api/workspace-projects/connect/givewell-kb/kb/publish",
-                       {"key": up.json()["key"], "sha256": hashlib.sha256(body).hexdigest()}, content_type=J)
+                       {"key": up.json()["key"], "sha256": hashlib.sha256(body).hexdigest(),
+                        "base": head.number if head else None}, content_type=J)
 
 
 def test_publishing_makes_the_project_serve_its_own_mcp(world, s3, tmp_path):
@@ -97,7 +99,7 @@ def test_a_republish_serves_the_new_file_and_keeps_the_old_one_as_a_version(worl
 def test_publish_refuses_a_key_that_is_not_this_projects_upload(world, s3):
     s3.objects["workspace-projects/connect/other/kb/x.sqlite.gz"] = b"x"
     r = world["client"].post("/api/workspace-projects/connect/givewell-kb/kb/publish",
-                             {"key": "workspace-projects/connect/other/kb/x.sqlite.gz", "sha256": "a" * 64},
+                             {"key": "workspace-projects/connect/other/kb/x.sqlite.gz", "sha256": "a" * 64, "base": None},
                              content_type=J)
     assert r.status_code == 422
 
@@ -105,7 +107,7 @@ def test_publish_refuses_a_key_that_is_not_this_projects_upload(world, s3):
 def test_publish_refuses_an_upload_that_never_arrived(world, s3):
     up = world["client"].post("/api/workspace-projects/connect/givewell-kb/kb/upload", content_type=J).json()
     r = world["client"].post("/api/workspace-projects/connect/givewell-kb/kb/publish",
-                             {"key": up["key"], "sha256": "a" * 64}, content_type=J)
+                             {"key": up["key"], "sha256": "a" * 64, "base": None}, content_type=J)
     assert r.status_code == 422
 
 

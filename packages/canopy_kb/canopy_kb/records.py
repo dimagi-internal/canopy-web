@@ -12,9 +12,10 @@ change to a document's metadata or card then sends a small record, never its tex
 again; an unchanged text is never sent twice.
 
 A publish is a STATE: `{"docs": {item_id: sha}, "parts": {name: sha}}` (`state`). The
-host compares it with the state it serves, asks for the records and parts it lacks,
-and applies the difference to its index (`canopy_kb.apply`). An unchanged bundle has
-the same state and sends nothing. Passages, sections and the entity index are not
+refresh compares it with the state the version it started from published (`diff`), and
+applies only the difference to that version's index on its own machine
+(`canopy_kb.curate`, `canopy_kb.apply`). An unchanged bundle has the same state: nothing
+is built or sent. Passages, sections and the entity index are not
 shipped: the index derives them, the same way for a delta as for a full build.
 
 Records travel gzipped (`encode`, with a zero mtime so the bytes are stable too).

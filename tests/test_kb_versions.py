@@ -1,10 +1,12 @@
 """A knowledge base is a version log of whole files its steward built (canopy-web never
-builds one, #1971): plan says when nothing changed, whats_new reads the log, rollback
-serves an earlier file, and a Drive source's documents are published only when their
-owner approved them.
+builds one, #1971). Each version carries the curation state it was built from; a
+publish names the version it was made from and loses to one that landed first;
+whats_new reads the file's own history; rollback serves an earlier file and state; and
+a Drive source's file is opened and published only when its owner approved every
+document in it.
 
-The steward's CLI is played here by hand: it builds, uploads the file (into the fake
-bucket) and publishes it with its state.
+The steward's refresh is played here by hand: it builds, uploads the file (into the
+fake bucket) and publishes it.
 """
 from __future__ import annotations
 
@@ -12,7 +14,6 @@ import gzip
 import hashlib
 
 import pytest
-from canopy_kb import build
 from django.contrib.auth.models import User
 from django.test import Client
 
@@ -27,7 +28,7 @@ pytestmark = pytest.mark.django_db
 s3, world = kb_fixtures.s3, kb_fixtures.world
 
 J, KB_URL, ITEMS, V2 = kb_fixtures.J, kb_fixtures.KB_URL, kb_fixtures.ITEMS, kb_fixtures.V2
-_bundle, _full, _plan = kb_fixtures.bundle, kb_fixtures.full, kb_fixtures.plan
+_bundle, _full = kb_fixtures.bundle, kb_fixtures.full
 
 
 def _call(user, name, args):
@@ -41,37 +42,68 @@ def _call(user, name, args):
         mod._current_user = orig
 
 
-def test_an_unchanged_republish_sends_nothing_and_makes_no_version(world, s3, tmp_path):
-    b = _bundle(tmp_path, "v1", ITEMS)
-    _full(world, s3, tmp_path, b)
-    assert _plan(world, b)["unchanged"] and KbVersion.objects.count() == 1
+def _result(world, s3, obj) -> str:
+    """Upload a curation state the way a refresh does: as a step result."""
+    import json as _json
+    body = gzip.compress(_json.dumps(obj).encode())
+    key = hashlib.sha256(_json.dumps(obj).encode()).hexdigest()
+    ups = world["client"].post(f"{KB_URL}/results", {"blobs": [{"sha256": key, "gz_sha256": hashlib.sha256(body)
+                                                                .hexdigest(), "bytes": len(body)}]},
+                               content_type=J).json()["uploads"]
+    for u in ups:
+        s3.objects[u["url"].split("https://s3.test/", 1)[1].split("?", 1)[0]] = body
+    return key
 
 
-def test_canopy_web_never_builds_an_index(world, s3):
-    """#1971: building in the web process ran canopy-web out of memory. The routes that
-    took a delta to build are gone, and so is the builder."""
+def test_canopy_web_never_builds_an_index_nor_keeps_a_refresh_s_state_beside_the_log(world, s3):
+    """#1971: building in the web process ran canopy-web out of memory; the routes that
+    took a delta to build are gone, and so is the builder. The curation pointer and its
+    lease went with them: a version carries its own state."""
     c = world["client"]
     assert c.post(f"{KB_URL}/versions", {"state": {"docs": {}, "parts": {}}, "base": 1},
                   content_type=J).status_code in (404, 405)
-    assert c.post(f"{KB_URL}/blobs", {"blobs": []}, content_type=J).status_code in (404, 405)
+    for method, path in (("post", "blobs"), ("post", "plan"), ("get", "curation"), ("put", "curation"),
+                         ("post", "curation/lease")):
+        assert getattr(c, method)(f"{KB_URL}/{path}", {}, content_type=J).status_code in (404, 405), path
     import importlib.util
     assert importlib.util.find_spec("apps.agents.kb_index") is None
 
 
-def test_a_whole_file_publish_serves_it_keeps_the_last_and_whats_new_reads_the_log(world, s3, tmp_path):
-    v1 = _bundle(tmp_path, "v1", ITEMS)
-    _full(world, s3, tmp_path, v1)
+def test_a_version_carries_the_state_it_was_built_from_and_a_rollback_brings_it_back(world, s3, tmp_path):
+    one = _result(world, s3, {"refresh": 1})
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS), curation=one)
+    two = _result(world, s3, {"refresh": 2})
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v2", V2), curation=two)
+    log = world["client"].get(f"{KB_URL}/versions").json()
+    assert [(v["number"], v["curation_sha"], v["current"]) for v in log] == [(2, two, True), (1, one, False)]
+    r = world["client"].post(f"{KB_URL}/versions/1/rollback", content_type=J).json()
+    assert (r["number"], r["curation_sha"], r["current"]) == (3, one, True)  # the next refresh starts from it
+
+
+def test_a_publish_made_from_an_older_version_loses(world, s3, tmp_path):
+    """Two refreshes start from version 1; the second to publish is refused, not applied."""
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v2", V2), base=1)
+    r = _full(world, s3, tmp_path, _bundle(tmp_path, "v2b", ITEMS), base=1, expect=409)
+    assert "at version 2, not 1" in r.json()["detail"]
+    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 2
+
+
+def test_a_publish_names_a_stored_curation_state(world, s3, tmp_path):
+    r = _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS), curation="0" * 64, expect=422)
+    assert "is not stored" in r.json()["detail"] and KbVersion.objects.count() == 0
+
+
+def test_a_whole_file_publish_serves_it_keeps_the_last_and_whats_new_reads_the_file(world, s3, tmp_path):
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
     first = AgentProject.objects.get(handle="givewell-kb").kb_key
-    v2 = _bundle(tmp_path, "v2", V2)
-    p = _plan(world, v2)
-    assert (p["added"], p["changed"], p["removed"]) == (1, 1, 1) and sorted(p["upload_docs"]) == ["n:1", "p:1"]
-    _full(world, s3, tmp_path, v2)
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v2", V2), previous=tmp_path / "v1.sqlite")
     project = AgentProject.objects.get(handle="givewell-kb")
     assert project.kb_version.number == 2 and project.kb_key != first and first in s3.objects
     out = _call(world["owner"], "whats_new", {})
-    assert out["version"] == 2
     assert {(c["item_id"], c["change"]) for c in out["changes"]} >= {("n:1", "new"), ("p:1", "changed"),
                                                                      ("r:1", "removed")}
+    assert ("b:1", "changed") not in {(c["item_id"], c["change"]) for c in out["changes"]}  # unchanged text
     assert "Zinc too" in _call(world["owner"], "read", {"ref": "p:1"})
 
 
@@ -203,8 +235,9 @@ def test_new_files_queue_unless_the_folder_auto_approves_and_deleted_ones_are_go
 
 
 def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_published(world, drive, s3, tmp_path):
-    """canopy-web vets every whole-file publish of a Drive KB against its owner's
-    approvals: a slip in a steward's pipeline cannot put an unapproved file in."""
+    """canopy-web opens every file published to a Drive KB and vets each document in it
+    against its owner's approvals: a slip in a steward's pipeline cannot put an
+    unapproved file in, whatever the publish says."""
     _inventory(world, drive, _listing())
     _decide(world["client"], drive, {"file_id": ROOT, "decision": "approved"})
     c = world["client"]
@@ -216,24 +249,22 @@ def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_published(world, dr
     _full(world, s3, tmp_path, _bundle(tmp_path, "d1", [doc]))
     held = {"id": "drive:f-pl", "type": "sheet", "title": "Patient list", "url": "https://docs/y", "text": "x",
             "sha256": "q", "meta": {"source": "drive"}}
-    with pytest.raises(AssertionError, match="Drive documents are not approved"):
-        _full(world, s3, tmp_path, _bundle(tmp_path, "d2", [doc, held]))
+    r = _full(world, s3, tmp_path, _bundle(tmp_path, "d2", [doc, held]), expect=422)
+    assert "1 Drive documents are not approved" in r.json()["detail"] and "drive:f-pl" in r.json()["detail"]
     assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 1
     _decide(c, drive, {"file_id": "f-pl", "release_hold": True})
     _full(world, s3, tmp_path, _bundle(tmp_path, "d3", [doc, held]))
     assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 2
 
 
-def test_a_drive_kb_publishes_with_its_state(world, drive, s3, tmp_path):
-    """Without the state there is nothing to vet: refused."""
-    db = tmp_path / "x.sqlite"
-    build(_bundle(tmp_path, "x", ITEMS), db)
-    body = gzip.compress(db.read_bytes())
+def test_a_drive_kb_publish_that_is_not_a_knowledge_base_is_refused(world, drive, s3, tmp_path):
+    """Nothing to vet is nothing to serve."""
+    body = gzip.compress(b"not a database at all" * 100)
     up = world["client"].post(f"{KB_URL}/upload", content_type=J).json()
     s3.objects[up["key"]] = body
-    r = world["client"].post(f"{KB_URL}/publish", {"key": up["key"], "sha256": hashlib.sha256(body).hexdigest()},
-                             content_type=J)
-    assert r.status_code == 422 and "with its state" in r.json()["detail"]
+    r = world["client"].post(f"{KB_URL}/publish", {"key": up["key"], "sha256": hashlib.sha256(body).hexdigest(),
+                                                   "base": None}, content_type=J)
+    assert r.status_code == 422 and "not a knowledge base" in r.json()["detail"]
 
 
 def test_a_drive_kb_answers_only_its_readers(world, drive, s3, tmp_path):

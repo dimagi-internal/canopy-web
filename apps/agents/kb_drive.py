@@ -260,8 +260,9 @@ def hold(source: KbSource, file_id: str, headers: list[str]) -> KbDriveFile:
 
 
 def check_ids(project):
-    """A publish's vetting of the Drive documents it names (`kb_versions.publish_full`), or
-    None for a knowledge base with no Drive source (whose `drive:` ids, such as files a
+    """A publish's vetting of the Drive documents its file holds (`kb_versions.publish_full`
+    reads their ids from the uploaded file itself), or None for a knowledge base with no
+    Drive source (whose `drive:` ids, such as files a
     publisher links on Drive, are not a folder owner's to approve)."""
     if not KbSource.objects.filter(project=project, kind=KbSource.DRIVE).exists():
         return None

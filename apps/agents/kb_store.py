@@ -11,8 +11,8 @@ they call the tools.
 * **Publish** (`publish`) checks the object is there, under THIS project's
   prefix, then points the project at it (`point`). The previous object stays, as
   an earlier version's file (`kb_versions`, which prunes beyond the newest few).
-* **States** (`get_blob`, `put_blob`): each version's state (`canopy_kb.records`),
-  gzipped canonical JSON under `records/<sha256 of the JSON>`.
+* **Check** (`item_ids`): the documents an uploaded file holds, read from the file
+  itself (a Drive source's publish is vetted against the owner's approvals with them).
 * **Read** (`open_kb`): each instance keeps the decompressed copy on local disk,
   keyed by the published object's sha256, so a new publish is picked up on the
   next call and an unchanged one is never fetched twice.
@@ -22,11 +22,12 @@ they call the tools.
   PUTs that S3 checks against the sha256; the `original` tool hands a reader a
   15-minute download link. Never deleted: a file the publisher changed or removed is
   the version a KB's `originals` table still lists, and the reason to keep originals.
-* **Curation** (`results_upload`, `stored`, `links`, `save_curation`): what a refresh
-  needs from the last one, so it can run on any machine and fetch only what it
-  changes (`canopy_kb.curate`): step results (an extracted text, an OCR transcription)
-  gzipped under `results/<step key>`, and the curation state, one result the project
-  points at (`kb_curation`). Steward only: for a Drive source they are its owner's text.
+* **Curation** (`results_upload`, `stored`, `links`): what a refresh needs from the
+  last one, so it can run on any machine and fetch only what it changes
+  (`canopy_kb.curate`): step results (an extracted text, a card) gzipped under
+  `results/<step key>`, immutable, and the curation states made of them, each named by
+  the version it built (`KbVersion.curation_sha`). Steward only: for a Drive source
+  they are its owner's text.
 
 The bucket is `CANOPY_KB_BUCKET`, else the attachments bucket (same access: a
 bucket policy naming the task role). No bucket → `KbNotConfigured`, a clear 503,
@@ -35,17 +36,16 @@ never a half-published project.
 from __future__ import annotations
 
 import base64
-import datetime as _dt
 import gzip
 import hashlib
 import shutil
+import sqlite3
 import tempfile
 import threading
 import uuid
 from pathlib import Path
 from urllib.parse import quote
 
-from canopy_kb import records
 from django.conf import settings
 from django.utils import timezone
 
@@ -143,22 +143,24 @@ def delete_object(key: str) -> None:
         pass
 
 
-def _blobs_prefix(project) -> str:
-    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/records/"
-
-
-def get_blob(project, sha: str):
-    """A record or part, checked against its address."""
-    body = _client().get_object(Bucket=_bucket(), Key=_blobs_prefix(project) + sha)["Body"].read()
-    return records.decode(body, sha)
-
-
-def put_blob(project, obj) -> str:
-    """Store a part canopy-web makes itself (a version's state). Returns its sha256."""
-    sha = records.sha(obj)
-    _client().put_object(Bucket=_bucket(), Key=_blobs_prefix(project) + sha, Body=records.encode(obj),
-                         ContentType=CONTENT_TYPE)
-    return sha
+def item_ids(project, key: str) -> list[str]:
+    """The ids of the documents in an uploaded kb.sqlite.gz (this project's, under its
+    prefix), read from the file: what a publish says it holds is never taken on trust."""
+    if not key.startswith(_prefix(project)):
+        raise KbPublishError("that upload is not this project's")
+    with tempfile.TemporaryDirectory(prefix="kb-check-") as td:
+        path = Path(td) / "kb.sqlite"
+        body = _client().get_object(Bucket=_bucket(), Key=key)["Body"]
+        with gzip.GzipFile(fileobj=body) as src, open(path, "wb") as dst:
+            shutil.copyfileobj(src, dst, 1 << 20)
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                return [r[0] for r in db.execute("SELECT id FROM items")]
+            finally:
+                db.close()
+        except sqlite3.DatabaseError as exc:
+            raise KbPublishError(f"the upload is not a knowledge base: {exc}") from exc
 
 
 # ---- originals ----
@@ -250,7 +252,7 @@ def original_link(project):
 #: Where each kind of stored object lives. `results` are a curation's step results (an
 #: extracted text, an OCR transcription, the curation state itself), gzipped under
 #: their step key; `records` and `originals` are the ones above.
-RESULTS, RECORDS, ORIGINALS = "results", "records", "originals"
+RESULTS, ORIGINALS = "results", "originals"
 #: How long a steward's download link works (a refresh fetches as it goes).
 STEWARD_LINK_SECONDS = UPLOAD_TTL_SECONDS
 
@@ -260,7 +262,7 @@ def _results_prefix(project) -> str:
 
 
 def _store_prefix(project, store: str) -> str:
-    prefixes = {RESULTS: _results_prefix, RECORDS: _blobs_prefix, ORIGINALS: _originals_prefix}
+    prefixes = {RESULTS: _results_prefix, ORIGINALS: _originals_prefix}
     if store not in prefixes:
         raise KbPublishError(f"store is one of {sorted(prefixes)}, not {store!r}")
     return prefixes[store](project)
@@ -327,60 +329,6 @@ def links(project, store: str, keys: list[str]) -> dict:
                                                          ExpiresIn=STEWARD_LINK_SECONDS)}
            for k in _keys(keys)]
     return {"links": out, "expires_in": STEWARD_LINK_SECONDS}
-
-
-class KbCurationConflict(ValueError):
-    """Another refresh saved the curation state since this one read it, or holds the lease."""
-
-
-#: The longest a refresh may hold its lease without renewing it.
-LEASE_MAX_SECONDS = 6 * 3600
-
-
-def take_lease(project, holder: str, seconds: int) -> dict:
-    """One refresh at a time per knowledge base (`project` locked by the caller): the lease
-    is free, expired, or this holder's already (a renewal). Another holder's is a conflict,
-    so two refreshes never both spend on the same work."""
-    holder = (holder or "").strip()[:200]
-    if not holder:
-        raise KbPublishError("a lease needs a holder (the refresh's run id)")
-    now = timezone.now()
-    cur = (project.kb_curation or {}).get("lease") or {}
-    until = cur.get("until")
-    if cur.get("holder") and cur["holder"] != holder and until and _dt.datetime.fromisoformat(until) > now:
-        raise KbCurationConflict(f"another refresh ({cur['holder']}) holds the lease until {until}")
-    lease = {"holder": holder, "until": (now + _dt.timedelta(seconds=max(60, min(int(seconds), LEASE_MAX_SECONDS))))
-             .isoformat()}
-    project.kb_curation = {**(project.kb_curation or {}), "lease": lease}
-    project.save(update_fields=["kb_curation", "updated_at"])
-    return project.kb_curation
-
-
-def drop_lease(project, holder: str) -> dict:
-    cur = (project.kb_curation or {}).get("lease") or {}
-    if cur.get("holder") == (holder or "").strip():
-        project.kb_curation = {k: v for k, v in (project.kb_curation or {}).items() if k != "lease"}
-        project.save(update_fields=["kb_curation", "updated_at"])
-    return project.kb_curation
-
-
-def save_curation(project, sha: str, base: str | None, *, saved_by: str, version: int | None = None) -> dict:
-    """Point a project (locked by the caller) at a curation state uploaded as a step
-    result under `sha`. `base` is the state the refresh started from (None before the
-    first): a refresh that raced another one is refused, never applied over it."""
-    (sha,) = _keys([sha])
-    current = (project.kb_curation or {}).get("sha")
-    if current and current != sha and (base or "").strip().lower() != current:
-        raise KbCurationConflict(f"the curation state was saved since ({current[:12]}) by another refresh; "
-                                 "refresh again from it")
-    if current == sha:
-        return project.kb_curation
-    if not _stored(_results_prefix(project), {sha}):
-        raise KbPublishError(f"no curation state {sha[:12]} uploaded")
-    project.kb_curation = {**(project.kb_curation or {}), "sha": sha, "saved_at": timezone.now().isoformat(),
-                           "saved_by": saved_by, "version": version if version is not None else project.kb_version_number}
-    project.save(update_fields=["kb_curation", "updated_at"])
-    return project.kb_curation
 
 
 # ---- the serving copy ----

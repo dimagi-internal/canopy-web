@@ -10,20 +10,26 @@ one, so a runner's disk is scratch (canopy-web#1925):
   is never recomputed, on any machine. Results are immutable: the same key is the same
   result, so two runs never conflict over one.
 * **The curation state** (`State`): what a refresh cannot recompute cheaply (the fetch
-  index, each input's descriptor, the cards), as named sections of small JSON entries,
-  stored in content-addressed chunks so a refresh that changed little uploads little.
-  The host points at its root; saving it is a compare-and-swap, after the version is
-  published, under a lease that keeps two refreshes from running at once.
+  index, each input's descriptor, the cards, what was published), as named sections of
+  small JSON entries, stored in content-addressed chunks so a refresh that changed little
+  uploads little. It belongs to a VERSION: each publish names the state it was built
+  from, and a refresh starts from the head version's. A rollback therefore rolls the
+  state back too, and there is no second pointer to drift from what readers see.
+* **One refresh wins** (`Curation.publish`): a publish names the version it started
+  from, and the host refuses it if another landed since. Results are immutable, so a
+  refresh that loses keeps everything it paid for; it simply refreshes again.
 * **Revisions are checked before anything runs** (`check_lock`): a step whose code or
   reader libraries changed since `steps.lock` refuses to run until its author bumps its
   REVISION (it re-runs) or relocks (its output cannot change). Nothing goes stale
   silently, and a comment edit never spends money.
 * **Spending is planned** (`Budget`): model calls are counted and priced before any is
   made, and a run over its budget stops before the first one.
-* **The refresh builds the index** (`Curation.publish`): it fetches the file the host
-  serves, applies what changed (`canopy_kb.apply`), and uploads the result. Compute is
-  the runner's; the host keeps state and serves, and a deploy of the host never kills
-  a build.
+* **The refresh builds the index** (`Curation.publish`): it compares what it would
+  publish with what its starting state published, and when nothing changed it stops:
+  nothing is built, sent or saved. Otherwise it fetches the file the host serves,
+  applies what changed (`canopy_kb.apply`), and uploads the result. Compute is the
+  runner's; the host stores, checks and serves, and a deploy of the host never kills a
+  build.
 
 `Store` is the host as a refresh sees it; `MemoryStore` is one in memory, for tests.
 A curator's adapter (GiveWell's crawl and item rules; a Drive folder sync) defines its
@@ -36,14 +42,13 @@ import gzip
 import hashlib
 import importlib.metadata
 import json
-import uuid
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
 from canopy_kb import records
 
-RESULTS, RECORDS, ORIGINALS = "results", "records", "originals"
+RESULTS, ORIGINALS = "results", "originals"
 #: Buckets per state section: a section's entries are split by key hash, so a refresh
 #: that touched a few entries re-uploads a few chunks.
 CHUNKS = 64
@@ -166,24 +171,19 @@ class Store(Protocol):
     def have(self, store: str, keys: list[str]) -> set[str]: ...
     def get(self, store: str, keys: list[str]) -> dict[str, bytes]: ...
     def put_results(self, blobs: dict[str, bytes]) -> int: ...
-    def put_records(self, blobs: dict[str, bytes]) -> int: ...
     def put_originals(self, files: dict[str, tuple[bytes, str]]) -> int: ...
-    def curation(self) -> dict: ...
-    def take_lease(self, holder: str, seconds: int) -> dict: ...
-    def drop_lease(self, holder: str) -> None: ...
-    def save_curation(self, sha: str, base: str | None) -> dict: ...
-    def plan(self, state: dict) -> dict: ...
+    def head(self) -> dict: ...  # {version: n | None, curation: root key | None}
     def served(self, out: Path) -> Path | None: ...
-    def publish_file(self, gz: Path, sha256: str, state: dict, changes: dict | None = None) -> dict: ...
+    def publish_file(self, gz: Path, sha256: str, *, base: int | None, curation: str,
+                     changes: dict | None = None) -> dict: ...
 
 
 class MemoryStore:
     """A host in memory: what `canopy kb refresh` talks to, for tests."""
 
     def __init__(self):
-        self.objects: dict[str, dict[str, bytes]] = {RESULTS: {}, RECORDS: {}, ORIGINALS: {}}
-        self.kb_curation: dict = {}
-        self.versions: list[dict] = []  # each {number, state, curation}
+        self.objects: dict[str, dict[str, bytes]] = {RESULTS: {}, ORIGINALS: {}}
+        self.versions: list[dict] = []  # each {number, file, curation, changes}
         self.calls: list[str] = []
 
     # objects
@@ -204,47 +204,13 @@ class MemoryStore:
     def put_results(self, blobs):
         return self._put(RESULTS, blobs)
 
-    def put_records(self, blobs):
-        return self._put(RECORDS, blobs)
-
     def put_originals(self, files):
         return self._put(ORIGINALS, {k: v[0] for k, v in files.items()})
 
-    # curation
-    def curation(self):
-        return dict(self.kb_curation)
-
-    def take_lease(self, holder, seconds):
-        lease = self.kb_curation.get("lease")
-        if lease and lease["holder"] != holder:
-            raise CurationError(f"another refresh ({lease['holder']}) holds the lease")
-        self.kb_curation["lease"] = {"holder": holder}
-        return self.curation()
-
-    def drop_lease(self, holder):
-        if (self.kb_curation.get("lease") or {}).get("holder") == holder:
-            self.kb_curation.pop("lease")
-
-    def save_curation(self, sha_, base):
-        cur = self.kb_curation.get("sha")
-        if cur and cur != sha_ and base != cur:
-            raise CurationError("the curation state was saved since by another refresh")
-        if sha_ not in self.objects[RESULTS]:
-            raise CurationError(f"no curation state {sha_[:12]} uploaded")
-        self.kb_curation["sha"] = sha_
-        self.kb_curation["version"] = self.versions[-1]["number"] if self.versions else None
-        return self.curation()
-
-    # publishing
+    # versions
     def head(self) -> dict:
-        return self.versions[-1]["state"] if self.versions else {"docs": {}, "parts": {}}
-
-    def plan(self, state):
-        d = records.diff(self.head(), state)
-        return {"base": self.versions[-1]["number"] if self.versions else None,
-                "unchanged": not (d["added"] or d["changed"] or d["removed"] or d["parts"]),
-                "added": len(d["added"]), "changed": len(d["changed"]), "removed": len(d["removed"]),
-                "upload_docs": d["added"] + d["changed"], "upload_parts": d["parts"], "full_required": False}
+        v = self.versions[-1] if self.versions else {}
+        return {"version": v.get("number"), "curation": v.get("curation")}
 
     def served(self, out):
         if not self.versions:
@@ -252,17 +218,37 @@ class MemoryStore:
         out.write_bytes(self.versions[-1]["file"])
         return out
 
-    def publish_file(self, gz, sha256, state, changes=None):
-        import gzip as _gz
+    def publish_file(self, gz, sha256, *, base, curation, changes=None):
         body = Path(gz).read_bytes()
-        if __import__("hashlib").sha256(body).hexdigest() != sha256:
+        if hashlib.sha256(body).hexdigest() != sha256:
             raise CurationError("the uploaded file is not the one named")
-        self.versions.append({"number": len(self.versions) + 1, "state": state, "file": _gz.decompress(body),
-                              "changes": changes})
+        if base != self.head()["version"]:
+            raise CurationError(f"the knowledge base is at version {self.head()['version']}, not {base}")
+        if curation not in self.objects[RESULTS]:
+            raise CurationError(f"no curation state {curation[:12]} uploaded")
+        self.versions.append({"number": len(self.versions) + 1, "file": gzip.decompress(body),
+                              "curation": curation, "changes": changes})
         self.calls.append(f"publish {len(body)}")
         return {"version": len(self.versions)}
 
+    def rollback(self, number: int) -> None:
+        """Serve version `number` again, with the state it was built from (the host's rollback)."""
+        old = self.versions[number - 1]
+        self.versions.append({**old, "number": len(self.versions) + 1})
+
     # what a test asks of it
+    def item_ids(self) -> list[str]:
+        """The ids of the documents the served file holds, sorted."""
+        import sqlite3
+        import tempfile as _tf
+        with _tf.TemporaryDirectory() as td:
+            path = Path(td) / "kb.sqlite"
+            path.write_bytes(self.versions[-1]["file"])
+            db = sqlite3.connect(path)
+            ids = sorted(r[0] for r in db.execute("SELECT id FROM items"))
+            db.close()
+        return ids
+
     def item(self, iid: str) -> dict:
         """A published document, read back from the file the host serves."""
         import json as _json
@@ -296,8 +282,8 @@ class State:
 
     def __init__(self, sections: dict[str, dict] | None = None, root: str | None = None, version: int | None = None):
         self.sections: dict[str, dict] = {k: dict(v) for k, v in (sections or {}).items()}
-        self.root = root          # the root it was read from: the save's compare-and-swap base
-        self.version = version    # the knowledge-base version it was saved with
+        self.root = root          # the root it was read from
+        self.version = version    # the knowledge-base version that published it
 
     def section(self, name: str) -> dict:
         return self.sections.setdefault(name, {})
@@ -324,10 +310,11 @@ class State:
 
     @classmethod
     def load(cls, store: Store) -> State:
-        cur = store.curation()
-        root_key = cur.get("sha")
+        """The state the head version was built from (empty before the first version)."""
+        head = store.head()
+        root_key = head.get("curation")
         if not root_key:
-            return cls(version=None)
+            return cls(version=head.get("version"))
         got = store.get(RESULTS, [root_key])
         if root_key not in got:
             raise CurationError(f"the curation state {root_key[:12]} is not stored")
@@ -345,7 +332,7 @@ class State:
             for k in keys:
                 if k:
                     sec.update(decode(blobs[k])["entries"])
-        return cls(sections, root=root_key, version=cur.get("version"))
+        return cls(sections, root=root_key, version=head.get("version"))
 
     def upload(self, store: Store) -> str:
         """Store the chunks the host lacks and the root; returns the root's key."""
@@ -369,19 +356,16 @@ def get_all(store: Store, kind: str, keys: Iterable[str]) -> dict[str, bytes]:
     return out
 
 
-def put_missing(store: Store, blobs: dict[str, bytes], kind: str = RESULTS) -> int:
-    """Upload the `blobs` the host lacks; returns how many were sent."""
+def put_missing(store: Store, blobs: dict[str, bytes]) -> int:
+    """Upload the result `blobs` the host lacks; returns how many were sent."""
     keys = sorted(blobs)
     have: set[str] = set()
     for batch in _batches(keys):
-        have |= store.have(kind, batch)
+        have |= store.have(RESULTS, batch)
     todo = {k: blobs[k] for k in keys if k not in have}
-    if not todo:
-        return 0
-    put = store.put_results if kind == RESULTS else store.put_records
     n = 0
     for batch in _batches(sorted(todo)):
-        n += put({k: todo[k] for k in batch})
+        n += store.put_results({k: todo[k] for k in batch})
     return n
 
 
@@ -410,30 +394,30 @@ class Budget:
 
 # ---- a refresh ------------------------------------------------------------------------------
 
-class Curation:
-    """One refresh: its lease, the state it started from, the results it reads and writes,
-    and its publish. Use as a context manager: the lease is released however it ends."""
+#: State sections `publish` keeps: what the version it made holds (item id -> record sha,
+#: part name -> part sha), so the next refresh can tell, on its own, that nothing changed.
+PUBLISHED_DOCS, PUBLISHED_PARTS = "published:docs", "published:parts"
 
-    def __init__(self, store: Store, budget: Budget | None = None, holder: str = "", lease_seconds: int = 4 * 3600):
+
+class Curation:
+    """One refresh: the version and state it started from, the results it reads and
+    writes, and its publish. Use as a context manager: pending results are stored
+    however it ends, so nothing paid for is lost."""
+
+    def __init__(self, store: Store, budget: Budget | None = None):
         self.store = store
         self.budget = budget or Budget(0)
-        self.holder = holder or f"refresh-{uuid.uuid4().hex[:12]}"
-        self.lease_seconds = lease_seconds
         self.state: State = State()
         self._pending: dict[str, bytes] = {}
         self._pending_bytes = 0
         self.report: dict[str, Any] = {"fetched_results": 0, "stored_results": 0}
 
     def __enter__(self):
-        self.store.take_lease(self.holder, self.lease_seconds)
         self.state = State.load(self.store)
         return self
 
     def __exit__(self, *exc):
-        try:
-            self.flush()
-        finally:
-            self.store.drop_lease(self.holder)
+        self.flush()
 
     # results
     def results(self, keys: Iterable[str]) -> dict[str, Any]:
@@ -490,16 +474,15 @@ class Curation:
     # publishing
     def publish(self, docs: dict[str, dict], text: Callable[[list[str]], dict[str, str]], parts: dict[str, object],
                 *, max_removed: float = 0.02, allow_removals: bool = False, scratch: Path | None = None) -> dict:
-        """Publish `docs` ({item id: record, text by reference}) and `parts`. The refresh's
-        own machine builds the index: it fetches the file the host serves, applies what
-        changed (`canopy_kb.apply`, the code a full build runs), and uploads the result,
-        which the host serves as a new version; the host never builds. `text(item ids)`
-        gives the changed documents' texts, a batch at a time. Nothing changed: nothing
-        is built or sent. The curation state is saved after the version (compare-and-swap).
+        """Publish `docs` ({item id: record, text by reference}) and `parts`. Compared with
+        what the starting state published: nothing changed, nothing is built, sent or
+        saved. Otherwise the refresh's own machine builds the index: it fetches the file
+        the host serves, applies what changed (`canopy_kb.apply`, the code a full build
+        runs), and uploads the result with the state it was built from, as a new version
+        made from the one this refresh started at (the host refuses it if another landed
+        since). `text(item ids)` gives the changed documents' texts, a batch at a time.
         A publish that would remove more than `max_removed` of the documents stops, unless
         allowed: a source that failed is not a publisher that deleted everything."""
-        import gzip as _gz
-        import hashlib
         import shutil
         import sqlite3
         import tempfile
@@ -507,69 +490,63 @@ class Curation:
         from canopy_kb import apply
 
         self.flush()
-        held_root = self.store.curation().get("sha")
-        if held_root and held_root != self.state.root:
-            raise CurationError("the curation state was saved since by another refresh: refresh again from it")
         state = {"docs": {i: sha(r) for i, r in docs.items()}, "parts": {n: sha(p) for n, p in parts.items()}}
-        plan = self.store.plan(state)
-        head_docs = plan["changed"] + plan["removed"] + (len(docs) - plan["added"] - plan["changed"])
-        if plan["removed"] and not allow_removals and plan["removed"] > max_removed * max(1, head_docs):
-            raise CurationError(f"this refresh would remove {plan['removed']} of {head_docs} documents "
-                                f"(more than {max_removed:.0%}): a source probably failed. Nothing was published; "
-                                "rerun with --allow-removals if they really are gone.")
-        out: dict[str, Any] = {"published": False, "unchanged": bool(plan["unchanged"])}
-        if not plan["unchanged"]:
-            with tempfile.TemporaryDirectory(prefix="kb-build-", dir=scratch) as td:
-                td = Path(td)
-                base = self.store.served(td / "base.sqlite")
-                held = set()
-                if base is not None:
-                    db = sqlite3.connect(f"file:{base}?mode=ro", uri=True)
-                    held = {r[0] for r in db.execute("SELECT id FROM items")}
-                    db.close()
-                ids = list(plan["upload_docs"])
+        was = {"docs": self.state.section(PUBLISHED_DOCS), "parts": self.state.section(PUBLISHED_PARTS)}
+        d = records.diff(was, state)
+        # A head whose state predates the published sections: every document is re-put
+        # (the result is the same file a full build makes), never a reason to skip.
+        known = bool(was["docs"]) or self.state.version is None
+        unchanged = known and not (d["added"] or d["changed"] or d["removed"] or d["parts"])
+        out: dict[str, Any] = {"published": False, "unchanged": unchanged, "base": self.state.version}
+        if unchanged:
+            return {**out, "added": 0, "changed": 0, "removed": 0}
+        with tempfile.TemporaryDirectory(prefix="kb-build-", dir=scratch) as td:
+            td = Path(td)
+            base = self.store.served(td / "base.sqlite")
+            held = set()
+            if base is not None:
+                db = sqlite3.connect(f"file:{base}?mode=ro", uri=True)
+                held = {r[0] for r in db.execute("SELECT id FROM items")}
+                db.close()
+            removed = sorted(held - set(docs))
+            if removed and not allow_removals and len(removed) > max_removed * max(1, len(held)):
+                raise CurationError(f"this refresh would remove {len(removed)} of {len(held)} documents "
+                                    f"(more than {max_removed:.0%}): a source probably failed. Nothing was published; "
+                                    "rerun with --allow-removals if they really are gone.")
+            ids = (d["added"] + d["changed"]) if known else sorted(docs)
+            def items():
+                for batch in _batches(ids, 200):
+                    got = text(batch)
+                    for i in batch:
+                        if "text_sha" in docs[i] and sha(got[i]) != docs[i]["text_sha"]:
+                            raise CurationError(f"{i}: its text is not the one its record names")
+                        yield records.join(docs[i], got[i]) if "text_sha" in docs[i] else docs[i]
 
-                rows: dict[str, dict] = {}
-
-                def items():
-                    for batch in _batches(ids, 200):
-                        got = text(batch)
-                        for i in batch:
-                            rows[i] = {k: docs[i].get(k) for k in ("type", "title", "url", "date")}
-                            if "text_sha" in docs[i] and sha(got[i]) != docs[i]["text_sha"]:
-                                raise CurationError(f"{i}: its text is not the one its record names")
-                            yield records.join(docs[i], got[i]) if "text_sha" in docs[i] else docs[i]
-
-                built = td / "kb.sqlite"
-                summary = apply(base, built, items(), sorted(held - set(docs)),
-                                manifest=parts.get(records.MANIFEST), aliases=parts.get(records.ALIASES) or {},
-                                tables=records.tables(parts))
-                gz = td / "kb.sqlite.gz"
-                with open(built, "rb") as src, open(gz, "wb") as raw, \
-                        _gz.GzipFile(fileobj=raw, mode="wb", compresslevel=6, mtime=0) as dst:
-                    shutil.copyfileobj(src, dst, 1 << 20)
-                digest = hashlib.sha256()
-                with open(gz, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1 << 20), b""):
-                        digest.update(chunk)
-                applied = summary.get("applied") or {}
-                # What readers' `whats_new` lists: documents whose content changed, not every
-                # record re-put (a new record format, a new card on an unchanged text).
-                changes = {"added": applied.get("new", []) if base is not None else [],
-                           "changed": applied.get("content_changed", []), "removed": applied.get("removed", []),
-                           "rows": {i: rows[i] for i in applied.get("new", []) + applied.get("content_changed", [])
-                                    if i in rows}}
-                v = self.store.publish_file(gz, digest.hexdigest(), state, changes)
-                out.update(published=True, version=v.get("version"), bytes=gz.stat().st_size,
-                           items=summary.get("items"))
-        root = self.state.upload(self.store)
-        saved = root != self.state.root
-        if saved:
-            self.store.save_curation(root, self.state.root)
-            self.state.root = root
-        out.update(added=plan["added"], changed=plan["changed"], removed=plan["removed"], state_saved=saved)
+            built = td / "kb.sqlite"
+            summary = apply(base, built, items(), removed, manifest=parts.get(records.MANIFEST),
+                            aliases=parts.get(records.ALIASES) or {}, tables=records.tables(parts))
+            gz = td / "kb.sqlite.gz"
+            with open(built, "rb") as src, open(gz, "wb") as raw, \
+                    gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=6, mtime=0) as dst:
+                shutil.copyfileobj(src, dst, 1 << 20)
+            digest = hashlib.sha256()
+            with open(gz, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    digest.update(chunk)
+            applied = summary.get("applied") or {}
+            # Documents whose CONTENT changed (the file's own `changes`, which `whats_new`
+            # reads), not every record re-put: a new record format, a new card.
+            counts = {"added": len(applied.get("new", [])) if base is not None else 0,
+                      "changed": len(applied.get("content_changed", [])), "removed": len(applied.get("removed", []))}
+            self.state.sections[PUBLISHED_DOCS] = dict(state["docs"])
+            self.state.sections[PUBLISHED_PARTS] = dict(state["parts"])
+            root = self.state.upload(self.store)
+            v = self.store.publish_file(gz, digest.hexdigest(), base=self.state.version, curation=root,
+                                        changes=counts)
+            self.state.root, self.state.version = root, v.get("version")
+            out.update(published=True, version=v.get("version"), bytes=gz.stat().st_size, items=summary.get("items"),
+                       **counts)
         return out
-
 
 def record(item: dict) -> dict:
     """An item (text in place) as a record (text by reference): `canopy_kb.records.record`."""

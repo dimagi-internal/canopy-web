@@ -1,12 +1,10 @@
-"""A workspace project's knowledge base: its version log, its delta publish, its
-sources and — for a Drive source — the owner's review of what may be read.
+"""A workspace project's knowledge base: its version log, the steward's curation
+store, its sources and — for a Drive source — the owner's review of what may be read.
 
-    POST …/kb/plan                      whether a state changes anything (the steward)
-    GET  …/kb/versions                  the log (each version a whole file the steward built)
+    GET  …/kb/versions                  the log (each version a whole file the steward
+                                        built, and the curation state it was built from)
     GET  …/kb/file                      a download of the file it serves now
-    POST …/kb/versions/{n}/rollback     serve version n's file again
-    GET/PUT …/kb/curation               the curation state a refresh starts from (the steward)
-    POST/DELETE …/kb/curation/lease     one refresh at a time
+    POST …/kb/versions/{n}/rollback     serve version n's file (and state) again
     POST …/kb/results                   presigned PUTs for step results the store lacks
     POST …/kb/objects/have|links        which results, records, originals are stored; downloads
     PUT  …/kb/settings                  the Drive replica option (off by default)
@@ -24,7 +22,6 @@ Services: `kb_versions`, `kb_drive`. canopy-web never builds an index (#1971).
 from __future__ import annotations
 
 from django.contrib.auth.models import User
-from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -35,25 +32,20 @@ from apps.api.route_gates import gate
 from . import kb_drive, kb_store, kb_versions
 from .fleet_api import _kb_call, _workspace_project_or_404
 from .gates import agent_for_work
-from .models import AgentProject, KbDriveFile, KbSource, KbVersion
+from .models import KbDriveFile, KbSource, KbVersion
 from .schemas import (
     AgentProjectOut,
     KbApprovalsIn,
     KbApprovalsOut,
     KbBlobsIn,
-    KbCurationIn,
-    KbCurationOut,
     KbDriveFileOut,
     KbFileOut,
     KbHoldIn,
     KbInventoryIn,
-    KbLeaseIn,
     KbObjectLinksOut,
     KbObjectsHaveOut,
     KbObjectsIn,
     KbOriginalsOut,
-    KbPlanIn,
-    KbPlanOut,
     KbReadersIn,
     KbReviewOut,
     KbReviewSourceOut,
@@ -93,7 +85,7 @@ def _owner(request: HttpRequest, workspace: str, handle: str):
 def _conflict(fn):
     try:
         return _kb_call(fn)
-    except (kb_versions.KbConflict, kb_store.KbCurationConflict) as exc:
+    except kb_versions.KbConflict as exc:
         raise HttpError(409, str(exc)) from exc
     except kb_drive.DriveSourceError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -105,7 +97,7 @@ def _version_out(project, v: KbVersion) -> KbVersionOut:
         rollback_of=v.rollback_of.number if v.rollback_of_id else None, added=v.added, changed=v.changed,
         removed=v.removed, uploaded_bytes=v.uploaded_bytes, kb_bytes=v.kb_bytes, summary=v.summary or {},
         error=v.error, published_by=v.published_by, created_at=v.created_at, finished_at=v.finished_at,
-        replica=v.replica, current=project.kb_version_id == v.pk,
+        replica=v.replica, curation_sha=v.curation_sha, current=project.kb_version_id == v.pk,
         can_roll_back=v.status == KbVersion.READY and bool(v.kb_key) and project.kb_key != v.kb_key)
 
 
@@ -128,73 +120,8 @@ def _file_out(row: KbDriveFile, queued: set[str]) -> KbDriveFileOut:
         indexable=kb_drive.is_indexable(row))
 
 
-# ---- publishing a delta ----
-
-@router.post(f"{_BASE}/plan", response=KbPlanOut,
-             summary="What publishing a knowledge-base state would change, and what to upload for it")
-@gate("agent.work", kind="action")  # the steward's write gate; changes nothing
-def kb_plan(request: HttpRequest, workspace: str, handle: str, payload: KbPlanIn) -> KbPlanOut:
-    """What publishing a state would change. Send the state (`canopy_kb.records.state`:
-    each record's and part's sha256). `unchanged` means stop: nothing to build or send.
-    Else `upload_docs` are the documents added or changed since the head: the steward
-    applies them to the served file, builds, and publishes the whole file with this
-    state (`…/kb/upload`, `…/kb/publish`)."""
-    project = _steward(request, workspace, handle)
-    return KbPlanOut(**_conflict(lambda: kb_versions.plan(project, payload.state.model_dump())))
-
-
 # ---- curation: what a refresh needs from the last one, on any machine ----
 # Steward only, reads included: for a Drive source these are its owner's text.
-
-@router.get(f"{_BASE}/curation", response=KbCurationOut,
-            summary="The curation state the last refresh saved, which the next one starts from")
-@gate("agent.work")
-def kb_curation(request: HttpRequest, workspace: str, handle: str) -> KbCurationOut:
-    project = _steward(request, workspace, handle)
-    return KbCurationOut(**(project.kb_curation or {}))
-
-
-@router.put(f"{_BASE}/curation", response=KbCurationOut,
-            summary="Save a refresh's curation state when it published nothing")
-@gate("agent.work", kind="content")
-def kb_save_curation(request: HttpRequest, workspace: str, handle: str, payload: KbCurationIn) -> KbCurationOut:
-    """409 when another refresh saved since `base`: refresh again from that one. A
-    refresh that publishes sends its state with the commit (`…/kb/versions`) instead."""
-    project = _steward(request, workspace, handle)
-
-    def save():
-        with transaction.atomic():
-            locked = AgentProject.objects.select_for_update().get(pk=project.pk)
-            return kb_store.save_curation(locked, payload.sha, payload.base,
-                                          saved_by=kb_versions.publisher(request.user))
-
-    return KbCurationOut(**_conflict(save))
-
-
-@router.post(f"{_BASE}/curation/lease", response=KbCurationOut,
-             summary="Take or renew the lease a refresh holds while it runs")
-@gate("agent.work", kind="content")
-def kb_take_lease(request: HttpRequest, workspace: str, handle: str, payload: KbLeaseIn) -> KbCurationOut:
-    """409 while another refresh holds an unexpired lease: one refresh at a time, so two
-    never pay for the same model calls."""
-    project = _steward(request, workspace, handle)
-
-    def take():
-        with transaction.atomic():
-            locked = AgentProject.objects.select_for_update().get(pk=project.pk)
-            return kb_store.take_lease(locked, payload.holder, payload.seconds)
-
-    return KbCurationOut(**_conflict(take))
-
-
-@router.delete(f"{_BASE}/curation/lease", response=KbCurationOut, summary="Release a refresh's lease")
-@gate("agent.work", kind="content")
-def kb_drop_lease(request: HttpRequest, workspace: str, handle: str, holder: str) -> KbCurationOut:
-    project = _steward(request, workspace, handle)
-    with transaction.atomic():
-        locked = AgentProject.objects.select_for_update().get(pk=project.pk)
-        return KbCurationOut(**kb_store.drop_lease(locked, holder))
-
 
 @router.post(f"{_BASE}/results", response=KbOriginalsOut,
              summary="Presigned uploads for the step results the store lacks")
@@ -208,7 +135,7 @@ def kb_upload_results(request: HttpRequest, workspace: str, handle: str, payload
 
 
 @router.post(f"{_BASE}/objects/have", response=KbObjectsHaveOut,
-             summary="Which step results, records or originals are stored")
+             summary="Which step results or originals are stored")
 @gate("agent.work", kind="action")  # changes nothing
 def kb_objects_have(request: HttpRequest, workspace: str, handle: str, payload: KbObjectsIn) -> KbObjectsHaveOut:
     project = _steward(request, workspace, handle)
@@ -216,7 +143,7 @@ def kb_objects_have(request: HttpRequest, workspace: str, handle: str, payload: 
 
 
 @router.post(f"{_BASE}/objects/links", response=KbObjectLinksOut,
-             summary="Presigned downloads of stored step results, records or originals")
+             summary="Presigned downloads of stored step results or originals")
 @gate("agent.work", kind="action")  # changes nothing
 def kb_objects_links(request: HttpRequest, workspace: str, handle: str, payload: KbObjectsIn) -> KbObjectLinksOut:
     project = _steward(request, workspace, handle)
@@ -248,7 +175,8 @@ def kb_file(request: HttpRequest, workspace: str, handle: str) -> KbFileOut:
 @gate("agent.work", kind="content")
 def kb_rollback(request: HttpRequest, workspace: str, handle: str, number: int) -> KbVersionOut:
     """A new version of the log pointing at version `number`'s file (kept for the newest
-    versions only: `can_roll_back` says which). The next delta builds on it."""
+    versions only: `can_roll_back` says which), with the curation state it was built
+    from: the next refresh starts from that state."""
     project = _steward(request, workspace, handle)
     version = _conflict(lambda: kb_versions.rollback(project, number, published_by=kb_versions.publisher(request.user)))
     project.refresh_from_db()

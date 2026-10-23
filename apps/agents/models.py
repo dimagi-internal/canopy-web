@@ -1319,10 +1319,6 @@ class AgentProject(models.Model):
     #: the project's Drive folder (`kb_versions`); no reader needs it — readers call the MCP.
     kb_drive_replica = models.BooleanField(default=False)
     kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
-    #: The curation state its last refresh saved ({sha, saved_at, saved_by, version}),
-    #: a step result in `kb_store`'s results/: what the next refresh, on any machine,
-    #: starts from (`canopy_kb.curate`). Empty before the first.
-    kb_curation = models.JSONField(default=dict, blank=True)
     #: Who may query a KB with a Drive source, beside its owner and its steward
     #: (`kb_drive.may_read`). A KB of public sources ignores it.
     kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")
@@ -2134,13 +2130,12 @@ class EngagementEvent(models.Model):
 class KbVersion(models.Model):
     """One published state of a workspace project's knowledge base: the version log.
 
-    A publish is a STATE — every document record's and corpus part's sha256
-    (`canopy_kb.records`) — kept as a content-addressed blob (`state_sha`). A FULL
-    publish is a whole kb.sqlite its steward built; canopy-web never builds one (#1971:
-    the DELTA kind, which canopy-web built in its web process, is kept only in the log
-    of versions made before). A ROLLBACK points the project back at an earlier version's
-    file. `KbChange` rows are what each version added, changed and removed: `whats_new`
-    reads them.
+    A FULL publish is a whole kb.sqlite its steward built; canopy-web never builds one
+    (#1971: the DELTA kind, which canopy-web built in its web process, is kept only in
+    the log of versions made before). Each carries the curation state it was built from
+    (`curation_sha`), which the next refresh starts from. A ROLLBACK points the project
+    back at an earlier version's file and state. What changed is the file's own history
+    (`whats_new`); `added`, `changed` and `removed` count it.
     """
 
     FULL, DELTA, ROLLBACK = "full", "delta", "rollback"
@@ -2156,8 +2151,9 @@ class KbVersion(models.Model):
     base = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     #: A rollback's target.
     rollback_of = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
-    #: The state blob's sha256 (`kb_store.blob_key`); blank for a full publish that sent none.
-    state_sha = models.CharField(max_length=64, blank=True, default="")
+    #: The curation state it was built from: a root in the steward's results store
+    #: (`canopy_kb.curate.State`). Blank for a file published without one (`canopy kb push`).
+    curation_sha = models.CharField(max_length=64, blank=True, default="")
     #: Its kb.sqlite.gz. Cleared when pruned (`kb_versions.KEEP_FILES`): an older
     #: version stays in the log but can no longer be rolled back to.
     kb_key = models.CharField(max_length=300, blank=True, default="")
@@ -2188,23 +2184,6 @@ class KbVersion(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"{self.project_id} v{self.number} {self.kind} {self.status}"
-
-
-class KbChange(models.Model):
-    """One document a version added, changed or removed — the log `whats_new` reads."""
-
-    NEW, CHANGED, REMOVED = "new", "changed", "removed"
-    version = models.ForeignKey(KbVersion, on_delete=models.CASCADE, related_name="changes")
-    item_id = models.CharField(max_length=300)
-    change = models.CharField(max_length=8, choices=[(NEW, NEW), (CHANGED, CHANGED), (REMOVED, REMOVED)])
-    type = models.CharField(max_length=60, blank=True, default="")
-    title = models.TextField(blank=True, default="")
-    url = models.TextField(blank=True, default="")
-    date = models.CharField(max_length=40, blank=True, default="")
-
-    class Meta:
-        db_table = "agents_kb_change"
-        indexes = [models.Index(fields=["version", "change"])]
 
 
 class KbSource(models.Model):
