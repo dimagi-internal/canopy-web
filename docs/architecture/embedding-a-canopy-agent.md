@@ -498,9 +498,10 @@ letter-spacing and so on:
 [data-canopy-widget]::part(dismiss)  { display: none; }  /* prefer dismissible: false */
 [data-canopy-widget]::part(panel)    { border-radius: 16px; }
 [data-canopy-widget]::part(resize)   { display: none; }  /* no corner resizing */
+[data-canopy-widget]::part(divider)  { display: none; }  /* no resizing a pinned rail */
 ```
 
-The parts are `launcher`, `dismiss`, `panel` and `resize`. Only rules you write against
+The parts are `launcher`, `dismiss`, `panel`, `resize` and `divider` (a pinned rail's left edge). Only rules you write against
 them reach in.
 
 **Pick a mode:**
