@@ -3,9 +3,14 @@
 
 The site publishes ``site.json`` beside its ``jwks.json`` (the Django host
 serves it at ``canopy/site.json``): its pages and the scopes each grants, what
-an agent must be to read real data there, and which agents it actually offers.
+an agent must be to work with its sensitive data, and which agents it actually
+offers (and which of them it lets near that data).
 canopy fetches it the way it fetches the site's keys and shows, per allowed
 agent, whether the agent meets it — before anyone opens a page.
+
+The pages and their scopes are the site's own description, for reference: canopy
+shows them but never enforces them or tells an agent — an agent declares only
+``sites:`` and ``data: sensitive``, and the site enforces its own page scopes.
 
 It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
 ``canopy-site+jwt``; ``iss`` is the site's Connected-site name::
@@ -13,8 +18,8 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
     {"v": 1, "iss": "connect-labs", "iat": 1792700000,
      "pages": [{"key": "labs:workflow:run", "title": "A workflow run",
                 "scopes": ["workflow:read", "workflow:act", "data:read"]}],
-     "real_data": {"requires": {"handles_sensitive": true, "runner_flag": "sensitive_data"}},
-     "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
+     "sensitive_data": {"requires": {"handles_sensitive": true, "runner_flag": "sensitive_data"}},
+     "uses": {"agents": ["ace", "labsdata"], "sensitive_data_agents": ["labsdata"],
               "version": "<site agents version chosen against>"},
      "site": {"origins": ["https://labs.connect.dimagi.com"],
               "jwks_url": "https://labs.connect.dimagi.com/labs/canopy/jwks.json",
@@ -90,19 +95,19 @@ def _requires(value) -> dict:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
-        raise SiteDocumentError("malformed", "real_data.requires must be a mapping")
+        raise SiteDocumentError("malformed", "sensitive_data.requires must be a mapping")
     extra = set(value) - {"handles_sensitive", "runner_flag"}
     if extra:
-        raise SiteDocumentError("malformed", f"real_data.requires: unknown key(s) {sorted(extra)}")
+        raise SiteDocumentError("malformed", f"sensitive_data.requires: unknown key(s) {sorted(extra)}")
     out: dict = {}
     if "handles_sensitive" in value:
         if not isinstance(value["handles_sensitive"], bool):
-            raise SiteDocumentError("malformed", "real_data.requires.handles_sensitive must be true or false")
+            raise SiteDocumentError("malformed", "sensitive_data.requires.handles_sensitive must be true or false")
         out["handles_sensitive"] = value["handles_sensitive"]
     flag = value.get("runner_flag")
     if flag:
         if flag not in contract.RUNNER_FLAGS:
-            raise SiteDocumentError("malformed", f"real_data.requires.runner_flag {flag!r} is not a "
+            raise SiteDocumentError("malformed", f"sensitive_data.requires.runner_flag {flag!r} is not a "
                                                  f"runner flag canopy knows ({sorted(contract.RUNNER_FLAGS)})")
         out["runner_flag"] = flag
     return out
@@ -160,16 +165,16 @@ def _normalize(claims: Mapping) -> dict:
             raise SiteDocumentError("malformed", "every page needs a key")
         pages.append({"key": str(page["key"]).strip(), "title": str(page.get("title") or ""),
                       "scopes": _strings(page.get("scopes"), f"pages[{page['key']}].scopes")})
-    real = claims.get("real_data") or {}
-    if not isinstance(real, Mapping):
-        raise SiteDocumentError("malformed", "real_data must be a mapping")
+    sensitive = claims.get("sensitive_data") or {}
+    if not isinstance(sensitive, Mapping):
+        raise SiteDocumentError("malformed", "sensitive_data must be a mapping")
     uses = claims.get("uses") or {}
     if not isinstance(uses, Mapping):
         raise SiteDocumentError("malformed", "uses must be a mapping")
     agents = _strings(uses.get("agents"), "uses.agents")
-    real_agents = _strings(uses.get("real_data_agents"), "uses.real_data_agents")
-    body = {"pages": pages, "real_data": {"requires": _requires(real.get("requires"))},
-            "uses": {"agents": agents, "real_data_agents": real_agents,
+    sensitive_agents = _strings(uses.get("sensitive_data_agents"), "uses.sensitive_data_agents")
+    body = {"pages": pages, "sensitive_data": {"requires": _requires(sensitive.get("requires"))},
+            "uses": {"agents": agents, "sensitive_data_agents": sensitive_agents,
                      "version": str(uses.get("version") or "")}}
     site = _site(claims.get("site"))
     if site:
@@ -177,17 +182,17 @@ def _normalize(claims: Mapping) -> dict:
     return body
 
 
-def site_document(site_name: str, *, pages: Sequence[Mapping] = (), real_data: Mapping | None = None,
+def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_data: Mapping | None = None,
                   uses: Mapping | None = None, site: Mapping | None = None,
                   now: float | None = None) -> dict:
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
-    ``real_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
-    ``{"agents", "real_data_agents", "version"}``, ``site`` as ``{"origins",
+    ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
+    ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
     "jwks_url", "issuer", "mcp_resource"}`` (each optional; left out when empty)."""
     name = str(site_name or "").strip()
     if not name:
         raise SiteDocumentError("not_configured", "the document needs the site's Connected-site name")
-    body = _normalize({"pages": list(pages), "real_data": real_data or {}, "uses": uses or {},
+    body = _normalize({"pages": list(pages), "sensitive_data": sensitive_data or {}, "uses": uses or {},
                        "site": site})
     return {"v": SITE_DOCUMENT_VERSION, "iss": name, "iat": int(time.time() if now is None else now),
             **body}
@@ -223,11 +228,12 @@ class SiteNeeds:
     site_name: str
     issued_at: int
     pages: tuple[SitePage, ...] = ()
-    #: ``{"handles_sensitive": bool, "runner_flag": str}`` — what an agent must be to read
-    #: real data here; empty when the site names nothing.
-    real_data_requires: Mapping = field(default_factory=dict)
+    #: ``{"handles_sensitive": bool, "runner_flag": str}`` — what an agent must be to work
+    #: with this site's sensitive data; empty when the site names nothing.
+    sensitive_data_requires: Mapping = field(default_factory=dict)
     uses_agents: tuple[str, ...] = ()
-    uses_real_data_agents: tuple[str, ...] = ()
+    #: The agents the site lets work with its sensitive data.
+    uses_sensitive_data_agents: tuple[str, ...] = ()
     #: The site agents version the site chose its settings against.
     uses_version: str = ""
     #: The site's own facts (its ``site`` block), or None when it declares none.
@@ -242,9 +248,9 @@ class SiteNeeds:
         return cls(
             site_name=site_name or str(claims.get("iss") or ""), issued_at=int(claims.get("iat") or 0),
             pages=tuple(SitePage(p["key"], p["title"], tuple(p["scopes"])) for p in body["pages"]),
-            real_data_requires=body["real_data"]["requires"],
+            sensitive_data_requires=body["sensitive_data"]["requires"],
             uses_agents=tuple(body["uses"]["agents"]),
-            uses_real_data_agents=tuple(body["uses"]["real_data_agents"]),
+            uses_sensitive_data_agents=tuple(body["uses"]["sensitive_data_agents"]),
             uses_version=body["uses"]["version"],
             site=(SiteFacts(origins=tuple(body["site"]["origins"]), jwks_url=body["site"]["jwks_url"],
                             issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"])

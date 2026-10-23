@@ -2,6 +2,25 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.17.0 — 2026-10-23
+
+**Breaking: real data → sensitive data in `site.json`.** A site's concept is "this agent
+may work with my sensitive data" — the vocabulary canopy uses everywhere else (a sensitive
+conversation, a capability that handles sensitive data, a sensitive-data runner). canopy
+reads only the new names; a host must move in lockstep.
+
+- Wire (`site.json`): `real_data` → `sensitive_data` (still `{"requires": {"handles_sensitive",
+  "runner_flag"}}`), and `uses.real_data_agents` → `uses.sensitive_data_agents`.
+- `canopy_sdk.site.site_document(..., real_data=...)` → `site_document(..., sensitive_data=...)`.
+- `SiteNeeds.real_data_requires` → `SiteNeeds.sensitive_data_requires`;
+  `SiteNeeds.uses_real_data_agents` → `SiteNeeds.uses_sensitive_data_agents`.
+- Django: the `CANOPY_HOST["SITE_NEEDS"]` hook returns `{"sensitive_data": {...},
+  "uses": {"agents": [...], "sensitive_data_agents": [...], ...}}`; `views.site_document`
+  reads `needs["sensitive_data"]`.
+- The `pages` part of `site.json` is informational for canopy: it shows it, but never
+  enforces it or tells an agent. Agents declare only `sites:` and `data: sensitive`; the
+  host enforces its own page scopes.
+
 ## 0.16.0 — 2026-10-23
 
 A host is set up from what it already knows, names its canopy tenant directly, and can

@@ -116,8 +116,8 @@ def test_unconfigured_host_shows_nothing():
 
 def test_site_json_is_signed_and_carries_the_needs(world):
     def needs():
-        return {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
-                "uses": {"agents": ["labsdata"], "real_data_agents": ["labsdata"], "version": "v1"},
+        return {"sensitive_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
+                "uses": {"agents": ["labsdata"], "sensitive_data_agents": ["labsdata"], "version": "v1"},
                 "titles": {"labs:workflow:run:data": "A workflow run, read-only"}}
 
     cfg = _settings(world, PAGE_SCOPES={"labs:workflow:run:data": ["workflow:read", "data:read"]},
@@ -129,7 +129,7 @@ def test_site_json_is_signed_and_carries_the_needs(world):
                                         site_name="connect-labs")
     assert got.pages[0].title == "A workflow run, read-only"
     assert got.pages[0].scopes == ("workflow:read", "data:read")
-    assert got.real_data_requires == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
+    assert got.sensitive_data_requires == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
     assert got.uses_version == "v1"
 
 
@@ -139,7 +139,7 @@ def test_site_json_without_a_key_is_503():
 
 
 def test_site_json_with_bad_needs_is_503(world):
-    cfg = _settings(world, SITE_NEEDS=lambda: {"real_data": {"requires": {"runner_flag": "nope"}}})
+    cfg = _settings(world, SITE_NEEDS=lambda: {"sensitive_data": {"requires": {"runner_flag": "nope"}}})
     with override_settings(CANOPY_HOST=cfg):
         assert Client().get("/canopy/site.json").status_code == 503
 

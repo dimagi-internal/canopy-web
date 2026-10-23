@@ -263,14 +263,14 @@ def test_the_response_is_signed_by_the_execution_key(w):
 # --- the site's needs, on the Connected sites page -------------------------------
 
 
-NEEDS = {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
-         "uses": {"agents": ["ace", "labsdata", "ghost"], "real_data_agents": ["labsdata"],
+NEEDS = {"sensitive_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
+         "uses": {"agents": ["ace", "labsdata", "ghost"], "sensitive_data_agents": ["labsdata"],
                   "version": "v-old"}}
 PAGES = [{"key": "labs:workflow:run:data", "title": "A workflow run, read-only",
           "scopes": ["workflow:read", "data:read"]}]
 
 
-def _publish(w, monkeypatch, *, key=None, fail=False):
+def _publish(w, monkeypatch, *, key=None, fail=False, needs=NEEDS):
     w["app"].jwks_url = "https://labs.example.org/canopy/jwks.json"
     w["app"].save()
     signer = key or w["key"]
@@ -284,7 +284,7 @@ def _publish(w, monkeypatch, *, key=None, fail=False):
             from canopy_sdk.fetch import FetchError
 
             raise FetchError(f"{url} answered 503")
-        return site_doc.sign_site_document(signer, site_doc.site_document(SITE, pages=PAGES, **NEEDS))
+        return site_doc.sign_site_document(signer, site_doc.site_document(SITE, pages=PAGES, **needs))
 
     monkeypatch.setattr(site_needs, "_get", get)
     return calls
@@ -308,10 +308,13 @@ def test_the_page_shows_the_sites_needs_and_who_meets_them(w, monkeypatch):
     assert body["pages"] == PAGES
     assert body["requires"] == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
     rows = {r["slug"]: r for r in body["agents"]}
-    assert rows["labsdata"]["offered"] and rows["labsdata"]["real_data"]
-    assert rows["labsdata"]["meets_real_data"] and rows["labsdata"]["why_not"] == []
-    assert rows["ace"]["offered"] and not rows["ace"]["meets_real_data"]
-    assert any("does not handle sensitive data" in why for why in rows["ace"]["why_not"])
+    assert rows["labsdata"]["offered"] and rows["labsdata"]["sensitive_data"]
+    assert rows["labsdata"]["can_handle_sensitive_data"] is True and rows["labsdata"]["why_not"] == []
+    assert rows["labsdata"]["url"].endswith("/agents/labsdata")
+    # The site offers ACE but never lets it near its sensitive data: nothing to meet,
+    # so no verdict and no reasons — not a failure.
+    assert rows["ace"]["offered"] and not rows["ace"]["sensitive_data"]
+    assert rows["ace"]["can_handle_sensitive_data"] is None and rows["ace"]["why_not"] == []
     assert not rows["bare"]["offered"] and not rows["bare"]["ready"]
     assert body["not_allowed"] == ["ghost"]
     assert body["uses_version"] == "v-old" and body["site_agents_version"] != "v-old"
@@ -319,13 +322,25 @@ def test_the_page_shows_the_sites_needs_and_who_meets_them(w, monkeypatch):
     assert len(calls) == 1, "a good copy is cached"
 
 
-def test_without_a_sensitive_runner_the_real_data_agent_falls_short_and_says_why(w, monkeypatch):
+def test_without_a_sensitive_runner_the_sensitive_data_agent_falls_short_and_says_why(w, monkeypatch):
     _publish(w, monkeypatch)
     _runner(w, w["labsdata"])
     row = next(r for r in _needs(w)["agents"] if r["slug"] == "labsdata")
-    assert not row["meets_real_data"]
-    assert any(why.startswith("no ready runner with sensitive") and "#running" in why
-               for why in row["why_not"])
+    assert row["can_handle_sensitive_data"] is False
+    assert [why for why in row["why_not"] if why["text"].startswith("no ready sensitive")] == [
+        {"text": "no ready sensitive-data runner takes its turns",
+         "url": row["url"] + "/settings#running"}]
+
+
+def test_an_agent_allowed_sensitive_data_without_a_sensitive_capability_says_why(w, monkeypatch):
+    needs = {**NEEDS, "uses": {**NEEDS["uses"], "sensitive_data_agents": ["labsdata", "ace"]}}
+    _publish(w, monkeypatch, needs=needs)
+    _runner(w, w["labsdata"], w["ace"], sensitive=True)
+    row = next(r for r in _needs(w)["agents"] if r["slug"] == "ace")
+    assert row["sensitive_data"] and row["can_handle_sensitive_data"] is False
+    assert row["why_not"][0] == {"text": "no capability of ACE for this site says `data: sensitive`",
+                                 "url": row["url"] + "/settings#reach"}
+    assert all(why["url"] and "canopy ›" not in why["text"] for why in row["why_not"])
 
 
 def test_a_site_json_signed_by_another_key_is_unavailable(w, monkeypatch):

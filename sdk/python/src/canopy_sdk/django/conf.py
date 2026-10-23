@@ -39,8 +39,8 @@
         "PAGE_TOKEN_MAX_AGE": 7200,
         # What this site asks of canopy's agents, published signed at
         # canopy/site.json (canopy_sdk.site): a callable (or dotted path)
-        # returning {"real_data": {"requires": {"handles_sensitive": True,
-        # "runner_flag": "sensitive_data"}}, "uses": {"agents": [...], "real_data_agents":
+        # returning {"sensitive_data": {"requires": {"handles_sensitive": True,
+        # "runner_flag": "sensitive_data"}}, "uses": {"agents": [...], "sensitive_data_agents":
         # [...], "version": "<site agents version>"}, "titles": {page_key: title}}.
         # The pages and their scopes are PAGE_SCOPES; PAGE_TITLES names them.
         "SITE_NEEDS": None,

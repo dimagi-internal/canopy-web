@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.16.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.17.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.16.0/dimagi_canopy-0.16.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.17.0/dimagi_canopy-0.17.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -448,7 +448,7 @@ if current is None:
     ...                             # show no agent (fail closed)
 agent = current.agent("labsdata") if current else None
 if agent and agent.ready and agent.handles_sensitive and agent.ready_with_flag("sensitive_data"):
-    ...                             # may be shown over real data
+    ...                             # may be shown over sensitive data
 reasons = agent.problem_links if agent else ()   # AgentProblem(text, url): render each as a link
 agent.url if agent else ""          # the agent's page in canopy
 current.site_settings_url           # this site's page in canopy: allow agents, keys, test
@@ -496,7 +496,7 @@ redirects) and checks the signature, `typ`, `iss`, `aud` (your site name),
 `canopy/site.json` beside `canopy/jwks.json`: your `PAGE_SCOPES` (titled by
 `PAGE_TITLES`) and what `SITE_NEEDS` returns, signed with your key. canopy's
 Connected sites page reads it and shows, per agent, whether it meets your
-`real_data.requires` and why not.
+`sensitive_data.requires` and why not.
 
 It also carries a `site` block — your own facts, which canopy's owner would
 otherwise type: `origins` (`CANOPY_HOST["ORIGINS"]`, else the origin of `ISSUER`,
@@ -509,8 +509,8 @@ confirm. Mount `views.site_document` at `/.well-known/canopy-site.json` too
 
 ```python
 def site_needs():
-    return {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
-            "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
+    return {"sensitive_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
+            "uses": {"agents": ["ace", "labsdata"], "sensitive_data_agents": ["labsdata"],
                      "version": current_site_agents_version()},
             "titles": {"labs:workflow:run": "A workflow run"}}
 
