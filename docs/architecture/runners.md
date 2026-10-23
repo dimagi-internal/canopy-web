@@ -692,7 +692,11 @@ or stops working. Three kinds:
   user:mcp_servers scope`).
 - **Token** — a `claude setup-token`, made on the box through the same relay
   (`slot: token`; `login_key` names the token to replace, "" adds one) and stored
-  encrypted in `value_enc`. Good for a year with nothing to renew.
+  encrypted in `value_enc`. Good for a year with nothing to renew. The box reads
+  the token off a replayed screen (`render_screen`: the CLI redraws only changed
+  cells, so stripping its cursor moves loses characters), then probes it before
+  reporting: a token Claude refuses is a failed sign-in, with Claude's words,
+  and is not stored.
 - **API key** — pasted, stored encrypted in `value_enc`. Billed per use: stepping
   onto one raises the coalesced `claude_api_key_fallback` alert.
 
@@ -760,7 +764,9 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
   bootstrap); after a re-read changes the bundle, only the new or changed entries,
   in the background — and every entry when the bundle was re-written unchanged
   (its `updated_at` moved); after a login is signed in again or the default login
-  is adopted (its value, a config dir, does not change); for a capped entry once
+  is adopted (its value, a config dir, does not change). A re-probe keeps the
+  entry's old check in the heartbeat until the new answer replaces it — the
+  `runner_credential` alert reads a missing check as fixed. For a capped entry once
   its reset has passed and a dead one every `DEAD_REPROBE_SECONDS` (10 min) — the
   main loop's poll tick; and when a turn's own failure is ambiguous (below).
   Background requests queue on one prober thread. Each check's detail ends
