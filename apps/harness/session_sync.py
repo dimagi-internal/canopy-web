@@ -15,8 +15,9 @@ import re
 import uuid
 from dataclasses import dataclass
 
+from canopy_transcript import BLOCK_STRIDE
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F, Max, Q
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -1199,6 +1200,52 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
     the session group as the chat path's `chat.turn_event` frames. Returns how
     many frames were pushed. The route (`post_session_stream`) only finds the
     binding."""
+    return _ingest(binding.session, transcript_id=transcript_id, events=events,
+                   index_offset=binding.index_offset, live=binding.stream_desired,
+                   binding=binding)
+
+
+def ingest_turn_end_rows(session, *, transcript_id, events) -> int:
+    """A CONFINED turn's transcript rows, shipped once when it ends by the runner
+    that ran it. A confined turn is never recorded as the session's binding (it is
+    never resumed, and its transcript is not a resume target), so this is the one
+    way its reply reaches the conversation. Each confined turn is a fresh Claude
+    session, starting again at ordinal 0, so each `transcript_id` gets its own epoch
+    above the rows already held (`_turn_end_epoch`); a re-ship of the same turn
+    lands on the same rows and is a no-op. Always fanned out: the person who asked
+    is waiting for it."""
+    offset = _turn_end_epoch(session, transcript_id)
+    shifted = [e.model_copy(update={"index": e.index + offset}) if e.index >= 0 else e
+               for e in events]
+    return _ingest(session, transcript_id="", events=shifted, index_offset=0, live=True,
+                   binding=None)
+
+
+#: Session metadata: the epoch (`turn_index` offset) of each confined turn's
+#: transcript that has shipped into it, by Claude session id. Server-owned.
+TURN_END_EPOCHS = "turn_end_epochs"
+
+
+def _turn_end_epoch(session, transcript_id: str) -> int:
+    """Where this transcript's ordinals start in `session`: the offset it was given
+    the first time it shipped, else one clear stride above every row held — the
+    rule a bound session's new file follows (`transcript_ingest._open_epoch`)."""
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        epochs = dict((locked.metadata or {}).get(TURN_END_EPOCHS) or {})
+        key = transcript_id or "-"
+        if key in epochs:
+            return int(epochs[key])
+        high = Message.objects.filter(session=locked).aggregate(m=Max("turn_index"))["m"]
+        offset = 0 if high is None else ((int(high) // BLOCK_STRIDE) + 2) * BLOCK_STRIDE
+        epochs[key] = offset
+        locked.metadata = {**(locked.metadata or {}), TURN_END_EPOCHS: epochs}
+        locked.save(update_fields=["metadata", "updated_at"])
+    session.metadata = locked.metadata
+    return offset
+
+
+def _ingest(session, *, transcript_id, events, index_offset, live, binding) -> int:
     from apps.canopy_sessions import services as chat_services
     from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
     from apps.realtime import groups
@@ -1208,15 +1255,16 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
     # sent an unmarked line without waiting for a reload (stream_map's
     # kind=="user" branch reads this when its own marker-parse finds none).
     authors_by_index: dict[int, dict] = {}
-    if chat_services.transcript_sourced(binding.session):
+    if chat_services.transcript_sourced(session):
         # BEFORE any write: if these ordinals index a different transcript than the
         # rows already held, the two would interleave (or the new one be silently
         # swallowed). If a closed session's NAME was reused, these rows are a new
         # conversation's and go to a new session, leaving the old one whole;
         # otherwise the new transcript opens a new epoch above the held rows.
-        if chat_transcript_ingest.fork_if_name_reused(binding.session, transcript_id):
+        if binding is not None and chat_transcript_ingest.fork_if_name_reused(session, transcript_id):
             binding = RunnerBinding.objects.select_related("session").get(pk=binding.pk)
-        chat_transcript_ingest.ensure_transcript_identity(binding.session, transcript_id)
+            session = binding.session
+        chat_transcript_ingest.ensure_transcript_identity(session, transcript_id)
         # Not "was this session discovered in emdash?" — where a conversation
         # started says nothing about where its record belongs. A phone-created chat
         # is driven by the same runner, in the same emdash session, writing the same
@@ -1230,7 +1278,7 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
         # {tool_use_id,is_error} are what the client pairs and renders on, so
         # flattening to text here would strip exactly the half that makes a tool
         # call legible.
-        created = chat_transcript_ingest.persist_transcript_rows(binding.session, [
+        created = chat_transcript_ingest.persist_transcript_rows(session, [
             {"index": e.index, "role": e.kind,
              "text": (e.payload or {}).get("text", ""), "content": e.payload or {},
              "cwd": e.cwd, "git_branch": e.git_branch}
@@ -1250,29 +1298,29 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
         if created and streamed:
             from apps.harness.signals import transcript_rows_streamed
 
-            session = binding.session
+            streamed_session = session
             transaction.on_commit(lambda: transcript_rows_streamed.send(
-                sender=type(session), session=session, rows=streamed))
+                sender=type(streamed_session), session=streamed_session, rows=streamed))
         user_indices = [
-            e.index + binding.index_offset
+            e.index + index_offset
             for e in events if e.index >= 0 and e.kind == "user"
         ]
         if user_indices:
             authors_by_index = {
-                turn_index - binding.index_offset: author
+                turn_index - index_offset: author
                 for turn_index, author in Message.objects.filter(
-                    session=binding.session, turn_index__in=user_indices,
+                    session=session, turn_index__in=user_indices,
                 ).values_list("turn_index", "author")
                 if author
             }
-    if not binding.stream_desired:
+    if not live:
         # Persisted above, but nobody is watching, so there is nothing to push.
         # The runner now tails EVERY session it backs so the durable record stops
         # depending on someone having the chat open (see list_streams); this is the
         # gate that keeps that from also broadcasting every session in the fleet to
         # session groups no client has joined.
         return 0
-    sgroup = groups.session_group(binding.session_id)
+    sgroup = groups.session_group(session.pk)
     n = 0
     from apps.canopy_sessions.transcript_noise import is_system_noise
 
@@ -1280,7 +1328,7 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
 
     # The live frame carries what the row stores (spec 2026-10-22-sensitive-data-agents
     # §4): a watcher and a reload see the same withheld result.
-    withhold = sensitivity.is_sensitive(binding.session)
+    withhold = sensitivity.is_sensitive(session)
 
     for e in events:
         # The noise filter has to run HERE too, not just in

@@ -6,6 +6,7 @@ Registered on the harness router (`api.router`), in the order api.py imports
 this module, so the schema and the MCP tool names are unchanged."""
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import uuid
 
@@ -324,9 +325,32 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         .filter(session_id=payload.session_id, runner=runner).first()
     )
     if binding is None:
-        raise HttpError(404, "session not bound to this runner")
+        # A confined turn is never this session's binding, so its reply arrives
+        # here unbound: accepted only from the runner that ran it, while it runs or
+        # just after it ends (`_turn_end_session`).
+        session = _turn_end_session(runner, payload.session_id)
+        if session is None:
+            raise HttpError(404, "session not bound to this runner")
+        return {"count": session_sync.ingest_turn_end_rows(
+            session, transcript_id=payload.transcript_id, events=payload.events)}
     return {"count": session_sync.ingest_session_stream(
         binding, transcript_id=payload.transcript_id, events=payload.events)}
+
+
+#: How long after a confined turn ends its runner may still ship its rows (a retry).
+TURN_END_SHIP_WINDOW = dt.timedelta(minutes=15)
+
+
+def _turn_end_session(runner, session_id):
+    """The session, when `runner` claimed a CONFINED turn in it that is running or
+    ended within `TURN_END_SHIP_WINDOW`; else None. The only standing an unbound
+    runner has to write a session's rows."""
+    live = Q(status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
+    recent = Q(finished_at__gte=timezone.now() - TURN_END_SHIP_WINDOW)
+    turn = (Turn.objects.select_related("chat_session")
+            .filter(chat_session_id=session_id, claimed_by=runner).exclude(capability="")
+            .filter(live | recent).first())
+    return turn.chat_session if turn is not None else None
 
 
 @router.get("/runners/{runner_id}/backfills", response=BackfillSyncOut)

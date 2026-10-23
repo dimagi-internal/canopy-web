@@ -8826,8 +8826,12 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
     if not rows:
         return
     events = [ct.stream_event(r) for r in rows]
+    # The transcript these ordinals index: a confined turn is a fresh Claude session
+    # each time, and without its id the next turn's rows (from ordinal 0 again) would
+    # land on the last one's and be dropped as already held.
     status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
-                     {"session_id": session_id, "events": events})
+                     {"session_id": session_id, "events": events,
+                      "transcript_id": cli_session_id})
     _log(f"turn {turn['id'][:8]}: shipped {len(events)} transcript rows -> {status}")
 
 

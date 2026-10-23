@@ -1293,6 +1293,36 @@ def test_a_missing_transcript_core_never_fails_the_turn(cloud_runner, monkeypatc
     cloud_runner._ship_transcript_rows("r1", {"id": "t1"}, "/tmp", "sess")  # must not raise
 
 
+def test_the_rows_name_the_transcript_they_index(cloud_runner, monkeypatch):
+    """A confined turn is a fresh Claude session each time: without its id the next
+    turn's rows (ordinal 0 again) would land on the last one's and be dropped."""
+    calls = []
+
+    class _Core:
+        @staticmethod
+        def resolve_cli_transcript(cwd, sid, claude_home=None):
+            return "/tmp/t.jsonl"
+
+        @staticmethod
+        def read_records(path):
+            return []
+
+        @staticmethod
+        def conversational_messages(records, last):
+            return [{"index": 0}]
+
+        @staticmethod
+        def stream_event(row):
+            return {"kind": "assistant", "index": row["index"], "payload": {}}
+
+    monkeypatch.setattr(cloud_runner, "_transcript_core", lambda: _Core)
+    monkeypatch.setattr(cloud_runner, "_chat_session_id", lambda turn: "sess-1")
+    monkeypatch.setattr(cloud_runner, "_api", lambda *a, **k: calls.append(a) or (200, None))
+    cloud_runner._ship_transcript_rows("r1", {"id": "t1"}, "/tmp", "cli-abc")
+    [(_method, _path, body)] = calls
+    assert body["transcript_id"] == "cli-abc" and body["session_id"] == "sess-1"
+
+
 class TestInheritedSessionMarkers:
     """A `claude` this runner spawns must not think it is a CHILD of a Claude
     session that happens to have started the runner.

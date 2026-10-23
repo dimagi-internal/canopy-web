@@ -20,7 +20,7 @@ from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import claim, ledger, services, session_sync, turn_asker, turn_gates
+from . import claim, ledger, sensitivity, services, session_sync, turn_access, turn_asker, turn_gates
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -301,7 +301,14 @@ def append_turn_events(request: HttpRequest, turn_id: uuid.UUID, payload: TurnEv
 @router.get("/turns/{turn_id}/events", response=TurnEventsOut)
 @gate("turn-content")
 def read_turn_events(request: HttpRequest, turn_id: uuid.UUID, after: int = 0):
-    turn = turn_content_or_404(request, turn_id)
+    # A sensitive turn's ledger is stored as metadata only (no words, no results), so
+    # it reads as a log: troubleshooting needs it, and it holds nothing to protect.
+    turn = turn_or_404(request, turn_id)
+    if sensitivity.is_sensitive(turn):
+        if not turn_access.can_read_turn_log(request.user, turn):
+            raise HttpError(404, "turn not found")
+    else:
+        turn = turn_content_or_404(request, turn_id)
     events = turn.events.filter(seq__gt=after).order_by("seq")[:500]
     return {"events": list(events)}
 
