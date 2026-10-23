@@ -844,12 +844,7 @@ def cancel_transfer_request(request: HttpRequest, request_id: uuid.UUID):
 # Declared above the `/{session_id}` routes, like the transfer requests.
 
 def _join_request_out(req) -> dict:
-    return {
-        "id": req.id, "session_id": req.session_id,
-        "requested_by": req.requested_by.email, "requested_by_name": control.person_name(req.requested_by),
-        "status": req.status, "decided_by": getattr(req.decided_by, "email", "") or "",
-        "decided_at": req.decided_at, "created_at": req.created_at,
-    }
+    return join_requests.dto(req)
 
 
 def _join_request_or_404(request: HttpRequest, request_id: uuid.UUID):
@@ -1387,13 +1382,15 @@ def ask_to_join(request: HttpRequest, session_id: uuid.UUID):
 
 
 @router.get("/{session_id}/join-requests", response=list[JoinRequestOut],
-            summary="Open requests to join your private conversation")
-@gate("session-acl")  # its owner, in it; anyone else reads none
+            summary="Open requests to join a private conversation you are in")
+@gate("session-acl")  # its people; anyone else reads none
 def list_join_requests(request: HttpRequest, session_id: uuid.UUID):
-    """The people asking to be added, oldest first, for its owner (who adds them from
-    the browser, `POST /{id}/participants`, or declines). Empty for anyone else."""
+    """The people asking to be added, oldest first, for the conversation's own people
+    (the same list rides the chat's socket as `session.join_requests`). Its owner adds
+    them from the browser (`POST /{id}/participants`) or declines. Empty for anyone
+    else."""
     session = _session_or_404(request, session_id)
-    if not join_requests.may_decide(request.user, session):
+    if not join_requests.may_see(request.user, session):
         return []
     return [_join_request_out(r) for r in join_requests.pending_for(session)]
 

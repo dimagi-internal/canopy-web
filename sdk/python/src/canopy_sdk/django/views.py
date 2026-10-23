@@ -148,8 +148,8 @@ def site_facts(request, config) -> dict:
       route on that origin;
     * ``issuer`` / ``mcp_resource`` — ``ISSUER`` / ``RESOURCE`` (blank while the
       grant is off);
-    * ``resource_schemes`` — ``ARTIFACTS["SCHEME"]`` plus ``RESOURCE_SCHEMES``: the
-      schemes of the links this site's tools return, which canopy keeps.
+    * ``resource_schemes`` — ``RESOURCE_SCHEMES``: the schemes of the links this
+      site's tools return, which canopy keeps.
     """
     overrides = conf.site_facts_overrides()
     base = _origin_of(config.issuer) or _origin_of(request.build_absolute_uri("/"))

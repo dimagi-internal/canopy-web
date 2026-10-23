@@ -12,6 +12,7 @@ from django.test import Client
 from apps.agents.models import AgentAdmin
 from apps.canopy_sessions import join_requests
 from apps.canopy_sessions.models import JoinRequest, Session, SessionParticipant
+from apps.realtime.groups import session_group
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.sensitive import ASKED, REPLY, ROW, _converse, rewrap_for, vault_key, world
 
@@ -87,15 +88,68 @@ def test_someone_who_can_see_it_asks_and_the_request_carries_nothing_it_said(w):
     assert w["ac"].get(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").json() == []
 
 
-def test_home_shows_the_owner_the_request(w):
+def test_the_request_goes_to_the_conversation_and_never_to_home(w):
     w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests")
-    data = w["c"].get("/api/me/attention/").json()
-    rows = [r for r in data["now"] + data["quiet"] if r["kind"] == "join_request"]
-    assert len(rows) == 1 and rows[0]["private"] is True
-    assert rows[0]["title"] == "ada@dimagi.com asked to join your private conversation with labsdata"
-    assert rows[0]["url"].endswith(f"/chat/{w['hot'].pk}")
-    other = w["ac"].get("/api/me/attention/").json()
-    assert not [r for r in other["now"] + other["quiet"] if r["kind"] == "join_request"]
+    for client in (w["c"], w["ac"]):
+        data = client.get("/api/me/attention/").json()
+        rows = data["now"] + data["quiet"] + data["hidden"] + data["running"]
+        assert not [r for r in rows if r["kind"] == "join_request"]
+
+
+def test_its_people_see_the_request_and_only_its_owner_answers(w):
+    """Anyone in it sees who is asking; only its owner (who can wrap them a key) decides."""
+    req = join_requests.ask(w["hot"], w["admin"])
+    beth = User.objects.create_user("beth", "beth@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=beth, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
+    SessionParticipant.objects.create(session=w["hot"], user=beth, role=SessionParticipant.EDITOR)
+    bc = Client()
+    bc.force_login(beth)
+    listed = bc.get(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").json()
+    assert [x["id"] for x in listed] == [str(req.pk)]
+    # Not hers to answer: she cannot even name it to decline it.
+    assert bc.post(f"/api/canopy-sessions/join-requests/{req.pk}/decline").status_code == 404
+    req.refresh_from_db()
+    assert req.status == JoinRequest.PENDING
+
+
+def test_every_change_rings_the_conversation_with_the_whole_open_list(
+        w, monkeypatch, django_capture_on_commit_callbacks):
+    sent = []
+    monkeypatch.setattr(join_requests, "_publish", lambda group, msg: sent.append((group, msg)))
+    _converse(w["hot"])
+    with django_capture_on_commit_callbacks(execute=True):
+        req = w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").json()
+    [(group, msg)] = sent
+    assert group == session_group(w["hot"].pk)
+    assert msg["type"] == "session.join_requests"
+    assert [r["id"] for r in msg["requests"]] == [req["id"]]
+    assert msg["requests"][0]["requested_by"] == "ada@dimagi.com"
+    assert ASKED not in str(msg) and REPLY not in str(msg)
+    # Asking again changes nothing, so rings nothing.
+    sent.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests")
+    assert sent == []
+    # Adding them answers it: the list empties, live.
+    with django_capture_on_commit_callbacks(execute=True):
+        w["c"].post(f"/api/canopy-sessions/{w['hot'].pk}/participants", data={
+            "email": "ada@dimagi.com", "role": "editor",
+            "wrap": rewrap_for(w["hot"], w["user"], w["key"], w["admin"])}, content_type="application/json")
+    assert sent[-1][1]["requests"] == []
+    # A decline or a withdrawal rings it too.
+    other = join_requests.ask(w["hot"], User.objects.create_user("z", "z@dimagi.com", "pw"))
+    sent.clear()
+    with django_capture_on_commit_callbacks(execute=True):
+        join_requests.decline(other, w["user"])
+    assert sent and sent[-1][1]["requests"] == []
+
+
+def test_the_socket_frame_reaches_ag_ui_clients():
+    from apps.canopy_sessions import agui
+
+    [event] = agui.project({"event": "session.join_requests", "data": {"requests": [{"id": "r1"}]}},
+                           thread_id="t1")
+    assert event.name == "canopy.session.join_requests" and event.value["requests"] == [{"id": "r1"}]
 
 
 def test_adding_them_from_the_owners_browser_approves_it(w):

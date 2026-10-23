@@ -41,7 +41,6 @@ const KIND_LABEL: Record<string, string> = {
   task: 'Task',
   session: 'Chat',
   access_request: 'Access',
-  join_request: 'Private chat',
 }
 
 export function HomePage(): JSX.Element {

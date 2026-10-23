@@ -521,6 +521,13 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
     if event == "session.queued":
         return [_custom(event, data)]
 
+    # Who is asking to join a private conversation (`join_requests.publish`): the
+    # whole open list, names only. No AG-UI spelling for "someone wants in", so
+    # it rides CUSTOM; dropped here, the request would reach the chat only on a
+    # reload, on both surfaces that ride ag-ui (the chat page and the panel).
+    if event == "session.join_requests":
+        return [_custom(event, data)]
+
     # Multiplayer and placement: canopy's, not AG-UI's. One user and one agent
     # is the protocol's model, so a co-edited draft, a presence roster and which
     # box a session is bound to have no native spelling. They are not dropped —

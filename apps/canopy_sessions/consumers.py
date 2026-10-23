@@ -654,6 +654,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         correct prior to apply one to."""
         await self.send_json({"event": "session.queued", "data": {"queued": message.get("queued") or []}})
 
+    async def session_join_requests(self, message):
+        """The whole list of open requests to join this private conversation
+        (`join_requests.publish`): who asked, never anything it said. Only the
+        conversation's people are on a sensitive conversation's socket."""
+        await self.send_json({"event": "session.join_requests",
+                              "data": {"requests": message.get("requests") or []}})
+
     async def session_page_action(self, message):
         """The agent is asking the attached page to do something.
 

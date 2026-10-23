@@ -12254,9 +12254,11 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Open requests to join your private conversation
-         * @description The people asking to be added, oldest first, for its owner (who adds them from
-         *     the browser, `POST /{id}/participants`, or declines). Empty for anyone else.
+         * Open requests to join a private conversation you are in
+         * @description The people asking to be added, oldest first, for the conversation's own people
+         *     (the same list rides the chat's socket as `session.join_requests`). Its owner adds
+         *     them from the browser (`POST /{id}/participants`) or declines. Empty for anyone
+         *     else.
          */
         readonly get: operations["list_join_requests"];
         readonly put?: never;

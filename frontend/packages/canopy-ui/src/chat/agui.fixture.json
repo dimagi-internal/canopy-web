@@ -543,6 +543,45 @@
   },
   {
     "canopy": {
+      "event": "session.join_requests",
+      "data": {
+        "requests": [
+          {
+            "id": "5b1d",
+            "session_id": "8f2e",
+            "requested_by": "ada@dimagi.com",
+            "requested_by_name": "Ada",
+            "status": "pending",
+            "decided_by": "",
+            "decided_at": null,
+            "created_at": "2026-10-23T12:00:00+00:00"
+          }
+        ]
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.session.join_requests",
+        "value": {
+          "requests": [
+            {
+              "id": "5b1d",
+              "session_id": "8f2e",
+              "requested_by": "ada@dimagi.com",
+              "requested_by_name": "Ada",
+              "status": "pending",
+              "decided_by": "",
+              "decided_at": null,
+              "created_at": "2026-10-23T12:00:00+00:00"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "session.stop",
       "data": {
         "state": "failed"

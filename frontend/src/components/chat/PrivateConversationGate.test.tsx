@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const getSession = vi.fn()
@@ -10,7 +10,7 @@ vi.mock('@/api/chat', () => ({
 }))
 vi.mock('@/api/agents', () => ({ getAgent: async () => ({ name: 'Labs Data' }) }))
 
-const { PrivateConversationGate, takeGateFetch } = await import('./PrivateConversationGate')
+const { ANSWER_POLL_MS, PrivateConversationGate, takeGateFetch } = await import('./PrivateConversationGate')
 
 const PRIVATE = {
   id: 's1', sensitive: true, agent_slug: 'labsdata', started_by_name: 'Jonathan Jackson',
@@ -68,5 +68,41 @@ describe('PrivateConversationGate', () => {
     gate()
     expect((await screen.findByTestId('private-asked')).textContent).toContain('Asked Jonathan Jackson')
     expect(screen.queryByTestId('private-ask')).toBeNull()
+  })
+
+  it('turns into Open it once its owner adds them, without a reload', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      getSession.mockResolvedValue({ ...PRIVATE, you_are_in_it: false, your_join_request: 'pending' })
+      gate()
+      await screen.findByTestId('private-asked')
+      getSession.mockResolvedValue({ ...PRIVATE, you_are_in_it: true, your_join_request: 'approved' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ANSWER_POLL_MS + 10)
+      })
+      expect((await screen.findByTestId('private-interstitial-text')).textContent)
+        .toContain('Jonathan Jackson added you.')
+      fireEvent.click(screen.getByTestId('private-open'))
+      await screen.findByText('THE CHAT')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('offers to ask again once its owner declines', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      getSession.mockResolvedValue({ ...PRIVATE, you_are_in_it: false, your_join_request: 'pending' })
+      gate()
+      await screen.findByTestId('private-asked')
+      getSession.mockResolvedValue({ ...PRIVATE, you_are_in_it: false, your_join_request: 'declined' })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ANSWER_POLL_MS + 10)
+      })
+      expect(await screen.findByText('Jonathan Jackson declined your last request.')).toBeTruthy()
+      expect(screen.getByTestId('private-ask')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

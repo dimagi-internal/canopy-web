@@ -14,7 +14,9 @@ import { Button } from 'canopy-ui/ui'
  *   ask for the one-click passkey unlock);
  * - to someone who can see it exists but is not in it: that only its people can
  *   read it, and [Ask <starter> to add you], a request carrying nothing it said
- *   (`POST /{id}/join-requests`), which its owner sees on Home and in the chat.
+ *   (`POST /{id}/join-requests`), which its people see in the conversation itself
+ *   (`JoinRequests`). While it waits, this re-reads the conversation now and then,
+ *   so an add turns into [Open it] (and a decline into "ask again") in place.
  *
  * An ordinary conversation passes straight through. The detail fetched to decide
  * is handed to the chat page (`takeGateFetch`), so a chat is still read once.
@@ -86,13 +88,32 @@ export function PrivateConversationGate({ sessionId, children }: { sessionId: st
   )
 }
 
+/** How often a waiting request re-reads whether it was answered. */
+export const ANSWER_POLL_MS = 10_000
+
 export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionDetail; onOpen: () => void }) {
   const agentName = useAgentName(session.agent_slug ?? null)
   const starter = (session.started_by_name ?? '').trim()
   const canAsk = Boolean(session.created_by)
   const [asked, setAsked] = useState(session.your_join_request ?? '')
+  const [inIt, setInIt] = useState(Boolean(session.you_are_in_it))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  // The requester is not on the conversation's socket (it is its people's alone),
+  // so the answer is read, not pushed.
+  useEffect(() => {
+    if (inIt || asked !== 'pending') return
+    const timer = window.setInterval(() => {
+      getSession(session.id)
+        .then((s) => {
+          if (s.you_are_in_it) setInIt(true)
+          else setAsked(s.your_join_request ?? '')
+        })
+        .catch(() => undefined)
+    }, ANSWER_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [session.id, inIt, asked])
 
   const ask = async () => {
     setBusy(true)
@@ -113,9 +134,10 @@ export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionD
           <Lock className="h-3.5 w-3.5" aria-hidden />
           Private conversation
         </p>
-        {session.you_are_in_it ? (
+        {inIt ? (
           <>
             <p className="mt-2 text-foreground-secondary" data-testid="private-interstitial-text">
+              {!session.you_are_in_it && <>{starter || 'Its owner'} added you. </>}
               This is a private conversation{agentName ? ` with ${agentName}` : ''}
               {starter ? `, started by ${starter}` : ''}. Its messages are sealed to the people in it.
             </p>

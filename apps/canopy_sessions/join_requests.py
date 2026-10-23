@@ -3,8 +3,11 @@
 Someone the session ACL lets see that a conversation exists (an agent's admin, say)
 but who is not one of its people cannot read it: its words are sealed to the people
 in it. They can ask its owner to add them. The request carries no conversation
-content, only who asked and which conversation, and it waits on Home for the
-people who may add someone (`may_decide`: the chat's owner, in it).
+content, only who asked and which conversation. It is shown IN the conversation,
+to its people (`may_see`), never on Home: every change to the open list rings
+the session's socket group with the whole list (`session.join_requests`, `publish`),
+and only the conversation's people are on that socket (`sensitivity.reads_content`).
+Who may answer it is narrower (`may_decide`: the chat's owner, in it).
 
 Approval is not a route of its own. Adding someone to a sensitive conversation is
 a browser act (the owner's browser wraps the conversation's key to the
@@ -18,13 +21,18 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.attention.types import ASKING, AttentionRow
 from apps.harness import sensitivity
-from apps.workspaces.links import scoped_path
+from apps.realtime.groups import publish as _publish
+from apps.realtime.groups import session_group
 
 from . import access
 from .control import person_name
 from .models import JoinRequest, Session, SessionParticipant
+
+
+def may_see(user, session) -> bool:
+    """Whoever sees the open requests: the conversation's own people."""
+    return sensitivity.is_conversation_person(session, user=user)
 
 
 def may_decide(user, session) -> bool:
@@ -49,10 +57,12 @@ def ask(session: Session, user) -> JoinRequest:
         return open_
     try:
         with transaction.atomic():
-            return JoinRequest.objects.create(session=session, requested_by=user)
+            req = JoinRequest.objects.create(session=session, requested_by=user)
     except IntegrityError:  # asked twice at once
         return JoinRequest.objects.get(session=session, requested_by=user,
                                        status=JoinRequest.PENDING)
+    publish(session)
+    return req
 
 
 def latest_of(session: Session, user) -> JoinRequest | None:
@@ -72,6 +82,7 @@ def _decide(req: JoinRequest, status: str, by) -> JoinRequest:
         raise ValueError(f"this request is already {req.status}")
     req.status, req.decided_by, req.decided_at = status, by, timezone.now()
     req.save(update_fields=["status", "decided_by", "decided_at"])
+    publish(req.session)
     return req
 
 
@@ -89,9 +100,12 @@ def cancel(req: JoinRequest, user) -> JoinRequest:
 
 def settle_on_add(session: Session, user, *, by) -> int:
     """`user` was just added to `session`: their open request, if any, is approved."""
-    return JoinRequest.objects.filter(
+    n = JoinRequest.objects.filter(
         session=session, requested_by=user, status=JoinRequest.PENDING,
     ).update(status=JoinRequest.APPROVED, decided_by=by, decided_at=timezone.now())
+    if n:
+        publish(session)
+    return n
 
 
 def _owned_q(user) -> Q:
@@ -105,34 +119,33 @@ def visible_to(user):
     return JoinRequest.objects.filter(Q(requested_by=user) | _owned_q(user)).distinct()
 
 
-# ── Home (`apps.attention.sources`) ─────────────────────────────────────────────
+def dto(req: JoinRequest) -> dict:
+    """`JoinRequestOut`: who asked and how it was decided, nothing the conversation said."""
+    return {
+        "id": req.id, "session_id": req.session_id,
+        "requested_by": req.requested_by.email, "requested_by_name": person_name(req.requested_by),
+        "status": req.status, "decided_by": getattr(req.decided_by, "email", "") or "",
+        "decided_at": req.decided_at, "created_at": req.created_at,
+    }
 
-def items(request, *, slugs: set[str]) -> list[AttentionRow]:
-    """Requests waiting on this person: open requests into conversations they own
-    and are in, in the workspaces Home is reading."""
-    user = request.user
-    rows = (JoinRequest.objects.filter(_owned_q(user), status=JoinRequest.PENDING,
-                                       session__workspace_id__in=slugs)
-            .select_related("session", "session__agent", "requested_by").distinct()[:200])
-    out = []
-    for r in rows:
-        session = r.session
-        if not may_decide(user, session):
-            continue
-        who = person_name(r.requested_by) or "Someone"
-        agent = session.agent.name if session.agent_id else "an agent"
-        out.append(AttentionRow(
-            key=f"join:{r.pk}",
-            kind="join_request",
-            state=ASKING,
-            reason="Wants to join",
-            title=f"{who} asked to join your private conversation with {agent}",
-            workspace=session.workspace_id,
-            agent_slug=session.agent.slug if session.agent_id else "",
-            url=scoped_path(session.workspace_id, f"/chat/{session.pk}"),
-            last_activity_at=r.created_at,
-            actions=("open",),
-            target={"session": str(session.pk), "request": str(r.pk)},
-            private=True,
-        ))
-    return out
+
+def publish(session: Session) -> None:
+    """Ring the conversation's socket with its whole open list, once the write
+    commits. Whole, never a delta (the `session.queued` rule): a just-connected
+    client has no prior to apply one to. Only its people hear it — the socket of a
+    sensitive conversation admits nobody else (`sensitivity.reads_content`)."""
+    session_id = session.pk
+
+    def _send():
+        rows = [dto(r) for r in JoinRequest.objects.filter(
+            session_id=session_id, status=JoinRequest.PENDING,
+        ).select_related("requested_by").order_by("created_at")]
+        _publish(session_group(session_id), {
+            "type": "session.join_requests",
+            "requests": [{**r, "id": str(r["id"]), "session_id": str(r["session_id"]),
+                          "created_at": r["created_at"].isoformat(),
+                          "decided_at": r["decided_at"].isoformat() if r["decided_at"] else None}
+                         for r in rows],
+        })
+
+    transaction.on_commit(_send)
