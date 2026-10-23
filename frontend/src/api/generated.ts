@@ -2104,6 +2104,40 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/contact/sessions/{session_id}/apps/{tool_call_id}/subscribe": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** An app view's resources/subscribe, as you */
+        readonly post: operations["contact_app_view_subscribe"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/sessions/{session_id}/apps/{tool_call_id}/unsubscribe": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** An app view's resources/unsubscribe, as you */
+        readonly post: operations["contact_app_view_unsubscribe"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/contact/sessions/{session_id}/apps/{tool_call_id}/context": {
         readonly parameters: {
             readonly query?: never;
@@ -7733,6 +7767,37 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/sites/resources-updated": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A connected site says some of its resources changed, signed
+         * @description Tell the Views subscribed to some of this site's resources to re-read them.
+         *
+         *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own key
+         *     (the one at its `jwks_url`): `typ` `canopy-resources-updated+jwt`, `iss` = `sub`
+         *     = its Connected-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
+         *     `uris` — the resource URIs that changed (1-50). `canopy_workspace` /
+         *     `canopy_agent` name the tenant as for `GET /api/sites/agents`. Build and send it
+         *     with `canopy_sdk.resources.notify_updated` (or the Django host's
+         *     `artifacts.update` / `artifacts.notify_updated`). The body is ignored. Each View
+         *     that subscribed (`resources/subscribe`) to one of the URIs on this site gets the
+         *     socket frame `app.resource_updated` — the URI and its tool call id, never data —
+         *     and re-reads it as its viewer. Answers `{notified}`.
+         */
+        readonly post: operations["resources_updated"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/timeline/": {
         readonly parameters: {
             readonly query?: never;
@@ -12718,6 +12783,40 @@ export interface paths {
         readonly put?: never;
         /** An app view's ui/message: a message from the viewer, which starts a turn */
         readonly post: operations["app_view_message"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/subscribe": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** An app view's resources/subscribe: hear when a host resource changes */
+        readonly post: operations["app_view_subscribe"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/apps/{tool_call_id}/unsubscribe": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** An app view's resources/unsubscribe */
+        readonly post: operations["app_view_unsubscribe"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -27857,6 +27956,11 @@ export interface components {
             /** Mcp Resource */
             readonly mcp_resource: string;
         };
+        /** ResourcesUpdatedOut */
+        readonly ResourcesUpdatedOut: {
+            /** Notified */
+            readonly notified: number;
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -37902,6 +38006,64 @@ export interface operations {
             };
         };
     };
+    readonly contact_app_view_subscribe: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly tool_call_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AppReadIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly contact_app_view_unsubscribe: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly tool_call_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AppReadIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     readonly contact_app_view_context: {
         readonly parameters: {
             readonly query?: never;
@@ -45612,6 +45774,26 @@ export interface operations {
             };
         };
     };
+    readonly resources_updated: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ResourcesUpdatedOut"];
+                };
+            };
+        };
+    };
     readonly list_timeline: {
         readonly parameters: {
             readonly query?: {
@@ -51218,6 +51400,64 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["AppMessageIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly app_view_subscribe: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly tool_call_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AppReadIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": {
+                        readonly [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readonly app_view_unsubscribe: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly tool_call_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AppReadIn"];
             };
         };
         readonly responses: {

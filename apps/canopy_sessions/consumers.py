@@ -618,6 +618,18 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             "data": {"uri": message.get("uri", "")},
         })
 
+    async def app_resource_updated(self, message):
+        """A host resource an MCP Apps View subscribed to changed
+        (`mcp_apps_views.resources_updated`, from the host's signed notification).
+
+        The tool call id says which View; the URI which resource — and nothing
+        else: the View re-reads it through `resources/read`, as its own viewer,
+        under the host's ACL. MCP's `notifications/resources/updated` shape."""
+        await self.send_json({
+            "event": "app.resource_updated",
+            "data": {"tool_call_id": message.get("tool_call_id", ""), "uri": message.get("uri", "")},
+        })
+
     async def session_turn_status(self, message):
         """Where the ask this session is waiting on currently stands.
 

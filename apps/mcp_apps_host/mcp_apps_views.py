@@ -36,14 +36,15 @@ import json
 import logging
 import threading
 from dataclasses import dataclass
+from datetime import timedelta
 
 from asgiref.sync import async_to_sync
 from django.db import transaction
 from django.utils import timezone
 
 from apps.harness import sensitivity
-
 from apps.host_grants import host_gateway
+from apps.realtime import groups
 
 from . import mcp_apps
 
@@ -300,6 +301,21 @@ def tool_result(row: ViewRow) -> dict | None:
     return {"content": blocks, "isError": is_error}
 
 
+#: `_meta` on a sensitive conversation's tool result: canopy did not keep it.
+WITHHELD_META = "canopy/withheld"
+
+
+def withheld_result(row: ViewRow) -> dict | None:
+    """A sensitive conversation's tool result as its View receives it: the host's
+    resource links and nothing else, or None when the call left none."""
+    links = (row.result or {}).get(sensitivity.RESOURCE_LINKS)
+    if not isinstance(links, list) or not links:
+        return None
+    return {"content": [dict(link) for link in links if isinstance(link, dict)],
+            "structuredContent": None, "_meta": {WITHHELD_META: True},
+            "isError": bool((row.result or {}).get("is_error"))}
+
+
 def _blocks(body) -> list[dict]:
     if isinstance(body, str):
         return [{"type": "text", "text": body}]
@@ -431,7 +447,12 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
             session, tool_call_id, chat_surface=viewer.chat_surface, user=viewer.user,
             contact=viewer.contact),
         "tool_input_path": row.ref["path"],
-        "tool_result": None if sensitivity.is_sensitive(session) else tool_result(row),
+        # A sensitive conversation keeps no result, only the host's resource links
+        # (`sensitivity.strip_result`): the View gets those — addresses it reads back
+        # from the host as the viewer — and `canopy/withheld` says the rest was not
+        # kept (spec 2026-10-23-host-held-results §3). An ordinary conversation's
+        # result goes as the transcript holds it, links included.
+        "tool_result": withheld_result(row) if sensitivity.is_sensitive(session) else tool_result(row),
         "receipts": receipts_for(session, tool_call_id),
     }
 
@@ -513,9 +534,84 @@ def read(session, viewer: Viewer, tool_call_id: str, uri: str) -> dict:
     except ViewRefusal as exc:
         _refuse(session, viewer, ref, "read", uri[:100], exc)
     except host_gateway.GatewayRefusal as exc:
-        _refuse(session, viewer, ref, "read", uri[:100], ViewRefusal(exc.code, exc.message, 502))
+        _refuse(session, viewer, ref, "read", uri[:100], ViewRefusal(
+            exc.code, exc.message, 502 if exc.code == "host_unreachable" else 403))
     _audit(session, viewer, ref, what="read", tool=uri[:100], ok=True)
     return {"contents": contents}
+
+
+# --- resources/subscribe: a View hears when a host resource changes -------------------
+
+#: How long a subscription lasts unless the View subscribes again.
+SUBSCRIPTION_TTL = timedelta(hours=24)
+#: The most live subscriptions one conversation holds.
+MAX_SUBSCRIPTIONS = 100
+MAX_URI_CHARS = 2048
+#: The socket frame a View's host page receives (`consumers.app_resource_updated`).
+RESOURCE_UPDATED = "app.resource_updated"
+
+
+def _subscription_uri(uri) -> str:
+    uri = str(uri or "").strip()
+    if not uri or len(uri) > MAX_URI_CHARS or ":" not in uri or any(c.isspace() for c in uri):
+        raise ViewRefusal("bad_uri", "that is not a resource URI", 422)
+    return uri
+
+
+def subscribe(session, viewer: Viewer, tool_call_id: str, uri: str) -> dict:
+    """A View's `resources/subscribe`: canopy holds the subscription (the gateway's
+    MCP sessions are per request, so no host session outlives the call) and relays
+    the host's signed "it changed" to this View (`resources_updated`).
+
+    Gated like `read`: a real View row in this session and the viewer's own live
+    grant for its site. What reaches the View later is the URI alone; the re-read
+    goes through `read`, as the viewer, under the host's ACL."""
+    from apps.canopy_sessions.models import AppViewSubscription  # noqa: PLC0415 — as Message here: models after the registry
+
+    ref = None
+    try:
+        row = find(session, tool_call_id)
+        ref = row.ref
+        uri = _subscription_uri(uri)
+        resolve_for_viewer(session, viewer, row)
+        now = timezone.now()
+        AppViewSubscription.objects.filter(session=session, expires_at__lte=now).delete()
+        live = AppViewSubscription.objects.filter(session=session)
+        if (not live.filter(tool_call_id=tool_call_id, uri=uri).exists()
+                and live.count() >= MAX_SUBSCRIPTIONS):
+            raise ViewRefusal("too_many", f"a conversation holds at most {MAX_SUBSCRIPTIONS} subscriptions", 429)
+    except ViewRefusal as exc:
+        _refuse(session, viewer, ref, "subscribe", str(uri)[:100], exc)
+    AppViewSubscription.objects.update_or_create(
+        session=session, tool_call_id=tool_call_id, uri=uri,
+        defaults={"app": row.app, "expires_at": now + SUBSCRIPTION_TTL})
+    _audit(session, viewer, ref, what="subscribe", tool=uri[:100], ok=True)
+    return {}
+
+
+def unsubscribe(session, viewer: Viewer, tool_call_id: str, uri: str) -> dict:
+    """A View's `resources/unsubscribe`. Idempotent; needs only the session's ACL
+    (the route's), so a View whose grant lapsed can still stop listening."""
+    from apps.canopy_sessions.models import AppViewSubscription  # noqa: PLC0415 — as above
+
+    AppViewSubscription.objects.filter(session=session, tool_call_id=tool_call_id,
+                                       uri=str(uri or "").strip()).delete()
+    return {}
+
+
+def resources_updated(app, uris) -> int:
+    """The host said `uris` changed (a request signed by its own key, verified by the
+    route): tell every View subscribed to one of them on THIS site. The frame carries
+    the call id and the URI, never data. Returns how many Views were told."""
+    from apps.canopy_sessions.models import AppViewSubscription  # noqa: PLC0415 — as above
+
+    subs = list(AppViewSubscription.objects.filter(app=app, uri__in=list(uris),
+                                                   expires_at__gt=timezone.now())
+                .values_list("session_id", "tool_call_id", "uri"))
+    for session_id, tool_call_id, uri in subs:
+        groups.publish(groups.session_group(session_id),
+                       {"type": "app.resource_updated", "tool_call_id": tool_call_id, "uri": uri})
+    return len(subs)
 
 
 # --- what the agent learns ------------------------------------------------------------

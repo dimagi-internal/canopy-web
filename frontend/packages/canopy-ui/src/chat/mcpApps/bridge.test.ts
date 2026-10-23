@@ -6,11 +6,12 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AppBridge, type AppBridgeHandlers } from "./bridge";
+import { AppBridge, type AppBridgeHandlers, type CallToolResult } from "./bridge";
 
 type Sent = Record<string, unknown>;
 
-function setup(opts: { canAct?: boolean; handlers?: Partial<AppBridgeHandlers> } = {}) {
+function setup(opts: { canAct?: boolean; handlers?: Partial<AppBridgeHandlers>;
+                        toolResult?: CallToolResult | null } = {}) {
   const iframe = document.createElement("iframe");
   document.body.appendChild(iframe);
   const proxy = iframe.contentWindow as Window;
@@ -34,7 +35,8 @@ function setup(opts: { canAct?: boolean; handlers?: Partial<AppBridgeHandlers> }
     canAct: opts.canAct ?? true,
     hostContext: { theme: "light", displayMode: "inline" },
     toolInput: { run_id: 5 },
-    toolResult: { content: [{ type: "text", text: "preview" }] },
+    toolResult: opts.toolResult !== undefined ? opts.toolResult
+      : { content: [{ type: "text", text: "preview" }] },
     handlers,
   });
   const fromProxy = (data: unknown, { source = proxy as MessageEventSource | null, origin = "null" } = {}) =>
@@ -187,5 +189,63 @@ describe("AppBridge", () => {
     fromProxy({ jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready", params: {} });
     await flush();
     expect(sent).toEqual([]);
+  });
+
+  it("hands a sensitive conversation's links-only result to the View intact", async () => {
+    const withheld: CallToolResult = {
+      content: [{ type: "resource_link", uri: "labs-result://r1", name: "Visits",
+                  mimeType: "application/json", description: "12 rows" }],
+      structuredContent: null,
+      _meta: { "canopy/withheld": true },
+    };
+    const { sent, fromProxy } = setup({ toolResult: withheld });
+    fromProxy({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    const out = sent.find((m) => m.method === "ui/notifications/tool-result");
+    expect(out?.params).toEqual(withheld);
+  });
+
+  it("subscribes and unsubscribes through the host, and relays updates only for subscribed URIs", async () => {
+    const subscribeResource = vi.fn(async () => undefined);
+    const unsubscribeResource = vi.fn(async () => undefined);
+    const { bridge, sent, fromProxy } = setup({ handlers: { subscribeResource, unsubscribeResource } });
+    expect(bridge.hostCapabilities().serverResources).toEqual({ subscribe: true });
+    // Before the View is initialized nothing is relayed, subscribed or not.
+    fromProxy({ jsonrpc: "2.0", id: 1, method: "resources/subscribe", params: { uri: "labs-result://r1" } });
+    await flush();
+    expect(subscribeResource).toHaveBeenCalledWith("labs-result://r1");
+    expect(sent.find((m) => m.id === 1)).toMatchObject({ result: {} });
+    bridge.notifyResourceUpdated("labs-result://r1");
+    expect(sent.some((m) => m.method === "notifications/resources/updated")).toBe(false);
+
+    fromProxy({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    bridge.notifyResourceUpdated("labs-result://other");
+    bridge.notifyResourceUpdated("labs-result://r1");
+    const updates = sent.filter((m) => m.method === "notifications/resources/updated");
+    expect(updates).toEqual([{ jsonrpc: "2.0", method: "notifications/resources/updated",
+                               params: { uri: "labs-result://r1" } }]);
+
+    fromProxy({ jsonrpc: "2.0", id: 2, method: "resources/unsubscribe", params: { uri: "labs-result://r1" } });
+    await flush();
+    expect(unsubscribeResource).toHaveBeenCalledWith("labs-result://r1");
+    expect(bridge.subscriptions()).toEqual([]);
+    bridge.notifyResourceUpdated("labs-result://r1");
+    expect(sent.filter((m) => m.method === "notifications/resources/updated")).toHaveLength(1);
+  });
+
+  it("refuses subscriptions to a viewer who may not act, and without a host handler", async () => {
+    const subscribeResource = vi.fn(async () => undefined);
+    const readOnly = setup({ canAct: false, handlers: { subscribeResource } });
+    readOnly.fromProxy({ jsonrpc: "2.0", id: 3, method: "resources/subscribe", params: { uri: "labs-result://r1" } });
+    await flush();
+    expect(subscribeResource).not.toHaveBeenCalled();
+    expect(readOnly.sent.find((m) => m.id === 3)).toMatchObject({ error: { code: -32000 } });
+    expect(readOnly.bridge.hostCapabilities().serverResources).toBeUndefined();
+    readOnly.bridge.close();
+
+    const none = setup();
+    expect(none.bridge.hostCapabilities().serverResources).toEqual({});
+    none.fromProxy({ jsonrpc: "2.0", id: 4, method: "resources/subscribe", params: { uri: "labs-result://r1" } });
+    await flush();
+    expect(none.sent.find((m) => m.id === 4)).toMatchObject({ error: { code: -32601 } });
   });
 });

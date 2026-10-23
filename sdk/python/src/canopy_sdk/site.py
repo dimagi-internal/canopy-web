@@ -24,7 +24,8 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
      "site": {"origins": ["https://labs.connect.dimagi.com"],
               "jwks_url": "https://labs.connect.dimagi.com/labs/canopy/jwks.json",
               "issuer": "https://labs.connect.dimagi.com",
-              "mcp_resource": "https://labs.connect.dimagi.com/mcp/"}}
+              "mcp_resource": "https://labs.connect.dimagi.com/mcp/",
+              "resource_schemes": ["labs-result"]}}
 
 ``site`` (optional) is the site's own facts — the values canopy's Connected
 sites form otherwise has someone type: the origins that frame the panel, where
@@ -32,6 +33,14 @@ its keys are, its OAuth issuer and its MCP server. canopy never applies them on
 its own: the site's owner in canopy reads them back ("Fill from the site") and
 saves them, because a site must not be able to change its own trusted origins.
 The Django host fills the block from settings it already has.
+
+``site.resource_schemes`` (optional, SDK 0.18+) names the URI schemes of the
+artifacts the site's tools link to (``canopy_sdk.resources``; the Django host fills
+it from ``CANOPY_HOST["ARTIFACTS"]["SCHEME"]``). Unlike the rest of the block canopy
+reads it LIVE, with no owner adopting it: it widens nothing — it is the list of
+addresses canopy will keep from this site's own tool results (in a sensitive
+conversation, the only thing it keeps), and a link under any other scheme is
+dropped.
 
 canopy finds the document beside the site's registered JWKS, or — knowing only
 the site's address — at ``WELL_KNOWN_PATH`` on its origin (mount
@@ -149,12 +158,28 @@ def _site(value) -> dict:
     out = {"origins": list(dict.fromkeys(_origin(o) for o in origins if o)),
            "jwks_url": _url(value.get("jwks_url"), "site.jwks_url"),
            "issuer": _url(value.get("issuer"), "site.issuer"),
-           "mcp_resource": _url(value.get("mcp_resource"), "site.mcp_resource")}
+           "mcp_resource": _url(value.get("mcp_resource"), "site.mcp_resource"),
+           "resource_schemes": _schemes(value.get("resource_schemes"))}
+    if not out["resource_schemes"]:
+        del out["resource_schemes"]
     return out if any(out.values()) else {}
 
 
+def _schemes(value) -> list[str]:
+    from .resources import ResourceError, check_scheme
+
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise SiteDocumentError("malformed", "site.resource_schemes must be a list of URI schemes")
+    try:
+        return list(dict.fromkeys(check_scheme(v) for v in value if v))
+    except ResourceError as exc:
+        raise SiteDocumentError("malformed", f"site.resource_schemes: {exc.message}") from exc
+
+
 #: The keys of ``site``, in order.
-SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource")
+SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource", "resource_schemes")
 
 
 def _normalize(claims: Mapping) -> dict:
@@ -188,7 +213,8 @@ def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_da
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
     ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
-    "jwks_url", "issuer", "mcp_resource"}`` (each optional; left out when empty)."""
+    "jwks_url", "issuer", "mcp_resource", "resource_schemes"}`` (each optional; left out
+    when empty)."""
     name = str(site_name or "").strip()
     if not name:
         raise SiteDocumentError("not_configured", "the document needs the site's Connected-site name")
@@ -219,6 +245,8 @@ class SiteFacts:
     jwks_url: str = ""
     issuer: str = ""
     mcp_resource: str = ""
+    #: The URI schemes of the artifacts this site's tools link to (``canopy_sdk.resources``).
+    resource_schemes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -253,7 +281,8 @@ class SiteNeeds:
             uses_sensitive_data_agents=tuple(body["uses"]["sensitive_data_agents"]),
             uses_version=body["uses"]["version"],
             site=(SiteFacts(origins=tuple(body["site"]["origins"]), jwks_url=body["site"]["jwks_url"],
-                            issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"])
+                            issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"],
+                            resource_schemes=tuple(body["site"].get("resource_schemes") or ()))
                   if body.get("site") else None),
             claims=dict(claims))
 

@@ -14,7 +14,7 @@
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
 import { ApiError } from "./problem";
-import type { AppHost, AppViewResource, CallToolResult } from "canopy-ui/chat";
+import type { AppHost, AppResourceUpdates, AppViewResource, CallToolResult } from "canopy-ui/chat";
 
 export type ChatSession = components["schemas"]["SessionOut"];
 export type ChatSessionDetail = components["schemas"]["SessionDetailOut"];
@@ -505,7 +505,7 @@ export function deleteSecret(id: string, name: string): Promise<void> {
  *  runs as the SIGNED-IN person (session cookie) — the person looking, never
  *  the agent. A sandbox URL (absolute, if the sandbox ever moves to its own
  *  origin) passes through; a path gets the app's base. */
-export function appHostFor(sessionId: string): AppHost {
+export function appHostFor(sessionId: string, updates?: AppResourceUpdates): AppHost {
   const base = `/api/canopy-sessions/${encodeURIComponent(sessionId)}/apps`;
   const at = (callId: string) => `${base}/${encodeURIComponent(callId)}`;
   const json = (method: string, body: unknown): RequestInit => ({
@@ -523,6 +523,13 @@ export function appHostFor(sessionId: string): AppHost {
     sendMessage: (callId, text) =>
       request<void>(`${at(callId)}/message`, json("POST", { text, client_id: `appview-${crypto.randomUUID()}` }))
         .then(() => undefined),
+    // A View's `resources/subscribe`: canopy holds it; the host's update comes
+    // back over the session socket (`app.resource_updated`, into `updates`).
+    subscribe: (callId, uri) =>
+      request<void>(`${at(callId)}/subscribe`, json("POST", { uri })).then(() => undefined),
+    unsubscribe: (callId, uri) =>
+      request<void>(`${at(callId)}/unsubscribe`, json("POST", { uri })).then(() => undefined),
+    ...(updates ? { onResourceUpdated: updates.onResourceUpdated } : {}),
     resolveUrl: (path) => (/^https?:\/\//.test(path) ? path : apiUrl(path)),
     // A View may ask to fill the window (a results table, a chart).
     fullscreen: true,

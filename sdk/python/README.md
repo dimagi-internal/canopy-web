@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.17.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.18.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.17.0/dimagi_canopy-0.17.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.18.0/dimagi_canopy-0.18.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -46,9 +46,11 @@ library, address-pinned.
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `site_settings_url`, `SiteAgent` + `problem_links` of `AgentProblem`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError` (`code`, `status`), `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
 | `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`), `site_document_url`, `WELL_KNOWN_PATH` |
+| `canopy_sdk.resources` | both sides | host-held results: `resource_link`, `validate_link(s)`, `check_scheme`, `RESERVED_SCHEMES`; "it changed": `notify_updated`, `updated_notification`, canopy's `verify_updated_notification`, `UPDATED_PATH` |
+| `canopy_sdk.host.artifacts` | a host | `Artifacts` (`save` → a `resource_link`, `read`, `contents` = the `resources/read` answer, `update`, `sweep`, `template`), `ArtifactRefused`, `MemoryArtifactStore`, `ArtifactStore`, `current_subject`, `summarize_rows`; see [Host-held results](#host-held-results-return-facts--artifacts) |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migration, the DPoP ASGI gate, `execution.verify_execution(request)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, `artifacts` (`save`, `read`, `resource_handler`, `mount_fastmcp`, `update`, `sweep`, `manage.py canopy_artifacts_sweep`), the DPoP ASGI gate, `execution.verify_execution(request)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
@@ -516,6 +518,98 @@ def site_needs():
 
 CANOPY_HOST = {..., "SITE_NEEDS": "myapp.canopy.site_needs"}
 ```
+
+## Host-held results: return facts + artifacts
+
+A tool that produces data — a query's rows, a chart, a draft edit and its diff —
+returns **facts** for the model and an MCP **`resource_link`** (MCP 2025-06-18
+tool-result content) naming an **artifact the host keeps**. canopy carries the link,
+never the data: in a sensitive conversation the link is all it stores. The person's
+View in the chat and the agent (`site_read`) read the artifact back from the host
+with `resources/read`, as themselves; the host's own ACL decides.
+
+**Turn it on (Django).** `"canopy_sdk.django"` is already in `INSTALLED_APPS` for the
+grant; `migrate` adds the `canopy_host_artifact` table (migration `0002_artifact`).
+Then:
+
+```python
+CANOPY_HOST = {...,
+    "ARTIFACTS": {
+        "SCHEME": "labs-result",   # your own URI scheme (never http(s), data, ui, file, ...)
+        "TTL": 86400,              # seconds an artifact lives; default a day
+        "MAY_READ": "myapp.canopy.may_read",  # (reader_subject, artifact) -> bool: who besides the owner
+        # "ON_READ": ...,          # (artifact, reader_subject) -> payload | None: recompute on read
+        # "READER": ...,           # () -> subject | None; default: the DPoPGate's delegated principal
+        # "NOTIFY": True,          # artifacts.update() tells canopy, so subscribed Views re-read
+    }}
+```
+
+`canopy/site.json` then declares the scheme (`site.resource_schemes`); canopy keeps
+a link only under a scheme the site declared (it reads this live — no owner step).
+A host with other resources of its own adds `CANOPY_HOST["RESOURCE_SCHEMES"]`.
+
+**In a tool:**
+
+```python
+import json
+from mcp.types import TextContent
+from canopy_sdk.django import artifacts
+from canopy_sdk.host.artifacts import summarize_rows
+
+@mcp.tool
+def data_query(sql: str):
+    columns, rows = run_query(sql)               # as the visitor, under your ACL
+    link = artifacts.save("query", {"columns": columns, "rows": rows, "sql": sql},
+                          tool_call_id=request_id(), name="Query result",
+                          description=f"{len(rows)} rows")
+    facts = {**summarize_rows(columns, rows, sample=5), "sql": sql}
+    return [TextContent(type="text", text=json.dumps(facts)), link]
+```
+
+The **owner** is the subject the call runs as — on a delegated request canopy made
+for a visitor, `DelegatedPrincipal.subject` (the ID-JAG's `sub`), read from the
+`DPoPGate` (`dpop_gate(app, require_principal=True)`) or your `READER` hook; outside
+one, pass `owner=` or `user=` (`SUBJECT_FOR_USER`). Reading: the owner may; anyone
+`MAY_READ` admits may (a colleague on the same conversation); nobody else.
+Refusals are named: `bad_uri`, `not_found`, `expired`, `forbidden`.
+
+**Serve `resources/read` on your MCP server:**
+
+```python
+# FastMCP (2.12+): a template <scheme>://{artifact_id}{?page,page_size}, listed by
+# resources/templates/list, answering as the reader.
+artifacts.mount_fastmcp(mcp)
+
+# Any other MCP server: for a URI under your scheme,
+contents = artifacts.resource_handler(uri)     # MCP `contents` dicts; ArtifactRefused -> an MCP error
+template = artifacts.template()                # your resources/templates/list entry
+```
+
+A read answers one JSON text content (`mimeType` `application/json`) with
+`_meta["canopy/artifact"]` = `{kind, tool_call_id, created_at, expires_at, snapshot}`
+(`snapshot: false` when `ON_READ` recomputed it). A **table** payload
+(`{"columns": [...], "rows": [...]}`) pages through the URI —
+`labs-result://<id>?page=2&page_size=100` (max 1000) — and the meta adds `page`,
+`page_size`, `pages`, `row_count`. Large results page through the resource, never
+through the chat.
+
+**Expiry.** Run `manage.py canopy_artifacts_sweep` (or `artifacts.sweep()`) on a
+schedule; an expired artifact already reads as `expired`.
+
+**Live updates.** A View may `resources/subscribe` to a link; canopy holds the
+subscription. When an artifact changes, `artifacts.update(uri, payload)` replaces it
+and POSTs canopy a notification signed with your site key (`iss` = `APP_NAME`,
+`aud` = `<CANOPY_BASE_URL>/api/sites/resources-updated`, 60 s, single use, `uris`);
+canopy tells each subscribed View `notifications/resources/updated`, and the View
+re-reads as its viewer. Anything else that changes data a link names can call
+`artifacts.notify_updated([uri, ...])` (best effort; a View that misses one shows its
+last read). Framework-free: `canopy_sdk.resources.notify_updated(canopy_url,
+site_name, site_key, uris, workspace=...)`.
+
+**Without Django**, the same logic is `canopy_sdk.host.artifacts.Artifacts(store,
+scheme=..., ttl=..., may_read=..., on_read=..., notify=...)` over any store with
+`put` / `get` / `set_payload` / `delete_expired` (`MemoryArtifactStore` for tests);
+declare the scheme yourself in `site_document(..., site={"resource_schemes": [...]})`.
 
 ## The live probe (optional, recommended)
 

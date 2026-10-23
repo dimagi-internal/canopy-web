@@ -32,7 +32,8 @@ def append_events(turn: Turn, events: list[dict]) -> int:
         # A sensitive conversation's tool results are never stored (spec
         # 2026-10-22-sensitive-data-agents §4): the row keeps which call and
         # whether it failed, and so does the live frame built from it.
-        events = [{**e, "payload": sensitivity.strip_result(e.get("payload"))}
+        session = turn.chat_session if turn.chat_session_id else None
+        events = [{**e, "payload": sensitivity.strip_result(e.get("payload"), session=session)}
                   if e.get("kind") in sensitivity.RESULT_KINDS else e for e in events]
     with transaction.atomic():
         # Lock the turn row first so concurrent appenders to the same turn
@@ -47,8 +48,7 @@ def append_events(turn: Turn, events: list[dict]) -> int:
         # what the person and the agent said, and a tool's arguments, never rest here.
         rows = [
             TurnEvent(turn=turn, seq=current + i + 1, kind=e["kind"],
-                      payload=(sensitivity.redact_payload(e.get("payload", {})) if sensitive
-                               else e.get("payload", {})))
+                      payload=(_metadata(e) if sensitive else e.get("payload", {})))
             for i, e in enumerate(events)
         ]
         TurnEvent.objects.bulk_create(rows)
@@ -71,6 +71,20 @@ def append_events(turn: Turn, events: list[dict]) -> int:
 
     transaction.on_commit(_fire_appended)
     return len(rows)
+
+
+def _metadata(event: dict) -> dict:
+    """A sensitive event as its row stores it: metadata (`redact_payload`), plus — on
+    a tool result — the host's resource links `strip_result` already checked: an
+    address the person's View reads back from the host, never the data."""
+    from . import sensitivity  # noqa: PLC0415 — as append_events: sensitivity reads harness models
+
+    payload = event.get("payload") or {}
+    out = sensitivity.redact_payload(payload)
+    links = payload.get(sensitivity.RESOURCE_LINKS) if event.get("kind") in sensitivity.RESULT_KINDS else None
+    if links:
+        out[sensitivity.RESOURCE_LINKS] = links
+    return out
 
 
 # Per-TURN ceiling on retained raw transcript content (security review

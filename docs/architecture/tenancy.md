@@ -309,7 +309,16 @@ THE predicate; every surface below asks it, one test each in
   an empty success); a `tool_end`/`tool_result` event, a `TOOL_RESULT` `Message` and its
   live frame keep `{tool_use_id, is_error, withheld}`, never the result
   (`sensitivity.strip_result`, in `ledger.append_events`, `persist_transcript_rows` and
-  `post_session_stream`).
+  `post_session_stream`) — plus the host's **resource links** (`resource_links`: URI,
+  name, mimeType — addresses, not data; spec `2026-10-23-host-held-results`). A link is
+  kept only when it is a valid MCP `resource_link` (at most 20, bounded strings, never a
+  reserved scheme such as `http(s)`/`data`/`ui`) under a URI scheme the conversation's site
+  declares in its signed `site.json` (`site.resource_schemes`, read live through
+  `site_needs.resource_schemes_for`, registered as `sensitivity.register_resource_schemes`;
+  unreadable → none kept). The host keeps the artifact; a View
+  (`mcp_apps_views.withheld_result`) and the agent (`site_read`) read it back from the host
+  as the person. Nothing else of the result survives, which
+  `tests/test_host_held_results.py`'s canary checks across every table.
 - **Metadata in every readable column:** every stored event and every `Message`'s
   `plaintext`/`content` (the person's, the agent's, a tool call's) keeps kind, tool name,
   argument names, ids, error flags, size and hash only (`sensitivity.redact_payload`). The

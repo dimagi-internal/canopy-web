@@ -1,5 +1,6 @@
 """The site agents API's doors: `GET /api/sites/agents` (a connected site asks,
-signed), `GET /api/workspaces/{slug}/connected-apps/{id}/needs` (the Connected
+signed), `POST /api/sites/resources-updated` (a connected site says its resources
+changed, signed), `GET /api/workspaces/{slug}/connected-apps/{id}/needs` (the Connected
 sites page reads what the site asks back, and who meets it) and
 `GET /api/workspaces/{slug}/connected-apps/discover` (the page reads the site's
 own facts from the same document, for its owner to adopt)."""
@@ -18,10 +19,17 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.embedding import embed_apps
 from apps.embedding.audit import client_ip
-from apps.embedding.rate_limit import SiteAgentsRateLimitError, check_site_agents_client, check_site_agents_issuer
+from apps.embedding.rate_limit import (
+    SiteAgentsRateLimitError,
+    check_resources_updated,
+    check_site_agents_client,
+    check_site_agents_issuer,
+)
+from apps.mcp_apps_host import mcp_apps_views
 from apps.workspaces import permissions as perms
 
-from . import client_identity, site_needs, site_agents
+from . import client_identity, site_agents, site_needs
+from . import resources_updated as notices
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +87,44 @@ def get_site_agents(request: HttpRequest):
     response = HttpResponse(body, content_type=wire.MEDIA_TYPE)
     response["Cache-Control"] = "no-store"
     return response
+
+
+class ResourcesUpdatedOut(Schema):
+    #: How many subscribed Views canopy told to re-read.
+    notified: int
+
+
+@sites_router.post("/resources-updated", auth=None, response=ResourcesUpdatedOut,
+                   summary="A connected site says some of its resources changed, signed")
+@gate("host", kind="action")  # auth=None; a request signed by the site's own registered key IS the credential
+def resources_updated(request: HttpRequest):
+    """Tell the Views subscribed to some of this site's resources to re-read them.
+
+    The site authenticates with `Authorization: Bearer <JWT>` signed by its own key
+    (the one at its `jwks_url`): `typ` `canopy-resources-updated+jwt`, `iss` = `sub`
+    = its Connected-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
+    `uris` — the resource URIs that changed (1-50). `canopy_workspace` /
+    `canopy_agent` name the tenant as for `GET /api/sites/agents`. Build and send it
+    with `canopy_sdk.resources.notify_updated` (or the Django host's
+    `artifacts.update` / `artifacts.notify_updated`). The body is ignored. Each View
+    that subscribed (`resources/subscribe`) to one of the URIs on this site gets the
+    socket frame `app.resource_updated` — the URI and its tool call id, never data —
+    and re-reads it as its viewer. Answers `{notified}`.
+    """
+    try:
+        check_resources_updated(client_ip(request))
+    except SiteAgentsRateLimitError as exc:
+        raise HttpError(429, f"rate_limited: {exc}")
+    token = _bearer(request)
+    try:
+        claimed = site_agents.site_for_request(token)
+        check_resources_updated(client_ip(request), f"{claimed.workspace_id}:{claimed.name}")
+        app, claims = notices.verify(token)
+    except SiteAgentsRateLimitError as exc:
+        raise HttpError(429, f"rate_limited: {exc}")
+    except site_agents.SiteAgentsRefused as exc:
+        raise HttpError(exc.status, f"{exc.code}: {exc.message}")
+    return {"notified": mcp_apps_views.resources_updated(app, claims["uris"])}
 
 
 class SitePageOut(Schema):

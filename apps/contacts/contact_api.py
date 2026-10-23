@@ -909,6 +909,28 @@ def contact_app_view_read(request: HttpRequest, session_id: str, tool_call_id: s
                     _app_viewer(request), tool_call_id, payload.uri)
 
 
+@contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/subscribe", response=dict,
+                     summary="An app view's resources/subscribe, as you")
+@gate("contact", kind="conversation")  # own session + own host grant
+def contact_app_view_subscribe(request: HttpRequest, session_id: str, tool_call_id: str,
+                               payload: AppReadIn):
+    from apps.mcp_apps_host import mcp_apps_views  # noqa: PLC0415 — as every View route here
+
+    return _app_run(mcp_apps_views.subscribe, _session_or_404(request, session_id),
+                    _app_viewer(request), tool_call_id, payload.uri)
+
+
+@contact_router.post("/sessions/{session_id}/apps/{tool_call_id}/unsubscribe", response=dict,
+                     summary="An app view's resources/unsubscribe, as you")
+@gate("contact", kind="conversation")
+def contact_app_view_unsubscribe(request: HttpRequest, session_id: str, tool_call_id: str,
+                                 payload: AppReadIn):
+    from apps.mcp_apps_host import mcp_apps_views  # noqa: PLC0415 — as every View route here
+
+    return _app_run(mcp_apps_views.unsubscribe, _session_or_404(request, session_id),
+                    _app_viewer(request), tool_call_id, payload.uri)
+
+
 @contact_router.put("/sessions/{session_id}/apps/{tool_call_id}/context", response=dict,
                     summary="An app view's ui/update-model-context")
 @gate("contact", kind="conversation")

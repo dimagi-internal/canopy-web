@@ -1,4 +1,5 @@
-"""`site_tools` / `site_call` — the host's tools, as the visitor, through canopy.
+"""`site_tools` / `site_call` / `site_read` — the host's tools and resources, as the
+visitor, through canopy.
 
 Host grant contract v1, §3 (`docs/architecture/host-grant-contract.md`). An agent
 answering a visitor on a connected site does not call that site's MCP server
@@ -8,7 +9,13 @@ DPoP-bound token server-side (`apps/host_grants/host_gateway.py`). So:
 * no runner ever holds a visitor's token or canopy's DPoP key;
 * the owner's per-site ceiling is enforced HERE, server-side, not only by the
   runner's `profile_guard`;
-* every call is one audit row, and none of them contains a token.
+* every call is one audit row, and none of them contains a token — or what the
+  host answered: `site_call` records the tool, `site_read` the URI.
+
+`site_read` is `resources/read` beside `site_call`'s `tools/call`: a host's tool may
+answer with facts plus a `resource_link` to a result it keeps (spec
+2026-10-23-host-held-results), and the agent reads the rows through it only when it
+needs them — so a large result never has to be in context.
 
 **Caller-token only.** These exist for a CONFINED visitor's session, whose token
 names its own conversation: the turn is read from that token, never from an
@@ -103,4 +110,31 @@ async def site_call(tool: str, arguments: dict | None = None) -> dict:
         raise ToolError(exc.message) from None
     await write_audit(user_id=current_user_id(), tool="site_call",
                       args_summary=f"{summary} is_error={out['is_error']}", ok=True)
+    return out
+
+
+@mcp.tool
+async def site_read(uri: str) -> dict:
+    """Read a resource at the visitor's site, as the visitor — the rows behind a
+    result a site tool returned as a link.
+
+    A site tool may answer with facts (a row count, the columns, a few samples) and
+    a `resource_link` whose `uri` names the full result the site keeps. Read it
+    here only when you need more than the facts; a table pages with the site's own
+    parameters (e.g. `?page=2&page_size=100`). The site decides, under the
+    visitor's own permissions, whether they may read it; an expired or foreign
+    result is refused — say so rather than guessing at its contents.
+    """
+    from apps.host_grants import host_gateway  # noqa: PLC0415 — as site_call: the gateway loads with a call
+
+    ctx = await _context("site_read")
+    # The URI only: never what came back (same as site_call, which records the tool).
+    summary = f"turn={ctx.turn_id} site={ctx.site} app={ctx.app_id} uri={str(uri or '')[:200]}"
+    try:
+        out = await host_gateway.read_resource(ctx, uri)
+    except host_gateway.GatewayRefusal as exc:
+        await write_audit(user_id=current_user_id(), tool="site_read",
+                          args_summary=summary, ok=False, error=exc.code)
+        raise ToolError(exc.message) from None
+    await write_audit(user_id=current_user_id(), tool="site_read", args_summary=summary, ok=True)
     return out

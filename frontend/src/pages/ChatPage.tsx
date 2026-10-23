@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { clsx } from 'clsx'
 import { useParams } from 'react-router-dom'
 import {
+  appResourceUpdate,
   ChatPanel,
+  createAppResourceUpdates,
   PlacementBanner,
   MenuPrompt,
   useSessionSocket,
@@ -74,7 +76,10 @@ export function ChatPage({
   // A sensitive conversation's Views get their call input decrypted here, with the
   // conversation key once it is open (`sealed`, below).
   const sealedKeyRef = useRef<ConversationKey | null>(null)
-  const appHost = useMemo(() => sealedAppHost(appHostFor(id), () => sealedKeyRef.current), [id])
+  // A host's `resources/updated`, relayed on the socket, fanned out to the Views.
+  const appUpdates = useMemo(() => createAppResourceUpdates(), [])
+  const appHost = useMemo(
+    () => sealedAppHost(appHostFor(id, appUpdates), () => sealedKeyRef.current), [id, appUpdates])
   // The agent asked for one of its secrets: a card that seals it in this
   // browser. Once stored, a value-free note tells the agent to carry on.
   const secretRequestHost = useMemo<SecretRequestHost>(() => ({
@@ -102,6 +107,11 @@ export function ChatPage({
     sessionId: id,
     wsUrl,
     protocol: 'ag-ui',
+    // `app.resource_updated`: a resource a View subscribed to changed at its host.
+    onUnknownEvent: useCallback((frame: { event: string; data?: unknown }) => {
+      const update = appResourceUpdate(frame)
+      if (update) appUpdates.emit(update.toolCallId, update.uri)
+    }, [appUpdates]),
     // A socket send with no receipt is resent here, under the same client_id,
     // so it cannot become a second turn (see canopy-ui's sendChat).
     resendOverHttp: useCallback(

@@ -9,7 +9,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 
 import { MessageList } from "../MessageList";
 import type { Message } from "../protocol";
-import { AppHostContext, type AppHost, type AppViewResource } from "./context";
+import { AppHostContext, createAppResourceUpdates, type AppHost, type AppViewResource } from "./context";
 
 const APP = { tool_call_id: "toolu_1", site: "connect-labs", tool: "workflow_run_action",
               resource_uri: "ui://labs/workflow-action-preview", path: "direct" };
@@ -156,5 +156,46 @@ describe("AppView full screen", () => {
     act(() => { document.dispatchEvent(esc); });
     expect(esc.defaultPrevented).toBe(true);
     expect(view().dataset.displayMode).toBe("inline");
+  });
+});
+
+describe("AppView resource subscriptions", () => {
+  it("relays the host's update for its own call to a View that subscribed, and unsubscribes on teardown", async () => {
+    const updates = createAppResourceUpdates();
+    const subscribe = vi.fn(async () => undefined);
+    const unsubscribe = vi.fn(async () => undefined);
+    const h = { ...host(resource()), subscribe, unsubscribe,
+                onResourceUpdated: updates.onResourceUpdated } as AppHost;
+    const tree = render(
+      <AppHostContext.Provider value={h}>
+        <MessageList messages={[use, result]} />
+      </AppHostContext.Provider>,
+    );
+    await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
+    const frame = screen.getByTitle("Labs: workflow_run_action") as HTMLIFrameElement;
+    const posted: Array<Record<string, unknown>> = [];
+    vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(((m: unknown) => {
+      posted.push(m as Record<string, unknown>);
+    }) as Window["postMessage"]);
+    const fromView = (data: unknown) => act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow, origin: "null" }));
+    });
+    await fromView({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
+    await fromView({ jsonrpc: "2.0", id: 9, method: "resources/subscribe", params: { uri: "labs-result://r1" } });
+    await waitFor(() => expect(posted.find((m) => m.id === 9)).toMatchObject({ result: {} }));
+    expect(subscribe).toHaveBeenCalledWith("toolu_1", "labs-result://r1");
+
+    act(() => {
+      updates.emit("toolu_other", "labs-result://r1");
+      updates.emit("toolu_1", "labs-result://r1");
+    });
+    expect(posted.filter((m) => m.method === "notifications/resources/updated")).toEqual([
+      { jsonrpc: "2.0", method: "notifications/resources/updated", params: { uri: "labs-result://r1" } },
+    ]);
+
+    tree.unmount();
+    expect(unsubscribe).toHaveBeenCalledWith("toolu_1", "labs-result://r1");
+    updates.emit("toolu_1", "labs-result://r1");
+    expect(posted.filter((m) => m.method === "notifications/resources/updated")).toHaveLength(1);
   });
 });

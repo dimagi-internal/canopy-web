@@ -135,6 +135,11 @@ export function AppView({ app }: { app: AppRef }) {
           return out;
         },
         readResource: (uri) => host.readResource(app.tool_call_id, uri),
+        ...(host.subscribe ? {
+          subscribeResource: (uri: string) => host.subscribe!(app.tool_call_id, uri),
+          unsubscribeResource: (uri: string) =>
+            host.unsubscribe ? host.unsubscribe(app.tool_call_id, uri) : Promise.resolve(),
+        } : {}),
         updateModelContext: (params) => host.updateContext(app.tool_call_id, params),
         sendMessage: (text) => host.sendMessage(app.tool_call_id, text),
         openLink,
@@ -153,7 +158,19 @@ export function AppView({ app }: { app: AppRef }) {
       },
     });
     bridgeRef.current = bridge;
+    // The host's `resources/updated`, relayed by canopy: only this View's call,
+    // and the bridge passes on only a URI the View subscribed to.
+    const stopListening = host.onResourceUpdated?.((toolCallId, uri) => {
+      if (toolCallId === app.tool_call_id) bridge.notifyResourceUpdated(uri);
+    });
     return () => {
+      stopListening?.();
+      // Best effort: a View going away no longer wants to hear about its resources.
+      if (host.unsubscribe) {
+        for (const uri of bridge.subscriptions()) {
+          void host.unsubscribe(app.tool_call_id, uri).catch(() => undefined);
+        }
+      }
       bridgeRef.current = null;
       bridge.close();
     };

@@ -24,6 +24,10 @@ What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
 """
 from __future__ import annotations
 
+import logging
+
+from canopy_sdk import resources as resource_links
+
 from . import runner_requirements as rr
 
 SENSITIVE_DATA = rr.SENSITIVE_DATA
@@ -86,12 +90,95 @@ def seals(session, turn=None) -> bool:
     return is_sensitive(session)
 
 
-def strip_result(payload: dict | None) -> dict:
-    """A tool result as a sensitive conversation stores it: which call, and
-    whether it failed — never what came back."""
+def strip_result(payload: dict | None, *, session=None, text: str = "") -> dict:
+    """A tool result as a sensitive conversation stores it: which call, whether it
+    failed, and the host's resource links — never what came back.
+
+    A link (`resource_links`) is an address, not data (spec
+    2026-10-23-host-held-results §6): the host keeps the artifact and a View or the
+    agent reads it back from the host as the person. Kept only when it is a valid
+    MCP `resource_link` under a URI scheme the conversation's site declared
+    (`resource_schemes`), bounded (`canopy_sdk.resources.validate_links`); anything
+    else in the result is dropped. `text` is the row's plaintext, where a runner
+    puts a tool's answer."""
     payload = payload if isinstance(payload, dict) else {}
     out = {k: v for k, v in payload.items() if k not in _RESULT_KEYS}
     out["withheld"] = True
+    out.pop(RESOURCE_LINKS, None)  # only ever what THIS function found and checked
+    candidates = _link_candidates([payload.get(k) for k in _RESULT_KEYS] + [text])
+    if candidates and session is not None:
+        links = resource_links.validate_links(candidates, resource_schemes(session))
+        if links:
+            out[RESOURCE_LINKS] = links
+    return out
+
+
+# ── resource links: the host's addresses, kept where its data is not ─────────────
+
+_log = logging.getLogger(__name__)
+#: The key a stripped result keeps its links under (a Message's content, a TurnEvent's
+#: payload, a live frame).
+RESOURCE_LINKS = "resource_links"
+#: The most text parsed looking for a gateway answer's links.
+_MAX_PARSE_BYTES = 4 * 1024 * 1024
+#: Who says which schemes a session's site declared: registered by `apps.host_grants`
+#: (which reads the site's signed `site.json`), so this core module names no feature app.
+_scheme_sources: list = []
+
+
+def register_resource_schemes(source) -> None:
+    """`source(session) -> iterable of schemes` joins the declared schemes."""
+    if source not in _scheme_sources:
+        _scheme_sources.append(source)
+
+
+def resource_schemes(session) -> frozenset[str]:
+    """The URI schemes the session's Connected site declared for its artifacts.
+    Empty — so every link is dropped — when it declared none, or it cannot be read."""
+    out: set[str] = set()
+    for source in _scheme_sources:
+        try:
+            out.update(str(s).lower() for s in (source(session) or ()))
+        except Exception:  # noqa: BLE001 — a site whose schemes cannot be read keeps no links
+            _log.warning("resource schemes unreadable", exc_info=True)
+    return frozenset(out)
+
+
+def _link_candidates(values) -> list[dict]:
+    """Every `resource_link`-typed block in a result: the host's own content blocks
+    (path D), and the content of a gateway answer (`site_call`'s
+    `{site, tool, content, structured, is_error}`), which reaches the transcript as
+    JSON text. One level of JSON only; nothing here is trusted until
+    `validate_links` has checked it."""
+    out: list[dict] = []
+
+    def blocks(value, depth: int = 0) -> None:
+        if depth > 2 or len(out) > 200:
+            return
+        if isinstance(value, str):
+            if not value or len(value) > _MAX_PARSE_BYTES or value.lstrip()[:1] not in "{[":
+                return
+            try:
+                value = _json.loads(value)
+            except ValueError:
+                return
+            blocks(value, depth + 1)
+        elif isinstance(value, list):
+            for item in value[:500]:
+                if isinstance(item, dict) and item.get("type") == resource_links.RESOURCE_LINK:
+                    out.append(item)
+                elif isinstance(item, dict) and item.get("type") == "text":
+                    blocks(item.get("text"), depth + 1)
+                elif isinstance(item, (list, str)):
+                    blocks(item, depth + 1)
+        elif isinstance(value, dict):
+            if value.get("type") == resource_links.RESOURCE_LINK:
+                out.append(value)
+            elif isinstance(value.get("content"), (list, str)):
+                blocks(value["content"], depth + 1)
+
+    for v in values:
+        blocks(v)
     return out
 
 
@@ -237,14 +324,15 @@ def seal(session, index: int, role: str, text: str, content: dict | None) -> tup
 
     The columns are metadata. `sealed` holds the words, sealed to the conversation's
     key, except for a tool's result, which is never kept (`strip_result`): what a tool
-    showed the person as a table or a chart is drawn again from the call's input, as
-    the viewer, never from a copy. None when the conversation has no key (a starter
+    showed the person as a table or a chart is read again from the host — through the
+    result's resource links, which are kept, or from the call's input — as the
+    viewer, never from a copy. None when the conversation has no key (a starter
     with no vault key): then the words are not kept at all."""
     from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
 
     content = content if isinstance(content, dict) else {}
     if role == "tool_result":
-        return "", strip_result(content), None
+        return "", strip_result(content, session=session, text=text or ""), None
     words = {"plaintext": text or "", "content": content}
     return "", redact_payload(content), conversation_keys.seal_words(session, index, words)
 
