@@ -873,6 +873,38 @@ describe('theming', () => {
   })
 })
 
+describe('the launcher beside an open docked panel', () => {
+  it('hides while the docked panel is open and comes back when it closes', async () => {
+    const { widget, root, fromFrame } = widgetHarness({ mode: 'docked', width: 560, expandable: true })
+    const dock = root.querySelector('.dock') as HTMLElement
+    widget.open()
+    expect(dock.dataset.covered).toBe('true')
+    // The panel's own × is how a visitor closes a docked rail.
+    await fromFrame({ source: SOURCE, type: 'close' })
+    expect(widget.isOpen()).toBe(false)
+    expect(dock.dataset.covered).toBe('false')
+    // Still there to reopen it with.
+    expect(root.querySelector('.launcher')).not.toBeNull()
+  })
+
+  it('hides when a docked widget opens at once', () => {
+    const { root } = widgetHarness({ mode: 'docked', open: true })
+    expect((root.querySelector('.dock') as HTMLElement).dataset.covered).toBe('true')
+  })
+
+  it('stays beside an open overlay panel, which sits above it', () => {
+    const { widget, root } = widgetHarness()
+    widget.open()
+    expect((root.querySelector('.dock') as HTMLElement).dataset.covered).not.toBe('true')
+  })
+
+  it('hides by a rule that beats `.dock { display: flex }`', () => {
+    const { root } = widgetHarness({ mode: 'docked' })
+    const css = root.querySelector('style')!.textContent!
+    expect(css).toMatch(/\.dock\[data-covered="true"\]\s*\{\s*display:\s*none/)
+  })
+})
+
 describe('the host hiding its launcher for a page', () => {
   it('hides and restores the launcher without the visitor\'s dismiss semantics', () => {
     const { widget, root } = widgetHarness()
