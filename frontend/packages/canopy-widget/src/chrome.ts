@@ -167,6 +167,10 @@ const STYLES = `
      which is the exact bug dismiss() records below. .dock[data-...] is more
      specific than .dock, so this one wins. */
   .dock[data-suppressed="true"] { display: none; }
+  /* A docked panel is a full-height rail on the right, so the bubble in the
+     corner sits on its composer (Labs: the pill and its × over send/stop). The
+     panel's own × closes it, and the bubble comes back. */
+  .dock[data-covered="true"] { display: none; }
   /* Without this a touch-drag scrolls the host's page instead of moving the
      bubble — the browser claims the gesture before pointermove ever fires. */
   .launcher { touch-action: none; }
@@ -478,6 +482,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       panel.dataset.open = 'true'
       placePanel()
       launcher?.setAttribute('aria-expanded', 'true')
+      if (dock && options.mode === 'docked') dock.dataset.covered = 'true'
       options.onToggle(true)
     },
     close() {
@@ -486,6 +491,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       if (inline || !api.isOpen()) return
       panel.dataset.open = 'false'
       launcher?.setAttribute('aria-expanded', 'false')
+      if (dock) dock.dataset.covered = 'false'
       options.onToggle(false)
     },
     toggle() {
