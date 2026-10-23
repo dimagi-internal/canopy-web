@@ -24,16 +24,27 @@
  * collapsing returns to exactly the overlay or rail it came from. The visitor's
  * choice is remembered per site through the same injected storage a dragged
  * position uses.
+ *
+ * An overlay panel can also be RESIZED by dragging its top-left corner — the
+ * one away from the bubble, so the panel grows up and to the left and stays
+ * attached to it. The size is remembered per site like a position; expanding
+ * overrides it without forgetting it.
  */
 
 import {
+  EDGE_MARGIN_PX,
   clampToViewport,
   isDrag,
   panelPosition,
   readSaved,
+  readSavedSize,
+  resizePanel,
+  sizeKeyFor,
   storageKeyFor,
   writeSaved,
+  writeSavedSize,
   type Point,
+  type Size,
 } from './dragging'
 import { launcherVars, resolvedMode, type SafeTheme } from './theme'
 
@@ -145,6 +156,27 @@ const STYLES = `
   @media (max-width: 640px) {
     .panel[data-expanded="true"] { inset: 0 !important; border-radius: 0; border-width: 0; }
   }
+  /* The resize grip: the panel's top-left corner, the one away from the
+     bubble. Overlay only — a docked rail's width is the host's layout, and an
+     expanded panel already fills the window. */
+  .resize {
+    position: absolute; top: 0; left: 0; z-index: 1;
+    width: 16px; height: 16px;
+    cursor: nwse-resize; touch-action: none;
+    color: rgba(255,255,255,.45);
+  }
+  .resize::before {
+    content: ''; position: absolute; top: 4px; left: 4px;
+    width: 7px; height: 7px;
+    border-top: 2px solid currentColor; border-left: 2px solid currentColor;
+    border-top-left-radius: 3px;
+    opacity: .6; transition: opacity .12s ease;
+  }
+  .resize:hover::before, .panel[data-resizing="true"] .resize::before { opacity: 1; }
+  .panel[data-theme="light"] .resize { color: rgba(0,0,0,.4); }
+  .panel[data-expanded="true"] .resize { display: none; }
+  /* Mid-drag the pointer crosses the iframe, which would swallow the moves. */
+  .panel[data-resizing="true"] iframe { pointer-events: none; }
   /* The bubble would sit on top of the expanded panel's corner. */
   :host([data-expanded="true"]) .dock { display: none; }
   iframe { width: 100%; height: 100%; border: 0; display: block; }
@@ -336,6 +368,84 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   panel.appendChild(iframe)
   root.appendChild(panel)
 
+  // --- resizing -------------------------------------------------------------
+  //
+  // Once the visitor has sized the panel by hand, their size wins over the
+  // height the frame asks for: the frame is guessing what fits, they know.
+  const sizeKey = sizeKeyFor(options.app)
+  let sizedByVisitor = false
+  function applySize(size: Size): void {
+    panel.style.width = `${size.width}px`
+    panel.style.height = `${size.height}px`
+  }
+  /** The most an overlay panel may take, given where its bottom-right sits.
+   *  Falls back to the window when there is no layout to measure (a closed
+   *  panel, or jsdom). */
+  function roomFor(rect: DOMRect | null): Size {
+    const right = rect?.right || window.innerWidth - 16
+    const bottom = rect?.bottom || window.innerHeight - 84
+    return { width: right - EDGE_MARGIN_PX, height: bottom - EDGE_MARGIN_PX }
+  }
+  if (options.mode === 'overlay') {
+    const saved = readSavedSize(options.storage, sizeKey)
+    if (saved) {
+      // Clamped, because the window it was saved in is not this one.
+      applySize(resizePanel(saved, { x: 0, y: 0 }, roomFor(null)))
+      sizedByVisitor = true
+    }
+
+    const grip = document.createElement('div')
+    grip.className = 'resize'
+    grip.setAttribute('part', 'resize')
+    grip.title = 'Drag to resize'
+    panel.appendChild(grip)
+
+    let from: Point | null = null
+    let start: Size = { width: 0, height: 0 }
+    let anchor: DOMRect | null = null
+    grip.addEventListener('pointerdown', (event) => {
+      event.preventDefault() // no text selection on the host page mid-drag
+      from = { x: event.clientX, y: event.clientY }
+      anchor = panel.getBoundingClientRect()
+      start = {
+        width: anchor.width || panel.offsetWidth || options.width,
+        height: anchor.height || panel.offsetHeight || 500,
+      }
+      panel.dataset.resizing = 'true'
+      grip.setPointerCapture?.(event.pointerId)
+    })
+    grip.addEventListener('pointermove', (event) => {
+      if (!from) return
+      const size = resizePanel(
+        start,
+        { x: event.clientX - from.x, y: event.clientY - from.y },
+        roomFor(anchor),
+      )
+      applySize(size)
+      // A panel placed by left/top (the bubble was dragged) would grow from its
+      // top-left; move that corner instead, so the bottom-right stays put.
+      if (panel.style.left && anchor?.right) {
+        panel.style.left = `${anchor.right - size.width}px`
+        panel.style.top = `${anchor.bottom - size.height}px`
+      }
+      sizedByVisitor = true
+    })
+    const endResize = (event: PointerEvent) => {
+      if (!from) return
+      grip.releasePointerCapture?.(event.pointerId)
+      from = null
+      panel.dataset.resizing = 'false'
+      if (panel.style.width && panel.style.height) {
+        writeSavedSize(options.storage, sizeKey, {
+          width: parseFloat(panel.style.width),
+          height: parseFloat(panel.style.height),
+        })
+      }
+    }
+    grip.addEventListener('pointerup', endResize)
+    grip.addEventListener('pointercancel', endResize)
+  }
+
   let launcher: HTMLButtonElement | null = null
   let dock: HTMLDivElement | null = null
   //: Survives the dock being removed, which is what dismissing does.
@@ -517,6 +627,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     isDismissed: () => dismissed,
     setHeight(px: number) {
       if (inline) return // the host owns layout here
+      if (sizedByVisitor) return
       panel.style.height = `${px}px`
     },
     setExpanded(next: boolean, remember = false) {

@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 
 import {
   clampToViewport,
+  MIN_PANEL,
   isDrag,
   panelPosition,
   readSaved,
+  readSavedSize,
+  resizePanel,
   storageKeyFor,
   writeSaved,
 } from './dragging'
@@ -120,5 +123,38 @@ describe('remembering where you put it', () => {
 
   it('keys per app, so two widgets on one origin do not fight', () => {
     expect(storageKeyFor('canopy-web')).not.toBe(storageKeyFor('connect-labs'))
+  })
+})
+
+describe('resizing the panel by its corner', () => {
+  const START = { width: 400, height: 600 }
+  const ROOM = { width: 900, height: 700 }
+
+  it('dragging the top-left corner up and left grows it', () => {
+    expect(resizePanel(START, { x: -100, y: -50 }, ROOM)).toEqual({ width: 500, height: 650 })
+  })
+
+  it('dragging it down and right shrinks it, but not below a usable panel', () => {
+    expect(resizePanel(START, { x: 1000, y: 1000 }, ROOM)).toEqual(MIN_PANEL)
+  })
+
+  it('never grows past the room it has', () => {
+    expect(resizePanel(START, { x: -5000, y: -5000 }, ROOM)).toEqual(ROOM)
+  })
+
+  it('gives way to a window smaller than the minimum', () => {
+    // A phone: a panel that fits beats a minimum that runs off the edge.
+    const tiny = { width: 200, height: 250 }
+    expect(resizePanel(START, { x: 0, y: 0 }, tiny)).toEqual(tiny)
+  })
+})
+
+describe('remembering the size', () => {
+  it('reads back only a usable size', () => {
+    const store = (raw: string) => ({ getItem: () => raw })
+    expect(readSavedSize(store('{"width":500,"height":600}'), 'k')).toEqual({ width: 500, height: 600 })
+    expect(readSavedSize(store('{"width":-1,"height":600}'), 'k')).toBeNull()
+    expect(readSavedSize(store('not json'), 'k')).toBeNull()
+    expect(readSavedSize(null, 'k')).toBeNull()
   })
 })
