@@ -119,7 +119,7 @@ pinned or bound turn would otherwise hand the box the agent's secrets through
 `device_keys.runner_serves_agent`), `unclaimable_queued_turns` reports such a turn
 with the unit's reason, `runner_routes_agent` and `agents_routed_to`
 ask it, `inherited_orders` drops such a runner for that agent, and the routing
-writes (`agents/api_routing.py::_runners_for_routing`) refuse it with 422 and the reason.
+writes (`apps/agents/api_routing.py::_runners_for_routing`) refuse it with 422 and the reason.
 The topology lists a box's units together (`machine`, `unit` on each runner row).
 `prime_machine_units` loads the machine siblings once per claim and per report.
 Tests: `tests/test_runner_units.py`.
@@ -725,7 +725,7 @@ the list reads. Migration 0097 moved the old slots onto the list.
   then records that a missing `default` means removed.
 
 **A token or key keeps the box alive.** A login renews itself, and a renewal can
-fail; a box with nothing else then stops (cloud-ec2-2, 2026-10-15). So removing
+fail; a box with nothing else then stops. So removing
 the **last** token or API key is refused (422; `LAST_FALLBACK_REFUSAL`): add
 another first. A box with no usable credential at all waits in
 `fetch_and_stage_credential`, heartbeating as online but not ready with a note
@@ -853,8 +853,8 @@ fails its next turn and re-marks itself. The CDP probe gates independently
 (`compute`), so expiry cannot mask emdash being down.
 
 **Signed out is the one not-ready note that stops claiming.** A laptop turn finishes
-at delivery, so a box with no Claude login used to stay ready and answer every
-message with the CLI's "Not logged in". The hook listener now reads the transcript
+at delivery, so without this a box with no Claude login would stay ready and answer
+every message with the CLI's "Not logged in". The hook listener reads the transcript
 tail on `Stop`/`Notification` (`canopy_transcript.signed_out`, the API-error record
 only — never agent text): on that record the box writes the marker with
 `canopy_transcript.SIGNED_OUT_NOTE`, raises `claude_auth_required` once

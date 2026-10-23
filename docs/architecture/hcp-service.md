@@ -419,18 +419,18 @@ Outside the rollout:
 - **Security review** of the consent screen and token endpoint by someone other than
   the author.
 
-## Retrieval: where search goes after keywords (on: Vertex gemini-embedding-001, 2026-10-18)
+## Retrieval: keywords plus meaning (Vertex gemini-embedding-001)
 
 **What runs today** (`hcp.rank`, `apps/contacts/embeddings.py`):
 - One search ranks everything the grant reaches together (`workspace_slugs`), so
-  the best entry wins wherever it lives — the envelope and `searchPreferences`
-  no longer fill from the agent's own workspace first.
+  the best entry wins wherever it lives — neither the envelope nor
+  `searchPreferences` fills from the agent's own workspace first.
 - What an agent records during a turn dispatched from a board task is filed
   against that task's project (`hcp.project_of`); a later turn on the same project
   gives those entries `HCP_PROJECT_BOOST` and admits them even with no word in common.
 - Unmatched role entries come along as background, at most `ROLE_FLOOR` (every
-  agent-written `work_context` entry is filed as a role, so "all of them" meant
-  "the newest work_context entries, whatever was asked"). Corrections always lead.
+  agent-written `work_context` entry is filed as a role, so admitting all of them
+  would return the newest work_context entries, whatever was asked). Corrections always lead.
 - **Embeddings, when `HCP_EMBEDDINGS_MODEL` names a model** (`vertex/gemini-embedding-001`
   today; Bedrock Cohere Embed or Titan v2 also work): each served entry carries a float32 unit
   vector on its own row (`PersonFact.embedding`, with `embedding_model`). Written
@@ -441,7 +441,7 @@ Outside the rollout:
   `HCP_SEMANTIC_WEIGHT` × similarity (counted at or above `HCP_SEMANTIC_FLOOR`). Any failure ranks
   lexically. Declared method: `hybrid` while on, `lexical` while off.
 - Comparison is done in Python over the filtered candidates rather than pgvector:
-  the same exact scan the plan below calls for at this scale, with no database
+  the exact scan the constraints below call for at this scale, with no database
   extension and the same code on SQLite in tests. Move it into pgvector if one
   person's served entries reach the thousands.
 
@@ -453,8 +453,8 @@ lexical. On Vertex that is the project's `cacheConfig` saying `disableCache: tru
 having no model-invocation logging (Bedrock itself stores no prompts). Neither
 check covers the contract: both clouds are under Dimagi's BAA, and Google's
 abuse-monitoring prompt-logging exception is granted per project — Dimagi's
-covers connect-labs and dimagi-chrome-extension, not canopy-494811 (2026-10-18;
-requested by hand). Turned on anyway with only Jonathan's own memory in it.
+covers connect-labs and dimagi-chrome-extension, not canopy-494811 (requested by
+hand). It is on with only Jonathan's own memory in it.
 
 **Turning it on — Vertex (the Dimagi-approved route).** No Google key is stored:
 the ECS task's AWS role (`canopy-web-task-role`) is exchanged for a short-lived
@@ -571,57 +571,23 @@ run `hcp_explain` with it to see each entry's meaning score; try `--floor` /
 three unrelated questions still return nothing; set the value in the cfn file and
 deploy.
 
-The original plan, kept for the reasoning. Before this, `hcp.search` ranked by
-term overlap (`_score`), declared as `lexical` (spec 4.4.3). That misses
-paraphrases: "how does Jonathan like updates?" doesn't find "Prefers short
-answers". The decided direction, for when it matters (roughly a few hundred
-entries per person, or agents recording steadily):
-
-**Stay in Postgres; add pgvector. No separate vector or graph store.**
-- Filter first, then rank. Grant categories (4.4.1), reach restrictions
-  (4.1.5.1), status and person are ordinary `WHERE` clauses; ranking happens
-  only inside what the grant reaches. Separate vector stores tend to rank then
-  filter, which can silently drop the best matches.
-- Deletion stays total: the vector is a column on the entry row, so a hard
-  delete removes it in the same transaction. Vectors are personal data (a lot
-  of the sentence can be recovered from one); same permissions as the text.
-- Scale is tiny (one person's few hundred sentences per search), so compare
-  against every row: exact results, no approximate index needed. With the same
-  vectors, the database choice does not change quality.
-
-**What determines quality, in order:** the embedding model; what text is
-embedded (statement + category + dimension); hybrid ranking (Postgres full-text
-plus vector similarity, so names and exact terms still win); optionally an LLM
-re-rank of the top 10–20 against the stated purpose (then declare `llm`).
-
-**How it works:**
-- On write/update: call the embedding API once, store the vector beside the
-  sentence with the model's name and version. The sentence stays the source of
-  truth; vectors are only for finding.
-- On search: embed the query (new text, so one API call, ~100 ms; pgvector
-  can't make vectors), then rank in Postgres. Mark document vs query (Google's
-  `task_type` RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY). If the API is down, fall
-  back to lexical.
-- Vectors from different models never mix. Changing models: embed everything
-  with the new model alongside the old, check it on the test set, switch
-  searches in one step, drop the old column. Minutes and pennies at our scale.
-- Agent-facing contract unchanged: ≤20 results, no paging, provenance redacted
-  (4.4.4), no counts of what was withheld (4.4.5).
-
-**Embedding model candidates** (pay per call; an always-on server would sit idle):
-- **Google `gemini-embedding-001` on Vertex AI** — strong; Dimagi has GCP via
-  Workspace. Confirm first: the *Google Cloud* BAA (separate from the Workspace
-  BAA) is accepted for the GCP org, and the model is on Google's HIPAA
-  covered-products list. Auth from AWS via workload identity federation (no
-  stored key). Memory text then leaves AWS for Google.
-- **Cohere Embed or Titan on AWS Bedrock** — keeps everything in canopy's AWS
-  account; the default if quality is close.
-- **Voyage** (Anthropic's recommendation, now MongoDB) — not on Bedrock; on AWS
-  only as an always-on SageMaker endpoint, or via Voyage's own API (outside
-  processor). Compare on test data only.
-
-**Before switching:** build a small fixed test set of real queries over real
-memory with the entries each should return, and pick the model and ranking by
-that, not by benchmarks. Providers retire models about yearly with notice
-(Google retired gecko and text-embedding-004 this way); a retirement notice
-should become a dated fleet task to re-embed.
+**Design constraints** (hold these when changing retrieval):
+- **Stay in Postgres; no separate vector or graph store.** Filter first, then
+  rank: grant categories (4.4.1), reach restrictions (4.1.5.1), status and person
+  are ordinary `WHERE` clauses, and ranking happens only inside what the grant
+  reaches — a store that ranks then filters can silently drop the best matches.
+  Scale is one person's few hundred sentences per search, so compare against every
+  row (exact, no approximate index).
+- **Deletion stays total.** The vector is a column on the entry row, so a hard
+  delete removes it in the same transaction. Vectors are personal data (much of the
+  sentence can be recovered from one): same permissions as the text. The sentence
+  is the source of truth; vectors are only for finding.
+- **Vectors from different models never mix.** To change models: embed everything
+  with the new model alongside the old, check it on the test set, switch searches
+  in one step, drop the old vectors. A provider's model-retirement notice becomes a
+  dated fleet task to re-embed.
+- **Pick models and ranking by a small fixed test set** of real queries over real
+  memory with the entries each should return, not by benchmarks.
+- **The agent-facing contract does not change with the ranker:** ≤20 results, no
+  paging, provenance redacted (4.4.4), no counts of what was withheld (4.4.5). An
+  LLM re-rank of the top 10–20, if added, declares `llm`.
