@@ -452,3 +452,23 @@ def test_adopting_as_a_tree_unit_records_its_root(live_box):
     _approve(live_box, _invite(live_box, units=LIVE_UNIT, name="cloud-ec2-2").json()["id"])
     _pair_units({"cloud-ec2-2": {"public_jwk": _jwk(), "ecdh_public_jwk": live_box["kms"]}}, name="cloud-ec2-2")
     assert Runner.objects.get(pk=live_box["runner"].pk).unit() == {"kind": "tree", "root": "connect"}
+
+
+# ---- a test box is directed from the moment it pairs ------------------------------------
+
+def test_an_invitation_for_a_test_box_pairs_it_directed(two_trees):
+    inv = _invite(two_trees, units=UNITS[:1], directed=True).json()
+    assert inv["directed"] is True
+    _approve(two_trees, inv["id"])
+    # The box's own word is not read: it says nothing about being directed.
+    res = _pair_units(_keys([BOX]))
+    assert res.status_code == 201, res.content
+    runner = Runner.objects.get(pk=res.json()["units"][BOX])
+    assert runner.directed and runner.directed_only()
+
+
+def test_an_ordinary_invitation_pairs_a_box_that_takes_routed_work(two_trees):
+    inv = _invite(two_trees, units=UNITS[:1]).json()
+    _approve(two_trees, inv["id"])
+    res = _pair_units(_keys([BOX]))
+    assert not Runner.objects.get(pk=res.json()["units"][BOX]).directed_only()

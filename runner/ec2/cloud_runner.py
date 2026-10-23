@@ -30,8 +30,6 @@ Config comes from the environment (see runner/ec2/README.md):
   RUNNER_AGENTS     comma-separated agent slugs this runner may drive (e.g. echo,ada)
   RUNNER_SESSIONS   whether this runner claims chat/session turns (default: OFF —
                      opt-in; see the RUNNER_SESSIONS declaration for why)
-  RUNNER_DIRECTED   take only what is put on this box — turns pinned to it and
-                     chats bound to it, no routed work (default: OFF; a test box)
   RUNNER_HOST       stable identity for session-reuse gating (default: RUNNER_NAME).
                      Analogous to emdash's per-macOS-account host, but for a headless
                      box it just needs to be STABLE across process restarts on the
@@ -173,12 +171,6 @@ if _csv("RUNNER_AGENTS"):
 RUNNER_SESSIONS = _bool_env("RUNNER_SESSIONS", False)
 if RUNNER_SESSIONS:
     RUNNER_CAPS["sessions"] = True
-# A directed-only box (a test box, `up.sh --test`) claims only turns pinned to it
-# and turns of chats bound to it: no routed agent turn, no repo turn, no unbound
-# chat. A self-restriction — it can only make the box take less — so the server
-# trusts it as declared (`Runner.directed_only`).
-if _bool_env("RUNNER_DIRECTED", False):
-    RUNNER_CAPS["directed"] = True
 RUNNER_WORKSPACE = os.environ.get("RUNNER_WORKSPACE", "")
 # A stable identity for THIS process/instance, load-bearing for session-reuse
 # gating (RunnerBinding.reusable_by requires host to match — see
@@ -1891,7 +1883,6 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int, locked: bool
         "RUNNER_WORKSPACE": unit["workspace"],
         "RUNNER_AGENTS": agents, "AGENT_SLUGS": slugs, "RUNNER_PROJECTS": projects,
         "RUNNER_SESSIONS": box.get("RUNNER_SESSIONS", "1"),
-        "RUNNER_DIRECTED": box.get("RUNNER_DIRECTED", "0"),
         "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
         # A box in ZDR mode runs every unit in it (one key, the locked profile).
         "RUNNER_DATA_MODE": box.get("RUNNER_DATA_MODE", ""),
@@ -2474,8 +2465,6 @@ def pair_units_payload(box: str, units: list[dict], keys: dict, proof: str,
         caps: dict = {}
         if uenv.get("RUNNER_SESSIONS", "1").strip().lower() not in ("0", "false", "no", ""):
             caps["sessions"] = True
-        if uenv.get("RUNNER_DIRECTED", "0").strip().lower() not in ("0", "false", "no", ""):
-            caps["directed"] = True
         if unit["kind"] == "agent":
             caps["unit"] = {"kind": "agent", "slug": unit["slug"]}
         entry = {"name": unit["name"], "public_jwk": k["public_jwk"], "host": unit["name"],
@@ -2696,7 +2685,7 @@ def install_broker(*, run=subprocess.run) -> bool:
 
 #: The stack parameters a box of units needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
-BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS", "RUNNER_DIRECTED",
+BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS",
                 "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS",
                 "RUNNER_DATA_MODE", "RUNNER_EGRESS", "RUNNER_EGRESS_ALLOW")
 _IN_PLACE_FETCH_ENV = """#!/bin/sh

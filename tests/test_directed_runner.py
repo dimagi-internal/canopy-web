@@ -1,8 +1,8 @@
 """A directed-only box takes only what is put on it, and choosing a box for a
 project chat needs you to administer it (spec 2026-10-19 #6).
 
-`capabilities.directed` is box-declared (`RUNNER_DIRECTED=1`) and can only make a
-box take less: it claims turns pinned to it and turns of sessions bound to it —
+`Runner.directed` is a person's setting (the runner page, or a test box's
+invitation), and it can only make a box take less: it claims turns pinned to it and turns of sessions bound to it —
 no routed agent turn (even with an enabled assignment row), no repo turn, no
 unbound chat, no inherited workspace order. A list that names it must say so
 rather than count it as serving (topology), and it must not stall a lower rank as
@@ -42,10 +42,8 @@ def team():
 
 def _box(owner, name, *, directed=False, projects=("canopy-web",)):
     caps = {"sessions": True, "projects": list(projects)}
-    if directed:
-        caps["directed"] = True
     return enrolled(Runner.objects.create(
-        name=name, kind=Runner.CLOUD, host=name, owner=owner,
+        name=name, kind=Runner.CLOUD, host=name, owner=owner, directed=directed,
         status=Runner.ONLINE, last_heartbeat_at=timezone.now(), capabilities=caps,
     ))
 

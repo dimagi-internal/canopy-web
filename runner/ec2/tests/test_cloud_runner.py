@@ -26,7 +26,7 @@ LOCK_REGRESSION_TIMEOUT = pytest.mark.timeout(20)
 
 ENV_KEYS = (
     "RUNNER_SESSIONS", "RUNNER_HOST", "RUNNER_NAME", "RUNNER_PROJECTS",
-    "RUNNER_AGENTS", "RUNNER_WORKSPACE", "RUNNER_DIRECTED",
+    "RUNNER_AGENTS", "RUNNER_WORKSPACE",
 )
 
 
@@ -2488,16 +2488,3 @@ def test_signed_in_reads_a_refusal_not_a_blip(cloud_runner, monkeypatch):
         assert cloud_runner._signed_in() is want, status
 
 
-# ── directed-only box (RUNNER_DIRECTED) ─────────────────────────────────────
-
-def test_runner_directed_env_declares_capability(load_cloud_runner, monkeypatch):
-    """A test box takes only what is put on it: `RUNNER_DIRECTED=1` declares
-    `capabilities.directed`, which the server reads as "pins and bindings only"."""
-    _clean_env(monkeypatch)
-    monkeypatch.setenv("RUNNER_DIRECTED", "1")
-    assert load_cloud_runner().RUNNER_CAPS["directed"] is True
-
-
-def test_runner_directed_off_by_default(load_cloud_runner, monkeypatch):
-    _clean_env(monkeypatch)
-    assert "directed" not in load_cloud_runner().RUNNER_CAPS

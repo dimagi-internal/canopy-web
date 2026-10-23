@@ -881,18 +881,15 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
 @gate("runner-admin", setting=True)
 def set_runner_directed(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerDirectedIn):
     """`true`: the box takes only turns pinned to it and chats bound to it, no routed
-    work. `false`: it takes routed work, whatever the box itself declares. `null`:
-    follow the box's own declaration. Owner or a runner administrator; a private
-    runner stays directed either way."""
+    work. `false`: it takes the work routed to it. Owner or a runner administrator;
+    a private runner stays directed either way."""
     runner = runner_admin_or_404(request, runner_id)
-    before = {"directed_setting": runner.directed_setting, "directed": runner.directed_only()}
-    if runner.directed_setting != payload.directed:
-        runner.directed_setting = payload.directed
-        runner.save(update_fields=["directed_setting"])
+    before = {"directed": runner.directed}
+    if runner.directed != payload.directed:
+        runner.directed = payload.directed
+        runner.save(update_fields=["directed"])
     events_audit.note_change(scope=f"runner-directed:{runner.name}", before=before,
-                             after={"directed_setting": runner.directed_setting,
-                                    "directed": runner.directed_only()},
-                             workspace=runner.workspace)
+                             after={"directed": runner.directed}, workspace=runner.workspace)
     out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
            .prefetch_related("declared_flags").get(pk=runner.pk))
     out.can_manage = out.owner_id in (request.user.id, None)

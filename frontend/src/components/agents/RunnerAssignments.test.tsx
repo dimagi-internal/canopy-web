@@ -75,7 +75,6 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     private_runner_id: null,
     only_agents: [],
     directed: false,
-    directed_setting: null,
     egress_locked: false,
     egress_allow: [],
     egress_forced: false,

@@ -16,23 +16,20 @@ export function isSessionCapable(runner: Pick<RunnerOut, "capabilities">): boole
 }
 
 /**
- * A directed-only box (`capabilities.directed === true`, a test box, or a
- * PRIVATE runner — its owner's own machine) takes only what is put on it: turns
- * pinned to it and chats bound to it — never routed work. Mirrors the server's
- * `Runner.directed_only`. It is still session-capable, so it is offered for a
- * chat (a chat started on it binds to it), labelled so nobody mistakes it for a
- * box that shares load.
+ * A directed-only box (`directed`, a runner administrator's setting — a test box
+ * pairs with it on — or a PRIVATE runner, its owner's own machine) takes only
+ * what is put on it: turns pinned to it and chats bound to it — never routed
+ * work. Mirrors the server's `Runner.directed_only`. It is still session-capable,
+ * so it is offered for a chat (a chat started on it binds to it), labelled so
+ * nobody mistakes it for a box that shares load.
  */
-export function isDirectedOnly(runner: Pick<RunnerOut, "capabilities"> & { private?: boolean; directed?: boolean }): boolean {
-  // `directed` is the server's answer (the box's declaration, or a runner admin's
-  // override of it); a row from an older server falls back to the box's own word.
-  if (typeof runner.directed === 'boolean') return runner.directed;
-  return runner.private === true || (runner.capabilities as { directed?: unknown } | null)?.directed === true;
+export function isDirectedOnly(runner: { private?: boolean; directed?: boolean }): boolean {
+  return runner.private === true || runner.directed === true;
 }
 
 /** A runner's name as a picker offers it, marked when it is directed-only. */
 export function runnerOptionLabel(
-  runner: Pick<RunnerOut, "name" | "capabilities"> & { private?: boolean },
+  runner: Pick<RunnerOut, "name"> & { private?: boolean; directed?: boolean },
 ): string {
   return isDirectedOnly(runner) ? `${runner.name} · directed only` : runner.name;
 }

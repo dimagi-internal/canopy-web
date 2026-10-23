@@ -9116,9 +9116,8 @@ export interface paths {
         /**
          * Decide whether this runner takes only work put on it
          * @description `true`: the box takes only turns pinned to it and chats bound to it, no routed
-         *     work. `false`: it takes routed work, whatever the box itself declares. `null`:
-         *     follow the box's own declaration. Owner or a runner administrator; a private
-         *     runner stays directed either way.
+         *     work. `false`: it takes the work routed to it. Owner or a runner administrator;
+         *     a private runner stays directed either way.
          */
         readonly put: operations["set_runner_directed"];
         readonly post?: never;
@@ -27447,6 +27446,11 @@ export interface components {
              * @default
              */
             readonly created_by_email: string;
+            /**
+             * Directed
+             * @default false
+             */
+            readonly directed: boolean;
             /** Approved At */
             readonly approved_at?: string | null;
             /**
@@ -27510,6 +27514,11 @@ export interface components {
             } | null;
             /** Units */
             readonly units?: readonly components["schemas"]["RunnerUnitIn"][] | null;
+            /**
+             * Directed
+             * @default false
+             */
+            readonly directed: boolean;
         };
         /**
          * RunnerUnitIn
@@ -28267,8 +28276,6 @@ export interface components {
              * @default false
              */
             readonly directed: boolean;
-            /** Directed Setting */
-            readonly directed_setting?: boolean | null;
             /**
              * Egress Locked
              * @default false
@@ -28933,7 +28940,7 @@ export interface components {
         /** RunnerDirectedIn */
         readonly RunnerDirectedIn: {
             /** Directed */
-            readonly directed: boolean | null;
+            readonly directed: boolean;
         };
         /** RunnerAgentChoiceOut */
         readonly RunnerAgentChoiceOut: {

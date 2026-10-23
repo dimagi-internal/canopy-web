@@ -114,6 +114,12 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
             {inv.status}: {STATUS_TEXT[inv.status]}
           </dd>
         </dl>
+        {inv.directed && (
+          <p className="mt-3 text-[12px] text-foreground" data-testid="invitation-directed">
+            A test box: it pairs directed only — it takes only turns pinned to it and chats started on it, no routed
+            work. Its runner page can turn that off.
+          </p>
+        )}
         {units.length > 0 ? (
           <>
             <table className="mt-4 w-full text-left text-[13px]" aria-label="Units">

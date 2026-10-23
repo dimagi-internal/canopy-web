@@ -162,11 +162,10 @@ def test_the_choices_are_the_agents_the_box_could_hold(fleet):
     assert [c["slug"] for c in body["choices"]] == ["ace", "labsdata"]
 
 
-# ---- a person decides "directed only", over the box's declaration ---------------------
+# ---- "directed only" is a person's setting -----------------------------------------
 def test_an_admin_can_put_a_directed_box_back_on_routed_work(fleet):
-    box = fleet["box"]
-    Runner.objects.filter(pk=box.pk).update(capabilities={**box.capabilities, "directed": True})
-    box = _dedicate(box, fleet["labsdata"])
+    Runner.objects.filter(pk=fleet["box"].pk).update(directed=True)
+    box = _dedicate(fleet["box"], fleet["labsdata"])
     t = _turn("lab", agent=fleet["labsdata"])
     assert box.directed_only() and claim.claim_next_turn(box) is None
 
@@ -174,16 +173,22 @@ def test_an_admin_can_put_a_directed_box_back_on_routed_work(fleet):
     url = f"/api/harness/runners/{box.pk}/directed"
     resp = c.put(url, {"directed": False}, content_type="application/json")
     assert resp.status_code == 200, resp.content
-    assert resp.json()["directed"] is False and resp.json()["directed_setting"] is False
+    assert resp.json()["directed"] is False
     box = Runner.objects.get(pk=box.pk)
     assert claim.turn_reach(Turn.objects.get(pk=t.pk)).kind == claim.LIVE
     assert claim.claim_next_turn(box).pk == t.pk
 
-    # null follows the box again.
-    resp = c.put(url, {"directed": None}, content_type="application/json")
-    assert resp.json()["directed"] is True and resp.json()["directed_setting"] is None
+    resp = c.put(url, {"directed": True}, content_type="application/json")
+    assert resp.json()["directed"] is True
+
+
+def test_a_box_cannot_declare_itself_directed(fleet):
+    """What the box says is not read: only the setting decides."""
+    Runner.objects.filter(pk=fleet["box"].pk).update(
+        capabilities={**fleet["box"].capabilities, "directed": True})
+    assert not Runner.objects.get(pk=fleet["box"].pk).directed_only()
 
 
 def test_a_private_runner_stays_directed(fleet):
-    Runner.objects.filter(pk=fleet["box"].pk).update(private=True, directed_setting=False)
+    Runner.objects.filter(pk=fleet["box"].pk).update(private=True, directed=False)
     assert Runner.objects.get(pk=fleet["box"].pk).directed_only()

@@ -71,7 +71,7 @@ describe('RunnerStatus', () => {
   })
 
   it('labels a directed-only box: it takes only what is put on it', () => {
-    render(<RunnerStatus runners={[runner({ name: 'test-box', capabilities: { sessions: true, directed: true } })]} />)
+    render(<RunnerStatus runners={[runner({ name: 'test-box', directed: true, capabilities: { sessions: true } })]} />)
     expect(screen.getByTestId('runner-directed-test-box').textContent).toBe('directed only')
   })
 

@@ -82,7 +82,7 @@ def invitation_out(invitation: RunnerInvitation) -> RunnerInvitationOut:
         created_at=invitation.created_at, expires_at=invitation.expires_at,
         created_by_email=invitation.created_by.email or "", approved_at=invitation.approved_at,
         has_ecdh_key=bool(invitation.ecdh_public_jwk) or any(u.get("ecdh_public_jwk") for u in units),
-        runner_id=invitation.runner_id,
+        runner_id=invitation.runner_id, directed=invitation.directed,
         units=[RunnerInvitationUnitOut(
             name=u["name"], workspace=u["workspace"], kind=u.get("kind") or "tree",
             slug=u.get("slug") or "", has_ecdh_key=bool(u.get("ecdh_public_jwk")),
@@ -196,6 +196,7 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
             invitation = RunnerInvitation.objects.create(
                 name=payload.name, workspace_id=slug, created_by=request.user,
                 role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh, units=units,
+                directed=payload.directed,
             )
     except IntegrityError:  # a concurrent create for the same role and name won
         raise HttpError(409, _INVITATION_TAKEN) from None
@@ -364,6 +365,7 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
                 capabilities=declared_capabilities(payload.capabilities),
                 owner=owner, workspace_id=invitation.workspace_id,
                 machine_id=aws_iam_proof.canonical_role_arn(role_arn),
+                directed=invitation.directed,
             )
             # The ECDH key the invitation named (the `<stack>-ecdh` KMS key, which
             # only this role can use) is approved with it — also when a fresh box
