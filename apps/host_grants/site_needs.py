@@ -67,13 +67,25 @@ def _keys(app, url: str) -> tuple[str, str]:
     return f"site-needs:fresh:{scope}", f"site-needs:last-good:{scope}"
 
 
+def document_url(jwks_url: str) -> str:
+    """Where a site's `site.json` is: beside its keys. The SDK's rule
+    (`…/jwks.json` → `…/site.json`), plus a site that serves its keys at its own
+    `…/jwks/` route (connect-labs: `/labs/canopy/jwks/`) → `…/site.json` beside
+    that route. "" when the URL names neither."""
+    url = wire.site_document_url(jwks_url)
+    if url:
+        return url
+    head, _, name = str(jwks_url or "").strip().rstrip("/").rpartition("/")
+    return f"{head}/{wire.SITE_DOCUMENT_NAME}" if head and name == "jwks" else ""
+
+
 def needs_for(app, *, now: float | None = None) -> Needs:
     t = time.time() if now is None else now
-    url = wire.site_document_url(app.jwks_url)
+    url = document_url(app.jwks_url)
     if not url:
         return Needs(url="", document=None, reason=(
-            "this site publishes no keys at a jwks.json URL, so canopy has nowhere to read its "
-            "site.json — give it the SDK's canopy/jwks.json URL"))
+            "this site publishes no keys at a …/jwks.json (or …/jwks/) URL, so canopy has "
+            "nowhere to read its site.json — serve the SDK's canopy/site.json beside its keys"))
     fresh, last_good = _keys(app, url)
     entry = cache.get(fresh)
     if isinstance(entry, dict):
