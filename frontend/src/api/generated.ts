@@ -17069,6 +17069,10 @@ export interface components {
             readonly raised_from_task_ext_id?: string | null;
             /** Session Id */
             readonly session_id: string;
+            /** Canopy Session Id */
+            readonly canopy_session_id?: string | null;
+            /** Canopy Session Url */
+            readonly canopy_session_url?: string | null;
             /** Result Note */
             readonly result_note: string;
             /**
@@ -30266,6 +30270,10 @@ export interface components {
             readonly raised_from_task_ext_id?: string | null;
             /** Session Id */
             readonly session_id: string;
+            /** Canopy Session Id */
+            readonly canopy_session_id?: string | null;
+            /** Canopy Session Url */
+            readonly canopy_session_url?: string | null;
             /** Result Note */
             readonly result_note: string;
             /**

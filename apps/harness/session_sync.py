@@ -414,7 +414,38 @@ def record_session(
         from apps.canopy_sessions.transcript_ingest import seed_stream_desired
 
         seed_stream_desired(binding)
+        link_turn_session(turn or _turn_of_agent_thread(agent, thread_key, runner), binding.session)
     return binding
+
+
+def _turn_of_agent_thread(agent, thread_key: str, runner: Runner):
+    """The turn an AGENT thread key names, when it names one: both runners record
+    an agent turn's session under `<agent>:<turn id>` (the laptop runner sends no
+    `turn_id` with it). Only a turn of that agent this runner claimed; else None."""
+    if agent is None:
+        return None
+    slug, _, tail = (thread_key or "").rpartition(":")
+    if slug != agent.slug:
+        return None
+    try:
+        turn_id = uuid.UUID(tail)
+    except ValueError:
+        return None
+    return Turn.objects.filter(pk=turn_id, agent=agent, claimed_by=runner).first()
+
+
+def link_turn_session(turn, session) -> bool:
+    """Record that an agent/project `turn` ran in canopy `session`, so whoever
+    dispatched it can follow up there with only the turn id (`TurnOut.
+    canopy_session_id`). First write wins, like `stamp_turn_session`: a later
+    record-session for a reused thread never moves a turn to another session.
+    A chat turn is skipped — its `chat_session` already is its conversation.
+    True if a row was linked."""
+    if turn is None or session is None or turn.chat_session_id:
+        return False
+    return bool(
+        Turn.objects.filter(pk=turn.pk, canopy_session__isnull=True).update(canopy_session=session)
+    )
 
 
 def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
