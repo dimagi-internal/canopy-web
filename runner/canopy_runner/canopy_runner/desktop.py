@@ -77,6 +77,8 @@ import time
 import uuid
 from pathlib import Path
 
+from canopy_transcript.result_note import cap, turn_url
+
 from . import caller, session_naming
 from .cancel import CANCELLED_TURNS
 
@@ -1184,14 +1186,16 @@ class TurnRun:
             logger.warning("status event failed for turn=%s", self.id, exc_info=True)
 
     def finish(self, ok: bool, note: str, sid: str = "") -> None:
+        # Capped, and a cut note says so and links the whole reply (#1955).
+        note = cap(note or "", turn_url(getattr(self.cfg, "base_url", ""), self.turn))
         if ok:
-            self.client.finish(self.id, note[:2000], status="done", emdash_task_id=sid)
+            self.client.finish(self.id, note, status="done", emdash_task_id=sid)
         elif sid:
             # Failed AFTER reaching a session: say which, so the server never
             # re-runs it blind (same rule as the emdash path).
-            self.client.finish(self.id, note[:2000], status="failed", emdash_task_id=sid)
+            self.client.finish(self.id, note, status="failed", emdash_task_id=sid)
         else:
-            self.client.fail_turn(self.id, note[:2000])
+            self.client.fail_turn(self.id, note)
         logger.info("desktop turn=%s %s: %s", self.id, "done" if ok else "failed", note[:160])
 
     def _prompt(self) -> str:
