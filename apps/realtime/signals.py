@@ -19,7 +19,6 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from apps.harness import sensitivity
 from apps.harness.models import Runner, Turn
 from apps.harness.signals import sessions_reported, turn_events_appended
 from apps.push.models import AgentWaitingSnapshot
@@ -68,11 +67,6 @@ def _session_chat_events(turn, events):
 
     session = turn.chat_session
     if session is None or not transcript_sourced(session):
-        return events
-    if sensitivity.reply_is_live_only(turn):
-        # No transcript of this turn ever reaches canopy (a ZDR box deletes a
-        # confined turn's), so the ledger is the only producer: without these
-        # frames the asker sees the turn end with no reply.
         return events
     return [e for e in events if e.get("kind") not in TRANSCRIPT_ROW_KINDS]
 

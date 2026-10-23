@@ -16,8 +16,9 @@ What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
   receipts and view context, the usage scan's and autotitle's title;
 * **refuse re-processing** — auto-debug, and the fleet's transcript readers (there
   is no transcript to read);
-* **deliver live** — a confined turn's reply reaches its asker as live frames only
-  (`reply_is_live_only`), since no transcript of it ever reaches canopy.
+* **read back by its own people only** — the words are kept SEALED on the message
+  (`seal`), and only the conversation's people, on its chat surfaces, read them
+  (`reads_content`, `unseal`): never a review, a search, a fleet reader or another AI.
 """
 from __future__ import annotations
 
@@ -61,15 +62,6 @@ def strip_result(payload: dict | None) -> dict:
     return out
 
 
-def reply_is_live_only(turn) -> bool:
-    """True when a sensitive turn's reply reaches its asker only as the ledger's live
-    frames. A confined turn (a caller's: a site visitor through the widget) is never
-    recorded as a resumable session, and a ZDR box deletes its transcript when it
-    ends, so no transcript row ever carries the reply. The frames go to whoever is
-    watching and nothing stores the words (`ledger.append_events` keeps metadata)."""
-    return bool(getattr(turn, "capability", "")) and is_sensitive(turn)
-
-
 def any_sensitive(*objs) -> bool:
     return any(is_sensitive(o) for o in objs)
 
@@ -92,13 +84,17 @@ def claude_session_is_sensitive(claude_session: str) -> bool:
 
 
 # ── metadata, never content (Jonathan, 2026-10-22) ────────────────────────────
-# Beyond tool results: a sensitive conversation's STORED rows keep only what
+# Beyond tool results: a sensitive conversation's readable rows keep only what
 # troubleshooting needs. What the person types, what the agent says and a tool's
 # arguments can all carry PHI (a name typed into a question, a case read back), so
-# the stored event, the person's own Message, the prompt once the turn ends and the
+# the stored event, every Message's columns, the prompt once the turn ends and the
 # result note keep metadata only. The live frame still carries the words to the
-# person watching (`ledger.append_events`), over the socket, and nothing writes them.
+# person watching (`ledger.append_events`), over the socket.
+#
+# The conversation itself is kept, sealed (below): a person can come back to it,
+# and the people in it can share it (multiplayer), without anything else reading it.
 
+import copy as _copy
 import hashlib as _hashlib
 import json as _json
 
@@ -155,3 +151,93 @@ def withheld_note(note: str) -> str:
     if not note or note.startswith(WITHHELD_PREFIX):
         return note or ""
     return f"{WITHHELD_PREFIX} ({len(note.encode())} bytes)"
+
+
+# ── sealed: the conversation, for its own people only ────────────────────────
+# A sensitive conversation must still be recoverable — a reload, a second tab, a
+# participant joining — so its Messages keep the words in `Message.sealed`, beside
+# metadata-only columns. Nothing reads `sealed` but `unseal`, and nothing calls
+# that without `reads_content`: the primary interaction, never a review of it.
+
+
+def seal(role: str, text: str, content: dict | None) -> tuple[str, dict, dict | None]:
+    """(plaintext, content, sealed) as a sensitive conversation stores a Message.
+
+    The columns are metadata. `sealed` holds the words, except for a tool's result,
+    which is never kept (`strip_result`): what a tool showed the person as a table or
+    a chart is drawn again from the call's input, as the viewer, never from a copy."""
+    content = content if isinstance(content, dict) else {}
+    if role == "tool_result":
+        return "", strip_result(content), None
+    return "", redact_payload(content), {"plaintext": text or "", "content": content}
+
+
+def is_conversation_person(session, *, user=None, contact=None) -> bool:
+    """Whether this principal is IN the conversation: its contact, its creator, or a
+    participant someone added (multiplayer). An agent's admin or a workspace owner
+    who is not in it is not."""
+    if contact is not None:
+        return session.contact_id == contact.pk
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if session.created_by_id == user.pk:
+        return True
+    return session.participants.filter(user=user).exists()
+
+
+def request_is_chat_surface(request) -> bool:
+    """A chat surface: the person at a browser, or the widget / SDK (a contact's or
+    a connected site's token). Never an MCP tool call, a PAT, OAuth or a session
+    minted from a token — the doors through which an AI reads sessions."""
+    if getattr(request, "via_mcp", False):
+        return False
+    if getattr(request, "contact", None) is not None or getattr(request, "delegated_app", None):
+        return True
+    from apps.common.views_debug import is_machine  # noqa: PLC0415 — loads the session store
+
+    return not is_machine(request)
+
+
+def scope_is_chat_surface(scope) -> bool:
+    """The socket's form of `request_is_chat_surface`."""
+    if scope.get("via_widget") or scope.get("contact") is not None:
+        return True
+    if scope.get("auth_method") != "session":
+        return False
+    from apps.common.views_debug import DEBUG_SESSION_MARKER  # noqa: PLC0415 — as above
+
+    session = scope.get("session")
+    try:
+        return not (session is not None and session.get(DEBUG_SESSION_MARKER))
+    except Exception:  # noqa: BLE001 — an unreadable session is not a person
+        return False
+
+
+def reads_content(session, *, chat_surface: bool, user=None, contact=None) -> bool:
+    """THE gate on reading a conversation back: True for any ordinary conversation;
+    for a sensitive one, only its own people on its own chat surfaces."""
+    if not is_sensitive(session):
+        return True
+    return chat_surface and is_conversation_person(session, user=user, contact=contact)
+
+
+def unseal(message):
+    """A copy of `message` carrying its sealed words, for a reader `reads_content`
+    admitted. A copy, so the instance a caller might save keeps its columns."""
+    sealed = getattr(message, "sealed", None)
+    if not isinstance(sealed, dict):
+        return message
+    out = _copy.copy(message)
+    out.plaintext = str(sealed.get("plaintext") or "")
+    out.content = {**(sealed.get("content") or {}),
+                   **{k: v for k, v in (message.content or {}).items() if k == "client_id"}}
+    return out
+
+
+def readable(messages, session, *, chat_surface: bool, user=None, contact=None) -> list:
+    """`messages` as this reader may see them: unsealed for the conversation's own
+    people on its chat surfaces, the metadata columns for everyone else."""
+    rows = list(messages)
+    if not reads_content(session, chat_surface=chat_surface, user=user, contact=contact):
+        return rows
+    return [unseal(m) for m in rows]

@@ -159,74 +159,115 @@ def test_the_live_frame_carries_the_stripped_row(w, monkeypatch):
     assert ROW not in str(list(Message.objects.filter(session=w["hot"]).values()))
 
 
-# --- deliver live ----------------------------------------------------------------------
+# --- read back by its own people only --------------------------------------------------
+
+ASKED = "how many visits did Amina have?"
+REPLY = "Amina has had 12 visits"
 
 
-REPLY = "Amina has 12 visits"
+def _converse(session):
+    """A turn's rows as the runner ships them (`persist_transcript_rows`)."""
+    chat_transcript_ingest.persist_transcript_rows(session, [
+        {"index": 0, "role": "user", "text": ASKED},
+        {"index": 64, "role": "tool_use", "text": "",
+         "content": {"id": "tu1", "name": "site_call", "input": {"tool": "data_query",
+                                                                   "arguments": {"q": "Amina"}}}},
+        {"index": 65, "role": "tool_result", "text": ROW,
+         "content": {"tool_use_id": "tu1", "is_error": False, "text": ROW}},
+        {"index": 128, "role": "assistant", "text": REPLY},
+    ])
 
 
-def _session_frames(published, session):
-    from apps.realtime import groups
-
-    return [m for g, m in published
-            if g == groups.session_group(session.pk) and m["type"] == "chat.turn_event"]
+def _said(page) -> str:
+    return " ".join(m["plaintext"] for m in page)
 
 
-def _ask(w, django_capture_on_commit_callbacks, monkeypatch, *, session, capability):
-    from apps.canopy_sessions import services as chat_services
-
-    session.metadata = {**session.metadata, chat_services.TRANSCRIPT_SOURCED: True}
-    session.save(update_fields=["metadata"])
-    published = []
-    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
-    t = _turn(session, capability=capability)
-    with django_capture_on_commit_callbacks(execute=True):
-        ledger.append_events(t, [
-            {"kind": "tool_start", "payload": {"id": "tu1", "name": "mcp__canopy-web__site_call",
-                                               "input": {"tool": "data_query"}}},
-            {"kind": "tool_end", "payload": {"tool_use_id": "tu1", "is_error": False,
-                                             "content": [{"type": "text", "text": ROW}]}},
-            {"kind": "assistant", "payload": {"text": REPLY}},
-        ])
-    return t, _session_frames(published, session)
+def test_the_words_are_sealed_beside_metadata_columns_and_a_result_is_never_kept(w):
+    _converse(w["hot"])
+    rows = {m.role: m for m in Message.objects.filter(session=w["hot"])}
+    assert rows[Message.USER].sealed["plaintext"] == ASKED
+    assert rows[Message.ASSISTANT].sealed["plaintext"] == REPLY
+    assert rows[Message.TOOL_USE].sealed["content"]["input"]["arguments"] == {"q": "Amina"}
+    assert rows[Message.TOOL_RESULT].sealed is None and ROW not in str(rows[Message.TOOL_RESULT].__dict__)
+    # Every column any other reader sees is metadata.
+    columns = str(list(Message.objects.filter(session=w["hot"]).values("plaintext", "content")))
+    assert ASKED not in columns and REPLY not in columns and "Amina" not in columns
+    # An ordinary conversation seals nothing.
+    _converse(w["cold"])
+    assert not Message.objects.filter(session=w["cold"], sealed__isnull=False).exists()
 
 
-def test_a_confined_zdr_turns_reply_reaches_its_asker_and_is_never_stored(
-        w, django_capture_on_commit_callbacks, monkeypatch):
-    """A site visitor's turn on a ZDR box: the box keeps no transcript of it, so the
-    ledger's live frames are the only way the reply reaches the widget."""
-    from apps.canopy_sessions import stream_map
-
-    t, frames = _ask(w, django_capture_on_commit_callbacks, monkeypatch,
-                     session=w["hot"], capability="data")
-    assert [f["event"]["kind"] for f in frames] == ["tool_start", "tool_end", "assistant"]
-    # What the widget renders, from the same mapping the socket uses.
-    client = [c for f in frames for c in stream_map.turn_event_to_frames(f["event"], lambda _s: "m")]
-    done = next(c for c in client if c["event"] == "chat.stream_complete")
-    assert done["data"]["plaintext"] == REPLY
-    # Progress: the call and its outcome, paired on the call id; the result withheld.
-    use = next(c for c in client if c["event"] == "chat.tool_use")["data"]["block"]
-    result = next(c for c in client if c["event"] == "chat.tool_result")["data"]["block"]
-    assert use["id"] == "tu1" and use["name"] == "mcp__canopy-web__site_call"
-    assert {k: result[k] for k in ("tool_use_id", "is_error", "withheld")} == {
-        "tool_use_id": "tu1", "is_error": False, "withheld": True}
-    assert ROW not in str(frames)
-    # ...and nothing stores the words.
-    stored = str(list(TurnEvent.objects.filter(turn=t).values("payload")))
-    assert REPLY not in stored and ROW not in stored
-    assert REPLY not in str(list(Message.objects.filter(session=w["hot"]).values()))
+def test_the_person_who_started_it_reads_it_back_on_the_chat_page(w):
+    _converse(w["hot"])
+    tail = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"]
+    assert ASKED in _said(tail) and REPLY in _said(tail)
+    assert ROW not in str(tail)  # a result is not kept for anyone
+    page = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}/messages?before=999").json()["messages"]
+    assert REPLY in _said(page)
 
 
-def test_other_turns_still_reply_through_their_transcript(
-        w, django_capture_on_commit_callbacks, monkeypatch):
-    # A full-profile ZDR turn keeps its transcript and streams it: a ledger copy too
-    # would show every reply twice. So would an ordinary confined turn.
-    _, frames = _ask(w, django_capture_on_commit_callbacks, monkeypatch,
-                     session=w["hot"], capability="")
-    assert frames == []
-    _, frames = _ask(w, django_capture_on_commit_callbacks, monkeypatch,
-                     session=w["cold"], capability="data")
-    assert frames == []
+def test_a_participant_reads_it_back_multiplayer(w):
+    from apps.canopy_sessions.models import SessionParticipant
+
+    _converse(w["hot"])
+    peer = User.objects.create_user("peer", "peer@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=peer, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
+    SessionParticipant.objects.create(session=w["hot"], user=peer, role=SessionParticipant.VIEWER)
+    c = Client()
+    c.force_login(peer)
+    assert REPLY in _said(c.get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"])
+
+
+def test_no_token_or_ai_door_reads_it_back_even_for_its_own_person(w):
+    from apps.tokens.models import PersonalToken
+
+    _converse(w["hot"])
+    raw, _ = PersonalToken.create_for_user(user=w["user"], label="cli")
+    pat = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    tail = pat.get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"]
+    assert tail and ASKED not in str(tail) and REPLY not in str(tail)
+    # What people typed, read back for a review, is a review: metadata, in a browser too.
+    typed = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}/human-inputs").json()["messages"]
+    assert ASKED not in str(typed)
+
+
+def test_an_mcp_call_is_not_a_chat_surface(w, rf):
+    request = rf.get("/")
+    request.user = w["user"]
+    assert sensitivity.request_is_chat_surface(request)
+    request.via_mcp = True
+    assert not sensitivity.request_is_chat_surface(request)
+    _converse(w["hot"])
+    rows = sensitivity.readable(Message.objects.filter(session=w["hot"]), w["hot"],
+                                chat_surface=False, user=w["user"])
+    assert REPLY not in _said([{"plaintext": m.plaintext} for m in rows])
+
+
+def test_the_socket_admits_a_browser_or_the_widget_never_a_token():
+    assert sensitivity.scope_is_chat_surface({"auth_method": "session", "session": {}})
+    assert sensitivity.scope_is_chat_surface({"auth_method": "dlg", "via_widget": True})
+    assert not sensitivity.scope_is_chat_surface({"auth_method": "pat"})
+    assert not sensitivity.scope_is_chat_surface(
+        {"auth_method": "session", "session": {"_canopy_debug_session": True}})
+
+
+def test_the_visitor_reads_their_own_conversation_back_in_the_widget(w):
+    from apps.contacts.models import Contact
+    from apps.tokens.models import AppCredential, ContactToken
+
+    app = AppCredential.create_credential(name="connect-labs", created_by=w["user"], workspace=w["ws"])
+    visitor = Contact.objects.create(workspace=w["ws"], app=app, external_id="v-1",
+                                     display_name="Visitor", source=Contact.SOURCE_EMBED)
+    s = Session.objects.create(workspace=w["ws"], agent=w["agent"], contact=visitor,
+                               metadata={**ZDR, "embed_app": "connect-labs"})
+    _converse(s)
+    raw, _ = ContactToken.issue(app=app, contact=visitor, ttl_seconds=600)
+    page = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").get(
+        f"/api/contact/sessions/{s.pk}/messages?before=999").json()["messages"]
+    assert ASKED in _said(page) and REPLY in _said(page)
+    other = Contact.objects.create(workspace=w["ws"], app=app, external_id="v-2",
+                                   display_name="Other", source=Contact.SOURCE_EMBED)
+    assert not sensitivity.reads_content(s, chat_surface=True, contact=other)
 
 
 # --- forced retention -------------------------------------------------------------------

@@ -41,6 +41,7 @@ from apps.embedding.rate_limit import (
     check_contact_token_issuer,
 )
 from apps.harness import initiator as who
+from apps.harness import sensitivity
 from apps.harness.schemas import TurnOut
 from apps.tokens.models import ContactToken, EmbedAuditLog
 from apps.tokens.schemas import WsTicketOut
@@ -656,6 +657,9 @@ def messages(request: HttpRequest, session_id: str, before: int, limit: int = 50
     # (except a tool result that carries an app View — `for_widget`).
     from apps.mcp_apps_host import mcp_apps_views
 
+    # The contact is the conversation's own person, on its own surface: a sensitive
+    # conversation reads back for them (`sensitivity.reads_content`).
+    rows = sensitivity.readable(rows, session, chat_surface=True, contact=request.contact)
     mcp_apps_views.annotate(session, rows)
     rows = session_transcript_read.for_widget(rows)
     return {"messages": [MessageOut.from_orm(m) for m in rows], "has_more_before": has_more}
