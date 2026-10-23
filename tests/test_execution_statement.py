@@ -56,13 +56,7 @@ def _sensitive_cap(w, *, sensitive=True):
     return box
 
 
-def _host_side():
-    """The host's verifier, configured as connect-labs would be."""
-    config = HostConfig(signing_key=generate_private_key("EdDSA"), resource=RESOURCE,
-                        canopy_client_id=client_identity.client_id())
-    docs = {client_identity.client_id(): client_identity.client_metadata(),
-            client_identity.jwks_uri(): client_identity.published_jwks()}
-    return config, ClientKeyResolver(fetch_json=docs.__getitem__), MemoryJtiStore()
+_host_side = sg.host_side
 
 
 def _verify(headers, store=None, **kw):

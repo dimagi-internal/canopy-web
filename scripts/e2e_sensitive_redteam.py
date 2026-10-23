@@ -23,7 +23,12 @@ Two halves:
   - the run's canary string (in every probe) appears nowhere canopy stores — the
     session's messages, each turn, its events, its transcript;
   - share link, Slack share and export refuse; a fork keeps the requirement; and,
-    with `--other-runner`, a send pinned to a non-sensitive-data box is refused or never runs.
+    with `--other-runner`, a send pinned to a non-sensitive-data box is refused or never runs;
+  - `view_door`: a token (what an agent holds) cannot read a kept result through the
+    person's View door, so it cannot make canopy issue a View's read. The host's half — a
+    delegated read with NO statement is refused, one with `Canopy-View` reads — needs
+    canopy's DPoP key, so it runs in the live container:
+    `manage.py view_read_probe --session <id> --email <a person in it>`.
 
     CANOPY_E2E_TOKEN=<pat> uv run python scripts/e2e_sensitive_redteam.py --workspace dimagi
     uv run python scripts/e2e_sensitive_redteam.py --token <pat> --workspace dimagi \\
@@ -55,7 +60,7 @@ SCRIPT = "e2e_sensitive_redteam.py"
 DEFAULT_BASE = "https://canopy.dimagi.com"
 PREFLIGHT = ("declaration", "box", "dedicated", "self_declared_flag")
 EXITS = ("requirement", "probes", "tools", "no_rows", "canary", "share", "slack", "export",
-         "fork", "ordinary_runner")
+         "fork", "ordinary_runner", "view_door")
 #: What a sensitive-data capability may call (apps/agents/sensitive_data.py) — anything else that comes
 #: back without an error is a way out.
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite")
@@ -346,6 +351,28 @@ class Run:
         if turn.get("claimed_by_name") and turn["claimed_by_name"] != self.sensitive_box()["name"]:
             raise Failure(f"claimed by the non-sensitive-data runner {turn['claimed_by_name']!r}")
         return f"not claimed by it in 90s (status {turn.get('status')}; cancelled)"
+
+
+    def step_view_door(self) -> str:
+        """The View's read door answers a person at a browser (or their widget), never a
+        token: a turn holding one cannot make canopy read a kept result "as the person's
+        View". Tries the conversation's own result links; each must be refused."""
+        links = []
+        for m in self._messages():
+            c = m.get("content") or {}
+            if m.get("role") == "tool_result" and c.get("tool_use_id"):
+                links += [(c["tool_use_id"], link.get("uri")) for link in c.get("resource_links") or []
+                          if link.get("uri")]
+        if not links:
+            raise Failure("the conversation holds no kept result link (ask the agent for a query first)")
+        for tool_call_id, uri in links[:3]:
+            r = self.api.raw("POST", f"/canopy-sessions/{self.args.session}/apps/{tool_call_id}/read",
+                             {"uri": uri})
+            if r.status < 300 or '"rows"' in r.raw:
+                raise Failure(f"a token read {uri} through the View door: {r.status} {r.raw[:120]}")
+            if r.status not in (401, 403):
+                raise Failure(f"expected a refusal of the token, got {r.status}: {r.raw[:160]}")
+        return f"{min(3, len(links))} result link(s): every token read refused"
 
 
 def main() -> int:

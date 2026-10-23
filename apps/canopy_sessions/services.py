@@ -44,6 +44,9 @@ SERVER_OWNED_METADATA = frozenset({
     # MCP Apps receipts + model context (apps/mcp_apps_host/mcp_apps_views.py): canopy's
     # own record of what a View did — a host must never be able to write it.
     "mcp_apps",
+    # The resource links a host's tools returned through the gateway, and which tool
+    # (apps/host_grants/host_gateway.py `remember_links`): what `site_read` may read back.
+    "host_links",
     # Where each confined turn's transcript sits in the session
     # (apps/harness/session_sync.py::TURN_END_EPOCHS).
     "turn_end_epochs",

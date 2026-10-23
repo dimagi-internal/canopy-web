@@ -114,6 +114,20 @@ class HostMCP:
         return self.inner.router.lifespan_context(self.inner)
 
 
+def host_side():
+    """The host's verifier for canopy's statements, configured as connect-labs would be:
+    `(HostConfig, ClientKeyResolver over canopy's own metadata, a fresh jti store)`."""
+    from canopy_sdk.host import ClientKeyResolver, HostConfig
+    from canopy_sdk.keys import generate_private_key
+    from canopy_sdk.stores import MemoryJtiStore
+
+    config = HostConfig(signing_key=generate_private_key("EdDSA"), resource=RESOURCE,
+                        canopy_client_id=client_identity.client_id())
+    docs = {client_identity.client_id(): client_identity.client_metadata(),
+            client_identity.jwks_uri(): client_identity.published_jwks()}
+    return config, ClientKeyResolver(fetch_json=docs.__getitem__), MemoryJtiStore()
+
+
 def host_mcp(monkeypatch):
     h = HostMCP()
     monkeypatch.setattr(host_gateway, "_transport_override", httpx2.ASGITransport(app=h.app))

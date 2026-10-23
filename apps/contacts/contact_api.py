@@ -42,8 +42,8 @@ from apps.embedding.rate_limit import (
     check_contact_token_client,
     check_contact_token_issuer,
 )
+from apps.harness import acting_person, sensitivity
 from apps.harness import initiator as who
-from apps.harness import sensitivity
 from apps.harness.schemas import TurnOut
 from apps.tokens.models import ContactToken, EmbedAuditLog
 from apps.tokens.schemas import WsTicketOut
@@ -865,7 +865,8 @@ def _app_viewer(request):
     from apps.mcp_apps_host import mcp_apps_views
 
     return mcp_apps_views.Viewer(contact=request.contact,
-                                 chat_surface=sensitivity.request_is_chat_surface(request))
+                                 chat_surface=sensitivity.request_is_chat_surface(request),
+                                 person=acting_person.is_person(request))
 
 
 def _app_run(fn, *args):

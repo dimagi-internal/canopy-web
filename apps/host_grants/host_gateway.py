@@ -51,7 +51,10 @@ import fnmatch
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from asgiref.sync import sync_to_async
 from canopy_sdk import consumer, contract
+from canopy_sdk import resources as resource_links
+from django.db import transaction
 from django.utils import timezone
 
 from apps.agents import sensitive_data
@@ -94,6 +97,14 @@ class SiteContext:
     #: What `Canopy-Execution` states for this turn (`execution.facts_for`), signed
     #: afresh on every request. None for a call no agent turn makes (a View, a probe).
     execution: dict | None = field(repr=False, default=None)
+    #: The conversation the turn is in (`resolve`), whose returned links `site_read` may
+    #: read back. "" for a context no turn made.
+    session_id: str = ""
+    #: What `Canopy-View` states — the person's own View, no agent acting
+    #: (`mcp_apps_views.view_facts`: subject, session, viewer, agent) — signed afresh on
+    #: every request of a View's `resources/read`, bound to the URI it reads. None for
+    #: anything else; never set beside `execution` (`resolve` never sets it).
+    view: dict | None = field(repr=False, default=None)
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling)
@@ -214,13 +225,15 @@ def resolve(turn_id: str) -> SiteContext:
             "undeclared",
             f"{site} gives its sensitive data only to a capability that handles sensitive data "
             "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
-    return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
-                             ceiling=list(cap.get("ceiling") or []),
-                             execution=execution.facts_for(turn, agent, session, effective))
+    ctx = context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
+                            ceiling=list(cap.get("ceiling") or []),
+                            execution=execution.facts_for(turn, agent, session, effective))
+    ctx.session_id = str(session.pk)
+    return ctx
 
 
 def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
-                      execution: dict | None = None) -> SiteContext:
+                      execution: dict | None = None, view: dict | None = None) -> SiteContext:
     """A `SiteContext` for ONE stored grant — or a refusal if the grant cannot
     be used: expired, for a resource the site no longer names, or bound to a
     DPoP key canopy no longer holds. `resolve` reaches it for a visitor's turn;
@@ -247,6 +260,7 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
         resource=app.host_mcp_resource, scope=grant.scope, expires_at=grant.expires_at,
         ceiling=list(ceiling),
         _token=decrypt_secret(grant.access_token_enc), app_id=app.pk, execution=execution,
+        view=view if execution is None else None,
     )
 
 
@@ -263,7 +277,7 @@ _transport_override = None
 PROOF_MODES = ("dpop", "no_proof", "stranger_key", "bearer")
 
 
-def _auth(ctx: SiteContext, mode: str = "dpop"):
+def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = ""):
     import httpx2
 
     from . import client_identity
@@ -305,15 +319,36 @@ def _auth(ctx: SiteContext, mode: str = "dpop"):
                 yield request
 
     def _state(request):
-        # canopy vouches for THIS request: a fresh, single-use statement each time.
+        # canopy vouches for THIS request: a fresh, single-use statement each time. An
+        # agent's turn says which agent (`Canopy-Execution`); the person's own View says
+        # so, for the one resource it reads (`Canopy-View`). Never both, and nothing for
+        # anything else — a host must treat no statement as no one it may trust.
+        # Each is bound to THIS JSON-RPC request too (`rpc`: its method and params), so a
+        # statement lifted off one call cannot ride another on the same token.
+        try:
+            body = request.content if request.method == "POST" else b""
+        except Exception:  # noqa: BLE001 - a streamed body: bound to nothing, so it vouches for nothing
+            body = b""
+        rpc = contract.rpc_digest_of_body(body)
         if ctx.execution is not None:
             request.headers[contract.EXECUTION_HEADER] = client_identity.execution_statement(
-                ctx.resource, ctx.execution, access_token=token)
+                ctx.resource, ctx.execution, access_token=token, rpc=rpc)
+        elif ctx.view is not None and view_uri and _reads(body, view_uri):
+            request.headers[contract.VIEW_HEADER] = client_identity.view_statement(
+                ctx.resource, uri=view_uri, access_token=token, rpc=rpc, **ctx.view)
 
     return _DPoP()
 
 
-def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None):
+def _reads(body: bytes, uri: str) -> bool:
+    """Whether this request body is the `resources/read` of `uri` (the only request a
+    View's statement rides — never its `initialize` or anything else)."""
+    rpc = contract.rpc_of_body(body)
+    return bool(rpc and rpc[0] == "resources/read" and str(rpc[1].get("uri") or "") == uri)
+
+
+def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None,
+            view_uri: str = ""):
     import httpx2
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
@@ -336,7 +371,7 @@ def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = Non
         return httpx2.AsyncClient(**kwargs)
 
     transport = StreamableHttpTransport(
-        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode),
+        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode, view_uri),
         httpx_client_factory=factory)
     # MCP Apps (SEP-1865): canopy renders a host's Views, so it says so in
     # `initialize` (§Client<>Server Capability Negotiation). A host that does not
@@ -369,8 +404,6 @@ async def _check_target(ctx: SiteContext) -> None:
 async def _listing(ctx: SiteContext, client) -> list:
     """The host's raw `tools/list` for this grant, with every tool's `_meta`
     folded into the site's MCP Apps index on the way past."""
-    from asgiref.sync import sync_to_async
-
     from apps.mcp_apps_host import mcp_apps
 
     tools = await client.list_tools()
@@ -422,8 +455,6 @@ async def _model_may_call(ctx: SiteContext, name: str, client) -> bool:
     still authorises every call as the visitor — but a hidden tool must not be
     callable by name either, or hiding it means nothing (spec 2026-10-08 §2).
     """
-    from asgiref.sync import sync_to_async
-
     from apps.mcp_apps_host import mcp_apps
     from apps.tokens.models import AppCredential
 
@@ -465,6 +496,7 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
         # returned must keep for the View and for `sensitivity.strip_result` to read.
         content.append({"type": "text", "text": text} if text is not None
                        else block.model_dump(mode="json", by_alias=True, exclude_none=True))
+    await sync_to_async(remember_links, thread_sensitive=True)(ctx, name, content)
     return {"site": ctx.site, "tool": name, "is_error": bool(result.is_error),
             "content": content, "structured": result.structured_content}
 
@@ -504,15 +536,83 @@ async def view_call(ctx: SiteContext, name: str, arguments: dict, *, check) -> d
     return out
 
 
+# --- the links a turn may read back ---------------------------------------------------
+
+#: Server-owned session metadata (`canopy_sessions.services.SERVER_OWNED_METADATA`): the
+#: resource links the host's tools returned through the gateway in this conversation,
+#: `[{"uri": <resource, no query>, "tool": <host tool>}]`, newest last.
+LINKS_KEY = "host_links"
+MAX_REMEMBERED_LINKS = 200
+
+
+def link_key(uri: str) -> str:
+    """A link as `site_read` matches it: the resource, any page of it (no query)."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    parts = urlsplit(str(uri or ""))
+    return urlunsplit((parts.scheme.lower(), parts.netloc, parts.path, "", ""))
+
+
+def remember_links(ctx: SiteContext, tool: str, content: list) -> None:
+    """Record the resource links `tool` returned (under a scheme the site declares) on the
+    turn's conversation, so `site_read` reads back only what this conversation was given."""
+    if not ctx.session_id:
+        return
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — a model/core module: loads with a call, as the gateway's other model reads
+    from apps.harness import sensitivity  # noqa: PLC0415 — a model/core module: loads with a call, as the gateway's other model reads
+
+    with transaction.atomic():
+        session = Session.objects.select_for_update().filter(pk=ctx.session_id).first()
+        if session is None:
+            return
+        links = resource_links.validate_links(content, sensitivity.resource_schemes(session))
+        if not links:
+            return
+        meta = dict(session.metadata or {})
+        known = [e for e in (meta.get(LINKS_KEY) or []) if isinstance(e, dict)]
+        fresh = {link_key(link["uri"]) for link in links}
+        known = [e for e in known if e.get("uri") not in fresh]
+        known += [{"uri": link_key(link["uri"]), "tool": host_tool_name(tool)} for link in links]
+        meta[LINKS_KEY] = known[-MAX_REMEMBERED_LINKS:]
+        Session.objects.filter(pk=session.pk).update(metadata=meta)
+
+
+def readable_link(ctx: SiteContext, uri: str) -> None:
+    """Refuse a `site_read` of anything but a link a site tool returned in THIS
+    conversation, under a scheme the site declares, from a tool the owner's ceiling
+    allows. Raises GatewayRefusal."""
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — a model/core module: loads with a call, as the gateway's other model reads
+    from apps.harness import sensitivity  # noqa: PLC0415 — a model/core module: loads with a call, as the gateway's other model reads
+
+    session = Session.objects.filter(pk=ctx.session_id).first() if ctx.session_id else None
+    if session is None:
+        raise GatewayRefusal("not_a_result", "I can read only results the site gave me in this conversation")
+    scheme = (resource_links.scheme_of(uri) or "").lower()
+    if not scheme or scheme not in sensitivity.resource_schemes(session):
+        raise GatewayRefusal("undeclared_scheme",
+                             f"{ctx.site} does not declare {scheme or 'that'}: links as its results")
+    key = link_key(uri)
+    entry = next((e for e in reversed((session.metadata or {}).get(LINKS_KEY) or [])
+                  if isinstance(e, dict) and e.get("uri") == key), None)
+    if entry is None:
+        raise GatewayRefusal("not_a_result", "I can read only results the site gave me in this conversation")
+    if not ctx.allows(str(entry.get("tool") or "")):
+        raise GatewayRefusal("not_allowed",
+                             f"that result came from {entry.get('tool')}, which I may not use on {ctx.site} here")
+
+
 async def read_resource(ctx: SiteContext, uri: str) -> dict:
     """`resources/read` for the AGENT (`site_read`), as the visitor — the read twin of
     `call_tool`, with the same resolution behind it (`resolve`: the conversation's
     runner requirements, a capability naming the site, the visitor's live grant) and
-    this turn's `Canopy-Execution` statement on every request. The host's own ACL
-    decides what the visitor may read; the answer is returned, never kept or audited."""
+    this turn's `Canopy-Execution` statement on every request. Only a link a site tool
+    returned in this conversation, under a scheme the site declares, from a tool inside
+    the owner's ceiling (`readable_link`); the host's own ACL then decides what the
+    visitor may read. The answer is returned, never kept or audited."""
     uri = str(uri or "").strip()
     if not uri or len(uri) > 2048 or ":" not in uri:
         raise GatewayRefusal("bad_uri", "that is not a resource URI")
+    await sync_to_async(readable_link, thread_sensitive=True)(ctx, uri)
     contents = await view_read(ctx, uri)
     return {"site": ctx.site, "uri": uri, "contents": contents}
 
@@ -523,7 +623,9 @@ async def view_read(ctx: SiteContext, uri: str) -> list[dict]:
 
     await _check_target(ctx)
     try:
-        async with _client(ctx) as client:
+        # A View's read carries `Canopy-View` for THIS uri when `ctx.view` says the person
+        # is looking; an agent's (`read_resource`) carries its `Canopy-Execution` instead.
+        async with _client(ctx, view_uri=uri) as client:
             contents = await client.read_resource(uri)
     except McpError as exc:
         # The host answered and said no (an artifact expired, not this person's):

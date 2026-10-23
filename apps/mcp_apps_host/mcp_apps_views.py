@@ -88,6 +88,11 @@ class Viewer:
     #: (`sensitivity.request_is_chat_surface`). False unless the route says so, so a
     #: sensitive conversation's call arguments reach no token-held door.
     chat_surface: bool = False
+    #: Whether the principal behind the request is a person acting as themselves
+    #: (`harness.acting_person`) — never an agent's turn, caller token or login. Only
+    #: then, and only in a conversation they are in, does canopy tell the host this is
+    #: the person's own View (`Canopy-View`, `view_facts`). False unless the route says so.
+    person: bool = False
 
     @property
     def name(self) -> str:
@@ -345,6 +350,25 @@ def _ceiling(session, row: ViewRow) -> list[str]:
     return list(cap.get("ceiling") or [])
 
 
+def view_facts(session, viewer: Viewer, grant) -> dict | None:
+    """What `Canopy-View` states for this viewer's reads, or None: canopy says "the
+    person's own View, no agent acting" only when the principal behind the request is a
+    person acting as themselves (`Viewer.person`, from `harness.acting_person`), they
+    are IN this conversation (`sensitivity.is_conversation_person`) and, for a sensitive
+    one, reading it on its chat surface (`may_read`'s rule). The person is named
+    as the host knows them (the grant's `subject`); the resource is bound per read."""
+    if not viewer.person or not grant.subject:
+        return None
+    if not sensitivity.is_conversation_person(session, user=viewer.user, contact=viewer.contact):
+        return None
+    # The same people `may_read` lets read a sensitive conversation's results, no wider.
+    if not sensitivity.reads_content(session, chat_surface=viewer.chat_surface, user=viewer.user,
+                                     contact=viewer.contact):
+        return None
+    return {"subject": grant.subject, "session": str(session.pk), "viewer": viewer.label(),
+            "agent": session.agent.slug if session.agent_id else ""}
+
+
 def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.SiteContext:
     """Gate 6. The site from the session, the grant from the VIEWER.
 
@@ -365,7 +389,7 @@ def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.Si
     try:
         return host_gateway.context_for_grant(
             app, grant, turn_id="", agent_slug=(session.agent.slug if session.agent_id else "canopy"),
-            ceiling=_ceiling(session, row))
+            ceiling=_ceiling(session, row), view=view_facts(session, viewer, grant))
     except host_gateway.GatewayRefusal as exc:
         raise ViewRefusal(GATES[6] if exc.code in ("expired", "stale_grant") else exc.code,
                           exc.message) from None
@@ -523,10 +547,25 @@ def call(session, viewer: Viewer, tool_call_id: str, name: str, arguments: dict)
     return result
 
 
+def may_read(session, viewer: Viewer) -> None:
+    """Who may read from the host through a View (`read`) or hear that it changed
+    (`subscribe`). Not `may_act`: a read changes nothing and runs on the viewer's OWN
+    grant, under the host's own ACL, so anyone the session ACL lets see an ordinary
+    conversation may (a VIEWER participant reads their own share of the host). A
+    sensitive conversation's results are read only by its own people on its own chat
+    surfaces (`sensitivity.reads_content`), the rule its words follow. Raises."""
+    if not sensitivity.reads_content(session, chat_surface=viewer.chat_surface, user=viewer.user,
+                                     contact=viewer.contact):
+        raise ViewRefusal("viewer_cannot_read",
+                          "only the people in this conversation read its results, from its chat")
+
+
 def read(session, viewer: Viewer, tool_call_id: str, uri: str) -> dict:
-    """A View's own `resources/read`: same server only (the session's site), as the viewer."""
+    """A View's own `resources/read`: same server only (the session's site), as the viewer,
+    by whoever `may_read`."""
     ref = None
     try:
+        may_read(session, viewer)
         row = find(session, tool_call_id)
         ref = row.ref
         ctx = resolve_for_viewer(session, viewer, row)
@@ -563,13 +602,14 @@ def subscribe(session, viewer: Viewer, tool_call_id: str, uri: str) -> dict:
     MCP sessions are per request, so no host session outlives the call) and relays
     the host's signed "it changed" to this View (`resources_updated`).
 
-    Gated like `read`: a real View row in this session and the viewer's own live
-    grant for its site. What reaches the View later is the URI alone; the re-read
+    Gated like `read`: `may_read`, a real View row in this session and the viewer's own
+    live grant for its site. What reaches the View later is the URI alone; the re-read
     goes through `read`, as the viewer, under the host's ACL."""
     from apps.canopy_sessions.models import AppViewSubscription  # noqa: PLC0415 — as Message here: models after the registry
 
     ref = None
     try:
+        may_read(session, viewer)
         row = find(session, tool_call_id)
         ref = row.ref
         uri = _subscription_uri(uri)

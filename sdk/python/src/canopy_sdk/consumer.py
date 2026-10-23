@@ -207,13 +207,15 @@ def client_assertion(key, client_id: str, audience: str, *, now: float | None = 
 
 
 def execution_statement(key, client_id: str, audience: str, facts: dict, *, jkt: str,
-                        access_token: str | None = None, now: float | None = None) -> str:
+                        access_token: str | None = None, rpc: str | None = None,
+                        now: float | None = None) -> str:
     """canopy's ``Canopy-Execution`` statement for ONE request to a host
     (spec 2026-10-22-sensitive-data-agents-design §6): ``facts`` (agent, capability,
     declaration, runner, runner_posture, requirements, turn, session) signed by
     canopy's CLIENT key, for ``audience`` (the host's MCP resource), living 60s,
     single-use ``jti``, bound to the DPoP key (``cnf.jkt``) and, when given, to
-    the access token it rides with (``ath``)."""
+    the access token it rides with (``ath``) and the JSON-RPC request it rides
+    (``rpc``, ``contract.rpc_digest``)."""
     issued = int(time.time() if now is None else now)
     claims = {**facts,
               "iss": client_id, "aud": audience, "iat": issued,
@@ -221,7 +223,33 @@ def execution_statement(key, client_id: str, audience: str, facts: dict, *, jkt:
               "cnf": {"jkt": jkt}}
     if access_token:
         claims["ath"] = contract.ath(access_token)
+    if rpc:
+        claims["rpc"] = rpc
     return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": contract.EXECUTION_TYP})
+
+
+def view_statement(key, client_id: str, audience: str, *, subject: str, uri: str, session: str,
+                   jkt: str, access_token: str, viewer: str = "", agent: str = "",
+                   rpc: str | None = None, now: float | None = None) -> str:
+    """canopy's ``Canopy-View`` statement for ONE request a person's own MCP Apps View
+    makes to a host: ``actor: "view"``, for ``subject`` (the host's own id for the
+    person, the grant's ``sub``), reading ``uri``, in conversation ``session``. Signed by
+    canopy's CLIENT key, for ``audience`` (the host's MCP resource), living 60s,
+    single-use ``jti``, bound to the DPoP key (``cnf.jkt``) and to the access token it
+    rides with (``ath``, required) and, when given, the JSON-RPC request it rides
+    (``rpc``, ``contract.rpc_digest``). ``viewer`` / ``agent`` are informational, for the
+    host's audit."""
+    if not (subject and uri and session and access_token):
+        raise ValueError("a view statement names its person, resource, conversation and token")
+    issued = int(time.time() if now is None else now)
+    claims = {"actor": contract.VIEW_ACTOR, "sub": str(subject), "uri": str(uri),
+              "session": str(session), "viewer": str(viewer or ""), "agent": str(agent or ""),
+              "iss": client_id, "aud": audience, "iat": issued,
+              "exp": issued + contract.VIEW_MAX_LIFETIME, "jti": new_jti(),
+              "cnf": {"jkt": jkt}, "ath": contract.ath(access_token)}
+    if rpc:
+        claims["rpc"] = rpc
+    return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": contract.VIEW_TYP})
 
 
 def dpop_proof(key, htm: str, htu: str, *, access_token: str | None = None,

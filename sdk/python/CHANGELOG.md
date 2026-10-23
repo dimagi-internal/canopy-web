@@ -2,6 +2,37 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.20.0 — 2026-10-23
+
+**`Canopy-View`: canopy's positive word that a request is the person's own View.** A host
+that gives a person's MCP Apps View more than an agent (Connect Labs: the rows of a
+sensitive result) must decide it on a signed statement, never on a missing
+`Canopy-Execution` — anything that makes canopy issue a delegated request without a
+statement would otherwise read as the person.
+
+- `contract.VIEW_HEADER` (`Canopy-View`), `VIEW_TYP` (`canopy-view+jwt`), `VIEW_ACTOR`
+  (`"view"`), `VIEW_MAX_LIFETIME` (60s), `VIEW_REQUIRED_CLAIMS`.
+- `consumer.view_statement(key, client_id, audience, *, subject, uri, session, jkt,
+  access_token, viewer="", agent="")` — canopy's half: `actor: "view"`, bound to the person
+  (`sub`, the host's id for them), the resource (`uri`), the conversation (`session`), the
+  DPoP key (`cnf.jkt`) and the access token (`ath`, required); 60s, single-use `jti`.
+- `canopy_sdk.host.verify_view(request, *, config, client_keys, replay_store, uri,
+  subject)` → `View`, or `ViewRefused` (`no_statement`, `agent_call` — a request that also
+  carries `Canopy-Execution` —, `bad_typ`, `bad_signature`, `bad_audience`, `bad_issuer`,
+  `bad_actor`, `expired`, `too_long`, `unbound`, `wrong_person`, `wrong_resource`,
+  `replayed`, ...). `same_resource(stated, actual)` compares scheme, authority and path
+  (a page of a result is the result). Django: `canopy_sdk.django.execution.verify_view`.
+- **Both statements bind the JSON-RPC request they ride** (`rpc` claim,
+  `contract.rpc_digest(method, params)`: the method plus, for `tools/call`, the tool name
+  and arguments, for `resources/read` the URI with its query sorted; `_meta` and `id` are
+  not part of it). `execution_statement(..., rpc=)` / `view_statement(..., rpc=)` sign it;
+  `verify_execution(..., rpc=(method, params))` / `verify_view(..., rpc=...)` refuse a
+  statement for another request (`wrong_request`), or one with no `rpc` when the host asks.
+  Helpers: `contract.rpc_digest_of_body`, `contract.rpc_of_body`. A host that does not pass
+  `rpc` sees no change.
+- Unchanged: 0.19.0's migration `canopy_host.0003_drop_artifact` still drops the
+  `canopy_host_artifact` table on a host that upgrades from 0.18.x.
+
 ## 0.19.0 — 2026-10-23
 
 **Breaking: kept results moved out of the SDK; a host keeps its own MCP results; the SDK

@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.19.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.20.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.19.0/dimagi_canopy-0.19.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.20.0/dimagi_canopy-0.20.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -42,14 +42,14 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `AGENT_CLAIM`, `WORKSPACE_CLAIM`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`), `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
-| `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`), `verify_view` → `View`, `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `view_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `site_settings_url`, `SiteAgent` + `problem_links` of `AgentProblem`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError` (`code`, `status`), `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
 | `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`), `site_document_url`, `WELL_KNOWN_PATH` |
 | `canopy_sdk.resources` | both sides | links to results a host keeps: `resource_link`, `validate_link(s)`, `check_scheme`, `RESERVED_SCHEMES`; "it changed": `notify_updated`, `updated_notification`, canopy's `verify_updated_notification`, `UPDATED_PATH`; see [Host-held results](#host-held-results-return-facts--a-link) |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
-| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
@@ -772,11 +772,43 @@ refusal = execution.sensitive_clearance(agents={"labsdata"})   # None, or the re
 allowlist, its capability is marked `data: sensitive`, the runner's flags in force
 and its reported `data_mode` include `sensitive_data`, and the conversation requires `sensitive_data`. Record
 `agent`, `runner` and the declarer on your audit log. A view call (a person
-clicking in an MCP Apps View) carries no statement: no agent is executing. canopy's
+clicking in an MCP Apps View) carries no `Canopy-Execution`: no agent is executing. A
+missing statement is never proof of that — see `Canopy-View` below. canopy's
 gateway itself refuses to call you at all for a `sensitive_data` conversation whose capability is
 not marked `data: sensitive`. The two attestations — that the box's
 model key is zero-data-retention, and that the agent behaves as declared — are a
 person's word, recorded; the statement says whose.
+
+#### `Canopy-View` — the person's own View, stated, never inferred
+
+When a person's own MCP Apps View reads a resource you keep (`resources/read`), canopy
+adds `Canopy-View: <JWT>` (`typ: canopy-view+jwt`), signed by the same client key:
+`actor: "view"`, `sub` = YOUR id for the person (the delegated grant's subject), `uri` =
+the resource, `session` = the conversation, `iat`/`exp` (≤ 60s), single-use `jti`,
+`cnf.jkt` and `ath` (required), `rpc` (below), plus informational `viewer` and `agent`. canopy sends it
+only when the principal behind the View request is a person acting as themselves — never
+an agent's turn, a conversation's caller token or an agent's own login — and only for a
+conversation that person is in. It never rides beside `Canopy-Execution`.
+
+```python
+from canopy_sdk.django.execution import ViewRefused, verify_view  # Django
+# framework-free: canopy_sdk.host.verify_view(request, config=..., client_keys=..., replay_store=..., uri=..., subject=...)
+
+try:
+    view = verify_view(request, uri=uri_being_read, subject=str(user.pk))
+except ViewRefused as exc:                       # no_statement, agent_call, wrong_person,
+    ...                                          # wrong_resource, expired, replayed, unbound, ...
+```
+
+**Both statements name the request they ride.** `rpc` = `contract.rpc_digest(method,
+params)` of the JSON-RPC request (for `tools/call` the tool name and arguments, for
+`resources/read` the URI, query sorted). Pass `rpc=(method, params)` to `verify_execution`
+/ `verify_view` and a statement lifted from one call cannot ride another on the same
+token (`wrong_request`).
+
+If you release more to a person's View than to an agent, release it on a verified
+`View` only. **No statement means refused**, not "the person is looking": anything that
+can make canopy call you without a statement would otherwise get the person's share.
 
 ### Freshness
 Canopy re-obtains an ID-JAG whenever the widget re-mints its token (the widget
