@@ -10,6 +10,8 @@ from canopy_sdk import contract
 from ninja import Schema
 from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_validator
 
+from apps.workspaces import links
+
 from . import sensitivity
 from .models import Turn
 from .runner_requirements import is_sensitive_data_box
@@ -841,6 +843,14 @@ class TurnOut(Schema):
     # ext_id, the way every route names a task (it is the agent's own task).
     raised_from_task_ext_id: str | None = None
     session_id: str
+    # The canopy conversation this turn ran in — a chat turn's own session, or the
+    # one its runner made for an agent/project turn (`Turn.canopy_session`). Null
+    # until that exists (the turn is still queued, or no runner reported one).
+    # NOT `session_id` above, which is the runner's own name for its live session.
+    # Follow up there with `POST /api/canopy-sessions/{canopy_session_id}/send`.
+    canopy_session_id: uuid.UUID | None = None
+    # That conversation's page on canopy-web; null when it has no workspace.
+    canopy_session_url: str | None = None
     result_note: str
     # True when `prompt`, `origin_ref` and `result_note` were blanked because
     # the caller may not read this turn's content (apps/harness/turn_access.py).
@@ -888,6 +898,18 @@ class TurnOut(Schema):
         if cs is not None:
             return cs.workspace_id
         return obj.workspace_id
+
+    @staticmethod
+    def resolve_canopy_session_id(obj) -> uuid.UUID | None:
+        return getattr(obj, "chat_session_id", None) or getattr(obj, "canopy_session_id", None)
+
+    @staticmethod
+    def resolve_canopy_session_url(obj) -> str | None:
+        session = (obj.chat_session if getattr(obj, "chat_session_id", None)
+                   else obj.canopy_session if getattr(obj, "canopy_session_id", None) else None)
+        if session is None:
+            return None
+        return links.scoped_url_or_none(session.workspace_id, f"/chat/{session.pk}")
 
     @staticmethod
     def resolve_claimed_by_name(obj) -> str | None:

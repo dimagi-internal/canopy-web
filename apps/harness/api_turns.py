@@ -154,6 +154,8 @@ def visible_turns_qs(request: HttpRequest, *, slugs: set[str] | None = None):
         "pinned_runner", "requested_turn_mode_by",
         # A chat turn's session and its agent are read per row by TurnOut.
         "chat_session", "chat_session__agent",
+        # TurnOut.canopy_session_url (an agent/project turn's conversation).
+        "canopy_session",
         # TurnOut.raised_from_task_ext_id.
         "raised_from_task",
     ).order_by("-created_at")

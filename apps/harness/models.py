@@ -815,7 +815,18 @@ class Turn(models.Model):
     # runner, the other is asserted by the agent, and conflating them would make a
     # missing value ambiguous.
     cli_session_id = models.CharField(max_length=100, blank=True, default="")
-    report_title = models.CharField(max_length=300, blank=True, default="")
+    # The canopy conversation an AGENT or PROJECT turn ran in: the Session its
+    # runner's record-session made (or reused) for it, stamped the moment that
+    # session exists, first write wins (`session_sync.link_turn_session`). It is
+    # what lets someone who dispatched a turn follow up in the same conversation
+    # (`POST /api/canopy-sessions/<id>/send`) holding only the turn id. A chat
+    # turn leaves it null: `chat_session` already is its conversation, and
+    # `TurnOut.canopy_session_id` answers with either.
+    canopy_session = models.ForeignKey(
+        "canopy_sessions.Session", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="driven_turns",
+    )
+    report_title =models.CharField(max_length=300, blank=True, default="")
     report_summary = models.TextField(blank=True, default="")
     # The request(s) this turn advanced — AgentTask.ext_id values (loose refs, not FKs).
     task_ext_ids = models.JSONField(default=list, blank=True)

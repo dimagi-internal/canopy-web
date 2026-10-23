@@ -389,7 +389,7 @@ def _tenant_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     others, from the caller's side.
     """
     turn = (
-        Turn.objects.select_related("agent", "claimed_by", "chat_session")
+        Turn.objects.select_related("agent", "claimed_by", "chat_session", "canopy_session")
         .filter(pk=turn_id)
         .first()
     )
