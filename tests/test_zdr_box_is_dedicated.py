@@ -14,7 +14,8 @@ from django.utils import timezone
 
 from apps.agents.interface import parse
 from apps.agents.models import Agent
-from apps.agents.services import is_zdr_box, runner_may_hold_agent
+from apps.agents.services import runner_may_hold_agent
+from apps.harness.runner_requirements import is_zdr_box
 from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag, Turn
 from apps.workspaces.models import Workspace, WorkspaceMembership

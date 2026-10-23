@@ -101,12 +101,15 @@ at boot:
   its transcript under `~/.claude/projects`, its caller envelope, its profile and its
   per-turn work directory are deleted. Encrypted EBS.
 - **A dedicated box.** A ZDR box — declared `zdr` OR reporting ZDR mode, either alone
-  (`services.is_zdr_box`) — holds only an agent with a `data: phi` capability, whoever
+  (`runner_requirements.is_zdr_box`) — holds only an agent with a `data: phi` capability, whoever
   owns it (`runner_may_hold_agent` refuses the rest, so claim, pins, credentials and
   routing writes all do).
 - **Egress locked.** Agent processes reach only an allowlist of hosts: canopy-web,
   `api.anthropic.com` and what the box itself needs. Egress is its own runner setting,
-  not part of ZDR mode — any box may lock it — but ZDR mode requires it.
+  set in canopy-web (runner page or MCP, an audited setting) and read by root on the box
+  by its instance role, never relayed by a unit. Any box may be locked; ZDR mode locks
+  every unit of its box, canopy-web refuses to unlock a ZDR box, and adding a host to
+  one is a person behind a passkey.
 - **Posture on every heartbeat.** The box reports `data_mode: "zdr"` and a hash of the
   config that produced it (settings, MCP config, environment allowlist, credential slot
   kinds — never the key). That is a self-report and proves nothing; what it buys is
@@ -351,9 +354,9 @@ Each step ships on its own and fails closed until the next lands.
 4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in ZDR
    mode; Jonathan declares `zdr`. Done: `cloud-zdr-1`, declared and reporting ZDR mode.
    The box holds only `data: phi` agents (§1, `is_zdr_box`). The egress lock is built
-   (`RunnerEgress=locked`: a loopback CONNECT proxy plus root's `CANOPY-EGRESS` chain,
-   `runner/ec2/README.md` § Egress lock), and ZDR mode is not ready without it; next,
-   `cloud-zdr-1` takes a stack update with `RunnerEgress=locked`.
+   (a loopback CONNECT proxy per unit plus root's `CANOPY-EGRESS` chain, set in
+   canopy-web and applied by root every minute; `runner/ec2/README.md` § Egress lock),
+   and ZDR mode is not ready without it.
 5. **canopy-web: storage rules** (§4). Done (#1847).
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips

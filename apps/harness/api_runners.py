@@ -27,7 +27,7 @@ from apps.events import audit as events_audit
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, routing, services
+from . import claim, egress, routing, services
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -47,6 +47,7 @@ from .models import (
     Turn,
     WorkspaceRunnerOrder,
 )
+from .runner_requirements import is_zdr_box
 from .schemas import (
     ClaimedTurnOut,
     FleetHoldIn,
@@ -64,6 +65,7 @@ from .schemas import (
     RunnerCredentialPatchIn,
     RunnerCredentialOut,
     RunnerCredentialStatusOut,
+    RunnerEgressIn,
     RunnerEngineIn,
     RunnerEnrollmentIn,
     RunnerEnrollmentOut,
@@ -928,6 +930,44 @@ def set_runner_only_agents(request: HttpRequest, runner_id: uuid.UUID, payload: 
         runner.only_agents.set(found.values())
     events_audit.note_change(scope=f"runner-only-agents:{runner.name}", before=before, after=after,
                       workspace=runner.workspace)
+    out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
+           .prefetch_related("declared_flags").get(pk=runner.pk))
+    out.can_manage = out.owner_id in (request.user.id, None)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
+    return _with_roots(request, out)
+
+
+@router.put("/runners/{runner_id}/egress", response=RunnerOut,
+            summary="Lock this runner's egress to an allowlist of hosts")
+@gate("runner-admin", setting=True)
+def set_runner_egress(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerEgressIn):
+    """Set the runner's egress lock: `locked` (its units reach the network only
+    through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
+    hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
+    applies it within a minute, on top of the box's own setting, which it never
+    loosens. A ZDR box is always locked; adding a host to one needs a person in a
+    browser behind a passkey. Owner or a runner administrator."""
+    runner = runner_admin_or_404(request, runner_id)
+    try:
+        allow = egress.normalize_allow(payload.allow)
+    except ValueError as exc:
+        raise HttpError(422, str(exc))
+    zdr = is_zdr_box(runner)
+    if zdr and not payload.locked:
+        raise HttpError(422, egress.FORCED)
+    if zdr and egress.loosens(runner, locked=payload.locked, allow=allow):
+        # A ZDR box reaching one more host is a person's decision, as its `zdr`
+        # declaration is: 403 `step_up_required` for a browser, a plain 403 for a token.
+        from apps.passkeys import stepup  # noqa: PLC0415 — lazy like set_runner_flags' own
+
+        stepup.require_recent_step_up(request)
+    before = {"locked": runner.egress_locked, "allow": list(runner.egress_allow or [])}
+    after = {"locked": payload.locked, "allow": allow}
+    if before != after:
+        runner.egress_locked, runner.egress_allow = payload.locked, allow
+        runner.save(update_fields=["egress_locked", "egress_allow"])
+    events_audit.note_change(scope=f"runner-egress:{runner.name}", before=before, after=after,
+                             workspace=runner.workspace)
     out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
            .prefetch_related("declared_flags").get(pk=runner.pk))
     out.can_manage = out.owner_id in (request.user.id, None)

@@ -677,43 +677,58 @@ A box in ZDR mode is the only kind canopy routes a ZDR-requiring conversation to
   is not used. Telemetry, error reporting and non-essential model calls are off.
 - **Nothing kept**: a turn's caller envelope and profiles are deleted when it ends,
   and a confined turn's transcript too.
-- **Egress locked** (`RunnerEgress=locked`, below). A ZDR box with egress open, or a
-  lock that is not holding, reports `ready: false`.
+- **Egress locked** (below): ZDR mode locks every unit. A unit whose lock is not
+  holding reports `ready: false`.
 - **It says so.** Every heartbeat carries `data_mode` and a config hash (which covers
   the egress setting); canopy counts a person's `zdr` declaration only while the box
   reports `zdr`.
 - **Dedicated.** canopy-web lets a ZDR box hold only agents with a `data: phi`
-  capability (`services.is_zdr_box`).
+  capability (`runner_requirements.is_zdr_box`).
 
-Standing one up: deploy with `EXTRA_PARAMS="RunnerDataMode=zdr RunnerEgress=locked"`,
+Standing one up: deploy with `EXTRA_PARAMS="RunnerDataMode=zdr"`,
 put the ZDR key in the API-key slot with `canopy runner credential`, then a person
 declares `zdr` on the runner page (passkey).
 
-## Egress lock (`RunnerEgress=locked`): a box that reaches only what it must
+## Egress lock: a box that reaches only what it must
 
-Any box may lock its egress; ZDR mode requires it. Locked, every isolation unit's
-processes (its runner, Claude, every tool) get `HTTPS_PROXY=http://127.0.0.1:3128`
-and reach the network only through `canopy-egress.service`, a CONNECT-only proxy
-(`cloud_runner.py --egress-proxy`, its own system user) that admits port 443 to:
+A locked isolation unit's processes (its runner, Claude, every tool) get
+`HTTPS_PROXY=http://127.0.0.1:<its port>` (`20000 + uid % 10000`) and reach the network
+only through `canopy-egress.service`, a CONNECT-only proxy (`cloud_runner.py
+--egress-proxy`, its own system user, one loopback listener per unit) that admits port
+443 to:
 
 - `api.anthropic.com`, canopy-web's host (from `CANOPY_BASE_URL`), and GitHub
   (`github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`,
   `release-assets.githubusercontent.com`) for the runner's code, the plugin and clones;
-- whatever `RunnerEgressAllow` adds (`host.example.com`, or `.example.com` for every
-  subdomain). A non-ZDR box that runs agents with Google, Slack or 1Password needs
-  their hosts here.
+- that unit's extra hosts (`host.example.com`, or `.example.com` for every subdomain).
 
-Root's iptables chain `CANOPY-EGRESS` rejects everything else a unit uid sends,
-including DNS on loopback (a lookup is itself a way out), so a tool that ignores the
-proxy fails instead of getting out. Root and the proxy's user are outside the chain;
-units cannot become either. A refused host is logged by name in the proxy's journal
-(`journalctl -u canopy-egress`), never content. The proxy narrows hosts, not paths.
+Root's iptables chain `CANOPY-EGRESS` rejects everything else a locked unit's uid sends —
+DNS on loopback (a lookup is itself a way out) and the other units' proxy ports
+included — so a tool that ignores the proxy fails instead of getting out. Root and the
+proxy's user are outside the chain; units cannot become either. A refused host is
+logged by name (`journalctl -u canopy-egress`), never content. The proxy narrows hosts,
+not paths.
 
-`--setup-units` (every start) installs or removes all of it from box.env. box.env is
-rewritten from the stack's parameters on every start, so change it with a stack update
-(`EXTRA_PARAMS="RunnerEgress=locked" ./up.sh …`), which stops and starts the box. The
-runner page's `egress` check says whether the lock holds: the proxy answers, and a
-direct connection out is refused.
+**Who locks a unit — it only ratchets up:**
+
+- **canopy-web** (the usual way): the runner's page, **Egress lock**, or MCP
+  `set_runner_egress` / `PUT /api/harness/runners/{id}/egress`, per runner: locked, plus
+  extra hosts. Root reads it every minute by the box's instance role
+  (`canopy-egress-sync.timer` → `--egress-sync` → `POST /api/harness/runners/box-egress`)
+  — never relayed by a unit, which could otherwise loosen its own lock. If canopy-web
+  cannot be read, root keeps the last answer it had.
+- **ZDR mode** (`RunnerDataMode=zdr`): every unit is locked, whatever canopy-web says,
+  and canopy-web refuses to unlock a ZDR box.
+- **The box's floor**, `RunnerEgress=locked` / `RunnerEgressAllow` in box.env: every
+  unit locked, with those hosts. Only a NEW box gets it from the stack: cloud-init
+  writes box.env's script on an instance's first boot only, so a parameter change does
+  not reach a live box — use canopy-web for that.
+
+A lock turning on or off rewrites the unit's env and restarts its runner, so it waits
+until the unit carries no turn; host changes apply at once. `--setup-units` applies it
+all at boot, and the auto-updater re-runs it after an update. The runner page's `egress`
+check says whether a locked unit's lock holds: its proxy answers, and a direct
+connection out is refused.
 
 ## Isolation units: one box, many tenants (`RunnerUnits`)
 
