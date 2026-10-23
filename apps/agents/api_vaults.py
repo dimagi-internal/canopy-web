@@ -54,13 +54,13 @@ def _member_of(request: HttpRequest, slug: str) -> Workspace:
 
 
 def _vault(request: HttpRequest, vault_id: uuid.UUID, *, manage: bool = False) -> Vault:
-    """A workspace vault in a workspace the caller belongs to (else 404); `manage`
-    also needs the caller to manage it, and a passkey step-up from a browser."""
+    """A workspace vault in a workspace the caller belongs to (else 404); `manage=True`
+    also needs the caller to be its owner or admin, and a passkey step-up from a browser."""
     v = Vault.objects.filter(pk=vault_id, kind=Vault.WORKSPACE).select_related("workspace").first()
     if v is None or wsvc.membership(request.user, v.workspace) is None:
         raise ProblemError(404, "Not found", detail="no such vault", type_=TYPE_NOT_FOUND)
     if manage:
-        if vault_members.role_of(v, request.user) != vault_members.MANAGE:
+        if not vault_members.is_admin(vault_members.role_of(v, request.user)):
             raise HttpError(403, "this action requires someone who manages this vault")
         if stepup.is_browser(request):
             stepup.require_recent_step_up(request)
@@ -70,7 +70,7 @@ def _vault(request: HttpRequest, vault_id: uuid.UUID, *, manage: bool = False) -
 def _out(v: Vault, user) -> WorkspaceVaultOut:
     ms = vault_members.members(v)
     keyed = set(UserVaultKeyset.objects.filter(user_id__in=list(ms)).values_list("user_id", flat=True))
-    rank = {"manage": 0, "use": 1}
+    rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
     held, keepers = workspace_vaults.copies(v)
     return WorkspaceVaultOut(
@@ -111,7 +111,7 @@ def list_workspace_vaults(request: HttpRequest, slug: str) -> list[WorkspaceVaul
 @gate("own", setting=True)
 def create_workspace_vault(request: HttpRequest, slug: str, payload: VaultCreateIn) -> WorkspaceVaultOut:
     """`{name}`. Starts with no key (kv 0) and two links: the workspace's owners
-    manage it, and everyone with full access to an agent it is attached to uses it."""
+    own it, and everyone with full access to an agent it is attached to is a member."""
     ws = _member_of(request, slug)
     if not perms.can(request.user, ws, perms.OWN):
         raise HttpError(403, "making a workspace vault requires the owner role")
@@ -132,7 +132,7 @@ def get_workspace_vault(request: HttpRequest, vault_id: uuid.UUID) -> WorkspaceV
 
 
 @router.post("/vaults/{vault_id}/members", response=WorkspaceVaultOut, summary="Add a person to a vault by name")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def add_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, payload: VaultMemberIn):
     """`{email, role}` — a direct membership. The person must be in the vault's workspace."""
     v = _vault(request, vault_id, manage=True)
@@ -149,7 +149,7 @@ def add_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, payloa
 
 @router.delete("/vaults/{vault_id}/members/{user_id}", response=WorkspaceVaultOut,
                summary="Remove a person's direct membership of a vault")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, user_id: int):
     """Only the DIRECT membership; a person who is then no longer a member is
     refused the vault at once — canopy-web hands them, and their machines, no
@@ -164,7 +164,7 @@ def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, use
 
 @router.post("/vaults/{vault_id}/attachments", response=WorkspaceVaultOut,
              summary="Serve an agent, every agent in a workspace and below, or a cloud runner from a vault")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: VaultAttachIn):
     """`{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
     a cloud runner whose Claude credentials the vault then holds. A runner needs the
@@ -197,7 +197,7 @@ def _administered_runner(request: HttpRequest, runner_id: str) -> Runner:
 
 @router.delete("/vaults/{vault_id}/attachments/{attachment_id}", response=WorkspaceVaultOut,
                summary="Stop serving an agent or a workspace from a vault")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def detach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, attachment_id: int):
     v = _vault(request, vault_id, manage=True)
     workspace_vaults.detach(v, attachment_id)
@@ -207,18 +207,18 @@ def detach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, attachment
 # ---- one vault: zero-knowledge (the agent vault's shapes) ----------------------------------
 
 @router.get("/vaults/{vault_id}/zk", response=ZkStateOut, summary="A workspace vault's zero-knowledge state")
-@gate("vault-manage")
+@gate("vault-admin")
 def get_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, values: bool = False) -> ZkStateOut:
     """As `GET /api/agents/{slug}/vault/zk`: kv, wraps, pending targets, and with
     `?values=true` the `zk1:` ciphertexts. `agent_id` is the vault's binding id."""
     v = _vault(request, vault_id)
-    if vault_members.role_of(v, request.user) != vault_members.MANAGE:
+    if not vault_members.is_admin(vault_members.role_of(v, request.user)):
         raise HttpError(403, "this action requires someone who manages this vault")
     return ZkStateOut(**workspace_vaults.state(v, include_values=values))
 
 
 @router.post("/vaults/{vault_id}/zk/enable", response=ZkStateOut, summary="Make a workspace vault's first key")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def enable_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, payload: ZkEnableIn) -> ZkStateOut:
     """`{kv: 1, wraps, values}` — a wrap the caller can open and a way back are required."""
     v = _vault(request, vault_id, manage=True)
@@ -231,7 +231,7 @@ def enable_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, payload
 
 
 @router.put("/vaults/{vault_id}/zk/values", response=ZkValuesOut, summary="Set a workspace vault's values")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def set_workspace_vault_values(request: HttpRequest, vault_id: uuid.UUID, payload: ZkValuesIn) -> ZkValuesOut:
     """Non-clobbering upsert of `zk1:` ciphertext at the current kv."""
     v = _vault(request, vault_id, manage=True)
@@ -246,7 +246,7 @@ def set_workspace_vault_values(request: HttpRequest, vault_id: uuid.UUID, payloa
 
 
 @router.post("/vaults/{vault_id}/zk/wraps", response=ZkStateOut, summary="Grant copies of a workspace vault's key")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def add_workspace_vault_wraps(request: HttpRequest, vault_id: uuid.UUID, payload: ZkWrapsIn) -> ZkStateOut:
     """`{kv, wraps}` to pending members and machines (see the vault's `pending`)."""
     v = _vault(request, vault_id, manage=True)
@@ -259,7 +259,7 @@ def add_workspace_vault_wraps(request: HttpRequest, vault_id: uuid.UUID, payload
 
 @router.delete("/vaults/{vault_id}/secrets/{name}", response=WorkspaceVaultOut,
                summary="Delete one secret from a workspace vault")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def delete_workspace_vault_secret(request: HttpRequest, vault_id: uuid.UUID, name: str):
     v = _vault(request, vault_id, manage=True)
     workspace_vaults.remove_secret(v, name)

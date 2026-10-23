@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// A workspace's vaults: what each serves, who is in it and why, and — for a manager —
+// A workspace's vaults: what each serves, who is in it and why, and — for an owner or admin —
 // the controls. Values never appear: only their names, and the CLI line that sets one.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -15,10 +15,10 @@ const { WorkspaceVaultsSection } = await import('./WorkspaceVaultsSection')
 
 const SHARED = {
   vault_id: 'v1', workspace: 'dimagi', name: 'Shared', kv: 1, secrets: ['gog-oauth-client'],
-  attachments: [{ id: 3, agent: null, workspace: 'dimagi' }], you: 'manage',
+  attachments: [{ id: 3, agent: null, workspace: 'dimagi' }], you: 'owner',
   members: [
-    { user_id: 1, email: 'jj@dimagi.com', role: 'manage', sources: ['workspace_owners:dimagi'], has_vault_key: true },
-    { user_id: 2, email: 'st@dimagi.com', role: 'use', sources: ['attached:ace'], has_vault_key: false },
+    { user_id: 1, email: 'jj@dimagi.com', role: 'owner', sources: ['workspace_owners:dimagi'], has_vault_key: true },
+    { user_id: 2, email: 'st@dimagi.com', role: 'member', sources: ['attached:ace'], has_vault_key: false },
   ],
 }
 
@@ -54,7 +54,7 @@ describe('WorkspaceVaultsSection', () => {
   })
 
   it('shows no controls to someone who only uses a vault', async () => {
-    api.listWorkspaceVaults.mockResolvedValue([{ ...SHARED, you: 'use' }])
+    api.listWorkspaceVaults.mockResolvedValue([{ ...SHARED, you: 'member' }])
     render(<WorkspaceVaultsSection slug="dimagi" />)
     await screen.findByText('Shared')
     expect(screen.queryByTestId('ws-vault-attach')).toBeNull()

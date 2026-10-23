@@ -24,7 +24,10 @@ or forge it, cannot swap a key unseen. A keeper reads it with its work and write
 back with `put_pins` (compare-and-swap on `keeper_pins_version`). A record made under
 an older vault key is unreadable after a rotation; keepers start a new one.
 
-**Announced.** A keeper's grant to a PERSON is emailed to the vault's managers
+**Who keeps.** Only a machine whose person is an OWNER or ADMIN of the vault is a keeper
+(`vault_members.device_works_for_an_admin`) — the people who may change who is in it.
+
+**Announced.** A keeper's grant to a PERSON is emailed to the vault's owners and admins
 (`_announce`), so nobody gets a vault without someone who manages it hearing of it.
 """
 from __future__ import annotations
@@ -46,14 +49,15 @@ logger = logging.getLogger(__name__)
 
 def _held(runner) -> list[AgentVaultWrap]:
     """This box's device wraps at each zero-knowledge agent's current kv — only while
-    the box may hold that key NOW: it serves the agent and its person is a vault
-    member. Holding a copy is never itself permission to pass one on."""
+    the box may pass that key on NOW: it serves the agent and its person is an owner
+    or admin of the vault. Holding a copy is never itself permission to pass one on;
+    a member's machine reads the vault but is no keeper."""
     return [w for w in (AgentVaultWrap.objects
                         .filter(kind=AgentVaultWrap.DEVICE, device_key__runner=runner,
                                 device_key__status=RunnerDeviceKey.ACTIVE, agent__zk_enabled=True)
                         .select_related("agent", "device_key__runner"))
             if w.kv == w.agent.zk_kv
-            and vault_members.device_works_for_a_member(w.agent, w.device_key)
+            and vault_members.device_works_for_an_admin(vault_members.vault_for_agent(w.agent), w.device_key)
             and device_keys.runner_serves_agent(runner, w.agent)]
 
 
@@ -93,12 +97,14 @@ def work(runner) -> list[dict]:
 
 def _held_workspace(runner) -> list[VaultKeyWrap]:
     """This box's device wraps at each workspace vault's current kv — only while it
-    may hold that key now (`workspace_vaults.device_may_hold`)."""
+    may hold that key now (`workspace_vaults.device_may_hold`) and its person is an
+    owner or admin of the vault."""
     return [w for w in (VaultKeyWrap.objects
                         .filter(kind="device", device_key__runner=runner,
                                 device_key__status=RunnerDeviceKey.ACTIVE, vault__kv__gt=0)
                         .select_related("vault", "device_key__runner"))
-            if w.kv == w.vault.kv and workspace_vaults.device_may_hold(w.vault, w.device_key)]
+            if w.kv == w.vault.kv and workspace_vaults.device_may_hold(w.vault, w.device_key)
+            and vault_members.device_works_for_an_admin(w.vault, w.device_key)]
 
 
 def grant_workspace(runner, vault_id, *, kv: int, wraps: list) -> int:
@@ -178,7 +184,7 @@ def put_pins(runner, vault: Vault, *, kv: int, expected_version: int, value: str
 # ---- announcing a keeper's grant -------------------------------------------------------------
 
 def _announce(vault: Vault | None, wraps: list, runner) -> None:
-    """Email the vault's managers who a keeper just gave the key to. Never raises:
+    """Email the vault's owners and admins who a keeper just gave the key to. Never raises:
     the copies are stored either way."""
     try:
         people = [str(w.target) for w in wraps if w.kind == "member"]
@@ -186,16 +192,17 @@ def _announce(vault: Vault | None, wraps: list, runner) -> None:
             return
         users = {str(u.pk): u for u in get_user_model().objects.filter(pk__in=people)}
         names = ", ".join(users[p].email for p in people if p in users)
-        managers = [m.user for m in vault_members.members(vault).values()
-                    if m.role == vault_members.MANAGE and str(m.user.pk) not in people]
-        to = sorted({getattr(u, "email", "") for u in managers} - {""})
+        admins = [m.user for m in vault_members.members(vault).values()
+                    if vault_members.is_admin(m.role) and str(m.user.pk) not in people]
+        to = sorted({getattr(u, "email", "") for u in admins} - {""})
         if not to:
             return
         what = vault.agent.slug if vault.kind == Vault.AGENT else f"the {vault.name} vault"
         subject = f"Canopy vault · {names} now has {what}'s key"
         body = (f"The keeper on {runner.name} gave {names} a copy of {what}'s vault key, because "
                 f"they are now a member of the vault.\n\nIf that is not right, remove them from the "
-                f"vault and change its key.\n\nYou are getting this because you manage {what}'s vault.\n")
+                f"vault and change its key.\n\nYou are getting this because you are an owner or admin "
+                f"of {what}'s vault.\n")
         send_mail(subject, body, None, to, fail_silently=True)
     except Exception:  # noqa: BLE001 — a failed notice must not fail the grant
         logger.exception("vault keeper: announcing a grant failed")

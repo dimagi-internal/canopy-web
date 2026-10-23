@@ -84,7 +84,7 @@ def test_a_runner_gets_its_own_vault_attached_and_managed_by_its_owner(fleet):
     assert v.kind == Vault.WORKSPACE and v.workspace_id == fleet["ws"].slug
     assert VaultAttachment.objects.filter(vault=v, runner=fleet["runner"]).exists()
     from apps.agents.credentials import vault_members
-    assert vault_members.role_of(v, fleet["user"]) == vault_members.MANAGE
+    assert vault_members.is_admin(vault_members.role_of(v, fleet["user"]))
     # Asking again returns the same vault, never a second one.
     again = fleet["client"].post(f"/api/harness/runners/{fleet['runner'].pk}/vault")
     assert again.json()["vault_id"] == body["vault_id"]

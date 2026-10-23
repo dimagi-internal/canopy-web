@@ -6,13 +6,13 @@ with the member so a page can always say WHY someone can open it:
 * **direct** — a `VaultMember` row: a person added by name;
 * **linked** — a `VaultLink` rule, re-read on every question so it follows the
   set it names: everyone with full access to an agent (`access.roster`; the
-  agent's owner and admins come in as `manage`) and everyone holding an active
+  agent's owner comes in as `owner`, its admins as `admin`) and everyone holding an active
   license to use it locally, or the owners / admins of a workspace (inherited
   down the tree as those roles are).
 
-A person's role is the highest any source gives them: `manage` (see and edit
-values, change membership) above `use` (open the values from their own browser
-and machines).
+A person's role is the highest any source gives them, in the agent's words:
+`owner` and `admin` (see and edit values, change membership) above `member` (open
+the values from their own browser and machines).
 
 The machine layer asks the same question of a device's PERSON
 (`person_of_device`): a machine may hold a vault's key only while the person it
@@ -41,8 +41,22 @@ from ..models import (
 
 logger = logging.getLogger(__name__)
 
-MANAGE, USE = VaultMember.MANAGE, VaultMember.USE
-_RANK = {USE: 0, MANAGE: 1}
+OWNER, ADMIN, MEMBER = VaultMember.OWNER, VaultMember.ADMIN, VaultMember.MEMBER
+_RANK = {MEMBER: 0, ADMIN: 1, OWNER: 2}
+#: What a row or a link may give: owner comes only from owning the agent or workspace.
+_ASSIGNABLE = {ADMIN, MEMBER}
+#: The words before the roles matched the agent's; still accepted from older clients.
+_OLD_NAMES = {"manage": ADMIN, "use": MEMBER}
+
+
+def is_admin(role: str | None) -> bool:
+    """May see and edit values and change membership: the vault's owners and admins."""
+    return role in (OWNER, ADMIN)
+
+
+def role_named(role: str) -> str:
+    """A role as a client sent it, in today's words (`manage` → `admin`, `use` → `member`)."""
+    return _OLD_NAMES.get(role, role)
 
 
 @dataclass
@@ -66,7 +80,7 @@ def vault_for_agent(agent: Agent) -> Vault | None:
         v, made = Vault.objects.get_or_create(
             agent=agent, defaults={"workspace_id": agent.workspace_id, "kind": Vault.AGENT, "name": agent.slug})
         if made:
-            VaultLink.objects.create(vault=v, kind=VaultLink.AGENT, agent=agent, role=USE)
+            VaultLink.objects.create(vault=v, kind=VaultLink.AGENT, agent=agent, role=MEMBER)
     return v
 
 
@@ -87,7 +101,7 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
         for row in access.roster(link.agent):
             if row["access"] != access.FULL:
                 continue
-            role = MANAGE if row["agent_role"] in (access.OWNER, access.ADMIN) else link.role
+            role = {access.OWNER: OWNER, access.ADMIN: ADMIN}.get(row["agent_role"], link.role)
             _add(out, _UserRef(row["user_id"], row["email"]), role, source)
         # A person licensed to use the agent locally (`AgentLicense`, canopy-web#1704)
         # runs its tools on their own machine, so the link counts them too — an
@@ -108,7 +122,8 @@ def _linked(link: VaultLink, out: dict[int, Membership]) -> None:
     source = f"{link.kind}:{link.workspace.slug}"
     for m in wsvc.effective_memberships(link.workspace):
         if m.role in wanted:
-            _add(out, m.user, link.role, source)
+            # A workspace's owners own its vault, as an agent's owner owns the agent's.
+            _add(out, m.user, OWNER if m.role == "owner" else link.role, source)
 
 
 def attached_agents(vault: Vault) -> list[Agent]:
@@ -164,7 +179,7 @@ def member_ids(vault: Vault | None) -> set[int]:
 
 
 def role_of(vault: Vault | None, user) -> str | None:
-    """`manage`, `use`, or None (not a member)."""
+    """`owner`, `admin`, `member`, or None (not a member)."""
 
     if user is None or not getattr(user, "is_authenticated", False):
         return None
@@ -196,30 +211,33 @@ class VaultMembershipError(Exception):
         self.status, self.code, self.detail = status, code, detail
 
 
-def _check_role(role: str) -> None:
-    if role not in _RANK:
-        raise VaultMembershipError(422, "vault_bad_role", "role must be manage or use")
+def _check_role(role: str) -> str:
+    role = role_named(role)
+    if role not in _ASSIGNABLE:
+        raise VaultMembershipError(422, "vault_bad_role",
+                                   "role must be admin or member (owner comes from owning the agent or workspace)")
+    return role
 
 
 def _lock(vault: Vault) -> Vault:
     """Hold the vault's row for this transaction, so two membership writes
-    cannot each see the other's manager and together leave none."""
+    cannot each see the other's admin and together leave none."""
     return Vault.objects.select_for_update().get(pk=vault.pk)
 
 
-def _require_a_manager(vault: Vault) -> None:
-    """Every change keeps someone who can manage the vault, or nobody could ever
-    change it again — checked inside the change's transaction, after it."""
+def _require_an_admin(vault: Vault) -> None:
+    """Every change keeps an owner or admin, or nobody could ever change the vault
+    again — checked inside the change's transaction, after it."""
 
-    if not any(m.role == MANAGE for m in members(vault).values()):
-        raise VaultMembershipError(409, "vault_needs_a_manager",
-                                   "this would leave the vault with nobody who can manage it")
+    if not any(is_admin(m.role) for m in members(vault).values()):
+        raise VaultMembershipError(409, "vault_needs_an_admin",
+                                   "this would leave the vault with no owner or admin")
 
 
 def add_member(vault: Vault, user, *, role: str, by) -> VaultMember:
     """Add `user` by name (or change their direct role). They must be a member
     of the vault's workspace: a vault cannot reach past its tenant."""
-    _check_role(role)
+    role = _check_role(role)
     if not_a_person([user.pk]):
         raise VaultMembershipError(422, "vault_not_a_person",
                                    f"{user.email} is an agent's login or a system account, not a person")
@@ -230,7 +248,7 @@ def add_member(vault: Vault, user, *, role: str, by) -> VaultMember:
         _lock(vault)
         row, _ = VaultMember.objects.update_or_create(vault=vault, user=user,
                                                       defaults={"role": role, "added_by": by})
-        _require_a_manager(vault)
+        _require_an_admin(vault)
     return row
 
 
@@ -241,20 +259,20 @@ def remove_member(vault: Vault, user_id: int) -> bool:
     with transaction.atomic():
         _lock(vault)
         deleted, _ = VaultMember.objects.filter(vault=vault, user_id=user_id).delete()
-        _require_a_manager(vault)
+        _require_an_admin(vault)
     return bool(deleted)
 
 
-def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = USE, by=None) -> VaultLink | None:
+def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = MEMBER, by=None) -> VaultLink | None:
     """Link the vault to `agent` (everyone with full access to it becomes a
-    member; its owner and admins as manage, everyone else as `role`), or unlink."""
+    member; its owner as owner, its admins as admin, everyone else as `role`), or unlink."""
 
-    _check_role(role)
+    role = _check_role(role)
     with transaction.atomic():
         _lock(vault)
         if not linked:
             VaultLink.objects.filter(vault=vault, kind=VaultLink.AGENT, agent=agent).delete()
-            _require_a_manager(vault)
+            _require_an_admin(vault)
             return None
         link, _ = VaultLink.objects.update_or_create(vault=vault, kind=VaultLink.AGENT, agent=agent,
                                                      defaults={"role": role, "created_by": by})
@@ -262,6 +280,14 @@ def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = USE,
 
 
 # ---- the machine layer, asked on every read --------------------------------------------------
+
+def device_works_for_an_admin(vault: Vault | None, device_key) -> bool:
+    """Does `device_key` work for an owner or admin of `vault`? Only such a machine is
+    a keeper: the people who may change who is in a vault are the ones whose boxes
+    pass its key on, as in 1Password (an admin's client, or the bridge they run)."""
+    m = members(vault).get(person_of_device(device_key))
+    return m is not None and is_admin(m.role)
+
 
 def device_works_for_a_member(agent: Agent, device_key) -> bool:
     """Does `device_key` work for a member of the agent's vault?"""

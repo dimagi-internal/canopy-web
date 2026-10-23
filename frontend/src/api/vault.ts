@@ -110,7 +110,7 @@ export async function getVaultMembers(slug: string): Promise<VaultMembersOut> {
     'Could not load who can open this vault')
 }
 
-export async function addVaultMember(slug: string, email: string, role: 'manage' | 'use'): Promise<VaultMembersOut> {
+export async function addVaultMember(slug: string, email: string, role: 'admin' | 'member'): Promise<VaultMembersOut> {
   return need<VaultMembersOut>(await apiV2.POST('/api/agents/{slug}/vault/members', {
     params: { path: { slug } }, body: { email, role } }), 'Could not add them to the vault')
 }
@@ -122,7 +122,7 @@ export async function removeVaultMember(slug: string, userId: number): Promise<V
 
 export async function setVaultAgentLink(slug: string, linked: boolean): Promise<VaultMembersOut> {
   return need<VaultMembersOut>(await apiV2.PUT('/api/agents/{slug}/vault/agent-link', {
-    params: { path: { slug } }, body: { linked, role: 'use' } }), 'Could not change the vault’s link to this agent')
+    params: { path: { slug } }, body: { linked, role: 'member' } }), 'Could not change the vault’s link to this agent')
 }
 
 // ---- workspace vaults (spec §4): any number per workspace, layered under an agent's own ----
@@ -150,7 +150,7 @@ export async function detachWorkspaceVault(vaultId: string, attachmentId: number
     params: { path: { vault_id: vaultId, attachment_id: attachmentId } } }), 'Could not detach the vault')
 }
 
-export async function addWorkspaceVaultMember(vaultId: string, email: string, role: 'use' | 'manage'):
+export async function addWorkspaceVaultMember(vaultId: string, email: string, role: 'admin' | 'member'):
     Promise<WorkspaceVaultOut> {
   return need<WorkspaceVaultOut>(await apiV2.POST('/api/vaults/{vault_id}/members', {
     params: { path: { vault_id: vaultId } }, body: { email, role } }), 'Could not add them to the vault')

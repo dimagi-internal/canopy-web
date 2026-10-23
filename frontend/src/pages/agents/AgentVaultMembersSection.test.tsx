@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// A vault's members, each with WHY they are one. Only a manager sees the add
+// A vault's members, each with WHY they are one. Only an owner or admin sees the add
 // form, the link toggle, and Remove — and Remove only on a direct membership,
 // since a linked one goes with the person's access to the agent.
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,10 +17,10 @@ vi.mock('@/api/vault', () => ({ getVaultMembers, addVaultMember, removeVaultMemb
 const { AgentVaultMembersSection } = await import('./AgentVaultMembersSection')
 
 const STATE = {
-  vault_id: 'v1', kind: 'agent', name: 'ace', agent_link: { linked: true, role: 'use' }, you: 'manage',
+  vault_id: 'v1', kind: 'agent', name: 'ace', agent_link: { linked: true, role: 'member' }, you: 'owner',
   members: [
-    { user_id: 1, email: 'jj@dimagi.com', role: 'manage', sources: ['agent:ace'], has_vault_key: true },
-    { user_id: 2, email: 'tm@dimagi.com', role: 'use', sources: ['direct'], has_vault_key: false },
+    { user_id: 1, email: 'jj@dimagi.com', role: 'owner', sources: ['agent:ace'], has_vault_key: true },
+    { user_id: 2, email: 'tm@dimagi.com', role: 'member', sources: ['direct'], has_vault_key: false },
   ],
 }
 
@@ -51,7 +51,7 @@ describe('AgentVaultMembersSection', () => {
   })
 
   it('shows no controls to someone who does not manage the vault', async () => {
-    getVaultMembers.mockResolvedValue({ ...STATE, you: 'use' })
+    getVaultMembers.mockResolvedValue({ ...STATE, you: 'member' })
     render(<AgentVaultMembersSection slug="ace" />)
     await screen.findByText('jj@dimagi.com')
     expect(screen.queryByTestId('vault-add-form')).toBeNull()

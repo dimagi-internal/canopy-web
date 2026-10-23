@@ -9,6 +9,7 @@ import {
   type WorkspaceVaultOut,
 } from '@/api/vault'
 import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
+import { VAULT_ROLE_LABEL } from './agents/AgentVaultMembersSection'
 
 // A workspace's own vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md
 // §4): shared secrets its agents read, layered under each agent's own. Each vault has its
@@ -33,7 +34,7 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
   const [error, setError] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [target, setTarget] = useState('')
-  const manages = v.you === 'manage'
+  const manages = v.you === 'owner' || v.you === 'admin'
 
   const run = async (fn: () => Promise<WorkspaceVaultOut>) => {
     setBusy(true)
@@ -81,7 +82,7 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
           {v.members.map((m) => (
             <tr key={m.user_id} data-testid={`ws-vault-member-${m.user_id}`}>
               <td className="py-1 text-foreground">{m.email}</td>
-              <td className="py-1 text-muted-foreground">{m.role === 'manage' ? 'Manages' : 'Can use'}</td>
+              <td className="py-1 text-muted-foreground">{VAULT_ROLE_LABEL[m.role] ?? m.role}</td>
               <td className="py-1 text-muted-foreground">
                 {m.sources.map(sourceLabel).join(' · ')}
                 {memberWaiting(m, v.holders) && <span className="text-warning"> · {memberWaiting(m, v.holders)}</span>}
@@ -105,7 +106,7 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
           <form className="flex flex-wrap items-center gap-2" data-testid="ws-vault-add-member"
                 onSubmit={(e) => {
                   e.preventDefault()
-                  void run(() => addWorkspaceVaultMember(v.vault_id, email.trim(), 'use')).then((ok) => ok && setEmail(''))
+                  void run(() => addWorkspaceVaultMember(v.vault_id, email.trim(), 'member')).then((ok) => ok && setEmail(''))
                 }}>
             <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="name@dimagi.com"
                    aria-label={`Add a person to ${v.name}`}
