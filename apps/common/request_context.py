@@ -131,9 +131,10 @@ def from_request(request: HttpRequest, *, request_id_value: str | None = None) -
         "parent": parent_from_headers(request),
     }
     # A confined session's caller token names the turn it was minted for: that
-    # turn is the parent of anything this request starts, whatever the headers say.
+    # turn is the parent of anything this request starts, whatever the headers say
+    # (a header naming another turn would drop the lineage a sensitive turn passes on).
     cred = info["credential"] or {}
-    if cred.get("turn_id") and not info["parent"].get("turn"):
+    if cred.get("turn_id"):
         info["parent"]["turn"] = str(cred["turn_id"])
     return {k: v for k, v in info.items() if v not in ("", None, {}, False)}
 

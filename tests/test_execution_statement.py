@@ -12,7 +12,6 @@ from canopy_sdk.host import ClientKeyResolver, ExecutionRefused, HostConfig, ver
 from canopy_sdk.keys import generate_private_key
 from canopy_sdk.stores import MemoryJtiStore
 from django.utils import timezone
-from fastmcp.exceptions import ToolError
 
 from apps.agents.interface import parse
 from apps.harness.models import Runner, RunnerFlag, Turn
@@ -144,7 +143,9 @@ def test_turning_sensitive_off_closes_the_door(w, host):
     _sensitive_cap(w)
     w["agent"].interface = parse(IFACE)
     w["agent"].save(update_fields=["interface"])
-    with pytest.raises(ToolError, match="handles sensitive data"):
+    # The sensitive turn's caller token itself now stands for nothing
+    # (`caller_tokens._sensitive_grant`), before the gateway's own refusal.
+    with pytest.raises(AssertionError):
         _calls(w, host)
     assert host.seen == []
 

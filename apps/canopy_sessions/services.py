@@ -135,20 +135,22 @@ def add_runner_requirements(session: Session, reqs) -> None:
         # so the session stays unclaimable — the fail-closed answer.
         current = set(rr.requirements_of_session(s))
         merged = sorted(current | reqs)
-        if merged == sorted(current):
-            return
-        was_sensitive = sensitivity.is_sensitive(s)
-        meta[rr.METADATA_KEY] = merged
-        s.metadata = meta
-        became_sensitive = not was_sensitive and sensitivity.is_sensitive(s)
-        # A sensitive conversation keeps no title: one typed or derived before it
-        # held the host's data may already quote it.
-        fields = {"metadata": meta, **({"title": ""} if became_sensitive else {})}
-        Session.objects.filter(pk=s.pk).update(**fields)
-        if became_sensitive:
-            # Every open socket on it re-asks `reads_content`: a token's, or a
-            # co-tenant's who is not in it, closes now rather than reading on.
-            transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))
+        became_sensitive = False
+        if merged != sorted(current):
+            was_sensitive = sensitivity.is_sensitive(s)
+            meta[rr.METADATA_KEY] = merged
+            s.metadata = meta
+            became_sensitive = not was_sensitive and sensitivity.is_sensitive(s)
+            # A sensitive conversation keeps no title: one typed or derived before it
+            # held the host's data may already quote it.
+            fields = {"metadata": meta, **({"title": ""} if became_sensitive else {})}
+            Session.objects.filter(pk=s.pk).update(**fields)
+            if became_sensitive:
+                # Every open socket on it re-asks `reads_content`: a token's, or a
+                # co-tenant's who is not in it, closes now rather than reading on.
+                transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))
+    # Either way the caller's copy says what the row says, so a decision read off
+    # it next (`sensitivity.seals`) is never made on a stale instance.
     session.metadata = meta
     if became_sensitive:
         session.title = ""

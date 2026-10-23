@@ -313,7 +313,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         except drafts.DraftVersionMismatch as exc:
             await self._error(
                 "draft_version_mismatch", "Draft changed since your last edit.",
-                {"current_version": exc.current_version, "current_body": exc.current_body},
+                {"current_version": exc.current_version,
+                 "current_body": exc.current_body if getattr(self, "_draft_words", False) else ""},
             )
             return
         await self._broadcast_draft(draft)
@@ -566,12 +567,17 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         return user is not None and message.get("author_id") == user.id
 
     async def draft_updated(self, message):
+        # A sensitive conversation's draft reaches only a reader `reads_content`
+        # admits, decided at connect (`_snapshot`); before that, nobody.
+        words = getattr(self, "_draft_words", False)
         if self._is_author(message):
-            await self.send_json({"event": "draft.updated", "data": message["draft"]})
+            data = message["draft"] if words else {**message["draft"], "body": ""}
+            await self.send_json({"event": "draft.updated", "data": data})
         else:
             # canopy-ui <= 0.12 adopts ANY draft.updated into its own composer, so
             # a peer's draft must never arrive under that name.
-            await self.send_json({"event": "draft.typing", "data": message["peer"]})
+            data = message["peer"] if words else {**message["peer"], "body": ""}
+            await self.send_json({"event": "draft.typing", "data": data})
 
     async def draft_committed(self, message):
         if not self._is_author(message):
@@ -729,6 +735,10 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         messages = sensitivity.readable(
             messages, self.session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
             user=self.user, contact=getattr(self, "contact", None))
+        # Drafts by the same gate: a sensitive conversation's are its people's.
+        self._draft_words = sensitivity.reads_content(
+            self.session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
+            user=self.user, contact=getattr(self, "contact", None))
         from apps.agents.credentials import secret_requests
         from apps.mcp_apps_host import mcp_apps_views
 
@@ -748,6 +758,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 present_ids=sorted(presence.present_ids(self.session.id)),
                 draft=own,
                 peer_drafts=peers,
+                draft_words=self._draft_words,
                 messages=messages,
                 queued=chat_send.queued_messages(self.session),
             ),

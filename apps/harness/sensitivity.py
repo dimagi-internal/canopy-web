@@ -58,6 +58,32 @@ def is_sensitive(obj) -> bool:
     return _is(rr.requirements_of_session(obj))
 
 
+def take_on(session, turn) -> None:
+    """Raise `session` to what `turn` requires when the turn asks more of a runner
+    than its conversation does (it was started from a sensitive turn or
+    conversation). Requirements only grow. Run when a turn joins a conversation
+    and again before its rows land, so the session that every reader's
+    `reads_content` asks says what the sealing said."""
+    if session is None or turn is None:
+        return
+    reqs = rr.requirements_of(turn)
+    if not reqs or reqs <= rr.requirements_of_session(session):
+        return
+    from apps.canopy_sessions.services import add_runner_requirements  # noqa: PLC0415 — harness ↛ chat at import
+
+    add_runner_requirements(session, reqs)
+
+
+def seals(session, turn=None) -> bool:
+    """THE decision whether rows landing in `session` (written by `turn`, when one
+    did) are sealed: the session's own sensitivity, after it has taken on the
+    turn's (`take_on`). One answer for the writer and every reader, so a
+    sensitive turn's words never land unsealed in a conversation `readable`
+    would hand to anyone."""
+    take_on(session, turn)
+    return is_sensitive(session)
+
+
 def strip_result(payload: dict | None) -> dict:
     """A tool result as a sensitive conversation stores it: which call, and
     whether it failed — never what came back."""

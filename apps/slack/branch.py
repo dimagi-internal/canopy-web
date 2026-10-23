@@ -20,6 +20,8 @@ from dataclasses import replace
 
 from apps.canopy_sessions import access as session_access
 from apps.canopy_sessions.models import Session
+from apps.canopy_sessions.services import add_runner_requirements
+from apps.harness import runner_requirements as rr
 
 from . import client
 from .services import (
@@ -96,6 +98,9 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
     branch.parent_claude_session = (getattr(binding, "transcript_id", "") or "")[:100]
     branch.metadata = {**(branch.metadata or {}), BRANCHED_FROM_KEY: key}
     branch.save(update_fields=["parent_session", "parent_claude_session", "metadata", "updated_at"])
+    # The branch carries the parent's words on (its seed), so it is held to what the
+    # parent requires — sensitive before its first message, never only by a link.
+    add_runner_requirements(branch, rr.requirements_of_session(parent))
 
     seed, omitted = exports.build_branch_seed(parent)
     prompt = _prompt(parent, seed, omitted, ask)

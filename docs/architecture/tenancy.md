@@ -372,3 +372,26 @@ THE predicate; every surface below asks it, one test each in
   mirroring (`slack.relay`), export (403), the usage scan's title.
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
   fleet's transcript readers find none to read.
+- **A sensitive turn's token reaches four tools:** its caller token's tools are the
+  capability's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
+  `who_is_asking`, `site_tools`, `site_call`), whatever the interface lists; it resolves to
+  nothing once the capability stops saying `data: sensitive` (re-read on every call) or the
+  turn is not confined (`caller_tokens._sensitive_grant`, `mcp/turn_scope.py`). So a
+  sensitive turn creates no schedule, task or turn of its own.
+- **Lineage is never dropped:** a caller token's own turn is the parent of anything its
+  request starts, whatever a header or payload names (`request_context.from_request`,
+  `provenance.requested_parent`); a payload `parent` that names nothing is a 422
+  (`provenance.UnknownParentError`). A session started from a sensitive turn or
+  conversation — a `parent`, a Slack branch, a transcript successor — takes its
+  requirements at birth (`provenance.inherit_requirements`); a turn started from one makes
+  the conversation it joins sensitive (`sensitivity.take_on`, at enqueue). A queued turn
+  whose recorded parent has since been deleted is unsatisfiable
+  (`runner_requirements.lost_lineage`).
+- **One sealing decision:** every writer of `Message` rows (`send.py`, `transcript_ingest`)
+  asks `sensitivity.seals(session, turn)` on the locked session, which first raises it to
+  the turn's requirements — so what is sealed and what `reads_content` admits agree.
+- **Elsewhere:** a turn refused at creation keeps no prompt (`services._apply_capability`);
+  forced retention reaches a session-less turn sensitive through any ancestor
+  (`retention.services._sweep_sensitive`); a draft's body is stored encrypted
+  (`drafts.SEALED_PREFIX`) and reaches only a socket `reads_content` admits. Tests:
+  `tests/test_sensitive_lineage.py`.

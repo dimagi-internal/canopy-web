@@ -42,10 +42,15 @@ DATA_VALUES = frozenset({SENSITIVE})
 
 #: Local tools a capability that handles sensitive data may hold: they read the agent's own checkout.
 READ_ONLY_LOCAL = frozenset({"Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite"})
-#: canopy's own tools such a capability may hold (any MCP server prefix ending in
-#: `canopy-web__`, as interface tool patterns are written).
+#: canopy's own tools such a capability may hold — and the ONLY canopy tools a
+#: sensitive turn's caller token reaches, whatever its interface says now
+#: (`harness.caller_tokens.resolve`, `mcp.turn_scope`).
+SENSITIVE_CANOPY_TOOLS = frozenset({"current_page", "who_is_asking", "site_tools", "site_call"})
+#: Those tools as interface patterns name them (any MCP server prefix ending in
+#: `canopy-web__`).
 _CANOPY_TOOL = re.compile(
-    r"^mcp__(?:\*|[A-Za-z0-9_.-]*?)canopy-web__(?:current_page|who_is_asking|site_tools|site_call)$")
+    r"^mcp__(?:\*|[A-Za-z0-9_.-]*?)canopy-web__(?:"
+    + "|".join(sorted(SENSITIVE_CANOPY_TOOLS)) + r")$")
 
 
 def structural_refusals(name: str, cap: dict) -> list[str]:

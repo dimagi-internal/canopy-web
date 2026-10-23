@@ -157,6 +157,10 @@ def _stamp_provenance(sender, instance, raw=False, **kwargs) -> None:
         import logging
 
         logging.getLogger("canopy.provenance").exception("could not stamp provenance")
+    if sender is Session:
+        # Not inside the try above: a session that cannot be told what its parent
+        # requires is not created at all (`provenance.inherit_requirements`).
+        provenance.inherit_requirements(instance)
 
 
 @receiver(post_save, sender=Turn)
