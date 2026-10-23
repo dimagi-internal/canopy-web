@@ -74,6 +74,39 @@ describe('unlockLocally (the panel)', () => {
     vi.unstubAllGlobals()
   })
 
+  it('one click goes straight to the passkey: no second "use my passkey" step', async () => {
+    const person = await zk.generateKeyPair()
+    const prf = zk.randomBytes(32)
+    const seal = await zk.sealUserKey(person.scalar, '7', 'Y3JlZA', prf)
+    const pass = await zk.sealUserKey2skd(person.scalar, '7', 'correct horse battery', zk.randomBytes(16))
+    const get = vi.fn(async () => ({ id: 'Y3JlZA', getClientExtensionResults: () => ({ prf: { results: { first: prf.buffer } } }) }))
+    vi.stubGlobal('navigator', { credentials: { get } })
+    const prompt = vi.fn()
+    const pending = unlockLocally({ user_id: '7', prf_input: zk.b64u(zk.randomBytes(32)), public_jwk: person.publicJwk,
+                                    seals: [seal, pass] as unknown as Record<string, unknown>[] }, prompt)
+    // Called synchronously from the click, inside its user gesture.
+    expect(get).toHaveBeenCalledTimes(1)
+    const me = await pending
+    expect(Array.from(me.scalar!)).toEqual(Array.from(person.scalar))
+    expect(prompt).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('falls back to the passphrase, and only it, when the passkey fails here', async () => {
+    const person = await zk.generateKeyPair()
+    const sk = zk.randomBytes(16)
+    const seal = await zk.sealUserKey(person.scalar, '7', 'Y3JlZA', zk.randomBytes(32))
+    const pass = await zk.sealUserKey2skd(person.scalar, '7', 'correct horse battery', sk)
+    vi.stubGlobal('navigator', { credentials: { get: vi.fn(async () => { throw new Error('NotAllowedError') }) } })
+    const prompt = vi.fn(async () => ({ method: 'passphrase' as const, passphrase: 'correct horse battery',
+                                        secretKey: zk.secretKeyCode(sk) }))
+    const me = await unlockLocally({ user_id: '7', prf_input: zk.b64u(zk.randomBytes(32)), public_jwk: person.publicJwk,
+                                     seals: [seal, pass] as unknown as Record<string, unknown>[] }, prompt)
+    expect(Array.from(me.scalar!)).toEqual(Array.from(person.scalar))
+    expect(prompt).toHaveBeenCalledWith(expect.objectContaining({ passkey: false, passphrase: true }))
+    vi.unstubAllGlobals()
+  }, 30_000)
+
   it('opens a passphrase seal', async () => {
     const person = await zk.generateKeyPair()
     const sk = zk.randomBytes(16)

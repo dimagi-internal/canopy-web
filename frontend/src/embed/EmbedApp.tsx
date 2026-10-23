@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Markdown } from '@/components/Markdown'
 import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
+import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { unlockLocally } from '@/vault/localUnlock'
 import type { SealedKey } from '@/vault/sealedChat'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
@@ -877,13 +878,20 @@ function EmbedChat({
   // keyset the conversation carries (`sealed_key.keyset`), since the frame has no
   // browser session for the vault's own routes. A contact holds no key, ever.
   const [sealedKey, setSealedKey] = useState<SealedKey | null>(null)
+  // Unknown (null) until the session is read: memory's switches wait for it.
+  const [sensitive, setSensitive] = useState<boolean | null>(null)
   const sealedRows = socket.state.messages.some((m) => typeof m.sealed === 'string')
   useEffect(() => {
     if (isContact) return
     let live = true
-    void client.rest.json<{ sealed_key?: SealedKey | null }>(`/api/canopy-sessions/${encodeURIComponent(sessionId)}`)
-      .then((d) => live && setSealedKey(d.sealed_key ?? null))
-      .catch(() => undefined)
+    void client.rest.json<{ sealed_key?: SealedKey | null; sensitive?: boolean }>(
+      `/api/canopy-sessions/${encodeURIComponent(sessionId)}`)
+      .then((d) => {
+        if (!live) return
+        setSealedKey(d.sealed_key ?? null)
+        setSensitive(Boolean(d.sensitive || d.sealed_key))
+      })
+      .catch(() => live && setSensitive((v) => v ?? false))
     return () => {
       live = false
     }
@@ -895,6 +903,12 @@ function EmbedChat({
   }, [sealedKey, unlocker.prompt])
   const sealed = useSealedConversation(sealedKey, socket.state.messages, unlockVault)
   const keyRef = sealed.keyRef
+  // How this person's vault key opens here, for the banner's words; and whether this
+  // frame may use a passkey at all (Chrome says, through its permissions policy).
+  const unlockMethod = (sealedKey?.keyset?.seals ?? []).some((x) => (x as { alg?: string }).alg === 'prf')
+    ? 'passkey' as const : 'passphrase' as const
+  const framePasskeys = (document as Document & { featurePolicy?: { allowsFeature?(f: string): boolean } })
+    .featurePolicy?.allowsFeature?.('publickey-credentials-get')
   const panelState = useMemo(
     () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
     [socket.state, sealed.messages],
@@ -1014,7 +1028,9 @@ function EmbedChat({
           <span className="truncate text-[12px] text-muted-foreground">{agent.name}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1">
-          {memorySource && <SessionMemoryToggles sessionId={sessionId} source={memorySource} />}
+          {/* Memory is off in a private conversation (the server refuses it too), so
+              its switches are not offered there at all. */}
+          {memorySource && sensitive === false && <SessionMemoryToggles sessionId={sessionId} source={memorySource} />}
           {contactMemory && (
             <ContactMemory hcp={contactMemory} sessionId={sessionId} agentName={agent.name} />
           )}
@@ -1039,20 +1055,24 @@ function EmbedChat({
           </button>
         </span>
       </header>
+      {sensitive && <PrivateConversationNote />}
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
         onUnlock={() => void sealed.unlock()}
         unlockElement={unlocker.element}
         needsMigration={Boolean(sealedKey?.needs_migration)}
-        // A frame the browser will not let use a passkey can still read it in
-        // canopy itself, where the vault has its own page.
-        openElsewhere={
+        hasSealed={sealed.hasSealed}
+        method={unlockMethod}
+        // Only when unlocking cannot work in this frame — the browser will not let it
+        // use a passkey, or the unlock failed — is it read in canopy itself, where the
+        // vault has its own page.
+        openElsewhere={(framePasskeys === false && unlockMethod === 'passkey') || sealed.state === 'error' ? (
           <a href={`${currentFrameBaseUrl()}/w/${encodeURIComponent(agent.workspace)}/chat/${encodeURIComponent(sessionId)}`}
              target="_blank" rel="noopener noreferrer" className="text-primary underline">
             Read it in canopy
           </a>
-        }
+        ) : undefined}
       />
       <div className="min-h-0 flex-1">
         <ChatPanel

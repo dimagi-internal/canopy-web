@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from ..models import Person, PersonFact, PersonGrant
 from .core import Actor, audit, denied, malformed
+from .sensitive import is_sensitive_session, is_sensitive_turn
 
 # --- the person's own switches: may agents learn about them, and use it? -------------
 
@@ -14,6 +15,9 @@ from .core import Actor, audit, denied, malformed
 #: the registered type for "outside what you are authorized for" (3.4.4).
 RECORD_OFF = "this person has not let agents learn about them"
 USE_OFF = "this person has not let agents use what they have learned"
+#: Why memory cannot be turned on in a sensitive conversation.
+SENSITIVE_OFF = ("this session holds a host's sensitive data, and memory is off in a sensitive conversation: "
+                 "agents neither learn from it nor read the person's memory in it")
 NOT_GRANTED = ("this person has not granted this agent access for that yet — they are asked "
                "in the session, not by the agent")
 #: Which switch an operation needs: "record" for a write, "use" for a read,
@@ -118,21 +122,28 @@ def _override(person: Person, session):
 def memory_state(person: Person, session=None) -> dict:
     """Per feature: `available`, `default`, this session's `override` (None =
     inherit) and the `effective` value — available AND (override, else default).
-    Outside the rollout nothing is available, so nothing is effective."""
+    Outside the rollout nothing is available, so nothing is effective; in a
+    sensitive conversation nothing is effective either — an agent neither learns
+    from it nor reads the person's memory into it (the read's query is the turn's
+    own words, which a search keeps)."""
     row = _override(person, session)
     rolled_out = rollout_allows(person)
+    sealed = is_sensitive_session(session)
     out = {}
     for f in FEATURES:
         available = rolled_out and bool(getattr(person, f"hcp_{f}_available"))
         default = bool(getattr(person, f"hcp_{f}_default"))
         override = getattr(row, f) if row is not None else None
         out[f] = {"available": available, "default": default, "override": override,
-                  "effective": available and (default if override is None else bool(override))}
+                  "effective": (not sealed) and available and (default if override is None else bool(override))}
     return out
 
 
 def effective(person: Person, turn=None) -> dict:
-    """{record, use} as they apply to the turn being served."""
+    """{record, use} as they apply to the turn being served — both off for a turn of
+    a sensitive conversation, a sensitive-data box, or one descended from either."""
+    if turn is not None and is_sensitive_turn(turn):
+        return {f: False for f in FEATURES}
     state = memory_state(person, session_of(turn))
     return {f: state[f]["effective"] for f in FEATURES}
 
@@ -148,6 +159,8 @@ def may_use(person: Person, turn=None) -> bool:
 def require(person: Person, need: str, turn=None) -> None:
     """Raise `scope-denied` unless what `need` requires is on for this turn."""
     require_rollout(person)
+    if turn is not None and is_sensitive_turn(turn):
+        raise denied(SENSITIVE_OFF)
     eff = effective(person, turn)
     if need == RECORD and not eff["record"]:
         raise denied(RECORD_OFF)
@@ -216,6 +229,8 @@ def set_session_memory(person: Person, session, *, actor: Actor, record: str | N
     changes = {"record": record, "use": use}
     if ON in changes.values():
         require_rollout(person)
+        if is_sensitive_session(session):
+            raise denied(SENSITIVE_OFF)
     for f, value in changes.items():
         if value not in (None, ON, OFF, INHERIT):
             raise malformed(f"{f} is on, off or inherit")

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { useAnchoredPopover } from './anchoredPopover'
+
 import {
   getSessionMemory,
   grantSessionAgent,
@@ -31,10 +33,11 @@ function personSource(sessionId: string): SessionMemorySource {
   }
 }
 
-// The panel hangs below the chip, right-aligned and never wider than the frame,
-// so it never pushes the header (or the widget's narrow panel) sideways.
+// The panel hangs below the chip, fixed-positioned and clamped into the viewport
+// (`useAnchoredPopover`): in the widget's narrow panel the chip sits left of other
+// header buttons, and a panel right-aligned to it ran off the left edge.
 const POPOVER =
-  'absolute right-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-1.5rem)] whitespace-normal break-words rounded-md border border-border bg-background p-2 text-left text-[12px] shadow-md'
+  'z-30 whitespace-normal break-words rounded-md border border-border bg-background p-2 text-left text-[12px] shadow-md'
 const QUIET = 'rounded-md px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50'
 
 const LABELS: Record<MemoryFeature, { short: string; name: string; on: string; off: string }> = {
@@ -275,6 +278,7 @@ export function SessionMemoryToggles({
   const memory = useSessionMemory(sessionId, source)
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const place = useAnchoredPopover(root, open)
 
   // The panel closes on a click outside it or Escape, like any popover.
   useEffect(() => {
@@ -307,7 +311,8 @@ export function SessionMemoryToggles({
         <MemoryDots memory={memory} />
       </button>
       {open && (
-        <div role="dialog" aria-label="Your memory in this conversation" className={POPOVER}>
+        <div role="dialog" aria-label="Your memory in this conversation" className={POPOVER}
+             style={place ?? { position: 'fixed', visibility: 'hidden' }}>
           <p className="mb-1 font-medium text-foreground">Your memory in this conversation</p>
           <SessionMemoryPanel memory={memory} />
         </div>

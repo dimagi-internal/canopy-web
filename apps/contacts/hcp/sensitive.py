@@ -33,6 +33,15 @@ def _turn_is_sensitive(turn) -> bool:
         runner_id=turn.claimed_by_id, flag=sensitivity.SENSITIVE_DATA).exists()
 
 
+def is_sensitive_session(session) -> bool:
+    """Is this chat session a sensitive conversation (`harness.sensitivity.is_sensitive`)?"""
+    if session is None:
+        return False
+    from apps.harness import sensitivity  # noqa: PLC0415 — cycle: harness imports contacts at load
+
+    return sensitivity.is_sensitive(session)
+
+
 def is_sensitive_turn(turn) -> bool:
     """Is this turn — or any turn it descends from — a sensitive conversation's?"""
     seen = set()

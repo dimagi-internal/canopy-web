@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { useAnchoredPopover } from '@/components/chat/anchoredPopover'
 import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 
 import { contactMemorySource, type ContactHcp, type ContactHcpState } from './sessionMemory'
@@ -18,9 +19,11 @@ import { contactMemorySource, type ContactHcp, type ContactHcpState } from './se
  *   canopy already holds some of theirs, which stays theirs to see, download and delete.
  */
 const pretty = (c: string) => c.replace(/_/g, ' ')
-// Hangs below the header, never wider than the frame (the widget panel is narrow).
+// Hangs below the header, fixed-positioned and clamped into the frame
+// (`useAnchoredPopover`) — the widget panel is narrow.
 const PANEL =
-  'absolute right-0 top-full z-30 mt-1 w-72 max-w-[calc(100vw-1.5rem)] whitespace-normal break-words rounded-md border border-border bg-background p-2 text-left text-[12px] shadow-md'
+  'z-30 whitespace-normal break-words rounded-md border border-border bg-background p-2 text-left text-[12px] shadow-md'
+const UNPLACED = { position: 'fixed', visibility: 'hidden' } as const
 const PRIMARY = 'rounded-md border border-border px-2 py-0.5 hover:bg-muted disabled:opacity-50'
 const QUIET = 'rounded-md px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-50'
 
@@ -39,6 +42,8 @@ export function ContactMemory({
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [epoch, setEpoch] = useState(0)
+  const anchor = useRef<HTMLDivElement>(null)
+  const place = useAnchoredPopover(anchor, view !== 'none')
 
   useEffect(() => {
     let live = true
@@ -98,8 +103,8 @@ export function ContactMemory({
       )
     }
     return (
-      <div className="relative">
-      <div role="dialog" aria-label="Let canopy learn from you" className={PANEL}>
+      <div className="relative" ref={anchor}>
+      <div role="dialog" aria-label="Let canopy learn from you" className={PANEL} style={place ?? UNPLACED}>
         <p className="text-foreground">
           <strong>{agentName}</strong> would like to learn from you
         </p>
@@ -132,7 +137,7 @@ export function ContactMemory({
   }
 
   return (
-    <div className="relative flex flex-col items-start">
+    <div className="relative flex flex-col items-start" ref={anchor}>
       <span className="flex items-center gap-1">
         {enabled && <SessionMemoryToggles key={epoch} sessionId={sessionId} source={source} />}
         <button type="button" className={QUIET}
@@ -141,7 +146,7 @@ export function ContactMemory({
         </button>
       </span>
       {view === 'knows' && (
-        <div role="dialog" aria-label="Your memory" className={PANEL}>
+        <div role="dialog" aria-label="Your memory" className={PANEL} style={place ?? UNPLACED}>
           <p className="text-foreground">
             Your memory{enabled ? '' : ' (paused)'}, held for {state.email}
           </p>

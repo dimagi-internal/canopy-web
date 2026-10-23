@@ -445,8 +445,9 @@ def test_an_hcp_write_from_a_sensitive_runners_session_is_refused_and_leaves_not
     assert r.status_code == 403 and "sensitive data" in r.json()["detail"]
     assert not PersonFact.objects.exists()
     assert not _events(w["person"], "preference.created")
-    # reads are not writes: the same session may still recall
-    assert _search(_as(w["ace"].user), turn).status_code == 200
+    # nor does it recall: a search keeps its query, which is the session's own words
+    r = _search(_as(w["ace"].user), turn)
+    assert r.status_code == 403 and "sensitive conversation" in r.json()["detail"]
 
 
 def test_an_update_from_a_sensitive_session_is_refused_but_the_entry_stays(w):
@@ -519,3 +520,59 @@ def _reports_sensitive(runner):
     runner.capabilities = {**(runner.capabilities or {}), "data_mode": "sensitive_data"}
     _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
     return runner
+
+
+# --- nor is anything read into one -------------------------------------------------------
+#
+# Memory is off in a sensitive conversation both ways: the turn-start recall runs no search
+# (a search keeps its query — the turn's own words — and embeds it), the agent's
+# hcp_searchPreferences is refused, and the person cannot switch it on or grant it there.
+
+
+def _sensitive_chat(w, key="sc", prompt="my diagnosis is X"):
+    from apps.canopy_sessions.models import Session
+
+    chat = Session.objects.create(agent=w["ace"], workspace=w["ws"], title="c", created_by=w["lili"],
+                                  metadata={"runner_requirements": ["sensitive_data"]})
+    turn = _turn(w["ace"], w["lili"], key, prompt=prompt)
+    Turn.objects.filter(pk=turn.pk).update(chat_session=chat, agent=None)
+    turn.refresh_from_db()
+    return chat, turn
+
+
+def test_the_envelope_reads_no_memory_into_a_sensitive_conversation(w):
+    from apps.contacts.models import PersonSearch
+
+    _add(w["person"], w["ws"], "Works on kangaroo care.")
+    _, turn = _sensitive_chat(w, prompt="kangaroo care")
+    block = caller_context.build(turn)["person"]
+    assert block["facts"] == [] and block["recall"] is None and block["record"] is None
+    assert block["hcp"]["use"] is False and block["hcp"]["record"] is False
+    assert not PersonSearch.objects.filter(turn=turn).exists()
+    assert not _events(w["person"], "preference.read")
+    # the same person, an ordinary conversation: recall runs
+    plain = _turn(w["ace"], w["lili"], "plain", prompt="kangaroo care")
+    assert caller_context.build(plain)["person"]["recall"] is not None
+
+
+def test_an_agent_cannot_search_memory_from_a_sensitive_conversation(w):
+    from apps.contacts.models import PersonSearch
+
+    _add(w["person"], w["ws"], "Works on kangaroo care.")
+    _, turn = _sensitive_chat(w)
+    r = _search(_as(w["ace"].user), turn)
+    assert r.status_code == 403 and "sensitive conversation" in r.json()["detail"]
+    assert not PersonSearch.objects.exists()
+
+
+def test_memory_cannot_be_switched_on_or_granted_in_a_sensitive_conversation(w):
+    chat, _ = _sensitive_chat(w)
+    c = _as(w["lili"])
+    url = f"/api/people/me/sessions/{chat.pk}/agent-memory/"
+    got = c.get(url).json()
+    assert got["record"]["effective"] is False and got["use"]["effective"] is False
+    r = c.put(url, data=json.dumps({"record": "on", "use": "on"}), content_type="application/json")
+    assert r.status_code == 403 and "sensitive conversation" in r.json()["detail"]
+    with pytest.raises(hcp.HcpError):
+        hcp.issue_agent_grant(w["person"], agent=w["ace"], features=["use"], duration="session",
+                              actor=hcp.user_actor(w["lili"]), session=chat)

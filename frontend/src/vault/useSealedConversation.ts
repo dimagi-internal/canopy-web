@@ -40,7 +40,10 @@ export function useSealedConversation<M extends Row>(
   messages: M[],
   unlockVault: () => Promise<Unlocked>,
 ): { state: SealedState; messages: M[]; unlock: () => Promise<void>; error: string | null;
-     key: ConversationKey | null; keyRef: { current: ConversationKey | null } } {
+     key: ConversationKey | null; keyRef: { current: ConversationKey | null };
+     /** Some row here came sealed — history or scroll-back, not a live frame — so
+      *  there is something for this browser to open. */
+     hasSealed: boolean } {
   const [key, setKey] = useState<ConversationKey | null>(null)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -101,5 +104,6 @@ export function useSealedConversation<M extends Row>(
     : key ? 'open'
       : opening ? 'opening'
         : whyNot(sealedKey) ?? (error ? 'error' : 'locked')
-  return { state, messages: shown, unlock, error, key, keyRef }
+  const hasSealed = messages.some((m) => isSealed(m.sealed))
+  return { state, messages: shown, unlock, error, key, keyRef, hasSealed }
 }

@@ -8,7 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from ..models import Person, PersonFact, PersonGrant
-from .consent import FEATURES, ON, memory_state, require_rollout, set_session_memory
+from .consent import FEATURES, ON, SENSITIVE_OFF, memory_state, require_rollout, set_session_memory
 from .core import (
     ACTIONS,
     HELD_CATEGORIES,
@@ -22,6 +22,7 @@ from .core import (
     scope,
 )
 from .entries import _iso
+from .sensitive import is_sensitive_session
 
 # --- grants (4.1) ----------------------------------------------------------------
 
@@ -424,6 +425,8 @@ def issue_agent_grant(person: Person, *, agent, features, duration: str, actor: 
         raise malformed("surface is " + ", ".join(SURFACES))
     if session is None:
         raise malformed("a grant is given in a session")
+    if is_sensitive_session(session):
+        raise denied(SENSITIVE_OFF)
     for f in features:
         if not getattr(person, f"hcp_{f}_available"):
             raise denied(f"{f} is not available for you; make it available first")
