@@ -963,7 +963,9 @@ class ClaimedTurnOut(TurnOut):
     def resolve_caller_context(obj) -> dict:
         from .caller_context import build
 
-        return build(obj)
+        # The claiming box runs the turn, so it alone is handed the conversation's
+        # sealed history (a sensitive conversation's memory).
+        return build(obj, with_history=True)
 
 
 class TurnEventIn(Schema):

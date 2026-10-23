@@ -32,6 +32,7 @@ from .models import (
     Runner,
     Turn,
 )
+from .runner_requirements import is_sensitive_data_box
 from .schemas import (
     AdmissionNoticeClaimIn,
     AdmissionNoticeClaimOut,
@@ -242,6 +243,9 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     from django.db.models import Min as _Min
 
     runner = runner_or_404(request, runner_id)
+    if is_sensitive_data_box(runner):
+        # A sensitive-data box keeps its transcripts to itself: nothing to tail.
+        return {"streams": []}
     bindings = (
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner, session__status=Session.ACTIVE)
@@ -330,6 +334,9 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
 def list_backfills(request: HttpRequest, runner_id: uuid.UUID):
     """Sessions this runner has been asked to ship full history for."""
     runner = runner_or_404(request, runner_id)
+    if is_sensitive_data_box(runner):
+        # Never asked of a sensitive-data box (`transcript_read.backfill_refused`).
+        return {"backfills": []}
     bindings = (
         RunnerBinding.objects.select_related("session")
         .filter(runner=runner, backfill_requested=True)
@@ -499,6 +506,11 @@ def post_session_backfill(request: HttpRequest, runner_id: uuid.UUID, payload: S
     from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 
     runner = runner_or_404(request, runner_id)
+    if is_sensitive_data_box(runner):
+        # A whole transcript is never taken from a sensitive-data box, asked for or
+        # not: a confined turn's reply reaches its session through the sealed
+        # turn-end stream, and nothing else of it leaves the box.
+        raise HttpError(409, "a sensitive-data runner ships no session history")
     binding = RunnerBinding.objects.filter(session_id=payload.session_id, runner=runner).first()
     if binding is None:
         raise HttpError(404, "session not bound to this runner")

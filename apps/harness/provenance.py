@@ -14,9 +14,10 @@ Three things live here, and only here:
   ip, MCP tool) from the request in flight (`apps/common/request_context.py`),
   and `parent_fields()` which turns raw parent ids (headers, a payload `parent`
   object, a caller token, or canopy's own internal paths) into the `parent_*`
-  columns. An id that does not resolve is kept verbatim in
-  `provenance["parent"]` and NEVER refuses the request: provenance is a record,
-  not a gate.
+  columns. A header's id that does not resolve is kept verbatim in
+  `provenance["parent"]` and never refuses the request; a payload `parent`
+  that names nothing is a 422, and a caller token's own turn is always the
+  parent — lineage carries a sensitive conversation's requirements down.
 * **Filling it on every creation** — `pre_save` receivers (connected in
   `signals.py`) stamp any Turn or Session born without it, so a creation site
   added next year is covered without remembering to call anything. Sites that
@@ -34,9 +35,11 @@ import logging
 import re
 import uuid
 
+from apps.api.errors import TYPE_VALIDATION, ProblemError
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.common import request_context
 
+from . import runner_requirements as rr
 from . import sensitivity
 from .models import Turn
 
@@ -61,17 +64,42 @@ def snapshot(**extra) -> dict:
     return out
 
 
-def requested_parent(explicit=None) -> dict:
-    """The parent the caller named: request headers (and a caller token's turn),
-    overridden key by key by an explicit `parent` (payload or internal path).
-    Values may be ids (strings) or model instances."""
-    out = dict(request_context.current().get("parent") or {})
+def _explicit(explicit) -> dict:
     if explicit is not None and not isinstance(explicit, dict):
         explicit = explicit.model_dump() if hasattr(explicit, "model_dump") else dict(explicit)
-    for key, value in (explicit or {}).items():
-        if key in PARENT_KEYS and value not in (None, ""):
-            out[key] = value
+    return {k: v for k, v in (explicit or {}).items() if k in PARENT_KEYS and v not in (None, "")}
+
+
+def token_turn() -> str:
+    """The turn a caller token was minted for, when one authenticated the request."""
+    return str((request_context.current().get("credential") or {}).get("turn_id") or "")
+
+
+def requested_parent(explicit=None) -> dict:
+    """The parent the caller named: request headers, overridden key by key by an
+    explicit `parent` (payload or internal path). Values may be ids (strings) or
+    model instances.
+
+    A caller token's own turn is the parent whatever an id in a header or a
+    payload says: a turn a sensitive conversation started is held to its
+    runners (`runner_requirements.requirements_of`), so naming another parent
+    would shed them. Only canopy's own paths, which pass the Turn itself (a
+    dispatch from a task a turn raised), name a different one."""
+    out = dict(request_context.current().get("parent") or {})
+    out.update(_explicit(explicit))
+    own = token_turn()
+    if own and not isinstance(out.get("turn"), Turn):
+        out["turn"] = own
     return out
+
+
+class UnknownParentError(ProblemError):
+    """A `parent` the caller named explicitly that names nothing."""
+
+    def __init__(self, keys: list[str]) -> None:
+        super().__init__(422, "Unknown parent", type_=TYPE_VALIDATION,
+                         detail=f"parent {', '.join(keys)} names nothing canopy knows; "
+                                "name the turn or session this was started from, or leave it out")
 
 
 def _as_uuid(value):
@@ -111,11 +139,18 @@ def _raw(value) -> str:
     return str(pk if pk is not None else value)[:200]
 
 
-def parent_fields(explicit=None) -> tuple[dict, dict]:
+def parent_fields(explicit=None, *, strict: bool = False) -> tuple[dict, dict]:
     """(`parent_*` column values, the raw parent to record in provenance).
 
-    Never raises on a bad id: what did not resolve is in the raw record under
-    `unresolved`, and the columns stay empty."""
+    A header's id that does not resolve is correlation, not a claim: it is kept
+    in the raw record under `unresolved`, and the columns stay empty. With
+    `strict` (a turn or session being created), a turn or session the caller
+    named EXPLICITLY (a payload `parent`) that names nothing is an
+    `UnknownParentError` 422 — read as "no parent" it would shed the requirements a
+    real parent passes on. The record says which keys resolved (`resolved`), so
+    a parent deleted later is told apart from one there never was
+    (`runner_requirements.lost_lineage`)."""
+    named = _explicit(explicit)
     raw = requested_parent(explicit)
     if not raw:
         return {}, {}
@@ -136,8 +171,15 @@ def parent_fields(explicit=None) -> tuple[dict, dict]:
     except Exception:  # noqa: BLE001 — a record must never fail the creation
         logger.exception("could not resolve a parent %r", record)
         return {}, {**record, "unresolved": "error"}
+    if strict:
+        bad = [k for k in unresolved if k in named and str(raw[k]) != token_turn()]
+        if bad:
+            raise UnknownParentError(bad)
     if unresolved:
         record["unresolved"] = ",".join(unresolved)
+    resolved = [k for k, v in (("turn", turn), ("session", session)) if v is not None]
+    if resolved:
+        record["resolved"] = ",".join(resolved)
     fields = {
         "parent_turn": turn,
         "parent_session": session,
@@ -147,8 +189,9 @@ def parent_fields(explicit=None) -> tuple[dict, dict]:
 
 
 def turn_fields(*, parent=None, **extra) -> dict:
-    """Column values for a new Turn: `provenance` plus `parent_*`."""
-    fields, record = parent_fields(parent)
+    """Column values for a new Turn: `provenance` plus `parent_*`. An explicit
+    `parent` that names nothing is a 422 (`parent_fields`)."""
+    fields, record = parent_fields(parent, strict=True)
     prov = snapshot(**extra)
     if record:
         prov["parent"] = record
@@ -178,6 +221,25 @@ def stamp(instance) -> None:
             setattr(instance, key, value)
         if record:
             instance.provenance = {**(instance.provenance or {}), "parent": record}
+
+
+def inherit_requirements(session) -> None:
+    """A NEW Session started from a turn or a conversation takes what they require of
+    a runner (`runner_requirements.lineage_requirements`) into its own metadata,
+    before its first message: a conversation a sensitive one started is sensitive
+    itself, for routing, sealing and every read. Requirements only grow. The
+    `pre_save` receiver runs it after `stamp`, and outside its try: a failure
+    fails the creation rather than birthing an unmarked conversation."""
+    if not session._state.adding:
+        return
+    inherited = rr.lineage_requirements(
+        parent_turn=session.parent_turn if session.parent_turn_id else None,
+        parent_session=session.parent_session if session.parent_session_id else None)
+    if not inherited or inherited <= rr.requirements_of_session(session):
+        return
+    meta = dict(session.metadata or {})
+    meta[rr.METADATA_KEY] = sorted(set(rr.requirements_of_session(session)) | inherited)
+    session.metadata = meta
 
 
 #: Recorded and logged, not served: a client address is for whoever reads the
@@ -316,7 +378,9 @@ def session_record(session) -> dict:
         "origin": session.origin,
         "who": _session_who(session),
         **_common(session),
-        "title": (session.title or "")[:PROMPT_HEAD],
+        # A sensitive conversation keeps no title (`canopy_sessions.services`); the
+        # log line never carries one either way.
+        "title": "" if sensitivity.is_sensitive(session) else (session.title or "")[:PROMPT_HEAD],
     }
 
 

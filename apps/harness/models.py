@@ -748,8 +748,8 @@ class Turn(models.Model):
     # FROM — from the X-Canopy-Parent-* headers, a `parent` object in the
     # payload, a confined session's caller token, or set by canopy itself (a
     # transfer, a re-ask of a lost turn, a dispatch from a task a turn raised).
-    # The two FKs are only set when the id resolved; an unknown id is kept raw in
-    # `provenance["parent"]` instead and never refuses the request.
+    # The two FKs are only set when the id resolved; a header's unknown id is kept
+    # raw in `provenance["parent"]`, a payload's is a 422 (`provenance.parent_fields`).
     parent_turn = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="child_turns",
     )

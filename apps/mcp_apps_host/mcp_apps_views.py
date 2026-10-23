@@ -83,6 +83,10 @@ class Viewer:
 
     user: object | None = None
     contact: object | None = None
+    #: Whether the request came through a chat surface
+    #: (`sensitivity.request_is_chat_surface`). False unless the route says so, so a
+    #: sensitive conversation's call arguments reach no token-held door.
+    chat_surface: bool = False
 
     @property
     def name(self) -> str:
@@ -419,7 +423,8 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         # §4): the View fetches its data as the viewer, from the input —
         # which only the conversation's own people read back (`reads_content`).
         "tool_input": (tool_input(row) if sensitivity.reads_content(
-            session, chat_surface=True, user=viewer.user, contact=viewer.contact) else {}),
+            session, chat_surface=viewer.chat_surface, user=viewer.user,
+            contact=viewer.contact) else {}),
         "tool_result": None if sensitivity.is_sensitive(session) else tool_result(row),
         "receipts": receipts_for(session, tool_call_id),
     }

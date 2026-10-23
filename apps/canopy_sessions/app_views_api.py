@@ -21,6 +21,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.harness import sensitivity
 from apps.mcp_apps_host import mcp_apps_views as views
 
 router = Router(auth=session_auth, tags=["chat"])
@@ -47,7 +48,11 @@ class AppMessageIn(Schema):
 
 def browser_only(request: HttpRequest) -> None:
     """A View's routes answer a person's browser, never a program holding a PAT."""
-    if getattr(request, "via_mcp", False) or getattr(request, "auth_method", "") == "pat":
+    # A chat surface (`sensitivity.request_is_chat_surface`): a browser or a site's
+    # widget token — never a session cookie minted from a token
+    # (`/api/debug/mint-session/`), which reads as a browser to everything else.
+    if (getattr(request, "via_mcp", False) or getattr(request, "auth_method", "") == "pat"
+            or not sensitivity.request_is_chat_surface(request)):
         raise HttpError(403, "app view routes are for a person's browser, not a token")
 
 
@@ -59,7 +64,8 @@ def _session(request, session_id):
 
 
 def _viewer(request) -> views.Viewer:
-    return views.Viewer(user=request.user)
+    return views.Viewer(user=request.user,
+                        chat_surface=sensitivity.request_is_chat_surface(request))
 
 
 def _run(fn, *args):

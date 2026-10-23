@@ -9,6 +9,12 @@ agent or repository, and person. One that matches nothing is MISSING: kept witho
 a workspace, visible only to the box's admins (`missing`), until they send it up
 (`send_up`), which files it as a session and asks the box for its transcript.
 
+A sensitive-data box (`runner_requirements.is_sensitive_data_box`) reports what was
+spent and nothing else: no title, no missing session, and nothing is ever sent up
+from it. A session canopy has no record of there is a confined turn's leftover (an
+earlier credential's attempt, a crash), and filing it would make the box ship words
+canopy keeps sealed as an ordinary transcript.
+
 No cost: the only figure a run reports is `claude -p`'s list-price estimate, which
 does not describe a subscription.
 """
@@ -22,11 +28,21 @@ from django.db.models import Max, Min, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from apps.harness import sensitivity
+from apps.harness import runner_requirements, sensitivity
 
 from .models import SessionUsage
 
 logger = logging.getLogger(__name__)
+
+
+class SendUpRefusedError(Exception):
+    """This box's missing sessions are never sent up (a sensitive-data box)."""
+
+
+SENSITIVE_BOX_REFUSAL = (
+    "This runner is a sensitive-data box: it keeps its transcripts to itself, so its "
+    "sessions are never sent up. A session canopy has no record of there is a confined "
+    "turn's leftover, and the box deletes it.")
 
 _TOKENS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 
@@ -94,6 +110,7 @@ def record(runner, sessions: list[dict], *, full: bool = False) -> dict:
     # The box scans only `scope`, but the server holds the line too: a session
     # canopy has no record of, in a repo its owner has not opted into, is not kept.
     allowed = set(scope(runner))
+    sensitive_box = runner_requirements.is_sensitive_data_box(runner)
     with transaction.atomic():
         for s in sessions:
             cs = str(s.get("claude_session") or "")[:64]
@@ -102,12 +119,18 @@ def record(runner, sessions: list[dict], *, full: bool = False) -> dict:
                 continue
             session, turn = _match(cs)
             repo = str(s.get("repo") or "")
-            if session is None and turn is None and repo not in allowed and not runner.opts_in(repo):
+            if session is None and turn is None and (
+                    sensitive_box or (repo not in allowed and not runner.opts_in(repo))):
+                # A sensitive-data box's session canopy has no record of is never
+                # kept: kept, it would be listed as missing and could be sent up.
                 continue
             who = _attribution(runner, str(s.get("repo") or "")[:100], session, turn)
             # A session's first prompt is its title here; a sensitive one's is the
             # host's data (spec 2026-10-22-sensitive-data-agents §4).
-            title = "" if sensitivity.any_sensitive(session, turn) else str(s.get("title") or "")[:200]
+            # A sensitive-data box's titles are blank whatever the session: the box
+            # holds only sensitive work.
+            title = ("" if sensitive_box or sensitivity.any_sensitive(session, turn)
+                     else str(s.get("title") or "")[:200])
             matched += who["workspace_id"] is not None
             agent = who["agent"]
             common = dict(
@@ -136,7 +159,10 @@ def record(runner, sessions: list[dict], *, full: bool = False) -> dict:
 
 
 def missing(runner) -> list[dict]:
-    """This box's sessions canopy has no record of, one row each, newest first."""
+    """This box's sessions canopy has no record of, one row each, newest first.
+    Never any on a sensitive-data box."""
+    if runner_requirements.is_sensitive_data_box(runner):
+        return []
     rows = (SessionUsage.objects.filter(runner=runner, workspace__isnull=True)
             .values("claude_session", "repo", "title")
             .annotate(first_at=Min("first_at"), last_at=Max("last_at"), days=Sum(1),
@@ -149,11 +175,14 @@ def send_up(runner, claude_sessions: list[str]) -> list[str]:
     """File each missing session as a canopy session and ask its box for the
     transcript (the ordinary backfill, keyed `claude:<id>`); its usage is matched
     to it at once. Filed where the report sweep files that box's sessions
-    (`harness.session_sync.session_home`). Returns the canopy session ids."""
+    (`harness.session_sync.session_home`). Returns the canopy session ids.
+    Raises SendUpRefusedError for a sensitive-data box, whatever is asked."""
     from apps.canopy_sessions import transcript_read as session_transcript_read
     from apps.canopy_sessions.models import RunnerBinding, Session
     from apps.harness.session_sync import session_home
 
+    if runner_requirements.is_sensitive_data_box(runner):
+        raise SendUpRefusedError(SENSITIVE_BOX_REFUSAL)
     out = []
     pending = {r["claude_session"]: r for r in missing(runner) if r["claude_session"] in set(claude_sessions)}
     for cs, row in pending.items():

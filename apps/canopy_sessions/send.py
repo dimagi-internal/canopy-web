@@ -201,7 +201,7 @@ def _send_message(
             origin_ref=origin_ref, capability=capability, parent=parent,
         )
     with transaction.atomic():
-        Session.objects.select_for_update().get(pk=session.pk)
+        locked = Session.objects.select_for_update().get(pk=session.pk)
         if client_id:
             existing = Message.objects.filter(
                 session=session, role=Message.USER, content__client_id=client_id
@@ -215,8 +215,9 @@ def _send_message(
 
         # A sensitive conversation's row says THAT the person spoke (metadata) and
         # keeps the words sealed, for the conversation's own people
-        # (`sensitivity.seal`); the turn's prompt is wiped when it ends.
-        sensitive = sensitivity.is_sensitive(session)
+        # (`sensitivity.seal`); the turn's prompt is wiped when it ends. Asked of
+        # the LOCKED row: the caller's copy may predate a requirement added since.
+        sensitive = sensitivity.seals(locked)
         plaintext, content, sealed = (sensitivity.seal(Message.USER, text, {"text": text})
                                       if sensitive else (text, {"text": text}, None))
         if client_id:
@@ -230,6 +231,17 @@ def _send_message(
             fallback_key=str(index), placement=placement, origin=origin, initiator=initiator,
             origin_ref=origin_ref, capability=capability, parent=parent,
         )
+        resealed = []
+        if not sensitive and sensitivity.seals(locked, turn):
+            # The turn was started from a sensitive turn or conversation, and this
+            # conversation took on its requirements: the row is sealed before the
+            # transaction that wrote it commits, so no reader ever sees it open.
+            message.plaintext, message.content, message.sealed = sensitivity.seal(
+                Message.USER, text, {"text": text})
+            if client_id:
+                message.content["client_id"] = client_id
+            session.metadata = locked.metadata
+            resealed = ["plaintext", "content", "sealed"]
         # The ledger path writes its own row, so it records the author directly
         # rather than through the transcript marker.
         if user is not None and getattr(user, "is_authenticated", False):
@@ -237,7 +249,7 @@ def _send_message(
                               "user_id": user.pk}
         if turn is not None:
             message.source_turn_id = turn.pk
-        message.save(update_fields=["author", "source_turn_id"])
+        message.save(update_fields=["author", "source_turn_id", *resealed])
         # Fan the row out to every OTHER watcher on the session socket. The
         # sender's own client already has it (the optimistic echo off
         # `draft.committed` / the REST response), but nobody said so to anyone

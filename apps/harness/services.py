@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
+from . import sensitivity
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
 from .ledger import append_events
@@ -67,7 +68,14 @@ def _apply_capability(turn: Turn, requested: str | None = None) -> None:
         turn.status = Turn.CANCELLED
         turn.finished_at = timezone.now()
         turn.result_note = f"not run: {decision.reason or agent.slug + ' does not take work from you'}"
-        turn.save(update_fields=["status", "finished_at", "result_note"])
+        fields = ["status", "finished_at", "result_note"]
+        if sensitivity.is_sensitive(turn):
+            # Ended before it began, so `closing.close_turn` — where a sensitive
+            # turn's prompt is otherwise wiped — never sees it: metadata only here
+            # too. The note is canopy's own refusal, not anything the turn read.
+            turn.prompt = ""
+            fields.append("prompt")
+        turn.save(update_fields=fields)
         # Refused whatever the rules say; the workspace's `offered-nothing` rule
         # decides what is recorded and who is told (canopy-web#1416).
         from apps.admission import evaluate as admission
@@ -248,6 +256,11 @@ def enqueue_turn(
                     and getattr(requested_turn_mode_by, "is_authenticated", False)
                     else None),
             )
+            if session is not None:
+                # A turn started from a sensitive turn or conversation makes the
+                # conversation it joins sensitive before anything of it lands
+                # there, so what is sealed and who reads it back agree.
+                sensitivity.take_on(session, turn)
             _apply_capability(turn, capability)
             # A combination that can never complete is refused here, before any
             # runner can see it — or, when the rule needs the runner or the
@@ -615,8 +628,6 @@ def finish_turn(
     from .turn_agent_tokens import revoke_for_turn
 
     revoke_for_turn(turn.pk)
-    from . import sensitivity
-
     if sensitivity.is_sensitive(turn):
         result_note = sensitivity.withheld_note(result_note)  # every path below stores it
 

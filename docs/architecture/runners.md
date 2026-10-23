@@ -511,6 +511,13 @@ key, runs every turn under a locked harness, limits egress to an allowlist of ho
 that handle sensitive data. The box runs in that mode with `RUNNER_DATA_MODE=sensitive_data`
 and reports it on every heartbeat; any other non-empty value takes no turn.
 
+Nothing of a sensitive-data box's transcripts reaches canopy-web except a confined
+turn's sealed turn-end rows. Its usage report keeps no title, a session canopy has no
+record of is neither kept nor listed as missing (`events.usage`), and sending one up,
+asking a backfill (`transcript_read.backfill_refused`), resetting one, filing a
+reported session (`session_sync.session_home`) or posting `session-backfill` is refused,
+with 409 on the routes. `tests/test_sensitive_box_uploads.py`.
+
 - A **host** requires flags of its visitors' conversations with
   `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["sensitive_data"]` (SDK `dimagi-canopy`); the SDK signs
   them into the visitor assertion (`canopy_runner_requirements`), and canopy stamps

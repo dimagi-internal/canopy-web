@@ -141,9 +141,17 @@ at boot:
 
 `requirements_of(turn)` reads the union of the turn's session, its ancestors
 (`parent_turn`), and — for auto-debug and dispatched turns — the turn they were made
-from. `fork_session` copies `runner_requirements`. A turn with requirements and no
-session (a schedule a sensitive conversation set up) stores them on the turn itself
-(`Turn.runner_requirements`, server-owned).
+from. `fork_session` copies `runner_requirements`. There is no
+`Turn.runner_requirements`: a sensitive turn cannot set up a schedule, a task or a turn,
+because its caller token reaches only `current_page`, `who_is_asking`, `site_tools` and
+`site_call` whatever its interface lists, and nothing once its capability stops saying
+`data: sensitive` (`caller_tokens._sensitive_grant`). What is enforced instead is
+lineage: a caller token's own turn is always the parent of what its request starts; a
+payload `parent` that names nothing is refused (422); a session started from a sensitive
+turn or conversation (a `parent`, a Slack branch, a transcript successor) takes its
+requirements at birth; a turn started from one makes the conversation it joins sensitive
+before anything of it lands there; and a queued turn whose recorded parent has been
+deleted is unsatisfiable.
 
 ## 4. Sensitive data stays inside the boundary in canopy-web
 

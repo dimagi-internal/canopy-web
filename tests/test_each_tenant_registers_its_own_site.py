@@ -27,6 +27,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.embedding import assertions, embed_apps
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -62,6 +63,7 @@ def _tenant(slug, email):
     Agent.objects.create(slug=f"{slug}-agent", name=slug, workspace=ws)
     c = Client()
     c.force_login(owner)
+    grant_step_up(c)  # connecting a site takes a passkey
     return owner, c
 
 

@@ -26,6 +26,7 @@ from apps.workspaces import services as wsvc
 
 from .models import ProjectOptIn, Runner, Turn
 from .routing import EXECUTING, runner_tenant_slugs
+from .runner_requirements import is_sensitive_data_box
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +493,15 @@ def _session_tenant(runner) -> set[str]:
     return cached
 
 
+def _sensitive_box(runner) -> bool:
+    """`is_sensitive_data_box(runner)`, read once per runner object, like the tenant."""
+    cached = getattr(runner, "_sensitive_box_cache", None)
+    if cached is None:
+        cached = is_sensitive_data_box(runner)
+        runner._sensitive_box_cache = cached
+    return cached
+
+
 def _agent_for_project(project: str, runner):
     """The agent a reported emdash PROJECT belongs to; None when it names no
     agent; `FOREIGN_AGENT` when it names an agent outside the runner's tenant.
@@ -537,7 +547,12 @@ def session_home(runner, project: str, fallback=None):
 
     None when the project names an agent outside the runner's tenant, or is a
     repo the runner's owner has not opted into (`Runner.opts_in`): such a
-    session is not canopy's and is not filed at all (callers skip it)."""
+    session is not canopy's and is not filed at all (callers skip it). None, too,
+    for anything a sensitive-data box reports: its sessions are canopy's own
+    confined turns, and one canopy has no record of is a leftover it deletes,
+    never a session to file and ask the box to ship."""
+    if _sensitive_box(runner):
+        return None
     owner = _agent_for_project(project, runner)
     if owner is FOREIGN_AGENT:
         return None
@@ -587,7 +602,9 @@ def fire_sessions_closed(session_ids: list) -> None:
 def _ask_identity(menu):
     if not menu:
         return None
-    return (str(menu.get("question") or ""),
+    # A sensitive conversation's dialog keeps no words (`sensitivity.menu_metadata`),
+    # only their digest, which is what tells one ask from the next.
+    return (str(menu.get("question") or "") + str(menu.get("sha256") or ""),
             tuple(str(o.get("label") or "") for o in (menu.get("options") or [])
                   if isinstance(o, dict)))
 
@@ -868,6 +885,10 @@ def replace_reported_sessions(
             # directly with lightweight session objects, and a dialog must
             # never be the reason a liveness report fails.
             binding.pending_question = getattr(s, "question", None) or None
+            # A sensitive conversation's dialog is kept as metadata: the question
+            # and its options are the host's data as often as not.
+            if binding.pending_question and sensitivity.is_sensitive(binding.session):
+                binding.pending_question = sensitivity.menu_metadata(binding.pending_question)
             if was_asking != binding.pending_question:
                 menu_changes.append((binding.session_id, binding.pending_question))
                 # Whether this is a NEW ask, not the same one seen again. Every
@@ -1055,6 +1076,12 @@ def report_session_menu(runner: Runner, session_id, menu: dict | None) -> bool:
         return False
     was_asking = binding.pending_question or None
     binding.pending_question = menu or None
+    if binding.pending_question:
+        from . import sensitivity  # noqa: PLC0415 — as in the laptop's report above
+
+        # As the laptop's report above: a sensitive conversation's dialog is metadata.
+        if sensitivity.is_sensitive(binding.session):
+            binding.pending_question = sensitivity.menu_metadata(binding.pending_question)
     if was_asking == binding.pending_question:
         return True
     binding.save(update_fields=["pending_question"])

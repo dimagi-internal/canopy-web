@@ -1578,7 +1578,13 @@ def send_up_missing_sessions(request: HttpRequest, runner_id: uuid.UUID, payload
     from apps.events import usage
 
     runner = runner_admin_or_404(request, runner_id)
-    return SendUpOut(sessions=usage.send_up(runner, payload.claude_sessions))
+    # Refused (409) on a sensitive-data box, which keeps its transcripts to itself
+    # (`usage.send_up`).
+    try:
+        return SendUpOut(sessions=usage.send_up(runner, payload.claude_sessions))
+    except usage.SendUpRefusedError as exc:
+        raise ProblemError(409, "Sessions are not sent up from a sensitive-data runner",
+                           detail=str(exc)) from exc
 
 
 def _missing_sessions(runner) -> MissingSessionsOut:

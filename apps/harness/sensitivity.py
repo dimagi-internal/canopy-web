@@ -28,6 +28,8 @@ SENSITIVE_DATA = rr.SENSITIVE_DATA
 #: The refusal every re-exposure door gives, so a person reads one sentence.
 REFUSAL = ("this conversation holds a host's sensitive data, so canopy does not share, export "
            "or copy it")
+#: Why a sensitive conversation cannot be named: a title is shown everywhere its words are not.
+NO_TITLE = ("this conversation holds a host's sensitive data, so canopy keeps no title for it")
 #: Why a door that would hand the words on refuses someone not in the conversation.
 NOT_IN_IT = ("this conversation holds a host's sensitive data: only the people in it can "
              "bring someone in or copy it")
@@ -54,6 +56,32 @@ def is_sensitive(obj) -> bool:
     if isinstance(obj, Turn):
         return _is(rr.requirements_of(obj))
     return _is(rr.requirements_of_session(obj))
+
+
+def take_on(session, turn) -> None:
+    """Raise `session` to what `turn` requires when the turn asks more of a runner
+    than its conversation does (it was started from a sensitive turn or
+    conversation). Requirements only grow. Run when a turn joins a conversation
+    and again before its rows land, so the session that every reader's
+    `reads_content` asks says what the sealing said."""
+    if session is None or turn is None:
+        return
+    reqs = rr.requirements_of(turn)
+    if not reqs or reqs <= rr.requirements_of_session(session):
+        return
+    from apps.canopy_sessions.services import add_runner_requirements  # noqa: PLC0415 — harness ↛ chat at import
+
+    add_runner_requirements(session, reqs)
+
+
+def seals(session, turn=None) -> bool:
+    """THE decision whether rows landing in `session` (written by `turn`, when one
+    did) are sealed: the session's own sensitivity, after it has taken on the
+    turn's (`take_on`). One answer for the writer and every reader, so a
+    sensitive turn's words never land unsealed in a conversation `readable`
+    would hand to anyone."""
+    take_on(session, turn)
+    return is_sensitive(session)
 
 
 def strip_result(payload: dict | None) -> dict:
@@ -139,6 +167,41 @@ def redact_payload(payload) -> dict:
             if isinstance(tool_input.get(key), str):
                 out[f"input_{key}"] = tool_input[key][:MAX_META_STRING]
     out["bytes"], out["sha256"] = _size_and_hash(payload)
+    return out
+
+
+def menu_metadata(menu) -> dict | None:
+    """A blocked agent's dialog (`RunnerBinding.pending_question`) as a sensitive
+    conversation keeps it: that it is waiting, who produced the dialog and its
+    shape — how many options, numbered, and whether each question is pick-any —
+    never the question or an option's words, which can quote the host's data.
+    The digest of the words tells one ask from the next without keeping them.
+    None for no dialog."""
+    if not isinstance(menu, dict) or not menu:
+        return None
+    if menu.get("redacted") == REDACTED:
+        return menu
+
+    def numbered(options) -> list[dict]:
+        rows = [o for o in (options or []) if isinstance(o, dict)]
+        return [{"number": o.get("number") if isinstance(o.get("number"), int) else i,
+                 "label": str(o.get("number") if isinstance(o.get("number"), int) else i),
+                 "description": ""} for i, o in enumerate(rows, start=1)]
+
+    words = {"question": menu.get("question"), "title": menu.get("title"),
+             "body": menu.get("body"), "options": menu.get("options"),
+             "questions": menu.get("questions")}
+    out: dict = {"redacted": REDACTED, "question": "", "title": "", "body": "",
+                 "options": numbered(menu.get("options")),
+                 "sha256": _size_and_hash(words)[1]}
+    for key in ("source", "observed_at", "selected"):
+        if isinstance(menu.get(key), (bool, int, float, str)) and key in menu:
+            out[key] = menu[key] if not isinstance(menu[key], str) else menu[key][:MAX_META_STRING]
+    if isinstance(menu.get("questions"), list):
+        out["questions"] = [
+            {"index": q.get("index", i), "question": "", "header": "",
+             "multi_select": bool(q.get("multi_select")), "options": numbered(q.get("options"))}
+            for i, q in enumerate(q for q in menu["questions"] if isinstance(q, dict))]
     return out
 
 

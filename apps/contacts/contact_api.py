@@ -857,7 +857,8 @@ from apps.canopy_sessions.app_views_api import (  # noqa: E402
 def _app_viewer(request):
     from apps.mcp_apps_host import mcp_apps_views
 
-    return mcp_apps_views.Viewer(contact=request.contact)
+    return mcp_apps_views.Viewer(contact=request.contact,
+                                 chat_surface=sensitivity.request_is_chat_surface(request))
 
 
 def _app_run(fn, *args):

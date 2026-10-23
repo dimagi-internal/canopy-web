@@ -24,6 +24,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.contacts.models import Contact
 from apps.embedding import assertions
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -394,6 +395,7 @@ def test_a_key_registered_THROUGH_THE_PAGE_verifies_a_real_assertion():
 
     admin = Client()
     admin.force_login(owner)
+    grant_step_up(admin)  # connecting a site takes a passkey
     created = admin.post(
         "/api/workspaces/w1/connected-apps",
         data={"name": "connect-labs", "origins": ["https://labs.connect.dimagi.com"],

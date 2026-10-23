@@ -274,10 +274,17 @@ def _sweep_sensitive(tally, *, now, apply, limit) -> None:
             touched += 1
             if limit is not None and touched >= limit:
                 break
-    turns = (_expired_turns(Turn.objects.filter(
-        chat_session__isnull=True, parent_session__metadata__has_key=sensitivity.rr.METADATA_KEY))
-        .filter(aged_at__lt=cutoff).select_related("parent_session"))
-    picked = [t.pk for t in turns if sensitivity.is_sensitive(t)]
+    # A session-less turn is sensitive through its chain (`requirements_of`): the
+    # conversation it was started from, or any ancestor turn's. SQL narrows to
+    # the turns that have either link; the predicate walks the chain. Expired,
+    # unscrubbed turns only, so each is walked once and then drops out.
+    turns = (_expired_turns(Turn.objects.filter(chat_session__isnull=True).filter(
+        Q(parent_session__metadata__has_key=sensitivity.rr.METADATA_KEY)
+        | Q(parent_turn__isnull=False)))
+        .filter(aged_at__lt=cutoff)
+        .select_related("parent_session", "parent_turn__chat_session",
+                        "parent_turn__parent_session"))
+    picked = [t.pk for t in turns.iterator(chunk_size=500) if sensitivity.is_sensitive(t)]
     tally.add(rule, "turns_scrubbed", len(picked))
     if apply and picked:
         _scrub_turns(picked, now)
