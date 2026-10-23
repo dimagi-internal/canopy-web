@@ -13,7 +13,7 @@ def _doc(i, text, **kw):
 
 def _publish(cur, docs, parts=None, **kw):
     recs = {i: r for i, (r, _) in docs.items()}
-    return cur.publish(recs, lambda i: docs[i][1], parts or {"manifest": {"name": "t"}}, **kw)
+    return cur.publish(recs, lambda ids: {i: docs[i][1] for i in ids}, parts or {"manifest": {"name": "t"}}, **kw)
 
 
 def test_a_step_key_names_its_code_and_its_inputs_not_the_machine():
@@ -178,7 +178,7 @@ def test_a_fresh_machine_asks_the_publisher_only_what_the_last_one_would_have(mo
                              monkeypatch)
         row = f.get("https://x/a")
         assert row["sha256"] and row["etag"] == "e1"
-        cur.put_originals(f.new_originals())
+        f.flush()
         _publish(cur, {"a": _doc("a", "v1")})
     with Curation(store) as cur:  # empty disk: the row is in the state, the bytes in the store
         f, client = _fetcher(cur, [_Resp(304)], monkeypatch)
@@ -186,6 +186,7 @@ def test_a_fresh_machine_asks_the_publisher_only_what_the_last_one_would_have(mo
         again = f.get("https://x/a", refetch=True)
         assert client.sent[0][1]["If-None-Match"] == "e1" and again["sha256"] == row["sha256"]
         assert f.body(again) == b"<html>v1</html>" and f.new_originals() == {}  # from the originals store
+        assert store.calls[-1].startswith("get originals")
 
 
 def test_an_outage_keeps_the_last_good_copy_and_a_404_is_a_removal(monkeypatch):
@@ -217,7 +218,7 @@ def test_a_google_export_that_says_the_same_keeps_its_row_and_original(monkeypat
         first = f.get("https://docs.google.com/spreadsheets/d/S/export?format=xlsx")
         again = f.get("https://docs.google.com/spreadsheets/d/S/export?format=xlsx", refetch=True)
         assert again["sha256"] == first["sha256"] and first["stable"] and f.counts["same_content"] == 1
-        assert len(f.new_originals()) == 1
+        assert len(f.new_originals()) == 1 and f.flush() == 1 and f.new_originals() == {}
 
 
 def test_the_toolkits_lock_describes_its_code():
