@@ -34,7 +34,7 @@ from django.utils import timezone
 from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
-from . import zk
+from . import vault_members, zk
 from ..models import Agent, AgentVaultWrap, ZkGrantNotice
 
 logger = logging.getLogger(__name__)
@@ -90,10 +90,13 @@ def _label(t: dict) -> str:
 
 
 def holders(agent) -> list:
-    """Everyone who can grant: a member wrap at the current kv, still active."""
+    """Everyone who can grant: a member wrap at the current kv, still active, and
+    still a member of the vault — a copy alone makes nobody a holder."""
 
-    return [w.user for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="member")
-            .select_related("user") if w.user_id and w.user.is_active]
+    ids = vault_members.agent_member_ids(agent)
+    return [w.user for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="member",
+                                                          user_id__in=ids)
+            .select_related("user") if w.user.is_active]
 
 
 def _link(agent) -> str:

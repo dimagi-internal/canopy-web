@@ -759,6 +759,14 @@ class Vault(models.Model):
     #: A WORKSPACE vault's own key version (always zero-knowledge; 0 = no key yet). An
     #: agent vault's key version stays on the agent (`Agent.zk_kv`).
     kv = models.PositiveIntegerField(default=0)
+    #: The keepers' shared record of whose key they have trusted, person by person
+    #: (`credentials/vault_keeper.py` § the keepers' record): a `zk1` value under the
+    #: vault key at `keeper_pins_kv`, bound to the name `~keeper-pins`. canopy-web
+    #: stores it and can neither read nor forge it; `keeper_pins_version` goes up on
+    #: every write, so two keepers cannot overwrite each other.
+    keeper_pins_zk = models.TextField(blank=True, default="")
+    keeper_pins_kv = models.PositiveIntegerField(default=0)
+    keeper_pins_version = models.PositiveIntegerField(default=0)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

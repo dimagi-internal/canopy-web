@@ -29,8 +29,11 @@ from apps.agents.models import (
     AgentCredentialRead,
     AgentPatRotation,
     AgentVaultWrap,
+    Vault,
+    VaultKeyWrap,
     ZeroKnowledgeValue,
 )
+from apps.agents.schemas import ZkWrapIn
 from apps.events.models import SettingChange
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
@@ -1221,33 +1224,38 @@ def test_a_box_whose_person_left_the_vault_reads_nothing(fleet):
     assert res.status_code == 403 and res.json()["error"] == "not_a_vault_member"
 
 
-def test_reconcile_drops_the_key_copies_of_whoever_left(fleet):
-    from apps.agents.credentials import vault_members
-
+def test_an_admin_who_left_the_vault_gets_no_ciphertext_though_they_kept_a_copy(fleet):
+    # Checked on every read, not swept: their old copy stays in the table, and
+    # opens nothing because canopy-web will not hand them the values.
     assert _enable(fleet).status_code == 200
-    assert vault_members.reconcile(fleet.agent).total == 0
-    assert AgentVaultWrap.objects.filter(agent=fleet.agent, kind="device").count() == 1
+    assert fleet.client.get(f"{ZK}?values=true").status_code == 200
     _leave_the_vault(fleet)
-    r = vault_members.reconcile(fleet.agent)
-    assert (r.member_wraps, r.device_wraps) == (1, 1)
-    assert set(AgentVaultWrap.objects.filter(agent=fleet.agent).values_list("kind", flat=True)) == {"recovery"}
+    assert AgentVaultWrap.objects.filter(agent=fleet.agent, kind="member", user=fleet.user).exists()
+    res = fleet.client.get(f"{ZK}?values=true")
+    assert res.status_code == 403 and res.json()["error"] == "not_a_vault_member"
+    assert fleet.client.get(ZK).status_code == 200   # the public state, no ciphertext
 
 
-def test_removing_a_direct_member_drops_their_copies_at_once(fleet):
+def test_a_box_whose_person_left_is_no_keeper_and_nobody_who_left_is_a_holder(fleet):
+    from apps.agents.credentials import vault_keeper, zk_notify
+
+    assert _enable(fleet).status_code == 200
+    fleet.agent.refresh_from_db()
+    assert [w.agent_id for w in vault_keeper._held(fleet.runner)] == [fleet.agent.pk]
+    assert zk_notify.holders(fleet.agent) == [fleet.user]
+    _leave_the_vault(fleet)
+    assert vault_keeper._held(fleet.runner) == []
+    assert zk_notify.holders(fleet.agent) == []
+
+
+def test_coming_back_to_the_vault_opens_it_again_with_the_same_copy(fleet):
     from apps.agents.credentials import vault_members
 
     assert _enable(fleet).status_code == 200
-    other = get_user_model().objects.create_user(username="o2", email="o2@dimagi.com")
-    WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.VIEWER)
-    o_priv, _ = _make_keyset(other, _add_passkey(other, "o2-cred").credential_id)
-    vault = vault_members.vault_for_agent(fleet.agent)
-    vault_members.add_member(vault, other, role="use", by=fleet.user)
-    res = fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
-        member_wrap(fleet, user=other, pub=o_priv.public_key())]}, content_type="application/json")
-    assert res.status_code == 200, res.content
-    res = fleet.client.delete(f"/api/agents/eva/vault/members/{other.pk}")
-    assert res.status_code == 200
-    assert not AgentVaultWrap.objects.filter(agent=fleet.agent, kind="member", user=other).exists()
+    vault = _leave_the_vault(fleet)
+    assert _resolve(fleet).status_code == 403
+    vault_members.set_agent_link(vault, fleet.agent, linked=True)
+    assert _resolve(fleet).status_code == 200
 
 
 # ---- workspace vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md §4) ------
@@ -1321,11 +1329,12 @@ def test_a_workspace_vault_serves_only_what_it_is_attached_to(fleet):
     [att] = fleet.client.get(f"/api/vaults/{vid}").json()["attachments"]
     res = fleet.client.delete(f"/api/vaults/{vid}/attachments/{att['id']}")
     assert res.status_code == 200
-    # Detached: the box serves no agent it is attached to, so its copy goes and it reads nothing.
-    from apps.agents.models import VaultKeyWrap
+    # Detached: the box serves no agent it is attached to, so it reads nothing and is
+    # no keeper of it — whatever copy it still holds.
+    from apps.agents.credentials import vault_keeper
 
-    assert not VaultKeyWrap.objects.filter(kind="device").exists()
     assert _resolve(fleet).json()["vaults"] == []
+    assert vault_keeper._held_workspace(fleet.runner) == []
 
 
 def test_only_a_workspace_owner_makes_one_and_only_a_manager_changes_it(fleet):
@@ -1355,3 +1364,74 @@ def test_a_keeper_grants_a_workspace_vault_too(fleet):
     res = fleet.client.post(row["grant_path"], data={"kv": 1, "wraps": [
         {"kind": "member", "target": str(ed.pk), "wrap": wrap}]}, content_type="application/json")
     assert res.status_code == 200 and res.json() == {"granted": 1}
+
+
+def test_replacing_your_vault_key_puts_you_back_in_line_for_workspace_vaults_too(fleet):
+    from apps.agents.credentials import workspace_vaults
+
+    assert _enable(fleet).status_code == 200
+    vid, _, _ = _ws_enabled(fleet, {"x": "y"})
+    v = Vault.objects.get(pk=vid)
+    assert VaultKeyWrap.objects.filter(vault=v, kind="member", user=fleet.user).exists()
+    zk.forget_member_wraps(fleet.user)   # what PUT /api/vault/keyset {replace: true} runs
+    assert not VaultKeyWrap.objects.filter(vault=v, kind="member", user=fleet.user).exists()
+    assert ("member", str(fleet.user.pk)) in {(t["kind"], t["target"]) for t in workspace_vaults.pending_targets(v)}
+
+
+def test_a_keeper_that_lost_the_race_adds_nothing(fleet):
+    # Both keepers saw the target pending; the second's write finds a copy under
+    # the lock and is refused, so exactly one grant stands.
+    assert _enable(fleet).status_code == 200
+    before = AgentVaultWrap.objects.get(agent=fleet.agent, kind="member", user=fleet.user).wrap
+    with pytest.raises(zk.ZkError) as exc:
+        zk.add_wraps(fleet.agent, kv=1, wraps=[ZkWrapIn(**member_wrap(fleet))], user=fleet.user, only_new=True)
+    assert exc.value.code == "zk_not_pending"
+    assert AgentVaultWrap.objects.get(agent=fleet.agent, kind="member", user=fleet.user).wrap == before
+
+
+# ---- the keepers' shared record, and announcing a keeper's grant -------------------------
+
+def _pins_value(fleet, kv=1, people=None) -> str:
+    import json as _json
+
+    return ref.encrypt_value(fleet.vk, _aid(fleet), "~keeper-pins", kv,
+                             _json.dumps({"v": 1, "people": people or {}}), os.urandom(12))
+
+
+def test_a_keeper_reads_and_writes_the_shared_record_over_the_version_it_read(fleet):
+    assert _enable(fleet).status_code == 200
+    _editor_with_a_key(fleet)
+    [work] = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    assert work["pins"] == {"value": "", "kv": 0, "version": 0}
+    assert work["pins_path"] == _keeper_url(fleet, "/eva/pins")
+    value = _pins_value(fleet)
+    res = fleet.client.put(work["pins_path"], data={"kv": 1, "expected_version": 0, "value": value},
+                           content_type="application/json")
+    assert res.status_code == 200 and res.json() == {"value": value, "kv": 1, "version": 1}, res.content
+    # A second keeper that read version 0 must read again and merge.
+    res = fleet.client.put(work["pins_path"], data={"kv": 1, "expected_version": 0, "value": value},
+                           content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "keeper_pins_stale"
+    [work] = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    assert work["pins"]["version"] == 1
+
+
+def test_only_a_holder_of_the_current_key_writes_the_record(fleet):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    res = fleet.client.put(_keeper_url(fleet, "/eva/pins"), content_type="application/json",
+                           data={"kv": 1, "expected_version": 0, "value": _pins_value(fleet)})
+    assert res.status_code == 403 and res.json()["error"] == "zk_not_a_holder"
+
+
+def test_a_keepers_grant_to_a_person_is_emailed_to_the_vaults_managers(fleet, settings):
+    from django.core import mail
+
+    settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    assert _enable(fleet).status_code == 200
+    user, priv = _editor_with_a_key(fleet)
+    mail.outbox.clear()
+    res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    [msg] = [m for m in mail.outbox if "now has" in m.subject]
+    assert msg.to == [fleet.user.email] and user.email in msg.subject

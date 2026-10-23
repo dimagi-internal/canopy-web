@@ -132,6 +132,15 @@ def eligible_device_keys(vault: Vault) -> list:
                 .select_related("runner"))
 
 
+def device_may_hold(vault: Vault, device_key) -> bool:
+    """May this ONE machine hold the vault's key now? Its person is a member and its
+    runner serves an agent the vault is attached to — `eligible_device_keys`, asked of
+    one key instead of listing every runner."""
+    if vault_members.person_of_device(device_key) not in vault_members.member_ids(vault):
+        return False
+    return any(device_keys.runner_serves_agent(device_key.runner, a) for a in attached_agents(vault))
+
+
 def _key(w) -> tuple:
     if w.kind == "device":
         return ("device", w.device_key_id)
@@ -289,7 +298,8 @@ def set_values(vault: Vault, *, kv: int, values: list, user) -> list[str]:
     return sorted(vals)
 
 
-def add_wraps(vault: Vault, *, kv: int, wraps: list, user) -> int:
+def add_wraps(vault: Vault, *, kv: int, wraps: list, user, only_new: bool = False) -> int:
+    """`zk.add_wraps` for a workspace vault, `only_new` included."""
     with transaction.atomic():
         vault = _locked(vault)
         if not vault.kv:
@@ -298,8 +308,13 @@ def add_wraps(vault: Vault, *, kv: int, wraps: list, user) -> int:
             raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {vault.kv}, not {kv}")
         rows = _parse_wraps(vault, kv, wraps, allow_recovery=False)
         for w in rows:
-            VaultKeyWrap.objects.filter(vault=vault, kv=kv, kind=w.kind, device_key=w.device_key,
-                                        user=w.user).delete()
+            held = VaultKeyWrap.objects.filter(vault=vault, kv=kv, kind=w.kind, device_key=w.device_key,
+                                               user=w.user)
+            if only_new and held.exists():
+                raise ZkError(409, "zk_not_pending",
+                              f"{w.kind} {w.device_key_id or w.user_id} already holds a copy — a keeper "
+                              "only adds copies, never replaces one")
+            held.delete()
         _save(rows, user)
     return len(rows)
 
@@ -322,6 +337,8 @@ def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[di
         if not v.kv:
             continue
         mine = None
+        # Checked on every read: a copy this device still holds opens nothing once
+        # its person has left the vault.
         if device_key is not None and vault_members.person_of_device(device_key) in vault_members.member_ids(v):
             mine = VaultKeyWrap.objects.filter(vault=v, kv=v.kv, kind="device", device_key=device_key).first()
         qs = VaultSecret.objects.filter(vault=v)
@@ -331,18 +348,3 @@ def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[di
                     "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
                     "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
     return out
-
-
-def reconcile(vault: Vault) -> int:
-    """Delete every copy of the vault's key that is no longer allowed: a person who is
-    not a member, and a machine that is not eligible — its person left, or it serves
-    no agent the vault is attached to any more (see `vault_members.reconcile`)."""
-    ids = vault_members.member_ids(vault)
-    n, _ = VaultKeyWrap.objects.filter(vault=vault, kind="member").exclude(user_id__in=ids).delete()
-    keep = {k.pk for k in eligible_device_keys(vault)}
-    m, _ = VaultKeyWrap.objects.filter(vault=vault, kind="device").exclude(device_key_id__in=keep).delete()
-    return n + m
-
-
-def reconcile_all() -> int:
-    return sum(reconcile(v) for v in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gt=0))

@@ -137,7 +137,6 @@ def add_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, payloa
         vault_members.add_member(v, user, role=payload.role, by=request.user)
     except vault_members.VaultMembershipError as exc:
         raise _problem(exc) from exc
-    workspace_vaults.reconcile(v)
     return _out(v, request.user)
 
 
@@ -145,14 +144,14 @@ def add_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, payloa
                summary="Remove a person's direct membership of a vault")
 @gate("vault-manage", setting=True)  # browser: + step-up; token allowed
 def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, user_id: int):
-    """Only the DIRECT membership; a person who is then no longer a member loses
-    their copies of the vault's key, and their machines theirs, at once."""
+    """Only the DIRECT membership; a person who is then no longer a member is
+    refused the vault at once — canopy-web hands them, and their machines, no
+    copy of its key and none of its values."""
     v = _vault(request, vault_id, manage=True)
     try:
         vault_members.remove_member(v, user_id)
     except vault_members.VaultMembershipError as exc:
         raise _problem(exc) from exc
-    workspace_vaults.reconcile(v)
     return _out(v, request.user)
 
 
@@ -179,7 +178,6 @@ def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: V
 def detach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, attachment_id: int):
     v = _vault(request, vault_id, manage=True)
     workspace_vaults.detach(v, attachment_id)
-    workspace_vaults.reconcile(v)
     return _out(v, request.user)
 
 
