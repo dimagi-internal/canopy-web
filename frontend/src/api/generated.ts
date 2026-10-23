@@ -28299,6 +28299,8 @@ export interface components {
              * @default
              */
             readonly key_waiting: string;
+            /** Report Projects */
+            readonly report_projects?: readonly string[] | null;
             /**
              * Known Flags
              * @default []

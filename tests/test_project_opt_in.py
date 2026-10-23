@@ -157,3 +157,28 @@ def test_the_setting_is_yours_alone(jj, box):
     _client(other).put("/api/me/canopy-projects/", {"everything": True}, content_type="application/json")
     assert _fresh(box).project_names() == []
     assert ProjectOptIn.objects.get(user=other).everything is True
+
+
+# ---- what the box is told to report -------------------------------------------
+
+
+def _beat(user, runner):
+    r = _client(user).post(f"/api/harness/runners/{runner.id}/heartbeat", {}, content_type="application/json")
+    assert r.status_code == 200, r.content
+    return r.json()["report_projects"]
+
+
+def test_the_heartbeat_tells_the_box_which_repos_to_report(jj, box):
+    assert _beat(jj, box) == []
+    _opt_in(jj, projects=["canopy-web"])
+    assert _beat(jj, box) == ["canopy-web"]
+    _opt_in(jj, everything=True)
+    assert _beat(jj, box) is None  # every repo
+
+
+def test_an_agents_repo_on_the_box_is_always_reported(jj, ws, box):
+    from apps.agents.models import Agent
+
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws)
+    Runner.objects.filter(pk=box.pk).update(capabilities={"projects": ["hal", "personal-site"]})
+    assert _beat(jj, box) == ["hal"]

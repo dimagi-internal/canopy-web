@@ -19,6 +19,12 @@ from pathlib import Path
 
 _path: Path | None = None
 _last_ok_at: float | None = None
+#: The repos canopy wants this box's sessions reported for (`report_projects` on
+#: the last accepted heartbeat): None = all of them (the owner uses canopy
+#: everywhere, or the server is too old to say). In memory only — a restart
+#: reports everything once more until the next heartbeat, and the server drops
+#: what is not opted in (`session_home`).
+_report_projects: frozenset[str] | None = None
 
 
 def configure(path: Path) -> None:
@@ -51,8 +57,10 @@ def accepted(reply: dict) -> None:
     menu bar says so rather than leaving it to an email. And whether the box is its
     owner's private runner (`private`), which decides whose sign-in a local Claude
     Code session here uses — None from a server too old to say."""
-    global _last_ok_at
+    global _last_ok_at, _report_projects
     _last_ok_at = time.time()
+    wanted = reply.get("report_projects")
+    _report_projects = frozenset(str(p) for p in wanted) if isinstance(wanted, list) else None
     note = " · ".join(dict.fromkeys(n for n in (reply.get("status_note"), reply.get("ready_note")) if n))
     _write({"ok": True, "at": _last_ok_at, "last_ok_at": _last_ok_at,
             "paused": bool(reply.get("paused")),
@@ -60,6 +68,11 @@ def accepted(reply: dict) -> None:
             "note": note, "remedy": str(reply.get("remedy") or ""),
             "key_waiting": str(reply.get("key_waiting") or ""),
             "private": bool(reply["private"]) if "private" in reply else None})
+
+
+def report_projects() -> frozenset[str] | None:
+    """Which repos' sessions to report — None for every repo. See `_report_projects`."""
+    return _report_projects
 
 
 def refused(exc: Exception) -> None:
