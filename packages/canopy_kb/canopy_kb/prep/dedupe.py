@@ -122,23 +122,26 @@ def shared_homes(items: list[dict], keep: dict[str, str] | None = None,
     """{tab key: the item id that keeps its rows} for tabs in several workbooks. Items carry
     `tabs` (`tab_keys`) and `chars`. A home in `keep` stays while it is still one of the
     copies, so a change in link counts does not move a tab's rows between 89 workbooks;
-    a new group's home is the most linked-to copy, then the shortest, then the first id."""
+    a new group's home is the most linked-to copy, then the shortest, ties as
+    `collapse_shared_tabs` breaks them (the same set of positions, in the same order),
+    so the two passes choose the same home."""
     keep = keep or {}
-    where: dict[str, list[dict]] = collections.defaultdict(list)
-    for it in items:
+    where: dict[str, set[int]] = collections.defaultdict(set)
+    for n, it in enumerate(items):
         if it["type"] in types:
-            for k in {k for _, k in it.get("tabs") or [] if k}:
-                where[k].append(it)
+            for _, k in it.get("tabs") or []:
+                if k:
+                    where[k].add(n)
     homes = {}
-    for k, its in where.items():
-        if len(its) < 2:
+    for k, ns in where.items():
+        if len(ns) < 2:
             continue
-        ids = {it["id"] for it in its}
+        ids = {items[n]["id"] for n in ns}
         if keep.get(k) in ids:
             homes[k] = keep[k]
         else:
-            homes[k] = min(its, key=lambda it: (-len(it["meta"].get("linked_from") or []), it.get("chars", 0),
-                                                it["id"]))["id"]
+            homes[k] = items[max(ns, key=lambda n: (len(items[n]["meta"].get("linked_from") or []),
+                                                    -items[n].get("chars", 0)))]["id"]
     return homes
 
 
