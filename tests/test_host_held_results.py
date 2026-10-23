@@ -14,13 +14,16 @@ from __future__ import annotations
 
 import json
 import uuid
+from types import SimpleNamespace
 
 import httpx2
 import pytest
 from asgiref.sync import async_to_sync, sync_to_async
-from canopy_sdk import resources
+from canopy_sdk import contract, resources
 from canopy_sdk import site as site_doc
+from canopy_sdk.host import ViewRefused, verify_view
 from canopy_sdk.keys import generate_private_key, public_pem
+from canopy_sdk.stores import MemoryJtiStore
 from django.contrib.auth.models import User
 from django.test import Client
 from fastmcp import FastMCP
@@ -28,18 +31,19 @@ from fastmcp.server.dependencies import get_http_headers
 from mcp.types import ResourceLink, TextContent
 
 from apps.agents.interface import parse
+from apps.agents.models import Agent
 from apps.canopy_sessions import agui
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import AppViewSubscription, Message, Session, SessionParticipant
 from apps.common.encryption import encrypt_secret
-from apps.harness import ledger, sensitivity
-from apps.harness.models import Runner, RunnerFlag, Turn, TurnEvent
+from apps.harness import acting_person, caller_tokens, ledger, sensitivity, turn_asker
+from apps.harness.models import Runner, RunnerFlag, Turn, TurnAgentToken, TurnEvent
 from apps.host_grants import client_identity, host_gateway, resources_updated, site_needs
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
-from apps.mcp_apps_host import mcp_apps
+from apps.mcp_apps_host import mcp_apps, mcp_apps_views
 from apps.realtime.groups import session_group
-from apps.tokens.models import HostGrant
+from apps.tokens.models import HostGrant, PersonalToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures import site_gateway as sg
 from tests.fixtures.host_results import META_KEY, ResultStore, facts
@@ -531,3 +535,221 @@ def test_nothing_canopy_stores_for_a_sensitive_conversation_holds_a_row(w, host,
             if SENTINEL in json.dumps(row, default=str):
                 hits.append(model.__name__)
     assert hits == [], f"...and canopy kept it in {sorted(set(hits))}"
+
+
+# --- Canopy-View: the person's own View, stated and never inferred -----------------------
+#
+# A host may give a person's View what it gives no agent (Connect Labs: the rows of a
+# sensitive result their cleared agent already received). It used to infer "the person is
+# looking" from a MISSING `Canopy-Execution`, so anything that could make canopy issue a
+# delegated read without a statement read as the person. canopy now states it — only when
+# the principal behind the View request is a person acting as themselves
+# (`harness.acting_person`, by credential, never by door), only in a conversation they are
+# in — bound to the person, the resource, the conversation, the DPoP key and the token.
+# The host's recorded headers are verified here with the SDK's `verify_view`, as Labs does.
+
+VIEW_H, EXEC_H = contract.VIEW_HEADER.lower(), contract.EXECUTION_HEADER.lower()
+
+
+def _view_of(headers, *, uri, subject, token):
+    config, keys, jtis = sg.host_side()
+    return verify_view({k.title(): v for k, v in headers.items()}, config=config, client_keys=keys,
+                       replay_store=jtis, uri=uri, subject=subject, jkt=client_identity.dpop_jkt(),
+                       access_token=token)
+
+
+def _read_as(w, host, who, uri):
+    host.seen.clear()
+    return through(host, lambda: post(client_for(w[who]), base(w) + "/read", {"uri": uri}))
+
+
+# --- the person's own View says so, bound to them, this result, this conversation --------
+
+
+def test_the_persons_own_view_read_carries_a_view_statement_and_no_execution(w, host):
+    link = _link(_converse(w, host, sensitive=True))
+    r = _read_as(w, host, "owner", link["uri"])
+    assert r.status_code == 200 and SENTINEL in r.content.decode()
+    stated = [h for h in host.seen if VIEW_H in h]
+    assert stated, "the View's read must carry Canopy-View"
+    assert not any(EXEC_H in h for h in host.seen), "a View is never an agent's call"
+    view = _view_of(stated[-1], uri=link["uri"], subject="grant-owner", token="grant-owner")
+    assert view.session == str(w["mine"].pk) and view.agent == "ace"
+    assert view.viewer == f"user:{w['owner'].pk}"
+    # Each request gets its own statement: none is reusable on another.
+    assert len({h[VIEW_H] for h in stated}) == len(stated)
+
+
+def test_a_view_statement_is_bound_to_its_person_resource_token_and_use(w, host):
+    link = _link(_converse(w, host, sensitive=True))
+    _read_as(w, host, "owner", link["uri"])
+    headers = [h for h in host.seen if VIEW_H in h][-1]
+    for kw, code in (({"subject": "grant-eddie"}, "wrong_person"),
+                     ({"uri": "labs-result://someone-elses"}, "wrong_resource"),
+                     ({"token": "grant-eddie"}, "unbound")):
+        args = {"uri": link["uri"], "subject": "grant-owner", "token": "grant-owner", **kw}
+        with pytest.raises(ViewRefused) as info:
+            _view_of(headers, **args)
+        assert info.value.code == code
+    config, keys, _ = sg.host_side()
+    store = MemoryJtiStore()
+    once = dict(config=config, client_keys=keys, replay_store=store, uri=link["uri"], subject="grant-owner",
+                jkt=client_identity.dpop_jkt(), access_token="grant-owner")
+    verify_view({k.title(): v for k, v in headers.items()}, **once)
+    with pytest.raises(ViewRefused, match="already been used"):
+        verify_view({k.title(): v for k, v in headers.items()}, **once)
+
+
+def test_a_colleague_in_the_conversation_gets_a_statement_naming_them(w, host):
+    link = _link(_converse(w, host, sensitive=True))
+    _read_as(w, host, "eddie", link["uri"])
+    headers = [h for h in host.seen if VIEW_H in h][-1]
+    assert _view_of(headers, uri=link["uri"], subject="grant-eddie", token="grant-eddie").subject == "grant-eddie"
+
+
+def test_an_agents_login_at_a_browser_gets_no_view_statement(w, host, monkeypatch):
+    """An agent's own canopy login is not a person, whichever door it uses — even a
+    session cookie in a conversation it was added to."""
+    link = _link(_converse(w, host, sensitive=True))
+    bot = User.objects.create_user("ace-bot", "ace-bot@agents.test", "pw")
+    Agent.objects.filter(pk=w["agent"].pk).update(user=bot)
+    WorkspaceMembership.objects.create(user=bot, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
+    SessionParticipant.objects.create(session=w["mine"], user=bot, role=SessionParticipant.EDITOR)
+    w["bot"] = bot
+    monkeypatch.setitem(SUBJECTS, "grant-bot", "sub-bot")
+    _grant(w["app"], "grant-bot", bot)  # a grant of its own, so the read reaches the host
+    _read_as(w, host, "bot", link["uri"])   # the host's own ACL then refuses it; not the point
+    assert host.seen, "the read went to the host..."
+    assert not any(VIEW_H in h for h in host.seen), "...without saying the person is looking"
+
+
+# --- an agent's door always carries its execution statement, never a view one ---------------
+
+
+def test_site_read_carries_the_agents_execution_statement_and_never_a_view(w, host):
+    sg.grant(w)
+    out = _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
+    uri = _link(out.structured_content)["uri"]
+    host.seen.clear()
+    _visitor_call(w, host, "site_read", {"uri": uri})
+    assert host.seen and all(EXEC_H in h for h in host.seen)
+    assert not any(VIEW_H in h for h in host.seen)
+
+
+# --- can an agent reach the View's own door at all? (the suspicion, tested) -----------------
+
+
+def _turn_in(w):
+    return Turn.objects.create(chat_session=w["mine"], prompt="q", initiator_user=w["owner"],
+                               initiator_kind="user", idempotency_key=uuid.uuid4().hex)
+
+
+def test_an_agents_credentials_cannot_reach_the_view_read_door(w, host):
+    """Every credential an agent's turn holds is refused at the View routes, so no turn can
+    make canopy issue a View's delegated read: a conversation's caller token (it reaches
+    only routes MCP serves as tools, and these are not), the turn's own login and a PAT
+    (refused by the route), and MCP (the routes are not tools)."""
+    link = _link(_converse(w, host, sensitive=False))
+    turn = _turn_in(w)
+    caller = caller_tokens.mint(turn, scoped=True)
+    bot = User.objects.create_user("ace-bot", "ace-bot@agents.test", "pw")
+    Agent.objects.filter(pk=w["agent"].pk).update(user=bot)
+    turn_login, tok = PersonalToken.create_for_user(user=bot, label="turn")
+    runner = Runner.objects.create(name="box", workspace=w["ws"], owner=w["owner"])
+    TurnAgentToken.objects.create(turn=turn, runner=runner, token=tok)
+    own_pat, _ = PersonalToken.create_for_user(user=w["owner"], label="mine")
+    host.seen.clear()
+    for raw in (caller, turn_login, own_pat):
+        r = post(Client(), base(w) + "/read", {"uri": link["uri"]}, HTTP_AUTHORIZATION=f"Bearer {raw}")
+        assert r.status_code in (401, 403), (raw[:5], r.status_code, r.content)
+    assert host.seen == [], "no agent credential made canopy read from the host"
+
+    from apps.api.api import api
+    from apps.mcp import api_tools
+
+    ops = {op.get("operationId") for item in api_tools.tool_spec(api.get_openapi_schema())["paths"].values()
+           for op in item.values() if isinstance(op, dict)}
+    assert not ops & {"app_view_read", "app_view_call", "app_view_resource",
+                      "contact_app_view_read", "contact_app_view_call", "contact_app_view_resource"}
+
+
+# --- the principal rule, by credential --------------------------------------------------------
+
+
+def _req(user=None, *, contact=None, cred=None, meta=None, **attrs):
+    return SimpleNamespace(user=user, contact=contact, auth_credential=cred, META=meta or {}, **attrs)
+
+
+def test_who_is_a_person_acting_as_themselves(w):
+    from django.contrib.auth.models import AnonymousUser
+
+    person, bot = w["owner"], User.objects.create_user("bot", "bot@agents.test", "pw")
+    Agent.objects.filter(pk=w["agent"].pk).update(user=bot)
+    turn = _turn_in(w)
+    _, login = PersonalToken.create_for_user(user=w["eddie"], label="turn")
+    TurnAgentToken.objects.create(turn=turn, runner=Runner.objects.create(name="b", workspace=w["ws"],
+                                                                          owner=w["owner"]), token=login)
+    _, own = PersonalToken.create_for_user(user=w["eddie"], label="mine")
+
+    assert acting_person.refusal(_req(person)) is None                                   # a browser
+    assert acting_person.refusal(_req(person, cred={"type": "delegated", "id": 1})) is None  # the widget
+    assert acting_person.refusal(_req(w["eddie"], cred={"type": "pat", "id": own.pk})) is None  # own PAT
+    assert acting_person.refusal(_req(person, cred={"type": "oauth", "id": 2})) is None    # own sign-in
+    assert acting_person.refusal(_req(AnonymousUser(), contact=w["contact"])) is None      # a visitor
+
+    assert acting_person.refusal(_req(person, cred={"type": "caller_token", "id": 1,
+                                                    "turn_id": str(turn.pk)})) == "turn"
+    assert acting_person.refusal(_req(person, cred={"type": "pat", "id": 9, "turn_id": "t"})) == "turn"
+    assert acting_person.refusal(_req(person, meta={acting_person.TURN_HEADER: str(turn.pk)})) == "turn"
+    assert acting_person.refusal(_req(w["eddie"], cred={"type": "pat", "id": login.pk})) == "turn_login"
+    assert acting_person.refusal(_req(bot)) == "agent_login"
+    assert acting_person.refusal(_req(person, runner_token=object())) == "runner"
+    assert acting_person.refusal(_req(AnonymousUser())) == "anonymous"
+    acting = User.objects.get(pk=w["vera"].pk)
+    setattr(acting, turn_asker.ATTR, object())
+    assert acting_person.refusal(_req(acting)) == "on_behalf"
+
+
+def test_view_facts_only_for_a_person_in_the_conversation(w):
+    grant = w["grants"]["owner"]
+    session = w["mine"]
+    facts = mcp_apps_views.view_facts(session, mcp_apps_views.Viewer(user=w["owner"], person=True), grant)
+    assert facts == {"subject": "grant-owner", "session": str(session.pk),
+                     "viewer": f"user:{w['owner'].pk}", "agent": "ace"}
+    # Not acting as themselves (an agent's credential), or not in this conversation.
+    assert mcp_apps_views.view_facts(session, mcp_apps_views.Viewer(user=w["owner"]), grant) is None
+    outsider = User.objects.create_user("olga", "olga@dimagi.com", "pw")
+    assert mcp_apps_views.view_facts(session, mcp_apps_views.Viewer(user=outsider, person=True), grant) is None
+    # A contact, in their own conversation only.
+    own = mcp_apps_views.Viewer(contact=w["contact"], person=True)
+    assert mcp_apps_views.view_facts(w["session"], own, grant)["viewer"] == f"contact:{w['contact'].pk}"
+    assert mcp_apps_views.view_facts(session, own, grant) is None
+
+
+def test_a_context_never_carries_a_view_beside_an_execution(w):
+    from apps.host_grants import host_gateway
+
+    ctx = host_gateway.context_for_grant(w["app"], w["grants"]["owner"], turn_id="t", agent_slug="ace",
+                                         ceiling=[], execution={"agent": "ace"},
+                                         view={"subject": "s", "session": "x"})
+    assert ctx.execution == {"agent": "ace"} and ctx.view is None
+
+
+def test_the_view_read_probe_shows_both_halves(w, host):
+    """`manage.py view_read_probe` (the live check after a deploy): the same read, without a
+    statement and with Canopy-View. This test host admits both — a real Labs refuses the
+    first — so what is checked is that only the second carried the statement."""
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    _converse(w, host, sensitive=True)
+    host.seen.clear()
+    out = StringIO()
+    through(host, lambda: call_command("view_read_probe", session=str(w["mine"].pk),
+                                       email=w["owner"].email, stdout=out))
+    text = out.getvalue()
+    assert "no statement: READ" in text and "Canopy-View: READ (2 rows" in text
+    assert SENTINEL not in text
+    with_view = [h for h in host.seen if VIEW_H in h]
+    assert with_view and len(with_view) < len(host.seen)

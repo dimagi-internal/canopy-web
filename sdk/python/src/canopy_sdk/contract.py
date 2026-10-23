@@ -194,6 +194,18 @@ EXECUTION_TYP = "canopy-execution+jwt"
 EXECUTION_MAX_LIFETIME = 60
 EXECUTION_REQUIRED_CLAIMS: tuple[str, ...] = (
     "iss", "aud", "iat", "exp", "jti", "cnf", "agent", "runner", "requirements", "turn")
+#: canopy's signed word that a request is the PERSON's own MCP Apps View reading what
+#: the host keeps for them — no agent acting. Sent only on a View's ``resources/read``,
+#: never beside ``Canopy-Execution`` (an agent's call), and bound to the person (``sub``,
+#: the host's own id for them), the resource (``uri``), the conversation (``session``),
+#: the DPoP key and the access token. A host must never infer "the person is looking"
+#: from a MISSING statement: ``canopy_sdk.host.verify_view``.
+VIEW_HEADER = "Canopy-View"
+VIEW_TYP = "canopy-view+jwt"
+VIEW_ACTOR = "view"
+VIEW_MAX_LIFETIME = 60
+VIEW_REQUIRED_CLAIMS: tuple[str, ...] = (
+    "iss", "aud", "iat", "exp", "jti", "cnf", "ath", "actor", "sub", "uri", "session")
 
 #: Where a canopy deployment serves its Client ID Metadata Document (its
 #: ``client_id`` IS this URL) and its client-auth JWKS, relative to its base URL.

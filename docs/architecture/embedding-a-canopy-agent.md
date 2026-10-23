@@ -1054,6 +1054,15 @@ In three steps — every claim, lifetime, header and refusal is in
    [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
    canopy's gateway itself never calls you for a sensitive conversation whose capability does
    not handle sensitive data.
+5. **The person's own View? Verify `Canopy-View`, never infer it.** A View's `resources/read`
+   carries canopy's signed `Canopy-View` (`actor: "view"`, your id for the person as `sub`, the
+   resource as `uri`, the conversation, 60s, single-use, bound to the DPoP key and token) only
+   when the principal behind the View is a person acting as themselves — never an agent's turn,
+   caller token or own login, whatever door it uses (`apps/harness/acting_person.py`) — and only
+   in a conversation they are in (`mcp_apps_views.view_facts`). If you give a View more than an
+   agent, give it on `canopy_sdk.django.execution.verify_view(request, uri=, subject=)` alone: a
+   delegated call with **no** statement is no one you may trust. Check it live with
+   `manage.py view_read_probe --session <id> --email <person>` in canopy-web's container.
 
 **What canopy adds on its side.** In your site's Connected-site row
 (`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP

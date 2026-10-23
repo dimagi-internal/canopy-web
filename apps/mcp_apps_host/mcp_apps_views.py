@@ -88,6 +88,11 @@ class Viewer:
     #: (`sensitivity.request_is_chat_surface`). False unless the route says so, so a
     #: sensitive conversation's call arguments reach no token-held door.
     chat_surface: bool = False
+    #: Whether the principal behind the request is a person acting as themselves
+    #: (`harness.acting_person`) — never an agent's turn, caller token or login. Only
+    #: then, and only in a conversation they are in, does canopy tell the host this is
+    #: the person's own View (`Canopy-View`, `view_facts`). False unless the route says so.
+    person: bool = False
 
     @property
     def name(self) -> str:
@@ -345,6 +350,20 @@ def _ceiling(session, row: ViewRow) -> list[str]:
     return list(cap.get("ceiling") or [])
 
 
+def view_facts(session, viewer: Viewer, grant) -> dict | None:
+    """What `Canopy-View` states for this viewer's reads, or None: canopy says "the
+    person's own View, no agent acting" only when the principal behind the request is a
+    person acting as themselves (`Viewer.person`, from `harness.acting_person`) and they
+    are IN this conversation (`sensitivity.is_conversation_person`). The person is named
+    as the host knows them (the grant's `subject`); the resource is bound per read."""
+    if not viewer.person or not grant.subject:
+        return None
+    if not sensitivity.is_conversation_person(session, user=viewer.user, contact=viewer.contact):
+        return None
+    return {"subject": grant.subject, "session": str(session.pk), "viewer": viewer.label(),
+            "agent": session.agent.slug if session.agent_id else ""}
+
+
 def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.SiteContext:
     """Gate 6. The site from the session, the grant from the VIEWER.
 
@@ -365,7 +384,7 @@ def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.Si
     try:
         return host_gateway.context_for_grant(
             app, grant, turn_id="", agent_slug=(session.agent.slug if session.agent_id else "canopy"),
-            ceiling=_ceiling(session, row))
+            ceiling=_ceiling(session, row), view=view_facts(session, viewer, grant))
     except host_gateway.GatewayRefusal as exc:
         raise ViewRefusal(GATES[6] if exc.code in ("expired", "stale_grant") else exc.code,
                           exc.message) from None

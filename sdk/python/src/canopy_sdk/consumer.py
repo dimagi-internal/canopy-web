@@ -224,6 +224,27 @@ def execution_statement(key, client_id: str, audience: str, facts: dict, *, jkt:
     return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": contract.EXECUTION_TYP})
 
 
+def view_statement(key, client_id: str, audience: str, *, subject: str, uri: str, session: str,
+                   jkt: str, access_token: str, viewer: str = "", agent: str = "",
+                   now: float | None = None) -> str:
+    """canopy's ``Canopy-View`` statement for ONE request a person's own MCP Apps View
+    makes to a host: ``actor: "view"``, for ``subject`` (the host's own id for the
+    person, the grant's ``sub``), reading ``uri``, in conversation ``session``. Signed by
+    canopy's CLIENT key, for ``audience`` (the host's MCP resource), living 60s,
+    single-use ``jti``, bound to the DPoP key (``cnf.jkt``) and to the access token it
+    rides with (``ath``, required). ``viewer`` / ``agent`` are informational, for the
+    host's audit."""
+    if not (subject and uri and session and access_token):
+        raise ValueError("a view statement names its person, resource, conversation and token")
+    issued = int(time.time() if now is None else now)
+    claims = {"actor": contract.VIEW_ACTOR, "sub": str(subject), "uri": str(uri),
+              "session": str(session), "viewer": str(viewer or ""), "agent": str(agent or ""),
+              "iss": client_id, "aud": audience, "iat": issued,
+              "exp": issued + contract.VIEW_MAX_LIFETIME, "jti": new_jti(),
+              "cnf": {"jkt": jkt}, "ath": contract.ath(access_token)}
+    return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": contract.VIEW_TYP})
+
+
 def dpop_proof(key, htm: str, htu: str, *, access_token: str | None = None,
                nonce: str | None = None) -> str:
     """A fresh RFC 9449 proof for ONE request, signed by canopy's DPoP key."""

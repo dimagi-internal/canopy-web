@@ -13,6 +13,9 @@
   statement about the call (agent, commit, sensitive-data declaration, runner, its flags
   in force, requirements), and ``Execution.sensitive_clearance`` — whether to release
   sensitive data.
+* ``verify_view`` → ``View`` — canopy's signed ``Canopy-View`` statement that a request
+  is the person's own MCP Apps View reading a resource (no agent acting), bound to the
+  person, the resource and the conversation. Never infer it from a missing statement.
 * ``ProbeIdentity`` + ``ProbeHandler`` — canopy's live probe: a real ID-JAG for
   one fixed, low-privilege principal, so the whole chain is exercised on a
   schedule without a visitor.
@@ -30,13 +33,15 @@ from .pages import Page, PageRegistry, PageTokens
 from .probe import ProbeDisabled, ProbeHandler, ProbeResult
 from .resource import DelegatedPrincipal, DPoPRefused, ResourceVerifier
 from .signing import MintFailed, arrival_payload, issue_id_jag, mint_contact_token, sign_visitor_assertion
+from .view import View, ViewRefused, same_resource, verify_view
 
 __all__ = [
     "ClientKeyResolver", "DPoPGate", "DPoPRefused", "DelegatedPrincipal", "Execution",
     "ExecutionRefused", "GrantHandler",
     "GrantRefused", "GrantResult", "HostConfig", "HostNotConfigured", "MetadataError", "MintFailed",
     "Page", "PageRegistry", "PageTokens", "ProbeDisabled", "ProbeHandler", "ProbeIdentity", "ProbeResult",
-    "ResourceVerifier", "arrival_payload", "authorization_server_metadata",
+    "ResourceVerifier", "View", "ViewRefused", "arrival_payload", "authorization_server_metadata",
     "delegated_principal", "issue_id_jag", "mint_contact_token", "presented_dpop_jkt",
-    "protected_resource_metadata", "sign_visitor_assertion", "verify_execution",
+    "protected_resource_metadata", "same_resource", "sign_visitor_assertion", "verify_execution",
+    "verify_view",
 ]

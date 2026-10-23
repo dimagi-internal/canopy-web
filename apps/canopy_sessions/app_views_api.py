@@ -21,7 +21,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.harness import sensitivity
+from apps.harness import acting_person, sensitivity
 from apps.mcp_apps_host import mcp_apps_views as views
 
 router = Router(auth=session_auth, tags=["chat"])
@@ -65,7 +65,8 @@ def _session(request, session_id):
 
 def _viewer(request) -> views.Viewer:
     return views.Viewer(user=request.user,
-                        chat_surface=sensitivity.request_is_chat_surface(request))
+                        chat_surface=sensitivity.request_is_chat_surface(request),
+                        person=acting_person.is_person(request))
 
 
 def _run(fn, *args):

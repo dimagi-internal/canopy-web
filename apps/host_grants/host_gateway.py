@@ -94,6 +94,11 @@ class SiteContext:
     #: What `Canopy-Execution` states for this turn (`execution.facts_for`), signed
     #: afresh on every request. None for a call no agent turn makes (a View, a probe).
     execution: dict | None = field(repr=False, default=None)
+    #: What `Canopy-View` states — the person's own View, no agent acting
+    #: (`mcp_apps_views.view_facts`: subject, session, viewer, agent) — signed afresh on
+    #: every request of a View's `resources/read`, bound to the URI it reads. None for
+    #: anything else; never set beside `execution` (`resolve` never sets it).
+    view: dict | None = field(repr=False, default=None)
 
     def allows(self, tool: str) -> bool:
         return tool_allowed(tool, ceiling=self.ceiling)
@@ -220,7 +225,7 @@ def resolve(turn_id: str) -> SiteContext:
 
 
 def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: list[str],
-                      execution: dict | None = None) -> SiteContext:
+                      execution: dict | None = None, view: dict | None = None) -> SiteContext:
     """A `SiteContext` for ONE stored grant — or a refusal if the grant cannot
     be used: expired, for a resource the site no longer names, or bound to a
     DPoP key canopy no longer holds. `resolve` reaches it for a visitor's turn;
@@ -247,6 +252,7 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
         resource=app.host_mcp_resource, scope=grant.scope, expires_at=grant.expires_at,
         ceiling=list(ceiling),
         _token=decrypt_secret(grant.access_token_enc), app_id=app.pk, execution=execution,
+        view=view if execution is None else None,
     )
 
 
@@ -263,7 +269,7 @@ _transport_override = None
 PROOF_MODES = ("dpop", "no_proof", "stranger_key", "bearer")
 
 
-def _auth(ctx: SiteContext, mode: str = "dpop"):
+def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = ""):
     import httpx2
 
     from . import client_identity
@@ -305,15 +311,22 @@ def _auth(ctx: SiteContext, mode: str = "dpop"):
                 yield request
 
     def _state(request):
-        # canopy vouches for THIS request: a fresh, single-use statement each time.
+        # canopy vouches for THIS request: a fresh, single-use statement each time. An
+        # agent's turn says which agent (`Canopy-Execution`); the person's own View says
+        # so, for the one resource it reads (`Canopy-View`). Never both, and nothing for
+        # anything else — a host must treat no statement as no one it may trust.
         if ctx.execution is not None:
             request.headers[contract.EXECUTION_HEADER] = client_identity.execution_statement(
                 ctx.resource, ctx.execution, access_token=token)
+        elif ctx.view is not None and view_uri:
+            request.headers[contract.VIEW_HEADER] = client_identity.view_statement(
+                ctx.resource, uri=view_uri, access_token=token, **ctx.view)
 
     return _DPoP()
 
 
-def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None):
+def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None,
+            view_uri: str = ""):
     import httpx2
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
@@ -336,7 +349,7 @@ def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = Non
         return httpx2.AsyncClient(**kwargs)
 
     transport = StreamableHttpTransport(
-        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode),
+        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode, view_uri),
         httpx_client_factory=factory)
     # MCP Apps (SEP-1865): canopy renders a host's Views, so it says so in
     # `initialize` (§Client<>Server Capability Negotiation). A host that does not
@@ -523,7 +536,9 @@ async def view_read(ctx: SiteContext, uri: str) -> list[dict]:
 
     await _check_target(ctx)
     try:
-        async with _client(ctx) as client:
+        # A View's read carries `Canopy-View` for THIS uri when `ctx.view` says the person
+        # is looking; an agent's (`read_resource`) carries its `Canopy-Execution` instead.
+        async with _client(ctx, view_uri=uri) as client:
             contents = await client.read_resource(uri)
     except McpError as exc:
         # The host answered and said no (an artifact expired, not this person's):

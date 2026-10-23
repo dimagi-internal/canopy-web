@@ -209,6 +209,17 @@ def execution_statement(audience: str, facts: dict, *, access_token: str | None 
                                         jkt=dpop_jkt(), access_token=access_token)
 
 
+def view_statement(audience: str, *, subject: str, uri: str, session: str, access_token: str,
+                   viewer: str = "", agent: str = "") -> str:
+    """`Canopy-View` for ONE request a person's own View makes to a host
+    (`mcp_apps_views.view_facts` decides it may): `actor: "view"`, the person as the host
+    knows them, the resource, the conversation; signed by the same client key, bound to
+    canopy's DPoP key and the access token, 60s, single-use."""
+    return consumer.view_statement(_client_key(), client_id(), audience, subject=subject, uri=uri,
+                                   session=session, jkt=dpop_jkt(), access_token=access_token,
+                                   viewer=viewer, agent=agent)
+
+
 def sign_site_agents(site_name: str, content: dict) -> str:
     """The site agents API (`site_agents.py`): signed by the same client key, so a site
     believes it exactly as it believes `Canopy-Execution`."""
