@@ -174,16 +174,11 @@ echo ">> account"
 "${AWS[@]}" sts get-caller-identity --query Account --output text \
   || die "AWS credentials for profile '$PROFILE' are not valid — run: aws sso login --profile $PROFILE"
 
-# The secrets every box reads at boot. They are SHARED by every runner stack —
-# a second box reuses the live box's — so a missing one is a one-time human step.
-# No canopy PAT among them: a new box pairs by invitation and holds none.
-# No gog keyring password either: each agent's is derived on the box from its unit's
-# own secret (spec 2026-10-19-runner-isolation-units §6).
-for pair in "canopy/cloud-runner/claude-oauth-token|./secrets.sh claude <file>   (the build FALLBACK — only read when no live runner has logins for wire.sh to copy; must exist, may be old)"; do
-  s="${pair%%|*}"; fix="${pair#*|}"
-  "${AWS[@]}" secretsmanager describe-secret --secret-id "$s" >/dev/null 2>&1 \
-    || die "missing secret '$s' — stage it: $fix"
-done
+# No Secrets Manager secret to stage: a new box pairs by invitation (no canopy PAT),
+# derives each agent's gog keyring password from its unit's own secret (spec
+# 2026-10-19-runner-isolation-units §6), and keeps its Claude credentials in a vault
+# its owner signs in on the runner's page (spec 2026-10-23-runner-claude-credentials-
+# in-the-vault-design.md) — there is no bootstrap Claude token any more.
 
 STACK_STATUS=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
   --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NONE")

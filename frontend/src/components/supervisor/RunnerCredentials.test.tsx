@@ -16,8 +16,7 @@ import {
 const api = vi.hoisted(() => ({
   getRunnerCredentialStatus: vi.fn(),
   addRunnerLogin: vi.fn(),
-  addRunnerCredential: vi.fn(),
-  updateRunnerCredential: vi.fn(),
+  renameRunnerCredential: vi.fn(),
   removeRunnerCredential: vi.fn(),
   orderRunnerCredentials: vi.fn(),
   getRunnerMint: vi.fn(),
@@ -63,6 +62,7 @@ const MIXED = status([KEY, LOGIN, TOKEN])
 
 beforeEach(() => {
   api.getRunnerMint.mockResolvedValue(null)
+  vaultApi.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
 })
 
 afterEach(() => {
@@ -159,16 +159,13 @@ describe('RunnerCredentials', () => {
     expect(api.removeRunnerCredential).not.toHaveBeenCalled()
   })
 
-  it('adds an API key with a name, and clears the field once it lands', async () => {
+  it('offers no token or API key until the vault has a key — there is nowhere else to keep one', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(status([]))
-    api.addRunnerCredential.mockResolvedValue(status([KEY]))
     render(<RunnerCredentials runnerId="r1" />)
-    fireEvent.click(await screen.findByTestId('cred-add-api_key'))
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ZDR org' } })
-    fireEvent.change(screen.getByLabelText('API key'), { target: { value: '  sk-ant-api-1 ' } })
-    fireEvent.click(screen.getByTestId('cred-new-api-key-save'))
-    await waitFor(() => expect(api.addRunnerCredential).toHaveBeenCalledWith('r1', 'api_key', 'sk-ant-api-1', 'ZDR org'))
-    await waitFor(() => expect(screen.queryByTestId('cred-new-api-key')).toBeNull())
+    expect((await screen.findByTestId('cred-add-api_key') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId('cred-add-token') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByTestId('cred-add-login') as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByTestId('cred-needs-vault').textContent).toContain('make its key')
   })
 
   it('adds a login by starting its sign-in', async () => {
@@ -181,7 +178,7 @@ describe('RunnerCredentials', () => {
   })
 
   it('adds a token by starting a token sign-in straight away', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(status([]))
+    api.getRunnerCredentialStatus.mockResolvedValue({ ...status([]), vaults: [{ vault_id: 'v1', name: 'v', kv: 1 }] })
     api.startRunnerMint.mockResolvedValue({ id: 'm', status: 'requested', slot: 'token', login_key: '' })
     render(<RunnerCredentials runnerId="r1" />)
     fireEvent.click(await screen.findByTestId('cred-add-token'))
@@ -190,23 +187,13 @@ describe('RunnerCredentials', () => {
 
   it('renames a token', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
-    api.updateRunnerCredential.mockResolvedValue(MIXED)
+    api.renameRunnerCredential.mockResolvedValue(MIXED)
     render(<RunnerCredentials runnerId="r1" />)
     fireEvent.click(await screen.findByTestId('cred-name-tt'))
     const input = screen.getByTestId('cred-name-input-tt')
     fireEvent.change(input, { target: { value: 'jj' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(api.updateRunnerCredential).toHaveBeenCalledWith('r1', 'tt', { name: 'jj' }))
-  })
-
-  it('replaces an API key without showing the old one', async () => {
-    api.getRunnerCredentialStatus.mockResolvedValue(MIXED)
-    api.updateRunnerCredential.mockResolvedValue(MIXED)
-    render(<RunnerCredentials runnerId="r1" />)
-    fireEvent.click(await screen.findByTestId('cred-replace-kk'))
-    fireEvent.change(screen.getByLabelText('New API key'), { target: { value: 'sk-ant-new' } })
-    fireEvent.click(screen.getByText('Save'))
-    await waitFor(() => expect(api.updateRunnerCredential).toHaveBeenCalledWith('r1', 'kk', { value: 'sk-ant-new' }))
+    await waitFor(() => expect(api.renameRunnerCredential).toHaveBeenCalledWith('r1', 'tt', 'jj'))
   })
 
   it('offers only API keys on a sensitive-data runner', async () => {
@@ -282,7 +269,16 @@ describe('the runner\'s own vault', () => {
     fireEvent.click(screen.getByTestId('cred-new-api-key-save'))
     await waitFor(() => expect(ops.sealWorkspaceVaultValue).toHaveBeenCalledWith('v1', 'anthropic-api-key:kk', 'sk-ant-api-1', ME))
     expect(api.addVaultedRunnerCredential).toHaveBeenCalledWith('r1', 'api_key', 'ZDR org')
-    expect(api.addRunnerCredential).not.toHaveBeenCalled()
+  })
+
+  it('replaces an API key by sealing the new one into the vault, never showing the old', async () => {
+    const key = entry({ key: 'kk', kind: 'api_key', has_value: true, in_vault: true, vault_secret: 'anthropic-api-key:kk' })
+    api.getRunnerCredentialStatus.mockResolvedValue(withVault(1, [key]))
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-replace-kk'))
+    fireEvent.change(screen.getByLabelText('New API key'), { target: { value: 'sk-ant-new' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(ops.sealWorkspaceVaultValue).toHaveBeenCalledWith('v1', 'anthropic-api-key:kk', 'sk-ant-new', ME))
   })
 
   it('marks what the vault holds', async () => {

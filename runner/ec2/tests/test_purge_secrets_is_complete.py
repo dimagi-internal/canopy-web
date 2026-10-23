@@ -77,13 +77,12 @@ def test_purge_does_not_delete_secrets_nothing_else_declares():
     assert not unknown, f"down.sh purges {sorted(unknown)}, which nothing else declares"
 
 
-def test_the_four_staged_secrets_are_all_purgeable():
+def test_the_staged_secrets_are_all_purgeable():
     """Belt and braces on the specific set a human stages by hand — these are the
     ones whose loss is felt, and the ones a 'from scratch' claim rests on."""
     staged = _names_in(EC2 / "secrets.sh")
     assert staged == {
         "canopy-pat",
-        "claude-oauth-token",
         "op-service-account-token",
         "gog-keyring-password",
     }, f"secrets.sh's managed set changed: {sorted(staged)}"

@@ -119,6 +119,7 @@ EXCLUDED: dict[str, str] = {
     "runner_agents": _RUNNER,
     "claim_runner_mint": _RUNNER,
     "post_runner_mint_url": _RUNNER,
+    "post_runner_mint_entry": _RUNNER,
     "post_runner_mint_result": _RUNNER,
     "runner_heartbeat": _RUNNER,
     "claim_turn": _RUNNER,

@@ -12,6 +12,7 @@ ships that file ALONE, so a sibling module is never delivered to a box.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 
 import pytest
@@ -438,7 +439,7 @@ def test_the_token_is_read_off_the_settled_screen(cm, monkeypatch):
 # Each of those dead tokens was reported "signed in; new token stored", and the
 # person was told it worked. The box now asks the token one question first.
 
-def _relay(cm, monkeypatch, probe_status):
+def _relay(cm, monkeypatch, probe_status, *, vault_open=True, seal_fails=False):
     posts = []
     claims = iter([
         (200, {"mint": {"id": "m1", "status": "requested", "slot": "token"}, "code": ""}),
@@ -458,35 +459,67 @@ def _relay(cm, monkeypatch, probe_status):
         def submit_code(self, code, timeout=90.0):
             return _TOKEN
 
-    probed = []
+    probed, sealed = [], []
 
     def probe(entry):
         probed.append(entry)
         return {"label": entry[0], "status": probe_status, "detail": "Not logged in · Please run /login",
                 "reset": None, "at": 0.0}
 
+    def seal(runner_id, values):
+        if seal_fails:
+            raise RuntimeError("holds no copy of a vault key to seal with")
+        sealed.append(dict(values))
+        return {"names": sorted(values), "vault_id": "v"}
+
     monkeypatch.setattr(cm, "_api", fake_api)
     monkeypatch.setattr(cm, "MintSession", FakeMint)
     monkeypatch.setattr(cm, "_probe_entry", probe)
+    monkeypatch.setattr(cm, "_run_seal_cli", seal)
     monkeypatch.setattr(cm, "_reload_claude_credentials", lambda: False)
+    monkeypatch.setattr(cm.secrets, "token_hex", lambda n: "0a1b2c3d")
+    cm._VAULT_STATE["open"] = vault_open
     cm._drain_mint("rid")
     cm._drain_mint("rid")
-    return [b for p, b in posts if p.endswith("/mint/result")], probed
+    return posts, probed, sealed
+
+
+def _results(posts):
+    return [b for p, b in posts if p.endswith("/mint/result")]
 
 
 def test_a_token_claude_refuses_is_reported_as_a_failure_and_not_stored(cm, monkeypatch):
-    results, probed = _relay(cm, monkeypatch, "dead")
+    posts, probed, sealed = _relay(cm, monkeypatch, "dead")
     assert probed == [("minted", "CLAUDE_CODE_OAUTH_TOKEN", _TOKEN)]
-    assert len(results) == 1
-    assert "token" not in results[0], "a token Claude refuses is never stored"
-    assert "refused" in results[0]["detail"]
-    assert "Not logged in" in results[0]["detail"]
-    assert _TOKEN not in results[0]["detail"]
+    [result] = _results(posts)
+    assert "token" not in result, "a token Claude refuses is never stored"
+    assert "refused" in result["detail"] and "Not logged in" in result["detail"]
+    assert _TOKEN not in result["detail"]
+    assert sealed == []
 
 
 @pytest.mark.parametrize("status", ["ok", "capped", "unknown"])
-def test_a_token_that_answers_or_cannot_be_checked_is_stored(cm, monkeypatch, status):
-    """Capped is a real token at its limit; unknown (a hung probe) must never
-    throw away a credential the person has just created."""
-    results, _ = _relay(cm, monkeypatch, status)
-    assert results == [{"token": _TOKEN}]
+def test_a_working_token_is_sealed_then_reported_and_never_sent(cm, monkeypatch, status):
+    """Capped is a real token at its limit; unknown (a hung probe) must never throw
+    away a credential the person has just created. The entry is named, the token
+    sealed into the vault, and only THEN is the sign-in reported."""
+    posts, _, sealed = _relay(cm, monkeypatch, status)
+    assert [p for p, _ in posts if "/mint/" in p][-2:] == ["/runners/rid/mint/entry", "/runners/rid/mint/result"]
+    assert sealed == [{"claude-token:0a1b2c3d": _TOKEN}]
+    assert _results(posts) == [{"vault_key": "0a1b2c3d"}]
+    assert _TOKEN not in json.dumps(posts), "canopy-web never sees the token"
+
+
+def test_a_seal_that_fails_is_a_failed_sign_in_not_a_success(cm, monkeypatch):
+    posts, _, _ = _relay(cm, monkeypatch, "ok", seal_fails=True)
+    [result] = _results(posts)
+    assert result["vault_key"] == "0a1b2c3d"
+    assert "could not seal" in result["detail"]
+    assert _TOKEN not in json.dumps(posts)
+
+
+def test_no_vault_means_no_token_kept(cm, monkeypatch):
+    posts, _, sealed = _relay(cm, monkeypatch, "ok", vault_open=False)
+    [result] = _results(posts)
+    assert "holds no copy of its vault" in result["detail"]
+    assert sealed == [] and _TOKEN not in json.dumps(posts)

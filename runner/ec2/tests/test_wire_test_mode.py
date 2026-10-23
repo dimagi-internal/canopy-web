@@ -46,7 +46,7 @@ def test_wire_test_touches_no_routing(tmp_path):
     assert not [c for c in calls if c.startswith("PUT ")], calls
     assert not [c for c in calls if c.endswith("/retire")], calls
     assert not [c for c in calls if "/api/agents/" in c or "runner-order" in c], calls
-    assert any(c == f"POST /api/harness/runners/{NEW}/credential" for c in calls)
+    assert any(c == f"POST /api/harness/runners/{NEW}/vault" for c in calls)
     assert "/w/canopy/chat" in res.stdout and "cloud-ec2-fork" in res.stdout
 
 
@@ -55,7 +55,7 @@ def test_wire_test_and_standby_do_not_mix(tmp_path):
     res = _wire(tmp_path, "--runner-id", NEW, "--name", "cloud-ec2-fork", "--test",
                 "--standby", "--agents", "echo")
     assert res.returncode != 0
-    assert not (state / "posted.json").exists()
+    assert not (state / "vaulted.json").exists()
 
 
 def test_wire_test_waits_for_a_working_credential(tmp_path):

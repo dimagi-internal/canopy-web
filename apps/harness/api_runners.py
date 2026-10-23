@@ -64,8 +64,6 @@ from .schemas import (
     RunnerAdminIn,
     RunnerAdminOut,
     RunnerCapabilitiesIn,
-    RunnerCredentialAddIn,
-    RunnerCredentialIn,
     RunnerCredentialOut,
     RunnerCredentialPatchIn,
     RunnerCredentialResolveOut,
@@ -82,6 +80,7 @@ from .schemas import (
     RunnerLoginReportIn,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
+    RunnerMintEntryIn,
     RunnerMintOut,
     RunnerMintResultIn,
     RunnerMintStartIn,
@@ -182,47 +181,6 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
     return Status(201, _with_roots(request, runner))
 
 
-@router.post("/runners/{runner_id}/credential", response=RunnerCredentialStatusOut,
-             summary="Set a cloud runner's credential bundle (owner only)")
-@gate("runner-admin", setting=True)
-def set_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialIn):
-    """The old fixed-slot write (`wire.sh`, older callers): `claude_token` and
-    `claude_token_secondary` are the first and second tokens in the runner's
-    credential list, `claude_api_key` its first API key. Non-clobbering per field;
-    "" removes that entry. Encrypted at rest; the response is masked."""
-    runner = runner_admin_or_404(request, runner_id)
-    if harness_runners.would_remove_last_backup_token(
-            runner, claude_token=payload.claude_token,
-            claude_token_secondary=payload.claude_token_secondary,
-            claude_api_key=payload.claude_api_key):
-        raise HttpError(422, harness_runners.LAST_BACKUP_TOKEN_REFUSAL)
-    harness_runners.set_runner_credential(
-        runner,
-        claude_token=payload.claude_token,
-        claude_token_secondary=payload.claude_token_secondary,
-        claude_api_key=payload.claude_api_key,
-        claude_token_label=payload.claude_token_label,
-        claude_token_secondary_label=payload.claude_token_secondary_label,
-        updated_by=request.user,
-    )
-    return harness_runners.runner_credential_status(runner)
-
-
-@router.post("/runners/{runner_id}/credentials", response=RunnerCredentialStatusOut,
-             summary="Add a token or API key at the end of a runner's credentials")
-@gate("runner-admin", setting=True)
-def add_runner_credential(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerCredentialAddIn):
-    """Pasted, encrypted at rest, never shown again. The runner picks it up the
-    next time it re-reads its credentials."""
-    runner = runner_admin_or_404(request, runner_id)
-    try:
-        harness_runners.add_runner_credential(runner, kind=payload.kind, value=payload.value,
-                                              name=payload.name, by=request.user)
-    except harness_runners.CredentialRefused as exc:
-        raise HttpError(422, str(exc)) from exc
-    return harness_runners.runner_credential_status(runner)
-
-
 # The fixed path is declared before `/credentials/{key}`, which would match it.
 @router.put("/runners/{runner_id}/credentials/order", response=RunnerCredentialStatusOut,
             summary="Set the order a runner tries its Claude credentials in")
@@ -239,13 +197,14 @@ def order_runner_credentials(request: HttpRequest, runner_id: uuid.UUID, payload
 
 
 @router.patch("/runners/{runner_id}/credentials/{key}", response=RunnerCredentialStatusOut,
-              summary="Rename a token or API key, or give it a new value")
+              summary="Rename a token or API key")
 @gate("runner-admin", setting=True)
 def update_runner_credential(request: HttpRequest, runner_id: uuid.UUID, key: str,
                              payload: RunnerCredentialPatchIn):
+    """Only its name: a new value is sealed into the runner's vault (in the browser,
+    or by the box after a sign-in), never sent here."""
     runner = runner_admin_or_404(request, runner_id)
-    if not harness_runners.update_runner_credential(runner, key, value=payload.value,
-                                                    name=payload.name, by=request.user):
+    if not harness_runners.update_runner_credential(runner, key, name=payload.name, by=request.user):
         raise HttpError(404, "no such token or API key on this runner")
     return harness_runners.runner_credential_status(runner)
 
@@ -423,8 +382,8 @@ def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
     `PUT /api/vaults/{vault_id}/zk/values`. 422 when the runner has no vault with a key."""
     runner = runner_admin_or_404(request, runner_id)
     try:
-        entry = harness_runners.add_runner_credential(runner, kind=payload.kind, value="",
-                                                      name=payload.name, by=request.user, in_vault=True)
+        entry = harness_runners.add_runner_credential(runner, kind=payload.kind, name=payload.name,
+                                                      by=request.user)
     except harness_runners.CredentialRefused as exc:
         raise HttpError(422, str(exc)) from exc
     vault = harness_runners.open_runner_vault(runner)
@@ -678,14 +637,33 @@ def post_runner_mint_code(request: HttpRequest, runner_id: uuid.UUID,
     return harness_runners.submit_mint_code(mint, payload.code)
 
 
+@router.post("/runners/{runner_id}/mint/entry", response=RunnerMintOut,
+             summary="The runner names the entry a token it signed in will be sealed under")
+@gate("runner", kind="runner-protocol")
+def post_runner_mint_entry(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerMintEntryIn):
+    """`{vault_key}` — the sign-in's own entry, else a new one the box names, with no
+    value here. The box then seals the token into the runner's vault under it, and
+    only then reports the sign-in (`…/mint/result {vault_key}`)."""
+    runner = runner_or_404(request, runner_id)
+    mint = harness_runners.current_runner_mint(runner)
+    if mint is None:
+        raise HttpError(409, "no sign-in is in progress for this runner")
+    try:
+        harness_runners.name_minted_entry(mint, payload.vault_key)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    return mint
+
+
 @router.post("/runners/{runner_id}/mint/result", response=RunnerMintOut,
-             summary="The runner reports the outcome (and delivers the token)")
+             summary="The runner reports the outcome of a sign-in")
 @gate("runner", kind="runner-protocol")
 def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
                             payload: RunnerMintResultIn):
-    """The minted token arrives HERE, never in the browser — it goes straight
-    into the encrypted credential bundle, so the only secret that ever reaches a
-    human's screen is the single-use authorization code."""
+    """How the sign-in ended. A `box` login stays on the box (`logged_in`); a `token`
+    sign-in names the entry it sealed into the runner's vault (`vault_key`) and is done
+    only if the vault holds it. A token itself is never accepted: one sent here fails
+    the sign-in, unstored. The only secret a human handles is the single-use code."""
     runner = runner_or_404(request, runner_id)
     mint = harness_runners.current_runner_mint(runner)
     if mint is None:
