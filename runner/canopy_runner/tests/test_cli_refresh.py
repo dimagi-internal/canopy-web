@@ -71,3 +71,35 @@ def test_start_checks_on_a_cadence_and_can_be_turned_off(box, monkeypatch):
     assert len(seen) == 2
     monkeypatch.setenv("CANOPY_CLI_REFRESH", "0")
     assert cli_refresh.start() is None
+
+
+def test_a_reinstall_keeps_what_was_installed_beside_canopy(box, monkeypatch):
+    """A bare reinstall drops every `--with`: the KB engine vanished from cloud-ec2-2 on the
+    next canopy release and `canopy kb build` failed there (canopy-web#1891)."""
+    receipt = box / ".local/share/uv/tools/canopy/uv-receipt.toml"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('''[tool]
+requirements = [
+    { name = "canopy", directory = "/home/u/.claude/plugins/marketplaces/canopy" },
+    { name = "canopy-kb", git = "https://github.com/dimagi-internal/canopy-web.git?subdirectory=packages%2Fcanopy_kb" },
+    { name = "openpyxl" },
+    { name = "httpx", specifier = ">=0.27", extras = ["http2"] },
+]
+''')
+    monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    calls = []
+    assert cli_refresh.check(home=box, run=_runner("0.2.685", calls)) == "refreshed"
+    install = calls[-1]
+    withs = [install[i + 1] for i, a in enumerate(install) if a == "--with"]
+    assert withs == ["canopy-kb @ git+https://github.com/dimagi-internal/canopy-web.git"
+                     "#subdirectory=packages/canopy_kb", "openpyxl", "httpx[http2]>=0.27"]
+    assert install[-1] == str(box / ".claude/plugins/marketplaces/canopy")
+
+
+def test_no_receipt_reinstalls_bare(box, monkeypatch):
+    monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    calls = []
+    cli_refresh.check(home=box, run=_runner("0.2.685", calls))
+    assert "--with" not in calls[-1]
