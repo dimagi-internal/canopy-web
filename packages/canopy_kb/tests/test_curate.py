@@ -96,18 +96,18 @@ def test_publishing_sends_what_changed_a_card_change_sends_no_text_and_the_state
     assert out["published"] and out["version"] == 1 and out["state_saved"]
     assert store.kb_curation["sha"] and store.kb_curation["version"] == 1
     assert store.item("a")["text"] == "Alpha " * 500
-    sent = len(store.objects["records"])
 
     with Curation(store) as cur:  # nothing new: nothing sent, no version, state unchanged
         out = _publish(cur, docs)
-    assert out == {**out, "published": False, "unchanged": True, "objects_sent": 0, "state_saved": False}
+    assert out == {**out, "published": False, "unchanged": True, "state_saved": False}
+    assert not any(c.startswith("publish") for c in store.calls[-3:])
     assert len(store.versions) == 1
 
     with Curation(store) as cur:  # a new card on "a": its small record only
         rec, text = _doc("a", "Alpha " * 500, card={"summary": "new"})
         out = _publish(cur, {**docs, "a": (rec, text)})
-    assert out["published"] and out["changed"] == 1 and out["objects_sent"] == 1
-    assert len(store.objects["records"]) == sent + 1 and store.item("a")["card"] == {"summary": "new"}
+    assert out["published"] and out["changed"] == 1 and out["version"] == 2
+    assert store.item("a")["card"]["summary"] == "new" and store.item("b")["text"] == "Beta " * 500
 
 
 def test_a_refresh_that_would_remove_much_stops_and_a_second_refresh_waits():
@@ -245,13 +245,32 @@ def test_urls_keep_the_order_they_were_first_fetched_in_across_machines(monkeypa
         assert [u for u, _ in fetch.Fetch(cur).in_order()] == urls
 
 
-def test_a_large_publish_asks_the_host_a_batch_at_a_time():
-    """A first publish in the new record format sends every text: the host is asked which
-    it holds once per thousand, not once per text (10,868 texts made it a 502)."""
-    store = MemoryStore()
-    docs = {str(n): _doc(str(n), f"text {n}") for n in range(2500)}
-    with Curation(store) as cur:
-        _publish(cur, docs)
-    asks = [c for c in store.calls if c.startswith("have records")]
-    assert len(asks) <= 6, len(asks)  # records once, texts once, a batch of 1000 each
+def test_the_refresh_builds_the_index_and_it_is_the_full_build_of_the_same_content(tmp_path):
+    """The host never builds: the refresh applies what changed to the file the host serves
+    (`canopy_kb.apply`), which is the full build of the same content."""
+    import json as _json
 
+    from canopy_kb import KB, build
+    store = MemoryStore()
+    docs = {str(n): _doc(str(n), f"Report {n} on nets and water. " * 20) for n in range(300)}
+    with Curation(store) as cur:
+        assert _publish(cur, docs)["version"] == 1
+    later = {**docs, "7": _doc("7", "A new text about chlorination. " * 20)}
+    later.pop("8")
+    with Curation(store) as cur:
+        out = _publish(cur, later, allow_removals=True)
+    assert out["version"] == 2 and (out["changed"], out["removed"]) == (1, 1)
+    bundle = tmp_path / "b"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(_json.dumps({"name": "t"}))
+    (bundle / "items.jsonl").write_text("".join(_json.dumps(records.join(r, t)) + "\n" for r, t in later.values()))
+    build(bundle, tmp_path / "full.sqlite")
+    served = tmp_path / "served.sqlite"
+    store.served(served)
+    a, f = KB(served), KB(tmp_path / "full.sqlite")
+    same = lambda s: {k: v for k, v in s.items() if k not in ("built_at", "new", "changed", "removed", "baseline")}  # noqa: E731
+    assert a.summary["items"] == 299 and same(a.summary) == same(f.summary)
+    for iid in ("7", "42", "299"):
+        assert a.text(iid) == f.text(iid) and dict(a.item_row(iid))["sha256"] == dict(f.item_row(iid))["sha256"]
+    assert a.item_row("8") is None and "chlorination" in a.find("chlorination")
+    assert store.item("7")["text"].startswith("A new text")

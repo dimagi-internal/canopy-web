@@ -12,18 +12,22 @@ one, so a runner's disk is scratch (canopy-web#1925):
 * **The curation state** (`State`): what a refresh cannot recompute cheaply (the fetch
   index, each input's descriptor, the cards), as named sections of small JSON entries,
   stored in content-addressed chunks so a refresh that changed little uploads little.
-  The host points at its root; saving it is a compare-and-swap, done with the version
-  commit, under a lease that keeps two refreshes from running at once.
+  The host points at its root; saving it is a compare-and-swap, after the version is
+  published, under a lease that keeps two refreshes from running at once.
 * **Revisions are checked before anything runs** (`check_lock`): a step whose code or
   reader libraries changed since `steps.lock` refuses to run until its author bumps its
   REVISION (it re-runs) or relocks (its output cannot change). Nothing goes stale
   silently, and a comment edit never spends money.
 * **Spending is planned** (`Budget`): model calls are counted and priced before any is
   made, and a run over its budget stops before the first one.
+* **The refresh builds the index** (`Curation.publish`): it fetches the file the host
+  serves, applies what changed (`canopy_kb.apply`), and uploads the result. Compute is
+  the runner's; the host keeps state and serves, and a deploy of the host never kills
+  a build.
 
 `Store` is the host as a refresh sees it; `MemoryStore` is one in memory, for tests.
 A curator's adapter (GiveWell's crawl and item rules; a Drive folder sync) defines its
-steps and drives a `Curation`; the canopy CLI's `canopy kb refresh` supplies the store.
+steps and drives a `Curation`; canopy's `kb_remote.RemoteStore` is the host as canopy-web.
 """
 from __future__ import annotations
 
@@ -169,7 +173,8 @@ class Store(Protocol):
     def drop_lease(self, holder: str) -> None: ...
     def save_curation(self, sha: str, base: str | None) -> dict: ...
     def plan(self, state: dict) -> dict: ...
-    def commit(self, state: dict, base: int | None, curation: dict | None) -> dict: ...
+    def served(self, out: Path) -> Path | None: ...
+    def publish_file(self, gz: Path, sha256: str, state: dict) -> dict: ...
 
 
 class MemoryStore:
@@ -241,33 +246,41 @@ class MemoryStore:
                 "added": len(d["added"]), "changed": len(d["changed"]), "removed": len(d["removed"]),
                 "upload_docs": d["added"] + d["changed"], "upload_parts": d["parts"], "full_required": False}
 
-    def commit(self, state, base, curation):
-        if (self.versions[-1]["number"] if self.versions else None) != base:
-            raise CurationError("the knowledge base moved since the plan")
-        d = records.diff(self.head(), state)
-        need = {state["docs"][i] for i in d["added"] + d["changed"]} | {state["parts"][n] for n in d["parts"]}
-        missing = need - set(self.objects[RECORDS])
-        if missing:
-            raise CurationError(f"{len(missing)} records were not uploaded")
-        for i in d["added"] + d["changed"]:
-            rec = decode(self.objects[RECORDS][state["docs"][i]])
-            if rec.get("text_sha") and rec["text_sha"] not in self.objects[RECORDS]:
-                raise CurationError(f"{i}: its text was not uploaded")
-        changed = bool(d["added"] or d["changed"] or d["removed"] or d["parts"])
-        cur = self.kb_curation.get("sha")
-        if curation and cur and cur != curation["sha"] and curation.get("base") != cur:
-            raise CurationError("the curation state was saved since by another refresh")  # and no version
-        if changed:
-            self.versions.append({"number": len(self.versions) + 1, "state": state, "diff": d})
-        if curation:
-            self.save_curation(curation["sha"], curation.get("base"))
-        return {"created": changed, "version": {"number": self.versions[-1]["number"]} if changed else None}
+    def served(self, out):
+        if not self.versions:
+            return None
+        out.write_bytes(self.versions[-1]["file"])
+        return out
+
+    def publish_file(self, gz, sha256, state):
+        import gzip as _gz
+        body = Path(gz).read_bytes()
+        if __import__("hashlib").sha256(body).hexdigest() != sha256:
+            raise CurationError("the uploaded file is not the one named")
+        self.versions.append({"number": len(self.versions) + 1, "state": state, "file": _gz.decompress(body)})
+        self.calls.append(f"publish {len(body)}")
+        return {"version": len(self.versions)}
 
     # what a test asks of it
     def item(self, iid: str) -> dict:
-        """A published document, joined with its text, as the index would store it."""
-        rec = decode(self.objects[RECORDS][self.head()["docs"][iid]])
-        return records.join(rec, decode(self.objects[RECORDS][rec["text_sha"]])) if "text_sha" in rec else rec
+        """A published document, read back from the file the host serves."""
+        import json as _json
+        import sqlite3
+        import tempfile as _tf
+
+        from canopy_kb import KB
+        with _tf.TemporaryDirectory() as td:
+            path = Path(td) / "kb.sqlite"
+            path.write_bytes(self.versions[-1]["file"])
+            kb = KB(path)
+            row = dict(kb.item_row(iid))
+            row["meta"] = _json.loads(row["meta"] or "{}")
+            row["text"] = kb.text(iid)
+            row["original"] = (kb.originals(iid) or [None])[0]
+            card = kb.db.execute("SELECT * FROM cards WHERE item_id = ?", (iid,)).fetchone()
+            row["card"] = dict(card) if isinstance(card, sqlite3.Row) else None
+            kb.db.close()
+        return row
 
 
 # ---- the curation state -----------------------------------------------------------------
@@ -475,56 +488,75 @@ class Curation:
 
     # publishing
     def publish(self, docs: dict[str, dict], text: Callable[[list[str]], dict[str, str]], parts: dict[str, object],
-                *, max_removed: float = 0.02, allow_removals: bool = False) -> dict:
-        """Publish `docs` ({item id: record, text by reference}) and `parts`, sending only
-        what the host lacks; `text(item ids)` gives those documents' texts ({id: text}),
-        asked in batches, when they must be sent.
-        The curation state goes with the commit, so the two never disagree. A publish that
-        would remove more than `max_removed` of the documents stops, unless allowed: a
-        source that failed is not a publisher that deleted everything."""
+                *, max_removed: float = 0.02, allow_removals: bool = False, scratch: Path | None = None) -> dict:
+        """Publish `docs` ({item id: record, text by reference}) and `parts`. The refresh's
+        own machine builds the index: it fetches the file the host serves, applies what
+        changed (`canopy_kb.apply`, the code a full build runs), and uploads the result,
+        which the host serves as a new version; the host never builds. `text(item ids)`
+        gives the changed documents' texts, a batch at a time. Nothing changed: nothing
+        is built or sent. The curation state is saved after the version (compare-and-swap).
+        A publish that would remove more than `max_removed` of the documents stops, unless
+        allowed: a source that failed is not a publisher that deleted everything."""
+        import gzip as _gz
+        import hashlib
+        import shutil
+        import sqlite3
+        import tempfile
+
+        from canopy_kb import apply
+
         self.flush()
+        held_root = self.store.curation().get("sha")
+        if held_root and held_root != self.state.root:
+            raise CurationError("the curation state was saved since by another refresh: refresh again from it")
         state = {"docs": {i: sha(r) for i, r in docs.items()}, "parts": {n: sha(p) for n, p in parts.items()}}
         plan = self.store.plan(state)
-        if plan.get("full_required"):
-            raise CurationError(plan.get("reason") or "the host asks for a whole-file publish first")
         head_docs = plan["changed"] + plan["removed"] + (len(docs) - plan["added"] - plan["changed"])
         if plan["removed"] and not allow_removals and plan["removed"] > max_removed * max(1, head_docs):
             raise CurationError(f"this refresh would remove {plan['removed']} of {head_docs} documents "
                                 f"(more than {max_removed:.0%}): a source probably failed. Nothing was published; "
                                 "rerun with --allow-removals if they really are gone.")
-        sent = 0
+        out: dict[str, Any] = {"published": False, "unchanged": bool(plan["unchanged"])}
         if not plan["unchanged"]:
-            ids = list(plan["upload_docs"])
-            blobs: dict[str, bytes] = {state["parts"][n]: encode(parts[n]) for n in plan["upload_parts"]}
-            for i in ids:
-                blobs[state["docs"][i]] = encode(docs[i])
-            sent = put_missing(self.store, blobs, RECORDS)
-            # the texts the host lacks, fetched and sent a batch at a time
-            want = {docs[i]["text_sha"]: i for i in ids if "text_sha" in docs[i]}
-            held: set[str] = set()
-            for b in _batches(sorted(want)):  # asked once, a batch at a time
-                held |= self.store.have(RECORDS, b)
-            missing = [s for s in sorted(want) if s not in held]
-            for batch in _batches(missing, 200):
-                got = text([want[s] for s in batch])
-                texts = {s: encode(got[want[s]]) for s in batch}
-                bad = [want[s] for s in batch if sha(got[want[s]]) != s]
-                if bad:
-                    raise CurationError(f"{bad[0]}: its text is not the one its record names")
-                sent += self.store.put_records(texts)  # known missing: no need to ask again
+            with tempfile.TemporaryDirectory(prefix="kb-build-", dir=scratch) as td:
+                td = Path(td)
+                base = self.store.served(td / "base.sqlite")
+                held = set()
+                if base is not None:
+                    db = sqlite3.connect(f"file:{base}?mode=ro", uri=True)
+                    held = {r[0] for r in db.execute("SELECT id FROM items")}
+                    db.close()
+                ids = list(plan["upload_docs"])
+
+                def items():
+                    for batch in _batches(ids, 200):
+                        got = text(batch)
+                        for i in batch:
+                            if "text_sha" in docs[i] and sha(got[i]) != docs[i]["text_sha"]:
+                                raise CurationError(f"{i}: its text is not the one its record names")
+                            yield records.join(docs[i], got[i]) if "text_sha" in docs[i] else docs[i]
+
+                built = td / "kb.sqlite"
+                summary = apply(base, built, items(), sorted(held - set(docs)),
+                                manifest=parts.get(records.MANIFEST), aliases=parts.get(records.ALIASES) or {},
+                                tables=records.tables(parts))
+                gz = td / "kb.sqlite.gz"
+                with open(built, "rb") as src, open(gz, "wb") as raw, \
+                        _gz.GzipFile(fileobj=raw, mode="wb", compresslevel=6, mtime=0) as dst:
+                    shutil.copyfileobj(src, dst, 1 << 20)
+                digest = hashlib.sha256()
+                with open(gz, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        digest.update(chunk)
+                v = self.store.publish_file(gz, digest.hexdigest(), state)
+                out.update(published=True, version=v.get("version"), bytes=gz.stat().st_size,
+                           items=summary.get("items"))
         root = self.state.upload(self.store)
-        curation = {"sha": root, "base": self.state.root} if root != self.state.root else None
-        if plan["unchanged"]:
-            if curation:
-                self.store.save_curation(root, self.state.root)
-            out = {"published": False, "unchanged": True}
-        else:
-            c = self.store.commit(state, plan["base"], curation)
-            out = {"published": bool(c.get("created")), "version": (c.get("version") or {}).get("number")}
-        if curation:
+        saved = root != self.state.root
+        if saved:
+            self.store.save_curation(root, self.state.root)
             self.state.root = root
-        out.update(added=plan["added"], changed=plan["changed"], removed=plan["removed"], objects_sent=sent,
-                   state_saved=bool(curation))
+        out.update(added=plan["added"], changed=plan["changed"], removed=plan["removed"], state_saved=saved)
         return out
 
 
