@@ -85,6 +85,7 @@ import sys
 import tempfile
 import termios
 import threading
+import unicodedata
 import time
 import urllib.error
 import urllib.parse
@@ -6709,13 +6710,18 @@ def _probe_in_background(labels: list[str]) -> None:
 
 def _reprobe(labels: list[str]) -> None:
     """Forget what these credentials last proved and ask them again — after a
-    person signs one in anew, which leaves its value (a config dir) unchanged."""
+    person signs one in anew, which leaves its value (a config dir) unchanged.
+
+    Readiness forgets the old answer (`_PROBES`); the `claude.probe.<label>`
+    CHECK stays in the heartbeat until the new answer overwrites it. canopy-web's
+    `runner_credential` alert resolves when the box stops reporting a failing
+    check, and a dropped check reads exactly like a passing one. cloud-ec2-2,
+    2026-10-23: a replaced token's alert resolved five seconds after the save and
+    three before the probe found the new token dead, then reopened a minute
+    later — "it said it worked, then that it didn't"."""
     with _PROBES_LOCK:
         for label in labels:
             _PROBES.pop(label, None)
-    with _HEALTH_LOCK:
-        for label in labels:
-            _HEALTH.pop(f"claude.probe.{label}", None)
     _probe_in_background(labels)
 
 
@@ -7005,9 +7011,8 @@ def _reload_claude_credentials() -> bool:
     with _PROBES_LOCK:
         for label in changed:
             _PROBES.pop(label, None)     # what the old value proved says nothing of the new
-    with _HEALTH_LOCK:
-        for label in changed:
-            _HEALTH.pop(f"claude.probe.{label}", None)
+    # The `claude.probe.<label>` CHECK stays until the new probe replaces it:
+    # see `_reprobe`.
     _CLAUDE_CREDS.clear()
     _CLAUDE_CREDS.extend(fresh)
     _apply_claude_credential(0)
@@ -7202,8 +7207,125 @@ def extract_authorize_url(raw: bytes) -> str | None:
     return None
 
 
+_SCREEN_ESC = re.compile(
+    r"\x1b(?:\[(?P<csi>[0-9;?<=>]*)[ -/]*(?P<final>[@-~])"   # CSI
+    r"|\][^\x07\x1b]*(?:\x07|\x1b\\)"                      # OSC (a hyperlink)
+    r"|[()][0-9A-Za-z]"                                    # charset select
+    r"|(?P<single>[0-9A-Za-z=>]))")
+
+
+def render_screen(raw: bytes) -> str:
+    """Terminal bytes -> the screen they leave behind, as text.
+
+    `strip_terminal` deletes cursor moves, which is right only for a renderer
+    that writes every character it shows. Claude Code's does not: it rewrites
+    only the cells that CHANGED, stepping over the rest with `ESC[nC`/`ESC[nG`/
+    `ESC[nA` (measured on 2.1.309: a spinner frame is `\\r ESC[1C ESC[1A ✢`). A
+    token drawn where the screen already held the same character loses that
+    character to the strip. cloud-ec2-2, from Claude Code 2.1.301 (2026-10-16):
+    every setup-token was stored as `sk-ant-at01-…` — the `o` of `oat01` was
+    already on screen — and every one was dead on its first probe.
+
+    So the token is read off a replayed screen: the cursor moves are applied to
+    a grid, which is what the human at a real terminal sees. Rows grow without
+    wrapping (the pty is 400 wide). OSC payloads are dropped — the URL is
+    `extract_authorize_url`'s, from `strip_terminal`.
+    """
+    text = raw.decode("utf-8", "replace")
+    rows: list[list[str]] = [[]]
+    r = c = 0
+    saved = (0, 0)
+
+    def row(i: int) -> list[str]:
+        while len(rows) <= i:
+            rows.append([])
+        return rows[i]
+
+    def put(ch: str) -> None:
+        nonlocal c
+        line = row(r)
+        if len(line) < c:
+            line.extend(" " * (c - len(line)))
+        cells = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        new = [ch] + [""] * (cells - 1)
+        line[c:c + cells] = new
+        c += cells
+
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\x1b":
+            m = _SCREEN_ESC.match(text, i)
+            if not m:
+                i += 1
+                continue
+            i = m.end()
+            final, single = m.group("final"), m.group("single")
+            if single == "7":
+                saved = (r, c)
+            elif single == "8":
+                r, c = saved
+            if not final:
+                continue
+            params = (m.group("csi") or "").lstrip("?<=>").split(";")
+            n = int(params[0]) if params and params[0].isdigit() else 0
+            step = n or 1
+            if final == "A":
+                r = max(0, r - step)
+            elif final == "B":
+                r += step
+            elif final == "C":
+                c += step
+            elif final == "D":
+                c = max(0, c - step)
+            elif final == "E":
+                r, c = r + step, 0
+            elif final == "F":
+                r, c = max(0, r - step), 0
+            elif final == "G":
+                c = step - 1
+            elif final in "Hf":
+                col = int(params[1]) if len(params) > 1 and params[1].isdigit() else 1
+                r, c = step - 1, max(0, col - 1)
+            elif final == "K":
+                line = row(r)
+                if n == 0:
+                    del line[c:]
+                elif n == 1:
+                    line[:c + 1] = [" "] * min(len(line), c + 1)
+                else:
+                    line.clear()
+            elif final == "J":
+                if n == 0:
+                    del row(r)[c:]
+                    del rows[r + 1:]
+                elif n == 1:
+                    for j in range(r):
+                        rows[j] = []
+                    line = row(r)
+                    line[:c + 1] = [" "] * min(len(line), c + 1)
+                else:
+                    rows[:] = [[] for _ in rows]
+            continue
+        i += 1
+        if ch == "\r":
+            c = 0
+        elif ch == "\n":
+            r, c = r + 1, 0   # a pty turns LF into CR LF; text fixtures rely on it too
+        elif ch == "\b":
+            c = max(0, c - 1)
+        elif ch == "\t":
+            c = (c // 8 + 1) * 8
+        elif ch >= " " and ch != "\x7f":
+            put(ch)
+    return "\n".join("".join(line).rstrip() for line in rows)
+
+
 def extract_token(raw: bytes) -> str | None:
     """The minted long-lived token, once the exchange has completed.
+
+    Read off the replayed screen (`render_screen`), never the stripped stream:
+    the stream has lost every character the renderer did not need to redraw.
 
     Three passes, most-grounded first: what the CLI SAID is its OAuth token,
     then the known `oat` format, then anything credential-shaped that is not a
@@ -7218,7 +7340,7 @@ def extract_token(raw: bytes) -> str | None:
     the credential. The exclusion belongs on the UNANCHORED pass, where we are
     guessing, and nowhere else.
     """
-    text = strip_terminal(raw)
+    text = render_screen(raw)
     m = _TOKEN_BANNER.search(text)
     if m:
         return m.group(1)
@@ -7376,6 +7498,14 @@ class MintSession:
         time.sleep(_PASTE_SETTLE_SECONDS)
         os.write(self._fd, b"\r")
         token = self._pump(timeout, extract_token)
+        if token is not None:
+            # `_pump` answers on the first match, and a token split across two
+            # pty reads matches at its first 16 characters. Let the CLI finish
+            # drawing, then read the token off the settled screen (the screen
+            # may also be gone by then — a TUI clearing on exit — so the first
+            # read stands in that case; the probe in `_drain_mint` checks it).
+            self._read_until_quiet()
+            token = extract_token(self._buf) or token
         tail = _diagnostic_tail(self._buf)
         # Ask BEFORE close(): the buffer is the only witness that the exchange
         # completed, and the redaction in `tail` deliberately removes the token
@@ -7410,6 +7540,21 @@ class MintSession:
             self._fd = None
 
     # ── internals ──────────────────────────────────────────────────────────
+    def _read_until_quiet(self, quiet: float = 1.0, cap: float = 5.0) -> None:
+        """Keep reading until the CLI has said nothing for `quiet` seconds."""
+        deadline = time.time() + cap
+        while time.time() < deadline:
+            try:
+                ready, _, _ = select.select([self._fd], [], [], quiet)
+                if not ready:
+                    return
+                chunk = os.read(self._fd, 65536)
+            except (OSError, ValueError, TypeError):  # the child exited; no pty
+                return
+            if not chunk:
+                return
+            self._buf += chunk
+
     def _pump(self, timeout, extract):
         """Read until `extract` finds something, or time runs out.
 
@@ -7623,6 +7768,22 @@ def _drain_mint(runner_id: str) -> None:
                     # proved before the sign-in.
                     _reprobe([_login_label(key)])
                     return
+                # Ask the token one question BEFORE calling the sign-in a success.
+                # cloud-ec2-2, 2026-10-16 to 10-23: three sign-ins were reported
+                # "signed in; new token stored" and every token was dead on its
+                # first probe seconds later (a misread — see `render_screen`).
+                # A dead one is not stored: the person hears it failed, with why.
+                # Capped or unanswered is a real token, and is kept.
+                check = _probe_entry(("minted", _LIST_KINDS["token"][1], token))
+                if check["status"] == "dead":
+                    _log(f"mint {mint_id[:8]}: the new token was refused on its first "
+                         f"use (format {token[:12]}…, {len(token)} chars) — not stored")
+                    _api("POST", f"/runners/{runner_id}/mint/result",
+                         {"detail": "the sign-in completed, but Claude refused the token "
+                                    "this runner read back from it, so it was not saved. "
+                                    "That is a bug in the runner, not anything you did. "
+                                    f"Claude said: {check['detail'] or 'not logged in'}"[:900]})
+                    return
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only
                 # secret a human handled was the single-use code.
@@ -7631,7 +7792,7 @@ def _drain_mint(runner_id: str) -> None:
                 # nothing else, and it is the one fact we lacked when a real
                 # token was discarded for not looking like the format we assumed.
                 _log(f"mint {mint_id[:8]}: signed in; new token stored "
-                     f"(format {token[:12]}…)")
+                     f"(format {token[:12]}…, {len(token)} chars)")
                 if _reload_claude_credentials():
                     _log("picked up the freshly minted credential")
             finally:
