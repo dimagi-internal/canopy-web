@@ -83,15 +83,46 @@ describe('useSealedConversation', () => {
 })
 
 describe('SealedConversationBanner', () => {
-  it('offers "Unlock to read this conversation" while locked, and is gone once open', () => {
-    const onUnlock = vi.fn()
-    const { rerender } = render(<SealedConversationBanner state="locked" error={null} onUnlock={onUnlock} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Unlock to read this conversation' }))
-    expect(onUnlock).toHaveBeenCalled()
-    rerender(<SealedConversationBanner state="no-wrap" error={null} onUnlock={onUnlock} />)
-    expect(screen.getByTestId('sealed-no-wrap').textContent).toMatch(/not been given a key/)
-    rerender(<SealedConversationBanner state="open" error={null} onUnlock={onUnlock} />)
+  it('says nothing on a fresh conversation whose messages all arrived live here', () => {
+    render(<SealedConversationBanner state="locked" error={null} onUnlock={vi.fn()} hasSealed={false} />)
     expect(screen.queryByTestId('sealed-banner')).toBeNull()
+    render(<SealedConversationBanner state="no-wrap" error={null} onUnlock={vi.fn()} hasSealed={false} />)
+    expect(screen.queryByTestId('sealed-banner')).toBeNull()
+  })
+
+  it('offers one plain unlock when sealed rows are waiting, and is gone once open', () => {
+    const onUnlock = vi.fn()
+    const { rerender } = render(<SealedConversationBanner state="locked" error={null} onUnlock={onUnlock} hasSealed />)
+    expect(screen.getByTestId('sealed-banner').textContent)
+      .toContain('Earlier messages are locked. Unlock with your passkey to read them.')
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    expect(onUnlock).toHaveBeenCalled()
+    // "Read it in canopy" only when the caller says unlocking cannot work here.
+    expect(screen.queryByText('Read it in canopy')).toBeNull()
+    rerender(<SealedConversationBanner state="error" error="No passkey was used" onUnlock={onUnlock} hasSealed
+                                       openElsewhere={<a href="/x">Read it in canopy</a>} />)
+    expect(screen.getByText('Read it in canopy')).toBeTruthy()
+    rerender(<SealedConversationBanner state="no-wrap" error={null} onUnlock={onUnlock} hasSealed />)
+    expect(screen.getByTestId('sealed-no-wrap').textContent).toMatch(/not been given a key/)
+    rerender(<SealedConversationBanner state="open" error={null} onUnlock={onUnlock} hasSealed />)
+    expect(screen.queryByTestId('sealed-banner')).toBeNull()
+  })
+
+  it("shows the passphrase fallback wherever it is asked, even with nothing sealed in view", () => {
+    render(<SealedConversationBanner state="opening" error={null} onUnlock={vi.fn()} hasSealed={false}
+                                     unlockElement={<form data-testid="vault-unlock" />} />)
+    expect(screen.getByTestId('vault-unlock')).toBeTruthy()
+  })
+})
+
+describe('useSealedConversation.hasSealed', () => {
+  it('is false for live rows and true once a sealed row is in view', async () => {
+    const c = await conversation()
+    const live = renderHook(() => useSealedConversation(c.sealedKey, [{ plaintext: 'hi', content: {} }], vi.fn()))
+    expect(live.result.current.hasSealed).toBe(false)
+    const rows = [{ plaintext: '', content: {}, sealed: await c.seal(0, { plaintext: 'x', content: {} }) }]
+    const stored = renderHook(() => useSealedConversation(c.sealedKey, rows, vi.fn()))
+    expect(stored.result.current.hasSealed).toBe(true)
   })
 })
 

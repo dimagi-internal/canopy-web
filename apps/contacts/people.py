@@ -393,7 +393,10 @@ def envelope_block(turn, *, agent, workspace_slug: str | None, reader_user=None)
         return None
     session = hcp.session_of(turn)
     state = hcp.memory_state(person, session)
-    record, use = state["record"]["effective"], state["use"]["effective"]
+    # A sensitive conversation (or a turn on a sensitive-data box, or descended from
+    # one) neither learns nor recalls: no search runs, so its words are not kept as one.
+    record, use = (state["record"]["effective"], state["use"]["effective"]) \
+        if not hcp.is_sensitive_turn(turn) else (False, False)
     # Granted to THIS agent (a grant only the person gives, in a session — nothing is
     # presumed). Access = the switch AND the grant; a switch on without a grant means
     # the person is asked in the session's UI, never by the agent.

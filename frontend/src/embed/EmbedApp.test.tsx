@@ -855,12 +855,15 @@ describe('agent memory in the conversation header', () => {
     use: { available: true, default: false, override: null, effective: false },
   }
 
-  function serve(personStatus: number) {
+  function serve(personStatus: number, session: Record<string, unknown> = { id: 'sess-1' }) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
         calls.push({ url: String(url), init })
         const path = String(url)
+        if (/\/canopy-sessions\/sess-1$/.test(path) && (!init?.method || init.method === 'GET')) {
+          return { ok: true, status: 200, json: async () => session } as Response
+        }
         if (path.includes('/api/embed/agents')) {
           return { ok: true, status: 200, json: async () => AGENTS } as Response
         }
@@ -897,6 +900,30 @@ describe('agent memory in the conversation header', () => {
     expect(screen.getByRole('switch', { name: /Learn from me/ })).toBeTruthy()
     expect(screen.getByRole('switch', { name: /Use my memory/ }).getAttribute('aria-checked')).toBe('false')
     expect(screen.queryByText('Change in canopy')).toBeNull()
+  })
+
+  it('the memory popover opens inside the narrow panel, never off its left edge', async () => {
+    serve(200)
+    open()
+    await say()
+    fireEvent.click(await screen.findByRole('button', { name: /Learn on, Use off/ }))
+    const dialog = screen.getByRole('dialog', { name: 'Your memory in this conversation' })
+    await waitFor(() => expect(dialog.style.position).toBe('fixed'))
+    expect(parseFloat(dialog.style.left)).toBeGreaterThanOrEqual(8)
+    expect(parseFloat(dialog.style.left) + parseFloat(dialog.style.width)).toBeLessThanOrEqual(window.innerWidth - 8)
+  })
+
+  it('a private (sensitive) conversation offers no memory switches, and says it is private', async () => {
+    serve(200, { id: 'sess-1', sensitive: true, sealed_key: null })
+    open()
+    await say()
+    expect(await screen.findByText(/Private — only the people in this conversation can read it/)).toBeTruthy()
+    await waitFor(() => expect(calls.some((c) => /\/canopy-sessions\/sess-1$/.test(c.url))).toBe(true))
+    expect(screen.queryByRole('button', { name: /Learn on/ })).toBeNull()
+    // Nothing sealed has arrived: no unlock banner on a fresh conversation.
+    expect(screen.queryByTestId('sealed-banner')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Private/ }))
+    expect(screen.getByTestId('sensitive-details').textContent).toMatch(/Memory is off in private conversations/)
   })
 
   it('a site acting for the person shows the state read-only, with a link to change it', async () => {

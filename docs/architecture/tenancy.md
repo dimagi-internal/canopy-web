@@ -357,8 +357,19 @@ THE predicate; every surface below asks it, one test each in
     key, wrapped to the starter; a session whose starter had no vault key kept the field key,
     is served to nobody, and is logged — `manage.py reseal_sensitive_conversations` moves it
     once they have one (`sealed_key.needs_migration` says so meanwhile).
+  - *In the browser.* A quiet "Private" line under the header says so on the chat page and
+    the panel. The unlock banner shows only when sealed rows are in view (history, scroll-back),
+    never for a conversation whose messages all arrived live; its one click goes straight to
+    the passkey (`unlockLocally`, `useVaultUnlock`), and a passphrase is asked only when the
+    passkey is absent or failed.
   - *Not covered:* a person's in-progress draft (`drafts.py`) is still under the field key
     while they type — it is the composer's live state, read back to send it.
+- **Memory is off, both ways:** nothing is written (`hcp.refuse_if_sensitive`), and nothing is
+  read into one — `hcp.memory_state` reads every feature as not effective in a sensitive
+  session, `hcp.effective` / `hcp.require` refuse a sensitive turn (so the envelope's `person`
+  runs no search, whose query would keep the turn's words, and `hcp_searchPreferences` is a
+  403), and the person cannot switch it on or grant it there. The Learn/Use switches are not
+  offered in one (`tests/test_hcp.py`).
 - **Live and log doors ask the same gate:** the chat socket (`SessionConsumer`), whose live
   frames carry the words, admits only `reads_content`; the turn socket's tail gets the stored
   metadata; and `turn_access.can_read_turn_content` is False for a sensitive turn, so no turn

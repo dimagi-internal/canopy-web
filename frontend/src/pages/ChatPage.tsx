@@ -27,6 +27,7 @@ import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
 import { useAttachments } from './chat/useAttachments'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
+import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { useSealedConversation } from '@/vault/useSealedConversation'
 import type { ConversationKey, SealedKey } from '@/vault/sealedChat'
@@ -395,26 +396,20 @@ export function ChatPage({
               workspace={meta?.workspace}
               moveTargets={actions.canMove ? actions.moveTargets : undefined}
               onMove={actions.canMove ? actions.moveToWorkspace : undefined}
-              memory={memory}
+              // Memory is off in a private conversation (the server refuses it too).
+              memory={meta?.sensitive ? null : memory}
             />
           )}
         </div>
       </div>
-      {meta?.sensitive && (
-        <p
-          data-testid="sensitive-banner"
-          className="m-0 border-b border-warning/30 bg-warning/10 px-4 py-1 text-[12px] text-foreground"
-        >
-          <span className="font-medium text-warning">Sensitive conversation.</span> Only the people in it
-          can read it back. Canopy does not share, export or mirror it, and no review or other AI reads it.
-        </p>
-      )}
+      {meta?.sensitive && <PrivateConversationNote />}
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
         onUnlock={() => void sealed.unlock()}
         unlockElement={vault.element}
         needsMigration={Boolean(meta?.sealed_key?.needs_migration)}
+        hasSealed={sealed.hasSealed}
       />
       <div className="min-h-0 flex-1" onContextMenu={fork.onMessageContextMenu}>
         {fork.messageMenu && (
