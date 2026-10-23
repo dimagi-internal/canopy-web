@@ -27,6 +27,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.embedding import assertions, embed_apps
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -62,6 +63,7 @@ def _tenant(slug, email):
     Agent.objects.create(slug=f"{slug}-agent", name=slug, workspace=ws)
     c = Client()
     c.force_login(owner)
+    grant_step_up(c)  # connecting a site takes a passkey
     return owner, c
 
 
@@ -300,3 +302,81 @@ def test_the_embed_shell_refuses_an_ambiguous_name():
     _world()
 
     assert Client().get("/embed/chat", {"app": "connect-labs"}).status_code == 404
+
+
+# --- naming the tenant by workspace ----------------------------------------------------
+
+
+def _assertion_for(priv, workspace, sub="u-1"):
+    now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+    return jwt.encode({"iss": "connect-labs", "sub": sub, "aud": assertions.audience(),
+                       "iat": now, "exp": now + 60, "jti": str(uuid.uuid4()),
+                       "canopy_workspace": workspace}, priv, algorithm="EdDSA")
+
+
+def _mint_in(priv, workspace, agent_slug=""):
+    body = {"assertion": _assertion_for(priv, workspace)}
+    if agent_slug:
+        body["agent_slug"] = agent_slug
+    return Client().post("/api/auth/contact-token", data=body, content_type="application/json")
+
+
+def test_the_signed_workspace_decides_the_tenant_with_no_agent_named():
+    priv, _pb, _a, _b = _world()
+
+    in_alpha, in_beta = _mint_in(priv, "alpha"), _mint_in(priv, "beta")
+
+    assert in_alpha.status_code == 200, in_alpha.content
+    assert in_beta.status_code == 200, in_beta.content
+    assert (_workspace_of(in_alpha), _workspace_of(in_beta)) == ("alpha", "beta")
+
+
+def test_a_workspace_and_an_agent_that_agree_are_served():
+    priv, _pb, _a, _b = _world()
+
+    r = _mint_in(priv, "beta", agent_slug="beta-agent")
+
+    assert r.status_code == 200, r.content
+    assert _workspace_of(r) == "beta"
+
+
+def test_a_workspace_and_an_agent_that_disagree_are_refused_rather_than_picked():
+    priv, _pb, _a, _b = _world()
+
+    r = _mint_in(priv, "alpha", agent_slug="beta-agent")
+
+    assert r.status_code == 409
+    assert r.json()["detail"].startswith("workspace_mismatch")
+
+
+def test_the_named_workspaces_keys_alone_verify():
+    priv_a, _priv_b, _a, _b = _world(same_key=False)
+
+    r = _mint_in(priv_a, "beta")
+
+    assert r.status_code == 401
+    assert r.json()["detail"].startswith("bad_signature")
+
+
+def test_a_malformed_workspace_claim_is_refused():
+    priv, _pb, _a, _b = _world()
+
+    r = _mint_in(priv, ["alpha"])
+
+    assert r.status_code == 400
+    assert r.json()["detail"].startswith("bad_workspace")
+
+
+def test_the_embed_shell_frames_for_the_named_workspace():
+    owner_a, _c = _tenant("alpha", "a@dimagi.com")
+    owner_b, _c = _tenant("beta", "b@dimagi.com")
+    _priv, pub = _keypair()
+    _register(owner_a, "alpha", pub, origins=["https://a.example.com"])
+    _register(owner_b, "beta", pub, origins=["https://b.example.com"])
+
+    r = Client().get("/embed/chat", {"app": "connect-labs", "workspace": "alpha"})
+
+    assert r.status_code == 200
+    assert r["Content-Security-Policy"] == "frame-ancestors https://a.example.com"
+    assert Client().get("/embed/chat", {"app": "connect-labs", "workspace": "alpha",
+                                        "agent": "beta-agent"}).status_code == 404

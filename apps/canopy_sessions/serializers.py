@@ -9,6 +9,7 @@ chat.stream_* frames, not in the DB).
 """
 from __future__ import annotations
 
+from .drafts import body_of
 from .models import Draft, Message, SessionParticipant
 
 
@@ -53,14 +54,16 @@ def message_dto(msg: Message) -> dict:
     }
 
 
-def draft_dto(draft: Draft | None) -> dict | None:
+def draft_dto(draft: Draft | None, *, words: bool = True) -> dict | None:
+    """The author's own draft. `words` False withholds the body: a sensitive
+    conversation's draft reaches only a reader `sensitivity.reads_content` admits."""
     if draft is None:
         return None
     return {
         "id": str(draft.pk),
         "slot": draft.slot,
         "status": "open",
-        "body": draft.body,
+        "body": body_of(draft) if words else "",
         "version": draft.version,
         # `last_editor` kept for canopy-ui <= 0.12, which treats a draft whose
         # last_editor is itself as its own. This DTO only ever reaches its author.
@@ -72,7 +75,7 @@ def draft_dto(draft: Draft | None) -> dict | None:
     }
 
 
-def peer_draft_dto(draft: Draft) -> dict:
+def peer_draft_dto(draft: Draft, *, words: bool = True) -> dict:
     """Someone ELSE's draft, as the live `draft.typing` row. Deliberately not the
     `draft_dto` shape: an old client adopts any draft-shaped frame as its own.
 
@@ -81,7 +84,10 @@ def peer_draft_dto(draft: Draft) -> dict:
       - `live`   -> the body, plus `typing` reflecting whether it's non-empty.
       - `typing` -> body withheld (""), `typing` reflects the REAL body.
       - `hidden` -> body withheld (""), `typing` always False (nothing shows
-                    until send)."""
+                    until send).
+    `words` False withholds the body whatever the mode (a sensitive
+    conversation, a reader `sensitivity.reads_content` does not admit)."""
+    body = body_of(draft)
     user = draft.author
     author = {"id": draft.author_id,
              "name": (user.get_full_name() or "").strip() or user.email}
@@ -89,8 +95,8 @@ def peer_draft_dto(draft: Draft) -> dict:
     if draft.visibility == Draft.HIDDEN:
         return {"author": author, "body": "", "at": at, "typing": False}
     if draft.visibility == Draft.TYPING:
-        return {"author": author, "body": "", "at": at, "typing": bool(draft.body)}
-    return {"author": author, "body": draft.body, "at": at, "typing": bool(draft.body)}
+        return {"author": author, "body": "", "at": at, "typing": bool(body)}
+    return {"author": author, "body": body if words else "", "at": at, "typing": bool(body)}
 
 
 def participant_dto(sp: SessionParticipant) -> dict:
@@ -120,14 +126,16 @@ def participant_dto_for(user, role: str) -> dict:
 
 
 def session_state_dto(*, session, current_user_id, participants, present_ids, draft,
-                      messages, peer_drafts=(), queued=(), current_contact_id=None) -> dict:
-    """The canonical `session.state` snapshot payload."""
+                      messages, peer_drafts=(), queued=(), current_contact_id=None,
+                      draft_words: bool = True) -> dict:
+    """The canonical `session.state` snapshot payload. `draft_words` False
+    withholds every draft's body (`draft_dto`)."""
     return {
         "messages": [message_dto(m) for m in messages],
         # The CONNECTING user's own draft (None for a contact, who has none).
-        "active_draft": draft_dto(draft),
+        "active_draft": draft_dto(draft, words=draft_words),
         # Everyone else's draft in progress, as `draft.typing` rows.
-        "peer_drafts": [peer_draft_dto(d) for d in peer_drafts],
+        "peer_drafts": [peer_draft_dto(d, words=draft_words) for d in peer_drafts],
         # Human sends that have not reached the transcript yet, visible to
         # everyone watching — in the snapshot for the same reason `menu` and
         # `turn_status` are: a client that just connected has no live frame to

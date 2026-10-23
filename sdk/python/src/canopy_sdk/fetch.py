@@ -35,7 +35,17 @@ MAX_URL_LENGTH = 2048
 
 class FetchError(Exception):
     """Why a document could not, or would not, be fetched. Safe to log: it never
-    contains a credential."""
+    contains a credential.
+
+    ``status`` is the HTTP status when the server ANSWERED with something other
+    than a 200 (``None`` when it could not be reached or refused to be fetched),
+    and ``detail`` its RFC 7807 ``detail`` when it gave one — so a caller can
+    tell "refused, and why" from "unreachable"."""
+
+    def __init__(self, message: str = "", *, status: int | None = None, detail: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.detail = detail
 
 
 def address_allowed(address: str) -> bool:
@@ -150,7 +160,7 @@ def get_json(url: str, *, timeout: float = TIMEOUT_SECONDS,
     status, data, _ = _request("GET", url, body=None, headers={"Accept": "application/json"},
                                timeout=timeout, max_bytes=max_bytes)
     if status != 200:
-        raise FetchError(f"{url} answered {status}")
+        raise FetchError(f"{url} answered {status}", status=status)
     return _json(url, data)
 
 
@@ -167,7 +177,8 @@ def get_text(url: str, *, headers: dict | None = None, accept: str = "applicatio
             detail = str(json.loads(data).get("detail") or "")[:300]
         except Exception:  # noqa: BLE001 - not a problem document
             detail = ""
-        raise FetchError(f"{url} answered {status}" + (f": {detail}" if detail else ""))
+        raise FetchError(f"{url} answered {status}" + (f": {detail}" if detail else ""),
+                         status=status, detail=detail)
     try:
         return data.decode("ascii").strip()
     except UnicodeDecodeError as exc:

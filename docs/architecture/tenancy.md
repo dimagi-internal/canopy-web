@@ -341,7 +341,28 @@ THE predicate; every surface below asks it, one test each in
   (`conversation.history`, `sensitivity.history`: the person's lines and the agent's
   replies, never a tool's) to the box that runs the next turn; the canopy plugin's
   `UserPromptSubmit` hook puts it in context. It is the one reader of the sealed words
-  besides the conversation's people.
+  besides the conversation's people, and only the turn's own box gets it: the claim and
+  the turn's caller token (`who_is_asking`) ask `caller_context.build(with_history=True)`;
+  every other envelope read has `history: null`. A member's `who_is_asking` is gated like
+  its REST twin (`can_read_turn_content`), so a sensitive turn is "turn not found".
+- **No door around the gate** (`tests/test_sensitive_read_doors.py`): a session minted from a
+  token is refused by the app-view routes (`app_views_api.browser_only`) and the panel's
+  own token (`embed_api.embed_self_token`), both via `is_machine`; a View's `tool_input`
+  asks the request's real surface (`Viewer.chat_surface`); attachment bytes ask
+  `reads_content` (404 otherwise).
+- **A blocked agent's dialog is metadata:** `RunnerBinding.pending_question` keeps source,
+  stamp, numbered options and a digest, never the question or option words
+  (`sensitivity.menu_metadata`, both producers in `session_sync`); its push says only that
+  it "needs your answer", and it is not relayed to Slack.
+- **The socket re-asks:** `access.recheck` also asks `reads_content`, and is sent to every
+  socket on a session that becomes sensitive (`services.add_runner_requirements`) and to a
+  removed participant's (`services.recheck_sockets`).
+- **No title:** create drops one, becoming sensitive clears one, `PUT …/title` is 422
+  (`sensitivity.NO_TITLE`; clearing is allowed), and the `SESSION_CREATED` line keeps none.
+- **Who a site may say a visitor is takes a passkey:** a signed `email_verified` claim
+  resolves to a member, whose token reads their sensitive chats, so registering a connected
+  site or changing its public keys, JWKS URL or issuer needs a fresh step-up; a token is
+  refused (`embedding/connected_apps_api.py`).
 - **The chat page says so:** `SessionOut.sensitive` draws a banner and turns off Share to
   Slack.
 - **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
@@ -351,3 +372,26 @@ THE predicate; every surface below asks it, one test each in
   mirroring (`slack.relay`), export (403), the usage scan's title.
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
   fleet's transcript readers find none to read.
+- **A sensitive turn's token reaches four tools:** its caller token's tools are the
+  capability's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
+  `who_is_asking`, `site_tools`, `site_call`), whatever the interface lists; it resolves to
+  nothing once the capability stops saying `data: sensitive` (re-read on every call) or the
+  turn is not confined (`caller_tokens._sensitive_grant`, `mcp/turn_scope.py`). So a
+  sensitive turn creates no schedule, task or turn of its own.
+- **Lineage is never dropped:** a caller token's own turn is the parent of anything its
+  request starts, whatever a header or payload names (`request_context.from_request`,
+  `provenance.requested_parent`); a payload `parent` that names nothing is a 422
+  (`provenance.UnknownParentError`). A session started from a sensitive turn or
+  conversation — a `parent`, a Slack branch, a transcript successor — takes its
+  requirements at birth (`provenance.inherit_requirements`); a turn started from one makes
+  the conversation it joins sensitive (`sensitivity.take_on`, at enqueue). A queued turn
+  whose recorded parent has since been deleted is unsatisfiable
+  (`runner_requirements.lost_lineage`).
+- **One sealing decision:** every writer of `Message` rows (`send.py`, `transcript_ingest`)
+  asks `sensitivity.seals(session, turn)` on the locked session, which first raises it to
+  the turn's requirements — so what is sealed and what `reads_content` admits agree.
+- **Elsewhere:** a turn refused at creation keeps no prompt (`services._apply_capability`);
+  forced retention reaches a session-less turn sensitive through any ancestor
+  (`retention.services._sweep_sensitive`); a draft's body is stored encrypted
+  (`drafts.SEALED_PREFIX`) and reaches only a socket `reads_content` admits. Tests:
+  `tests/test_sensitive_lineage.py`.

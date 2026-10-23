@@ -19,6 +19,8 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
+from apps.harness.models import Runner
+from apps.harness.runners import can_administer_runner, vault_values_written
 from apps.passkeys import stepup
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
@@ -74,8 +76,10 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     return WorkspaceVaultOut(
         vault_id=str(v.pk), workspace=v.workspace_id, name=v.name, kv=v.kv,
         secrets=sorted(VaultSecret.objects.filter(vault=v).values_list("name", flat=True)),
-        attachments=[{"id": a.pk, "agent": a.agent.slug if a.agent_id else None, "workspace": a.workspace_id}
-                     for a in VaultAttachment.objects.filter(vault=v).select_related("agent")],
+        attachments=[{"id": a.pk, "agent": a.agent.slug if a.agent_id else None, "workspace": a.workspace_id,
+                      "runner": str(a.runner_id) if a.runner_id else None,
+                      "runner_name": a.runner.name if a.runner_id else None}
+                     for a in VaultAttachment.objects.filter(vault=v).select_related("agent", "runner")],
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
         you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
@@ -159,20 +163,36 @@ def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, use
 
 
 @router.post("/vaults/{vault_id}/attachments", response=WorkspaceVaultOut,
-             summary="Serve an agent, or every agent in a workspace and below, from a vault")
+             summary="Serve an agent, every agent in a workspace and below, or a cloud runner from a vault")
 @gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: VaultAttachIn):
-    """`{agent}` or `{workspace}` — the vault's own workspace or one below it."""
+    """`{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
+    a cloud runner whose Claude credentials the vault then holds. A runner needs the
+    caller to administer it too, and must share an isolation boundary with every runner
+    the vault already serves (422 `vault_crosses_isolation`). Attaching makes the box
+    eligible for a copy of the key; a holder still has to grant it one."""
     v = _vault(request, vault_id, manage=True)
     agent = Agent.objects.filter(slug=payload.agent).first() if payload.agent else None
     ws = Workspace.objects.filter(slug=payload.workspace).first() if payload.workspace else None
+    runner = _administered_runner(request, payload.runner) if payload.runner else None
     if (payload.agent and agent is None) or (payload.workspace and ws is None):
         raise ProblemError(404, "Not found", detail="no such agent or workspace", type_=TYPE_NOT_FOUND)
     try:
-        workspace_vaults.attach(v, agent=agent, workspace=ws, by=request.user)
+        workspace_vaults.attach(v, agent=agent, workspace=ws, runner=runner, by=request.user)
     except ZkError as exc:
         raise _problem(exc) from exc
     return _out(v, request.user)
+
+
+def _administered_runner(request: HttpRequest, runner_id: str) -> Runner:
+    try:
+        pk = uuid.UUID(str(runner_id))
+    except ValueError:
+        pk = None
+    runner = Runner.objects.filter(pk=pk).exclude(status=Runner.RETIRED).first() if pk else None
+    if runner is None or not can_administer_runner(request.user, runner):
+        raise ProblemError(404, "Not found", detail="no such runner you administer", type_=TYPE_NOT_FOUND)
+    return runner
 
 
 @router.delete("/vaults/{vault_id}/attachments/{attachment_id}", response=WorkspaceVaultOut,
@@ -219,6 +239,9 @@ def set_workspace_vault_values(request: HttpRequest, vault_id: uuid.UUID, payloa
         names = workspace_vaults.set_values(v, kv=payload.kv, values=payload.values, user=request.user)
     except ZkError as exc:
         raise _problem(exc) from exc
+    # A runner's own credential, sealed here by a person: the copy canopy-web kept goes,
+    # and the box reads the vault again.
+    vault_values_written(v, names)
     return ZkValuesOut(kv=payload.kv, names=names)
 
 

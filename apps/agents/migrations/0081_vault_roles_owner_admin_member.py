@@ -22,7 +22,7 @@ def unrename(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0079_grant_notice_for_workspace_vaults"),
+        ("agents", "0080_runner_vault_attachment"),
     ]
 
     operations = [

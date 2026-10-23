@@ -87,13 +87,14 @@ contact_token_router = Router(auth=None, tags=["contact"])
 
 class ContactTokenIn(Schema):
     assertion: str
-    #: WHICH tenant this token is for, named by an agent the site may offer.
+    #: An agent the site may offer — the agent the visitor is arriving for.
     #:
     #: Each tenant registers a site itself, so `iss` names a site only within a
-    #: tenant; the agent says which one. Omitted = the one live site with that
-    #: name, which is what every integration written before this meant — and a
-    #: 409 `ambiguous_issuer` once a second tenant registers the same name.
-    #: Send it.
+    #: tenant. The assertion's signed `canopy_workspace` claim says which one
+    #: directly; without it, this agent's workspace does. Neither = the one live
+    #: site with that name, which is what every integration written before this
+    #: meant — and a 409 `ambiguous_issuer` once a second tenant registers the
+    #: same name. Both = they must agree (409 `workspace_mismatch`).
     agent_slug: str = ""
     #: Optional: an ID-JAG the site issued for its OWN MCP server, naming the
     #: same visitor (host grant contract v1). canopy redeems it so the agent can
@@ -136,7 +137,8 @@ _STATUS = {
     "malformed": 400, "no_issuer": 400, "incomplete": 400, "no_subject": 400,
     "no_jti": 400, "unknown_issuer": 401, "bad_signature": 401, "no_key": 401,
     "wrong_audience": 401, "expired": 401, "too_long": 400, "replayed": 401,
-    "rate_limited": 429, "ambiguous_issuer": 409,
+    "rate_limited": 429, "ambiguous_issuer": 409, "workspace_mismatch": 409,
+    "bad_workspace": 400,
 }
 
 
@@ -151,8 +153,11 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     the thing an attacker looks for — whereas a signature proves the claim
     without canopy holding anything that could make one.
 
-    The workspace comes from the app's own row, never the assertion. A host
-    cannot name the tenant it wants its visitor placed in.
+    The workspace comes from the app's own row, never the assertion. The
+    assertion's `canopy_workspace` (or the named agent) only SELECTS which
+    tenant's registration of the site name to verify against — and only that
+    registration's keys can make it verify — so a host cannot place its
+    visitor in a tenant whose registration does not hold its key.
     """
     from apps.contacts import services as contact_services
 
@@ -447,8 +452,8 @@ class ContactSendIn(Schema):
 def _tenant_for(app, agent_slug: str):
     """Which tenant this token is for: the site's own, always.
 
-    The site was already resolved inside the named agent's tenant
-    (`embed_apps.resolve_site`), so there is no tenant left to choose — only
+    The site was already resolved inside the named workspace's or agent's
+    tenant (`embed_apps.resolve_site`), so there is no tenant left to choose — only
     whether this tenant's site may offer the agent. Checked separately because
     a tenant can register a site and not yet allow it any agents, and "not
     authorized" with no reason sends an integrator to re-read their keys.
@@ -852,7 +857,8 @@ from apps.canopy_sessions.app_views_api import (  # noqa: E402
 def _app_viewer(request):
     from apps.mcp_apps_host import mcp_apps_views
 
-    return mcp_apps_views.Viewer(contact=request.contact)
+    return mcp_apps_views.Viewer(contact=request.contact,
+                                 chat_surface=sensitivity.request_is_chat_surface(request))
 
 
 def _app_run(fn, *args):

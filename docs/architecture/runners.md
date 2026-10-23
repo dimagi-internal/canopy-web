@@ -511,6 +511,13 @@ key, runs every turn under a locked harness, limits egress to an allowlist of ho
 that handle sensitive data. The box runs in that mode with `RUNNER_DATA_MODE=sensitive_data`
 and reports it on every heartbeat; any other non-empty value takes no turn.
 
+Nothing of a sensitive-data box's transcripts reaches canopy-web except a confined
+turn's sealed turn-end rows. Its usage report keeps no title, a session canopy has no
+record of is neither kept nor listed as missing (`events.usage`), and sending one up,
+asking a backfill (`transcript_read.backfill_refused`), resetting one, filing a
+reported session (`session_sync.session_home`) or posting `session-backfill` is refused,
+with 409 on the routes. `tests/test_sensitive_box_uploads.py`.
+
 - A **host** requires flags of its visitors' conversations with
   `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["sensitive_data"]` (SDK `dimagi-canopy`); the SDK signs
   them into the visitor assertion (`canopy_runner_requirements`), and canopy stamps
@@ -707,6 +714,17 @@ or stops working. Three kinds:
   and is not stored.
 - **API key** — pasted, stored encrypted in `value_enc`. Billed per use: stepping
   onto one raises the coalesced `claude_api_key_fallback` alert.
+- **In a vault:** a token's or API key's value can live in a vault serving the
+  runner instead (`docs/architecture/vault.md` § A runner's own vault). The bundle
+  then names it (`cascade[].vault_secret`), and the box opens it with its own
+  device key (`canopy vault runner-credentials`), using the entry's stored `value`
+  only for what the vault did not open. What it opened is kept until the bundle
+  changes or `VAULT_REREAD_SECONDS` (1 h) passes; the `claude.vault` check says how
+  it went. The status view marks each entry `in_vault` and lists the runner's
+  `vaults`. Once the runner has a vault with a key, the box seals in whatever
+  canopy-web still keeps (`seal_as`, once per bundle, hourly while it cannot) and
+  seals each token it signs in there instead of sending it; any failure falls back
+  to the stored copy, never a lost token.
 
 A token or key cannot say whose it is, so a person names it (`name`). The box
 reads the list as `cascade` on `GET …/credential`; the fixed-slot fields beside it

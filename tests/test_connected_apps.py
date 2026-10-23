@@ -14,6 +14,7 @@ from django.test import Client
 
 from apps.agents.models import Agent
 from apps.embedding import embed_apps
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -35,6 +36,7 @@ def _ctx(role=WorkspaceMembership.OWNER):
     user = boss if role == WorkspaceMembership.OWNER else _member(ws, f"{role}@dimagi.com", role)
     c = Client()
     c.force_login(user)
+    grant_step_up(c)  # connecting a site takes a passkey
     return user, ws, c
 
 
@@ -80,6 +82,7 @@ def test_a_non_member_gets_404_not_403():
     outsider = User.objects.create_user("out", "out@dimagi.com", "pw")
     c = Client()
     c.force_login(outsider)
+    grant_step_up(c)  # connecting a site takes a passkey
     assert c.get("/api/workspaces/w1/connected-apps").status_code == 404
 
 
@@ -92,6 +95,7 @@ def test_a_second_workspaces_owner_cannot_see_my_apps():
     WorkspaceMembership.objects.create(user=other, workspace=ws2, role=WorkspaceMembership.OWNER)
     c2 = Client()
     c2.force_login(other)
+    grant_step_up(c2)  # connecting a site takes a passkey
 
     assert c2.get("/api/workspaces/w2/connected-apps").json() == []
 

@@ -2349,8 +2349,11 @@ export interface paths {
          *     the thing an attacker looks for — whereas a signature proves the claim
          *     without canopy holding anything that could make one.
          *
-         *     The workspace comes from the app's own row, never the assertion. A host
-         *     cannot name the tenant it wants its visitor placed in.
+         *     The workspace comes from the app's own row, never the assertion. The
+         *     assertion's `canopy_workspace` (or the named agent) only SELECTS which
+         *     tenant's registration of the site name to verify against — and only that
+         *     registration's keys can make it verify — so a host cannot place its
+         *     visitor in a tenant whose registration does not hold its key.
          */
         readonly post: operations["contact_token"];
         readonly delete?: never;
@@ -7545,7 +7548,9 @@ export interface paths {
         readonly put?: never;
         /**
          * Connect a site
-         * @description Register a site in this workspace.
+         * @description Register a site in this workspace. Needs a person at a browser who just
+         *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
+         *     refused.
          */
         readonly post: operations["connect_app"];
         readonly delete?: never;
@@ -7574,7 +7579,13 @@ export interface paths {
         readonly delete: operations["tokens_connected_apps_disconnect_app"];
         readonly options?: never;
         readonly head?: never;
-        /** Change what a connected site may do */
+        /**
+         * Change what a connected site may do
+         * @description Change what a connected site may do. A change to what it may sign — its
+         *     public keys, key URL or issuer — needs a person at a browser who just
+         *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
+         *     refused it.
+         */
         readonly patch: operations["update_connected_app"];
         readonly trace?: never;
     };
@@ -7635,6 +7646,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/connected-apps/discover": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a site's own facts from its signed site.json
+         * @description Reads the site's signed `site.json` and returns the facts it declares
+         *     about itself — its origins, the URL of its keys, its sign-in issuer and its
+         *     MCP server — so an owner can fill a Connected site from them instead of
+         *     typing them. `address` is the site's address, the URL of its keys, or of the
+         *     document itself; the document is looked for beside its keys, at
+         *     `/.well-known/canopy-site.json` and at `canopy/site.json`. With `app_id` (a
+         *     site this workspace registered) `address` is optional, the document must be
+         *     that site's, and the answer includes what canopy holds now and which fields
+         *     differ. Nothing is saved: adopt the values with the create or update route.
+         */
+        readonly get: operations["discover_site"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sites/agents": {
         readonly parameters: {
             readonly query?: never;
@@ -7648,11 +7687,16 @@ export interface paths {
          *
          *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own
          *     key (the one at its `jwks_url`): `iss` = its Connected-site name, `aud` =
-         *     this URL, at most 60 s, single-use `jti`; `canopy_agent` names one of its
-         *     agents when two workspaces registered the same name. The answer is
+         *     this URL, at most 60 s, single-use `jti`. `canopy_workspace` (the workspace
+         *     slug) names which workspace's registration of the name is meant, or
+         *     `canopy_agent` names one of its agents to the same end; both must agree
+         *     (409 `workspace_mismatch`), and neither is needed unless two workspaces
+         *     registered the same name (409 `ambiguous_issuer`). The answer is
          *     `application/jose`: a compact JWS signed with canopy's client key (its `kid`
          *     in `/oauth/client.json`), payload `v`, `iss`, `aud`, `iat`, `exp`,
-         *     `version`, `site`, `runner_flags`, `agents`. Verify it with
+         *     `version`, `site` (`name`, `tenant`, `settings_url` — this site's page in
+         *     canopy), `runner_flags`, `agents` (each with `url`, `problems` and
+         *     `problem_links`: `[{text, url}]`, the page that fixes each). Verify it with
          *     `canopy_sdk.site_agents.fetch_site_agents`.
          */
         readonly get: operations["get_site_agents"];
@@ -8330,8 +8374,12 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Serve an agent, or every agent in a workspace and below, from a vault
-         * @description `{agent}` or `{workspace}` — the vault's own workspace or one below it.
+         * Serve an agent, every agent in a workspace and below, or a cloud runner from a vault
+         * @description `{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
+         *     a cloud runner whose Claude credentials the vault then holds. A runner needs the
+         *     caller to administer it too, and must share an isolation boundary with every runner
+         *     the vault already serves (422 `vault_crosses_isolation`). Attaching makes the box
+         *     eligible for a copy of the key; a holder still has to grant it one.
          */
         readonly post: operations["attach_workspace_vault"];
         readonly delete?: never;
@@ -8830,6 +8878,101 @@ export interface paths {
         readonly get: operations["get_runner_credential_status"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/credential/resolve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This runner's Claude credentials from its vault, as ciphertext (the box, with its device key)
+         * @description Each vault serving this runner, with THIS device's copy of its key (`wrap: null`
+         *     when it holds none) and the `zk1:` values the runner's credential list names
+         *     (`claude-token:<key>`, `anthropic-api-key:<key>`). Only the box's own runner token,
+         *     with a proof of an active device key on this runner, gets an answer: 403
+         *     `runner_only` for a person's token or session, 401 `device_proof_required` without
+         *     a proof. Every value handed out is logged.
+         */
+        readonly get: operations["resolve_runner_credential"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault/values": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * The box seals its own credentials into its vault
+         * @description `{vault_id, kv, values: [{name, value_zk}]}` — `zk1:` ciphertext the box made with
+         *     its copy of the vault key, for names its credential list uses
+         *     (`claude-token:<key>`, `anthropic-api-key:<key>`), into a vault serving it. Each entry
+         *     filled drops its stored copy here. Only the box's own runner token with a device
+         *     proof of a key on this runner (as `…/credential/resolve`).
+         */
+        readonly put: operations["put_runner_vault_values"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault/entries": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a token or API key whose value is sealed into the runner's vault
+         * @description The entry, at the end of the list, with no value here: the caller (a browser
+         *     holding the vault's key) then seals the value under `secret_name` with
+         *     `PUT /api/vaults/{vault_id}/zk/values`. 422 when the runner has no vault with a key.
+         */
+        readonly post: operations["add_vaulted_runner_credential"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give a cloud runner its own vault for its Claude credentials
+         * @description The runner's own workspace vault (`<runner> Claude credentials`): its owner
+         *     manages it, the workspace's owners too, and it is attached to this runner — the box
+         *     becomes eligible for a copy of its key once someone makes the key on the vault's
+         *     page. Returns the vault the runner already has, if any. Sharing one vault between
+         *     boxes is an attach (`POST /api/vaults/{id}/attachments`, `{runner}`).
+         */
+        readonly post: operations["create_runner_vault"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -27511,6 +27654,41 @@ export interface components {
             /** Scopes */
             readonly scopes: readonly string[];
         };
+        /**
+         * SiteDiscoveryOut
+         * @description What a site's own signed `site.json` says about it — for an owner to adopt,
+         *     never applied by this read.
+         */
+        readonly SiteDiscoveryOut: {
+            /** Url */
+            readonly url: string;
+            /** Tried */
+            readonly tried: readonly string[];
+            /** Name */
+            readonly name: string;
+            readonly site: components["schemas"]["SiteFactsOut"];
+            /** Signed By */
+            readonly signed_by: string;
+            /** Registered Keys Verify */
+            readonly registered_keys_verify: boolean | null;
+            readonly current?: components["schemas"]["SiteFactsOut"] | null;
+            /**
+             * Changes
+             * @default []
+             */
+            readonly changes: readonly string[];
+        };
+        /** SiteFactsOut */
+        readonly SiteFactsOut: {
+            /** Origins */
+            readonly origins: readonly string[];
+            /** Jwks Url */
+            readonly jwks_url: string;
+            /** Issuer */
+            readonly issuer: string;
+            /** Mcp Resource */
+            readonly mcp_resource: string;
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -28381,6 +28559,10 @@ export interface components {
             readonly agent?: string | null;
             /** Workspace */
             readonly workspace?: string | null;
+            /** Runner */
+            readonly runner?: string | null;
+            /** Runner Name */
+            readonly runner_name?: string | null;
         };
         /** WorkspaceVaultOut */
         readonly WorkspaceVaultOut: {
@@ -28420,6 +28602,8 @@ export interface components {
             readonly agent?: string | null;
             /** Workspace */
             readonly workspace?: string | null;
+            /** Runner */
+            readonly runner?: string | null;
         };
         /** VaultKeeperAgentOut */
         readonly VaultKeeperAgentOut: {
@@ -28737,6 +28921,16 @@ export interface components {
              * @default false
              */
             readonly has_value: boolean;
+            /**
+             * In Vault
+             * @default false
+             */
+            readonly in_vault: boolean;
+            /**
+             * Vault Secret
+             * @default
+             */
+            readonly vault_secret: string;
             /** Reported At */
             readonly reported_at?: string | null;
         };
@@ -28780,6 +28974,11 @@ export interface components {
              * @default []
              */
             readonly logins: readonly components["schemas"]["RunnerLoginOut"][];
+            /**
+             * Vaults
+             * @default []
+             */
+            readonly vaults: readonly components["schemas"]["RunnerVaultOut"][];
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -28802,6 +29001,21 @@ export interface components {
             readonly signed_in: boolean;
             /** Reported At */
             readonly reported_at?: string | null;
+        };
+        /**
+         * RunnerVaultOut
+         * @description A vault that holds a runner's Claude credentials.
+         */
+        readonly RunnerVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
         };
         /**
          * RunnerCredentialIn
@@ -28838,6 +29052,16 @@ export interface components {
              * @default
              */
             readonly value: string;
+            /**
+             * Vault Secret
+             * @default
+             */
+            readonly vault_secret: string;
+            /**
+             * Seal As
+             * @default
+             */
+            readonly seal_as: string;
         };
         /**
          * RunnerCredentialOut
@@ -28869,6 +29093,11 @@ export interface components {
              * @default []
              */
             readonly cascade: readonly components["schemas"]["RunnerCascadeItem"][];
+            /**
+             * Vault Open
+             * @default false
+             */
+            readonly vault_open: boolean;
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -28973,6 +29202,99 @@ export interface components {
         readonly SlashCommandsIn: {
             /** Commands */
             readonly commands?: readonly components["schemas"]["SlashCommandIn"][];
+        };
+        /**
+         * RunnerCredentialResolveOut
+         * @description A runner's credentials, as ciphertext only its own device key opens: each vault
+         *     serving the runner with this device's copy of its key (`wrap: null` when it holds
+         *     none) and the values the runner's list names.
+         */
+        readonly RunnerCredentialResolveOut: {
+            /**
+             * Vaults
+             * @default []
+             */
+            readonly vaults: readonly components["schemas"]["RunnerVaultLayerOut"][];
+        };
+        /**
+         * RunnerVaultLayerOut
+         * @description One vault serving a runner, in the shape an agent's resolve gives its workspace
+         *     vault layers (`ResolveVaultLayerOut`), so `canopy` opens both with one function.
+         */
+        readonly RunnerVaultLayerOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Binding Id */
+            readonly binding_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Wrap */
+            readonly wrap?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Values */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
+        };
+        /** RunnerVaultValuesOut */
+        readonly RunnerVaultValuesOut: {
+            /**
+             * Names
+             * @default []
+             */
+            readonly names: readonly string[];
+        };
+        /** RunnerVaultValueIn */
+        readonly RunnerVaultValueIn: {
+            /** Name */
+            readonly name: string;
+            /** Value Zk */
+            readonly value_zk: string;
+        };
+        /**
+         * RunnerVaultValuesIn
+         * @description The box's own write: `zk1:` ciphertext for names its credential list uses.
+         */
+        readonly RunnerVaultValuesIn: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Values */
+            readonly values: readonly components["schemas"]["RunnerVaultValueIn"][];
+        };
+        /** RunnerVaultEntryOut */
+        readonly RunnerVaultEntryOut: {
+            /** Key */
+            readonly key: string;
+            /** Secret Name */
+            readonly secret_name: string;
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Kv */
+            readonly kv: number;
+        };
+        /**
+         * RunnerVaultEntryIn
+         * @description A token or API key whose value goes into the runner's vault: the entry is made
+         *     here with no value, and the caller seals the value under `secret_name`.
+         */
+        readonly RunnerVaultEntryIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "token" | "api_key";
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
         };
         /**
          * TurnGitHubTokenOut
@@ -29138,6 +29460,11 @@ export interface components {
              * @default
              */
             readonly account: string;
+            /**
+             * Vault Key
+             * @default
+             */
+            readonly vault_key: string;
         };
         /** SignInRequestOut */
         readonly SignInRequestOut: {
@@ -44997,6 +45324,31 @@ export interface operations {
             };
         };
     };
+    readonly discover_site: {
+        readonly parameters: {
+            readonly query?: {
+                readonly address?: string;
+                readonly app_id?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SiteDiscoveryOut"];
+                };
+            };
+        };
+    };
     readonly get_site_agents: {
         readonly parameters: {
             readonly query?: never;
@@ -46417,6 +46769,102 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly resolve_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialResolveOut"];
+                };
+            };
+        };
+    };
+    readonly put_runner_vault_values: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerVaultValuesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerVaultValuesOut"];
+                };
+            };
+        };
+    };
+    readonly add_vaulted_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerVaultEntryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerVaultEntryOut"];
+                };
+            };
+        };
+    };
+    readonly create_runner_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerVaultOut"];
                 };
             };
         };

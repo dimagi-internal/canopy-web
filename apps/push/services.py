@@ -23,6 +23,7 @@ from pywebpush import WebPushException, webpush
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Message, Session
 from apps.agents.models import AgentTask
+from apps.harness import sensitivity
 from apps.harness.models import Turn
 
 from .models import AgentWaitingSnapshot, PushSubscription, session_idle_minutes_for
@@ -238,6 +239,8 @@ def mark_dirty(agent_id: int) -> None:
 # looking, and no amount of UI fixes that.
 
 QUESTION_BODY_MAX = 140
+#: What a sensitive conversation's question push says in place of the question.
+SENSITIVE_QUESTION_BODY = "needs your answer"
 
 
 def can_open(user, session) -> bool:
@@ -330,6 +333,10 @@ def notify_session_question(session, menu: dict) -> int:
     if user is None:
         return 0
     question = str(menu.get("question") or "").strip() or "a question"
+    # A sensitive conversation's question never leaves canopy in a push: a lock
+    # screen is not its chat surface (`harness.sensitivity`).
+    if sensitivity.is_sensitive(session):
+        question = SENSITIVE_QUESTION_BODY
     if len(question) > QUESTION_BODY_MAX:
         question = question[: QUESTION_BODY_MAX - 1].rstrip() + "…"
     try:

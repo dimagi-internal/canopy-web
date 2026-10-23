@@ -304,8 +304,13 @@ def sender_trust(turn) -> dict | None:
     }
 
 
-def build(turn, *, reader_user=None) -> dict:
+def build(turn, *, reader_user=None, with_history: bool = False) -> dict:
     """The envelope for one turn. Safe to call on every claim.
+
+    `with_history` adds a sensitive conversation's earlier lines
+    (`sensitivity.history`). Only the turn's own runner asks for them — the claim,
+    and the turn's caller token re-reading its envelope — so every other reader of
+    the envelope gets `conversation.history` null.
 
     Not quite a pure read since v3: a turn asked by a human resolves (get-or-
     create) their `Person`, and serving the `person` block writes one
@@ -363,8 +368,9 @@ def build(turn, *, reader_user=None) -> dict:
             "slack": _slack_location(cs),
             # A SENSITIVE conversation's earlier lines (`sensitivity.history`):
             # its turns are confined and never resumed, so this is how the agent
-            # remembers what was said. null for every other conversation.
-            "history": sensitivity.history(turn),
+            # remembers what was said. null for every other conversation, and
+            # for every reader but the turn's own runner (`with_history`).
+            "history": sensitivity.history(turn) if with_history else None,
         },
         # What the caller invoked and the scope it grants (§4). null means the
         # agent's FULL profile: its owner, an admin, canopy itself, or a

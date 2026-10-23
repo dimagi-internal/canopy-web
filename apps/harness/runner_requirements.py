@@ -27,7 +27,7 @@ MEANINGS = {
 }
 
 __all__ = ["MEANINGS", "METADATA_KEY", "RUNNER_FLAGS", "SENSITIVE_DATA", "UNSATISFIABLE", "describe",
-           "requirements_of",
+           "lineage_requirements", "lost_lineage", "requirements_of",
            "requirements_of_grant", "requirements_of_session", "satisfies", "in_force",
            "runner_satisfies"]
 
@@ -60,10 +60,16 @@ def requirements_of(turn) -> frozenset[str]:
     Requirements only grow down a chain: a turn a sensitive conversation started (a dispatch,
     a re-ask, a transfer) carries the conversation's data with it, so it is held to the
     same runners even though it has no chat session of its own.
+
+    A turn that has not finished, whose chain lost a parent it was created with (the
+    parent deleted since, its link set to NULL), is unsatisfiable: what the lost
+    parent required can no longer be read, so it is not guessed to be nothing
+    (`lost_lineage`). A finished turn is read as it stands.
     """
     reqs: set[str] = set()
     seen: set = set()
     node = turn
+    live = getattr(turn, "status", None) not in getattr(turn, "TERMINAL", ())
     for _ in range(MAX_ANCESTORS + 1):
         if node is None:
             return frozenset(reqs)
@@ -75,8 +81,40 @@ def requirements_of(turn) -> frozenset[str]:
             reqs |= requirements_of_session(node.chat_session)
         if getattr(node, "parent_session_id", None):
             reqs |= requirements_of_session(node.parent_session)
+        if live and lost_lineage(node):
+            reqs.add(UNSATISFIABLE)
         node = node.parent_turn if getattr(node, "parent_turn_id", None) else None
     return frozenset(reqs | {UNSATISFIABLE})
+
+
+def lost_lineage(node) -> bool:
+    """Whether a Turn or Session was created with a parent turn or session that is
+    gone now: its provenance says the parent resolved (`provenance.parent_fields`
+    records `resolved`), and the link is NULL. A record from before `resolved`
+    was written counts a named key that did not fail to resolve."""
+    record = (getattr(node, "provenance", None) or {}).get("parent") or {}
+    if not isinstance(record, dict) or not record:
+        return False
+    if "resolved" in record:
+        had = set(str(record["resolved"]).split(","))
+    else:
+        failed = set(str(record.get("unresolved") or "").split(","))
+        had = {k for k in ("turn", "session") if record.get(k) and k not in failed}
+    return (("turn" in had and not getattr(node, "parent_turn_id", None))
+            or ("session" in had and not getattr(node, "parent_session_id", None)))
+
+
+def lineage_requirements(*, parent_turn=None, parent_session=None) -> frozenset[str]:
+    """What something started from `parent_turn` / `parent_session` inherits: the
+    union of both. A session started from a sensitive turn or conversation is
+    stamped with this at birth (`provenance.inherit_requirements`), so it is
+    sensitive before its first message rather than only through a chain."""
+    reqs: set[str] = set()
+    if parent_turn is not None:
+        reqs |= requirements_of(parent_turn)
+    if parent_session is not None:
+        reqs |= requirements_of_session(parent_session)
+    return frozenset(reqs)
 
 
 def satisfies(flags: frozenset[str], reqs: frozenset[str]) -> bool:

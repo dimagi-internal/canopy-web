@@ -9,7 +9,10 @@ only what it would have asked on the machine that ran the last one:
 * a refetch is conditional (the row's ETag / Last-Modified), and a 304 keeps the row;
 * a Google export re-made with new bytes but the same content (`raw.same_content`'s
   stable hash, kept on the row) keeps its row, sha and original;
-* a fetch that fails keeps the last good row: an outage is not a deletion.
+* a fetch that fails keeps the last good row: an outage is not a deletion;
+* each url keeps the `seq` it was first fetched in (`in_order`): the state is a dict
+  saved in chunks and comes back in another order, and a curator whose ties go to
+  the first-seen document must see the same order on every machine.
 
 New bytes go to the originals store as they arrive, in batches (`flush`: a first crawl
 is gigabytes, which no runner holds in memory); bytes of an unchanged url come from
@@ -48,6 +51,11 @@ class Fetch:
         self._lock = threading.Lock()
         self._local = threading.local()
         self.counts = {"requests": 0, "not_modified": 0, "same_content": 0, "new": 0, "errors_kept": 0}
+        self._seq = max((r.get("seq", -1) for r in self.index.values()), default=-1) + 1
+
+    def in_order(self) -> list[tuple[str, dict]]:
+        """(url, row) in the order the urls were first fetched."""
+        return sorted(self.index.items(), key=lambda kv: (kv[1].get("seq", float("inf")), kv[0]))
 
     def _client(self):
         import httpx
@@ -111,6 +119,10 @@ class Fetch:
             row = {**old, "checked_at": now(), "last_error": row.get("error") or row.get("status")}
             self._count("errors_kept")
         with self._lock:
+            if "seq" in old:
+                row["seq"] = old["seq"]
+            else:
+                row["seq"], self._seq = self._seq, self._seq + 1
             self.index[url] = row
         return row
 

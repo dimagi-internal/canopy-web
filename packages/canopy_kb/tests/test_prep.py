@@ -98,3 +98,14 @@ def test_page_extraction_keeps_the_whole_content_region_and_headings():
     title, md = page(html, title_suffix="| Acme")
     assert title == "AMF" and "# Against Malaria Foundation" in md and "## Later section" in md and "Kept." in md
     assert "menu" not in md and "Net: $2" in md
+
+
+def test_shared_homes_on_descriptors_choose_what_collapse_shared_tabs_chooses():
+    """A tie on links and length goes to the first copy, as the text-based pass does."""
+    tab = "## Sheet: Moral weights\n" + "- Row 1 · value: 1\n" * 300
+    a = _item("sheet:b", "## Sheet: Main\n- x\n\n" + tab, "cea_model", linked_from=["p"])
+    b = _item("sheet:a", "## Sheet: Main\n- y\n\n" + tab, "cea_model", linked_from=["q"])
+    descs = [{**it, "tabs": dedupe.tab_keys(it["text"]), "chars": len(it["text"])} for it in (a, b)]
+    homes = dedupe.shared_homes(descs)
+    dedupe.collapse_shared_tabs([a, b])
+    assert list(homes.values()) == ["sheet:b"] and "sheet:b" in b["meta"]["shared_tabs_in"]

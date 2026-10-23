@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit
 
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse, JsonResponse
+from django.urls import NoReverseMatch, reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -131,11 +133,44 @@ def jwks(request):
         return _json({"keys": []}, 503)
 
 
+def _origin_of(url: str) -> str:
+    parts = urlsplit(url or "")
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+
+
+def site_facts(request, config) -> dict:
+    """``site.json``'s ``site`` block, from what this host already knows:
+
+    * ``origins`` — ``CANOPY_HOST["ORIGINS"]``, else the origin of ``ISSUER``
+      (the public address the host signs as), else the origin this request
+      reached (the one canopy fetched the document from);
+    * ``jwks_url`` — ``CANOPY_HOST["JWKS_URL"]``, else the SDK's ``jwks.json``
+      route on that origin;
+    * ``issuer`` / ``mcp_resource`` — ``ISSUER`` / ``RESOURCE`` (blank while the
+      grant is off).
+    """
+    overrides = conf.site_facts_overrides()
+    base = _origin_of(config.issuer) or _origin_of(request.build_absolute_uri("/"))
+    jwks_url = overrides["jwks_url"]
+    if not jwks_url and base:
+        try:
+            jwks_url = base + reverse("canopy_host:jwks")
+        except NoReverseMatch:
+            # Mounted outside the `canopy_host` namespace: beside this document.
+            jwks_url = base + request.path.rsplit("/", 1)[0] + "/jwks.json"
+    return {"origins": overrides["origins"] or ([base] if base else []), "jwks_url": jwks_url,
+            "issuer": config.issuer if config.grant_enabled else "",
+            "mcp_resource": config.resource if config.grant_enabled else ""}
+
+
 @require_GET
 def site_document(request):
-    """``site.json``: what this site asks of canopy's agents, signed with the
-    host's key (``canopy_sdk.site``). canopy reads it beside ``jwks.json``.
-    Unauthenticated, like the JWKS: it names pages and agents, never a person."""
+    """``site.json``: what this site asks of canopy's agents, and its own facts
+    (origins, keys, issuer, MCP server), signed with the host's key
+    (``canopy_sdk.site``). canopy reads it beside ``jwks.json``, or at
+    ``/.well-known/canopy-site.json`` when a host mounts this view there too.
+    Unauthenticated, like the JWKS: it names pages, agents and public URLs,
+    never a person."""
     from ..site import MEDIA_TYPE, SiteDocumentError, sign_site_document
     from ..site import site_document as build
 
@@ -146,7 +181,8 @@ def site_document(request):
         needs = conf.site_needs()
         token = sign_site_document(config.signing_key, build(
             config.app_name, pages=conf.site_pages(needs.get("titles")),
-            real_data=needs.get("real_data"), uses=needs.get("uses")))
+            real_data=needs.get("real_data"), uses=needs.get("uses"),
+            site=site_facts(request, config)))
     except HostNotConfigured:
         return _json({"error": "not_configured"}, 503)
     except SiteDocumentError as exc:

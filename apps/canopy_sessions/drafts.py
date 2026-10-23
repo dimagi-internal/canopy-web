@@ -18,6 +18,43 @@ from .models import Draft, Session
 PEER_DRAFT_FRESH = dt.timedelta(minutes=10)
 
 
+#: How a sensitive conversation's draft is stored: its body encrypted
+#: (`apps/common/encryption.py`) behind this marker, so a database read, a backup
+#: or a shell sees nothing of what a person is typing (`harness.sensitivity`).
+SEALED_PREFIX = "sealed:"
+
+
+def _sensitive(session: Session) -> bool:
+    """Read off the row, not the caller's copy: a socket holds its session for
+    the life of the connection, and a requirement added since must count."""
+    from apps.harness import sensitivity  # noqa: PLC0415 — chat ↛ harness at import
+
+    fresh = Session.objects.only("metadata").filter(pk=session.pk).first()
+    return sensitivity.is_sensitive(fresh if fresh is not None else session)
+
+
+def _stored(session: Session, body: str) -> str:
+    if not body or not _sensitive(session):
+        return body
+    from apps.common.encryption import encrypt_secret  # noqa: PLC0415 — reads settings
+
+    return SEALED_PREFIX + encrypt_secret(body)
+
+
+def body_of(draft: Draft | None) -> str:
+    """A draft's words. Callers that hand them to someone first ask whether that
+    reader may have them (the socket's `reads_content`, `serializers.draft_dto`)."""
+    raw = (draft.body if draft is not None else "") or ""
+    if not raw.startswith(SEALED_PREFIX):
+        return raw
+    from apps.common.encryption import decrypt_secret  # noqa: PLC0415 — reads settings
+
+    try:
+        return decrypt_secret(raw[len(SEALED_PREFIX):])
+    except Exception:  # noqa: BLE001 — a body no key opens reads as nothing
+        return ""
+
+
 class DraftVersionMismatch(Exception):
     def __init__(self, current_version: int, current_body: str):
         self.current_version = current_version
@@ -31,7 +68,8 @@ def draft_for(session: Session, user) -> Draft:
 
 
 def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft:
-    """The version-guarded keystroke path. Deliberately has no `visibility`
+    """The version-guarded keystroke path. In a sensitive conversation the body
+    is stored encrypted (`_stored`); `body_of` reads it back. Deliberately has no `visibility`
     parameter any more (canopy-ui#… "hidden->live->hidden" regression): the
     mode used to ride this frame, so a stale keystroke echo — one that lost a
     race against a mode change — could silently downgrade it server-side, and
@@ -41,8 +79,8 @@ def update_draft(session: Session, *, user, expected_version: int, body: str) ->
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
-            raise DraftVersionMismatch(draft.version, draft.body)
-        draft.body = body
+            raise DraftVersionMismatch(draft.version, body_of(draft))
+        draft.body = _stored(session, body)
         draft.version += 1
         draft.save(update_fields=["body", "version", "updated_at"])
     return draft
@@ -76,7 +114,7 @@ def commit_draft(session: Session, user) -> str:
     """Take MY draft's text and reset it. Returns the committed text."""
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
-        text = draft.body
+        text = body_of(draft)
         draft.body = ""
         draft.version += 1
         draft.save(update_fields=["body", "version", "updated_at"])
@@ -138,7 +176,8 @@ def clear_after_http_send(session: Session, user, text: str) -> Draft | None:
     with transaction.atomic():
         draft = Draft.objects.select_for_update().filter(
             session=session, author=user, slot="next").first()
-        if draft is None or not draft.body.strip() or not sent.startswith(draft.body.strip()):
+        body = body_of(draft).strip()
+        if draft is None or not body or not sent.startswith(body):
             return None
         draft.body = ""
         draft.version += 1

@@ -19,15 +19,19 @@ from django.utils import timezone
 from ninja import Status
 from ninja.errors import HttpError
 
+from apps.agents.credentials import workspace_vaults
+from apps.agents.credentials.zk import ZkError
 from apps.agents.models import Agent
+from apps.agents.route_refusals import zk_problem
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.canopy_sessions.models import Attachment, Session
 from apps.events import audit as events_audit
+from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, egress, routing, services
+from . import claim, egress, routing, runner_credential_resolve, services
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -64,6 +68,7 @@ from .schemas import (
     RunnerCredentialIn,
     RunnerCredentialOut,
     RunnerCredentialPatchIn,
+    RunnerCredentialResolveOut,
     RunnerCredentialStatusOut,
     RunnerDirectedIn,
     RunnerEgressIn,
@@ -85,6 +90,11 @@ from .schemas import (
     RunnerOnlyAgentsOut,
     RunnerOut,
     RunnerPrivateIn,
+    RunnerVaultEntryIn,
+    RunnerVaultEntryOut,
+    RunnerVaultOut,
+    RunnerVaultValuesIn,
+    RunnerVaultValuesOut,
     SendUpIn,
     SendUpOut,
     SignInRequestIn,
@@ -360,6 +370,87 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
     return RunnerCredentialOut(**harness_runners.get_runner_credential(runner))
 
 
+@router.get("/runners/{runner_id}/credential/resolve", response=RunnerCredentialResolveOut,
+            summary="This runner's Claude credentials from its vault, as ciphertext (the box, with its device key)")
+@gate("runner")  # + the box's own runner token and a device proof of a key on it
+def resolve_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialResolveOut:
+    """Each vault serving this runner, with THIS device's copy of its key (`wrap: null`
+    when it holds none) and the `zk1:` values the runner's credential list names
+    (`claude-token:<key>`, `anthropic-api-key:<key>`). Only the box's own runner token,
+    with a proof of an active device key on this runner, gets an answer: 403
+    `runner_only` for a person's token or session, 401 `device_proof_required` without
+    a proof. Every value handed out is logged."""
+    runner = runner_or_404(request, runner_id)
+    out = runner_credential_resolve.resolve(request, runner)
+    if isinstance(out, runner_credential_resolve.Refusal):
+        raise ProblemError(out.status, "Runner credentials", detail=out.detail, members={"error": out.code})
+    return RunnerCredentialResolveOut(vaults=out)
+
+
+@router.put("/runners/{runner_id}/vault/values", response=RunnerVaultValuesOut,
+            summary="The box seals its own credentials into its vault")
+@gate("runner", kind="runner-protocol")  # + the box's own runner token and a device proof
+def put_runner_vault_values(request: HttpRequest, runner_id: uuid.UUID,
+                            payload: RunnerVaultValuesIn) -> RunnerVaultValuesOut:
+    """`{vault_id, kv, values: [{name, value_zk}]}` — `zk1:` ciphertext the box made with
+    its copy of the vault key, for names its credential list uses
+    (`claude-token:<key>`, `anthropic-api-key:<key>`), into a vault serving it. Each entry
+    filled drops its stored copy here. Only the box's own runner token with a device
+    proof of a key on this runner (as `…/credential/resolve`)."""
+    runner = runner_or_404(request, runner_id)
+    refused = runner_credential_resolve.box_refusal(request, runner)
+    if refused is not None:
+        raise ProblemError(refused.status, "Runner credentials", detail=refused.detail,
+                           members={"error": refused.code})
+    try:
+        names = harness_runners.store_vault_values(
+            runner, vault_id=payload.vault_id, kv=payload.kv,
+            values={v.name: v.value_zk for v in payload.values})
+    except harness_runners.VaultWriteRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
+    return RunnerVaultValuesOut(names=names)
+
+
+@router.post("/runners/{runner_id}/vault/entries", response=RunnerVaultEntryOut,
+             summary="Add a token or API key whose value is sealed into the runner's vault")
+@gate("runner-admin", setting=True)
+def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
+                                  payload: RunnerVaultEntryIn) -> RunnerVaultEntryOut:
+    """The entry, at the end of the list, with no value here: the caller (a browser
+    holding the vault's key) then seals the value under `secret_name` with
+    `PUT /api/vaults/{vault_id}/zk/values`. 422 when the runner has no vault with a key."""
+    runner = runner_admin_or_404(request, runner_id)
+    try:
+        entry = harness_runners.add_runner_credential(runner, kind=payload.kind, value="",
+                                                      name=payload.name, by=request.user, in_vault=True)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    vault = harness_runners.open_runner_vault(runner)
+    return RunnerVaultEntryOut(key=entry.key, secret_name=entry.vault_secret_name,
+                               vault_id=str(vault.pk), kv=vault.kv)
+
+
+@router.post("/runners/{runner_id}/vault", response=RunnerVaultOut,
+             summary="Give a cloud runner its own vault for its Claude credentials")
+@gate("runner-admin", setting=True)  # browser: + step-up; token allowed
+def create_runner_vault(request: HttpRequest, runner_id: uuid.UUID) -> RunnerVaultOut:
+    """The runner's own workspace vault (`<runner> Claude credentials`): its owner
+    manages it, the workspace's owners too, and it is attached to this runner — the box
+    becomes eligible for a copy of its key once someone makes the key on the vault's
+    page. Returns the vault the runner already has, if any. Sharing one vault between
+    boxes is an attach (`POST /api/vaults/{id}/attachments`, `{runner}`)."""
+    runner = runner_admin_or_404(request, runner_id)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        v = workspace_vaults.create_for_runner(runner, by=request.user)
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
+    return RunnerVaultOut(vault_id=str(v.pk), name=v.name, kv=v.kv)
+
+
 @router.post("/runners/{runner_id}/turns/{turn_id}/github-token",
              response=TurnGitHubTokenOut,
              summary="One claimed turn's GitHub credential (its agent owner's)")
@@ -599,8 +690,12 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     mint = harness_runners.current_runner_mint(runner)
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return harness_runners.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
-                                       logged_in=payload.logged_in, account=payload.account)
+    try:
+        return harness_runners.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
+                                                  logged_in=payload.logged_in, account=payload.account,
+                                                  vault_key=payload.vault_key)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
 
 
 @router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,
@@ -1483,7 +1578,13 @@ def send_up_missing_sessions(request: HttpRequest, runner_id: uuid.UUID, payload
     from apps.events import usage
 
     runner = runner_admin_or_404(request, runner_id)
-    return SendUpOut(sessions=usage.send_up(runner, payload.claude_sessions))
+    # Refused (409) on a sensitive-data box, which keeps its transcripts to itself
+    # (`usage.send_up`).
+    try:
+        return SendUpOut(sessions=usage.send_up(runner, payload.claude_sessions))
+    except usage.SendUpRefusedError as exc:
+        raise ProblemError(409, "Sessions are not sent up from a sensitive-data runner",
+                           detail=str(exc)) from exc
 
 
 def _missing_sessions(runner) -> MissingSessionsOut:

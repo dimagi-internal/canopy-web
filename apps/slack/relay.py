@@ -272,7 +272,8 @@ def relay_menu(session_id, menu) -> bool:
 
     session = Session.objects.select_related("agent").filter(pk=session_id).first()
     dest = session_destination(session)
-    if dest is None:
+    # A sensitive conversation's dialog is never mirrored, like its replies.
+    if dest is None or sensitivity.is_sensitive(session):
         return False
     installation, channel, thread_ts = dest
     from . import status as status_mod

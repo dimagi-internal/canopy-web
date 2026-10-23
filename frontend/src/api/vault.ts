@@ -156,6 +156,31 @@ export async function addWorkspaceVaultMember(vaultId: string, email: string, ro
     params: { path: { vault_id: vaultId } }, body: { email, role } }), 'Could not add them to the vault')
 }
 
+// A workspace vault's zero-knowledge routes take the agent vault's shapes, with the
+// vault's binding id as `agent_id` — so the same operations drive either.
+
+export async function getWorkspaceVaultZk(vaultId: string, values = false): Promise<ZkStateOut> {
+  return need<ZkStateOut>(await apiV2.GET('/api/vaults/{vault_id}/zk', {
+    params: { path: { vault_id: vaultId }, query: { values } } }), 'Could not load the vault’s key state')
+}
+
+export async function enableWorkspaceVaultZk(vaultId: string, body: { kv: number; wraps: ZkWrapIn[]; values: Value[] }):
+    Promise<ZkStateOut> {
+  return need<ZkStateOut>(await apiV2.POST('/api/vaults/{vault_id}/zk/enable', {
+    params: { path: { vault_id: vaultId } }, body: body as never }), 'Could not make the vault’s key')
+}
+
+export async function putWorkspaceVaultValues(vaultId: string, body: { kv: number; values: Value[] }) {
+  return need<{ kv: number; names: string[] }>(await apiV2.PUT('/api/vaults/{vault_id}/zk/values', {
+    params: { path: { vault_id: vaultId } }, body: body as never }), 'Could not save the value')
+}
+
+export async function addWorkspaceVaultWraps(vaultId: string, body: { kv: number; wraps: ZkWrapIn[] }):
+    Promise<ZkStateOut> {
+  return need<ZkStateOut>(await apiV2.POST('/api/vaults/{vault_id}/zk/wraps', {
+    params: { path: { vault_id: vaultId } }, body: body as never }), 'Could not grant the vault’s key')
+}
+
 export async function removeWorkspaceVaultMember(vaultId: string, userId: number): Promise<WorkspaceVaultOut> {
   return need<WorkspaceVaultOut>(await apiV2.DELETE('/api/vaults/{vault_id}/members/{user_id}', {
     params: { path: { vault_id: vaultId, user_id: userId } } }), 'Could not remove them from the vault')

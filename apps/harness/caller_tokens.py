@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 
 from django.utils import timezone
 
+from apps.agents import sensitive_data
 from apps.common.token_hash import hash_token
+
+from . import sensitivity
 from .models import CallerToken, Turn
 
 PREFIX = "cct_"
@@ -102,6 +105,8 @@ class Grant:
     turn_ids: set[str] = field(default_factory=set)
     #: The CallerToken row, for provenance (which credential created a turn).
     token_id: int | None = None
+    #: The turn holds a host's sensitive data (`_sensitive_grant`).
+    sensitive: bool = False
 
     def allows_tool(self, name: str) -> bool:
         return any(fnmatch.fnmatchcase(name, g) for g in self.tool_globs)
@@ -145,6 +150,8 @@ def resolve(raw: str) -> Grant | None:
     if current.status in Turn.TERMINAL and current.finished_at and \
             current.finished_at < now - AFTER_FINISH:
         return None
+    if not current.capability and sensitivity.is_sensitive(current):
+        return None             # a sensitive turn runs confined, or its token is nothing
     agent = current.acting_agent
     if agent is None:
         # A project's session acts as its CURRENT asker, re-checked on every call
@@ -160,6 +167,22 @@ def resolve(raw: str) -> Grant | None:
         # Full profile: nothing to list, but still the asker's identity — never
         # the runner's.
         return Grant(turn=current, user=user, all_tools=True, turn_ids=turn_ids, token_id=tok.pk)
-    return Grant(turn=current, user=user,
-                 tool_globs=canopy_tool_globs(profile(agent, current.capability)),
-                 turn_ids=turn_ids, token_id=tok.pk)
+    globs = canopy_tool_globs(profile(agent, current.capability))
+    if sensitivity.is_sensitive(current):
+        return _sensitive_grant(current, agent, globs, user=user, turn_ids=turn_ids,
+                                token_id=tok.pk)
+    return Grant(turn=current, user=user, tool_globs=globs, turn_ids=turn_ids, token_id=tok.pk)
+
+
+def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | None:
+    """A sensitive turn's grant: at most the four tools a `data: sensitive`
+    capability may hold (`sensitive_data.SENSITIVE_CANOPY_TOOLS`), and only while
+    its capability still says `data: sensitive`. Asked on every call, so an
+    interface edited mid-turn — the switch turned off, a tool added — narrows the
+    token at once rather than widening it: a sensitive turn never reaches a tool
+    that would write its data somewhere else, whatever the interface says now."""
+    if not sensitive_data.handles_sensitive(agent, current.capability):
+        return None
+    allowed = sorted(name for name in sensitive_data.SENSITIVE_CANOPY_TOOLS
+                     if any(fnmatch.fnmatchcase(name, g) for g in globs))
+    return Grant(turn=current, tool_globs=allowed, sensitive=True, **kw)

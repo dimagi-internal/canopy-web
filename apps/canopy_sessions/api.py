@@ -11,6 +11,7 @@ import datetime as dt
 import uuid
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Max
 from django.http import Http404, HttpRequest
 from django.shortcuts import get_object_or_404
@@ -21,6 +22,7 @@ from ninja.files import UploadedFile
 
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
+from apps.api.errors import ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
@@ -1133,6 +1135,10 @@ def set_session_title(request: HttpRequest, session_id: uuid.UUID, payload: Sess
     session in canopy only — the emdash task keeps its name."""
     session = _session_or_404(request, session_id, write=True)
     title = " ".join(payload.title.split())[:200]
+    # A sensitive conversation keeps no title: a name is shown in every list,
+    # Home and push, where its words never go. Clearing one is still allowed.
+    if title and sensitivity.is_sensitive(session):
+        raise HttpError(422, sensitivity.NO_TITLE)
     if session.title != title:
         session.title = title
         session.save(update_fields=["title", "updated_at"])
@@ -1217,6 +1223,9 @@ def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int
     if user_id != request.user.pk and not access.can_share(request.user, session):
         raise HttpError(403, "only the chat's owner can remove someone else")
     SessionParticipant.objects.filter(session=session, user_id=user_id).delete()
+    # A tab they still hold on it re-asks who may read it — for a sensitive
+    # conversation, someone no longer in it must stop hearing it now.
+    transaction.on_commit(lambda: services.recheck_sockets(session.pk, user_ids=[user_id]))
     return _participants(session)
 
 
@@ -1422,7 +1431,13 @@ def detach_session(request: HttpRequest, session_id: uuid.UUID):
 @gate("session-acl", kind="conversation")  # READ gate on a POST
 def request_backfill(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
-    return {"status": transcript_read.request_backfill(session)}
+    # A sensitive-data runner's session is refused (409): that box keeps its
+    # transcripts to itself (`transcript_read.backfill_refused`).
+    try:
+        return {"status": transcript_read.request_backfill(session)}
+    except transcript_read.BackfillRefusedError as exc:
+        raise ProblemError(409, "History is not asked of a sensitive-data runner",
+                           detail=str(exc)) from exc
 
 
 @router.post(
@@ -1494,6 +1509,11 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     # what was shared in it; a co-tenant who cannot read it cannot either.
     if attachment.session.workspace_id not in _visible_slugs(request) or not access.can_read(
             request.user, attachment.session):
+        raise HttpError(404, "attachment not found")
+    # What was shared in a sensitive conversation is its words: only its own
+    # people, on its chat surfaces, read it back (`sensitivity.reads_content`).
+    if not sensitivity.reads_content(attachment.session, user=request.user,
+                                     chat_surface=sensitivity.request_is_chat_surface(request)):
         raise HttpError(404, "attachment not found")
     return attachment_storage.http_response(attachment)
 

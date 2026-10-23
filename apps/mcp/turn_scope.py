@@ -16,6 +16,8 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
+from apps.agents.sensitive_data import SENSITIVE_CANOPY_TOOLS
+
 
 def _turn_claims() -> dict | None:
     try:
@@ -42,6 +44,14 @@ def caller_turn_ids() -> list[str] | None:
 
 
 def _allowed(name: str, claims: dict) -> bool:
+    if claims.get("sensitive"):
+        # A sensitive turn's session: the four tools a `data: sensitive`
+        # capability may hold, never more, whatever else the claims say
+        # (`caller_tokens._sensitive_grant` already narrowed them; this is the
+        # second line).
+        if name not in SENSITIVE_CANOPY_TOOLS:
+            return False
+        return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
     if claims.get("all_tools"):
         return True             # a full-profile caller: every tool, run as the asker
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])

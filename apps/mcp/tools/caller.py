@@ -6,8 +6,10 @@ agent that wants to check again rather than trust a file it read an hour ago —
 a contact's notes may have been corrected, or the person blocked, since.
 
 Gated exactly like `GET /api/harness/turns/{id}/caller-context`: the caller
-must be a member of the turn's tenant, and a turn they cannot see is "not
-found", never "forbidden", so a guessed id confirms nothing.
+must be a member of the turn's tenant who may read the turn's content
+(`turn_access.can_read_turn_content`, never for a sensitive turn), and a turn
+they cannot see is "not found", never "forbidden", so a guessed id confirms
+nothing.
 """
 from __future__ import annotations
 
@@ -43,10 +45,12 @@ def _envelope_for_caller_token(turn_id: str) -> dict:
                                         "initiator_contact").filter(pk=turn_id).first())
     if turn is None:
         raise TurnNotFound("turn not found")
-    return build(turn)
+    # The turn's own box, re-reading what its claim handed it — history included.
+    return build(turn, with_history=True)
 
 
 def _envelope_sync(user_id, turn_id: str) -> dict:
+    from apps.harness import turn_access  # noqa: PLC0415 — as its neighbours: tools load before apps
     from apps.harness.caller_context import build
     from apps.harness.models import Turn
     from apps.workspaces import services as wsvc
@@ -62,6 +66,10 @@ def _envelope_sync(user_id, turn_id: str) -> dict:
     # Fail CLOSED on a tenant-less turn: no tenant must never read as "ungated".
     slug = _tenant_of(turn) if turn is not None else None
     if turn is None or user is None or not slug or not wsvc.is_member(user, slug):
+        raise TurnNotFound("turn not found")
+    # ...and the REST twin's content gate (`turn_content_or_404`): a turn's envelope
+    # is its content, and a sensitive turn's is no one's to read through a tool.
+    if not turn_access.can_read_turn_content(user, turn):
         raise TurnNotFound("turn not found")
     return build(turn, reader_user=user)
 

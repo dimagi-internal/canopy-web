@@ -15,6 +15,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.harness import provenance
+from apps.harness import runner_requirements as rr
 from apps.harness.models import Turn
 
 from . import activity as session_activity
@@ -259,6 +260,10 @@ def _move_binding_to_successor(old, binding, *, transcript_id: str = "", success
     elif successor.status != Session.ACTIVE:
         successor.status = Session.ACTIVE
         successor.save(update_fields=["status", "updated_at"])
+    # The successor carries the same box conversation on, so it is held to what
+    # `old` required (a new one took it at birth from its parent link,
+    # `provenance.inherit_requirements`; a reused one is told here).
+    services.add_runner_requirements(successor, rr.requirements_of_session(old))
     old.status = Session.ARCHIVED
     old.save(update_fields=["metadata", "status", "updated_at"])
     binding.session = successor
@@ -422,7 +427,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
 
         # A sensitive conversation keeps which call and whether it failed, never
         # the result (spec 2026-10-22-sensitive-data-agents §4).
-        withhold = sensitivity.is_sensitive(locked)
+        withhold = sensitivity.seals(locked)
         vouched = _vouched_markers(locked, rows)
         pool = _MatchPool(locked) if attribute else None
         for row in rows:
@@ -760,10 +765,13 @@ def project_events(turn: Turn, rows) -> int:
         return 0
     from apps.harness import sensitivity
 
-    sensitive = sensitivity.is_sensitive(turn)
     created = 0
     with transaction.atomic():
         session = Session.objects.select_for_update().get(pk=turn.chat_session_id)
+        # Decided on the locked session after it has taken on the turn's
+        # requirements: a sensitive turn writing into a conversation that was not
+        # makes it sensitive, so these rows are sealed AND read back as such.
+        sensitive = sensitivity.seals(session, turn)
         act = session_activity.Activity(session.activity)
         index = _next_index(session)
         for row in rows:

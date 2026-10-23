@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type JSX } from 'react'
-import { useParams } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
 import { Button, Input } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
 
@@ -10,6 +10,7 @@ import { runnerFlagLabel } from '@/components/chat/runnerEligibility'
 import {
   connectApp,
   disconnectApp,
+  discoverSite,
   getConnectedAppNeeds,
   listConnectedApps,
   testConnectedApp,
@@ -17,6 +18,8 @@ import {
   type ConnectedApp,
   type ConnectionCheck,
   type ConnectionTest,
+  type SiteDiscovery,
+  type SiteFacts,
   type SiteNeeds,
 } from '@/api/connectedApps'
 import { WorkspaceApiError } from '@/api/workspaces'
@@ -474,6 +477,223 @@ export function SiteNeedsSection({ slug, app }: { slug: string; app: ConnectedAp
   )
 }
 
+const FACT_ROWS: { key: keyof SiteFacts; label: string }[] = [
+  { key: 'origins', label: 'Site URLs' },
+  { key: 'jwks_url', label: 'Signing keys URL' },
+  { key: 'issuer', label: 'Sign-in issuer' },
+  { key: 'mcp_resource', label: 'MCP server' },
+]
+
+function factText(facts: SiteFacts, key: keyof SiteFacts): string {
+  const v = facts[key]
+  return (typeof v === 'string' ? v : v.join(', ')) || '—'
+}
+
+/** How canopy believed the document, in words: an owner adopting keys should
+ *  know when the keys come from the document itself. */
+export function discoverySource(d: Pick<SiteDiscovery, 'url' | 'signed_by' | 'registered_keys_verify'>): string {
+  const how =
+    d.signed_by === 'registered_keys'
+      ? 'signed with the keys canopy already has for this site'
+      : d.registered_keys_verify === false
+        ? 'NOT signed with the keys canopy has for this site — only with the keys it names; saving adopts those keys'
+        : 'signed with the keys it names'
+  return `Read from ${d.url}, ${how}.`
+}
+
+/** What the site says about itself, beside what canopy holds now (for a
+ *  registered site). One row per fact; a changed row is marked. */
+export function SiteFactsTable({ discovery }: { discovery: SiteDiscovery }): JSX.Element {
+  const changed = new Set(discovery.changes ?? [])
+  const current = discovery.current
+  return (
+    <table className="w-full border-collapse text-xs">
+      <thead>
+        <tr className="border-b border-border text-left text-muted-foreground">
+          <th className="py-1 pr-2 font-normal">Setting</th>
+          {current && <th className="py-1 pr-2 font-normal">In canopy now</th>}
+          <th className="py-1 pr-2 font-normal">The site says</th>
+        </tr>
+      </thead>
+      <tbody>
+        {FACT_ROWS.map(({ key, label }) => (
+          <tr key={key} className="border-b border-border align-top last:border-0">
+            <td className="py-1 pr-2 text-foreground">
+              {label}
+              {changed.has(key) && <span className="ml-1 text-warning">changes</span>}
+            </td>
+            {current && (
+              <td className="break-all py-1 pr-2 font-mono text-[11px] text-muted-foreground">
+                {factText(current, key)}
+              </td>
+            )}
+            <td className="break-all py-1 pr-2 font-mono text-[11px] text-foreground">
+              {factText(discovery.site, key)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/** The values to save when an owner adopts what a site declares. */
+export type AdoptedFacts = {
+  origins: string[]
+  jwks_url: string
+  host_issuer: string
+  host_mcp_resource: string
+}
+
+export function adoptedFacts(site: SiteFacts): AdoptedFacts {
+  return {
+    origins: [...site.origins],
+    jwks_url: site.jwks_url,
+    host_issuer: site.issuer,
+    host_mcp_resource: site.mcp_resource,
+  }
+}
+
+/**
+ * "Fill from the site's own documents" on a registered site: read its signed
+ * `site.json`, show what it declares beside what canopy holds, and save only
+ * when the owner says so — through the ordinary, audited update. A site never
+ * changes its own trusted origins by publishing a document.
+ */
+export function FillFromSite({
+  slug,
+  app,
+  busy,
+  onSave,
+}: {
+  slug: string
+  app: Pick<ConnectedApp, 'id'>
+  busy: boolean
+  onSave: (facts: AdoptedFacts) => void
+}): JSX.Element {
+  const [found, setFound] = useState<SiteDiscovery | null>(null)
+  const [reading, setReading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function onRead() {
+    setReading(true)
+    setError(null)
+    try {
+      setFound(await discoverSite(slug, { appId: app.id }))
+    } catch (e) {
+      setFound(null)
+      setError(e instanceof Error ? e.message : "Could not read the site's own documents.")
+    } finally {
+      setReading(false)
+    }
+  }
+
+  const changes = found?.changes ?? []
+  return (
+    <div className="space-y-2 border-t border-border pt-2">
+      <div className="flex items-center gap-3">
+        <Button size="sm" variant="outline" disabled={reading || busy} onClick={() => void onRead()}>
+          {reading ? 'Reading…' : "Fill from the site's own documents"}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Reads the URLs, keys, issuer and MCP server the site publishes in its signed site.json. Nothing
+          changes until you save.
+        </span>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {found && (
+        <div className="space-y-2">
+          <p className={`text-xs ${found.signed_by === 'registered_keys' ? 'text-muted-foreground' : 'text-warning'}`}>
+            {discoverySource(found)}
+          </p>
+          <SiteFactsTable discovery={found} />
+          {changes.length === 0 ? (
+            <p className="text-xs text-success">canopy already has what the site says.</p>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  onSave(adoptedFacts(found.site))
+                  setFound(null)
+                }}
+              >
+                Save these values
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setFound(null)}>
+                Cancel
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The first step of connecting a site: type its address, and canopy reads the
+ * rest from the site's signed site.json into the form below for the owner to
+ * check before connecting.
+ */
+export function SiteAddressFill({
+  slug,
+  onFill,
+}: {
+  slug: string
+  onFill: (found: SiteDiscovery) => void
+}): JSX.Element {
+  const [address, setAddress] = useState('')
+  const [reading, setReading] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function onRead() {
+    setReading(true)
+    setError(null)
+    setNote(null)
+    try {
+      const found = await discoverSite(slug, { address: address.trim() })
+      onFill(found)
+      setNote(`${discoverySource(found)} Check the values below, then Connect.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read the site's own documents.")
+    } finally {
+      setReading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <span className="text-xs text-foreground-secondary">Site address</span>
+      <div className="flex gap-2">
+        <Input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder="https://labs.connect.dimagi.com"
+          aria-label="Site address"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={reading || !address.trim()}
+          onClick={() => void onRead()}
+        >
+          {reading ? 'Reading…' : 'Fill from the site'}
+        </Button>
+      </div>
+      <span className="block text-xs text-muted-foreground">
+        A site on dimagi-canopy 0.16+ publishes its URLs, keys, issuer and MCP server; canopy fills them in
+        for you to check.
+      </span>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
+
 /** "Test connection": runs canopy's conformance checks against this site's
  *  settings, from canopy's server, and shows the table. */
 export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedApp }): JSX.Element {
@@ -513,6 +733,7 @@ export function ConnectionTester({ slug, app }: { slug: string; app: ConnectedAp
 
 export function ConnectedAppsPage(): JSX.Element | null {
   const { workspace: slug } = useParams()
+  const { hash } = useLocation()
   const { workspaces } = useWorkspace()
   // Two tiers (lib/workspaceRoles): an admin reads the sites and runs Test
   // connection; only an owner registers, changes or disconnects one — a
@@ -558,6 +779,13 @@ export function ConnectedAppsPage(): JSX.Element | null {
       .then((p) => setAgents(p.items))
       .catch(() => setAgents([]))
   }, [reload])
+
+  // `#site-<id>` is a site's own address (the site agents API's `settings_url`):
+  // its card renders after the list loads, so scroll to it then.
+  useEffect(() => {
+    if (!apps || !hash.startsWith('#site-')) return
+    document.getElementById(hash.slice(1))?.scrollIntoView?.({ block: 'start' })
+  }, [apps, hash])
 
 
   async function run(what: () => Promise<unknown>) {
@@ -626,7 +854,13 @@ export function ConnectedAppsPage(): JSX.Element | null {
         )}
         {apps
           ?.map((app) => (
-            <div key={app.id} className="rounded-lg border border-border bg-card p-4 space-y-2">
+            <div
+              key={app.id}
+              id={`site-${app.id}`}
+              className={`rounded-lg border bg-card p-4 space-y-2 ${
+                hash === `#site-${app.id}` ? 'border-primary' : 'border-border'
+              }`}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm text-foreground">
@@ -685,6 +919,22 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   }
                 />
               )}
+              {isOwner && !app.revoked && (
+                <FillFromSite
+                  slug={slug}
+                  app={app}
+                  busy={busy}
+                  onSave={(facts) =>
+                    void run(() =>
+                      updateConnectedApp(slug, app.id, {
+                        ...facts,
+                        // Re-adds canopy's own origin, which the site does not list.
+                        ...(app.shows_on_canopy_pages ? { show_on_canopy_pages: true } : {}),
+                      }),
+                    )
+                  }
+                />
+              )}
               {canTest && !app.revoked && <SiteNeedsSection slug={slug} app={app} />}
               {canTest && !app.revoked && <ConnectionTester slug={slug} app={app} />}
             </div>
@@ -694,6 +944,17 @@ export function ConnectedAppsPage(): JSX.Element | null {
       {isOwner && (
         <form onSubmit={onConnect} className="rounded-lg border border-border bg-card p-4 space-y-3">
           <h2 className="text-sm font-medium text-foreground">Connect another site</h2>
+
+          <SiteAddressFill
+            slug={slug}
+            onFill={(found) => {
+              if (!name.trim()) setName(found.name)
+              setOrigins(found.site.origins.join('\n'))
+              setJwksUrl(found.site.jwks_url)
+              setHostIssuer(found.site.issuer)
+              setHostResource(found.site.mcp_resource)
+            }}
+          />
 
           <label className="block space-y-1">
             <span className="text-xs text-foreground-secondary">Name</span>

@@ -16,6 +16,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, EmbedAuditLog
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.site_tenant import host_workspace
@@ -46,6 +47,7 @@ def _owner():
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     c = Client()
     c.force_login(user)
+    grant_step_up(c)  # connecting a site takes a passkey
     return user, ws, c
 
 

@@ -2184,9 +2184,12 @@ class VaultHoldersOut(StrictModel):
 
 class VaultAttachmentOut(StrictModel):
     id: int
-    #: Exactly one: the agent it serves, or the workspace whose agents (and those below) it serves.
+    #: Exactly one: the agent it serves, the workspace whose agents (and those below) it
+    #: serves, or the cloud runner whose own Claude credentials it holds (its id).
     agent: str | None = None
     workspace: str | None = None
+    runner: str | None = None
+    runner_name: str | None = None
 
 
 class WorkspaceVaultOut(StrictModel):
@@ -2210,6 +2213,8 @@ class VaultCreateIn(StrictModel):
 class VaultAttachIn(StrictModel):
     agent: str | None = None
     workspace: str | None = None
+    #: A cloud runner's id: the vault then holds that box's Claude credentials.
+    runner: str | None = None
 
 
 class VaultAgentLinkOut(StrictModel):
