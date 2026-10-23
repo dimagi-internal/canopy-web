@@ -74,3 +74,12 @@ def test_the_dedicated_step_needs_a_probe_agent_and_sends_nothing_without_one(rt
     run = rt.Run(rt.Client(server, "tok", "dimagi", "n2"), Args())
     with pytest.raises(rt.Failure, match="probe-agent"):
         run.step_dedicated()
+
+
+def test_the_slack_reply_step_needs_its_thread_and_sends_nothing_without_it(rt, server):
+    class Args:
+        slack_thread = slack_user = ""
+        session = "s1"
+    run = rt.Run(rt.Client(server, "tok", "dimagi", "n3"), Args())
+    with pytest.raises(rt.Failure, match="slack-thread"):
+        run.step_slack_reply()

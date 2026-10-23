@@ -27,7 +27,9 @@ ALLOWED = {
     "apps/canopy_sessions/serializers.py": "puts the gate's output (`readable_sealed`) on the "
                                            "socket's row",
     "apps/canopy_sessions/conversation_keys.py": "re-seals rows written under the field key "
-                                                 "to their conversation's key (the migration)",
+                                                 "to their conversation's key (the migration), and "
+                                                 "seals the rows an ordinary conversation kept when "
+                                                 "it becomes sensitive (`seal_existing`)",
 }
 
 

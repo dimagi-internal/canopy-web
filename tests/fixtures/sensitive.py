@@ -174,3 +174,34 @@ def _unowned_thread(w):
                                metadata=dict(SENSITIVE))
     RunnerBinding.objects.create(session=s, runner=w["runner"], session_key="unowned")
     return s
+
+
+def minted(user) -> Client:
+    """A browser holding a session cookie minted from a token (`/api/debug/mint-session/`)."""
+    from apps.common.views_debug import DEBUG_SESSION_MARKER
+
+    c = Client()
+    c.force_login(user)
+    session = c.session
+    session[DEBUG_SESSION_MARKER] = {"via": "pat"}
+    session.save()
+    return c
+
+
+def mcp_as(user):
+    """The MCP server's auth context for `user`, as a signed-in MCP client's token sets it."""
+    import contextlib
+
+    from fastmcp.server.auth import AccessToken
+    from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
+
+    @contextlib.contextmanager
+    def ctx():
+        access = AccessToken(token="test-token", client_id=str(user.pk), scopes=["canopy:user"],
+                             claims={"sub": str(user.pk), "user_id": user.pk, "email": user.email})
+        tok = auth_context_var.set(AuthenticatedUser(access))
+        try:
+            yield
+        finally:
+            auth_context_var.reset(tok)
+    return ctx()

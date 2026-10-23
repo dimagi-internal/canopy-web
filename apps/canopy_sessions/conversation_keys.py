@@ -131,12 +131,14 @@ def ensure_key(session: Session, *, starter=None) -> SessionKey | None:
 
 
 def require_key(session: Session, *, user=None, contact=None) -> SessionKey:
-    """The key a send into a sensitive conversation seals under — made for this sender
-    if the conversation has none yet — or CannotHold: a contact never holds one, and
-    nobody can write words nobody could read back."""
+    """The key a send into a sensitive conversation seals under — made for its
+    creator if it has none yet — or CannotHold: a contact never holds one, nobody
+    can write words nobody could read back, and a sender who did not start it never
+    becomes its key's holder by sending (a conversation nobody started — an agent's
+    own thread — stays keyless, and takes no words)."""
     if contact is not None:
         raise CannotHold()
-    key = ensure_key(session, starter=user)
+    key = ensure_key(session)
     if key is None:
         raise CannotHold()
     return key
@@ -183,6 +185,33 @@ def envelope(conversation, public_jwk: dict, index: int, words: dict, **pinned) 
 
 def is_envelope(value) -> bool:
     return isinstance(value, str) and value.startswith(PREFIX)
+
+
+def seal_existing(session: Session) -> int:
+    """Every row `session` stored IN CLEAR before it became sensitive, as a sensitive
+    conversation stores it (`sensitivity.seal`): metadata columns, the words sealed to
+    the conversation's public key — which canopy-web holds, so it can seal what it
+    can no longer read back — and a tool's result dropped. With no key (its starter
+    has no vault key) the words are not kept at all. Run by
+    `services.add_runner_requirements` in the transaction that made it sensitive, so
+    no reader ever sees the conversation sensitive with its old rows open. Returns
+    how many rows it changed."""
+    from apps.harness import sensitivity  # noqa: PLC0415 — harness's gate reads this module lazily
+
+    changed = []
+    for m in Message.objects.filter(session_id=session.pk, sealed__isnull=True).iterator():
+        content = m.content if isinstance(m.content, dict) else {}
+        if content.get("redacted") == sensitivity.REDACTED or content.get("withheld"):
+            continue  # already metadata
+        m.plaintext, new_content, m.sealed = sensitivity.seal(
+            session, m.turn_index, m.role, m.plaintext, content)
+        if content.get("client_id"):
+            new_content["client_id"] = content["client_id"]
+        m.content = new_content
+        changed.append(m)
+    if changed:
+        Message.objects.bulk_update(changed, ["plaintext", "content", "sealed"], batch_size=500)
+    return len(changed)
 
 
 # ── who holds it ────────────────────────────────────────────────────────────

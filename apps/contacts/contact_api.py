@@ -642,6 +642,8 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         "contact", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id, origin=payload.origin or None,
         runner_requirements=getattr(request, "runner_requirements", ()),
+        # A contact's own token is their chat surface (the widget).
+        chat_surface=True,
         initiator=who.for_request(request, via=who.channel(request, "contact")),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": message.id}
@@ -959,6 +961,7 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
         "contact_app_view", session=session, text=text, user=request.user,
         client_id=payload.client_id,
         runner_requirements=getattr(request, "runner_requirements", ()),
+        chat_surface=True,
         initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}

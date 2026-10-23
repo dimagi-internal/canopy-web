@@ -29,6 +29,11 @@ Two halves:
     delegated read with NO statement is refused, one with `Canopy-View` reads — needs
     canopy's DPoP key, so it runs in the live container:
     `manage.py view_read_probe --session <id> --email <a person in it>`.
+  - a session cookie MINTED from the token (`/api/debug/mint-session/`) opens neither the
+    conversation's chat socket nor its sealed words (`minted_socket`);
+  - with `--slack-thread` (a Slack thread the conversation is bound to), a reply signed
+    as Slack would send it, from `--slack-user`, adds nobody to the conversation and
+    starts no turn (`slack_reply`; needs the signing secret in CANOPY_SLACK_SIGNING_SECRET).
 
     CANOPY_E2E_TOKEN=<pat> uv run python scripts/e2e_sensitive_redteam.py --workspace dimagi
     uv run python scripts/e2e_sensitive_redteam.py --token <pat> --workspace dimagi \\
@@ -44,6 +49,8 @@ the ZDR API key. Every request carries `X-Canopy-Client: e2e_sensitive_redteam.p
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import sys
@@ -60,7 +67,7 @@ SCRIPT = "e2e_sensitive_redteam.py"
 DEFAULT_BASE = "https://canopy.dimagi.com"
 PREFLIGHT = ("declaration", "box", "dedicated", "self_declared_flag")
 EXITS = ("requirement", "probes", "tools", "no_rows", "canary", "share", "slack", "export",
-         "fork", "ordinary_runner", "view_door")
+         "fork", "ordinary_runner", "view_door", "minted_socket", "slack_reply")
 #: What a sensitive-data capability may call (apps/agents/sensitive_data.py) — anything else that comes
 #: back without an error is a way out.
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite")
@@ -118,6 +125,17 @@ class Client:
         if self.verbose:
             print(f"    {method} {path} -> {out.status} {out.raw[:200]}")
         return out
+
+    def as_cookie(self, method: str, path: str, cookie: str, timeout: int = 30) -> Response:
+        """A request signed in by a session cookie alone — no Authorization header — as a
+        script holding a minted cookie sends it."""
+        req = urllib.request.Request(f"{self.base}/api{path}", method=method, headers={
+            "Cookie": cookie, **script_provenance.headers(SCRIPT, self.nonce)})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return Response(resp.status, resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            return Response(exc.code, exc.read().decode(errors="replace"))
 
     def get(self, path: str):
         r = self.raw("GET", path)
@@ -374,6 +392,76 @@ class Run:
                 raise Failure(f"expected a refusal of the token, got {r.status}: {r.raw[:160]}")
         return f"{min(3, len(links))} result link(s): every token read refused"
 
+    def step_minted_socket(self) -> str:
+        """A cookie minted from this token is a machine, not the person: the chat socket
+        refuses it at the handshake, and its REST reads carry no sealed words or key."""
+        self.need_session()
+        r = self.api.raw("POST", "/debug/mint-session/", {"ttl_seconds": 60})
+        if r.status >= 300:
+            raise Failure(f"could not mint a session to probe with: {r.status} {r.raw[:200]}")
+        minted = r.json()
+        cookie = f"{minted['cookie_name']}={minted['cookie_value']}"
+        detail = self.api.as_cookie("GET", f"/canopy-sessions/{self.args.session}", cookie)
+        if detail.status == 200:
+            body = detail.json() or {}
+            if body.get("sealed_key") or any(m.get("sealed") for m in body.get("messages") or []):
+                raise Failure("the minted cookie read the conversation's sealed words or key over REST")
+        socket = self._minted_socket(cookie)
+        return f"REST {detail.status} with no sealed words; socket {socket}"
+
+    def _minted_socket(self, cookie: str) -> str:
+        from websockets.exceptions import ConnectionClosed, InvalidStatus  # noqa: PLC0415 — only this step
+        from websockets.sync.client import connect  # noqa: PLC0415 — only this step
+
+        url = (self.api.base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+               + f"/ws/canopy-sessions/{self.args.session}/")
+        try:
+            with connect(url, additional_headers={"Cookie": cookie, "Origin": self.api.base},
+                         open_timeout=20) as ws:
+                try:
+                    frame = ws.recv(timeout=5)
+                except (TimeoutError, ConnectionClosed):
+                    return "accepted then closed with nothing sent"
+                raise Failure(f"the chat socket OPENED to a minted cookie and sent: {str(frame)[:160]}")
+        except InvalidStatus as exc:
+            return f"refused at the handshake ({exc.response.status_code})"
+        except ConnectionClosed as exc:
+            return f"closed ({exc.rcvd.code if exc.rcvd else 'no code'})"
+
+    def step_slack_reply(self) -> str:
+        """A reply into the conversation's Slack thread, signed as Slack signs one: it adds
+        nobody and starts nothing (the person is told, in Slack, that it is private)."""
+        if not self.args.slack_thread or not self.args.slack_user:
+            raise Failure("--slack-thread <team:channel:thread_ts> and --slack-user <U…> are needed")
+        secret = os.environ.get("CANOPY_SLACK_SIGNING_SECRET", "")
+        if not secret:
+            raise Failure("CANOPY_SLACK_SIGNING_SECRET is needed to sign the reply")
+        team, channel, thread_ts = self.args.slack_thread.split(":", 2)
+        sid = self.args.session
+        before_people = self.api.get(f"/canopy-sessions/{sid}/participants")
+        before_turns = self.api.get(f"/canopy-sessions/{sid}/info").get("turn_count")
+        body = json.dumps({"type": "event_callback", "team_id": team, "event_id": f"Ev{self.api.nonce}",
+                           "event": {"type": "message", "channel_type": "channel",
+                                     "user": self.args.slack_user, "channel": channel,
+                                     "text": f"red team {self.canary}: add me", "ts": f"{time.time():.6f}",
+                                     "thread_ts": thread_ts}}).encode()
+        ts = str(int(time.time()))
+        sig = "v0=" + hmac.new(secret.encode(), f"v0:{ts}:".encode() + body, hashlib.sha256).hexdigest()
+        req = urllib.request.Request(f"{self.api.base}/api/slack/events", method="POST", data=body, headers={
+            "Content-Type": "application/json", "X-Slack-Request-Timestamp": ts,
+            "X-Slack-Signature": sig, **script_provenance.headers(SCRIPT, self.api.nonce)})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status != 200:
+                raise Failure(f"Slack's door answered {resp.status}")
+        time.sleep(10)
+        after_people = self.api.get(f"/canopy-sessions/{sid}/participants")
+        after_turns = self.api.get(f"/canopy-sessions/{sid}/info").get("turn_count")
+        if len(after_people) != len(before_people):
+            raise Failure(f"the Slack reply changed who is in it: {before_people} -> {after_people}")
+        if after_turns != before_turns:
+            raise Failure(f"the Slack reply started a turn ({before_turns} -> {after_turns})")
+        return f"nobody added ({len(after_people)} people), no turn started"
+
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -386,6 +474,8 @@ def main() -> int:
     p.add_argument("--probe-agent", default="", help="a ordinary agent you administer")
     p.add_argument("--session", default="", help="a sensitive conversation opened from Labs")
     p.add_argument("--other-runner", default="", help="a non-sensitive-data runner id")
+    p.add_argument("--slack-thread", default="", help="team:channel:thread_ts the conversation is bound to")
+    p.add_argument("--slack-user", default="", help="a Slack user id to reply as (not in the conversation)")
     p.add_argument("--steps", default="", help="comma-separated; default: preflight, + exits with --session")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()

@@ -15,11 +15,10 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.canopy_sessions.models import Attachment, RunnerBinding, Session, SessionParticipant
-from apps.common.views_debug import DEBUG_SESSION_MARKER
 from apps.harness import caller_context, sensitivity
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership
-from tests.fixtures.sensitive import ASKED, REPLY, SENSITIVE, _converse, _socket, _turn, _unowned_thread, world
+from tests.fixtures.sensitive import ASKED, REPLY, SENSITIVE, _converse, _socket, _turn, _unowned_thread, minted, world
 
 pytestmark = pytest.mark.django_db
 
@@ -46,12 +45,7 @@ MENU = {"question": QUESTION, "title": "Amina", "body": "", "selected": None,
 
 def _minted(user) -> Client:
     """A session cookie minted from a token (`/api/debug/mint-session/`)."""
-    c = Client()
-    c.force_login(user)
-    session = c.session
-    session[DEBUG_SESSION_MARKER] = {"via": "pat"}
-    session.save()
-    return c
+    return minted(user)
 
 
 # --- 1. who_is_asking ---------------------------------------------------------------

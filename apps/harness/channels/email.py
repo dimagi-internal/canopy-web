@@ -22,7 +22,7 @@ from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
 
 from .. import initiator as who
-from .. import session_sync
+from .. import sensitivity, session_sync
 from ..ledger import append_events
 from ..models import Turn
 
@@ -95,9 +95,14 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
         thread_id = str((origin_ref or {}).get("thread_id") or "")
         if thread_id:
             try:
-                session = session_sync.email_thread_session(
+                bound = session_sync.email_thread_session(
                     agent, thread_id, str((origin_ref or {}).get("subject") or ""))
-                agent = None          # the session now carries the agent
+                # A private (sensitive) conversation takes nothing from outside its
+                # people (docs/architecture/tenancy.md § Sensitive conversations):
+                # the mail runs as the agent's own turn, beside it, not in it.
+                if not sensitivity.is_sensitive(bound):
+                    session = bound
+                    agent = None      # the session now carries the agent
             except Exception:  # noqa: BLE001
                 # Degrade to the previous behaviour. A turn that runs without a
                 # session is the status quo; a turn that fails to EXIST because

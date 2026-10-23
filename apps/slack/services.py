@@ -36,7 +36,9 @@ from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.canopy_sessions.participants import ensure_participant
 from apps.harness import initiator as who
+from apps.harness import sensitivity
 from apps.harness.models import Turn
+from apps.workspaces import links
 from apps.workspaces import services as wsvc
 
 from . import client, window
@@ -151,6 +153,8 @@ STALE = "stale"
 MEMBERS_ONLY = "members_only"
 #: A reply in a thread whose shared session has since been closed.
 SESSION_CLOSED = "session_closed"
+#: A message into a thread whose conversation is private (sensitive): never sent.
+PRIVATE = "private"
 #: The agent's interface offers this caller nothing; the turn was written cancelled.
 REFUSED = "refused"
 #: A `--history N` ask canopy would not, or could not, read the channel for.
@@ -427,6 +431,22 @@ def has_thread_session(installation: SlackInstallation, inbound: Inbound) -> boo
     return tenant_sessions(installation).filter(**{f"metadata__{SLACK_THREAD_KEY}": key}).exists()
 
 
+def private_refusal(session: Session | None, *, agent: Agent | None = None) -> Outcome | None:
+    """A private (sensitive) conversation takes nothing from Slack: its words are
+    sealed to its own people, a Slack reply comes from whoever is in the channel,
+    and adding them would make them one of its people with no owner's act and no
+    key (docs/architecture/tenancy.md § Sensitive conversations). Said plainly, with
+    where to go instead. None for an ordinary conversation."""
+    if session is None or not sensitivity.is_sensitive(session):
+        return None
+    url = links.scoped_url_or_none(session.workspace_id, f"/chat/{session.pk}") or ""
+    where = f" Open it in canopy: {url}" if url else " Open it in canopy."
+    return Outcome(PRIVATE, "This conversation is private, so canopy does not take messages into "
+                   f"it from Slack, and nothing you wrote here was sent.{where}",
+                   session=session, agent=agent or session.agent,
+                   workspace_id=session.workspace_id)
+
+
 def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
                    title: str) -> tuple[Session, bool]:
     """The Session for this (agent, Slack thread) — found, or created once.
@@ -441,7 +461,10 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
     existing = (Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
                 .order_by("created_at").first())
     if existing is not None:
-        if principal.user is not None and existing.created_by_id != principal.user.pk:
+        # Never into a private conversation: replying is not being let in
+        # (`private_refusal`, which every caller asks next).
+        if (principal.user is not None and existing.created_by_id != principal.user.pk
+                and not sensitivity.is_sensitive(existing)):
             ensure_participant(existing, principal.user, SessionParticipant.EDITOR)
         return existing, False
     metadata = {
@@ -552,6 +575,9 @@ def handle_message(inbound: Inbound) -> Outcome:
             + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
                                       title=title)
+    refused = private_refusal(session, agent=agent)
+    if refused is not None:
+        return refused
     if not created and win is None and _confined_elsewhere(session, agent, principal, inbound):
         return _fork_confined(installation, session, agent, principal, inbound, prompt, named=named)
     if created and win is None and inbound.thread_ts and not inbound.is_dm:
@@ -811,6 +837,9 @@ def _continue_shared(session: Session, principal: Principal, text: str, inbound:
     Code session, usually running with permissions bypassed, and a Slack guest
     must not be able to type into it.
     """
+    refused = private_refusal(session)
+    if refused is not None:
+        return refused
     if principal.user is None:
         return Outcome(MEMBERS_ONLY, "Only members of this canopy workspace can reply into this session.",
                        session=session)
@@ -852,6 +881,9 @@ def _remember_location(session: Session, inbound: Inbound) -> None:
 
 def _send(session: Session, created: bool, agent: Agent | None, principal: Principal, prompt: str,
           inbound: Inbound, *, named: bool = True) -> Outcome:
+    refused = private_refusal(session, agent=agent)
+    if refused is not None:
+        return refused
     # A SHARED session that has been closed has no one left to answer: say so
     # instead of queueing a turn nothing will ever take. (A Slack-born one is
     # simply asked again, which still works.)
@@ -879,6 +911,8 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
         # No site's token behind a Slack event: nothing to stamp. A floor an
         # earlier site send set stays (the stamp only grows).
         runner_requirements=(),
+        # Slack is never a sensitive conversation's chat surface (`private_refusal`).
+        chat_surface=False,
         # A contact has no account; enqueue_turn ignores an anonymous user, so
         # the turn carries no `enqueued_by` and the initiator names the contact.
         user=principal.user or AnonymousUser(),
@@ -1022,6 +1056,7 @@ def _requeue_stranded(session: Session, user, via: str) -> tuple[list[Turn], lis
     for turn in closed:
         _msg, again = doors.send_from(
             "slack", session=session, text=turn.prompt, user=user, runner_requirements=(),
+            chat_surface=False,
             # Idempotent per lost turn: a double click re-asks once.
             client_id=f"requeue:{turn.pk}", origin=turn.origin,
             initiator=who.for_user(user, via=via, assurance=""),

@@ -60,6 +60,8 @@ from __future__ import annotations
 
 from django.db.models import Q
 
+from apps.harness import sensitivity
+
 from .models import Session, SessionParticipant
 
 
@@ -228,6 +230,14 @@ def role_for(user, session) -> str | None:
         )
     else:
         derived = None  # a web chat you did not create: only a row gets you in
+    if derived is not None and row is None and session.created_by_id != user.pk:
+        # A SENSITIVE conversation's words are sealed to its own people: a leg that
+        # lets someone see it exists (an agent's admin, a co-tenant of a
+        # runner-discovered one) does not make them able to drive, share or copy
+        # it — they read its metadata. Only being in it does
+        # (`sensitivity.is_conversation_person`: its creator, or a participant row).
+        if sensitivity.is_sensitive(session):
+            derived = SessionParticipant.VIEWER
     candidates = [r for r in (row, derived) if r in ranks]
     return max(candidates, key=ranks.__getitem__) if candidates else SessionParticipant.VIEWER
 

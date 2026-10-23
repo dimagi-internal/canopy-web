@@ -14,13 +14,14 @@ import logging
 from django.conf import settings
 from django.db import transaction
 
-from apps.harness import provenance, sensitivity
+from apps.harness import ledger, provenance, sensitivity
+from apps.harness.models import Turn, TurnEvent, TurnTranscript
 from apps.realtime import groups
 
 from . import activity as session_activity
 from . import conversation_keys
 from . import transcript_read
-from .models import Message, Session
+from .models import Message, RunnerBinding, Session
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,10 @@ def add_runner_requirements(session: Session, reqs) -> None:
                 # (`conversation_keys.ensure_key`; a starter with no vault key gets
                 # none, and the send door refuses them).
                 conversation_keys.ensure_key(s)
+                # What it said before is held to the same rule as what it says next,
+                # in this transaction: its rows sealed, its turns' words withheld.
+                conversation_keys.seal_existing(s)
+                _withhold_what_it_kept(s)
                 # Every open socket on it re-asks `reads_content`: a token's, or a
                 # co-tenant's who is not in it, closes now rather than reading on.
                 transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))
@@ -165,6 +170,36 @@ def add_runner_requirements(session: Session, reqs) -> None:
     session.metadata = meta
     if became_sensitive:
         session.title = ""
+
+
+def _withhold_what_it_kept(session: Session) -> None:
+    """A conversation that just became sensitive, held to what a sensitive one keeps
+    (docs/architecture/tenancy.md § Sensitive conversations) for everything it kept
+    before: an ended turn's prompt wiped and its note withheld (a live turn keeps
+    its prompt until it ends, `closing.close_turn`); every stored event reduced to
+    its metadata and a tool's result to its call; no raw transcript; the binding's
+    tail, summary and pending dialog's words gone. Its Message rows are sealed
+    beside this (`conversation_keys.seal_existing`)."""
+    turns = Turn.objects.filter(chat_session_id=session.pk)
+    for turn in turns.filter(status__in=list(Turn.TERMINAL)).exclude(prompt="", result_note=""):
+        Turn.objects.filter(pk=turn.pk).update(
+            prompt="", result_note=sensitivity.withheld_note(turn.result_note))
+    events = []
+    for e in TurnEvent.objects.filter(turn__chat_session_id=session.pk).iterator():
+        payload = e.payload if isinstance(e.payload, dict) else {}
+        if payload.get("redacted") == sensitivity.REDACTED:
+            continue
+        if e.kind in sensitivity.RESULT_KINDS:
+            payload = sensitivity.strip_result(payload, session=session)
+        e.payload = ledger.metadata_of({"kind": e.kind, "payload": payload})
+        events.append(e)
+    if events:
+        TurnEvent.objects.bulk_update(events, ["payload"], batch_size=500)
+    TurnTranscript.objects.filter(turn__chat_session_id=session.pk).delete()
+    binding = RunnerBinding.objects.filter(session_id=session.pk).first()
+    if binding is not None:
+        RunnerBinding.objects.filter(pk=binding.pk).update(
+            tail=[], summary="", pending_question=sensitivity.menu_metadata(binding.pending_question))
 
 
 def recheck_sockets(session_id, *, user_ids=()) -> None:

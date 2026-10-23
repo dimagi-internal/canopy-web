@@ -262,6 +262,12 @@ def _sweep_sensitive(tally, *, now, apply, limit) -> None:
 
     rule = sensitive_rule()
     cutoff = _cutoff(rule, now)
+    if apply:
+        # A turn no runner started keeps its words in clear only until its deadline;
+        # whatever is past it is closed now, prompt wiped, before anything is aged.
+        from apps.harness.sweeps import expire_unrun_sensitive_turns  # noqa: PLC0415 — as the harness models above
+
+        tally.add(rule, "turns_scrubbed", expire_unrun_sensitive_turns(now=now))
     # `has_key` narrows in SQL on every backend; the predicate decides.
     rows = (Session.objects.filter(pk__in=_chat_candidates(cutoff),
                                    metadata__has_key=sensitivity.rr.METADATA_KEY)

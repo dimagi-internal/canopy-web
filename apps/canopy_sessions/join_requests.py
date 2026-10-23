@@ -17,6 +17,9 @@ withdrawing are routes.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -40,6 +43,24 @@ def may_decide(user, session) -> bool:
     return access.can_share(user, session) and sensitivity.is_conversation_person(session, user=user)
 
 
+#: How long after asking someone waits before asking the same conversation again.
+REASK_SECONDS_DEFAULT = 3600
+
+
+def reask_after() -> timedelta:
+    return timedelta(seconds=int(getattr(settings, "CANOPY_JOIN_REQUEST_REASK_SECONDS",
+                                         REASK_SECONDS_DEFAULT)))
+
+
+class TooSoon(ValueError):
+    """Asked this conversation again within `reask_after` of the last ask."""
+
+    def __init__(self):
+        minutes = max(1, int(reask_after().total_seconds() // 60))
+        super().__init__(f"you asked to join this conversation in the last {minutes} minutes; "
+                         "ask again later")
+
+
 def ask(session: Session, user) -> JoinRequest:
     """`user`'s request to be added to `session`. The open one if they already
     asked. ValueError when there is nothing to ask: an ordinary conversation, or
@@ -55,6 +76,11 @@ def ask(session: Session, user) -> JoinRequest:
                                        status=JoinRequest.PENDING).first()
     if open_ is not None:
         return open_
+    since = timezone.now() - reask_after()
+    if JoinRequest.objects.filter(session=session, requested_by=user, created_at__gte=since).exists():
+        # Declined (or withdrawn) moments ago: asking again rings the owner's chat
+        # again, so once per `reask_after` per conversation.
+        raise TooSoon()
     try:
         with transaction.atomic():
             req = JoinRequest.objects.create(session=session, requested_by=user)

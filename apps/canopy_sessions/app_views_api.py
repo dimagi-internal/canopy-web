@@ -137,6 +137,7 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
         # its visitor; that token's runner requirements (`sensitive_data`) bind this send
         # exactly as they bind the REST send.
         runner_requirements=getattr(request, "runner_requirements", ()),
+        chat_surface=sensitivity.request_is_chat_surface(request),
         initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}
