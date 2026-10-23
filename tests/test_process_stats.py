@@ -69,6 +69,26 @@ def test_a_thread_burning_cpu_is_named_with_the_stack_it_is_in():
     assert any("_spin" in frame for frame in rows[0]["stack"])
 
 
+def test_cpu_is_counted_for_threads_born_during_the_interval_and_before_it():
+    stop = threading.Event()
+    born = threading.Thread(target=stop.wait, name="kb-index")
+    old = threading.Thread(target=stop.wait, name="kb-vectors")
+    idle = threading.Thread(target=stop.wait, name="idle")
+    for t in (born, old, idle):
+        t.start()
+    try:
+        tck = process_stats._CLK_TCK
+        before = {old.native_id: 5 * tck, idle.native_id: 7 * tck}  # `born` did not exist yet
+        after = {born.native_id: tck, old.native_id: 5 * tck + tck // 2, idle.native_id: 7 * tck}
+        rows = {r["name"]: r for r in process_stats._hot_threads(before, after, elapsed=1.0)}
+    finally:
+        stop.set()
+    assert rows["kb-index"]["cpu_pct"] == 100.0
+    assert rows["kb-vectors"]["cpu_pct"] == 50.0
+    assert "idle" not in rows
+    assert any("wait" in frame for frame in rows["kb-index"]["stack"])
+
+
 @linux_only
 def test_memory_reports_rss():
     assert process_stats._memory()["rss_mb"] > 0

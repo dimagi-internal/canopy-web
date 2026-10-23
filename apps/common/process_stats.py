@@ -149,7 +149,8 @@ def _hot_threads(before: dict[int, int], after: dict[int, int], elapsed: float) 
     frames = sys._current_frames()  # noqa: SLF001 - the whole point: where each thread is now
     rows = []
     for tid, ticks_now in after.items():
-        pct = 100 * (ticks_now - before.get(tid, ticks_now)) / _CLK_TCK / elapsed
+        # A thread born during the interval spent all its CPU inside it, so it counts from 0.
+        pct = 100 * (ticks_now - before.get(tid, 0)) / _CLK_TCK / elapsed
         if pct < HOT_THREAD_PCT:
             continue
         thread = by_native.get(tid)
