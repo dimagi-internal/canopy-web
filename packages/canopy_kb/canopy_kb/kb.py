@@ -394,7 +394,7 @@ def build(bundle: Path, out: Path, previous: Path | None = None) -> dict:
     return summary
 
 
-def apply(previous: Path, out: Path, upserts: Iterable[dict], removed: Iterable[str] = (), *,
+def apply(previous: Path | None, out: Path, upserts: Iterable[dict], removed: Iterable[str] = (), *,
           manifest: dict | None = None, aliases: dict | None = None,
           tables: dict[str, list[dict]] | None = None) -> dict:
     """Apply a delta to a previous kb.sqlite, writing a new one at `out` (the previous
@@ -402,24 +402,33 @@ def apply(previous: Path, out: Path, upserts: Iterable[dict], removed: Iterable[
     ids that are gone; `manifest` and `aliases` replace the previous ones when given, and
     `tables` holds only the declared tables whose rows changed. The result is what `build`
     makes of the same content (`_Index`). Returns the summary, with `applied`: the ids
-    this delta added, changed and removed."""
-    previous, out = Path(previous), Path(out)
+    this delta added, changed and removed. `previous=None` is a knowledge base's first
+    version: every record is new, into an empty file."""
+    out = Path(out)
     tmp = Path(str(out) + ".apply")
     part = Path(str(out) + ".part")
     for p in (tmp, part):
         p.unlink(missing_ok=True)
-    shutil.copyfile(previous, tmp)
-    db = sqlite3.connect(tmp)
+    if previous is None:
+        db = sqlite3.connect(tmp)
+        db.executescript(SCHEMA)
+    else:
+        previous = Path(previous)
+        shutil.copyfile(previous, tmp)
+        db = sqlite3.connect(tmp)
     db.row_factory = sqlite3.Row
     try:
         meta = dict(db.execute("SELECT key, value FROM meta").fetchall())
-        if int(json.loads(meta.get("summary") or "{}").get("schema") or 0) < SCHEMA_VERSION:
+        if previous is not None and int(json.loads(meta.get("summary") or "{}").get("schema") or 0) < SCHEMA_VERSION:
             raise KBError(f"{previous} is an older schema; publish a full build first")
         old_manifest = json.loads(meta.get("manifest") or "{}")
         if aliases is None:
-            if "aliases" not in meta:
+            if previous is None:
+                aliases = {}
+            elif "aliases" not in meta:
                 raise KBError(f"{previous} does not carry its aliases; pass them")
-            aliases = json.loads(meta["aliases"])
+            else:
+                aliases = json.loads(meta["aliases"])
         idx = _Index(db, _now(), live_fts=True)
         applied: dict[str, list[str]] = {"new": [], "changed": [], "removed": []}
         seen: set[str] = set()
@@ -432,7 +441,8 @@ def apply(previous: Path, out: Path, upserts: Iterable[dict], removed: Iterable[
             row = {k: it.get(k) for k in ("type", "title", "url", "date")}
             if old is None:
                 applied["new"].append(iid)
-                idx.change(iid, "new", row)
+                if previous is not None:  # a first version is a baseline, as `build` makes it
+                    idx.change(iid, "new", row)
             else:
                 applied["changed"].append(iid)
                 if it.get("sha256") and old["sha256"] != it.get("sha256"):
@@ -449,8 +459,8 @@ def apply(previous: Path, out: Path, upserts: Iterable[dict], removed: Iterable[
             idx.change(iid, "removed", old)
             idx.drop(iid, removed=True)
         summary = idx.finish(manifest if manifest is not None else old_manifest, aliases, tables or {}, old_manifest, {
-            "new": len(applied["new"]), "changed": len(applied["changed"]), "removed": len(applied["removed"]),
-            "baseline": False})
+            "new": len(applied["new"]) if previous is not None else 0, "changed": len(applied["changed"]),
+            "removed": len(applied["removed"]), "baseline": previous is None})
         db.commit()
         db.execute("VACUUM INTO ?", (str(part),))
     finally:

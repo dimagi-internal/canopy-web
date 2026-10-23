@@ -12,9 +12,11 @@ changed, so a steward:
    (`kb_index`) applies it to the base's kb.sqlite and points the project at the
    result. The published version is untouched until then, and if the job fails.
 
-A FULL publish (`publish_full`, the presigned whole file) is the first build and the
-fallback; it carries its state when the steward sends one, so the next publish can
-be a delta. `rollback` points the project at an earlier version's file. Each version
+A knowledge base's FIRST version is a delta from nothing: the index job builds it from
+its records, so no machine builds kb.sqlite. A FULL publish (`publish_full`, the
+presigned whole file) is the fallback; it carries its state when the steward sends
+one, so the next publish can be a delta. A commit may carry the refresh's curation
+state (`kb_store.save_curation`), saved with the version or refused with it. `rollback` points the project at an earlier version's file. Each version
 lists what it added, changed and removed (`KbChange`) — `whats_new` reads that log.
 
 Only the newest `KEEP_FILES` versions keep their kb.sqlite.gz (`prune`); older ones
@@ -36,6 +38,8 @@ log = logging.getLogger(__name__)
 KEEP_FILES = 5
 #: A version still on its way: one at a time per project.
 _LIVE =(KbVersion.PENDING, KbVersion.BUILDING)
+#: What a knowledge base with no version yet holds.
+EMPTY = {"docs": {}, "parts": {}}
 
 
 class KbConflict(RuntimeError):
@@ -60,8 +64,12 @@ def publisher(user) -> str:
 
 
 def head_state(project) -> dict | None:
+    """The state the project serves: EMPTY before its first version, None when its head
+    is a whole-file publish that carried no state (publish the whole file once more)."""
     head = project.kb_version
-    if head is None or not head.state_sha:
+    if head is None:
+        return EMPTY
+    if not head.state_sha:
         return None
     return kb_store.get_blob(project, head.state_sha)
 
@@ -89,9 +97,11 @@ def plan(project, state: dict) -> dict:
 
 
 def commit(project, state: dict, base: int | None, *, published_by: str = "", uploaded_bytes: int = 0,
-           check_ids=None) -> tuple[KbVersion | None, bool]:
+           check_ids=None, curation: dict | None = None) -> tuple[KbVersion | None, bool]:
     """A pending DELTA version from `base` to `state`, or (head, False) when nothing
-    changed. `check_ids(ids)` vets the ids a source admits (a Drive source's approvals)."""
+    changed. `check_ids(ids)` vets the ids a source admits (a Drive source's approvals).
+    `curation` ({sha, base}) is saved in the same transaction, changed or not, so a
+    refresh's state and the version it published never disagree."""
     _state_ok(state)
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
@@ -105,6 +115,9 @@ def commit(project, state: dict, base: int | None, *, published_by: str = "", up
             raise kb_store.KbPublishError("publish the whole file once first (the head carries no state)")
         d = records.diff(current, state)
         if not (d["added"] or d["changed"] or d["removed"] or d["parts"]):
+            if curation:
+                kb_store.save_curation(project, curation.get("sha") or "", curation.get("base"),
+                                       saved_by=published_by, version=base)
             return head, False
         if check_ids is not None:
             check_ids(d["added"] + d["changed"])
@@ -116,6 +129,9 @@ def commit(project, state: dict, base: int | None, *, published_by: str = "", up
             project=project, number=_next_number(project), kind=KbVersion.DELTA, base=head,
             state_sha=kb_store.put_blob(project, state), added=len(d["added"]), changed=len(d["changed"]),
             removed=len(d["removed"]), uploaded_bytes=max(0, int(uploaded_bytes or 0)), published_by=published_by)
+        if curation:  # a conflict here undoes the version too
+            kb_store.save_curation(project, curation.get("sha") or "", curation.get("base"),
+                                   saved_by=published_by, version=version.number)
         transaction.on_commit(kb_index.kick)
     return version, True
 
@@ -128,7 +144,7 @@ def publish_full(project, key: str, sha256: str, state: dict | None = None, *, p
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
         if KbVersion.objects.filter(project=project, status__in=_LIVE).exists():
             raise KbConflict("a version is still being built; wait for it, then publish")
-        previous = head_state(project) if state is not None else None
+        previous = head_state(project) if state is not None and project.kb_version_id else None
         head = project.kb_version
         project = kb_store.publish(project, key, sha256)
         version = KbVersion.objects.create(

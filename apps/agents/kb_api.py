@@ -7,6 +7,10 @@ sources and — for a Drive source — the owner's review of what may be read.
     GET  …/kb/versions                  the log
     GET  …/kb/file                      a download of the file it serves now
     POST …/kb/versions/{n}/rollback     serve version n's file again
+    GET/PUT …/kb/curation               the curation state a refresh starts from (the steward)
+    POST/DELETE …/kb/curation/lease     one refresh at a time
+    POST …/kb/results                   presigned PUTs for step results the store lacks
+    POST …/kb/objects/have|links        which results, records, originals are stored; downloads
     PUT  …/kb/settings                  the Drive replica option (off by default)
     GET/POST …/kb/sources               where its documents come from
     POST …/kb/sources/{id}/inventory    a Drive source's metadata listing (the steward)
@@ -22,6 +26,7 @@ Services: `kb_versions`, `kb_index`, `kb_drive`.
 from __future__ import annotations
 
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.http import HttpRequest
 from ninja import Router
 from ninja.errors import HttpError
@@ -32,7 +37,7 @@ from apps.api.route_gates import gate
 from . import kb_drive, kb_store, kb_versions
 from .fleet_api import _kb_call, _workspace_project_or_404
 from .gates import agent_for_work
-from .models import KbDriveFile, KbSource, KbVersion
+from .models import AgentProject, KbDriveFile, KbSource, KbVersion
 from .schemas import (
     AgentProjectOut,
     KbApprovalsIn,
@@ -40,10 +45,16 @@ from .schemas import (
     KbBlobsIn,
     KbCommitIn,
     KbCommitOut,
+    KbCurationIn,
+    KbCurationOut,
     KbDriveFileOut,
     KbFileOut,
     KbHoldIn,
     KbInventoryIn,
+    KbLeaseIn,
+    KbObjectLinksOut,
+    KbObjectsHaveOut,
+    KbObjectsIn,
     KbOriginalsOut,
     KbPlanIn,
     KbPlanOut,
@@ -86,7 +97,7 @@ def _owner(request: HttpRequest, workspace: str, handle: str):
 def _conflict(fn):
     try:
         return _kb_call(fn)
-    except kb_versions.KbConflict as exc:
+    except (kb_versions.KbConflict, kb_store.KbCurationConflict) as exc:
         raise HttpError(409, str(exc)) from exc
     except kb_drive.DriveSourceError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -159,9 +170,90 @@ def kb_commit(request: HttpRequest, workspace: str, handle: str, payload: KbComm
     project = _steward(request, workspace, handle)
     version, created = _conflict(lambda: kb_versions.commit(
         project, payload.state.model_dump(), payload.base, published_by=kb_versions.publisher(request.user),
-        uploaded_bytes=payload.uploaded_bytes, check_ids=kb_drive.check_ids(project)))
+        uploaded_bytes=payload.uploaded_bytes, check_ids=kb_drive.check_ids(project),
+        curation=payload.curation.model_dump() if payload.curation else None))
     project.refresh_from_db()
     return KbCommitOut(created=created, version=_version_out(project, version) if version else None)
+
+
+# ---- curation: what a refresh needs from the last one, on any machine ----
+# Steward only, reads included: for a Drive source these are its owner's text.
+
+@router.get(f"{_BASE}/curation", response=KbCurationOut,
+            summary="The curation state the last refresh saved, which the next one starts from")
+@gate("agent.work")
+def kb_curation(request: HttpRequest, workspace: str, handle: str) -> KbCurationOut:
+    project = _steward(request, workspace, handle)
+    return KbCurationOut(**(project.kb_curation or {}))
+
+
+@router.put(f"{_BASE}/curation", response=KbCurationOut,
+            summary="Save a refresh's curation state when it published nothing")
+@gate("agent.work", kind="content")
+def kb_save_curation(request: HttpRequest, workspace: str, handle: str, payload: KbCurationIn) -> KbCurationOut:
+    """409 when another refresh saved since `base`: refresh again from that one. A
+    refresh that publishes sends its state with the commit (`…/kb/versions`) instead."""
+    project = _steward(request, workspace, handle)
+
+    def save():
+        with transaction.atomic():
+            locked = AgentProject.objects.select_for_update().get(pk=project.pk)
+            return kb_store.save_curation(locked, payload.sha, payload.base,
+                                          saved_by=kb_versions.publisher(request.user))
+
+    return KbCurationOut(**_conflict(save))
+
+
+@router.post(f"{_BASE}/curation/lease", response=KbCurationOut,
+             summary="Take or renew the lease a refresh holds while it runs")
+@gate("agent.work", kind="content")
+def kb_take_lease(request: HttpRequest, workspace: str, handle: str, payload: KbLeaseIn) -> KbCurationOut:
+    """409 while another refresh holds an unexpired lease: one refresh at a time, so two
+    never pay for the same model calls."""
+    project = _steward(request, workspace, handle)
+
+    def take():
+        with transaction.atomic():
+            locked = AgentProject.objects.select_for_update().get(pk=project.pk)
+            return kb_store.take_lease(locked, payload.holder, payload.seconds)
+
+    return KbCurationOut(**_conflict(take))
+
+
+@router.delete(f"{_BASE}/curation/lease", response=KbCurationOut, summary="Release a refresh's lease")
+@gate("agent.work", kind="content")
+def kb_drop_lease(request: HttpRequest, workspace: str, handle: str, holder: str) -> KbCurationOut:
+    project = _steward(request, workspace, handle)
+    with transaction.atomic():
+        locked = AgentProject.objects.select_for_update().get(pk=project.pk)
+        return KbCurationOut(**kb_store.drop_lease(locked, holder))
+
+
+@router.post(f"{_BASE}/results", response=KbOriginalsOut,
+             summary="Presigned uploads for the step results the store lacks")
+@gate("agent.work", kind="content")
+def kb_upload_results(request: HttpRequest, workspace: str, handle: str, payload: KbBlobsIn) -> KbOriginalsOut:
+    """Each result gzipped, under its step key (`canopy_kb.curate`); the PUT carries the
+    gzip's sha256, which storage checks."""
+    project = _steward(request, workspace, handle)
+    blobs = [b.model_dump() for b in payload.blobs]
+    return KbOriginalsOut(**_conflict(lambda: kb_store.results_upload(project, blobs)))
+
+
+@router.post(f"{_BASE}/objects/have", response=KbObjectsHaveOut,
+             summary="Which step results, records or originals are stored")
+@gate("agent.work", kind="action")  # changes nothing
+def kb_objects_have(request: HttpRequest, workspace: str, handle: str, payload: KbObjectsIn) -> KbObjectsHaveOut:
+    project = _steward(request, workspace, handle)
+    return KbObjectsHaveOut(have=_conflict(lambda: kb_store.stored(project, payload.store, payload.keys)))
+
+
+@router.post(f"{_BASE}/objects/links", response=KbObjectLinksOut,
+             summary="Presigned downloads of stored step results, records or originals")
+@gate("agent.work", kind="action")  # changes nothing
+def kb_objects_links(request: HttpRequest, workspace: str, handle: str, payload: KbObjectsIn) -> KbObjectLinksOut:
+    project = _steward(request, workspace, handle)
+    return KbObjectLinksOut(**_conflict(lambda: kb_store.links(project, payload.store, payload.keys)))
 
 
 @router.get(f"{_BASE}/versions", response=list[KbVersionOut],
