@@ -1,6 +1,7 @@
 import {
-  ChatPanel, MenuPrompt, SendBox, newClientId, useSessionSocket,
-  type AppHost, type AppViewResource, type CallToolResult,
+  ChatPanel, MenuPrompt, SendBox, appResourceUpdate, createAppResourceUpdates, newClientId,
+  useSessionSocket,
+  type AppHost, type AppResourceUpdates, type AppViewResource, type CallToolResult,
 } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
 import { Maximize2, Minimize2, Pin, PinOff } from 'lucide-react'
@@ -838,8 +839,17 @@ function EmbedChat({
   // as a DOORBELL only — the durable PageAction row is the mechanism, and the
   // result goes back over HTTP so it is an acknowledged write rather than a
   // second frame that could land nowhere.
+  // The host's `resources/updated` for this panel's Views, relayed on the socket.
+  const appUpdates = useMemo(() => createAppResourceUpdates(), [])
   const onUnknownEvent = useCallback(
     (frame: { event: string; data?: unknown }) => {
+      // A resource a View in this panel subscribed to changed at its host: the
+      // View is told, and re-reads it as the visitor.
+      const update = appResourceUpdate(frame)
+      if (update) {
+        appUpdates.emit(update.toolCallId, update.uri)
+        return
+      }
       if (frame.event === 'page.invalidate') {
         // Relayed straight out to the host page, which owns what "re-read"
         // means. The kit deliberately does not know this frame — it is canopy's
@@ -868,7 +878,7 @@ function EmbedChat({
           .catch(() => undefined)
       })()
     },
-    [client, link, sessionId, isContact],
+    [client, link, sessionId, isContact, appUpdates],
   )
 
   // AG-UI on the wire. `session.page_action` and `page.invalidate` still reach
@@ -952,8 +962,9 @@ function EmbedChat({
     [socket.state, sealed.messages],
   )
   const appHost = useMemo(
-    () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded), () => keyRef.current),
-    [client, sessionId, isContact, expanded, keyRef])
+    () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates),
+                        () => keyRef.current),
+    [client, sessionId, isContact, expanded, keyRef, appUpdates])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -1189,7 +1200,8 @@ function EmbedChat({
 /** The embed panel's MCP Apps host: the same five routes as canopy's chat page,
  *  under `/api/contact/` for a contact (their whole surface) — through the
  *  panel's own client, so the visitor's token is what authorises every click. */
-function embedAppHost(client: CanopyClient, sessionPath: string, expanded = false): AppHost {
+function embedAppHost(client: CanopyClient, sessionPath: string, expanded = false,
+                      updates?: AppResourceUpdates): AppHost {
   const at = (callId: string) => `${sessionPath}/apps/${encodeURIComponent(callId)}`
   const send = <T,>(path: string, method: string, body: unknown) =>
     client.rest.json(path, { method, body: JSON.stringify(body) }) as Promise<T>
@@ -1202,6 +1214,9 @@ function embedAppHost(client: CanopyClient, sessionPath: string, expanded = fals
       send<void>(`${at(callId)}/context`, 'PUT', params).then(() => undefined),
     sendMessage: (callId, text) =>
       send<void>(`${at(callId)}/message`, 'POST', { text, client_id: newClientId() }).then(() => undefined),
+    subscribe: (callId, uri) => send<void>(`${at(callId)}/subscribe`, 'POST', { uri }).then(() => undefined),
+    unsubscribe: (callId, uri) => send<void>(`${at(callId)}/unsubscribe`, 'POST', { uri }).then(() => undefined),
+    ...(updates ? { onResourceUpdated: updates.onResourceUpdated } : {}),
     resolveUrl: (path) => (/^https?:\/\//.test(path) ? path : `${currentFrameBaseUrl()}${path}`),
     // Narrow-panel sized, until the visitor expands the panel: then the View
     // gets the panel's width (no cap) and most of the window's height.

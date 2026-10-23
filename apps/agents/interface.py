@@ -65,7 +65,7 @@ ran as the AGENT. A site capability instead names a registered Connected site:
 
 A conversation held on that site (its server-owned `embed_app`) selects the
 capability, and its confined profile gains canopy's gateway tools (`site_tools`,
-`site_call`) automatically. Through them the agent calls the host's tools AS THE
+`site_call`, `site_read`) automatically. Through them the agent calls the host's tools AS THE
 VISITOR, with a grant the host issued for the page they are on — so what one
 turn may call is what the HOST grants: its scopes for that page and its ACL for
 that person (`apps/host_grants/host_gateway.py`). canopy holds no list of the host's
@@ -125,7 +125,8 @@ ASK = "ask"
 
 #: canopy's gateway to a Connected site's own tools, added to every capability
 #: that names `sites:` (apps/mcp/tools/site.py).
-GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call")
+GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
+                 "mcp__*canopy-web__site_read")
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.

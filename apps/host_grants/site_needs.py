@@ -31,6 +31,7 @@ from django.core.cache import cache
 
 from apps.embedding import assertions
 from apps.embedding import jwks as jwks_mod
+from apps.mcp_apps_host.mcp_apps_views import site_app
 
 FRESH_SECONDS = 600
 STALE_SECONDS = 24 * 60 * 60
@@ -307,3 +308,23 @@ def discover(address: str = "", *, app=None) -> Discovery:
     return Discovery(url=url, name=name, facts=unverified.site,
                      signed_by="registered_keys" if registered else "published_keys",
                      registered_keys_verify=registered, tried=tuple(tried))
+
+
+# --- the schemes of the site's own resource links (spec 2026-10-23-host-held-results) ----
+
+
+def resource_schemes_for(session) -> tuple[str, ...]:
+    """The URI schemes the session's Connected site declares for its artifacts
+    (`site.json`'s `site.resource_schemes`): a sensitive conversation keeps a host's
+    resource link only under one of these (`harness.sensitivity.strip_result`).
+
+    Read LIVE from the verified, cached document, with no owner adopting it, unlike
+    the rest of the `site` block: it widens nothing — it lists the addresses canopy
+    keeps from this site's own tool results. Fails closed: no session site, no
+    verifiable document, or no block → no schemes, so every link is dropped."""
+    app = site_app(session) if session is not None else None
+    if app is None:
+        return ()
+    document = needs_for(app).document
+    facts = document.site if document is not None else None
+    return tuple(facts.resource_schemes) if facts is not None else ()

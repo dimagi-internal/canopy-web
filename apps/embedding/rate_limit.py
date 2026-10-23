@@ -144,3 +144,16 @@ def check_site_agents_issuer(name: str) -> None:
     window = int(getattr(settings, "SITE_AGENTS_WINDOW_SECONDS", 60))
     if _over(f"tokens:site-agents:iss:{name}", limit, window):
         raise SiteAgentsRateLimitError(f"too many site agents requests for this site ({limit} per {window}s)")
+
+
+def check_resources_updated(client_ip, issuer: str = "") -> None:
+    """A connected site telling canopy its resources changed
+    (`POST /api/sites/resources-updated`): per client before anything is parsed,
+    per site (`issuer`) before its signature is checked. Generous — a host may
+    notify on every edit — but bounded."""
+    limit = int(getattr(settings, "RESOURCES_UPDATED_LIMIT", 600))
+    window = int(getattr(settings, "RESOURCES_UPDATED_WINDOW_SECONDS", 60))
+    key = f"tokens:resources-updated:iss:{issuer}" if issuer else \
+        f"tokens:resources-updated:ip:{client_ip or 'unknown'}"
+    if _over(key, limit, window):
+        raise SiteAgentsRateLimitError(f"too many resource notifications ({limit} per {window}s)")

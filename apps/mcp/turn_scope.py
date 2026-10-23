@@ -45,7 +45,7 @@ def caller_turn_ids() -> list[str] | None:
 
 def _allowed(name: str, claims: dict) -> bool:
     if claims.get("sensitive"):
-        # A sensitive turn's session: the four tools a `data: sensitive`
+        # A sensitive turn's session: the canopy tools a `data: sensitive`
         # capability may hold, never more, whatever else the claims say
         # (`caller_tokens._sensitive_grant` already narrowed them; this is the
         # second line).

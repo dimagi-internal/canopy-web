@@ -439,6 +439,13 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
         # line that changes.
         return [_custom("page.invalidate", {"uri": data.get("uri") or ""})]
 
+    if event == "app.resource_updated":
+        # A host resource a View subscribed to changed: which View (its tool call id)
+        # and which URI, never data — the View re-reads as its viewer. MCP's
+        # `notifications/resources/updated`, which AG-UI has no event for.
+        return [_custom("app.resource_updated", {"tool_call_id": data.get("tool_call_id") or "",
+                                                 "uri": data.get("uri") or ""})]
+
     if event == "session.title_updated":
         return [
             E.StateDeltaEvent(

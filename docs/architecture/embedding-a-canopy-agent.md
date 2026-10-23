@@ -1038,7 +1038,7 @@ In three steps — every claim, lifetime, header and refusal is in
    `{canopy base}/oauth/jwks.json`) redeems it at your token endpoint with
    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `private_key_jwt` and DPoP;
    you answer a short-lived, DPoP-bound access token for the visitor — no refresh token.
-3. **Use.** canopy's `site_tools` / `site_call` call your MCP with `Authorization: DPoP <token>`,
+3. **Use.** canopy's `site_tools` / `site_call` / `site_read` call your MCP with `Authorization: DPoP <token>`,
    a fresh proof and an informational `Canopy-Actor` header; run the tool as `sub`, within the
    token's scopes.
 4. **Sensitive data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
@@ -1088,6 +1088,88 @@ or an admin talks to a CONFINED session, which reaches canopy's MCP with a
 caller token scoped to **agent ∩ visitor** — the visitor's own canopy
 permissions (none, for a contact), limited to the tools the agent's declared
 interface lists. The owner's token is never used there.
+
+## 8b. Return facts + artifacts: results your host keeps
+
+A tool that produces data — a query's rows, a chart, a draft edit — should not put
+the data in its result. Return **facts** for the model (how many rows, the columns,
+a few samples, what the query was) and an MCP **`resource_link`** (MCP 2025-06-18
+tool-result content) naming an **artifact your host keeps**:
+
+```json
+{"content": [
+  {"type": "text", "text": "{\"row_count\": 1840, \"columns\": [\"worker\", \"visits\"], ...}"},
+  {"type": "resource_link", "uri": "labs-result://Zk3...", "name": "Visits by worker",
+   "mimeType": "application/json", "description": "1840 rows"}
+]}
+```
+
+**Why.** Your host owns what its tools produce; canopy carries the conversation and
+the wiring, never the data. The person's View (your MCP Apps card in the chat) reads
+the link back from you with `resources/read` — through canopy's View routes and its
+gateway, **as the viewer**, with their delegated token — and pages, sorts and
+re-reads it there. The agent reads it with **`site_read`** (beside `site_call`), as
+the visitor, only when it needs more than the facts — so a large result never has to
+be in its context. Your ACL and your audit apply to every read.
+
+**Sensitive conversations.** canopy stores no tool result for a sensitive
+conversation — only these links (URI, name, mimeType: addresses, not data). A View
+there receives `ui/notifications/tool-result` as
+`{content: [the links], structuredContent: null, _meta: {"canopy/withheld": true}}`
+and reads each link as its viewer. In an ordinary conversation the tool result
+reaches the View as it always did, links included. A link is kept only when it is a
+well-formed `resource_link` (at most 20, URI ≤ 2048 characters, name ≤ 200) under a
+**URI scheme your `site.json` declares** in `site.resource_schemes`; anything else
+is dropped. Declare your own scheme (`labs-result`), never `http(s)`, `data`, `ui`
+or `file`. canopy reads the declaration live from your signed document, with no
+owner step.
+
+**With the Python SDK** (`dimagi-canopy` ≥ 0.18) it is a line. Turn the helper on —
+`migrate` adds its table, and `canopy/site.json` declares the scheme for you:
+
+```python
+CANOPY_HOST = {...,
+    "ARTIFACTS": {"SCHEME": "labs-result", "TTL": 86400,          # a day
+                  "MAY_READ": "myapp.canopy.may_read"}}         # who besides the owner
+```
+
+```python
+import json
+from mcp.types import TextContent
+from canopy_sdk.django import artifacts
+from canopy_sdk.host.artifacts import summarize_rows
+
+@mcp.tool
+def data_query(sql: str):
+    columns, rows = run_query(sql)                          # as the visitor, under your ACL
+    link = artifacts.save("query", {"columns": columns, "rows": rows, "sql": sql},
+                          tool_call_id=request_id(), name="Visits by worker",
+                          description=f"{len(rows)} rows")
+    facts = {**summarize_rows(columns, rows, sample=5), "sql": sql}
+    return [TextContent(type="text", text=json.dumps(facts)), link]
+
+artifacts.mount_fastmcp(mcp)    # resources/read on labs-result://… as the reader
+```
+
+The artifact belongs to the subject the call ran as (the visitor's `sub`, from the
+SDK's DPoP gate); `resources/read` lets the owner read it, anyone your `MAY_READ`
+admits (a colleague on the same conversation), and nobody else, with a named refusal
+(`not_found`, `expired`, `forbidden`). A table pages through the URI
+(`labs-result://<id>?page=2&page_size=100`), never through the chat. Run
+`manage.py canopy_artifacts_sweep` on a schedule. Without FastMCP, answer
+`resources/read` for your scheme with `artifacts.resource_handler(uri)`. Every
+setting, the framework-free form and the read answer's `_meta`:
+[SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--artifacts).
+
+**Live updates.** A View may `resources/subscribe` to a link. canopy holds the
+subscription (its gateway's MCP sessions last one request), so your host tells canopy
+when an artifact changes: `artifacts.update(uri, payload)` does it, or
+`artifacts.notify_updated([uri])` for a change made elsewhere — a POST to
+`/api/sites/resources-updated` with a JWT signed by your site key (`typ`
+`canopy-resources-updated+jwt`, `iss` = `sub` = your Connected-site name, `aud` =
+that URL, 60 s, single-use `jti`, `uris`). canopy sends each subscribed View
+`notifications/resources/updated` — the URI, never data — and the View re-reads it
+as its viewer.
 
 ---
 

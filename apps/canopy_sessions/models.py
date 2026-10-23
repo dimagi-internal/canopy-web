@@ -889,3 +889,37 @@ class SessionWorkspacePreference(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"session-workspace-pref:{self.user_id}->{self.workspace_id}"
+
+
+class AppViewSubscription(models.Model):
+    """A rendered MCP Apps View asked to hear when a host resource changes
+    (`resources/subscribe`, spec 2026-10-23-host-held-results §3).
+
+    canopy holds it, not the host: canopy's gateway opens one short MCP session per
+    request, so no host-side subscription would outlive the call that made it. The
+    host tells canopy a URI changed with a request signed by its own key
+    (`POST /api/sites/resources-updated`, `canopy_sdk.resources`); canopy sends the
+    URI — never data — to every View subscribed to it on that site
+    (`mcp_apps_views.resources_updated`), and the View re-reads as its viewer.
+
+    Per View (session + tool call), not per person: the frame goes to the
+    conversation's socket and each viewer's View re-reads under its own grant.
+    Lapses after `SUBSCRIPTION_TTL` unless the View subscribes again.
+    """
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="app_subscriptions")
+    #: The Connected site whose resource it is: only that site's notification reaches it.
+    app = models.ForeignKey("tokens.AppCredential", on_delete=models.CASCADE, related_name="+")
+    tool_call_id = models.CharField(max_length=255)
+    uri = models.CharField(max_length=2048)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "app_view_subscriptions"
+        constraints = [models.UniqueConstraint(fields=["session", "tool_call_id", "uri"],
+                                               name="app_view_subscription_unique")]
+        indexes = [models.Index(fields=["app", "uri"], name="app_view_sub_app_uri")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"app-view-sub:{self.session_id}:{self.tool_call_id}:{self.uri[:60]}"

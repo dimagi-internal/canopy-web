@@ -169,6 +169,11 @@ EXCLUDED: dict[str, str] = {
     "app_view_read": _BROWSER,
     "app_view_context": _BROWSER,
     "app_view_message": _BROWSER,
+    "app_view_subscribe": _BROWSER,
+    "app_view_unsubscribe": _BROWSER,
+    # A connected site telling canopy its resources changed: signed by the site's own
+    # key, a host's door, never a person's or an agent's.
+    "resources_updated": _HOST,
 }
 
 def excluded_reason(path: str, method: str, operation: dict) -> str | None:

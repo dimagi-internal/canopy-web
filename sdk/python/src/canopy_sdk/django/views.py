@@ -147,7 +147,9 @@ def site_facts(request, config) -> dict:
     * ``jwks_url`` — ``CANOPY_HOST["JWKS_URL"]``, else the SDK's ``jwks.json``
       route on that origin;
     * ``issuer`` / ``mcp_resource`` — ``ISSUER`` / ``RESOURCE`` (blank while the
-      grant is off).
+      grant is off);
+    * ``resource_schemes`` — ``ARTIFACTS["SCHEME"]`` plus ``RESOURCE_SCHEMES``: the
+      schemes of the links this site's tools return, which canopy keeps.
     """
     overrides = conf.site_facts_overrides()
     base = _origin_of(config.issuer) or _origin_of(request.build_absolute_uri("/"))
@@ -160,7 +162,8 @@ def site_facts(request, config) -> dict:
             jwks_url = base + request.path.rsplit("/", 1)[0] + "/jwks.json"
     return {"origins": overrides["origins"] or ([base] if base else []), "jwks_url": jwks_url,
             "issuer": config.issuer if config.grant_enabled else "",
-            "mcp_resource": config.resource if config.grant_enabled else ""}
+            "mcp_resource": config.resource if config.grant_enabled else "",
+            "resource_schemes": conf.resource_schemes()}
 
 
 @require_GET

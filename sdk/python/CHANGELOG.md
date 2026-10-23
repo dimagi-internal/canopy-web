@@ -2,6 +2,36 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.18.0 — 2026-10-23
+
+**Host-held results** (spec `2026-10-23-host-held-results-design`): a tool returns facts
+for the model plus an MCP `resource_link` to an artifact the host keeps; canopy carries the
+link, never the data, and the person's View and the agent read it back as themselves.
+Additive: nothing a 0.17 host calls changes shape.
+
+- **`canopy_sdk.host.artifacts`**: `Artifacts(store, scheme=, ttl=, may_read=, on_read=,
+  notify=)` — `save(owner, kind, payload, *, tool_call_id, ttl, scheme, name, description)`
+  → a `resource_link` dict; `read(uri, reader)` → `Artifact` or `ArtifactRefused`
+  (`bad_uri`, `not_found`, `expired`, `forbidden`); `contents(uri, reader)` → the MCP
+  `resources/read` contents (JSON text, `_meta["canopy/artifact"]`, a table paged by
+  `?page=&page_size=`); `update(uri, payload)` (calls `notify`); `sweep()`; `template()`.
+  `MemoryArtifactStore`, the `ArtifactStore` protocol, `current_subject()` (the
+  `DPoPGate`'s delegated principal), `summarize_rows(columns, rows, sample=5)`, and
+  module-level `configure` / `save` / `read` / `contents` / `sweep`.
+- **`canopy_sdk.resources`**: the link (`resource_link`, `validate_link(s)`, `check_scheme`,
+  `RESERVED_SCHEMES`, bounds) and "it changed" (`updated_notification`,
+  `verify_updated_notification`, `notify_updated`, `UPDATED_PATH` =
+  `/api/sites/resources-updated`, typ `canopy-resources-updated+jwt`).
+- **`site.json`**: the `site` block gains `resource_schemes` (`SiteFacts.resource_schemes`).
+  canopy keeps a host's links only under a scheme it declares there, reading it live.
+- **Django**: model `Artifact` + migration `canopy_host.0002_artifact` (table
+  `canopy_host_artifact`); `canopy_sdk.django.artifacts` (`save`, `read`,
+  `resource_handler`, `template`, `mount_fastmcp`, `update`, `notify_updated`, `sweep`,
+  `DjangoArtifactStore`); `manage.py canopy_artifacts_sweep`; settings
+  `CANOPY_HOST["ARTIFACTS"]` (`SCHEME`, `TTL`, `MAY_READ`, `ON_READ`, `READER`, `NOTIFY`,
+  `EXTRA_SCHEMES`, `MIME_TYPE`) and `CANOPY_HOST["RESOURCE_SCHEMES"]`; `canopy/site.json`
+  declares them.
+
 ## 0.17.0 — 2026-10-23
 
 **Breaking: real data → sensitive data in `site.json`.** A site's concept is "this agent

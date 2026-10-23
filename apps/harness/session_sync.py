@@ -1359,7 +1359,7 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding) -> i
         # that does arrive twice collapses instead of doubling.
         event_payload = e.payload
         if withhold and e.kind in sensitivity.RESULT_KINDS:
-            event_payload = {**sensitivity.strip_result(e.payload), "text": ""}
+            event_payload = {**sensitivity.strip_result(e.payload, session=session), "text": ""}
         if e.kind == "user":
             author = authors_by_index.get(e.index)
             if author:

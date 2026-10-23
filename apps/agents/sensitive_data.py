@@ -6,8 +6,9 @@ A capability says `data: sensitive` on the published interface. That is accepted
 
 * **when it is structurally true** (`structural_refusals`, asked by
   `interface.parse`): the capability reaches its host through canopy's gateway
-  (`sites:` is required), and its tools may be only the gateway's site tools,
-  `current_page`, `who_is_asking` and read-only local tools — no shell, no
+  (`sites:` is required), and its tools may be only the gateway's site tools
+  (`site_tools`, `site_call`, `site_read`), `current_page`, `who_is_asking` and
+  read-only local tools — no shell, no
   writes, nothing that leaves the box (Drive, email, memory, Slack, the web).
   Anything else is a 422 naming it;
 * **from the agent's owner or an admin** (`publish_interface`), from the browser or
@@ -45,7 +46,8 @@ READ_ONLY_LOCAL = frozenset({"Read", "Grep", "Glob", "Skill", "ToolSearch", "Tod
 #: canopy's own tools such a capability may hold — and the ONLY canopy tools a
 #: sensitive turn's caller token reaches, whatever its interface says now
 #: (`harness.caller_tokens.resolve`, `mcp.turn_scope`).
-SENSITIVE_CANOPY_TOOLS = frozenset({"current_page", "who_is_asking", "site_tools", "site_call"})
+SENSITIVE_CANOPY_TOOLS = frozenset({"current_page", "who_is_asking", "site_tools", "site_call",
+                                    "site_read"})
 #: Those tools as interface patterns name them (any MCP server prefix ending in
 #: `canopy-web__`).
 _CANOPY_TOOL = re.compile(

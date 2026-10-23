@@ -730,5 +730,24 @@
         }
       }
     ]
+  },
+  {
+    "canopy": {
+      "event": "app.resource_updated",
+      "data": {
+        "tool_call_id": "toolu_01RESULTS",
+        "uri": "labs-result://Zk3aQ"
+      }
+    },
+    "agui": [
+      {
+        "type": "CUSTOM",
+        "name": "canopy.app.resource_updated",
+        "value": {
+          "tool_call_id": "toolu_01RESULTS",
+          "uri": "labs-result://Zk3aQ"
+        }
+      }
+    ]
   }
 ]

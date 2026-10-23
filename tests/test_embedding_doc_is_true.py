@@ -69,6 +69,7 @@ def test_a_site_is_set_up_only_through_the_audited_routes():
         "/api/embed/agents",
         "/embed/chat",
         "/embed/widget.js",
+        "/api/sites/resources-updated",
     ],
 )
 def test_documented_routes_resolve(doc, route):
@@ -514,7 +515,7 @@ def test_the_gateway_tools_the_doc_names_are_served():
 
     text = DOC.read_text()
     names = {t.name for t in asyncio.run(mcp._list_tools())}
-    for tool in ("site_tools", "site_call"):
+    for tool in ("site_tools", "site_call", "site_read"):
         assert tool in text and tool in names
     # The retired canopy-minted assertion is gone from the server and the doc's
     # instructions (it may be named once, as history).

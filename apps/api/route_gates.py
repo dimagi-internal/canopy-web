@@ -220,6 +220,8 @@ HAND_TOOL_GATES: dict[str, tuple[tuple[str, ...], str]] = {
     # the visitor's live host grant (`apps/host_grants/host_gateway.py`).
     "site_tools": (("caller-token",), "read"),
     "site_call": (("caller-token",), "action"),
+    # `resources/read` at the visitor's site, same resolution as site_call.
+    "site_read": (("caller-token",), "read"),
     # The caller's own open pages (or, for a caller token, its own conversation's).
     "current_page": (("self", "caller-token"), "read"),
     # /ide close review: carries an MCP Apps View, which has no REST shape.

@@ -105,8 +105,12 @@ export {
 export { AppView } from "./mcpApps/AppView";
 export {
   AppHostContext,
+  appResourceUpdate,
+  createAppResourceUpdates,
   useAppHost,
   type AppHost,
+  type AppResourceListener,
+  type AppResourceUpdates,
   type AppRef,
   type AppReceipt,
   type AppViewResource,

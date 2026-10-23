@@ -461,8 +461,10 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
     content = []
     for block in result.content or []:
         text = getattr(block, "text", None)
+        # By alias: the MCP wire names (`mimeType`), which a `resource_link` the host
+        # returned must keep for the View and for `sensitivity.strip_result` to read.
         content.append({"type": "text", "text": text} if text is not None
-                       else block.model_dump(mode="json", exclude_none=True))
+                       else block.model_dump(mode="json", by_alias=True, exclude_none=True))
     return {"site": ctx.site, "tool": name, "is_error": bool(result.is_error),
             "content": content, "structured": result.structured_content}
 
@@ -502,12 +504,33 @@ async def view_call(ctx: SiteContext, name: str, arguments: dict, *, check) -> d
     return out
 
 
+async def read_resource(ctx: SiteContext, uri: str) -> dict:
+    """`resources/read` for the AGENT (`site_read`), as the visitor — the read twin of
+    `call_tool`, with the same resolution behind it (`resolve`: the conversation's
+    runner requirements, a capability naming the site, the visitor's live grant) and
+    this turn's `Canopy-Execution` statement on every request. The host's own ACL
+    decides what the visitor may read; the answer is returned, never kept or audited."""
+    uri = str(uri or "").strip()
+    if not uri or len(uri) > 2048 or ":" not in uri:
+        raise GatewayRefusal("bad_uri", "that is not a resource URI")
+    contents = await view_read(ctx, uri)
+    return {"site": ctx.site, "uri": uri, "contents": contents}
+
+
 async def view_read(ctx: SiteContext, uri: str) -> list[dict]:
     """`resources/read` as the viewer: each content as `{uri, mimeType, text|blob, _meta}`."""
+    from mcp.shared.exceptions import MCPError as McpError  # noqa: PLC0415 — as probe_call: the MCP client loads with a call
+
     await _check_target(ctx)
     try:
         async with _client(ctx) as client:
             contents = await client.read_resource(uri)
+    except McpError as exc:
+        # The host answered and said no (an artifact expired, not this person's):
+        # its sentence, never "did not answer".
+        detail = str(getattr(exc, "message", "") or getattr(getattr(exc, "error", None), "message", "")
+                     or exc)[:300]
+        raise GatewayRefusal("host_refused", f"{ctx.site} refused: {detail}") from None
     except Exception as exc:  # noqa: BLE001
         raise _unreachable(ctx, exc) from None
     return [c.model_dump(mode="json", by_alias=True, exclude_none=True) for c in contents or []]

@@ -175,7 +175,7 @@ def resolve(raw: str) -> Grant | None:
 
 
 def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | None:
-    """A sensitive turn's grant: at most the four tools a `data: sensitive`
+    """A sensitive turn's grant: at most the canopy tools a `data: sensitive`
     capability may hold (`sensitive_data.SENSITIVE_CANOPY_TOOLS`), and only while
     its capability still says `data: sensitive`. Asked on every call, so an
     interface edited mid-turn — the switch turned off, a tool added — narrows the

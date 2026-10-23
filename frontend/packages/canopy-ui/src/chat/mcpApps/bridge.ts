@@ -5,9 +5,16 @@
  * canopy frames a sandbox proxy (`/mcp-apps/sandbox/`, opaque origin); the proxy
  * frames the View and relays JSON-RPC both ways. This module is the host's end
  * of that wire: it answers the View's requests (`ui/initialize`, `tools/call`,
- * `resources/read`, `ui/open-link`, `ui/message`, `ui/update-model-context`,
+ * `resources/read`, `resources/subscribe`, `resources/unsubscribe`,
+ * `ui/open-link`, `ui/message`, `ui/update-model-context`,
  * `ui/request-display-mode`, `ping`) through callbacks that go to canopy's REST
- * routes, and sends the View its tool input and result.
+ * routes, sends the View its tool input and result, and relays the host's
+ * `notifications/resources/updated` for a resource the View subscribed to.
+ *
+ * **Host-held results.** In a sensitive conversation canopy keeps no tool
+ * result, only the host's `resource_link`s; the View still gets a tool result —
+ * `{content: [links], structuredContent: null, _meta: {"canopy/withheld": true}}`
+ * — passed through unchanged, and reads the links as the viewer.
  *
  * Why not `@modelcontextprotocol/ext-apps/app-bridge`: it peer-depends on
  * `@modelcontextprotocol/{client,core,server}` v2 and zod 4, and this file ships
@@ -31,14 +38,20 @@ export const PROTOCOL_VERSION = "2026-01-26";
 
 export interface CallToolResult {
   content: unknown[];
-  structuredContent?: Record<string, unknown>;
+  /** `null` in the links-only form a sensitive conversation hands a View. */
+  structuredContent?: Record<string, unknown> | null;
   isError?: boolean;
+  _meta?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface AppBridgeHandlers {
   callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
   readResource(uri: string): Promise<unknown>;
+  /** `resources/subscribe` / `resources/unsubscribe` from the View. Absent, the
+   *  View is told the host does not offer subscriptions. */
+  subscribeResource?(uri: string): Promise<void>;
+  unsubscribeResource?(uri: string): Promise<void>;
   updateModelContext(params: Record<string, unknown>): Promise<void>;
   sendMessage(text: string): Promise<void>;
   openLink(url: string): void;
@@ -92,6 +105,7 @@ export class AppBridge {
   private dataSent = false;
   private nextId = 1;
   private closed = false;
+  private readonly subscribed = new Set<string>();
 
   constructor(opts: AppBridgeOptions) {
     this.opts = opts;
@@ -109,9 +123,21 @@ export class AppBridge {
     };
     if (this.opts.canAct) {
       caps.serverTools = {};
-      caps.serverResources = {};
+      caps.serverResources = this.opts.handlers.subscribeResource ? { subscribe: true } : {};
     }
     return caps;
+  }
+
+  /** The URIs the View has subscribed to (and not unsubscribed from). */
+  subscriptions(): string[] {
+    return [...this.subscribed];
+  }
+
+  /** The host says a resource changed: tell the View, if it subscribed to it.
+   *  Carries the URI and nothing else; the View re-reads it as the viewer. */
+  notifyResourceUpdated(uri: string): void {
+    if (this.closed || !this.initialized || !this.subscribed.has(uri)) return;
+    this.post({ jsonrpc: "2.0", method: "notifications/resources/updated", params: { uri } });
   }
 
   /** Tell the View its host context changed (`displayMode`, dimensions…). */
@@ -257,6 +283,29 @@ export class AppBridge {
           }
           const uri = typeof params.uri === "string" ? params.uri : "";
           this.respond(id, await h.readResource(uri));
+          return;
+        }
+        case "resources/subscribe":
+        case "resources/unsubscribe": {
+          const subscribe = method === "resources/subscribe";
+          const handler = subscribe ? h.subscribeResource : h.unsubscribeResource;
+          if (!this.opts.canAct) {
+            this.fail(id, -32000, "You can't act from this view");
+            return;
+          }
+          if (!handler) {
+            this.fail(id, -32601, `Method not found: ${method}`);
+            return;
+          }
+          const uri = typeof params.uri === "string" ? params.uri : "";
+          if (!uri) {
+            this.fail(id, -32602, "uri is required");
+            return;
+          }
+          await handler(uri);
+          if (subscribe) this.subscribed.add(uri);
+          else this.subscribed.delete(uri);
+          this.respond(id, {});
           return;
         }
         case "ui/update-model-context":

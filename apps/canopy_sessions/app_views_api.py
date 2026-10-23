@@ -137,3 +137,24 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
         initiator=who.for_request(request, via=f"app_view:{ref['site']}"),
     )
     return {"turn_id": str(turn.id) if turn else None, "message_id": str(message.id)}
+
+
+@router.post("/{session_id}/apps/{tool_call_id}/subscribe", response=dict,
+             summary="An app view's resources/subscribe: hear when a host resource changes")
+# canopy holds the subscription (apps/mcp_apps_host/mcp_apps_views.py `subscribe`); the
+# host's signed POST /api/sites/resources-updated reaches the View as the socket frame
+# `app.resource_updated` — a URI, never data.
+@gate("session-acl", kind="conversation")  # the viewer's own host grant
+def app_view_subscribe(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str,
+                       payload: AppReadIn):
+    session = _session(request, session_id)
+    return _run(views.subscribe, session, _viewer(request), tool_call_id, payload.uri)
+
+
+@router.post("/{session_id}/apps/{tool_call_id}/unsubscribe", response=dict,
+             summary="An app view's resources/unsubscribe")
+@gate("session-acl", kind="conversation")  # idempotent; the session ACL alone
+def app_view_unsubscribe(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str,
+                         payload: AppReadIn):
+    session = _session(request, session_id)
+    return _run(views.unsubscribe, session, _viewer(request), tool_call_id, payload.uri)
