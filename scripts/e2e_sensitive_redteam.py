@@ -144,7 +144,7 @@ class Run:
     def step_declaration(self) -> str:
         iface = self.api.get(f"/agents/{self.args.agent}/interface")["interface"]
         cap = (iface.get("capabilities") or {}).get(self.args.capability) or {}
-        if cap.get("data") != "phi":
+        if cap.get("data") != "sensitive":
             raise Failure(f"{self.args.agent}.{self.args.capability} is not declared `data: sensitive` "
                           f"(declare it on the agent's settings, behind a passkey): {cap}")
         bad = [t for t in cap.get("tools") or []
@@ -355,7 +355,7 @@ def main() -> int:
     p.add_argument("--workspace", required=True)
     p.add_argument("--agent", default="labsdata")
     p.add_argument("--capability", default="data")
-    p.add_argument("--zdr-runner", default="cloud-zdr-1")
+    p.add_argument("--sensitive-runner", default="cloud-zdr-1")
     p.add_argument("--probe-agent", default="", help="a ordinary agent you administer")
     p.add_argument("--session", default="", help="a sensitive conversation opened from Labs")
     p.add_argument("--other-runner", default="", help="a non-sensitive-data runner id")
