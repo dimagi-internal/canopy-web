@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import {
   addRunnerCredential,
   addRunnerLogin,
+  addVaultedRunnerCredential,
+  createRunnerVault,
   getRunnerCredentialStatus,
   orderRunnerCredentials,
   removeRunnerCredential,
@@ -10,6 +12,16 @@ import {
   type CredentialStatus,
   type RunnerCredentialEntry,
 } from '@/api/harness'
+import { getKeyset, getWorkspaceVaultZk } from '@/api/vault'
+import {
+  grantWorkspaceVaultPending,
+  makeWorkspaceVaultKey,
+  sealWorkspaceVaultValue,
+  stepUpAndUnlock,
+  unlockVaultKey,
+  type Unlocked,
+} from '@/vault/operations'
+import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { RunnerReauth } from './RunnerReauth'
 
 export type { CredentialStatus }
@@ -129,6 +141,12 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
   const [dragging, setDragging] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const alive = useRef(true)
+  const unlocker = useUnlockPrompt()
+  // One passkey touch both steps up and opens my vault key; a passphrase otherwise.
+  const unlock = async (): Promise<Unlocked> => {
+    const ks = await getKeyset()
+    return (await stepUpAndUnlock(ks).catch(() => null)) ?? unlockVaultKey(unlocker.prompt, ks)
+  }
 
   const load = useCallback(async () => {
     try {
@@ -169,6 +187,22 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
   const entries = status?.credentials ?? []
   const keys = entries.map((e) => e.key)
   const warning = status ? credentialWarning(status, signedIn) : null
+  // A vault with a key: a pasted value is sealed into it in this browser, never sent.
+  const openVault = (status?.vaults ?? []).find((v) => v.kv > 0) ?? null
+
+  /** Run a vault step, then reload the list. */
+  const inVault = async (fn: () => Promise<unknown>, fallback: string) =>
+    write(async () => { await fn(); return getRunnerCredentialStatus(runnerId) }, fallback)
+  const addKey = (value: string, name: string) => openVault
+    ? inVault(async () => {
+      const entry = await addVaultedRunnerCredential(runnerId, 'api_key', name)
+      await sealWorkspaceVaultValue(entry.vault_id, entry.secret_name, value, await unlock())
+    }, 'Failed to seal the key into the vault')
+    : write(() => addRunnerCredential(runnerId, 'api_key', value, name), 'Failed to add the key')
+  const replaceKey = (e: RunnerCredentialEntry, value: string) => openVault
+    ? inVault(async () => sealWorkspaceVaultValue(openVault.vault_id, e.vault_secret, value, await unlock()),
+      'Failed to seal the key into the vault')
+    : write(() => updateRunnerCredential(runnerId, e.key, { value }), 'Failed to save')
 
   const reorder = (key: string, to: number) => {
     const next = moved(keys, key, to)
@@ -204,6 +238,17 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
         <p className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[12px] text-warning" data-testid="runner-credentials-warning">
           ⚠ {warning}
         </p>
+      )}
+
+      {!apiKeysOnly && status && (
+        <RunnerVaultRow
+          runnerId={runnerId}
+          vaults={status.vaults ?? []}
+          busy={busy}
+          run={inVault}
+          create={() => createRunnerVault(runnerId)}
+          unlock={unlock}
+        />
       )}
 
       <p className="text-[11px] text-foreground-subtle">
@@ -282,6 +327,10 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
                   >
                     {KIND_LABEL[e.kind]}
                   </span>
+                  {e.in_vault && (
+                    <span className="text-[11px] text-foreground-subtle" title="Sealed in the runner's vault: only the box's own key opens it"
+                      data-testid={`cred-in-vault-${e.key}`}>vault</span>
+                  )}
                   {e.kind === 'login' ? (
                     <span className="truncate" data-testid={`cred-account-${e.key}`}>
                       {e.signed_in ? (e.account || 'signed in') : e.account ? `${e.account} (signed out)` : 'not signed in yet'}
@@ -320,8 +369,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
                   <RunnerReauth runnerId={runnerId} slot="token" loginKey={e.key} isSet onSignedIn={load} />
                 )}
                 {e.kind === 'api_key' && (
-                  <ReplaceKey disabled={busy} entryKey={e.key}
-                    onSave={(value) => write(() => updateRunnerCredential(runnerId, e.key, { value }), 'Failed to save')} />
+                  <ReplaceKey disabled={busy} entryKey={e.key} onSave={(value) => replaceKey(e, value)} />
                 )}
               </li>
             )
@@ -362,7 +410,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
           disabled={busy}
           onCancel={() => setAdding(null)}
           onSave={async (value, name) => {
-            if (await write(() => addRunnerCredential(runnerId, 'api_key', value, name), 'Failed to add the key')) {
+            if (await addKey(value, name)) {
               setAdding(null)
               return true
             }
@@ -376,6 +424,72 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
       <p className="text-[11px] text-foreground-subtle">
         Tokens and keys are write-only: this page shows whether one is set, never what it is.
       </p>
+      {unlocker.element}
+    </div>
+  )
+}
+
+/** Where the runner's tokens and keys are kept. In its own vault, a token is sealed with
+ *  a key only this box and the vault's people hold; canopy-web keeps ciphertext. Its
+ *  owner makes the key here, once, with a passkey touch, and lets new boxes in. */
+function RunnerVaultRow({ runnerId, vaults, busy, run, create, unlock }: {
+  runnerId: string
+  vaults: NonNullable<CredentialStatus['vaults']>
+  busy: boolean
+  run: (fn: () => Promise<unknown>, fallback: string) => Promise<boolean>
+  create: () => Promise<unknown>
+  unlock: () => Promise<Unlocked>
+}): JSX.Element {
+  const vault = vaults[0] ?? null
+  const [waiting, setWaiting] = useState(0)
+
+  useEffect(() => {
+    let live = true
+    if (vault && vault.kv > 0) {
+      // Who is waiting for a copy of the key (a new box, someone just added). Only a
+      // manager of the vault can see it, and only a manager could grant it.
+      getWorkspaceVaultZk(vault.vault_id)
+        .then((z) => { if (live) setWaiting(z.pending.length) })
+        .catch(() => { if (live) setWaiting(0) })
+    }
+    return () => { live = false }
+  }, [vault, runnerId])
+
+  if (!vault) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2 text-[12px]"
+        data-testid="runner-vault-none">
+        <span className="text-muted-foreground">Tokens and keys are kept by canopy. Keep them in a vault only this runner can open instead.</span>
+        <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-create"
+          onClick={() => void run(create, 'Failed to make the vault')}>Keep them in a vault</button>
+      </div>
+    )
+  }
+  if (vault.kv === 0) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[12px]"
+        data-testid="runner-vault-no-key">
+        <span className="text-foreground">{vault.name} has no key yet. Your passkey makes it: a copy for you and one for this runner.</span>
+        <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-make-key"
+          onClick={() => void run(async () => makeWorkspaceVaultKey(vault.vault_id, await unlock()),
+            'Failed to make the vault’s key')}>Make its key</button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="runner-vault">
+      <span className="text-success">●</span>
+      <span className="text-foreground">{vault.name}</span>
+      <span className="text-[11px] text-foreground-subtle">opened only by this runner&rsquo;s own key</span>
+      {waiting > 0 && (
+        <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-grant"
+          onClick={() => void run(async () => {
+            await grantWorkspaceVaultPending(vault.vault_id, await unlock())
+            setWaiting(0)
+          }, 'Failed to give out the vault’s key')}>
+          Give {waiting === 1 ? 'the one waiting' : `the ${waiting} waiting`} a copy
+        </button>
+      )}
     </div>
   )
 }

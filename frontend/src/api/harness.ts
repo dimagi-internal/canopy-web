@@ -187,6 +187,29 @@ export async function addRunnerLogin(runnerId: string): Promise<CredentialStatus
   return unwrap(res, 'addRunnerLogin') as unknown as CredentialStatus
 }
 
+export type RunnerVault = components['schemas']['RunnerVaultOut']
+export type RunnerVaultEntry = components['schemas']['RunnerVaultEntryOut']
+
+/** The runner's own vault for its Claude credentials (made and attached; the one it has, if any). */
+export async function createRunnerVault(runnerId: string): Promise<RunnerVault> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/vault', {
+    params: { path: { runner_id: runnerId } },
+  })
+  return unwrap(res, 'createRunnerVault') as unknown as RunnerVault
+}
+
+/** A token or API key whose value the caller seals into the runner's vault: the entry
+ *  comes back with the name to seal it under, and holds no value on canopy-web. */
+export async function addVaultedRunnerCredential(
+  runnerId: string, kind: 'token' | 'api_key', name = '',
+): Promise<RunnerVaultEntry> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/vault/entries', {
+    params: { path: { runner_id: runnerId } },
+    body: { kind, name },
+  })
+  return unwrap(res, 'addVaultedRunnerCredential') as unknown as RunnerVaultEntry
+}
+
 /** Add a pasted token or API key at the end of the runner's list. */
 export async function addRunnerCredential(
   runnerId: string, kind: 'token' | 'api_key', value: string, name = '',

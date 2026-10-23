@@ -6319,17 +6319,96 @@ def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dic
     return values
 
 
+#: Whether the runner's last bundle said it has a vault with a key (`vault_open`): a
+#: token this box signs in is then sealed there rather than sent to canopy-web.
+_VAULT_STATE: dict = {"open": False}
+#: When this box last tried to seal its stored values into the vault, and for which
+#: bundle — so a box still waiting for its copy of the key does not ask every re-read.
+_SEAL_TRIED: dict = {"stamp": None, "at": 0.0}
+
+
+def _run_seal_cli(runner_id: str, values: dict) -> dict:
+    """`canopy vault runner-seal`, as this box: the values go in on stdin, never argv."""
+    env = _child_safe_env()
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    res = subprocess.run([_canopy_cli(), "vault", "runner-seal", "--runner", runner_id],
+                         input=json.dumps(values), env=env, capture_output=True, text=True, timeout=120)
+    lines = (res.stdout or "").strip().splitlines()
+    doc = json.loads(lines[-1]) if res.returncode == 0 and lines else None
+    if not isinstance(doc, dict) or not isinstance(doc.get("names"), list):
+        raise RuntimeError(" ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}")
+    return doc
+
+
+def _seal_stored(runner_id: str, cred: dict, now: float | None = None) -> None:
+    """Move what canopy-web still keeps for this runner into its vault: each entry the
+    bundle marks `seal_as` (a value here, while the runner has a vault with a key) is
+    sealed in by this box, and canopy-web drops its copy. Once per bundle, and at most
+    hourly while it cannot (no copy of the key yet) — never a failed box."""
+    pending = {str(e["seal_as"]): str(e["value"]) for e in cred.get("cascade") or []
+               if isinstance(e, dict) and e.get("seal_as") and e.get("value")}
+    if not pending:
+        return
+    now = time.time() if now is None else now
+    stamp = (str(cred.get("updated_at") or ""), tuple(sorted(pending)))
+    if _SEAL_TRIED["stamp"] == stamp and now - _SEAL_TRIED["at"] < VAULT_REREAD_SECONDS:
+        return
+    _SEAL_TRIED.update(stamp=stamp, at=now)
+    try:
+        doc = _run_seal_cli(runner_id, pending)
+    except Exception as exc:  # noqa: BLE001 — the stored copy keeps serving
+        _set_check("claude.vault", "warn", f"could not seal {len(pending)} credential(s) into this "
+                   f"runner's vault yet ({exc}); the stored copy keeps serving")
+        _log(f"warn: could not seal {len(pending)} credential(s) into the vault ({exc})")
+        return
+    _log(f"sealed {len(doc['names'])} credential(s) into this runner's vault; canopy-web dropped its copy")
+
+
+def _seal_minted(runner_id: str, mint: dict, token: str, mint_id: str) -> bool:
+    """A setup-token this box just minted, sealed into the runner's vault so canopy-web
+    never sees it: the entry is named first (the sign-in's own, else a new key this box
+    chooses), then filled. False — send it the old way — when the runner has no vault
+    with a key, or canopy-web will not take the entry. Once the entry exists the token
+    is never lost: a seal that fails stores it on that entry instead."""
+    if not _VAULT_STATE["open"]:
+        return False
+    key = str(mint.get("login_key") or "") or secrets.token_hex(4)
+    status, _ = _api("POST", f"/runners/{runner_id}/mint/result", {"vault_key": key})
+    if status != 200:
+        _log(f"mint {mint_id[:8]}: canopy-web did not take a vault entry ({status}); sending the token")
+        return False
+    name = f"{_VAULT_PREFIX['token']}{key}"
+    try:
+        _run_seal_cli(runner_id, {name: token})
+        _log(f"mint {mint_id[:8]}: signed in; new token sealed into the runner's vault "
+             f"(format {token[:12]}…, {len(token)} chars)")
+    except Exception as exc:  # noqa: BLE001 — keep the credential whatever happens
+        _log(f"mint {mint_id[:8]}: could not seal the new token ({exc}); storing it on its entry")
+        _api("PATCH", f"/runners/{runner_id}/credentials/{key}", {"value": token})
+    if _reload_claude_credentials():
+        _log("picked up the freshly minted credential")
+    return True
+
+
+#: The vault secret a list entry's value lives under, by kind (canopy-web's
+#: `RunnerLogin.vault_secret_name`).
+_VAULT_PREFIX = {"token": "claude-token:", "api_key": "anthropic-api-key:"}
+
+
 def _with_vault_values(runner_id: str, cred):
     """`cred` with every cascade entry that names a vault secret given the value opened
     from the vault. An entry the vault did not open keeps the bundle's own `value` (the
     stored copy, while there is one) — never a failed box."""
     if not isinstance(cred, dict) or not isinstance(cred.get("cascade"), list):
         return cred
+    _VAULT_STATE["open"] = bool(cred.get("vault_open"))
+    _seal_stored(runner_id, cred)
     names = sorted({str(e.get("vault_secret")) for e in cred["cascade"]
                     if isinstance(e, dict) and e.get("vault_secret")})
     if not names:
-        with _HEALTH_LOCK:
-            _HEALTH.pop("claude.vault", None)
+        if not any(isinstance(e, dict) and e.get("seal_as") for e in cred["cascade"]):
+            with _HEALTH_LOCK:
+                _HEALTH.pop("claude.vault", None)
         return cred
     values = _vault_values(runner_id, (str(cred.get("updated_at") or ""), tuple(names)))
     return {**cred, "cascade": [
@@ -7882,6 +7961,8 @@ def _drain_mint(runner_id: str) -> None:
                                     "this runner read back from it, so it was not saved. "
                                     "That is a bug in the runner, not anything you did. "
                                     f"Claude said: {check['detail'] or 'not logged in'}"[:900]})
+                    return
+                if _seal_minted(runner_id, mint, token, mint_id):
                     return
                 # The token goes straight to canopy-web, which writes it into the
                 # encrypted bundle — it never touches the browser, so the only

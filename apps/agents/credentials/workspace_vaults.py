@@ -418,6 +418,20 @@ def set_values(vault: Vault, *, kv: int, values: list, user) -> list[str]:
     return sorted(vals)
 
 
+def set_runner_values(vault: Vault, *, kv: int, values: dict[str, str], user) -> list[str]:
+    """`set_values` for a box writing its own credentials (`runners.store_vault_values`
+    decides which names it may): the same lock, key-version check and `zk1:` shape."""
+    with transaction.atomic():
+        vault = _locked(vault)
+        if not vault.kv:
+            raise ZkError(409, "zk_no_vault_key", f"{vault.name} has no vault key yet")
+        if kv != vault.kv:
+            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {vault.kv}, not {kv}")
+        vals = {name: check_value_zk(value, name) for name, value in values.items()}
+        _write(vault, vals, kv, user)
+    return sorted(vals)
+
+
 def add_wraps(vault: Vault, *, kv: int, wraps: list, user, only_new: bool = False) -> int:
     """`zk.add_wraps` for a workspace vault, `only_new` included."""
     with transaction.atomic():

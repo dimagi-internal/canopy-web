@@ -1353,6 +1353,39 @@ class RunnerCredentialAddIn(Schema):
     name: str = Field(default="", max_length=200)
 
 
+class RunnerVaultEntryIn(Schema):
+    """A token or API key whose value goes into the runner's vault: the entry is made
+    here with no value, and the caller seals the value under `secret_name`."""
+
+    kind: Literal["token", "api_key"]
+    name: str = Field(default="", max_length=200)
+
+
+class RunnerVaultEntryOut(Schema):
+    key: str
+    #: The name to seal the value under, in `vault_id`, at key version `kv`.
+    secret_name: str
+    vault_id: str
+    kv: int
+
+
+class RunnerVaultValueIn(Schema):
+    name: str = Field(max_length=120)
+    value_zk: str = Field(max_length=20000)
+
+
+class RunnerVaultValuesIn(Schema):
+    """The box's own write: `zk1:` ciphertext for names its credential list uses."""
+
+    vault_id: str
+    kv: int
+    values: list[RunnerVaultValueIn] = Field(max_length=50)
+
+
+class RunnerVaultValuesOut(Schema):
+    names: list[str] = []
+
+
 class RunnerCredentialPatchIn(Schema):
     """A new value and/or name for one token or API key. None leaves it unchanged."""
 
@@ -1371,6 +1404,9 @@ class RunnerCascadeItem(Schema):
     #: box reads it from there (`…/credential/resolve`, with its device key) and uses
     #: `value` only when it cannot.
     vault_secret: str = ""
+    #: A value still kept here while the runner has a vault with a key: the name the
+    #: box seals it in under (`PUT …/vault/values`), after which the copy here goes.
+    seal_as: str = ""
 
 
 class RunnerLoginRef(Schema):
@@ -1392,6 +1428,9 @@ class RunnerCredentialOut(Schema):
     #: Every credential, in the order the box uses them. The fields above are
     #: what a box from before the list reads.
     cascade: list[RunnerCascadeItem] = []
+    #: The runner has a vault with a key: a token the box signs in is sealed there
+    #: rather than sent here (`RunnerMintResultIn.vault_key`).
+    vault_open: bool = False
     updated_at: dt.datetime | None = None
 
 
@@ -1420,6 +1459,8 @@ class RunnerCredentialEntryOut(Schema):
     has_value: bool = False
     #: A token or API key: whether a vault serving this runner holds its value.
     in_vault: bool = False
+    #: A token or API key: the name its value has (or would have) in that vault.
+    vault_secret: str = ""
     reported_at: dt.datetime | None = None
 
 
@@ -1554,6 +1595,10 @@ class RunnerMintResultIn(Schema):
     logged_in: bool = False
     #: The account a `box` sign-in signed in as, read back off the box.
     account: str = Field(default="", max_length=254)
+    #: A `token` sign-in the box sealed into its own vault instead of sending: the
+    #: entry it fills (the sign-in's own, else a new key the box chose). The value
+    #: arrives by `PUT …/vault/values`; no `token` comes with it.
+    vault_key: str = Field(default="", max_length=8)
 
 
 class SignInRequestIn(Schema):

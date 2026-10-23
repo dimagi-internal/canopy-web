@@ -9,6 +9,8 @@ through a route only its own runner token, with a device proof, can reach.
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
@@ -241,3 +243,155 @@ def test_the_bundle_points_the_box_at_the_vault(fleet, sts):
     assert entries["t1"]["in_vault"] is True and entries["t1"]["has_value"] is True
     assert entries["t2"]["in_vault"] is False
     assert [v["name"] for v in status["vaults"]] == ["ec2-box Claude credentials"]
+
+
+# ── step 2: values go INTO the vault, never through canopy-web ────────────────
+
+ZK = "zk1:" + "A" * 60   # shape-valid ciphertext; canopy-web never opens it
+
+
+def _values_path(runner) -> str:
+    return f"/api/harness/runners/{runner.pk}/vault/values"
+
+
+def _box_put(fleet, body, *, token=None, iat=None):
+    """`iat`: a proof is single-use, so a second write in the same second needs its own."""
+    path = _values_path(fleet["runner"])
+    return Client().put(path, data=body, content_type="application/json",
+                        HTTP_AUTHORIZATION=f"Bearer {token or _runner_token(fleet['runner'])}",
+                        HTTP_X_CANOPY_AWS_PROOF=_proof(f"http://testserver{path}", iat=iat))
+
+
+def _open_vault(fleet, sts):
+    key = _box_key(fleet, sts)
+    v = _keyed(workspace_vaults.create_for_runner(fleet["runner"], by=fleet["user"]), key)
+    return key, v
+
+
+def test_the_box_seals_a_stored_value_into_its_vault_and_the_copy_here_goes(fleet, sts):
+    from apps.common.encryption import encrypt_secret
+    from apps.harness.models import RunnerCredential
+    _, v = _open_vault(fleet, sts)
+    entry = _token_entry(fleet["runner"])
+    RunnerLogin.objects.filter(pk=entry.pk).update(value_enc=encrypt_secret("sk-ant-oat01-old"))
+    before = RunnerCredential.objects.get_or_create(runner=fleet["runner"])[0].updated_at
+
+    res = _box_put(fleet, {"vault_id": str(v.pk), "kv": 1, "values": [{"name": "claude-token:t1", "value_zk": ZK}]})
+    assert res.status_code == 200, res.content
+    assert res.json()["names"] == ["claude-token:t1"]
+    assert VaultSecret.objects.get(vault=v, name="claude-token:t1").value_zk == ZK
+    entry.refresh_from_db()
+    assert entry.value_enc == "", "the vault holds it now; no copy is kept here"
+    assert RunnerCredential.objects.get(runner=fleet["runner"]).updated_at > before, "the box re-reads"
+
+
+def test_the_box_writes_only_names_on_its_own_list(fleet, sts):
+    _, v = _open_vault(fleet, sts)
+    _token_entry(fleet["runner"])
+    raw = _runner_token(fleet["runner"])
+    res = _box_put(fleet, {"vault_id": str(v.pk), "kv": 1, "values": [{"name": "gog-token", "value_zk": ZK}]},
+                   token=raw)
+    assert res.status_code == 422
+    stale = _box_put(fleet, {"vault_id": str(v.pk), "kv": 2, "values": [{"name": "claude-token:t1", "value_zk": ZK}]},
+                     token=raw, iat=time.time() - 5)
+    assert stale.status_code == 409 and stale.json()["error"] == "zk_kv_mismatch"
+
+
+def test_no_one_but_the_box_writes_its_vault_values(fleet, sts):
+    _, v = _open_vault(fleet, sts)
+    _token_entry(fleet["runner"])
+    res = _box_put(fleet, {"vault_id": str(v.pk), "kv": 1,
+                           "values": [{"name": "claude-token:t1", "value_zk": ZK}]}, token=_pat(fleet["user"]))
+    assert res.status_code == 403 and res.json()["error"] == "runner_only"
+    assert not VaultSecret.objects.filter(vault=v).exists()
+
+
+def test_a_pasted_token_is_an_entry_with_no_value_here(fleet, sts):
+    path = f"/api/harness/runners/{fleet['runner'].pk}/vault/entries"
+    workspace_vaults.create_for_runner(fleet["runner"], by=fleet["user"])
+    early = fleet["client"].post(path, data={"kind": "token", "name": "hal"}, content_type="application/json")
+    assert early.status_code == 422, "no vault key yet: nowhere to seal it"
+
+    _open_vault(fleet, sts)
+    res = fleet["client"].post(path, data={"kind": "token", "name": "hal"}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    body = res.json()
+    entry = RunnerLogin.objects.get(runner=fleet["runner"], key=body["key"])
+    assert entry.value_enc == "" and entry.name == "hal"
+    assert body["secret_name"] == f"claude-token:{entry.key}" and body["kv"] == 1
+
+
+def _mint(fleet, *, login_key=""):
+    from apps.harness.models import RunnerMint
+    return RunnerMint.objects.create(runner=fleet["runner"], slot=RunnerMint.TOKEN, login_key=login_key,
+                                     status=RunnerMint.COMPLETING, requested_by=fleet["user"])
+
+
+def test_a_sign_in_sealed_into_the_vault_sends_no_token(fleet, sts):
+    from apps.harness import runners as harness_runners
+    _open_vault(fleet, sts)
+    m = harness_runners.finish_runner_mint(_mint(fleet), vault_key="0a1b2c3d")
+    assert m.status == m.DONE and "vault" in m.detail
+    entry = RunnerLogin.objects.get(runner=fleet["runner"], key="0a1b2c3d")
+    assert entry.value_enc == "" and entry.kind == RunnerLogin.TOKEN
+
+    # A sign-in FOR an existing token keeps that entry; its value comes by the vault write.
+    _token_entry(fleet["runner"], key="t1")
+    harness_runners.finish_runner_mint(_mint(fleet, login_key="t1"), vault_key="t1")
+    assert RunnerLogin.objects.filter(runner=fleet["runner"], key="t1").count() == 1
+    with pytest.raises(harness_runners.CredentialRefused):
+        harness_runners.finish_runner_mint(_mint(fleet, login_key="t1"), vault_key="ffffffff")
+
+
+def test_removing_an_entry_removes_its_secret_unless_another_box_uses_it(fleet, sts):
+    from apps.harness import runners as harness_runners
+    _, v = _open_vault(fleet, sts)
+    for k in ("t1", "t2", "t3"):
+        _token_entry(fleet["runner"], key=k)
+        VaultSecret.objects.create(vault=v, name=f"claude-token:{k}", value_zk=ZK, kv=1)
+    second = _other_runner(fleet)
+    workspace_vaults.attach(v, runner=second, by=fleet["user"])
+    RunnerLogin.objects.create(runner=second, kind=RunnerLogin.TOKEN, key="t2", position=0)
+
+    assert harness_runners.remove_runner_credential(fleet["runner"], "t1")
+    assert harness_runners.remove_runner_credential(fleet["runner"], "t2")
+    names = set(VaultSecret.objects.filter(vault=v).values_list("name", flat=True))
+    assert names == {"claude-token:t2", "claude-token:t3"}, "t2 stays: the other box still lists it"
+
+
+def test_a_token_held_only_in_the_vault_counts_as_a_backup(fleet, sts):
+    from apps.harness import runners as harness_runners
+    _, v = _open_vault(fleet, sts)
+    _token_entry(fleet["runner"], key="t1")
+    VaultSecret.objects.create(vault=v, name="claude-token:t1", value_zk=ZK, kv=1)
+    with pytest.raises(harness_runners.CredentialRefused):
+        harness_runners.remove_runner_credential(fleet["runner"], "t1")
+
+
+def test_the_bundle_tells_the_box_what_to_seal(fleet, sts):
+    from apps.common.encryption import encrypt_secret
+    _, v = _open_vault(fleet, sts)
+    _token_entry(fleet["runner"], key="t1")
+    kept = _token_entry(fleet["runner"], key="t2")
+    VaultSecret.objects.create(vault=v, name="claude-token:t1", value_zk=ZK, kv=1)
+    RunnerLogin.objects.filter(pk=kept.pk).update(value_enc=encrypt_secret("plain"))
+    bundle = fleet["client"].get(f"/api/harness/runners/{fleet['runner'].pk}/credential").json()
+    by_key = {c["key"]: c for c in bundle["cascade"]}
+    assert bundle["vault_open"] is True
+    assert (by_key["t1"]["vault_secret"], by_key["t1"]["seal_as"]) == ("claude-token:t1", "")
+    assert (by_key["t2"]["vault_secret"], by_key["t2"]["seal_as"]) == ("", "claude-token:t2")
+
+
+def test_a_value_a_person_seals_drops_the_copy_kept_here(fleet, sts):
+    from apps.common.encryption import encrypt_secret
+    from apps.harness.models import RunnerCredential
+    _, v = _open_vault(fleet, sts)
+    entry = _token_entry(fleet["runner"], key="t1")
+    RunnerLogin.objects.filter(pk=entry.pk).update(value_enc=encrypt_secret("old"))
+    before = RunnerCredential.objects.get_or_create(runner=fleet["runner"])[0].updated_at
+    res = fleet["client"].put(f"/api/vaults/{v.pk}/zk/values", content_type="application/json",
+                              data={"kv": 1, "values": [{"name": "claude-token:t1", "value_zk": ZK}]})
+    assert res.status_code == 200, res.content
+    entry.refresh_from_db()
+    assert entry.value_enc == ""
+    assert RunnerCredential.objects.get(runner=fleet["runner"]).updated_at > before

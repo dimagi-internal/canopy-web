@@ -20,7 +20,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
 from apps.harness.models import Runner
-from apps.harness.runners import can_administer_runner
+from apps.harness.runners import can_administer_runner, vault_values_written
 from apps.passkeys import stepup
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
@@ -239,6 +239,9 @@ def set_workspace_vault_values(request: HttpRequest, vault_id: uuid.UUID, payloa
         names = workspace_vaults.set_values(v, kv=payload.kv, values=payload.values, user=request.user)
     except ZkError as exc:
         raise _problem(exc) from exc
+    # A runner's own credential, sealed here by a person: the copy canopy-web kept goes,
+    # and the box reads the vault again.
+    vault_values_written(v, names)
     return ZkValuesOut(kv=payload.kv, names=names)
 
 

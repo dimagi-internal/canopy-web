@@ -714,7 +714,10 @@ or stops working. Three kinds:
   only for what the vault did not open. What it opened is kept until the bundle
   changes or `VAULT_REREAD_SECONDS` (1 h) passes; the `claude.vault` check says how
   it went. The status view marks each entry `in_vault` and lists the runner's
-  `vaults`.
+  `vaults`. Once the runner has a vault with a key, the box seals in whatever
+  canopy-web still keeps (`seal_as`, once per bundle, hourly while it cannot) and
+  seals each token it signs in there instead of sending it; any failure falls back
+  to the stored copy, never a lost token.
 
 A token or key cannot say whose it is, so a person names it (`name`). The box
 reads the list as `cascade` on `GET …/credential`; the fixed-slot fields beside it

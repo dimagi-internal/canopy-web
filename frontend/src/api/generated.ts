@@ -8901,6 +8901,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/vault/values": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * The box seals its own credentials into its vault
+         * @description `{vault_id, kv, values: [{name, value_zk}]}` — `zk1:` ciphertext the box made with
+         *     its copy of the vault key, for names its credential list uses
+         *     (`claude-token:<key>`, `anthropic-api-key:<key>`), into a vault serving it. Each entry
+         *     filled drops its stored copy here. Only the box's own runner token with a device
+         *     proof of a key on this runner (as `…/credential/resolve`).
+         */
+        readonly put: operations["put_runner_vault_values"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault/entries": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Add a token or API key whose value is sealed into the runner's vault
+         * @description The entry, at the end of the list, with no value here: the caller (a browser
+         *     holding the vault's key) then seals the value under `secret_name` with
+         *     `PUT /api/vaults/{vault_id}/zk/values`. 422 when the runner has no vault with a key.
+         */
+        readonly post: operations["add_vaulted_runner_credential"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/vault": {
         readonly parameters: {
             readonly query?: never;
@@ -28872,6 +28918,11 @@ export interface components {
              * @default false
              */
             readonly in_vault: boolean;
+            /**
+             * Vault Secret
+             * @default
+             */
+            readonly vault_secret: string;
             /** Reported At */
             readonly reported_at?: string | null;
         };
@@ -28998,6 +29049,11 @@ export interface components {
              * @default
              */
             readonly vault_secret: string;
+            /**
+             * Seal As
+             * @default
+             */
+            readonly seal_as: string;
         };
         /**
          * RunnerCredentialOut
@@ -29029,6 +29085,11 @@ export interface components {
              * @default []
              */
             readonly cascade: readonly components["schemas"]["RunnerCascadeItem"][];
+            /**
+             * Vault Open
+             * @default false
+             */
+            readonly vault_open: boolean;
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -29171,6 +29232,61 @@ export interface components {
             readonly values?: {
                 readonly [key: string]: string;
             };
+        };
+        /** RunnerVaultValuesOut */
+        readonly RunnerVaultValuesOut: {
+            /**
+             * Names
+             * @default []
+             */
+            readonly names: readonly string[];
+        };
+        /** RunnerVaultValueIn */
+        readonly RunnerVaultValueIn: {
+            /** Name */
+            readonly name: string;
+            /** Value Zk */
+            readonly value_zk: string;
+        };
+        /**
+         * RunnerVaultValuesIn
+         * @description The box's own write: `zk1:` ciphertext for names its credential list uses.
+         */
+        readonly RunnerVaultValuesIn: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Values */
+            readonly values: readonly components["schemas"]["RunnerVaultValueIn"][];
+        };
+        /** RunnerVaultEntryOut */
+        readonly RunnerVaultEntryOut: {
+            /** Key */
+            readonly key: string;
+            /** Secret Name */
+            readonly secret_name: string;
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Kv */
+            readonly kv: number;
+        };
+        /**
+         * RunnerVaultEntryIn
+         * @description A token or API key whose value goes into the runner's vault: the entry is made
+         *     here with no value, and the caller seals the value under `secret_name`.
+         */
+        readonly RunnerVaultEntryIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "token" | "api_key";
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
         };
         /**
          * TurnGitHubTokenOut
@@ -29336,6 +29452,11 @@ export interface components {
              * @default
              */
             readonly account: string;
+            /**
+             * Vault Key
+             * @default
+             */
+            readonly vault_key: string;
         };
         /** SignInRequestOut */
         readonly SignInRequestOut: {
@@ -46662,6 +46783,58 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerCredentialResolveOut"];
+                };
+            };
+        };
+    };
+    readonly put_runner_vault_values: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerVaultValuesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerVaultValuesOut"];
+                };
+            };
+        };
+    };
+    readonly add_vaulted_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerVaultEntryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerVaultEntryOut"];
                 };
             };
         };
