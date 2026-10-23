@@ -1286,6 +1286,38 @@ class RunnerLogin(models.Model):
     def __str__(self) -> str:
         return f"login:{self.runner_id}:{self.key}"
 
+    #: The vault secret that holds a token's or API key's value, by kind. Derived
+    #: from `key`, so an entry and its secret can never name different things.
+    VAULT_SECRET_PREFIX = {TOKEN: "claude-token:", API_KEY: "anthropic-api-key:"}
+
+    @property
+    def vault_secret_name(self) -> str:
+        """The name its value has in a vault attached to the runner; "" for a login."""
+        prefix = self.VAULT_SECRET_PREFIX.get(self.kind)
+        return f"{prefix}{self.key}" if prefix else ""
+
+
+class RunnerCredentialRead(models.Model):
+    """One read of one of a runner's Claude credentials out of its vault — the read
+    log (`GET …/runners/{id}/credential/resolve`), one row per secret handed out, as
+    `AgentCredentialRead` is for an agent's. `name` is a plain string: deleting the
+    secret must not erase the record that it was read."""
+
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="credential_reads")
+    device_key = models.ForeignKey("RunnerDeviceKey", on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name="+")
+    vault = models.ForeignKey("agents.Vault", on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name="+")
+    name = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["runner", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.runner_id}:{self.name}@{self.created_at:%Y-%m-%d %H:%M}"
+
 
 class RunnerMint(models.Model):
     """One browser-driven re-authentication of a runner's Claude credential.

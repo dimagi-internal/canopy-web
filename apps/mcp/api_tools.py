@@ -110,6 +110,7 @@ EXCLUDED: dict[str, str] = {
     # Runner protocol.
     "pair_runner": _RUNNER,
     "get_runner_credential": _RUNNER,
+    "resolve_runner_credential": _RUNNER,
     "turn_github_token": _RUNNER,
     "turn_attachment_content": _RUNNER,
     "runner_github_readiness": _RUNNER,

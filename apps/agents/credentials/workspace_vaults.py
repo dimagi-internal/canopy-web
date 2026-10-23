@@ -13,7 +13,14 @@ for either with the same code, and a copy made for one can never open the other.
   workspace and below it. A turn reads every vault attached to its agent, layered under
   the agent's own vault (`layers_for`).
 * **Who may hold its key:** a member with a vault key of their own; a machine whose
-  person is a member AND that serves an agent the vault is attached to.
+  person is a member AND that serves an agent the vault is attached to — or that is a
+  RUNNER the vault is attached to, inside one isolation boundary (below).
+
+A vault attached to a cloud runner holds that box's own Claude credentials (spec
+2026-10-23-runner-claude-credentials-in-the-vault-design.md): the box opens it with its
+own device key, through `GET /api/harness/runners/{id}/credential/resolve`. Several
+runners may share one vault only inside one **isolation boundary** (`isolation_boundary`):
+the same owner, the same isolation unit, the same sensitive-data standing.
 """
 from __future__ import annotations
 
@@ -22,8 +29,9 @@ import uuid
 from django.db import transaction
 from django.db.models import Q
 
-from apps.harness import device_keys
-from apps.harness.models import RunnerDeviceKey
+from apps.harness import device_keys, runner_requirements
+from apps.harness.models import Runner, RunnerDeviceKey
+from apps.harness.runners import enrolled_roots
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import services as wsvc
 
@@ -53,19 +61,46 @@ def create(workspace, name: str, *, by) -> Vault:
     return v
 
 
-def attach(vault: Vault, *, agent: Agent | None = None, workspace=None, by=None) -> VaultAttachment:
-    """Serve one agent, or every agent in `workspace` and below. Neither may lie
-    outside the vault's own workspace tree below it."""
+def attach(vault: Vault, *, agent: Agent | None = None, workspace=None, runner: Runner | None = None,
+           by=None) -> VaultAttachment:
+    """Serve one agent, every agent in `workspace` and below, or one cloud runner. None
+    may lie outside the vault's own workspace tree below it, and a runner must share an
+    isolation boundary with every runner the vault already serves."""
     allowed = {vault.workspace_id} | wsvc.descendant_slugs({vault.workspace_id})
-    if (agent is None) == (workspace is None):
-        raise ZkError(422, "vault_bad_attachment", "attach to an agent or to a workspace, not both")
-    where = agent.workspace_id if agent is not None else workspace.slug
+    if sum(x is not None for x in (agent, workspace, runner)) != 1:
+        raise ZkError(422, "vault_bad_attachment", "attach to exactly one agent, workspace or runner")
+    if runner is not None:
+        _check_runner(vault, runner, allowed)
+        where = runner.workspace_id
+    else:
+        where = agent.workspace_id if agent is not None else workspace.slug
     if where not in allowed:
         raise ZkError(422, "vault_bad_attachment",
                       f"{where} is not {vault.workspace_id} or a workspace below it")
     row, _ = VaultAttachment.objects.get_or_create(vault=vault, agent=agent, workspace=workspace,
-                                                   defaults={"created_by": by})
+                                                   runner=runner, defaults={"created_by": by})
     return row
+
+
+def _check_runner_itself(runner: Runner) -> None:
+    if (runner.kind != Runner.CLOUD or runner.status == Runner.RETIRED or not runner.owner_id
+            or not runner.workspace_id):
+        raise ZkError(422, "vault_bad_attachment",
+                      f"{runner.name} is not a live cloud runner with an owner and a workspace; only "
+                      "those keep their Claude credentials in a vault")
+
+
+def _check_runner(vault: Vault, runner: Runner, allowed: set) -> None:
+    _check_runner_itself(runner)
+    if runner.workspace_id not in allowed:
+        raise ZkError(422, "vault_bad_attachment",
+                      f"{runner.name} lives in {runner.workspace_id}, not {vault.workspace_id} or below")
+    mine = isolation_boundary(runner)
+    for other in attached_runners(vault):
+        if other.pk != runner.pk and isolation_boundary(other) != mine:
+            raise ZkError(422, "vault_crosses_isolation",
+                          f"{runner.name} and {other.name} are not in one isolation boundary (same "
+                          "owner, same unit, same sensitive-data standing), so they cannot share a vault")
 
 
 def detach(vault: Vault, attachment_id: int) -> bool:
@@ -76,6 +111,72 @@ def detach(vault: Vault, attachment_id: int) -> bool:
 def attached_agents(vault: Vault) -> list[Agent]:
     """Every agent this vault serves (`vault_members.attached_agents`)."""
     return vault_members.attached_agents(vault)
+
+
+# ---- serving a runner -------------------------------------------------------------------
+
+def isolation_boundary(runner: Runner) -> tuple:
+    """What a runner may share a vault only inside: its owner, its isolation unit (an
+    agent unit's agent, a tree unit's root, or — a box that declares no unit — the trees
+    it is enrolled in, kept apart from declared units), and whether it is a sensitive-data
+    box. A box holds every value in every vault it opens, so two boxes share one only
+    when either could already have held the other's work."""
+    unit = runner.unit()
+    if unit.get("kind") == "agent":
+        where: tuple = ("agent", str(unit.get("slug") or ""))
+    elif unit.get("kind") == "tree":
+        where = ("tree", str(unit.get("root") or ""))
+    else:
+        where = ("box", tuple(enrolled_roots(runner)))
+    return (runner.owner_id, where, runner_requirements.is_sensitive_data_box(runner))
+
+
+def attached_runners(vault: Vault) -> list[Runner]:
+    """Every live runner this vault serves, oldest attachment first."""
+    return [a.runner for a in (VaultAttachment.objects.filter(vault=vault, runner__isnull=False)
+                               .exclude(runner__status=Runner.RETIRED)
+                               .select_related("runner").order_by("created_at", "pk"))]
+
+
+def serving_runners(vault: Vault) -> list[Runner]:
+    """The attached runners the vault actually serves: those still inside the boundary
+    of its FIRST attached runner. A box whose unit, owner or standing changed after it
+    was attached falls out until it is
+    detached or put back: its copy of the key is then handed out to nobody."""
+    runners = attached_runners(vault)
+    if not runners:
+        return []
+    first = isolation_boundary(runners[0])
+    return [r for r in runners if isolation_boundary(r) == first]
+
+
+def runner_vaults(runner: Runner) -> list[Vault]:
+    """The vaults that hold this runner's credentials and still serve it, oldest first."""
+    out = []
+    for a in (VaultAttachment.objects.filter(runner=runner, vault__kind=Vault.WORKSPACE)
+              .select_related("vault").order_by("created_at", "pk")):
+        if any(r.pk == runner.pk for r in serving_runners(a.vault)):
+            out.append(a.vault)
+    return out
+
+
+def runner_vault_name(runner: Runner) -> str:
+    return f"{runner.name} Claude credentials"
+
+
+def create_for_runner(runner: Runner, *, by) -> Vault:
+    """The runner's OWN vault (the default; sharing is a later, explicit attach): made in
+    the runner's workspace with the standard links, its owner a direct `manage` member,
+    and attached to it. Returns the vault it already has, if any."""
+    have = runner_vaults(runner)
+    if have:
+        return have[0]
+    _check_runner_itself(runner)
+    with transaction.atomic():
+        v = create(runner.workspace, runner_vault_name(runner), by=by)
+        vault_members.add_member(v, runner.owner, role=vault_members.MANAGE, by=by)
+        VaultAttachment.objects.create(vault=v, runner=runner, created_by=by)
+    return v
 
 
 def layers_for(agent: Agent) -> list[Vault]:
@@ -125,6 +226,9 @@ def eligible_device_keys(vault: Vault) -> list:
     served: set = set()
     for agent in attached_agents(vault):
         served |= set(device_keys.keys_for_agent(agent).values_list("pk", flat=True))
+    runners = serving_runners(vault)
+    if runners:
+        served |= set(RunnerDeviceKey.objects.filter(runner__in=runners).values_list("pk", flat=True))
     return list(RunnerDeviceKey.objects.filter(pk__in=served, status=RunnerDeviceKey.ACTIVE,
                                                ecdh_approved_at__isnull=False)
                 .exclude(ecdh_jkt="")
@@ -134,10 +238,12 @@ def eligible_device_keys(vault: Vault) -> list:
 
 def device_may_hold(vault: Vault, device_key) -> bool:
     """May this ONE machine hold the vault's key now? Its person is a member and its
-    runner serves an agent the vault is attached to — `eligible_device_keys`, asked of
-    one key instead of listing every runner."""
+    runner serves an agent the vault is attached to, or is a runner the vault serves —
+    `eligible_device_keys`, asked of one key instead of listing every runner."""
     if vault_members.person_of_device(device_key) not in vault_members.member_ids(vault):
         return False
+    if any(r.pk == device_key.runner_id for r in serving_runners(vault)):
+        return True
     return any(device_keys.runner_serves_agent(device_key.runner, a) for a in attached_agents(vault))
 
 
@@ -362,3 +468,31 @@ def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[di
                     "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
                     "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
     return out
+
+
+def runner_layers_payload(runner: Runner, device_key, wanted: set[str] | None) -> list[dict]:
+    """`layers_payload` for a runner's own read: each vault that holds `runner`'s
+    credentials, oldest first, with this device's copy of its key and its ciphertext
+    (only the names in `wanted`, when given). The same shape, so `canopy` opens it with
+    the code that opens an agent's layers."""
+    out = []
+    for v in runner_vaults(runner):
+        if not v.kv:
+            continue
+        mine = None
+        if device_key is not None and vault_members.person_of_device(device_key) in vault_members.member_ids(v):
+            mine = VaultKeyWrap.objects.filter(vault=v, kv=v.kv, kind="device", device_key=device_key).first()
+        qs = VaultSecret.objects.filter(vault=v)
+        if wanted is not None:
+            qs = qs.filter(name__in=sorted(wanted))
+        out.append({"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
+                    "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
+                    "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
+    return out
+
+
+def runner_secret_names(runner: Runner) -> set[str]:
+    """Every secret name a vault serving `runner` holds."""
+    vaults = [v.pk for v in runner_vaults(runner)]
+    return set(VaultSecret.objects.filter(vault_id__in=vaults).values_list("name", flat=True))
+
