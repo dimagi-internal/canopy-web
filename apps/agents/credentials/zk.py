@@ -36,7 +36,7 @@ from apps.harness.models import RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
 
 from .. import services
-from ..models import Agent, AgentCredential, AgentVaultWrap
+from ..models import Agent, AgentCredential, AgentVaultWrap, VaultKeyWrap
 from . import vault_alerts, vault_members
 
 ZK_PREFIX = "zk1:"
@@ -490,8 +490,6 @@ def forget_device_wraps(device_key) -> int:
     """A device's ECDH key changed: its wraps were to the old key (and bound to
     the old thumbprint), so they are useless — drop them; it shows as pending."""
 
-    from apps.agents.models import VaultKeyWrap
-
     deleted, _ = AgentVaultWrap.objects.filter(device_key=device_key).delete()
     more, _ = VaultKeyWrap.objects.filter(device_key=device_key).delete()
     return deleted + more
@@ -500,8 +498,6 @@ def forget_device_wraps(device_key) -> int:
 def forget_member_wraps(user) -> int:
     """A person replaced their vault key: wraps to the old one are useless — in
     agent vaults and workspace vaults alike, so each shows them as pending again."""
-    from apps.agents.models import VaultKeyWrap
-
     deleted, _ = AgentVaultWrap.objects.filter(kind="member", user=user).delete()
     more, _ = VaultKeyWrap.objects.filter(kind="member", user=user).delete()
     return deleted + more
