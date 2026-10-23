@@ -9,6 +9,7 @@ import {
   removeWorkspaceVaultMember,
   type WorkspaceVaultOut,
 } from '@/api/vault'
+import { Button } from 'canopy-ui/ui'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { runnerHref } from '@/lib/scopedLinks'
 import { VAULT_ROLE_LABEL } from '@/pages/agents/AgentVaultMembersSection'
@@ -92,10 +93,10 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
               machine waiting.
             </span>
             {manages && (
-              <button type="button" disabled={busy} className={buttonClass} data-testid="vault-make-key"
+              <Button type="button" size="sm" disabled={busy} data-testid="vault-make-key"
                 onClick={() => void run(async () => { await makeWorkspaceVaultKey(v.vault_id, await unlock()); reload() })}>
                 Make its key
-              </button>
+              </Button>
             )}
           </div>
         ) : (
@@ -103,14 +104,14 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
             <span className="text-success">●</span>
             <span className="text-foreground">Key version {v.kv}</span>
             {waiting > 0 && (
-              <button type="button" disabled={busy} className={buttonClass} data-testid="vault-grant"
+              <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-grant"
                 onClick={() => void run(async () => {
                   await grantWorkspaceVaultPending(v.vault_id, await unlock())
                   setWaiting(0)
                   reload()
                 })}>
                 Give {waiting === 1 ? 'the one waiting' : `the ${waiting} waiting`} a copy
-              </button>
+              </Button>
             )}
           </div>
         )}
