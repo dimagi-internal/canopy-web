@@ -8366,8 +8366,12 @@ export interface paths {
         readonly get?: never;
         readonly put?: never;
         /**
-         * Serve an agent, or every agent in a workspace and below, from a vault
-         * @description `{agent}` or `{workspace}` — the vault's own workspace or one below it.
+         * Serve an agent, every agent in a workspace and below, or a cloud runner from a vault
+         * @description `{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
+         *     a cloud runner whose Claude credentials the vault then holds. A runner needs the
+         *     caller to administer it too, and must share an isolation boundary with every runner
+         *     the vault already serves (422 `vault_crosses_isolation`). Attaching makes the box
+         *     eligible for a copy of the key; a holder still has to grant it one.
          */
         readonly post: operations["attach_workspace_vault"];
         readonly delete?: never;
@@ -8866,6 +8870,55 @@ export interface paths {
         readonly get: operations["get_runner_credential_status"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/credential/resolve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This runner's Claude credentials from its vault, as ciphertext (the box, with its device key)
+         * @description Each vault serving this runner, with THIS device's copy of its key (`wrap: null`
+         *     when it holds none) and the `zk1:` values the runner's credential list names
+         *     (`claude-token:<key>`, `anthropic-api-key:<key>`). Only the box's own runner token,
+         *     with a proof of an active device key on this runner, gets an answer: 403
+         *     `runner_only` for a person's token or session, 401 `device_proof_required` without
+         *     a proof. Every value handed out is logged.
+         */
+        readonly get: operations["resolve_runner_credential"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give a cloud runner its own vault for its Claude credentials
+         * @description The runner's own workspace vault (`<runner> Claude credentials`): its owner
+         *     manages it, the workspace's owners too, and it is attached to this runner — the box
+         *     becomes eligible for a copy of its key once someone makes the key on the vault's
+         *     page. Returns the vault the runner already has, if any. Sharing one vault between
+         *     boxes is an attach (`POST /api/vaults/{id}/attachments`, `{runner}`).
+         */
+        readonly post: operations["create_runner_vault"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -28452,6 +28505,10 @@ export interface components {
             readonly agent?: string | null;
             /** Workspace */
             readonly workspace?: string | null;
+            /** Runner */
+            readonly runner?: string | null;
+            /** Runner Name */
+            readonly runner_name?: string | null;
         };
         /** WorkspaceVaultOut */
         readonly WorkspaceVaultOut: {
@@ -28491,6 +28548,8 @@ export interface components {
             readonly agent?: string | null;
             /** Workspace */
             readonly workspace?: string | null;
+            /** Runner */
+            readonly runner?: string | null;
         };
         /** VaultKeeperAgentOut */
         readonly VaultKeeperAgentOut: {
@@ -28808,6 +28867,11 @@ export interface components {
              * @default false
              */
             readonly has_value: boolean;
+            /**
+             * In Vault
+             * @default false
+             */
+            readonly in_vault: boolean;
             /** Reported At */
             readonly reported_at?: string | null;
         };
@@ -28851,6 +28915,11 @@ export interface components {
              * @default []
              */
             readonly logins: readonly components["schemas"]["RunnerLoginOut"][];
+            /**
+             * Vaults
+             * @default []
+             */
+            readonly vaults: readonly components["schemas"]["RunnerVaultOut"][];
             /** Updated At */
             readonly updated_at?: string | null;
         };
@@ -28873,6 +28942,21 @@ export interface components {
             readonly signed_in: boolean;
             /** Reported At */
             readonly reported_at?: string | null;
+        };
+        /**
+         * RunnerVaultOut
+         * @description A vault that holds a runner's Claude credentials.
+         */
+        readonly RunnerVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
         };
         /**
          * RunnerCredentialIn
@@ -28909,6 +28993,11 @@ export interface components {
              * @default
              */
             readonly value: string;
+            /**
+             * Vault Secret
+             * @default
+             */
+            readonly vault_secret: string;
         };
         /**
          * RunnerCredentialOut
@@ -29044,6 +29133,44 @@ export interface components {
         readonly SlashCommandsIn: {
             /** Commands */
             readonly commands?: readonly components["schemas"]["SlashCommandIn"][];
+        };
+        /**
+         * RunnerCredentialResolveOut
+         * @description A runner's credentials, as ciphertext only its own device key opens: each vault
+         *     serving the runner with this device's copy of its key (`wrap: null` when it holds
+         *     none) and the values the runner's list names.
+         */
+        readonly RunnerCredentialResolveOut: {
+            /**
+             * Vaults
+             * @default []
+             */
+            readonly vaults: readonly components["schemas"]["RunnerVaultLayerOut"][];
+        };
+        /**
+         * RunnerVaultLayerOut
+         * @description One vault serving a runner, in the shape an agent's resolve gives its workspace
+         *     vault layers (`ResolveVaultLayerOut`), so `canopy` opens both with one function.
+         */
+        readonly RunnerVaultLayerOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Binding Id */
+            readonly binding_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Wrap */
+            readonly wrap?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Values */
+            readonly values?: {
+                readonly [key: string]: string;
+            };
         };
         /**
          * TurnGitHubTokenOut
@@ -46513,6 +46640,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
+                };
+            };
+        };
+    };
+    readonly resolve_runner_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialResolveOut"];
+                };
+            };
+        };
+    };
+    readonly create_runner_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerVaultOut"];
                 };
             };
         };

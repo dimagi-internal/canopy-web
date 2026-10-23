@@ -1367,6 +1367,10 @@ class RunnerCascadeItem(Schema):
     key: str
     kind: CredentialKind
     value: str = ""
+    #: The name its value has in a vault serving this runner, when one holds it: the
+    #: box reads it from there (`…/credential/resolve`, with its device key) and uses
+    #: `value` only when it cannot.
+    vault_secret: str = ""
 
 
 class RunnerLoginRef(Schema):
@@ -1414,6 +1418,8 @@ class RunnerCredentialEntryOut(Schema):
     signed_in: bool = False
     #: A token or API key: whether a value is held (never the value).
     has_value: bool = False
+    #: A token or API key: whether a vault serving this runner holds its value.
+    in_vault: bool = False
     reported_at: dt.datetime | None = None
 
 
@@ -1597,6 +1603,36 @@ class OpenSignInRequestOut(Schema):
     expires_at: dt.datetime
 
 
+class RunnerVaultLayerOut(Schema):
+    """One vault serving a runner, in the shape an agent's resolve gives its workspace
+    vault layers (`ResolveVaultLayerOut`), so `canopy` opens both with one function."""
+
+    vault_id: str
+    name: str
+    workspace: str
+    binding_id: str
+    kv: int
+    wrap: dict[str, Any] | None = None
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class RunnerVaultOut(Schema):
+    """A vault that holds a runner's Claude credentials."""
+
+    vault_id: str
+    name: str
+    #: Its key version; 0 = no key yet (someone has to make it on the vault's page).
+    kv: int = 0
+
+
+class RunnerCredentialResolveOut(Schema):
+    """A runner's credentials, as ciphertext only its own device key opens: each vault
+    serving the runner with this device's copy of its key (`wrap: null` when it holds
+    none) and the values the runner's list names."""
+
+    vaults: list[RunnerVaultLayerOut] = []
+
+
 class RunnerCredentialStatusOut(Schema):
     """Masked view — booleans, never values. The POST response + any UI."""
 
@@ -1610,6 +1646,8 @@ class RunnerCredentialStatusOut(Schema):
     claude_token_secondary_label: str = ""
     #: The full logins on the box, in the order it falls through them.
     logins: list[RunnerLoginOut] = []
+    #: The vaults that hold this runner's tokens and API keys, oldest first.
+    vaults: list[RunnerVaultOut] = []
     updated_at: dt.datetime | None = None
 
 

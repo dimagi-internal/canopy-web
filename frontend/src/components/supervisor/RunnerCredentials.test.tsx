@@ -27,7 +27,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/harness', () => api)
 
 function entry(over: Partial<RunnerCredentialEntry> & Pick<RunnerCredentialEntry, 'key' | 'kind'>): RunnerCredentialEntry {
-  return { name: '', account: '', signed_in: false, has_value: false, reported_at: null, ...over }
+  return { name: '', account: '', signed_in: false, has_value: false, in_vault: false, reported_at: null, ...over }
 }
 
 function status(credentials: RunnerCredentialEntry[]): CredentialStatus {
@@ -39,6 +39,7 @@ function status(credentials: RunnerCredentialEntry[]): CredentialStatus {
     claude_token_label: '',
     claude_token_secondary_label: '',
     logins: [],
+    vaults: [],
     updated_at: null,
   }
 }

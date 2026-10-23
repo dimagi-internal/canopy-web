@@ -19,15 +19,19 @@ from django.utils import timezone
 from ninja import Status
 from ninja.errors import HttpError
 
+from apps.agents.credentials import workspace_vaults
+from apps.agents.credentials.zk import ZkError
 from apps.agents.models import Agent
+from apps.agents.route_refusals import zk_problem
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
 from apps.canopy_sessions.models import Attachment, Session
 from apps.events import audit as events_audit
+from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, egress, routing, services
+from . import claim, egress, routing, runner_credential_resolve, services
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -64,6 +68,7 @@ from .schemas import (
     RunnerCredentialIn,
     RunnerCredentialOut,
     RunnerCredentialPatchIn,
+    RunnerCredentialResolveOut,
     RunnerCredentialStatusOut,
     RunnerDirectedIn,
     RunnerEgressIn,
@@ -85,6 +90,7 @@ from .schemas import (
     RunnerOnlyAgentsOut,
     RunnerOut,
     RunnerPrivateIn,
+    RunnerVaultOut,
     SendUpIn,
     SendUpOut,
     SignInRequestIn,
@@ -358,6 +364,42 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
     runner. Laptop/emdash runners never call this (they use ambient auth)."""
     runner = runner_or_404(request, runner_id)
     return RunnerCredentialOut(**harness_runners.get_runner_credential(runner))
+
+
+@router.get("/runners/{runner_id}/credential/resolve", response=RunnerCredentialResolveOut,
+            summary="This runner's Claude credentials from its vault, as ciphertext (the box, with its device key)")
+@gate("runner")  # + the box's own runner token and a device proof of a key on it
+def resolve_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialResolveOut:
+    """Each vault serving this runner, with THIS device's copy of its key (`wrap: null`
+    when it holds none) and the `zk1:` values the runner's credential list names
+    (`claude-token:<key>`, `anthropic-api-key:<key>`). Only the box's own runner token,
+    with a proof of an active device key on this runner, gets an answer: 403
+    `runner_only` for a person's token or session, 401 `device_proof_required` without
+    a proof. Every value handed out is logged."""
+    runner = runner_or_404(request, runner_id)
+    out = runner_credential_resolve.resolve(request, runner)
+    if isinstance(out, runner_credential_resolve.Refusal):
+        raise ProblemError(out.status, "Runner credentials", detail=out.detail, members={"error": out.code})
+    return RunnerCredentialResolveOut(vaults=out)
+
+
+@router.post("/runners/{runner_id}/vault", response=RunnerVaultOut,
+             summary="Give a cloud runner its own vault for its Claude credentials")
+@gate("runner-admin", setting=True)  # browser: + step-up; token allowed
+def create_runner_vault(request: HttpRequest, runner_id: uuid.UUID) -> RunnerVaultOut:
+    """The runner's own workspace vault (`<runner> Claude credentials`): its owner
+    manages it, the workspace's owners too, and it is attached to this runner — the box
+    becomes eligible for a copy of its key once someone makes the key on the vault's
+    page. Returns the vault the runner already has, if any. Sharing one vault between
+    boxes is an attach (`POST /api/vaults/{id}/attachments`, `{runner}`)."""
+    runner = runner_admin_or_404(request, runner_id)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    try:
+        v = workspace_vaults.create_for_runner(runner, by=request.user)
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
+    return RunnerVaultOut(vault_id=str(v.pk), name=v.name, kv=v.kv)
 
 
 @router.post("/runners/{runner_id}/turns/{turn_id}/github-token",

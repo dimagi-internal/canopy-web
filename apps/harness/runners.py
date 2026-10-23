@@ -242,27 +242,46 @@ def get_runner_credential(runner) -> dict:
     entries = list(_entries(runner))
     slots = _first_values(runner)
     cred = getattr(runner, "credential", None)
+    held = _vault_secret_names(runner)
     return {
         **{k: decrypt_secret(e.value_enc) if e is not None else "" for k, e in slots.items()},
         "logins": [{"key": e.key, "account": e.account}
                    for e in entries if e.kind == RunnerLogin.LOGIN],
         "cascade": [{"key": e.key, "kind": e.kind,
-                     "value": decrypt_secret(e.value_enc) if e.kind in VALUE_KINDS else ""}
+                     "value": decrypt_secret(e.value_enc) if e.kind in VALUE_KINDS and e.value_enc else "",
+                     "vault_secret": e.vault_secret_name if e.vault_secret_name in held else ""}
                     for e in entries],
         "updated_at": cred.updated_at if cred is not None else None,
     }
 
 
+def _vault_secret_names(runner) -> set[str]:
+    """Every secret name the vaults serving `runner` hold (spec 2026-10-23-runner-claude-
+    credentials-in-the-vault-design.md): a list entry whose value is among them is read
+    from there by the box, with its own device key."""
+    # cycle: agents.credentials.workspace_vaults imports this module (enrolled_roots)
+    from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — import cycle, above
+
+    return workspace_vaults.runner_secret_names(runner)
+
+
 def runner_credential_status(runner) -> dict:
     """Masked view — which credentials are held, never their values. Names are
     not secrets, so they ride along."""
+    from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — cycle: it imports this module
+
     entries = list(_entries(runner))
     slots = _first_values(runner)
     cred = getattr(runner, "credential", None)
+    vaults = workspace_vaults.runner_vaults(runner)
+    held = _vault_secret_names(runner) if vaults else set()
     return {
         "credentials": [{"key": e.key, "kind": e.kind, "name": e.name, "account": e.account,
-                         "signed_in": e.signed_in, "has_value": bool(e.value_enc),
+                         "signed_in": e.signed_in,
+                         "has_value": bool(e.value_enc) or e.vault_secret_name in held,
+                         "in_vault": bool(e.vault_secret_name) and e.vault_secret_name in held,
                          "reported_at": e.reported_at} for e in entries],
+        "vaults": [{"vault_id": str(v.pk), "name": v.name, "kv": v.kv} for v in vaults],
         "logins": [{"key": e.key, "account": e.account, "signed_in": e.signed_in,
                     "reported_at": e.reported_at} for e in entries if e.kind == RunnerLogin.LOGIN],
         "has_claude_token": slots["claude_token"] is not None,

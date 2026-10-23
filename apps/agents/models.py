@@ -840,15 +840,19 @@ class VaultKeyWrap(models.Model):
 
 
 class VaultAttachment(models.Model):
-    """Which agents a WORKSPACE vault serves: one agent, or every agent in a
-    workspace and below it (`workspace`, a subtree). A turn of an agent reads every
-    vault attached to it, layered under its own (`workspace_vaults.layered_for`)."""
+    """What a WORKSPACE vault serves: one agent, or every agent in a workspace and
+    below it (`workspace`, a subtree) — a turn of an agent reads every vault attached
+    to it, layered under its own (`workspace_vaults.layered_for`) — or one cloud
+    RUNNER, whose own Claude credentials it holds (`workspace_vaults.runner_layers`;
+    spec 2026-10-23-runner-claude-credentials-in-the-vault-design.md)."""
 
     vault = models.ForeignKey("Vault", on_delete=models.CASCADE, related_name="attachments")
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True,
                               related_name="vault_attachments")
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, null=True, blank=True,
                                   related_name="vault_attachments")
+    runner = models.ForeignKey("harness.Runner", on_delete=models.CASCADE, null=True, blank=True,
+                               related_name="vault_attachments")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -856,13 +860,17 @@ class VaultAttachment(models.Model):
     class Meta:
         ordering = ["vault_id", "created_at"]
         constraints = [
-            models.CheckConstraint(condition=(models.Q(agent__isnull=False, workspace__isnull=True)
-                                              | models.Q(agent__isnull=True, workspace__isnull=False)),
-                                   name="vault_attachment_one_target"),
+            models.CheckConstraint(
+                condition=(models.Q(agent__isnull=False, workspace__isnull=True, runner__isnull=True)
+                           | models.Q(agent__isnull=True, workspace__isnull=False, runner__isnull=True)
+                           | models.Q(agent__isnull=True, workspace__isnull=True, runner__isnull=False)),
+                name="vault_attachment_one_target"),
             models.UniqueConstraint(fields=["vault", "agent"], name="one_vault_attachment_per_agent",
                                     condition=models.Q(agent__isnull=False)),
             models.UniqueConstraint(fields=["vault", "workspace"], name="one_vault_attachment_per_subtree",
                                     condition=models.Q(workspace__isnull=False)),
+            models.UniqueConstraint(fields=["vault", "runner"], name="one_vault_attachment_per_runner",
+                                    condition=models.Q(runner__isnull=False)),
         ]
 
     def __str__(self) -> str:

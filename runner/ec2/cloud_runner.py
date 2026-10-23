@@ -6270,6 +6270,73 @@ def _login_keys(cred: dict | None) -> list[str]:
     return keys
 
 
+#: A token or API key whose value lives in a vault serving this runner (canopy-web spec
+#: 2026-10-23-runner-claude-credentials-in-the-vault-design.md) is read from there, with
+#: this box's own device key: `canopy vault runner-credentials` asks canopy-web for the
+#: ciphertext and opens it here. What it opened is kept until the bundle changes or an
+#: hour passes, so the five-minute bundle re-read is not a vault read (each is logged).
+VAULT_REREAD_SECONDS = int(os.environ.get("VAULT_REREAD_SECONDS", "3600"))
+_VAULT_VALUES: dict = {"stamp": None, "at": 0.0, "values": {}}
+
+
+def _run_vault_cli(runner_id: str) -> dict:
+    """`canopy vault runner-credentials`, as this box: `{values, vault_layers}`. Raises
+    with the CLI's own words when it cannot."""
+    env = _child_safe_env()
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    res = subprocess.run([_canopy_cli(), "vault", "runner-credentials", "--runner", runner_id,
+                          "--print-json"], env=env, capture_output=True, text=True, timeout=120)
+    lines = (res.stdout or "").strip().splitlines()
+    doc = json.loads(lines[-1]) if res.returncode == 0 and lines else None
+    if not isinstance(doc, dict) or not isinstance(doc.get("values"), dict):
+        raise RuntimeError(" ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}")
+    return doc
+
+
+def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dict:
+    """The values this box opened from its vault: cached while `stamp` (the bundle's
+    `updated_at` and the names it points at) is unchanged and younger than
+    VAULT_REREAD_SECONDS; the last good ones when a read fails."""
+    now = time.time() if now is None else now
+    if _VAULT_VALUES["stamp"] == stamp and now - _VAULT_VALUES["at"] < VAULT_REREAD_SECONDS:
+        return _VAULT_VALUES["values"]
+    try:
+        doc = _run_vault_cli(runner_id)
+    except Exception as exc:  # noqa: BLE001 — a vault hiccup must not take the box down
+        _set_check("claude.vault", "warn", f"could not open this runner's vault ({exc}); "
+                   "using the stored copy where there is one")
+        _log(f"warn: could not open this runner's vault ({exc})")
+        return _VAULT_VALUES["values"]
+    values = {str(k): str(v) for k, v in doc["values"].items()}
+    shut = [str(layer.get("vault")) for layer in doc.get("vault_layers") or []
+            if isinstance(layer, dict) and not layer.get("opened")]
+    _VAULT_VALUES.update(stamp=stamp, at=now, values=values)
+    if shut:
+        _set_check("claude.vault", "warn", f"{len(values)} credential(s) opened from the vault; this box "
+                   f"holds no copy of the key to {', '.join(shut)} — grant it on the vault's page")
+    else:
+        _set_check("claude.vault", "ok", f"{len(values)} credential(s) opened from the vault")
+    return values
+
+
+def _with_vault_values(runner_id: str, cred):
+    """`cred` with every cascade entry that names a vault secret given the value opened
+    from the vault. An entry the vault did not open keeps the bundle's own `value` (the
+    stored copy, while there is one) — never a failed box."""
+    if not isinstance(cred, dict) or not isinstance(cred.get("cascade"), list):
+        return cred
+    names = sorted({str(e.get("vault_secret")) for e in cred["cascade"]
+                    if isinstance(e, dict) and e.get("vault_secret")})
+    if not names:
+        with _HEALTH_LOCK:
+            _HEALTH.pop("claude.vault", None)
+        return cred
+    values = _vault_values(runner_id, (str(cred.get("updated_at") or ""), tuple(names)))
+    return {**cred, "cascade": [
+        {**e, "value": values[e["vault_secret"]]} if isinstance(e, dict) and e.get("vault_secret") in values
+        else e for e in cred["cascade"]]}
+
+
 def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
     """The ordered credential list, as a person set it on canopy-web (`cascade`):
     logins, tokens and API keys in any order. A login counts only once it is
@@ -7028,6 +7095,7 @@ def _reload_claude_credentials() -> bool:
     if status != 200 or not cred:
         return False
     _reconcile_logins(_CLAUDE_CRED_RUNNER_ID, cred)
+    cred = _with_vault_values(_CLAUDE_CRED_RUNNER_ID, cred)
     fresh = _cascade_from(cred)
     restaged = (cred.get("updated_at") or "") != _BUNDLE_STAMP["updated_at"]
     _BUNDLE_STAMP["updated_at"] = cred.get("updated_at") or ""
@@ -7084,6 +7152,7 @@ def fetch_and_stage_credential(runner_id: str) -> bool:
         status, cred = _api("GET", f"/runners/{runner_id}/credential")
         if status == 200:
             _reconcile_logins(runner_id, cred)
+            cred = _with_vault_values(runner_id, cred)
         if status == 200 and _cascade_from(cred):
             global _CLAUDE_CRED_RUNNER_ID
             _CLAUDE_CRED_RUNNER_ID = runner_id

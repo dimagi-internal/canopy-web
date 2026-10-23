@@ -707,6 +707,14 @@ or stops working. Three kinds:
   and is not stored.
 - **API key** — pasted, stored encrypted in `value_enc`. Billed per use: stepping
   onto one raises the coalesced `claude_api_key_fallback` alert.
+- **In a vault:** a token's or API key's value can live in a vault serving the
+  runner instead (`docs/architecture/vault.md` § A runner's own vault). The bundle
+  then names it (`cascade[].vault_secret`), and the box opens it with its own
+  device key (`canopy vault runner-credentials`), using the entry's stored `value`
+  only for what the vault did not open. What it opened is kept until the bundle
+  changes or `VAULT_REREAD_SECONDS` (1 h) passes; the `claude.vault` check says how
+  it went. The status view marks each entry `in_vault` and lists the runner's
+  `vaults`.
 
 A token or key cannot say whose it is, so a person names it (`name`). The box
 reads the list as `cascade` on `GET …/credential`; the fixed-slot fields beside it
