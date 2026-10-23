@@ -31,6 +31,7 @@ import { useMessageFork } from './chat/useMessageFork'
 import { useRunnerPlacement } from './chat/useRunnerPlacement'
 import { useSessionActions } from './chat/useSessionActions'
 import { useSessionMeta } from './chat/useSessionMeta'
+import { useSlashCommands } from './chat/useSlashCommands'
 import { useTranscriptPaging } from './chat/useTranscriptPaging'
 
 /**
@@ -114,6 +115,8 @@ export function ChatPage({
   const menuAnswer = useMenuAnswer(id, socket.state.menu, socket.state.activity)
   const { pendingAnswer, menuHidden, visibleMenu } = menuAnswer
   const actions = useSessionActions({ sessionId: id, meta, setMeta, onLeave, onTitleChange, editTitle })
+  const slashCommands = useSlashCommands(
+    id, `${meta?.runner_name ?? ''}|${socket.state.messages.length > 0}`)
 
   // Attach-on-open / detach-on-unmount. The server's attach counter floors at
   // 0 rather than going negative, so a detach that lands BEFORE its paired
@@ -417,6 +420,7 @@ export function ChatPage({
           appHost={appHost}
           // The agent asking for a secret: the zero-knowledge seal card.
           secretRequestHost={secretRequestHost}
+          slashCommands={slashCommands}
           emptyState={emptyState}
           historySlot={historySlot}
           // Refuse the send outright rather than queueing it at a box that

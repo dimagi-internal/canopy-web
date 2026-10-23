@@ -8587,6 +8587,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/slash-commands": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * The runner reports the slash commands its sessions can run
+         * @description The chat composer's `/` autocomplete for sessions on this box. The whole
+         *     list, replacing what was held.
+         */
+        readonly put: operations["report_slash_commands"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/logins/{key}": {
         readonly parameters: {
             readonly query?: never;
@@ -11376,6 +11397,28 @@ export interface paths {
          *     anyone who can read the session; turn content you may not read is blanked.
          */
         readonly get: operations["get_session_info"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/slash-commands": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The slash commands the composer offers
+         * @description What `/` offers in this session's composer: the agent's launchable skills
+         *     and what the session's runner reported it can run. Empty for someone who can
+         *     read the session but not send to it.
+         */
+        readonly get: operations["list_slash_commands"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -28534,6 +28577,34 @@ export interface components {
             readonly account: string;
         };
         /**
+         * SlashCommandIn
+         * @description One command a Claude session on the box can run, as `/name args`.
+         */
+        readonly SlashCommandIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Args Hint
+             * @default
+             */
+            readonly args_hint: string;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
+        };
+        /** SlashCommandsIn */
+        readonly SlashCommandsIn: {
+            /** Commands */
+            readonly commands?: readonly components["schemas"]["SlashCommandIn"][];
+        };
+        /**
          * TurnGitHubTokenOut
          * @description One turn's GitHub credential: its agent OWNER's token for that agent
          *     (`AgentDelegation`), and the identity to commit with. Handed to the runner
@@ -32123,6 +32194,29 @@ export interface components {
              * @default 0
              */
             readonly message_count: number;
+        };
+        /**
+         * SlashCommandOut
+         * @description A command the composer offers as `/name`.
+         */
+        readonly SlashCommandOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Args Hint
+             * @default
+             */
+            readonly args_hint: string;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
         };
         /**
          * HumanInputPageOut
@@ -45594,6 +45688,30 @@ export interface operations {
             };
         };
     };
+    readonly report_slash_commands: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlashCommandsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readonly remove_runner_login: {
         readonly parameters: {
             readonly query?: never;
@@ -48644,6 +48762,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionInfoOut"];
+                };
+            };
+        };
+    };
+    readonly list_slash_commands: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SlashCommandOut"][];
                 };
             };
         };

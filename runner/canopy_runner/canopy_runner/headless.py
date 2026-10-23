@@ -30,6 +30,8 @@ import logging
 import threading
 from pathlib import Path
 
+from . import slash_commands
+
 logger = logging.getLogger("canopy_runner.headless")
 
 #: Where a laptop runner installs the adapter: launchd's PATH is the bare system
@@ -120,14 +122,17 @@ def run_turn(prompt: str, *, cwd: Path, emit, env: dict | None = None,
         if on_session is not None:
             on_session(sid)
 
+    reducer = canopy_acp.UpdateReducer()
+
     def ended(agent) -> None:
         with _lock:
             for sid in [s for s, a in RUNNING.items() if a is agent]:
                 RUNNING.pop(sid, None)
+        slash_commands.remember_acp(reducer.available_commands)
 
     res = canopy_acp.drive_turn(
         prompt, make_agent=functools.partial(canopy_acp.AcpAgent, argv=argv),
-        reducer=canopy_acp.UpdateReducer(), emit=emit, cwd=cwd,
+        reducer=reducer, emit=emit, cwd=cwd,
         env={**(env or {}), HEADLESS_ENV: "1", ONE_SHOT_ENV: "1"}, resume=resume,
         on_start=agents.append, on_session=started, on_end=ended, cancelled=cancelled,
         flush_seconds=FLUSH_SECONDS, timeout=timeout, log=logger.info)

@@ -406,6 +406,17 @@ class SessionBindingInfoOut(Schema):
     updated_at: dt.datetime | None = None
 
 
+class SlashCommandOut(Schema):
+    """A command the composer offers as `/name`."""
+
+    name: str
+    description: str = ""
+    # What the command takes, shown after the name while it is typed.
+    args_hint: str = ""
+    # agent (the agent's launchable skill), user, plugin or acp (what the box found).
+    source: str = ""
+
+
 class SessionInfoOut(Schema):
     """Everything canopy stores about a session, in one read — for the Session
     info panel. `session` is the same shape the list and detail reads serve."""

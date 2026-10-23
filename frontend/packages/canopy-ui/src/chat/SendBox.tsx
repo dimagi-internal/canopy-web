@@ -16,6 +16,12 @@ import {
   type DraftStorage,
 } from "./drafts";
 import { Button } from "../ui/button";
+import {
+  matchSlashCommands,
+  pendingArgsCommand,
+  slashQuery,
+  type SlashCommand,
+} from "./slashCommands";
 
 /** An attachment the composer is holding, uploaded but not yet sent. */
 export interface PendingAttachment {
@@ -78,6 +84,9 @@ interface Props {
    *  control at all rather than a dead one. */
   typingVisibility?: TypingVisibility;
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
+  /** Commands to offer when the message starts with `/`. Omit (or pass none)
+   *  and `/` is just a character. */
+  slashCommands?: readonly SlashCommand[];
 }
 
 /** What the composer types where a file goes: "[Image #2]", "[File #3]". */
@@ -105,6 +114,7 @@ export function SendBox({
   storage,
   typingVisibility,
   onTypingVisibilityChange,
+  slashCommands,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -213,6 +223,28 @@ export function SendBox({
     onUpdate(value);
   };
 
+  // The `/` menu: open while the message is `/` plus a partial name. Esc closes
+  // it for the text on screen; typing anything reopens it.
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState<string | null>(null);
+  const query = slashCommands?.length && !blocked ? slashQuery(body) : null;
+  const slashMatches =
+    query !== null && slashDismissed !== body ? matchSlashCommands(slashCommands!, query) : [];
+  const slashOpen = slashMatches.length > 0;
+  const slashActive = Math.min(slashIndex, Math.max(slashMatches.length - 1, 0));
+  const argsFor = slashCommands?.length ? pendingArgsCommand(body, slashCommands) : null;
+
+  const pickSlash = (command: SlashCommand) => {
+    const next = `/${command.name} `;
+    handleChange(next);
+    setSlashIndex(0);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      el?.focus();
+      el?.setSelectionRange(next.length, next.length);
+    });
+  };
+
   const canAttach = typeof onAttach === "function" && !blocked;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -272,6 +304,25 @@ export function SendBox({
     // Enter to commit a composition must not send the message.
     const isComposing = (e.nativeEvent as unknown as { isComposing?: boolean })
       .isComposing;
+    if (slashOpen && !isComposing) {
+      const move = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      if (move) {
+        e.preventDefault();
+        setSlashIndex((slashActive + move + slashMatches.length) % slashMatches.length);
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        e.preventDefault();
+        pickSlash(slashMatches[slashActive]);
+        return;
+      }
+      if (e.key === "Escape") {
+        // Closes the menu only — it never also stops a running reply.
+        e.preventDefault();
+        setSlashDismissed(body);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey && !isComposing) {
       e.preventDefault();
       if (canSend) handleSend();
@@ -321,7 +372,8 @@ export function SendBox({
       {/* Capped and scrollable: a many-question dialog is taller than a short
           pane, and uncapped it pushed its own Send (and the composer) off screen. */}
       {banner ? <div className="max-h-[60vh] overflow-y-auto" data-testid="sendbox-banner">{banner}</div> : null}
-      <div className={`p-2 ${dragging ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""}`}>
+      {/* relative: the `/` menu opens upward from here. */}
+      <div className={`relative p-2 ${dragging ? "bg-primary/5 ring-1 ring-inset ring-primary/40" : ""}`}>
         {peers}
         {staged.length > 0 && (
           <ul className="mb-1.5 flex flex-wrap gap-1.5" data-testid="attachment-chips">
@@ -352,6 +404,45 @@ export function SendBox({
             ))}
           </ul>
         )}
+        {argsFor && (
+          <div className="mb-1 text-xs text-muted-foreground" data-testid="slash-args-hint">
+            <span className="font-mono">/{argsFor.name}</span> {argsFor.args_hint}
+          </div>
+        )}
+        {slashOpen && (
+          <ul
+            role="listbox"
+            aria-label="Commands"
+            data-testid="slash-menu"
+            className={[
+              "absolute bottom-full left-2 right-2 z-20 mb-1 max-h-72 overflow-y-auto",
+              "rounded-md border border-border bg-popover py-1 text-sm text-popover-foreground shadow-md",
+            ].join(" ")}
+          >
+            {slashMatches.map((c, i) => (
+              <li
+                key={c.name}
+                role="option"
+                aria-selected={i === slashActive}
+                // mousedown, not click: a click lands after the textarea blurs.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pickSlash(c);
+                }}
+                onMouseEnter={() => setSlashIndex(i)}
+                className={`flex cursor-pointer items-baseline gap-2 px-2 py-1 ${
+                  i === slashActive ? "bg-accent text-accent-foreground" : ""
+                }`}
+              >
+                <span className="shrink-0 font-mono">/{c.name}</span>
+                {c.args_hint && (
+                  <span className="shrink-0 text-xs text-muted-foreground">{c.args_hint}</span>
+                )}
+                <span className="truncate text-xs text-muted-foreground">{c.description}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         <textarea
           ref={textareaRef}
           data-testid="composer"
@@ -368,6 +459,9 @@ export function SendBox({
             "focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed",
             "border-input text-foreground disabled:bg-muted disabled:text-muted-foreground",
           ].join(" ")}
+          role={slashCommands?.length ? "combobox" : undefined}
+          aria-expanded={slashCommands?.length ? slashOpen : undefined}
+          aria-autocomplete={slashCommands?.length ? "list" : undefined}
         />
         <div className="mt-1 flex items-center justify-end gap-2">
           {canAttach && (

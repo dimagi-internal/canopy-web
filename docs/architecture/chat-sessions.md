@@ -281,6 +281,29 @@ an emdash task name alone is not an identity.
   (`apps/realtime/presence_keys.py::GLOBAL_SENTINEL`, shared with ace-web) for a page
   with no workspace; no canopy-web page uses it.
 
+## Slash commands in the composer
+
+- Typing `/` opens a menu (canopy-ui `SendBox`, `slashCommands` prop; matching in
+  `chat/slashCommands.ts`). Enter or Tab completes `/name `, then Enter sends; Esc closes
+  the menu and never stops the reply. The message is sent as typed. Nothing on the server
+  rewrites a leading slash.
+- The list is `GET /api/canopy-sessions/{id}/slash-commands`
+  (`apps/canopy_sessions/slash_commands.py`): the agent's `launchable` skills as
+  `<slug>:<name>`, then what the session's bound runner reported (`Runner.slash_commands`).
+  A session not yet on a runner offers only the agent's skills.
+- Each runner reports what its sessions can run (`canopy_runner/slash_commands.py`, shared by
+  the cloud runner), and sends it only when the list changes: `~/.claude/skills`,
+  `~/.claude/commands`, enabled plugins as `plugin:name`, plus whatever ACP sessions announced
+  (`available_commands_update`). Commands a repo defines in its own `.claude/` are not read,
+  because emdash does not record where a project lives.
+- Built-ins (`/compact`, `/model`, …) are offered only where ACP announces them. How a typed
+  command runs depends on the runtime:
+  - emdash: the text is typed into Claude Code's TUI, and its own `/` popup takes the first
+    Enter.
+  - claude-desktop: the mod runs it with `$.command.run`.
+  - claude-cli and cloud `acp`: the ACP adapter runs it.
+  - cloud `cli`: `claude -p`, which has skills and commands but few built-ins.
+
 ## How the runner drives a chat
 
 - `CHAT_STUB_EXECUTOR` (true in dev, false on labs): when off, a session turn waits for a runner with `capabilities.sessions: true`. The laptop runner drives the agent's emdash session and bridges the reply (`execute_chat_turn` + `chat_bridge.py`); `chat_pump` advances bridges each tick, in-flight turn ids on the heartbeat renew the 900s lease. A turn finishes when the transcript hands the floor back (`hands_back_to_human`: any terminal `stop_reason` other than `tool_use`); idle is only a 15-min backstop.

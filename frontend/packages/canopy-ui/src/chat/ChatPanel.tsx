@@ -9,6 +9,7 @@ import { isMine, isUnconfirmed } from "./identity";
 import { QueuedRows } from "./QueuedRows";
 import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
+import type { SlashCommand } from "./slashCommands";
 import { type DraftStorage } from "./drafts";
 import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { useStickyBottom } from "./useStickyBottom";
@@ -65,6 +66,8 @@ export interface ChatPanelProps {
   /** How this page shows an agent's request for one of its secrets (a seal
    *  card). Omit and such a row renders as an ordinary tool row. */
   secretRequestHost?: SecretRequestHost;
+  /** Commands the composer offers when a message starts with `/`. */
+  slashCommands?: readonly SlashCommand[];
 }
 
 /**
@@ -99,6 +102,7 @@ export function ChatPanel({
   onTypingVisibilityChange,
   appHost,
   secretRequestHost,
+  slashCommands,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -325,6 +329,7 @@ export function ChatPanel({
         onUpdate={onUpdateDraft}
         onSend={onSend}
         onStop={onStop}
+        slashCommands={slashCommands}
         stopState={state.stopState}
         peers={<PeerComposers peers={peerDrafts} />}
         banner={

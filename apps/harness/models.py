@@ -230,6 +230,13 @@ class Runner(models.Model):
     # Server clock, stamped when a report arrives — tells a current answer from
     # an old one, since a box that stops reporting keeps its last list.
     mailboxes_checked_at = models.DateTimeField(null=True, blank=True)
+    # The slash commands a Claude session on this box can run (its account's
+    # skills and commands, its enabled plugins', and what ACP announced), as
+    # [{name, description, args_hint, source}] — REPORTED by the box when the list
+    # changes (`canopy_runner.slash_commands`), never typed. Feeds the chat
+    # composer's `/` autocomplete; kept off RunnerOut, since it runs to hundreds
+    # of rows. NULL = never reported (an older runner).
+    slash_commands = models.JSONField(null=True, blank=True, default=None)
     # An operator asked this box to refresh itself (re-run bootstrap: plugins,
     # the canopy CLI, Claude Code, agent provisioning). DURABLE, not a frame: a
     # control frame is a doorbell, and one sent while the socket is down is

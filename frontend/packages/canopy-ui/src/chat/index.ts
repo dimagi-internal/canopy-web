@@ -82,6 +82,12 @@ export { MessageList } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
 export { ToolCallPair } from "./ToolCallPair";
 export { SendBox, type PendingAttachment } from "./SendBox";
+export {
+  matchSlashCommands,
+  pendingArgsCommand,
+  slashQuery,
+  type SlashCommand,
+} from "./slashCommands";
 export { PresenceChips } from "./PresenceChips";
 export { TypingRows } from "./TypingRows";
 export { PeerComposers } from "./PeerComposers";

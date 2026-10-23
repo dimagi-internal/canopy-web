@@ -80,6 +80,21 @@ class UnclaimableTurnOut(Schema):
     can_cancel: bool = False
 
 
+class SlashCommandIn(Schema):
+    """One command a Claude session on the box can run, as `/name args`."""
+
+    name: str = Field(max_length=120, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+    description: str = Field(default="", max_length=300)
+    args_hint: str = Field(default="", max_length=120)
+    # Where the box found it: user (its account's own), plugin, acp (announced).
+    source: str = Field(default="", max_length=16)
+
+
+class SlashCommandsIn(Schema):
+    # The whole list, replacing what was held — the box sends it when it changes.
+    commands: list[SlashCommandIn] = Field(default_factory=list, max_length=1000)
+
+
 class RunnerCapabilitiesIn(Schema):
     # Wholesale replacement, like the skill catalog — the caller sends the full
     # capabilities it wants (e.g. {"agents": [...], "projects": ["canopy-web"]}).
