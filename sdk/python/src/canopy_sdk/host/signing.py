@@ -88,6 +88,13 @@ def sign_visitor_assertion(config: HostConfig, subject: str, *, name: str = "", 
         claims[contract.AGENT_CLAIM] = agent
     else:
         claims.pop(contract.AGENT_CLAIM, None)
+    # The tenant, named directly (``CANOPY_HOST["WORKSPACE"]``): canopy selects
+    # the site's registration by it, so a deleted or moved agent cannot leave
+    # the site unresolvable. Never from ``extra``.
+    if config.workspace:
+        claims[contract.WORKSPACE_CLAIM] = config.workspace
+    else:
+        claims.pop(contract.WORKSPACE_CLAIM, None)
     # `kid` so canopy can pick this key out of the JWKS the host publishes;
     # without it a rotation has nothing to select on.
     return sign(claims, config.signing_key, headers={"kid": config.kid})

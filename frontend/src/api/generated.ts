@@ -2349,8 +2349,11 @@ export interface paths {
          *     the thing an attacker looks for — whereas a signature proves the claim
          *     without canopy holding anything that could make one.
          *
-         *     The workspace comes from the app's own row, never the assertion. A host
-         *     cannot name the tenant it wants its visitor placed in.
+         *     The workspace comes from the app's own row, never the assertion. The
+         *     assertion's `canopy_workspace` (or the named agent) only SELECTS which
+         *     tenant's registration of the site name to verify against — and only that
+         *     registration's keys can make it verify — so a host cannot place its
+         *     visitor in a tenant whose registration does not hold its key.
          */
         readonly post: operations["contact_token"];
         readonly delete?: never;
@@ -7635,6 +7638,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/connected-apps/discover": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read a site's own facts from its signed site.json
+         * @description Reads the site's signed `site.json` and returns the facts it declares
+         *     about itself — its origins, the URL of its keys, its sign-in issuer and its
+         *     MCP server — so an owner can fill a Connected site from them instead of
+         *     typing them. `address` is the site's address, the URL of its keys, or of the
+         *     document itself; the document is looked for beside its keys, at
+         *     `/.well-known/canopy-site.json` and at `canopy/site.json`. With `app_id` (a
+         *     site this workspace registered) `address` is optional, the document must be
+         *     that site's, and the answer includes what canopy holds now and which fields
+         *     differ. Nothing is saved: adopt the values with the create or update route.
+         */
+        readonly get: operations["discover_site"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sites/agents": {
         readonly parameters: {
             readonly query?: never;
@@ -7648,11 +7679,16 @@ export interface paths {
          *
          *     The site authenticates with `Authorization: Bearer <JWT>` signed by its own
          *     key (the one at its `jwks_url`): `iss` = its Connected-site name, `aud` =
-         *     this URL, at most 60 s, single-use `jti`; `canopy_agent` names one of its
-         *     agents when two workspaces registered the same name. The answer is
+         *     this URL, at most 60 s, single-use `jti`. `canopy_workspace` (the workspace
+         *     slug) names which workspace's registration of the name is meant, or
+         *     `canopy_agent` names one of its agents to the same end; both must agree
+         *     (409 `workspace_mismatch`), and neither is needed unless two workspaces
+         *     registered the same name (409 `ambiguous_issuer`). The answer is
          *     `application/jose`: a compact JWS signed with canopy's client key (its `kid`
          *     in `/oauth/client.json`), payload `v`, `iss`, `aud`, `iat`, `exp`,
-         *     `version`, `site`, `runner_flags`, `agents`. Verify it with
+         *     `version`, `site` (`name`, `tenant`, `settings_url` — this site's page in
+         *     canopy), `runner_flags`, `agents` (each with `url`, `problems` and
+         *     `problem_links`: `[{text, url}]`, the page that fixes each). Verify it with
          *     `canopy_sdk.site_agents.fetch_site_agents`.
          */
         readonly get: operations["get_site_agents"];
@@ -27477,6 +27513,41 @@ export interface components {
             /** Scopes */
             readonly scopes: readonly string[];
         };
+        /**
+         * SiteDiscoveryOut
+         * @description What a site's own signed `site.json` says about it — for an owner to adopt,
+         *     never applied by this read.
+         */
+        readonly SiteDiscoveryOut: {
+            /** Url */
+            readonly url: string;
+            /** Tried */
+            readonly tried: readonly string[];
+            /** Name */
+            readonly name: string;
+            readonly site: components["schemas"]["SiteFactsOut"];
+            /** Signed By */
+            readonly signed_by: string;
+            /** Registered Keys Verify */
+            readonly registered_keys_verify: boolean | null;
+            readonly current?: components["schemas"]["SiteFactsOut"] | null;
+            /**
+             * Changes
+             * @default []
+             */
+            readonly changes: readonly string[];
+        };
+        /** SiteFactsOut */
+        readonly SiteFactsOut: {
+            /** Origins */
+            readonly origins: readonly string[];
+            /** Jwks Url */
+            readonly jwks_url: string;
+            /** Issuer */
+            readonly issuer: string;
+            /** Mcp Resource */
+            readonly mcp_resource: string;
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -44951,6 +45022,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SiteNeedsOut"];
+                };
+            };
+        };
+    };
+    readonly discover_site: {
+        readonly parameters: {
+            readonly query?: {
+                readonly address?: string;
+                readonly app_id?: number | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SiteDiscoveryOut"];
                 };
             };
         };

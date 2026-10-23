@@ -87,36 +87,48 @@ def apps_for(user, slug: str) -> QuerySet[AppCredential]:
     )
 
 
-def resolve_site(name: str, agent_slug: str = "") -> AppCredential | None:
+def resolve_site(name: str, agent_slug: str = "", workspace: str = "") -> AppCredential | None:
     """Which tenant's registration a host means by `name` — the ONE place a
     site name becomes a row.
 
-    A name is only unique within a tenant, so it needs a tenant beside it, and
-    the tenant comes from the AGENT the host names: an agent belongs to exactly
-    one workspace, and a host already knows which agent it is mounting. Always
-    the agent's own workspace's row — never another tenant's row of the same
-    name, whatever that row lists.
+    A name is only unique within a tenant, so it needs a tenant beside it. The
+    host names it one of two ways:
 
-    With no agent named, the name must be unambiguous among live sites. That is
-    what every integration written before per-tenant sites sends, and it keeps
-    working exactly until a second tenant registers the same name — at which
-    point this refuses (`AmbiguousSite`) rather than pick one, because picking
-    would route a visitor into a tenant their host never meant. The fix the
-    refusal names is to send the agent, which removes the dependency on any
-    other tenant's choices entirely.
+    * `workspace` — the tenant's slug, directly (the signed `canopy_workspace`
+      claim, `CANOPY_HOST["WORKSPACE"]`). Preferred: it does not depend on any
+      one agent surviving.
+    * `agent_slug` — an agent of the site, whose workspace is the tenant (an
+      agent belongs to exactly one). This is how every host named it before
+      `workspace` existed, and it breaks when that agent is deleted or moved.
+
+    When both are named the workspace selects, and the agent must be one of
+    that workspace's — otherwise `SiteTenantMismatch`, never a pick: the host
+    believes two different things about where it is registered, and either
+    guess could route a visitor into a tenant it never meant. A missing agent
+    and another workspace's agent answer the same, so a prober learns nothing
+    about agents elsewhere.
+
+    Always the selected tenant's own row — never another tenant's row of the
+    same name, whatever that row lists. With neither named, the name must be
+    unambiguous among live sites; once a second tenant registers it, this
+    refuses (`AmbiguousSite`) rather than pick one.
 
     Returns None when nothing matches. Callers answer "unknown" identically for
-    a missing agent and a missing site, so a prober learns nothing about
-    another tenant's agents or registrations.
+    a missing agent, workspace and site.
     """
+    from apps.agents.models import Agent
+
     name = (name or "").strip()
     if not name:
         return None
     live = AppCredential.objects.filter(name=name, revoked_at__isnull=True)
     slug = (agent_slug or "").strip()
+    tenant = (workspace or "").strip()
+    if tenant:
+        if slug and not Agent.objects.filter(slug=slug, workspace_id=tenant).exists():
+            raise SiteTenantMismatch(slug, tenant)
+        return live.filter(workspace_id=tenant).first()
     if slug:
-        from apps.agents.models import Agent
-
         workspace_id = (Agent.objects.filter(slug=slug)
                         .values_list("workspace_id", flat=True).first())
         if workspace_id is None:
@@ -136,8 +148,26 @@ class AmbiguousSite(Exception):
     def __init__(self, name: str):
         self.name = name
         super().__init__(
-            f"more than one workspace has a site named {name!r}; name the agent "
+            f"more than one workspace has a site named {name!r}; name the workspace "
+            "(`CANOPY_HOST[\"WORKSPACE\"]`, the signed `canopy_workspace` claim) or an agent "
             "(`agent_slug`, or `agent` in canopy.init) so canopy knows which one"
+        )
+
+
+class SiteTenantMismatch(Exception):
+    """The host named a workspace AND an agent, and the agent is not one of that
+    workspace's. Refused rather than resolved either way; the message says what
+    to change and reveals nothing about where the agent actually is."""
+
+    code = "workspace_mismatch"
+
+    def __init__(self, agent_slug: str, workspace: str):
+        self.agent_slug = agent_slug
+        self.workspace = workspace
+        super().__init__(
+            f"agent {agent_slug!r} is not an agent of workspace {workspace!r}; the site names "
+            "both, and they must agree — fix CANOPY_HOST[\"WORKSPACE\"] or the agent it names "
+            "(AGENT_SLUG, or the page's chosen agent)"
         )
 
 

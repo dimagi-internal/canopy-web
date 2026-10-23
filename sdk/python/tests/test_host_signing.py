@@ -346,3 +346,23 @@ class TestPerPageAgent:
         cfg = _config(world, runner_requirements=("sensitive_data",))
         claims = _read_claims(sign_visitor_assertion(cfg, "u-1", runner_requirements=["sensitive_data"]))
         assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
+
+
+class TestTheWorkspaceClaim:
+    def test_a_configured_workspace_is_signed_into_every_assertion(self, world):
+        from dataclasses import replace
+
+        config = replace(world.config, workspace="connect")
+        claims = _decode(world, sign_visitor_assertion(config, "42", extra={"canopy_workspace": "evil"}),
+                         audience=CANOPY)
+        assert claims["canopy_workspace"] == "connect"
+
+    def test_no_workspace_sends_no_claim_and_extra_cannot_forge_one(self, world):
+        claims = _decode(world, sign_visitor_assertion(world.config, "42",
+                                                       extra={"canopy_workspace": "evil"}),
+                         audience=CANOPY)
+        assert "canopy_workspace" not in claims
+
+    def test_a_malformed_workspace_is_refused_at_boot(self, world):
+        with pytest.raises(ValueError):
+            HostConfig(signing_key=world.host_key, workspace="w" * 65)

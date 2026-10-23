@@ -7,7 +7,8 @@
         "SIGNING_KEY": env("CANOPY_SIGNING_KEY"),        # Ed25519 / P-256 PEM
         "CANOPY_BASE_URL": "https://labs.connect.dimagi.com/canopy",
         "APP_NAME": "connect-labs",                       # your Connected-site name
-        "AGENT_SLUG": "ace",                              # which canopy tenant
+        "WORKSPACE": "connect",     # the canopy workspace (tenant) the site is registered in
+        "AGENT_SLUG": "ace",        # the default agent; also names the tenant when WORKSPACE is unset
         # The grant. All four present turns it on; any missing turns it off.
         "CLIENT_ID": "https://labs.connect.dimagi.com/canopy/oauth/client.json",
         "ISSUER": "https://labs.connect.dimagi.com",
@@ -44,6 +45,12 @@
         # The pages and their scopes are PAGE_SCOPES; PAGE_TITLES names them.
         "SITE_NEEDS": None,
         "PAGE_TITLES": {},
+        # site.json also declares this site's own facts, so canopy's owner adopts
+        # them instead of typing them: origins (default: the origin of ISSUER,
+        # else of the request canopy fetched site.json with), jwks_url (default:
+        # the SDK's jwks.json route), issuer (ISSUER) and mcp_resource (RESOURCE).
+        "ORIGINS": [],               # optional override: every origin that frames the panel
+        "JWKS_URL": "",              # optional override: where canopy should read your keys
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -144,6 +151,7 @@ def get_host_config() -> HostConfig:
         retired_keys=tuple(cfg.get("RETIRED_KEYS") or ()),
         probe=_probe_or_none(cfg),
         runner_requirements=tuple(cfg.get("RUNNER_REQUIREMENTS") or ()),
+        workspace=str(cfg.get("WORKSPACE") or ""),
     )
 
 
@@ -244,6 +252,20 @@ def page_scopes(value, user) -> tuple[str, ...]:
 
 def agent_slug() -> str:
     return str(raw().get("AGENT_SLUG") or "")
+
+
+def workspace() -> str:
+    """``WORKSPACE``: the canopy workspace (tenant) slug the site is registered
+    in. Sent as ``canopy_workspace`` on everything the SDK signs for canopy."""
+    return str(raw().get("WORKSPACE") or "").strip()
+
+
+def site_facts_overrides() -> dict:
+    """``ORIGINS`` / ``JWKS_URL`` as set (``site.json``'s ``site`` block fills the rest)."""
+    cfg = raw()
+    origins = cfg.get("ORIGINS") or []
+    origins = [origins] if isinstance(origins, str) else list(origins)
+    return {"origins": [str(o) for o in origins if o], "jwks_url": str(cfg.get("JWKS_URL") or "")}
 
 
 def panel_options() -> dict:

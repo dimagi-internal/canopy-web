@@ -21,16 +21,22 @@ No new secrets. Both trust anchors already exist:
 
     try:
         listing = fetch_site_agents("https://canopy.dimagi.com", "connect-labs", signing_key,
-                                    ClientKeyResolver())
+                                    ClientKeyResolver(), workspace="connect")
     except SiteAgentsError as exc:
-        ...                                   # exc.code: unreachable, bad_signature...
+        ...      # exc.code: unreachable, refused, unknown_issuer, ambiguous_issuer, bad_signature...
     agent = listing.agent("labsdata")
     if agent and agent.ready and agent.handles_sensitive and agent.ready_with_flag("sensitive_data"):
         ...
 
 A Django host reads ``canopy_sdk.django.site_agents.current()`` instead: cached,
 refreshed on a miss, the last good copy served (marked ``stale``) for up to a
-day when canopy cannot be reached, then None — show no agent.
+day when canopy cannot be reached, then None — show no agent; and
+``last_error()`` says why the last refresh failed.
+
+Where to fix things is in the answer itself: ``SiteAgents.site_settings_url`` is
+this site's page in canopy, every ``SiteAgent.url`` the agent's, and each
+``SiteAgent.problem_links`` entry pairs a problem's sentence with the URL of the
+page that fixes it — a host renders links, never builds canopy URLs.
 
 Both halves live here so canopy and every site read ONE definition:
 ``request_assertion`` / ``verify_site_agents`` / ``fetch_site_agents`` are the site's,
@@ -73,14 +79,53 @@ RESPONSE_REQUIRED_CLAIMS: tuple[str, ...] = ("v", "iss", "aud", "iat", "exp", "v
 VERSIONED_KEYS: tuple[str, ...] = ("site", "runner_flags", "agents")
 
 
+#: Codes ``SiteAgentsError`` carries that a host can act on (others are the
+#: verifier's: ``bad_signature``, ``expired``, ``bad_version``…):
+#:
+#: * ``not_configured`` — this host lacks a setting (name, key, canopy URL);
+#: * ``unreachable`` — canopy could not be reached at all;
+#: * ``refused`` — canopy answered with a refusal that named no code;
+#: * canopy's own refusal codes, passed through: ``unknown_issuer`` (no Connected
+#:   site by this name in the tenant named), ``ambiguous_issuer`` (several
+#:   tenants have one; name ``workspace``), ``workspace_mismatch`` (the agent
+#:   named is not in the workspace named), ``bad_signature`` (canopy's registered
+#:   keys do not verify this site's), ``rate_limited``…
+REFUSED = "refused"
+UNREACHABLE = "unreachable"
+NOT_CONFIGURED = "not_configured"
+
+
 class SiteAgentsError(Exception):
     """The site agents response could not be had or believed. ``code`` names why; the message
-    never contains a credential."""
+    never contains a credential. ``status`` is canopy's HTTP status when canopy answered with
+    a refusal (``None`` otherwise)."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, status: int | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.status = status
+
+    def as_dict(self) -> dict:
+        """``{"code", "message", "status"}`` — safe to show a host's operator."""
+        return {"code": self.code, "message": self.message, "status": self.status}
+
+    @classmethod
+    def from_dict(cls, value) -> SiteAgentsError | None:
+        if not isinstance(value, Mapping) or not value.get("code"):
+            return None
+        status = value.get("status")
+        return cls(str(value["code"]), str(value.get("message") or ""),
+                   status=status if isinstance(status, int) else None)
+
+
+def _refusal_code(detail: str) -> str:
+    """canopy's refusals read ``"<code>: <why>"``; the code, or ``refused``."""
+    head, sep, _ = str(detail or "").partition(":")
+    head = head.strip()
+    if sep and head and len(head) <= 64 and all(c.islower() or c.isdigit() or c == "_" for c in head):
+        return head
+    return REFUSED
 
 
 def endpoint_url(canopy_url: str) -> str:
@@ -92,14 +137,17 @@ def endpoint_url(canopy_url: str) -> str:
 
 
 def request_assertion(site_name: str, site_key, audience: str, *, agent: str = "",
-                      now: float | None = None) -> str:
+                      workspace: str = "", now: float | None = None) -> str:
     """The site's signed request for its agents.
 
     ``iss`` = ``sub`` = the site's Connected-site name, ``aud`` = the endpoint URL
-    (``endpoint_url``), 60 seconds, single-use ``jti``. ``agent`` names one of the
-    site's agents, which tells canopy WHICH tenant's registration of
-    ``site_name`` is meant — needed only when two tenants registered the same
-    name (``ambiguous_issuer`` otherwise)."""
+    (``endpoint_url``), 60 seconds, single-use ``jti``. ``workspace`` (the tenant's
+    slug, ``contract.WORKSPACE_CLAIM``) tells canopy WHICH tenant's registration of
+    ``site_name`` is meant; ``agent`` (one of the site's agents) does too, through
+    the agent's workspace. Either is needed only when two tenants registered the
+    same name (``ambiguous_issuer`` otherwise). Prefer ``workspace``: it does not
+    break when an agent is deleted or moved. Both = canopy selects by the
+    workspace and refuses (``workspace_mismatch``) if the agent is not in it."""
     name = str(site_name or "").strip()
     if not name:
         raise ValueError("the request needs the site's Connected-site name")
@@ -110,6 +158,9 @@ def request_assertion(site_name: str, site_key, audience: str, *, agent: str = "
     agent = contract.parse_agent_claim(agent or None)
     if agent:
         claims[contract.AGENT_CLAIM] = agent
+    workspace = contract.parse_workspace_claim(workspace or None)
+    if workspace:
+        claims[contract.WORKSPACE_CLAIM] = workspace
     return sign(claims, key, headers={"kid": public_jwk(key)["kid"], "typ": REQUEST_TYP})
 
 
@@ -235,6 +286,19 @@ class AgentCapability:
 
 
 @dataclass(frozen=True)
+class AgentProblem:
+    """One reason an agent cannot serve this site yet: the sentence, and the URL
+    of the canopy page where it is fixed (render it as a link)."""
+
+    text: str
+    url: str = ""
+
+    @classmethod
+    def from_mapping(cls, value: Mapping) -> AgentProblem:
+        return cls(text=str(value.get("text") or ""), url=str(value.get("url") or ""))
+
+
+@dataclass(frozen=True)
 class SiteAgent:
     """One agent canopy allows on this site, and whether it can serve it now."""
 
@@ -252,6 +316,10 @@ class SiteAgent:
     ready: bool = False
     #: Plain sentences, each naming where in canopy to fix it.
     problems: tuple[str, ...] = ()
+    #: The same problems, each with the URL of the page that fixes it (wire
+    #: ``problem_links``: ``[{"text", "url"}]``). Empty from a canopy that
+    #: predates it — fall back to ``problems``.
+    problem_links: tuple[AgentProblem, ...] = ()
 
     @property
     def handles_sensitive(self) -> bool:
@@ -276,7 +344,8 @@ class SiteAgent:
             capabilities=tuple(AgentCapability.from_mapping(c) for c in _maps(value.get("capabilities"))),
             flags_available=_strs(runners.get("flags_available")),
             ready_with={str(k): v is True for k, v in ready_with.items()},
-            ready=value.get("ready") is True, problems=_strs(value.get("problems")))
+            ready=value.get("ready") is True, problems=_strs(value.get("problems")),
+            problem_links=tuple(AgentProblem.from_mapping(p) for p in _maps(value.get("problem_links"))))
 
 
 @dataclass(frozen=True)
@@ -297,6 +366,9 @@ class SiteAgents:
     claims: dict = field(repr=False, default_factory=dict)
     stale: bool = False
     age: float = 0.0
+    #: This Connected site's page in canopy's UI — where its owner allows agents,
+    #: changes its keys and URLs, and tests it. "" from a canopy that predates it.
+    site_settings_url: str = ""
 
     def agent(self, slug: str) -> SiteAgent | None:
         return next((a for a in self.agents if a.slug == slug), None)
@@ -319,6 +391,7 @@ class SiteAgents:
             version=str(claims.get("version") or ""),
             site_name=str(site.get("name") or claims.get("aud") or ""),
             tenant=str(site.get("tenant") or ""),
+            site_settings_url=str(site.get("settings_url") or ""),
             agents=tuple(SiteAgent.from_mapping(a) for a in _maps(claims.get("agents"))),
             runner_flags=tuple(RunnerFlag(str(f.get("flag") or ""), str(f.get("meaning") or ""))
                                for f in _maps(claims.get("runner_flags"))),
@@ -363,7 +436,7 @@ def verify_site_agents(token: str, *, client_id: str, site_name: str, client_key
 
 
 def fetch_site_agents(canopy_url: str, site_name: str, site_key, canopy_keys, *,
-                client_id: str | None = None, agent: str = "",
+                client_id: str | None = None, agent: str = "", workspace: str = "",
                 get: Callable[..., str] | None = None) -> SiteAgents:
     """Ask canopy which agents this site may show, and verify the answer.
 
@@ -372,18 +445,27 @@ def fetch_site_agents(canopy_url: str, site_name: str, site_key, canopy_keys, *,
     key. ``client_id`` defaults to canopy's at ``canopy_url`` — pass the host
     config's ``canopy_client_id`` when canopy's identity is not its address.
     The GET goes through ``canopy_sdk.fetch`` (https only, address-pinned,
-    bounded, no redirects). Raises ``SiteAgentsError``."""
+    bounded, no redirects). ``workspace`` / ``agent`` name the tenant
+    (``request_assertion``). Raises ``SiteAgentsError``: ``unreachable`` when
+    canopy could not be reached, canopy's own code (``unknown_issuer``,
+    ``ambiguous_issuer``, ``workspace_mismatch``…; ``refused`` when it named none)
+    when it answered with a refusal."""
     from . import fetch
 
     url = endpoint_url(canopy_url)
     try:
-        token = request_assertion(site_name, site_key, url, agent=agent)
+        token = request_assertion(site_name, site_key, url, agent=agent, workspace=workspace)
     except (ValueError, ContractError) as exc:
-        raise SiteAgentsError("not_configured", str(exc)) from exc
+        raise SiteAgentsError(NOT_CONFIGURED, str(exc)) from exc
     getter = get or fetch.get_text
     try:
         body = getter(url, headers={"Authorization": f"Bearer {token}"}, accept=MEDIA_TYPE)
     except fetch.FetchError as exc:
-        raise SiteAgentsError("unreachable", str(exc)) from exc
+        status = getattr(exc, "status", None)
+        if status is None:
+            raise SiteAgentsError(UNREACHABLE, str(exc)) from exc
+        # canopy answered: a refusal is not an outage, and its code says what to fix.
+        detail = getattr(exc, "detail", "") or ""
+        raise SiteAgentsError(_refusal_code(detail), detail or str(exc), status=status) from exc
     return verify_site_agents(body, client_id=client_id or contract.client_id_for(canopy_url),
                         site_name=site_name, client_keys=canopy_keys)

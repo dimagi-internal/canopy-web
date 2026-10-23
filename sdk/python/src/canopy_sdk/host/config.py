@@ -127,6 +127,12 @@ class HostConfig:
     #: Runner flags every conversation of this host's visitors must run under
     #: (``canopy_sdk.contract.RUNNER_FLAGS``); sent in every visitor assertion.
     runner_requirements: Sequence[str] = ()
+    #: The canopy workspace (tenant) slug this host's Connected site is
+    #: registered in. Sent as ``contract.WORKSPACE_CLAIM`` in every visitor
+    #: assertion and site agents request, so canopy finds the site's tenant
+    #: without going through an agent. Empty = not named (canopy then needs an
+    #: agent, or a name only one tenant holds).
+    workspace: str = ""
 
     def __post_init__(self):
         set_ = object.__setattr__
@@ -139,6 +145,7 @@ class HostConfig:
         set_(self, "scope_tools", _frozen_scope_tools(self.scope_tools))
         set_(self, "runner_requirements",
              contract.parse_runner_requirements(list(self.runner_requirements)))
+        set_(self, "workspace", contract.parse_workspace_claim(self.workspace or None))
         if not 0 < self.assertion_ttl <= contract.ASSERTION_MAX_LIFETIME:
             raise ValueError(f"assertion_ttl must be 1..{contract.ASSERTION_MAX_LIFETIME}s")
         if not 0 < self.id_jag_ttl <= contract.ID_JAG_MAX_LIFETIME:

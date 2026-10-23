@@ -55,7 +55,22 @@ happens" almost always means one of them is missing rather than something being
 broken.
 
 Go to **Connected sites** in your workspace —
-**`/w/<workspace>/settings/connected-apps`** — as a workspace owner:
+**`/w/<workspace>/settings/connected-apps`** — as a workspace owner.
+
+**Type your site's address and click "Fill from the site".** A site on
+`dimagi-canopy` ≥ 0.16 publishes its own facts — the origins that frame the
+panel, where its keys are, its sign-in issuer and its MCP server — in the `site`
+block of its signed `site.json`. canopy looks for it beside the address you typed
+(`…/site.json`), at `/.well-known/canopy-site.json` on its origin, and at
+`…/canopy/site.json` (the SDK's default mount), checks the signature against the
+keys the document names, and fills the form; the name comes from the document
+too. You check the values and click **Connect**. Nothing is saved until you do —
+a site must never be able to set its own trusted origins. On an already
+connected site, **Fill from the site's own documents** shows what the site says
+beside what canopy holds, marks what would change, and saves only on **Save these
+values**, through the same audited update as a hand edit.
+
+The fields, whether filled or typed:
 
 | Field | What it is | If you get it wrong |
 | --- | --- | --- |
@@ -89,7 +104,9 @@ what you get from an address bar.
 `POST /api/workspaces/<ws>/connected-apps` (MCP `connect_app`) and
 `PATCH /api/workspaces/<ws>/connected-apps/<id>` (MCP `update_connected_app`), which take
 the same fields — `origins`, `agents`, `public_keys` or `jwks_url` — with the
-same validation, and record each change in the settings audit
+same validation; `GET /api/workspaces/<ws>/connected-apps/discover?address=…`
+(MCP `discover_site`, add `app_id` for a connected site) reads the site's
+declared facts for you to pass to them, and record each change in the settings audit
 (`settings-audit.md`). There is no management command for any of it: a command
 would skip both. For local setup, sign in and use the page, or call the routes
 with a personal access token.
@@ -106,19 +123,26 @@ origins, disconnecting, or deleting the workspace touches its registration
 alone. Give every workspace the same JWKS URL and rotating your key needs no
 change in any of them.
 
-**Name the agent** when you mint a visitor token (`agent_slug` on
-`POST /api/auth/contact-token`), and pass `agent` to `canopy.init`, which puts
-it on the embed shell's URL. A site's name is unique only *within* a workspace
-— two workspaces may each have a `connect-labs` — so the name alone does not
-say which registration verifies your assertion. An agent belongs to exactly
-one workspace, and you already know which one you are mounting.
+**Name the workspace.** A site's name is unique only *within* a workspace —
+two workspaces may each have a `connect-labs` — so the name alone does not say
+which registration verifies your assertion. Set `CANOPY_HOST["WORKSPACE"]` to
+the workspace's slug (`dimagi-canopy` ≥ 0.16): the SDK signs it as
+`canopy_workspace` into every visitor assertion and site agents request, and
+canopy selects that workspace's registration (`?workspace=` does the same on the
+embed shell's URL). Without the SDK, add the claim to what you sign.
 
-Omitting it still works **while only one workspace has a live site by that
-name**, which is what an integration that omits it relies on. The moment
-a second workspace registers the same name, an agent-less mint gets a `409
-ambiguous_issuer` and an agent-less shell a 404 rather than a guess: picking
-one would route your visitor into a tenant you never meant. Send the agent and
-that can never happen to you.
+Naming an agent does it too — `agent_slug` on `POST /api/auth/contact-token`
+(`AGENT_SLUG`), `agent` in `canopy.init` — because an agent belongs to exactly
+one workspace. But it breaks the moment that agent is deleted or moved to
+another workspace: canopy then cannot find your site, and the site agents API
+answers nothing. Name the workspace and keep sending the agent for its other
+jobs; when both are sent they must agree, and canopy refuses a disagreement with
+`409 workspace_mismatch` rather than pick one.
+
+Naming neither still works **while only one workspace has a live site by that
+name**. The moment a second workspace registers the same name, an unnamed mint
+gets a `409 ambiguous_issuer` and an unnamed shell a 404 rather than a guess:
+picking one would route your visitor into a tenant you never meant.
 
 One consequence worth expecting: a visitor of yours who talks to agents in two
 workspaces is **two contacts**, one per workspace, and you mint a token for
@@ -729,29 +753,62 @@ offers. Hosts not on the SDK add the claim to their own assertion — see
 
 ## 5d. Choosing your agents from canopy's site agents API
 
-Don't type canopy's facts into your settings. Ask for them (`dimagi-canopy` ≥ 0.14):
+Don't type canopy's facts into your settings. Ask for them (`dimagi-canopy` ≥ 0.14;
+the workspace, links and `last_error` need ≥ 0.16):
 
 ```python
 from canopy_sdk.django import site_agents
 
 current = site_agents.current()     # None = show no agent
+error = site_agents.last_error()    # why not, when it is None or stale
+site_agents.refresh()               # "re-read now" from your own settings page
 ```
 
 `GET /api/sites/agents`, signed with your own key, answers with a JWS signed by
 canopy's client key (the `Canopy-Execution` key): exactly the agents this
 workspace allows on your site, each with its capabilities for your site
 (`handles_sensitive` and who set it), which runner flags its runners carry and whether one
-is ready now, `ready`, and `problems` — plain sentences naming where in canopy to
-fix each. `runner_flags` lists every flag canopy knows; `version` changes exactly
-when any of that does, so record it with each settings save. Cached for 5 minutes;
-when canopy cannot be reached the last good copy is served marked `stale` for up
-to 24 hours, then `None`.
+is ready now, `ready`, `url` (the agent's page in canopy), `problems` — plain
+sentences naming where in canopy to fix each — and `problem_links`
+(`[{text, url}]`, SDK `SiteAgent.problem_links`): each problem with the URL of
+the canopy page that fixes it, to render as a link. The `site` block carries
+`settings_url` (SDK `SiteAgents.site_settings_url`): your Connected site's own
+card in canopy, where its owner allows agents, changes keys and tests it. Never
+build a canopy URL yourself. `runner_flags` lists every flag canopy knows;
+`version` changes exactly when any of that does, so record it with each settings
+save. Cached for 5 minutes (per `WORKSPACE`/`AGENT_SLUG`, so changing either takes
+effect at once); when canopy cannot be reached the last good copy is served
+marked `stale` for up to 24 hours, then `None`.
+
+**When you get nothing, say why.** `last_error()` is the last refresh's failure,
+cleared by the next success: a `SiteAgentsError` with a `code`, a `message` safe
+to show your operator, and canopy's HTTP `status` when it answered.
+
+| `code` | Meaning | Fix |
+| --- | --- | --- |
+| `not_configured` | `SIGNING_KEY`, `CANOPY_BASE_URL` or `APP_NAME` is missing or unusable | your settings |
+| `unreachable` | canopy could not be reached (network, DNS, TLS) | retry; check `CANOPY_BASE_URL` |
+| `unknown_issuer` | no Connected site named `APP_NAME` in the workspace you named | register it, or fix `WORKSPACE` / `APP_NAME` |
+| `ambiguous_issuer` | several workspaces have a site by that name and you named none | set `WORKSPACE` |
+| `workspace_mismatch` | `WORKSPACE` and the agent you sent name different workspaces | fix one (a moved agent) |
+| `bad_signature` | the keys canopy holds for the site do not verify yours | the site's JWKS URL in canopy, or your key |
+| `rate_limited` | too many requests | wait |
+| `refused` | canopy refused without naming a code | `status` and `message` |
 
 Tell canopy what you need back by setting `CANOPY_HOST["SITE_NEEDS"]`: the SDK
 serves it, signed, at `canopy/site.json` beside `canopy/jwks.json`, and canopy's
 **Connected sites** page shows your pages and scopes and, per agent, whether it
-meets your `real_data.requires` and why not. Details: `sdk/python/README.md` §
-The site agents API and the site's needs.
+meets your `real_data.requires` and why not.
+
+The same document carries a **`site` block** — your own facts, filled by the SDK
+from settings you already have: `origins` (`CANOPY_HOST["ORIGINS"]`, else the
+origin of `ISSUER`, else the address canopy fetched it from), `jwks_url`
+(`JWKS_URL`, else the SDK's `jwks.json` route), `issuer` and `mcp_resource`
+(`ISSUER` and `RESOURCE`, while the grant is on). canopy's owner adopts them with
+"Fill from the site" (§1) — never automatically. Mount
+`canopy_sdk.django.views.site_document` at `/.well-known/canopy-site.json` as well,
+so your address alone finds it. Details: `sdk/python/README.md` § The site agents
+API and the site's needs.
 
 ---
 

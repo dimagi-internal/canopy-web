@@ -39,7 +39,7 @@ from django.urls import get_script_prefix
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.http import require_GET
 
-from .embed_apps import AmbiguousSite, resolve_site
+from .embed_apps import AmbiguousSite, SiteTenantMismatch, resolve_site
 
 #: The vite entry, as it is keyed in the build manifest.
 _EMBED_ENTRY = "src/embed/main.tsx"
@@ -197,13 +197,15 @@ def embed_chat(request: HttpRequest) -> HttpResponse:
     if not name:
         raise Http404("embed requires ?app=")
 
-    # `&agent=` says whose `name` this is — a site name is unique only within
-    # a tenant. Ambiguity is a 404 like every other refusal here: the shell has
-    # nothing worth distinguishing, and the widget loader sends the agent
-    # whenever the host gave one.
+    # `&workspace=` (or `&agent=`) says whose `name` this is — a site name is
+    # unique only within a tenant. Ambiguity and a workspace/agent mismatch are
+    # 404s like every other refusal here: the shell has nothing worth
+    # distinguishing, and the widget loader sends the agent whenever the host
+    # gave one.
     try:
-        app = resolve_site(name, request.GET.get("agent") or "")
-    except AmbiguousSite as exc:
+        app = resolve_site(name, request.GET.get("agent") or "",
+                           request.GET.get("workspace") or "")
+    except (AmbiguousSite, SiteTenantMismatch) as exc:
         raise Http404(str(exc)) from exc
     if app is None:
         raise Http404("no such embedding app")

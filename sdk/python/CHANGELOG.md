@@ -2,6 +2,47 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.16.0 — 2026-10-23
+
+A host is set up from what it already knows, names its canopy tenant directly, and can
+say why canopy showed it nothing. Additive: nothing a 0.15 host calls changes shape.
+
+- **`CANOPY_HOST["WORKSPACE"]`** (`HostConfig.workspace`): the canopy workspace slug the
+  Connected site is registered in. When set, the SDK signs it as the new claim
+  `canopy_workspace` (`contract.WORKSPACE_CLAIM`, `contract.parse_workspace_claim`) into
+  every visitor assertion and site agents request, and canopy selects the site's
+  registration by it — so deleting or moving the agent in `AGENT_SLUG` no longer leaves
+  the site unresolvable. `AGENT_SLUG` keeps working (and keeps its other jobs); with both,
+  canopy refuses a disagreement with `workspace_mismatch`. The site agents request sends
+  the workspace alone when it is set.
+- **`canopy_sdk.site_agents`**: `request_assertion(..., workspace="")` and
+  `fetch_site_agents(..., workspace="")`. A refusal canopy answered is no longer
+  `unreachable`: `SiteAgentsError.code` is canopy's own code (`unknown_issuer`,
+  `ambiguous_issuer`, `workspace_mismatch`, `bad_signature`, `rate_limited`…, or `refused`
+  when it named none) and `SiteAgentsError.status` its HTTP status; `unreachable` means
+  canopy could not be reached. `SiteAgentsError.as_dict()` / `from_dict()`.
+- **Links in the answer**: `SiteAgents.site_settings_url` (this site's page in canopy,
+  the wire's `site.settings_url`) and `SiteAgent.problem_links` — `AgentProblem(text, url)`,
+  each problem with the URL of the page that fixes it (wire `problem_links: [{text, url}]`,
+  beside the unchanged `problems` sentences). Both empty from an older canopy.
+- **`canopy_sdk.django.site_agents`**: `last_error() -> SiteAgentsError | None` — the last
+  refresh's failure (`not_configured` at once for an unusable `CANOPY_HOST`), kept in the
+  host's cache and cleared by the next success. `refresh()` is a host view's "re-read now":
+  it bypasses the cache and the retry pause, raises `SiteAgentsError` (including
+  `not_configured`, no longer `HostNotConfigured`), and records the failure. The cache key
+  now includes the tenant selector (`WORKSPACE` / `AGENT_SLUG`), so changing it takes
+  effect on the next read.
+- **`canopy_sdk.site`**: an optional `site` block — `{"origins", "jwks_url", "issuer",
+  "mcp_resource"}` — in `site_document(..., site=...)`, read back as `SiteNeeds.site`
+  (`SiteFacts`, or None). `WELL_KNOWN_PATH = "/.well-known/canopy-site.json"`.
+- **`canopy/site.json`** fills the `site` block from the host's settings: `ORIGINS`
+  (default: the origin of `ISSUER`, else of the request), `JWKS_URL` (default: the SDK's
+  `jwks.json` route), `ISSUER` and `RESOURCE` while the grant is on. canopy's Connected
+  sites page adopts them on its owner's confirm ("Fill from the site"); mount
+  `views.site_document` at `/.well-known/canopy-site.json` so the site's address alone
+  finds it.
+- `canopy_sdk.fetch.FetchError` carries `status` and `detail` when the server answered.
+
 ## 0.15.0 — 2026-10-22
 
 **Breaking.** The sensitive-data vocabulary replaces ZDR / PHI (spec

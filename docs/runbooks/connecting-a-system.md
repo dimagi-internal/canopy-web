@@ -16,21 +16,41 @@ Connecting a **new** system is entirely self-serve, in the UI, by a workspace
 owner. There is no shell step and no secret to hand over:
 
 1. The host generates a keypair, keeps the private half, and publishes the
-   public half as a JWKS at a URL of its own.
-2. A workspace owner opens **`/w/<workspace>/settings/connected-apps`** and
-   registers the site: name, site URLs, which of this workspace's agents it may
-   offer, and that JWKS URL.
+   public half as a JWKS at a URL of its own. On `dimagi-canopy` ≥ 0.16 it also
+   serves a signed `site.json` declaring its own facts (origins, JWKS URL,
+   sign-in issuer, MCP server) — the SDK fills it from the host's settings —
+   ideally at `/.well-known/canopy-site.json` too, and sets
+   `CANOPY_HOST["WORKSPACE"]` to the workspace slug it is being registered in.
+2. A workspace owner opens **`/w/<workspace>/settings/connected-apps`**,
+   **types the site's address and clicks "Fill from the site"**: canopy reads
+   the site's `site.json`, checks its signature, and fills the name, site URLs,
+   JWKS URL, issuer and MCP server. The owner **checks the values**, picks which
+   of this workspace's agents it may offer, and clicks **Connect**. Nothing is
+   adopted without that click. (A host on an older SDK: type the same fields by
+   hand.)
 3. The host adds one backend endpoint (mint a visitor token) and one script
    tag.
 
 That is it. Canopy holds only a public key, fetched from the host, so nothing
-has to be copied and a rotation on the host's side needs no change here.
+has to be copied and a rotation on the host's side needs no change here. When
+the host's facts change later (a new origin, a moved MCP server), the owner
+clicks **Fill from the site's own documents** on the site's card, reviews what
+would change, and saves — the same audited update as a hand edit.
 
 **A second workspace** registers the site itself, the same way, with the same
 JWKS URL. Registrations are per workspace — there is no shared row and no
-custodian (2026-09-24) — so the host must then **name the agent** when it mints
-a visitor token (`agent_slug`) and in `canopy.init` (`agent`). A name alone is
-ambiguous once two workspaces hold it, and canopy refuses rather than guesses.
+custodian (2026-09-24) — so the host must then **name the workspace**
+(`CANOPY_HOST["WORKSPACE"]`, signed as `canopy_workspace`), or at least an agent
+when it mints a visitor token (`agent_slug`) and in `canopy.init` (`agent`). A
+name alone is ambiguous once two workspaces hold it, and canopy refuses rather
+than guesses. Prefer the workspace: naming it through an agent fails as soon as
+that agent is deleted or moved, and the host then shows no agents.
+
+**When a host says it cannot see its agents**, it can now say why: the SDK's
+`site_agents.last_error()` carries canopy's refusal code (`unknown_issuer`,
+`ambiguous_issuer`, `workspace_mismatch`, `bad_signature`, …) or `unreachable` /
+`not_configured`, and every canopy page it links to comes from canopy's answer
+(`site_settings_url`, each problem's URL).
 
 ---
 
