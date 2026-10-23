@@ -725,6 +725,9 @@ CAPABILITY_BROKER_ID = env("CAPABILITY_BROKER_ID", default="")
 # The off-request clock (apps/common/ticks.py): how often the ASGI process wakes to
 # run every registered job that has come due. <= 0 turns every job off.
 TICK_BASE_S = env.float("TICK_BASE_S", default=5)
+# Seconds between each web process's PROCESS_STATS log line (apps/common/process_stats.py):
+# memory, CPU, threads by name, and the busiest threads' stacks while CPU is high. 0 = off.
+PROCESS_STATS_S = env.float("PROCESS_STATS_S", default=60)
 # The harness's queue sweeps and scheduled unpauses (apps/harness/sweeps.py).
 HARNESS_QUEUE_SWEEP_TICK_S = env.int("HARNESS_QUEUE_SWEEP_TICK_S", default=15)
 
