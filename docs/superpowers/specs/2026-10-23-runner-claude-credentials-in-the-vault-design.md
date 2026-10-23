@@ -60,7 +60,8 @@ The plaintext `GET /runners/{id}/credential` keeps serving the non-secret parts 
 
 - **A sign-in on the box** (`RunnerMint`, `slot: token`): the box probes the new token (#1929), then seals it into the vault itself with its copy of the vault key and writes the ciphertext (`PUT /api/vaults/{id}/zk/values`, the workspace vault's own route). canopy-web never sees the token. `mint/result` carries only success and the row key.
 - **A token or API key pasted on the runner page:** the browser seals it, as it already does for a workspace vault's values (the person unlocks their vault key).
-- **A box with no copy of the vault key yet** cannot seal. It posts the token to canopy-web once, which seals it `zks1` to every eligible recipient and keeps nothing. The next key holder settles it into an ordinary value, exactly as for a server-minted agent secret today (`zk_seal.py`).
+- **The vault's key** is made by the runner's owner, in the browser, with one passkey touch on the runner's credentials page (Jonathan, 2026-10-23: a person makes keys, as for every other vault): a copy for them and one for the box. A box attached later gets its copy from "Give … a copy" there, or a keeper.
+- **A box with no copy of the vault key yet** cannot seal. Until step 3 it sends a signed-in token the old way, and seals it in by itself once it has its copy (below) — so for that window canopy-web holds it, as it does today.
 
 ### A new box
 
@@ -69,7 +70,7 @@ The plaintext `GET /runners/{id}/credential` keeps serving the non-secret parts 
 ## Migration
 
 1. Ship the attachment, eligibility, resolve and box read path, with the box reading the vault first and the old plaintext bundle as a fallback.
-2. For each cloud runner with `token`/`api_key` rows: create **its own** vault (`<runner> Claude credentials`; Jonathan, 2026-10-23: per-box first, attach to a shared vault later), and seal each `value_enc` into it as `zks1` to the eligible recipients (`manage.py runner_credentials_to_vault`, dry-run by default). Clear `value_enc` in the same transaction. The box settles the values on its next pass.
+2. For each cloud runner with `token`/`api_key` rows: its owner creates **its own** vault (`<runner> Claude credentials`; Jonathan, 2026-10-23: per-box first, attach to a shared vault later) and makes its key on the runner's page. The box then moves its own values in: the bundle marks each value still kept here `seal_as`, the box (which already holds the plaintext) seals it with its copy of the key, and canopy-web drops `value_enc` as the ciphertext lands. No server-side migration command, and no `zks1`: the box that already has the values is the one that seals them.
 3. Once no row holds a `value_enc`, delete the column and the plaintext values from `GET …/credential`, and the box's fallback with them.
 
 ## Not in scope

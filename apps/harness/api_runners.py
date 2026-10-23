@@ -90,7 +90,11 @@ from .schemas import (
     RunnerOnlyAgentsOut,
     RunnerOut,
     RunnerPrivateIn,
+    RunnerVaultEntryIn,
+    RunnerVaultEntryOut,
     RunnerVaultOut,
+    RunnerVaultValuesIn,
+    RunnerVaultValuesOut,
     SendUpIn,
     SendUpOut,
     SignInRequestIn,
@@ -383,6 +387,51 @@ def resolve_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> Run
     return RunnerCredentialResolveOut(vaults=out)
 
 
+@router.put("/runners/{runner_id}/vault/values", response=RunnerVaultValuesOut,
+            summary="The box seals its own credentials into its vault")
+@gate("runner", kind="runner-protocol")  # + the box's own runner token and a device proof
+def put_runner_vault_values(request: HttpRequest, runner_id: uuid.UUID,
+                            payload: RunnerVaultValuesIn) -> RunnerVaultValuesOut:
+    """`{vault_id, kv, values: [{name, value_zk}]}` — `zk1:` ciphertext the box made with
+    its copy of the vault key, for names its credential list uses
+    (`claude-token:<key>`, `anthropic-api-key:<key>`), into a vault serving it. Each entry
+    filled drops its stored copy here. Only the box's own runner token with a device
+    proof of a key on this runner (as `…/credential/resolve`)."""
+    runner = runner_or_404(request, runner_id)
+    refused = runner_credential_resolve.box_refusal(request, runner)
+    if refused is not None:
+        raise ProblemError(refused.status, "Runner credentials", detail=refused.detail,
+                           members={"error": refused.code})
+    try:
+        names = harness_runners.store_vault_values(
+            runner, vault_id=payload.vault_id, kv=payload.kv,
+            values={v.name: v.value_zk for v in payload.values})
+    except harness_runners.VaultWriteRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
+    return RunnerVaultValuesOut(names=names)
+
+
+@router.post("/runners/{runner_id}/vault/entries", response=RunnerVaultEntryOut,
+             summary="Add a token or API key whose value is sealed into the runner's vault")
+@gate("runner-admin", setting=True)
+def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
+                                  payload: RunnerVaultEntryIn) -> RunnerVaultEntryOut:
+    """The entry, at the end of the list, with no value here: the caller (a browser
+    holding the vault's key) then seals the value under `secret_name` with
+    `PUT /api/vaults/{vault_id}/zk/values`. 422 when the runner has no vault with a key."""
+    runner = runner_admin_or_404(request, runner_id)
+    try:
+        entry = harness_runners.add_runner_credential(runner, kind=payload.kind, value="",
+                                                      name=payload.name, by=request.user, in_vault=True)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    vault = harness_runners.open_runner_vault(runner)
+    return RunnerVaultEntryOut(key=entry.key, secret_name=entry.vault_secret_name,
+                               vault_id=str(vault.pk), kv=vault.kv)
+
+
 @router.post("/runners/{runner_id}/vault", response=RunnerVaultOut,
              summary="Give a cloud runner its own vault for its Claude credentials")
 @gate("runner-admin", setting=True)  # browser: + step-up; token allowed
@@ -641,8 +690,12 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
     mint = harness_runners.current_runner_mint(runner)
     if mint is None:
         raise HttpError(409, "no sign-in is in progress for this runner")
-    return harness_runners.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
-                                       logged_in=payload.logged_in, account=payload.account)
+    try:
+        return harness_runners.finish_runner_mint(mint, token=payload.token, detail=payload.detail,
+                                                  logged_in=payload.logged_in, account=payload.account,
+                                                  vault_key=payload.vault_key)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(422, str(exc)) from exc
 
 
 @router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,

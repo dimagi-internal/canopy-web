@@ -110,3 +110,116 @@ def test_a_cli_failure_carries_its_own_words(cr, monkeypatch):
         returncode=1, stdout="", stderr="Error: no runner token"))
     with pytest.raises(RuntimeError, match="no runner token"):
         cr._run_vault_cli("rid")
+
+
+# ── step 2: the box seals into its vault ──────────────────────────────────────
+
+STORED = {"key": "t3", "kind": "token", "value": "sk-ant-oat01-kept", "vault_secret": "",
+          "seal_as": "claude-token:t3"}
+
+
+def _seal_cli(cr, monkeypatch, *, fail=None):
+    calls = []
+
+    def run(runner_id, values):
+        calls.append(dict(values))
+        if fail:
+            raise RuntimeError(fail)
+        return {"names": sorted(values), "vault_id": "v"}
+
+    monkeypatch.setattr(cr, "_run_seal_cli", run)
+    return calls
+
+
+def test_a_value_still_stored_is_sealed_in_once(cr, monkeypatch):
+    _cli(cr, monkeypatch, {})
+    calls = _seal_cli(cr, monkeypatch)
+    cred = dict(_bundle(STORED), vault_open=True)
+    out = cr._with_vault_values("rid", cred)
+    assert calls == [{"claude-token:t3": "sk-ant-oat01-kept"}]
+    assert out["cascade"][0]["value"] == "sk-ant-oat01-kept", "this pass still serves the stored copy"
+    cr._with_vault_values("rid", cred)
+    assert len(calls) == 1, "the same bundle is not sealed twice"
+
+
+def test_a_box_that_cannot_seal_yet_waits_an_hour(cr, monkeypatch):
+    _cli(cr, monkeypatch, {})
+    calls = _seal_cli(cr, monkeypatch, fail="holds no copy of a vault key")
+    cred = dict(_bundle(STORED), vault_open=True)
+    cr._with_vault_values("rid", cred)
+    cr._with_vault_values("rid", cred)
+    assert len(calls) == 1
+    assert "could not seal" in cr._HEALTH["claude.vault"]["detail"]
+    cr._SEAL_TRIED["at"] -= cr.VAULT_REREAD_SECONDS + 1
+    cr._with_vault_values("rid", cred)
+    assert len(calls) == 2
+
+
+def _mint_api(cr, monkeypatch, *, result_status=200):
+    posts = []
+
+    def api(method, path, body=None, **kw):
+        posts.append((method, path, body))
+        return (result_status if path.endswith("/mint/result") else 200), {}
+
+    monkeypatch.setattr(cr, "_api", api)
+    monkeypatch.setattr(cr, "_reload_claude_credentials", lambda: False)
+    return posts
+
+
+def test_a_minted_token_is_sealed_and_never_sent(cr, monkeypatch):
+    posts = _mint_api(cr, monkeypatch)
+    calls = _seal_cli(cr, monkeypatch)
+    monkeypatch.setattr(cr.secrets, "token_hex", lambda n: "0a1b2c3d")
+    cr._VAULT_STATE["open"] = True
+    assert cr._seal_minted("rid", {"login_key": ""}, "sk-ant-oat01-new", "m1234567") is True
+    assert posts == [("POST", "/runners/rid/mint/result", {"vault_key": "0a1b2c3d"})]
+    assert calls == [{"claude-token:0a1b2c3d": "sk-ant-oat01-new"}]
+    assert "sk-ant-oat01-new" not in json.dumps(posts), "canopy-web never sees it"
+
+
+def test_a_sign_in_for_a_token_seals_under_that_tokens_key(cr, monkeypatch):
+    posts = _mint_api(cr, monkeypatch)
+    calls = _seal_cli(cr, monkeypatch)
+    cr._VAULT_STATE["open"] = True
+    cr._seal_minted("rid", {"login_key": "a62534be"}, "tok", "m1234567")
+    assert posts[0][2] == {"vault_key": "a62534be"}
+    assert calls == [{"claude-token:a62534be": "tok"}]
+
+
+def test_no_vault_means_the_old_path(cr, monkeypatch):
+    posts = _mint_api(cr, monkeypatch)
+    cr._VAULT_STATE["open"] = False
+    assert cr._seal_minted("rid", {"login_key": ""}, "tok", "m1234567") is False
+    assert posts == []
+
+
+def test_a_refused_entry_falls_back_to_sending(cr, monkeypatch):
+    _mint_api(cr, monkeypatch, result_status=422)
+    calls = _seal_cli(cr, monkeypatch)
+    cr._VAULT_STATE["open"] = True
+    assert cr._seal_minted("rid", {"login_key": ""}, "tok", "m1234567") is False
+    assert calls == []
+
+
+def test_a_failed_seal_keeps_the_token_on_its_entry(cr, monkeypatch):
+    posts = _mint_api(cr, monkeypatch)
+    _seal_cli(cr, monkeypatch, fail="timeout")
+    monkeypatch.setattr(cr.secrets, "token_hex", lambda n: "0a1b2c3d")
+    cr._VAULT_STATE["open"] = True
+    assert cr._seal_minted("rid", {"login_key": ""}, "tok", "m1234567") is True
+    assert posts[-1] == ("PATCH", "/runners/rid/credentials/0a1b2c3d", {"value": "tok"})
+
+
+def test_the_seal_cli_takes_values_on_stdin_not_argv(cr, monkeypatch):
+    seen = {}
+
+    def run(argv, input=None, env=None, **kw):
+        seen.update(argv=argv, input=input, env=env)
+        return types.SimpleNamespace(returncode=0, stderr="", stdout=json.dumps({"names": ["n"], "vault_id": "v"}))
+
+    monkeypatch.setattr(cr.subprocess, "run", run)
+    cr._run_seal_cli("rid", {"n": "secret-value"})
+    assert "secret-value" not in " ".join(seen["argv"])
+    assert json.loads(seen["input"]) == {"n": "secret-value"}
+    assert seen["env"]["CANOPY_TOKEN"] == "box-token"

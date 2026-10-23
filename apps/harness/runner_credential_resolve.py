@@ -70,14 +70,28 @@ def wanted_names(runner) -> set[str]:
             if e.vault_secret_name}
 
 
-def resolve(request: HttpRequest, runner) -> list[dict] | Refusal:
+def _box_key(request: HttpRequest, runner):
+    """`(device_key, None)` when this request is the box itself — its own runner token
+    and a proof of an active device key on it — else `(None, Refusal)`."""
     rtok = getattr(request, "runner_token", None)
     if rtok is None or rtok.runner_id != runner.pk:
-        return Refusal(403, RUNNER_ONLY, f"only {runner.name}'s own runner token reads its credentials; "
-                                         "a person's token or browser session never does")
+        return None, Refusal(403, RUNNER_ONLY, f"only {runner.name}'s own runner token reaches its "
+                                               "credentials; a person's token or browser session never does")
     key, why = device_key_for(request, runner)
     if key is None:
-        return Refusal(401, DEVICE_PROOF_REQUIRED, why)
+        return None, Refusal(401, DEVICE_PROOF_REQUIRED, why)
+    return key, None
+
+
+def box_refusal(request: HttpRequest, runner) -> Refusal | None:
+    """Why this request is not the box itself (`_box_key`), or None."""
+    return _box_key(request, runner)[1]
+
+
+def resolve(request: HttpRequest, runner) -> list[dict] | Refusal:
+    key, refused = _box_key(request, runner)
+    if refused is not None:
+        return refused
     layers = workspace_vaults.runner_layers_payload(runner, key, wanted_names(runner))
     _record_read(runner, key, layers)
     return layers

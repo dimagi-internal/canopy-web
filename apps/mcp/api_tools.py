@@ -111,6 +111,7 @@ EXCLUDED: dict[str, str] = {
     "pair_runner": _RUNNER,
     "get_runner_credential": _RUNNER,
     "resolve_runner_credential": _RUNNER,
+    "put_runner_vault_values": _RUNNER,
     "turn_github_token": _RUNNER,
     "turn_attachment_content": _RUNNER,
     "runner_github_readiness": _RUNNER,

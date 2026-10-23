@@ -23,11 +23,23 @@ const api = vi.hoisted(() => ({
   getRunnerMint: vi.fn(),
   startRunnerMint: vi.fn(),
   submitRunnerMintCode: vi.fn(),
+  createRunnerVault: vi.fn(),
+  addVaultedRunnerCredential: vi.fn(),
 }))
 vi.mock('@/api/harness', () => api)
+const vaultApi = vi.hoisted(() => ({ getKeyset: vi.fn(), getWorkspaceVaultZk: vi.fn() }))
+vi.mock('@/api/vault', () => vaultApi)
+const ops = vi.hoisted(() => ({
+  makeWorkspaceVaultKey: vi.fn(),
+  grantWorkspaceVaultPending: vi.fn(),
+  sealWorkspaceVaultValue: vi.fn(),
+  stepUpAndUnlock: vi.fn(),
+  unlockVaultKey: vi.fn(),
+}))
+vi.mock('@/vault/operations', () => ops)
 
 function entry(over: Partial<RunnerCredentialEntry> & Pick<RunnerCredentialEntry, 'key' | 'kind'>): RunnerCredentialEntry {
-  return { name: '', account: '', signed_in: false, has_value: false, in_vault: false, reported_at: null, ...over }
+  return { name: '', account: '', signed_in: false, has_value: false, in_vault: false, vault_secret: '', reported_at: null, ...over }
 }
 
 function status(credentials: RunnerCredentialEntry[]): CredentialStatus {
@@ -223,3 +235,61 @@ describe('RunnerCredentials', () => {
     expect(screen.queryByTestId('runner-credentials-warning')).toBeNull()
   })
 })
+
+describe('the runner\'s own vault', () => {
+  const ME = { userId: '1' }
+  const withVault = (kv: number, credentials: RunnerCredentialEntry[] = []): CredentialStatus =>
+    ({ ...status(credentials), vaults: [{ vault_id: 'v1', name: 'ec2-box Claude credentials', kv }] })
+
+  beforeEach(() => {
+    vaultApi.getKeyset.mockResolvedValue({ exists: true })
+    ops.stepUpAndUnlock.mockResolvedValue(ME)
+    vaultApi.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
+  })
+
+  it('offers to keep the runner\'s tokens in a vault', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValueOnce(status([])).mockResolvedValue(withVault(0))
+    api.createRunnerVault.mockResolvedValue({ vault_id: 'v1', name: 'x', kv: 0 })
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('runner-vault-create'))
+    await waitFor(() => expect(api.createRunnerVault).toHaveBeenCalledWith('r1'))
+    await screen.findByTestId('runner-vault-no-key')
+  })
+
+  it('makes the vault\'s key with one passkey touch', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValueOnce(withVault(0)).mockResolvedValue(withVault(1))
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('runner-vault-make-key'))
+    await waitFor(() => expect(ops.makeWorkspaceVaultKey).toHaveBeenCalledWith('v1', ME))
+    await screen.findByTestId('runner-vault')
+  })
+
+  it('lets a box waiting for its copy of the key in', async () => {
+    vaultApi.getWorkspaceVaultZk.mockResolvedValue({ pending: [{ kind: 'device', target: 'k1' }] })
+    api.getRunnerCredentialStatus.mockResolvedValue(withVault(1))
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('runner-vault-grant'))
+    await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalledWith('v1', ME))
+  })
+
+  it('seals a pasted API key into the vault in the browser, never sending it', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(withVault(1))
+    api.addVaultedRunnerCredential.mockResolvedValue({ key: 'kk', secret_name: 'anthropic-api-key:kk', vault_id: 'v1', kv: 1 })
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-add-api_key'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'ZDR org' } })
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'sk-ant-api-1' } })
+    fireEvent.click(screen.getByTestId('cred-new-api-key-save'))
+    await waitFor(() => expect(ops.sealWorkspaceVaultValue).toHaveBeenCalledWith('v1', 'anthropic-api-key:kk', 'sk-ant-api-1', ME))
+    expect(api.addVaultedRunnerCredential).toHaveBeenCalledWith('r1', 'api_key', 'ZDR org')
+    expect(api.addRunnerCredential).not.toHaveBeenCalled()
+  })
+
+  it('marks what the vault holds', async () => {
+    const sealed = entry({ key: 'tt', kind: 'token', has_value: true, in_vault: true, vault_secret: 'claude-token:tt' })
+    api.getRunnerCredentialStatus.mockResolvedValue(withVault(1, [sealed]))
+    render(<RunnerCredentials runnerId="r1" />)
+    await screen.findByTestId('cred-in-vault-tt')
+  })
+})
+
