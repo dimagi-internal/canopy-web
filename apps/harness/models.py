@@ -310,6 +310,13 @@ class Runner(models.Model):
     #: stood up directed (`up.sh --test`) can take routed work again from the runner
     #: page, with no shell on it. Set by a runner administrator, never by the box.
     directed_setting = models.BooleanField(null=True, blank=True, default=None)
+    #: The egress lock a person set for this runner (`PUT …/egress`, `apps/harness/egress.py`):
+    #: locked, and the hosts it admits beyond the box's base set. Root on the box reads it
+    #: by its instance role (`POST /api/harness/runners/box-egress`) and applies it. It
+    #: only ever adds to the box's own floor (box.env), and a ZDR box is locked
+    #: whatever it says. Never reported by the box.
+    egress_locked = models.BooleanField(default=False)
+    egress_allow = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["kind", "status"])]

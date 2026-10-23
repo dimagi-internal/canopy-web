@@ -359,6 +359,12 @@ PY
   # The only privileged step, and the only reason this box grants the service user
   # any sudo at all — scoped to this exact command by a sudoers drop-in. On a box of
   # units this runs as root and restarts every unit (and the broker) at once.
+  # A box of units re-runs root's setup first (users, env files, the IMDS rule, the
+  # egress lock and its sync timer), so what the new code sets up is in place before
+  # its runners start. Its runners Require it, so they restart with it.
+  if [ "$UNITS_MODE" = "1" ]; then
+    systemctl restart canopy-units.service || log "canopy-units did not restart cleanly"
+  fi
   # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
   $RESTART_CMD $SERVICE
 }

@@ -12,6 +12,8 @@ from pydantic import Field, WithJsonSchema, field_validator, model_validator
 
 from .models import Runner, Turn
 
+from .runner_requirements import is_zdr_box
+
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
 # These are the values the DB columns accept (origin max_length=32, routing
 # max_length=15); typing the INPUT schemas as Literals turns an out-of-set value
@@ -132,6 +134,29 @@ class RunnerOnlyAgentsOut(Schema):
     agents: list[str]
     # Every agent it could be dedicated to: in the workspaces it serves and visible to you.
     choices: list[RunnerAgentChoiceOut]
+class RunnerEgressIn(Schema):
+    # Locked: the box's units reach the network only through its proxy, to the base
+    # set (canopy-web, the model, GitHub) plus `allow`. A ZDR box cannot be unlocked.
+    locked: bool
+    # Extra hostnames; `.example.com` admits every subdomain. Replaces the list.
+    allow: list[str] = []
+
+
+class BoxEgressIn(Schema):
+    # An `X-Canopy-Aws-Proof` value for this URL: the box's instance role.
+    proof: str
+
+
+class BoxEgressRunnerOut(Schema):
+    id: uuid.UUID
+    name: str
+    locked: bool
+    allow: list[str]
+
+
+class BoxEgressOut(Schema):
+    # Every live runner of the box's instance role, as its egress is set.
+    runners: list[BoxEgressRunnerOut]
 
 
 class RunnerEngineIn(Schema):
@@ -257,6 +282,11 @@ class RunnerOut(Schema):
     # box's own `capabilities.directed`).
     directed: bool = False
     directed_setting: bool | None = None
+    # The egress lock a person set (`PUT …/egress`); `egress_forced`: a ZDR box,
+    # locked whatever is set. Root on the box applies it within a minute.
+    egress_locked: bool = False
+    egress_allow: list[str] = []
+    egress_forced: bool = False
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -289,6 +319,10 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_only_agents(obj) -> list[str]:
         return sorted(obj.only_agent_slugs())
+
+    @staticmethod
+    def resolve_egress_forced(obj) -> bool:
+        return is_zdr_box(obj)
 
     @staticmethod
     def resolve_key_waiting(obj) -> str:

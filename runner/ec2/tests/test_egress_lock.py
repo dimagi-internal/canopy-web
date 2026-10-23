@@ -8,6 +8,7 @@ docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §1.
 from __future__ import annotations
 
 import asyncio
+import json
 import pathlib
 import subprocess
 
@@ -15,7 +16,10 @@ import pytest
 
 BOX = {"RUNNER_NAME": "cloud-zdr-1", "RUNNER_WORKSPACE": "dimagi",
        "CANOPY_BASE_URL": "https://canopy.dimagi.com", "RUNNER_UNITS": "tree:dimagi"}
-UNITS = [{"id": "dimagi", "uid": 1001}, {"id": "agent-eva", "uid": 1002}]
+UNITS = [{"id": "dimagi", "uid": 1001, "gid": 1001, "name": "cloud-zdr-1", "kind": "tree", "slug": "",
+          "workspace": "dimagi", "user": "cu-dimagi", "home": "/home/cu-dimagi"},
+         {"id": "agent-eva", "uid": 1002, "gid": 1002, "name": "cloud-zdr-1-agent-eva", "kind": "agent",
+          "slug": "eva", "workspace": "dimagi", "user": "cu-agent-eva", "home": "/home/cu-agent-eva"}]
 
 
 class Recorder:
@@ -75,11 +79,26 @@ def test_locked_each_unit_may_send_only_on_loopback_and_not_dns(cloud_runner, mo
     assert ["iptables", "-I", "OUTPUT", "1", "-j", "CANOPY-EGRESS"] in run.calls
     rules = run.appended()
     own = ["-m", "owner", "--uid-owner", "1001"]
-    assert rules[:4] == [[*own, "-o", "lo", "-p", "udp", "--dport", "53", "-j", "REJECT"],
+    assert rules[:5] == [[*own, "-o", "lo", "-p", "udp", "--dport", "53", "-j", "REJECT"],
                          [*own, "-o", "lo", "-p", "tcp", "--dport", "53", "-j", "REJECT"],
+                         # not the other unit's proxy: that is the other unit's allowlist
+                         [*own, "-o", "lo", "-p", "tcp", "--dport", "21002", "-j", "REJECT"],
                          [*own, "-o", "lo", "-j", "RETURN"],
                          [*own, "-j", "REJECT"]]
-    assert rules[7] == ["-m", "owner", "--uid-owner", "1002", "-j", "REJECT"]
+    assert rules[9] == ["-m", "owner", "--uid-owner", "1002", "-j", "REJECT"]
+
+
+def test_only_the_named_units_are_locked(cloud_runner, monkeypatch):
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
+    run = Recorder()
+    cloud_runner.egress_rules(UNITS, locked={"agent-eva"}, run=run)
+    owners = {r[3] for r in run.appended()}
+    assert owners == {"1002"}
+
+
+def test_each_unit_has_its_own_stable_port(cloud_runner):
+    assert cloud_runner.egress_port(1001) == 21001
+    assert cloud_runner.egress_port(1002) == 21002
 
 
 def test_unlocked_the_chain_is_emptied(cloud_runner, monkeypatch):
@@ -103,39 +122,126 @@ def test_a_locked_box_whose_rules_are_refused_does_not_come_up_open(cloud_runner
                                   run=Recorder(fail=lambda argv: argv[0] == "ip6tables" and argv[1] == "-A"))
 
 
-def test_setup_locked_writes_the_allowlist_unit_and_starts_the_proxy(cloud_runner, monkeypatch, tmp_path):
+# ---- the plan: the box's floor, ZDR mode, and canopy-web ------------------------
+
+def test_canopy_web_locks_one_unit_and_adds_its_hosts(cloud_runner):
+    plan = cloud_runner.egress_plan(BOX, UNITS, {"cloud-zdr-1-agent-eva": {"locked": True,
+                                                                          "allow": ["slack.com"]}})
+    assert plan["dimagi"]["locked"] is False
+    assert plan["agent-eva"]["locked"] is True and "slack.com" in plan["agent-eva"]["allow"]
+    assert "slack.com" not in plan["dimagi"]["allow"]
+
+
+def test_canopy_web_cannot_unlock_what_the_box_locks(cloud_runner):
+    for box in ({**BOX, "RUNNER_EGRESS": "locked"}, {**BOX, "RUNNER_DATA_MODE": "zdr"}):
+        plan = cloud_runner.egress_plan(box, UNITS, {"cloud-zdr-1": {"locked": False}})
+        assert plan["dimagi"]["locked"] is True and plan["agent-eva"]["locked"] is True
+
+
+def test_a_bad_host_from_canopy_web_is_skipped_not_fatal(cloud_runner):
+    plan = cloud_runner.egress_plan(BOX, UNITS, {"cloud-zdr-1": {"locked": True,
+                                                                "allow": ["ok.example.com", "bad/host"]}})
+    assert "ok.example.com" in plan["dimagi"]["allow"] and "bad/host" not in plan["dimagi"]["allow"]
+
+
+def test_the_box_reads_canopy_web_by_its_role(cloud_runner):
+    seen = {}
+
+    def post(url, body):
+        seen.update(url=url, body=body)
+        return 200, {"runners": [{"name": "cloud-zdr-1", "locked": True, "allow": ["slack.com"]}]}
+
+    got = cloud_runner.fetch_box_egress("https://canopy.dimagi.com", post=post, proof=lambda url: "PROOF")
+    assert seen["url"] == "https://canopy.dimagi.com/api/harness/runners/box-egress"
+    assert seen["body"] == {"proof": "PROOF"}
+    assert got == {"cloud-zdr-1": {"locked": True, "allow": ["slack.com"]}}
+    assert cloud_runner.fetch_box_egress("https://x", post=lambda u, b: (401, {}), proof=lambda u: "P") is None
+    assert cloud_runner.fetch_box_egress("https://x", post=post, proof=lambda u: "") is None
+
+
+# ---- applying it --------------------------------------------------------------------
+
+def _apply(cr, tmp_path, *, box=BOX, server=None, boot=False, idle=True, run=None):
+    run = run or Recorder()
+    applied = cr.apply_egress(box, UNITS, boot=boot, run=run, chown=lambda *a: None, etc=tmp_path,
+                              systemd=tmp_path, fetch=lambda: server, idle=lambda u: idle)
+    return applied, run
+
+
+def test_boot_applies_the_plan_writes_env_and_starts_the_proxy(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
-    run = Recorder(missing=lambda argv: argv[:2] == ["id", "-u"])
-    locked = cloud_runner.setup_egress({**BOX, "RUNNER_EGRESS": "locked"}, UNITS, run=run,
-                                       chown=lambda *a: None, etc=tmp_path, systemd=tmp_path)
-    assert locked
-    assert "canopy.dimagi.com" in (tmp_path / "egress.allow").read_text().split()
+    applied, run = _apply(cloud_runner, tmp_path, boot=True,
+                          server={"cloud-zdr-1": {"locked": True, "allow": ["slack.com"]}})
+    assert applied == {"dimagi": True, "agent-eva": False}
+    assert "slack.com" in (tmp_path / "dimagi.egress.allow").read_text().split()
+    env = (tmp_path / "dimagi.env").read_text()
+    assert "HTTPS_PROXY=http://127.0.0.1:21001" in env and "RUNNER_EGRESS=locked" in env
+    assert "HTTPS_PROXY" not in (tmp_path / "agent-eva.env").read_text()
+    assert json.loads((tmp_path / "egress.json").read_text())["units"][0]["port"] == 21001
     assert "--egress-proxy" in (tmp_path / "canopy-egress.service").read_text()
-    assert "User=canopy-egress" in (tmp_path / "canopy-egress.service").read_text()
-    assert any(c[0] == "useradd" and "canopy-egress" in c for c in run.calls)
     assert ["systemctl", "enable", "--now", "--no-block", "canopy-egress.service"] in run.calls
-    assert run.appended()     # the rules, after the proxy
+    assert {r[3] for r in run.appended()} == {"1001"}
+    assert not any("canopy-runner@" in " ".join(c) for c in run.calls)   # nothing running yet
 
 
-def test_setup_unlocked_stops_the_proxy_and_opens_the_chain(cloud_runner, monkeypatch, tmp_path):
+def test_a_lock_set_in_canopy_web_waits_for_an_idle_unit(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
-    run = Recorder()
-    assert not cloud_runner.setup_egress(BOX, UNITS, run=run, chown=lambda *a: None,
-                                         etc=tmp_path, systemd=tmp_path)
+    _apply(cloud_runner, tmp_path, boot=True, server={})
+    busy, run = _apply(cloud_runner, tmp_path, server={"cloud-zdr-1": {"locked": True}}, idle=False)
+    assert busy["dimagi"] is False and run.appended() == []        # a turn is running: not yet
+    done, run = _apply(cloud_runner, tmp_path, server={"cloud-zdr-1": {"locked": True}}, idle=True)
+    assert done["dimagi"] is True
+    assert "HTTPS_PROXY=http://127.0.0.1:21001" in (tmp_path / "dimagi.env").read_text()
+    assert ["systemctl", "restart", "--no-block", "canopy-runner@dimagi.service"] in run.calls
+    assert {r[3] for r in run.appended()} == {"1001"}
+
+
+def test_an_unreadable_canopy_web_keeps_the_last_answer(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
+    _apply(cloud_runner, tmp_path, boot=True, server={"cloud-zdr-1": {"locked": True, "allow": ["slack.com"]}})
+    applied, run = _apply(cloud_runner, tmp_path, server=None)      # read failed
+    assert applied["dimagi"] is True
+    assert "slack.com" in (tmp_path / "dimagi.egress.allow").read_text().split()
+
+
+def test_nothing_locked_stops_the_proxy_and_opens_the_chain(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
+    applied, run = _apply(cloud_runner, tmp_path, boot=True, server={})
+    assert applied == {"dimagi": False, "agent-eva": False}
     assert ["systemctl", "disable", "--now", "canopy-egress.service"] in run.calls
     assert ["iptables", "-F", "CANOPY-EGRESS"] in run.calls and run.appended() == []
 
 
-def test_a_locked_units_env_carries_the_proxy(cloud_runner):
-    unit = {"id": "dimagi", "kind": "tree", "slug": "", "name": "cloud-zdr-1", "workspace": "dimagi",
-            "user": "cu-dimagi", "home": "/home/cu-dimagi"}
-    env = cloud_runner.unit_env(unit, [unit], {**BOX, "RUNNER_EGRESS": "locked"}, uid=1001)
-    assert env["RUNNER_EGRESS"] == "locked"
+def test_the_box_floor_locks_at_boot_with_no_canopy_web(cloud_runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
+    applied, _run = _apply(cloud_runner, tmp_path, box={**BOX, "RUNNER_DATA_MODE": "zdr"}, boot=True,
+                           server=None)
+    assert applied == {"dimagi": True, "agent-eva": True}
+
+
+def test_idle_reads_the_in_flight_marker(cloud_runner, tmp_path):
+    unit = {**UNITS[0], "home": str(tmp_path)}
+    assert cloud_runner.unit_idle(unit)                                   # no marker
+    (tmp_path / ".canopy-runner").mkdir()
+    marker = tmp_path / ".canopy-runner" / "in-flight"
+    marker.write_text(json.dumps({"count": 1, "at": 1000.0}))
+    assert not cloud_runner.unit_idle(unit, now=lambda: 1030.0)
+    assert cloud_runner.unit_idle(unit, now=lambda: 1200.0)             # stale: not running
+    marker.write_text(json.dumps({"count": 0, "at": 1000.0}))
+    assert cloud_runner.unit_idle(unit, now=lambda: 1030.0)
+
+
+def test_a_locked_units_env_carries_its_own_proxy(cloud_runner):
+    unit = UNITS[0]
+    env = cloud_runner.unit_env(unit, UNITS, BOX, uid=1001, locked=True)
+    assert env["RUNNER_EGRESS"] == "locked" and env["CANOPY_EGRESS_PORT"] == "21001"
     for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
-        assert env[name] == "http://127.0.0.1:3128"
+        assert env[name] == "http://127.0.0.1:21001"
     assert "127.0.0.1" in env["NO_PROXY"]
-    open_env = cloud_runner.unit_env(unit, [unit], BOX, uid=1001)
+    open_env = cloud_runner.unit_env(unit, UNITS, BOX, uid=1001, locked=False)
     assert "HTTPS_PROXY" not in open_env and open_env["RUNNER_EGRESS"] == ""
+    # Not told: what the box alone says.
+    assert cloud_runner.unit_env(unit, UNITS, {**BOX, "RUNNER_EGRESS": "locked"}, uid=1001)["RUNNER_EGRESS"]
 
 
 def test_the_egress_settings_carry_over_on_an_in_place_move(cloud_runner):
@@ -298,7 +404,7 @@ def zdr_box(load_cloud_runner, monkeypatch):
 def test_zdr_mode_with_egress_open_is_not_ready(zdr_box):
     cr = zdr_box("")
     ok, note = cr.zdr_readiness()
-    assert not ok and "RunnerEgress=locked" in note
+    assert not ok and "started open" in note
     cr._egress_check()
     assert cr._HEALTH["egress"]["status"] == "fail"
 

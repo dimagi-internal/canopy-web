@@ -10,6 +10,7 @@ import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerDirected } from '@/components/supervisor/RunnerDirected'
 import { RunnerOnlyAgents } from '@/components/supervisor/RunnerOnlyAgents'
+import { RunnerEgress } from '@/components/supervisor/RunnerEgress'
 import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
@@ -193,6 +194,9 @@ export function RunnerDetail({
         {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
         {runner.can_administer && onChanged && <RunnerOnlyAgents runner={runner} onChange={onChanged} />}
         {runner.can_administer && onChanged && <RunnerDirected runner={runner} onChange={onChanged} />}
+        {runner.can_administer && runner.kind === 'cloud' && onChanged && (
+          <RunnerEgress runner={runner} onChange={onChanged} />
+        )}
         {(runner.can_administer || runner.can_manage) && runner.kind !== 'cloud' && onChanged && (
           <RunnerEngine runner={runner} onChange={onChanged} />
         )}

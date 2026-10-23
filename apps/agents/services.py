@@ -17,6 +17,7 @@ from apps.events import services as events
 from apps.harness.dispatch import dispatch, enqueue_task_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import inherited_orders
+from apps.harness.runner_requirements import is_zdr_box
 from apps.tokens.models import PersonalToken
 from apps.workspaces import permissions as perms
 from apps.workspaces import role_cap
@@ -1535,14 +1536,6 @@ def runner_may_hold_agent(runner, agent) -> bool:
         return False
     return agent.is_admin(runner.owner)
 
-
-def is_zdr_box(runner) -> bool:
-    """A box set up for PHI work: a person declared `zdr` on it, OR it reports ZDR
-    mode on its heartbeat. Either alone makes it dedicated — unlike routing's
-    `runner_requirements.in_force`, which needs both before it sends ZDR work
-    there; dedication errs toward keeping other agents off."""
-    caps = getattr(runner, "capabilities", None) or {}
-    return "zdr" in runner.flags or bool(caps.get("data_mode"))
 
 
 # ---- 1Password vault + import (spec 2026-09-06) -------------------------------

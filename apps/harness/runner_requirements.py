@@ -95,6 +95,16 @@ def in_force(runner) -> frozenset[str]:
                      if FLAG_NEEDS_DATA_MODE.get(f) in (None, reported))
 
 
+def is_zdr_box(runner) -> bool:
+    """A box set up for PHI work: a person declared `zdr` on it, OR it reports ZDR
+    mode on its heartbeat. Either alone counts — unlike `in_force`, which needs both
+    before routing sends ZDR work there. What it decides errs toward the strict side:
+    the box holds only `data: phi` agents (`agents.services.runner_may_hold_agent`)
+    and its egress stays locked (`egress`)."""
+    caps = getattr(runner, "capabilities", None) or {}
+    return "zdr" in runner.flags or bool(caps.get(DATA_MODE_KEY))
+
+
 def runner_satisfies(runner, reqs: frozenset[str]) -> bool:
     """Whether `runner` may hold work that requires `reqs` — the one question every
     routing, placement and gateway check asks."""

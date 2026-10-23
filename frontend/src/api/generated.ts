@@ -7762,6 +7762,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/box-egress": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A cloud box reads its runners' egress lock (instance role, no token)
+         * @description Prove this box's EC2 instance role (`proof`, bound to this URL): every live
+         *     runner on that machine with its egress lock — `locked` (a ZDR box always is) and
+         *     `allow`, the hosts beyond the box's base set. Root applies it on top of the box's
+         *     own setting, never below it. Any bad proof: one uniform 401.
+         */
+        readonly post: operations["box_egress"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runner-pairings/": {
         readonly parameters: {
             readonly query?: never;
@@ -9107,6 +9130,31 @@ export interface paths {
          *     runner administrator.
          */
         readonly put: operations["set_runner_only_agents"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/egress": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Lock this runner's egress to an allowlist of hosts
+         * @description Set the runner's egress lock: `locked` (its units reach the network only
+         *     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
+         *     hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
+         *     applies it within a minute, on top of the box's own setting, which it never
+         *     loosens. A ZDR box is always locked; adding a host to one needs a person in a
+         *     browser behind a passkey. Owner or a runner administrator.
+         */
+        readonly put: operations["set_runner_egress"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -27555,6 +27603,30 @@ export interface components {
              */
             readonly host: string;
         };
+        /** BoxEgressOut */
+        readonly BoxEgressOut: {
+            /** Runners */
+            readonly runners: readonly components["schemas"]["BoxEgressRunnerOut"][];
+        };
+        /** BoxEgressRunnerOut */
+        readonly BoxEgressRunnerOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Locked */
+            readonly locked: boolean;
+            /** Allow */
+            readonly allow: readonly string[];
+        };
+        /** BoxEgressIn */
+        readonly BoxEgressIn: {
+            /** Proof */
+            readonly proof: string;
+        };
         /**
          * RunnerPairedOut
          * @description `reattached` (this key is already an active runner's) or `paired` (a new
@@ -28154,6 +28226,21 @@ export interface components {
             readonly directed: boolean;
             /** Directed Setting */
             readonly directed_setting?: boolean | null;
+            /**
+             * Egress Locked
+             * @default false
+             */
+            readonly egress_locked: boolean;
+            /**
+             * Egress Allow
+             * @default []
+             */
+            readonly egress_allow: readonly string[];
+            /**
+             * Egress Forced
+             * @default false
+             */
+            readonly egress_forced: boolean;
             /**
              * Roots
              * @default []
@@ -28797,6 +28884,16 @@ export interface components {
         readonly RunnerOnlyAgentsIn: {
             /** Agents */
             readonly agents: readonly string[];
+        };
+        /** RunnerEgressIn */
+        readonly RunnerEgressIn: {
+            /** Locked */
+            readonly locked: boolean;
+            /**
+             * Allow
+             * @default []
+             */
+            readonly allow: readonly string[];
         };
         /** RunnerEngineIn */
         readonly RunnerEngineIn: {
@@ -44457,6 +44554,30 @@ export interface operations {
             };
         };
     };
+    readonly box_egress: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BoxEgressIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["BoxEgressOut"];
+                };
+            };
+        };
+    };
     readonly create_runner_pairing: {
         readonly parameters: {
             readonly query?: never;
@@ -46078,6 +46199,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerOnlyAgentsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_egress: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerEgressIn"];
             };
         };
         readonly responses: {

@@ -47,6 +47,9 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     only_agents: [],
     directed: false,
     directed_setting: null,
+    egress_locked: false,
+    egress_allow: [],
+    egress_forced: false,
     roots: ['dimagi'], spans_trees: false,
     ...overrides,
   };
