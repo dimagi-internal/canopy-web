@@ -312,6 +312,11 @@ export interface SessionState {
    *  client that just connected has no correct prior to merge a delta into.
    *  Absent on an older server. */
   queued?: QueuedMessage[];
+  /** What the session's subagents are doing, one per `Agent` call (matched by
+   *  `tool_use_id`), replaced wholesale. In the CONNECT SNAPSHOT for the same
+   *  reason as `menu`: a background agent works while nobody is watching.
+   *  Absent on an older server. */
+  subagents?: SubagentSummary[];
   participants: Participant[];
   presence_user_ids: number[];
   /** The connecting user — null for a contact (a widget visitor), who has no
@@ -320,6 +325,28 @@ export interface SessionState {
   /** The connecting CONTACT, when the viewer is one; null for a member.
    *  Absent on an older server. */
   current_contact_id?: number | null;
+}
+
+/** One subagent of a session, from the files Claude Code keeps beside its
+ *  transcript (`canopy_transcript.summarize_subagents`). `description` and
+ *  `last` are blank on a sensitive conversation. */
+export interface SubagentSummary {
+  agent_id: string;
+  /** The `Agent` tool call that started it — the row it belongs to. */
+  tool_use_id: string;
+  /** Set when another subagent started this one. */
+  parent_agent_id: string;
+  description: string;
+  agent_type: string;
+  /** Runs on after its tool call returned. */
+  background: boolean;
+  state: "running" | "done";
+  /** Tool calls it has made. */
+  steps: number;
+  /** Its latest tool call, as `Name · target`. */
+  last: string;
+  started_at: string | null;
+  updated_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +387,8 @@ export type WsEvent =
   // to carry a menu would report an agent as idle or blocked on the wrong one.
   // `menu: null` is the retraction — somebody answered at the keyboard.
   | { event: "session.menu"; data: { menu: SessionMenu | null } }
+  // The session's subagents changed — the whole set, replaced wholesale.
+  | { event: "session.subagents"; data: { subagents: SubagentSummary[] } }
   // Where the ask stands, re-derived server-side on every transition. Its own
   // frame rather than a field on `session.activity`: activity is the runner's
   // fast hook clock reporting whether the agent is PRODUCING, while this is the

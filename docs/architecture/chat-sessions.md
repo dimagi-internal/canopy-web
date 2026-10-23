@@ -214,6 +214,12 @@ an emdash task name alone is not an identity.
 - Code: `apps/canopy_sessions/staleness.py`. Spec:
   `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md`.
 
+## Subagents on an `Agent` row
+
+- A subagent writes only to `<transcript-stem>/subagents/agent-<id>.jsonl` (plus an `agent-<id>.meta.json` naming the parent's `Agent` call as `toolUseId`), never to the session transcript, so the chat sees one `Agent` row — and a background agent's result returns the moment it is launched.
+- `canopy_transcript.summarize_subagents` reads the side files into one dict per subagent (`state` running/done by `hands_back_to_human`, `steps`, `last` step, times, `parent_agent_id`); both runners send the whole set from their stream loop when it changes (`POST /runners/{id}/session-subagents`). It is cached on `RunnerBinding.subagents` (words blanked for a sensitive session), pushed as `session.subagents` (AG-UI `CUSTOM`), and served in the socket snapshot and the REST detail as `subagents`.
+- canopy-ui's `ToolCallPair` matches a summary to its row by `tool_use_id` (`subagents.ts`), and shows the subagent's state rather than its tool result's. Its own transcript is not shipped.
+
 ## ACP is the wire shape; emdash stays the laptop executor
 
 - The Agent Client Protocol (`@agentclientprotocol/claude-agent-acp`, what emdash

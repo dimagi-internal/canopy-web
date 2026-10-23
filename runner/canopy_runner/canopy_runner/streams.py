@@ -12,7 +12,7 @@ from pathlib import Path
 
 # Both live in the library BOTH runners share, so the laptop and the cloud box
 # cannot drift on either question (what to ship, and how big a request may be).
-from canopy_transcript import chunk_rows, rows_to_ship
+from canopy_transcript import chunk_rows, rows_to_ship, summarize_subagents
 
 from . import activity, chat_bridge, desktop, hooks, transcript
 from .client import Client
@@ -125,6 +125,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
             # moment it sees the new id (issue #615).
             st["reader"], st["count"] = None, 0
         st["transcript_id"] = transcript_id
+        sync_subagents(cfg, client, sid, st, path)
         reader = st["reader"]
         if reader is None:
             # (Re-)attach: read the whole file once, atomically w.r.t. this
@@ -165,6 +166,25 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
             st["reader"], st["count"] = None, 0
             continue
         st["count"] = base + len(new_records)
+
+
+def sync_subagents(cfg: Config, client: Client, sid: str, st: dict, path: Path) -> None:
+    """Send this session's subagent summaries when they differ from the last set
+    the server took. Each tick, beside the transcript: a subagent writes only to
+    its own file, so the session's rows can sit still for its whole run."""
+    try:
+        current = summarize_subagents(path, st.setdefault("subagent_cache", {}))
+    except Exception:  # noqa: BLE001 — never the reason the transcript stops shipping
+        logger.debug("subagent summary failed for %s (non-fatal)", sid, exc_info=True)
+        return
+    if current == st.get("subagents_sent", []):
+        return
+    try:
+        client.post_session_subagents(cfg.runner_id, sid, current)
+    except Exception:  # noqa: BLE001 — retried next tick: nothing was recorded as sent
+        logger.debug("subagent post failed for %s (non-fatal)", sid, exc_info=True)
+        return
+    st["subagents_sent"] = current
 
 
 def drain_closes(cfg: Config, client: Client) -> None:

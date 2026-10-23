@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
-import type { PeerDraft, SessionState, TypingVisibility } from "./protocol";
+import type { PeerDraft, SessionState, SubagentSummary, TypingVisibility } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
@@ -15,6 +15,7 @@ import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLa
 import { useStickyBottom } from "./useStickyBottom";
 import { AppHostContext, type AppHost } from "./mcpApps/context";
 import { SecretRequestHostContext, type SecretRequestHost } from "./secretRequest";
+import { SubagentsContext } from "./subagents";
 
 export interface ChatPanelProps {
   state: SessionState;
@@ -78,6 +79,7 @@ export interface ChatPanelProps {
  * ChatPage) wires `useSessionSocket` returns into these props.
  */
 const EMPTY_PEERS: PeerDraft[] = [];
+const NO_SUBAGENTS: SubagentSummary[] = [];
 
 export function ChatPanel({
   state,
@@ -291,17 +293,19 @@ export function ChatPanel({
           auto, so anything wider than the column made the transcript scroll
           sideways into empty space. Wide content scrolls inside its own box. */}
       <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-x-hidden overflow-y-auto">
-        <MessageList
-          messages={shownMessages}
-          emptyState={emptyState}
-          renderMarkdown={renderMarkdown}
-          pendingReply={showPendingReply}
-          pendingLabel={pendingLabel}
-          currentUserId={currentUserId}
-          currentContactId={currentContactId}
-          cancellable={cancellable}
-          onCancelQueued={onUnqueue}
-        />
+        <SubagentsContext.Provider value={state.subagents ?? NO_SUBAGENTS}>
+          <MessageList
+            messages={shownMessages}
+            emptyState={emptyState}
+            renderMarkdown={renderMarkdown}
+            pendingReply={showPendingReply}
+            pendingLabel={pendingLabel}
+            currentUserId={currentUserId}
+            currentContactId={currentContactId}
+            cancellable={cancellable}
+            onCancelQueued={onUnqueue}
+          />
+        </SubagentsContext.Provider>
         <QueuedRows
           queued={state.queued ?? []}
           hideClientIds={hideClientIds}

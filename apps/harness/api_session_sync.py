@@ -55,6 +55,7 @@ from .schemas import (
     SessionBackfillIn,
     SessionMenuIn,
     SessionMenuOut,
+    SessionSubagentsIn,
     SessionReportOut,
     SessionStreamIn,
     StreamPostOut,
@@ -522,6 +523,19 @@ def post_session_menu(request: HttpRequest, runner_id: uuid.UUID, payload: Sessi
     when this runner does not hold the session."""
     runner = runner_or_404(request, runner_id)
     return {"ok": session_sync.report_session_menu(runner, payload.session_id, payload.menu)}
+
+
+@router.post("/runners/{runner_id}/session-subagents", response=SessionMenuOut)
+@gate("runner", kind="runner-protocol")  # only a session this runner holds
+def post_session_subagents(request: HttpRequest, runner_id: uuid.UUID,
+                           payload: SessionSubagentsIn):
+    """What the subagents of one session on this runner are doing: which `Agent`
+    call started each, whether it is running or done, its step count and latest
+    step. The whole set each time it changes. `ok: false` when this runner does
+    not hold the session."""
+    runner = runner_or_404(request, runner_id)
+    return {"ok": session_sync.report_session_subagents(
+        runner, payload.session_id, payload.subagents)}
 
 
 @router.post("/runners/{runner_id}/admission-notices", response=AdmissionNoticeClaimOut)

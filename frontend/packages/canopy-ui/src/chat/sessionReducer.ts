@@ -39,7 +39,7 @@ const UNBLOCKING_FRAMES = new Set([
  * `sessionReducer.events.test.ts` fails if this and the switch below differ.
  */
 export const REDUCER_EVENTS: ReadonlySet<string> = new Set([
-  "session.state", "session.activity", "session.stop", "session.menu",
+  "session.state", "session.activity", "session.stop", "session.menu", "session.subagents",
   "session.turn_status", "session.error", "session.title_updated", "session.queued",
   "chat.stream_start", "chat.user_message", "chat.delta", "chat.stream_complete",
   "chat.stream_error", "chat.stream_cancelled", "chat.tool_use", "chat.tool_result",
@@ -126,6 +126,10 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
       // from the transcript every ~10s and pushes only the edges. `null` is the
       // retraction, and has to be honoured — somebody answered at the keyboard.
       return { ...prev, menu: frame.data.menu ?? undefined };
+
+    case "session.subagents":
+      // Wholesale: the runner sends the whole set whenever any of it changes.
+      return { ...prev, subagents: frame.data.subagents };
 
     case "session.turn_status":
       // Wholesale, never merged. The server re-derives the whole status from

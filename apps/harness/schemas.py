@@ -1852,6 +1852,13 @@ class SessionMenuOut(Schema):
     ok: bool
 
 
+class SessionSubagentsIn(Schema):
+    session_id: uuid.UUID
+    # One dict per subagent (`canopy_transcript.summarize_subagents`), the whole
+    # set each time; [] when it has none.
+    subagents: list[dict] = []
+
+
 class CloseOut(Schema):
     session_id: str
     session_key: str

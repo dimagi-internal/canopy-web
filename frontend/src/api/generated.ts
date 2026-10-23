@@ -10370,6 +10370,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/session-subagents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Session Subagents
+         * @description What the subagents of one session on this runner are doing: which `Agent`
+         *     call started each, whether it is running or done, its step count and latest
+         *     step. The whole set each time it changes. `ok: false` when this runner does
+         *     not hold the session.
+         */
+        readonly post: operations["post_session_subagents"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/admission-notices": {
         readonly parameters: {
             readonly query?: never;
@@ -30797,6 +30820,21 @@ export interface components {
                 readonly [key: string]: unknown;
             } | null;
         };
+        /** SessionSubagentsIn */
+        readonly SessionSubagentsIn: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /**
+             * Subagents
+             * @default []
+             */
+            readonly subagents: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
         /** AdmissionNoticeClaimOut */
         readonly AdmissionNoticeClaimOut: {
             /**
@@ -33173,6 +33211,13 @@ export interface components {
             readonly menu?: {
                 readonly [key: string]: unknown;
             } | null;
+            /**
+             * Subagents
+             * @default []
+             */
+            readonly subagents: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /** Turn Status */
             readonly turn_status?: {
                 readonly [key: string]: unknown;
@@ -48743,6 +48788,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["SessionMenuIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionMenuOut"];
+                };
+            };
+        };
+    };
+    readonly post_session_subagents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionSubagentsIn"];
             };
         };
         readonly responses: {

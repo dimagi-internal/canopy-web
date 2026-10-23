@@ -982,6 +982,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     # Same reader as the WS snapshot, so opening a session over REST and over
     # the socket can never disagree about whether an agent is waiting.
     data["menu"] = serializers.pending_menu(session)
+    data["subagents"] = serializers.session_subagents(session)
     data["turn_status"] = status_feed.status_for_session(session)
     data["my_role"] = access.role_for(request.user, session)
     data["can_move"] = filing.can_move(request.user, session)

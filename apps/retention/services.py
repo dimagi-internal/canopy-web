@@ -366,7 +366,8 @@ def _purge_chat(session_id, rule, cutoff, tally, *, now, apply) -> bool:
     ) and not Message.objects.filter(session_id=session_id, created_at__gte=cutoff).exists()
     closes = idle and (
         bool(session.title) or session.status == Session.ACTIVE or bool(session.page_state)
-        or bool(binding and (binding.tail or binding.summary or binding.pending_question))
+        or bool(binding and (binding.tail or binding.summary or binding.pending_question
+                     or binding.subagents))
     )
 
     counts = {
@@ -406,6 +407,7 @@ def _purge_chat(session_id, rule, cutoff, tally, *, now, apply) -> bool:
         if closes and binding is not None:
             RunnerBinding.objects.filter(pk=binding.pk).update(
                 tail=[], summary="", pending_question=None, pending_answer=None,
+                subagents=[],
             )
     if turn_ids:
         _scrub_turns(turn_ids, now)

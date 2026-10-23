@@ -9203,6 +9203,25 @@ def _post_stream_rows(runner_id: str, session_id: str, rows: list,
     return True
 
 
+def _sync_subagents(runner_id: str, sid: str, st: dict, ct, path) -> None:
+    """Send a session's subagent summaries when they differ from the last set the
+    server took. Mirrors canopy_runner.streams.sync_subagents: a subagent writes
+    only to its own file, so the session's rows sit still for its whole run."""
+    summarize = getattr(ct, "summarize_subagents", None)
+    if summarize is None:
+        return  # an older canopy_transcript on this box; raising here would drop the tailer
+    try:
+        current = summarize(path, st.setdefault("subagent_cache", {}))
+    except Exception:  # noqa: BLE001 — never the reason the transcript stops shipping
+        return
+    if current == st.get("subagents_sent", []):
+        return
+    status, _ = _api("POST", f"/runners/{runner_id}/session-subagents",
+                     {"session_id": sid, "subagents": current})
+    if status == 200:
+        st["subagents_sent"] = current
+
+
 def _sync_session_streams(runner_id: str) -> None:
     """Tail every session this runner backs and ship its rows.
 
@@ -9255,6 +9274,7 @@ def _sync_session_streams(runner_id: str) -> None:
                 st["reader"], st["count"] = None, 0  # session replaced or moved under us
             st["transcript_id"] = transcript_id
             st["path"] = str(path)
+            _sync_subagents(runner_id, sid, st, ct, path)
             if st["reader"] is None:
                 reader = ct.TailReader(str(path))
                 records = reader.read_new()
