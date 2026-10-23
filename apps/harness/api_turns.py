@@ -20,7 +20,7 @@ from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import claim, ledger, services, session_sync, turn_gates
+from . import claim, ledger, services, session_sync, turn_asker, turn_gates
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -97,6 +97,11 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
     turn_gates.check_email_poster(request, payload, agent)
     pinned = turn_gates.resolve_pin(request, payload, agent)
     initiator = turn_gates.check_asker(request, payload, agent)
+    # An agent dispatching on behalf of the person in its turn (turn_asker): the record
+    # says so, and that person is who asked for its mode (the claim re-checks them).
+    on_behalf = turn_asker.of(request.user)
+    if on_behalf is not None:
+        origin_ref["on_behalf_of"] = on_behalf.record()
 
     turn, created = services.enqueue_turn(
         agent=agent,
@@ -115,7 +120,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         # the person who wrote in.
         initiator=initiator,
         requested_turn_mode=payload.turn_mode or "",
-        requested_turn_mode_by=request.user if payload.turn_mode else None,
+        requested_turn_mode_by=turn_asker.subject(request.user) if payload.turn_mode else None,
         # What the caller was running inside (overrides X-Canopy-Parent-*).
         parent=payload.parent,
     )
