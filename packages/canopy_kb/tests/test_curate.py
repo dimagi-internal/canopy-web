@@ -227,3 +227,20 @@ def test_the_toolkits_lock_describes_its_code():
     pytest.importorskip("pymupdf")
     from canopy_kb.prep import steps
     steps.check()
+
+
+def test_urls_keep_the_order_they_were_first_fetched_in_across_machines(monkeypatch):
+    store = MemoryStore()
+    with Curation(store) as cur:
+        f, _ = _fetcher(cur, [_Resp(200, f"<p>{n}</p>".encode(), {"content-type": "text/html"}) for n in range(40)],
+                        monkeypatch)
+        urls = [f"https://x/{n}" for n in reversed(range(40))]
+        for u in urls:
+            f.get(u)
+        f.flush()
+        _publish(cur, {"a": _doc("a", "one")})
+    with Curation(store) as cur:  # the state comes back in chunk order; the fetcher restores fetch order
+        from canopy_kb.prep import fetch
+        assert list(cur.state.section("fetch")) != urls
+        assert [u for u, _ in fetch.Fetch(cur).in_order()] == urls
+
