@@ -391,16 +391,23 @@ def test_the_creation_log_line_keeps_no_prompt(w):
     assert provenance.turn_record(_turn(w["cold"], prompt=ASKED))["prompt_head"] == ASKED
 
 
-def test_the_next_turn_remembers_the_conversation(w):
-    """Confined, never resumed, deleted on the box: the envelope is its memory."""
+def test_the_envelope_never_hands_the_words_on(w):
+    """A sensitive conversation's agent resumes the session its box kept; canopy-web
+    never reads the sealed words back to give the next turn (spec 2026-10-23 §1)."""
     from apps.harness import caller_context
 
     _converse(w["hot"])
     t = _turn(w["hot"], prompt="and last month?")
-    said = caller_context.build(t, with_history=True)["conversation"]["history"]
-    assert [h["role"] for h in said] == ["person", "agent"]
-    assert said[0]["text"] == ASKED and said[1]["text"] == REPLY and ROW not in str(said)
-    assert caller_context.build(_turn(w["cold"]), with_history=True)["conversation"]["history"] is None
+    env = caller_context.build(t)
+    assert "history" not in env["conversation"]
+    assert ASKED not in str(env) and REPLY not in str(env)
+
+
+def test_the_claim_says_the_conversation_is_sensitive(w):
+    from apps.harness.schemas import ClaimedTurnOut
+
+    assert ClaimedTurnOut.resolve_sensitive_conversation(_turn(w["hot"])) is True
+    assert ClaimedTurnOut.resolve_sensitive_conversation(_turn(w["cold"])) is False
 
 
 def test_the_chat_page_is_told(w):
@@ -441,6 +448,60 @@ def test_a_confined_turns_reply_arrives_with_no_binding_and_each_turn_lands_afte
     assert REPLY in said and "9 visits" in said
     # Still sealed: nothing readable in the columns.
     assert REPLY not in str(list(Message.objects.filter(session=w["hot"]).values("plaintext", "content")))
+
+
+def test_a_resumed_session_reships_its_transcript_and_only_the_new_turn_lands(w):
+    """A sensitive conversation's next turn resumes the SAME Claude session (spec
+    2026-10-23 §1), so its turn-end ship carries the whole transcript again, under the
+    same id and with the same ordinals for the earlier turns. Those are already held:
+    only the new turn's rows are added, and nothing is doubled."""
+    from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
+
+    w["hot"].metadata = {**w["hot"].metadata, TRANSCRIPT_SOURCED: True}
+    w["hot"].save(update_fields=["metadata"])
+    first = _turn(w["hot"], prompt=ASKED, capability="data", claimed_by=w["runner"],
+                  status=Turn.RUNNING)
+    turn_one = [("user", ASKED), ("assistant", REPLY)]
+    assert _ship(w, w["runner"], "cli-1", turn_one).status_code == 200
+    held = list(Message.objects.filter(session=w["hot"]).order_by("turn_index")
+                .values_list("turn_index", flat=True))
+    first.status, first.finished_at = Turn.DONE, timezone.now()
+    first.save(update_fields=["status", "finished_at"])
+    _turn(w["hot"], prompt="and last month?", capability="data", claimed_by=w["runner"],
+          status=Turn.RUNNING)
+    r = _ship(w, w["runner"], "cli-1", turn_one + [("user", "and last month?"),
+                                                   ("assistant", "9 visits")])
+    assert r.status_code == 200
+    rows = list(Message.objects.filter(session=w["hot"]).order_by("turn_index"))
+    assert [m.turn_index for m in rows[:len(held)]] == held and len(rows) == len(held) + 2
+    said = _said(w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"])
+    assert said.count(REPLY) == 1 and said.count("9 visits") == 1
+    # The same ship again (a retry) adds nothing.
+    assert _ship(w, w["runner"], "cli-1", turn_one + [("user", "and last month?"),
+                                                      ("assistant", "9 visits")]).status_code == 200
+    assert Message.objects.filter(session=w["hot"]).count() == len(rows)
+
+
+def _kept(w, runner, ids):
+    return w["c"].post(f"/api/harness/runners/{runner.id}/kept-conversations",
+                       data={"session_ids": [str(i) for i in ids]}, content_type="application/json")
+
+
+def test_a_box_learns_which_of_its_kept_conversations_are_closed(w):
+    """A confined conversation has no binding, so `/closes` never names it: its box
+    asks, and forgets the session of every conversation not still open."""
+    from apps.canopy_sessions.control import close_session
+
+    other = Runner.objects.create(name="other", workspace=w["ws"], location=Runner.LOCAL,
+                                  status=Runner.ONLINE, owner=w["user"])
+    _turn(w["hot"], capability="data", claimed_by=w["runner"], status=Turn.DONE)
+    _turn(w["cold"], capability="data", claimed_by=other, status=Turn.DONE)
+    r = _kept(w, w["runner"], [w["hot"].pk, w["cold"].pk, "not-a-uuid"])
+    assert r.status_code == 200, r.content
+    # Open, and this runner ran a confined turn in it; never another box's conversation.
+    assert r.json() == {"open": [str(w["hot"].pk)]}
+    assert close_session(session=w["hot"]) == "closed"
+    assert _kept(w, w["runner"], [w["hot"].pk]).json() == {"open": []}
 
 
 def test_only_the_runner_that_ran_a_confined_turn_may_ship_its_rows_and_only_for_a_while(w):

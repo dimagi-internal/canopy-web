@@ -33,7 +33,6 @@ from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 
 from . import initiator as who
-from . import sensitivity
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
@@ -304,13 +303,8 @@ def sender_trust(turn) -> dict | None:
     }
 
 
-def build(turn, *, reader_user=None, with_history: bool = False) -> dict:
+def build(turn, *, reader_user=None) -> dict:
     """The envelope for one turn. Safe to call on every claim.
-
-    `with_history` adds a sensitive conversation's earlier lines
-    (`sensitivity.history`). Only the turn's own runner asks for them — the claim,
-    and the turn's caller token re-reading its envelope — so every other reader of
-    the envelope gets `conversation.history` null.
 
     Not quite a pure read since v3: a turn asked by a human resolves (get-or-
     create) their `Person`, and serving the `person` block writes one
@@ -366,11 +360,10 @@ def build(turn, *, reader_user=None, with_history: bool = False) -> dict:
             # (2026-10-16). Read from the session's cache — building the envelope
             # never calls Slack (apps/slack/location.py). Additive: no VERSION bump.
             "slack": _slack_location(cs),
-            # A SENSITIVE conversation's earlier lines (`sensitivity.history`):
-            # its turns are confined and never resumed, so this is how the agent
-            # remembers what was said. null for every other conversation, and
-            # for every reader but the turn's own runner (`with_history`).
-            "history": sensitivity.history(turn) if with_history else None,
+            # No `history`: a SENSITIVE conversation's agent resumes the session its
+            # box kept for it, and canopy-web never reads the words back to hand
+            # them on. A turn that cannot resume is told it starts fresh by its
+            # runner (`starts_fresh`, which the runner adds to this block).
         },
         # What the caller invoked and the scope it grants (§4). null means the
         # agent's FULL profile: its owner, an admin, canopy itself, or a

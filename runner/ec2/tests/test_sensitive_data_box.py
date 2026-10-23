@@ -247,3 +247,169 @@ def test_a_sensitive_turn_does_not_update_the_plugin(load_cloud_runner, monkeypa
     mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
     assert mod.SENSITIVE_DATA_ENV["CANOPY_FLEET_AUTOUPDATE"] == "0"
     assert mod.sensitive_data_settings()["env"]["CANOPY_FLEET_AUTOUPDATE"] == "0"
+
+
+# ── a sensitive conversation keeps its own session between turns ─────────────
+# (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1)
+CONV = "5e55a0b1-0000-4000-8000-00000000c0de"
+
+
+def _conv_turn(tid=TID, cap=CAP, sensitive=True):
+    return _turn(id=tid, sensitive_conversation=sensitive, origin_ref={"chat_session_id": CONV},
+                 caller_context={"profile": "confined", "capability": cap, "conversation": {}})
+
+
+def _keeping(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    calls = _wire(mod, monkeypatch, tmp_path)
+    _own_layer(mod, monkeypatch, tmp_path)
+    claude = tmp_path / "claude"
+    project = claude / "projects" / mod._encode_project_dir(tmp_path)
+    seen = calls.setdefault("seen", [])
+
+    def run(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        # What the plugin hook would read: the envelope as the turn starts.
+        env = json.loads((tmp_path / "caller" / f"{turn_id}.json").read_text())
+        seen.append({"resume": resume_session_id, "conversation": env.get("conversation")})
+        cmd = mod._claude_cmd(prompt, resume_session_id)
+        sid = resume_session_id or cmd[cmd.index("--session-id") + 1]
+        with (project / f"{sid}.jsonl").open("a") if (project / f"{sid}.jsonl").exists() else \
+                _leave(project / f"{sid}.jsonl", "").open("a") as fh:
+            fh.write('{"the host": "data"}\n')
+        _leave(project / sid / "tool-results" / "out.txt")
+        _leave(claude / "todos" / f"{sid}-agent-{sid}.json")
+        _leave(claude / "file-history" / sid / "f")
+        return True, "ok", sid
+
+    monkeypatch.setattr(mod, "execute_prompt", run)
+    return mod, calls, project, claude
+
+
+def test_a_sensitive_conversation_resumes_its_own_session(load_cloud_runner, monkeypatch, tmp_path):
+    mod, calls, project, claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    mod._run_turn("r-1", _conv_turn())
+    [first] = calls["seen"]
+    assert first["resume"] is None and first["conversation"]["starts_fresh"] is True
+    sid = json.loads((tmp_path / "kept" / f"{CONV}.json").read_text())["cli_session_id"]
+    # Only what --resume reads stays: the transcript and its sidecar.
+    assert (project / f"{sid}.jsonl").exists() and (project / sid / "tool-results" / "out.txt").exists()
+    assert not list((claude / "todos").glob("*")) and not (claude / "file-history" / sid).exists()
+    # Everything else still goes at the end of every turn.
+    assert not list((tmp_path / "caller").glob("*")) and not list((tmp_path / "profiles").glob("*"))
+
+    mod._run_turn("r-1", _conv_turn(tid="3f2b8c1e-0000-4000-8000-0000000000bb"))
+    second = calls["seen"][1]
+    assert second["resume"] == sid and "starts_fresh" not in second["conversation"]
+    assert (project / f"{sid}.jsonl").read_text().count("\n") == 2
+    assert [f["status"] for f in _finish(calls)] == ["done", "done"]
+
+
+def test_another_capability_starts_fresh_and_forgets_the_old_session(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod, calls, project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    mod._run_turn("r-1", _conv_turn())
+    old = json.loads((tmp_path / "kept" / f"{CONV}.json").read_text())["cli_session_id"]
+    mod._run_turn("r-1", _conv_turn(tid="3f2b8c1e-0000-4000-8000-0000000000bb",
+                                    cap={**CAP, "name": "other"}))
+    second = calls["seen"][1]
+    assert second["resume"] is None and second["conversation"]["starts_fresh"] is True
+    new = json.loads((tmp_path / "kept" / f"{CONV}.json").read_text())["cli_session_id"]
+    assert new != old and not (project / f"{old}.jsonl").exists() and not (project / old).exists()
+
+
+def test_a_conversation_canopy_does_not_call_sensitive_keeps_nothing(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod, calls, project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    mod._run_turn("r-1", _conv_turn(sensitive=False))
+    mod._run_turn("r-1", _conv_turn(tid="3f2b8c1e-0000-4000-8000-0000000000bb", sensitive=False))
+    assert [s["resume"] for s in calls["seen"]] == [None, None]
+    assert "starts_fresh" not in calls["seen"][0]["conversation"]
+    assert not list(project.glob("*")) and not (tmp_path / "kept").exists()
+
+
+def test_a_resume_that_falls_back_tells_the_agent_it_starts_fresh(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod, calls, _project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    mod._run_turn("r-1", _conv_turn())
+    tid = "3f2b8c1e-0000-4000-8000-0000000000bb"
+    marked = []
+
+    def fallback(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        assert resume_session_id  # planned a resume
+        mod._starting_fresh()  # run_claude found it could not
+        marked.append(json.loads((tmp_path / "caller" / f"{turn_id}.json").read_text()))
+        return True, "ok", ""
+
+    monkeypatch.setattr(mod, "execute_prompt", fallback)
+    mod._run_turn("r-1", _conv_turn(tid=tid))
+    assert marked[0]["conversation"]["starts_fresh"] is True
+
+
+def _kept_conversation(mod, tmp_path, *, conv=CONV, age=0.0, now=1_000_000.0):
+    cwd = tmp_path / "work" / "sessions" / conv
+    project = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(cwd)
+    files = [_leave(project / "sid-1.jsonl"), _leave(project / "sid-1" / "tool-results" / "o.txt")]
+    mod._write_private(mod.KEPT_ROOT / f"{conv}.json",
+                       {"cli_session_id": "sid-1", "last_used": now - age, "cwd": str(cwd),
+                        "capability": "data", "agent": "labsdata"})
+    return files
+
+
+def test_an_idle_conversation_is_forgotten_after_a_day(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    fresh = _kept_conversation(mod, tmp_path, conv="c-fresh", age=23 * 3600)
+    idle = _kept_conversation(mod, tmp_path, conv="c-idle", age=24 * 3600)
+    assert mod.sweep_kept_conversations(now=1_000_000.0) == 1
+    assert all(p.exists() for p in fresh) and not any(p.exists() for p in idle)
+    assert not (tmp_path / "kept" / "c-idle.json").exists()
+
+
+def test_a_closed_conversation_is_forgotten_and_an_unanswered_ask_closes_nothing(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    still = _kept_conversation(mod, tmp_path, conv="c-open")
+    closed = _kept_conversation(mod, tmp_path, conv="c-closed")
+    asked = []
+    monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: (502, None))
+    assert mod.sweep_kept_conversations("r-1", now=1_000_000.0) == 0
+    monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: asked.append((p, b)) or (
+        200, {"open": ["c-open"]}))
+    assert mod.sweep_kept_conversations("r-1", now=1_000_000.0) == 1
+    assert asked == [("/runners/r-1/kept-conversations", {"session_ids": ["c-closed", "c-open"]})]
+    assert all(p.exists() for p in still) and not any(p.exists() for p in closed)
+
+
+def test_a_conversation_with_a_turn_running_is_never_swept(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    files = _kept_conversation(mod, tmp_path, age=48 * 3600)
+    mod._kept_busy(CONV, 1)
+    assert mod.sweep_kept_conversations(now=1_000_000.0) == 0 and all(p.exists() for p in files)
+    mod._kept_busy(CONV, -1)
+    assert mod.sweep_kept_conversations(now=1_000_000.0) == 1
+
+
+def test_the_sweep_runs_on_its_clock(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    ran = []
+    monkeypatch.setattr(mod, "sweep_kept_conversations", lambda rid, now=None: ran.append(now))
+    assert mod.maybe_sweep_kept("r-1", now=10_000.0)
+    assert not mod.maybe_sweep_kept("r-1", now=10_000.0 + mod.SENSITIVE_KEEP_SWEEP_SECONDS - 1)
+    assert mod.maybe_sweep_kept("r-1", now=10_000.0 + mod.SENSITIVE_KEEP_SWEEP_SECONDS)
+    assert len(ran) == 2
+
+
+def test_a_restart_keeps_a_conversation_still_within_its_day(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    monkeypatch.setattr(mod, "PROFILE_ROOT", tmp_path / "profiles")
+    monkeypatch.setattr(mod, "CALLER_ROOT", tmp_path / "caller")
+    kept = _kept_conversation(mod, tmp_path)
+    project = kept[0].parent
+    beside = [_leave(project / "crashed-sid.jsonl"), _leave(mod._claude_home() / "todos" / "sid-1-a.json"),
+              _leave(mod.CLAUDE_PROJECTS_HOME / "-elsewhere" / "x.jsonl")]
+    mod.sensitive_data_sweep_leftovers()
+    assert all(p.exists() for p in kept) and not any(p.exists() for p in beside)

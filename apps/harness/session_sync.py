@@ -1207,13 +1207,14 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
 
 def ingest_turn_end_rows(session, *, transcript_id, events) -> int:
     """A CONFINED turn's transcript rows, shipped once when it ends by the runner
-    that ran it. A confined turn is never recorded as the session's binding (it is
-    never resumed, and its transcript is not a resume target), so this is the one
-    way its reply reaches the conversation. Each confined turn is a fresh Claude
-    session, starting again at ordinal 0, so each `transcript_id` gets its own epoch
-    above the rows already held (`_turn_end_epoch`); a re-ship of the same turn
-    lands on the same rows and is a no-op. Always fanned out: the person who asked
-    is waiting for it."""
+    that ran it. A confined turn is never recorded as the session's binding, so this
+    is the one way its reply reaches the conversation. A confined turn that starts a
+    fresh Claude session begins again at ordinal 0, so each `transcript_id` gets its
+    own epoch above the rows already held (`_turn_end_epoch`). A turn of a sensitive
+    conversation that resumed the session its box kept ships the same transcript
+    again, under the same id: the earlier turns' rows land on the rows already held
+    and are skipped, and only its own are added; a re-ship of the same turn is a
+    no-op. Always fanned out: the person who asked is waiting for it."""
     offset = _turn_end_epoch(session, transcript_id)
     shifted = [e.model_copy(update={"index": e.index + offset}) if e.index >= 0 else e
                for e in events]
