@@ -501,15 +501,17 @@ class Curation:
             sent = put_missing(self.store, blobs, RECORDS)
             # the texts the host lacks, fetched and sent a batch at a time
             want = {docs[i]["text_sha"]: i for i in ids if "text_sha" in docs[i]}
-            missing = [s for s in sorted(want) if s not in set().union(
-                *(self.store.have(RECORDS, b) for b in _batches(sorted(want))))] if want else []
+            held: set[str] = set()
+            for b in _batches(sorted(want)):  # asked once, a batch at a time
+                held |= self.store.have(RECORDS, b)
+            missing = [s for s in sorted(want) if s not in held]
             for batch in _batches(missing, 200):
                 got = text([want[s] for s in batch])
                 texts = {s: encode(got[want[s]]) for s in batch}
                 bad = [want[s] for s in batch if sha(got[want[s]]) != s]
                 if bad:
                     raise CurationError(f"{bad[0]}: its text is not the one its record names")
-                sent += put_missing(self.store, texts, RECORDS)
+                sent += self.store.put_records(texts)  # known missing: no need to ask again
         root = self.state.upload(self.store)
         curation = {"sha": root, "base": self.state.root} if root != self.state.root else None
         if plan["unchanged"]:

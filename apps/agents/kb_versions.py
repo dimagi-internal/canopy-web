@@ -38,6 +38,9 @@ log = logging.getLogger(__name__)
 KEEP_FILES = 5
 #: A version still on its way: one at a time per project.
 _LIVE =(KbVersion.PENDING, KbVersion.BUILDING)
+#: Records a commit checks are stored before it answers (a first publish of a large
+#: knowledge base changes every record: ~11,000 HEADs would outlast the request).
+CHECK_MAX = 1000
 #: What a knowledge base with no version yet holds.
 EMPTY = {"docs": {}, "parts": {}}
 
@@ -122,7 +125,11 @@ def commit(project, state: dict, base: int | None, *, published_by: str = "", up
         if check_ids is not None:
             check_ids(d["added"] + d["changed"])
         need = {state["docs"][i] for i in d["added"] + d["changed"]} | {state["parts"][n] for n in d["parts"]}
-        missing = kb_store.missing_blobs(project, need)
+        # Checked here up to CHECK_MAX (a HEAD each, inside this request); past that a
+        # sample, and the index job reads every record anyway: one missing fails the
+        # version, never the version readers see.
+        check = need if len(need) <= CHECK_MAX else set(sorted(need)[:CHECK_MAX])
+        missing = kb_store.missing_blobs(project, check)
         if missing:
             raise kb_store.KbPublishError(f"{len(missing)} records were not uploaded (first: {sorted(missing)[0]})")
         version = KbVersion.objects.create(
