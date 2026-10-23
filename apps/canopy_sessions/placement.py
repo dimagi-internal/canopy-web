@@ -12,11 +12,10 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.harness import routing
-from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
 from . import activity as session_activity
-from . import conversation_keys, services, transcript_ingest
+from . import conversation_keys, handoff, services
 from .models import Message, RunnerBinding, Session
 
 
@@ -184,8 +183,6 @@ on another box, in a different checkout — you do NOT have it in context, even 
 though the chat history is showing it to you. Everything you can rely on is \
 below. Read it, verify the state yourself, then report and wait; do not start \
 new work or redo anything already described as shipped.
-
-Anything that was never pushed from {source} did not come with you.
 """
 
 
@@ -202,25 +199,27 @@ def _initiator(initiator, user, via: str):
 
 def transfer_session(*, session: Session, placement: str, brief: str = "", user=None,
                      initiator=None):
-    """Move a live session onto another runner, carrying its history.
+    """Move a live session onto another runner, carrying its history AND its work.
 
-    The three things a transfer has to do, which pinning a turn alone does NOT:
+    What a transfer has to do, which pinning a turn alone does NOT:
 
     1. **Re-point the binding.** A pinned turn lands on the target box, but the
        binding still names the old one, so `post_session_stream`'s
        runner-owned-binding gate (404s a non-owner) drops everything the new box
        ships until its first `record_session` happens to fix it up. Moving it here
        makes the transfer the thing that decides placement, rather than a race.
-    2. **Open a new epoch.** The target cannot resume the source's claude session,
-       so it starts a fresh transcript whose ordinals restart near 0. Those would
-       collide with the rows already held and, worse, trip
-       `ensure_transcript_identity` into deleting them. `index_offset` lifts the
-       new box's ordinals above the inherited history instead. See its docstring
-       on the model — this is the field's entire reason to exist.
-    3. **Hand over context.** The new session is cold. `TRANSFER_PREAMBLE` plus the
-       caller's `brief` become the prompt of a turn pinned to the target, which is
-       the only thing standing between "picked up the thread" and "started again
-       from a blank worktree".
+    2. **Carry the work** (`handoff.py`). The source box is asked to pack its
+       worktree — branch, local-only commits, diffs, untracked files — and the
+       target restores it before its agent acts. The turn waits for that: it is
+       enqueued when the source answers (or `handoff.CAPTURE_WAIT` passes), not
+       here. A source that cannot answer transfers at once with NO SNAPSHOT, and
+       the prompt says so.
+    3. **Open a new epoch** — at settle, unless the target resumes the source's
+       own Claude session (a cloud box given the transcript). A fresh Claude
+       session restarts its ordinals near 0; `index_offset` lifts them above the
+       inherited history instead of on top of it (see the field's docstring).
+    4. **Hand over context.** `TRANSFER_PREAMBLE`, what the snapshot holds, and
+       the caller's `brief` become the prompt of a turn pinned to the target.
 
     `placement` is a runner UUID (resolved through the same `_placeable_runner`
     gate `send_message` uses, so a foreign or non-session-capable box is refused
@@ -230,7 +229,8 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     session with no binding to move, and RuntimeError while a turn is still
     executing — a box mid-thought would keep writing into the epoch we are about
     to close, so the caller stops the session first (`POST /{id}/stop`) and
-    retries. Returns (binding, turn).
+    retries. Returns (binding, turn); `turn` is None while the source packs
+    (`session.handoffs.first()` says how that is going).
     """
     target = _placeable_runner(session, placement)
     if target is None:
@@ -252,7 +252,11 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         if source is not None and source.id == target.id:
             raise ValueError(f"session is already on '{target.name}'")
 
-        transcript_ingest._open_epoch(binding, session)
+        # Before the source's identity is cleared below: the handoff is now the
+        # only record of which task on which box holds the work.
+        h = handoff.begin(session=session, binding=binding, source=source, target=target,
+                          brief=brief, user=user,
+                          initiator=_initiator(initiator, user, "transfer"))
 
         binding.runner = target
         binding.transferred_from = source
@@ -263,10 +267,10 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         # drive a task that does not exist on it. Cleared, `resolve_session`
         # returns reuse=False + new_thread=False, which is precisely "open a fresh
         # session under this account and rehydrate from `summary`" — the path the
-        # two-account failover already uses.
+        # two-account failover already uses. (`transcript_id` and the epoch are
+        # decided at settle: they depend on whether the target resumes.)
         binding.session_key = ""
         binding.host = ""
-        binding.transcript_id = ""
         binding.pending_question = None
         binding.pending_answer = None
         binding.close_requested = False
@@ -274,8 +278,8 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         binding.agent_status_stale = False
         binding.tail = []
         binding.save(update_fields=[
-            "runner", "transferred_from", "transferred_at", "index_offset",
-            "session_key", "host", "transcript_id", "pending_question",
+            "runner", "transferred_from", "transferred_at",
+            "session_key", "host", "pending_question",
             "pending_answer", "close_requested", "agent_status",
             "agent_status_stale", "tail", "updated_at",
         ])
@@ -284,32 +288,10 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         # falling back to open routing and landing on whichever box polls first.
         services._merge_metadata(session, {"requested_runner_id": str(target.id)})
 
-        source_name = source.name if source is not None else "an unknown runner"
-        prompt = TRANSFER_PREAMBLE.format(source=source_name, target=target.name)
-        if brief.strip():
-            prompt = f"{prompt}\n{brief.strip()}\n"
-        thread_key = binding.thread_key or str(session.id)
-        turn, _created = harness_services.enqueue_turn(
-            session=session,
-            origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
-            # Keyed on the TARGET and the transfer's own timestamp: transferring
-            # back and forth (which is the normal shape of a failover) must not
-            # dedupe onto the outbound turn.
-            idempotency_key=(
-                f"transfer:{session.id.hex}:{target.id.hex}:"
-                f"{int(binding.transferred_at.timestamp())}"
-            ),
-            prompt=prompt,
-            origin_ref={"thread_key": thread_key, "chat_session_id": str(session.id),
-                        "transfer_from": source_name},
-            enqueued_by=user,
-            pinned_runner=target,
-            initiator=_initiator(initiator, user, "transfer"),
-            # The session being moved is what this handoff turn comes from.
-            parent={"session": session},
-            provenance_extra={"transfer_from": source_name},
-        )
-    return binding, turn
+        if h.capture_status != handoff.SessionHandoff.PENDING:
+            h = handoff.settle(h)
+    binding.refresh_from_db()
+    return binding, h.turn
 
 
 #: Where a fork records what its first turn must copy (`resolve_session` hands it

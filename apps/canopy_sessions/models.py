@@ -864,6 +864,97 @@ class TransferRequest(models.Model):
         return f"transfer-request:{str(self.session_id)[:8]}->{self.to_runner_id}:{self.status}"
 
 
+class SessionHandoff(models.Model):
+    """The WORK half of one transfer (`handoff.py`): what the source box packed,
+    whether the target unpacked it, and whether the source's task was closed.
+
+    A transfer carries the conversation by itself; this carries the worktree — the
+    branch, local-only commits, staged/unstaged diffs and untracked files — so the
+    target starts where the source stopped, not from a blank checkout. Each of its
+    three steps can fail on its own and each says so:
+
+    * `capture_status` — did the SOURCE pack it? `unreachable` and `not_asked`
+      transfer with NO SNAPSHOT; `timed_out` means it never answered in time.
+    * `restore_status` — did the TARGET unpack it, and does `git status` match?
+    * `close_status` — did the source's task go away? Closed only after a verified
+      restore (or once a late snapshot is safely held); `kept` when closing it
+      would lose work nobody else holds. `failed`/`kept` raise an alert.
+
+    The source's identity (`source_session_key`/`source_project`) is copied here
+    because the transfer clears it off the binding — and it is what the source
+    runner needs to find the worktree, and the report path needs to NOT re-file
+    the task as a new session while it is still open (`replace_reported_sessions`).
+    """
+
+    PENDING, CAPTURED, FAILED, UNREACHABLE, TIMED_OUT, NOT_ASKED = (
+        "pending", "captured", "failed", "unreachable", "timed_out", "not_asked")
+    RESTORED, MISMATCH = "restored", "mismatch"
+    CLOSED, KEPT = "closed", "kept"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="handoffs")
+    source_runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    target_runner = models.ForeignKey(
+        "harness.Runner", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    source_session_key = models.CharField(max_length=255, blank=True, default="")
+    source_project = models.CharField(max_length=255, blank=True, default="")
+    source_transcript_id = models.CharField(max_length=100, blank=True, default="")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    brief = models.TextField(blank=True, default="")
+    # The asker, as the transfer turn will carry it (`apps/harness/initiator.py`).
+    initiator = models.JSONField(null=True, blank=True, default=None)
+    # Pack the Claude transcript too: the target runs Claude itself and can resume it.
+    want_transcript = models.BooleanField(default=False)
+
+    capture_status = models.CharField(max_length=12, default=PENDING)
+    capture_note = models.CharField(max_length=500, blank=True, default="")
+    manifest = models.JSONField(null=True, blank=True, default=None)
+    parts_received = models.PositiveSmallIntegerField(default=0)
+    # Settle without the snapshot after this: a source that never answers must not
+    # hold the session hostage.
+    deadline = models.DateTimeField(null=True, blank=True)
+    captured_at = models.DateTimeField(null=True, blank=True)
+
+    # The transfer turn, enqueued once the capture settles (`handoff.settle`).
+    turn = models.ForeignKey("harness.Turn", on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name="+")
+    settled_at = models.DateTimeField(null=True, blank=True)
+    # The target was told it has the conversation (a resumed transcript), not a summary.
+    resume_planned = models.BooleanField(default=False)
+
+    restore_status = models.CharField(max_length=12, blank=True, default="")
+    restore_report = models.JSONField(null=True, blank=True, default=None)
+    restored_at = models.DateTimeField(null=True, blank=True)
+
+    close_status = models.CharField(max_length=12, blank=True, default="")
+    close_error = models.CharField(max_length=500, blank=True, default="")
+    # A person said "close it anyway" to a `kept` task.
+    close_forced = models.BooleanField(default=False)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["source_runner", "close_status"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"handoff:{str(self.session_id)[:8]}:{self.capture_status}/{self.restore_status}"
+
+
+class HandoffArchive(models.Model):
+    """The packed work itself (a tar.gz, `runner/canopy_runner/canopy_runner/handoff.py`),
+    apart from its `SessionHandoff` so listing handoffs never loads megabytes.
+    Uploaded in chunks; dropped `handoff.ARCHIVE_KEEP` after it was made."""
+
+    handoff = models.OneToOneField(SessionHandoff, on_delete=models.CASCADE, primary_key=True,
+                                   related_name="archive")
+    data = models.BinaryField(default=bytes)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class JoinRequest(models.Model):
     """Someone who can see a PRIVATE (sensitive) conversation exists, but is not in
     it, asking its owner to add them (`join_requests.py`).

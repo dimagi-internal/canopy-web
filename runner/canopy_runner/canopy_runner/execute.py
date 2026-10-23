@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
                native_permissions, readiness, scoped_token, session_naming, startup_watch, transcript)
-from . import whois
+from . import transfer, whois
 from .client import ClientError
 from .tail import TailReader
 
@@ -1104,6 +1104,9 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         return f"failed:{turn_id}"
     if task:
         _native_confine(cfg, client, turn, task)
+        # A snapshot that arrived after its transfer, restored into the live
+        # session's worktree before the message that says so is delivered.
+        transfer.restore_into_task(cfg, client, turn, target, task)
         # Who is asking reaches the agent beside the words, never inside them (caller.py).
         caller.write_pending(task, turn, envelope)
         # Before delivery, so the agent's first `canopy secret` cannot race it.
@@ -1214,6 +1217,10 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             if not _confine(client, turn, task):
                 return f"failed:{turn_id}"
         _native_confine(cfg, client, turn, task)
+        # A transfer's work, into the worktree emdash just made. emdash types the
+        # prompt as it creates the task, so this races the agent — which is why
+        # the prompt's first command waits for this restore's report.
+        transfer.restore_into_task(cfg, client, turn, target, task)
         startup_watch.note_created(target, task)
         _record_created(
             client, turn_id, task,

@@ -72,11 +72,77 @@ class TransferIn(Schema):
     # "pin to where this session already is", which is the one thing a transfer
     # can never mean.
     runner: str
-    # The handoff. Prepended with `placement.TRANSFER_PREAMBLE` server-side, so
-    # this carries only what the server cannot know: the branch, what is pushed,
-    # what shipped, what is still open. Optional, but a transfer without one
-    # lands a cold session in a fresh worktree and it will go looking.
+    # What the new box should know beyond the work itself. The source's branch,
+    # commits and uncommitted files travel as a snapshot (`handoff.py`) and the
+    # prompt describes them server-side, so this carries only what no checkout
+    # holds: what shipped, what is still open, what to do next.
     brief: str = ""
+
+
+class HandoffOut(Schema):
+    """The work half of a transfer: what the source packed, whether the target
+    restored it, and whether the source's task was closed."""
+    id: str
+    session_id: str
+    source_runner: str
+    target_runner: str
+    # pending (the source is packing) | captured | failed | unreachable (the
+    # source was not answering: NO SNAPSHOT) | timed_out | not_asked
+    capture_status: str
+    capture_note: str = ""
+    branch: str = ""
+    head: str = ""
+    local_commits: int = 0
+    staged_files: list[str] = []
+    unstaged_files: list[str] = []
+    untracked_files: list[str] = []
+    # Untracked files deliberately not carried, each with why (a secret's name, too big).
+    skipped: list[dict] = []
+    snapshot_bytes: int = 0
+    # The Claude transcript travelled, and the target was told it resumes it.
+    transcript_carried: bool = False
+    resume_planned: bool = False
+    # The transfer turn: empty while the source is still packing.
+    turn_id: str = ""
+    # "" (nothing to restore) | pending | restored | mismatch | failed
+    restore_status: str = ""
+    restore_report: dict | None = None
+    # "" (nothing to close) | pending | closed | kept (left open: it holds the
+    # only copy of work) | failed
+    close_status: str = ""
+    close_error: str = ""
+    created_at: dt.datetime
+    settled_at: dt.datetime | None = None
+
+
+class TransferAllIn(Schema):
+    """Body for POST /transfer-all — move every open session on one runner to another."""
+    # Runner ids or names.
+    from_runner: str
+    to_runner: str
+    # Given to every session's transfer turn, after what its snapshot holds.
+    brief: str = ""
+    # Only these sessions (ids); empty = every open session on `from_runner` you can write.
+    session_ids: list[str] = []
+    # List what would move, and why anything would not, without moving it.
+    dry_run: bool = False
+
+
+class TransferAllResult(Schema):
+    session_id: str
+    title: str
+    session_key: str
+    # moved | pending (waiting on the target's admin) | refused (see error) | would_move (dry run)
+    status: str
+    error: str = ""
+    turn_id: str = ""
+    handoff: HandoffOut | None = None
+
+
+class TransferAllOut(Schema):
+    from_runner: str
+    to_runner: str
+    results: list[TransferAllResult]
 
 
 class ForkIn(Schema):
@@ -100,6 +166,9 @@ class TransferOut(Schema):
     status: str = "moved"
     request_id: uuid.UUID | None = None
     approvers: list[str] = []
+    # The work: whether the source is packing it (turn_id is empty until it has,
+    # at most `handoff.CAPTURE_WAIT`), and what came — or NO SNAPSHOT and why.
+    handoff: HandoffOut | None = None
 
 
 class TransferDecisionIn(Schema):

@@ -9510,6 +9510,150 @@ def _drain_backfills(runner_id: str) -> None:
             _log(f"backfill {sid[:8]} FAILED: {exc}")
 
 
+# ── a transfer carries the work (canopy_runner/handoff.py) ──────────────────
+# The SAME packing the laptop does (this box puts canopy_runner on its path,
+# `_expose_repo_packages`), so a session moves laptop <-> cloud in either
+# direction with one format. canopy-web's flow: apps/canopy_sessions/handoff.py.
+#
+# As the SOURCE: a chat session's work is its own WORK_DIR/sessions/<id>
+# worktree; pack it when asked, and once the target has restored it, set the
+# directory aside so a transfer BACK starts from a clean worktree rather than
+# refusing to restore over this stay's leftovers.
+#
+# As the TARGET: restore into the session's directory before Claude starts, and —
+# when canopy-web planned it — put the source's transcript where `--resume` /
+# `session/load` look, so the conversation continues instead of starting cold.
+
+def _import_handoff():
+    from canopy_runner import handoff  # noqa: PLC0415
+    return handoff
+
+
+def _handoff_core():
+    return _lazy_import("canopy_runner.handoff", _import_handoff,
+                        "transfers to and from this box carry no work")
+
+
+def _api_bytes(path: str) -> bytes | None:
+    """GET raw bytes from the harness router (`_api` json-decodes)."""
+    req = urllib.request.Request(f"{BASE_URL}/api/harness{path}", method="GET")
+    bearer = _bearer()
+    if bearer:
+        req.add_header("Authorization", f"Bearer {bearer}")
+    req.add_header("X-Canopy-Client", "canopy-cloud-runner")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.read()
+    except (urllib.error.URLError, OSError) as exc:
+        _log(f"GET {path} failed: {exc}")
+        return None
+
+
+def _session_workdir(session_id: str) -> pathlib.Path:
+    return pathlib.Path(WORK_DIR) / "sessions" / _safe_session_dirname(session_id)
+
+
+def _drain_handoffs(runner_id: str) -> None:
+    """What this box owes as a transfer's source: pack, or close (set aside)."""
+    hc = _handoff_core()
+    if hc is None:
+        return
+    status, payload = _api("GET", f"/runners/{runner_id}/handoffs")
+    if status != 200 or not payload:
+        return
+    for item in payload.get("handoffs") or []:
+        try:
+            if item.get("capture"):
+                _capture_handoff(runner_id, hc, item)
+            elif item.get("close"):
+                _close_handoff(runner_id, item)
+        except Exception as exc:  # noqa: BLE001 — retried next tick
+            _log(f"handoff {str(item.get('id'))[:8]} failed: {exc}")
+
+
+def _capture_handoff(runner_id: str, hc, item: dict) -> None:
+    hid = item["id"]
+    wt = _session_workdir(item.get("session_id") or "")
+    if not (wt / ".git").exists():
+        _api("POST", f"/runners/{runner_id}/handoffs/{hid}/captured",
+             {"ok": False, "error": f"no worktree for this session on {socket.gethostname()}"})
+        return
+    transcript = (_session_transcript_path(item.get("session_id") or "", item.get("session_key") or "",
+                                           item.get("project") or "")
+                  if item.get("transcript") else None)
+    try:
+        archive, manifest = hc.capture(wt, transcript=transcript)
+    except hc.SnapshotError as exc:
+        _api("POST", f"/runners/{runner_id}/handoffs/{hid}/captured",
+             {"ok": False, "error": str(exc)[:1000]})
+        return
+    parts = hc.chunks(archive)
+    for i, chunk in enumerate(parts):
+        status, _ = _api("POST", f"/runners/{runner_id}/handoffs/{hid}/archive",
+                         {"part": i, "parts": len(parts),
+                          "data": base64.b64encode(chunk).decode()})
+        if status != 200:
+            raise RuntimeError(f"upload part {i} -> {status}")
+    _api("POST", f"/runners/{runner_id}/handoffs/{hid}/captured", {"ok": True, "manifest": manifest})
+    _log(f"handoff {hid[:8]}: packed {wt.name} ({manifest.get('branch') or 'detached'}, "
+         f"{len(archive)} bytes)")
+
+
+def _close_handoff(runner_id: str, item: dict) -> None:
+    """A cloud session has no task to delete. Its worktree is set aside — not
+    removed: the sweep judges it like any idle chat worktree."""
+    hid = item["id"]
+    wt = _session_workdir(item.get("session_id") or "")
+    if wt.exists():
+        aside = wt.with_name(f"{wt.name}.handed-off-{int(time.time())}")
+        if not _git_quiet("-C", str(wt), "worktree", "move", str(wt), str(aside)):
+            try:
+                wt.rename(aside)
+            except OSError as exc:
+                _api("POST", f"/runners/{runner_id}/handoffs/{hid}/close-result",
+                     {"ok": False, "error": f"could not set {wt} aside: {exc}"})
+                return
+    _api("POST", f"/runners/{runner_id}/handoffs/{hid}/close-result", {"ok": True})
+    _log(f"handoff {hid[:8]}: set {wt.name} aside — its work lives on the target now")
+
+
+_RESUMABLE_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def _restore_handoff(runner_id: str, ref: dict, cwd: pathlib.Path, env: dict | None) -> str:
+    """Restore the snapshot a transfer turn carries into `cwd`, leave the report
+    where the agent's first command reads it, and tell canopy-web. Returns the
+    Claude session id to resume when canopy-web planned a resume and the
+    transcript is in place, else ""."""
+    hc = _handoff_core()
+    hid = ref.get("id") or ""
+    if hc is None or not hid:
+        return ""
+    archive = _api_bytes(f"/runners/{runner_id}/handoffs/{hid}/archive")
+    if archive is None:
+        report = {"ok": False, "restored": False, "notes": [], "mismatch": [],
+                  "error": "could not download the snapshot"}
+    else:
+        report = hc.restore(cwd, archive, env=env)
+    hc.write_marker(cwd, report)
+    _api("POST", f"/runners/{runner_id}/handoffs/{hid}/restored", {"report": report})
+    _log(f"handoff {hid[:8]}: {hc.summary(report)}")
+    if not (ref.get("resume") and archive):
+        return ""
+    try:
+        sid = ((hc.read_manifest(archive).get("transcript") or {}).get("session_id") or "")
+        data = hc.read_transcript(archive)
+        if not (data and _RESUMABLE_ID.match(sid)):
+            return ""
+        dst = CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{sid}.jsonl"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
+    except Exception as exc:  # noqa: BLE001 — falls back to the cold prompt
+        _log(f"handoff {hid[:8]}: could not place the transcript to resume: {exc}")
+        return ""
+    return sid
+
+
 def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
     """Both session-view syncs, in the order that minimises duplicate work: a
     backfill rewrites the whole history, so run it before the incremental tail
@@ -9527,6 +9671,7 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
         if with_backfills:
             if not SENSITIVE_DATA_MODE:
                 _drain_backfills(runner_id)
+                _drain_handoffs(runner_id)
             _maybe_report_usage(runner_id)
             _maybe_report_slash_commands(runner_id)
         if not SENSITIVE_DATA_MODE:
@@ -10008,6 +10153,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         if not confined:
             # A caller's confined turn gets no repo checkouts; everyone else may ask.
             _TURN_ENV.extra.update(_repo_worktree_env(turn, turn_id))
+            handoff_ref = (turn.get("origin_ref") or {}).get("handoff") or {}
+            if handoff_ref.get("id") and cwd is not None:
+                # A transfer's work, restored before Claude starts in this directory.
+                resumed = _restore_handoff(runner_id, handoff_ref, cwd, _agent_env(slug))
+                if resumed:
+                    resume_id = resumed
+                elif handoff_ref.get("resume"):
+                    # Planned to resume, could not: the prompt that does not claim it.
+                    prompt = handoff_ref.get("cold_prompt") or prompt
             prompt = _with_attachments(prompt, *_fetch_attachments(runner_id, turn))
         if confined:
             # Never resume, never be resumed: an email thread can hold a staff turn

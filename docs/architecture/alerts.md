@@ -44,6 +44,7 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | `device_key_pending` | `apps/harness/alerts_device_key.py` | blocking | Device key |
 | `runner_code` | `apps/harness/alerts_runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
 | `canopy_projects_off` | `apps/harness/alerts_project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
+| `transfer_left_open` | `apps/canopy_sessions/alerts_handoff.py` (a transferred session's task still open on the box it left: its close keeps failing, or it was kept because it holds the only copy of the work; 14 days) | action | Transfers |
 | `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), or every routed runner is directed-only) | setup | Agent routing |
 
 Actions: a source returns `Action(id, label, closes, href)`. An `href` action is
@@ -76,7 +77,8 @@ Per-source notes:
   machine); `agent_cant_run` Fix routing (· Dismiss, the one kind that keeps it — an
   agent nobody means to run yet); `canopy_projects_off` Choose repos (·
   Dismiss, for a person who runs only agents and means canopy to be off in
-  their repos). No other kind offers Dismiss.
+  their repos); `transfer_left_open` Retry close / Close it anyway (· Dismiss,
+  for a task someone already dealt with by hand). No other kind offers Dismiss.
 - **`runner_credential` actions** are the only two that fix a broken
   credential: **Replace token** (a link to the runner's credentials; "Sign in
   again" for a login) and **Remove token**, offered only when removing is

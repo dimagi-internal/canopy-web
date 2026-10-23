@@ -10211,6 +10211,116 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/handoffs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Handoffs Due
+         * @description What this runner owes as the SOURCE of a transfer: worktrees to pack and
+         *     tasks to close. Drained on the poll tick above the pause gate, like closes —
+         *     a box parked because its account is out of tokens still hands its work over.
+         */
+        readonly get: operations["list_handoffs_due"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/archive": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The packed work a transfer onto this runner carries
+         * @description The tar.gz the source packed, for the box that restores it.
+         */
+        readonly get: operations["get_handoff_archive"];
+        readonly put?: never;
+        /**
+         * Post Handoff Part
+         * @description One chunk of the packed worktree, in order (part 0 starts over).
+         */
+        readonly post: operations["post_handoff_part"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/captured": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Handoff Captured
+         * @description The source's answer: packed (the archive is complete and matches
+         *     `manifest.sha256`), or could not and why — which sends the transfer on with
+         *     NO SNAPSHOT and keeps this task open, since it holds the only copy.
+         */
+        readonly post: operations["post_handoff_captured"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/close-result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Handoff Close
+         * @description Whether the source's task is gone. A failure stays due (retried next tick)
+         *     and raises an alert with its reason.
+         */
+        readonly post: operations["post_handoff_close"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/handoffs/{handoff_id}/restored": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Post Handoff Restored
+         * @description The restore's report. Only a verified one (`ok`) lets the source close its
+         *     task; anything else keeps it open and raises an alert.
+         */
+        readonly post: operations["post_handoff_restored"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/kept-conversations": {
         readonly parameters: {
             readonly query?: never;
@@ -11618,7 +11728,9 @@ export interface paths {
          *     Filters: `q` (title or session_key contains), `repo` (the repo it ran in or
          *     worked on — a name or owner/name), `branch` (any branch its transcript saw),
          *     `pr` (a PR it created or asked to merge — N, owner/name#N or a URL),
-         *     `since` / `until` (last activity in [since, until)). To reach EVERY session
+         *     `since` / `until` (last activity in [since, until)), `runner` (the runner it
+         *     is on, by id or name — `?runner=<name>&state=active` is every open session on
+         *     a box, what `POST /transfer-all` moves). To reach EVERY session
          *     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
          */
         readonly get: operations["canopy_sessions_list_sessions"];
@@ -11826,6 +11938,33 @@ export interface paths {
         readonly put?: never;
         /** Withdraw a transfer request you made */
         readonly post: operations["cancel_transfer_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/transfer-all": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Move every open session on one runner to another
+         * @description Move every open session you can act in from `from_runner` to `to_runner`,
+         *     each with its work (see `transfer`), and say what happened to each one.
+         *
+         *     The way to empty a box — an account out of Claude tokens, a laptop going
+         *     away, load moving to the cloud. `dry_run` lists what would move first. Each
+         *     session is its own transfer, so one that cannot move (a turn executing, a
+         *     session the target cannot run) is reported `refused` with the reason and the
+         *     rest still move. Discovery alone is `GET /api/canopy-sessions/?runner=<name>`.
+         */
+        readonly post: operations["transfer_all"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -12341,6 +12480,52 @@ export interface paths {
          *     another request for this session is waiting.
          */
         readonly post: operations["transfer"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/handoffs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What each transfer of this session carried
+         * @description Every transfer of this session, newest first: what the source packed (or
+         *     why it could not — NO SNAPSHOT), whether the target restored it and `git
+         *     status` matched, and whether the source's task was closed.
+         */
+        readonly get: operations["list_handoffs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/handoffs/{handoff_id}/restore": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Restore a snapshot that arrived after its transfer
+         * @description A source that was asleep at the transfer packs its work when it is back.
+         *     This puts that snapshot into the session now: a turn on the session's
+         *     current runner restores it — into a worktree with no uncommitted changes
+         *     only; the report says otherwise and leaves the worktree alone. 409 while a
+         *     turn is queued or running in the session.
+         */
+        readonly post: operations["restore_handoff"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -30664,6 +30849,105 @@ export interface components {
              */
             readonly closes: readonly components["schemas"]["CloseOut"][];
         };
+        /**
+         * HandoffDueOut
+         * @description One thing a runner owes as the SOURCE of a transfer (`canopy_sessions/handoff.py`).
+         */
+        readonly HandoffDueOut: {
+            /** Id */
+            readonly id: string;
+            /** Session Id */
+            readonly session_id: string;
+            /** Session Key */
+            readonly session_key: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /**
+             * Transcript
+             * @default false
+             */
+            readonly transcript: boolean;
+            /**
+             * Capture
+             * @default false
+             */
+            readonly capture: boolean;
+            /**
+             * Close
+             * @default false
+             */
+            readonly close: boolean;
+            /**
+             * Close Error
+             * @default
+             */
+            readonly close_error: string;
+        };
+        /** HandoffSyncOut */
+        readonly HandoffSyncOut: {
+            /**
+             * Handoffs
+             * @default []
+             */
+            readonly handoffs: readonly components["schemas"]["HandoffDueOut"][];
+        };
+        /** HandoffPartOut */
+        readonly HandoffPartOut: {
+            /** Received */
+            readonly received: number;
+        };
+        /** HandoffPartIn */
+        readonly HandoffPartIn: {
+            /** Part */
+            readonly part: number;
+            /** Parts */
+            readonly parts: number;
+            /** Data */
+            readonly data: string;
+        };
+        /** HandoffAckOut */
+        readonly HandoffAckOut: {
+            /** Capture Status */
+            readonly capture_status: string;
+            /** Restore Status */
+            readonly restore_status: string;
+            /** Close Status */
+            readonly close_status: string;
+        };
+        /** HandoffCapturedIn */
+        readonly HandoffCapturedIn: {
+            /** Ok */
+            readonly ok: boolean;
+            /** Manifest */
+            readonly manifest?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /** HandoffCloseIn */
+        readonly HandoffCloseIn: {
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /** HandoffRestoredIn */
+        readonly HandoffRestoredIn: {
+            /** Report */
+            readonly report: {
+                readonly [key: string]: unknown;
+            };
+        };
         /** KeptConversationsOut */
         readonly KeptConversationsOut: {
             /**
@@ -32797,6 +33081,111 @@ export interface components {
              */
             readonly sample: number;
         };
+        /**
+         * HandoffOut
+         * @description The work half of a transfer: what the source packed, whether the target
+         *     restored it, and whether the source's task was closed.
+         */
+        readonly HandoffOut: {
+            /** Id */
+            readonly id: string;
+            /** Session Id */
+            readonly session_id: string;
+            /** Source Runner */
+            readonly source_runner: string;
+            /** Target Runner */
+            readonly target_runner: string;
+            /** Capture Status */
+            readonly capture_status: string;
+            /**
+             * Capture Note
+             * @default
+             */
+            readonly capture_note: string;
+            /**
+             * Branch
+             * @default
+             */
+            readonly branch: string;
+            /**
+             * Head
+             * @default
+             */
+            readonly head: string;
+            /**
+             * Local Commits
+             * @default 0
+             */
+            readonly local_commits: number;
+            /**
+             * Staged Files
+             * @default []
+             */
+            readonly staged_files: readonly string[];
+            /**
+             * Unstaged Files
+             * @default []
+             */
+            readonly unstaged_files: readonly string[];
+            /**
+             * Untracked Files
+             * @default []
+             */
+            readonly untracked_files: readonly string[];
+            /**
+             * Skipped
+             * @default []
+             */
+            readonly skipped: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Snapshot Bytes
+             * @default 0
+             */
+            readonly snapshot_bytes: number;
+            /**
+             * Transcript Carried
+             * @default false
+             */
+            readonly transcript_carried: boolean;
+            /**
+             * Resume Planned
+             * @default false
+             */
+            readonly resume_planned: boolean;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Restore Status
+             * @default
+             */
+            readonly restore_status: string;
+            /** Restore Report */
+            readonly restore_report?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Close Status
+             * @default
+             */
+            readonly close_status: string;
+            /**
+             * Close Error
+             * @default
+             */
+            readonly close_error: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Settled At */
+            readonly settled_at?: string | null;
+        };
         /** TransferOut */
         readonly TransferOut: {
             /** Session Id */
@@ -32821,6 +33210,7 @@ export interface components {
              * @default []
              */
             readonly approvers: readonly string[];
+            readonly handoff?: components["schemas"]["HandoffOut"] | null;
         };
         /** TransferRequestOut */
         readonly TransferRequestOut: {
@@ -32878,6 +33268,62 @@ export interface components {
              * @default
              */
             readonly note: string;
+        };
+        /** TransferAllOut */
+        readonly TransferAllOut: {
+            /** From Runner */
+            readonly from_runner: string;
+            /** To Runner */
+            readonly to_runner: string;
+            /** Results */
+            readonly results: readonly components["schemas"]["TransferAllResult"][];
+        };
+        /** TransferAllResult */
+        readonly TransferAllResult: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Title */
+            readonly title: string;
+            /** Session Key */
+            readonly session_key: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            readonly handoff?: components["schemas"]["HandoffOut"] | null;
+        };
+        /**
+         * TransferAllIn
+         * @description Body for POST /transfer-all — move every open session on one runner to another.
+         */
+        readonly TransferAllIn: {
+            /** From Runner */
+            readonly from_runner: string;
+            /** To Runner */
+            readonly to_runner: string;
+            /**
+             * Brief
+             * @default
+             */
+            readonly brief: string;
+            /**
+             * Session Ids
+             * @default []
+             */
+            readonly session_ids: readonly string[];
+            /**
+             * Dry Run
+             * @default false
+             */
+            readonly dry_run: boolean;
         };
         /**
          * JoinRequestOut
@@ -48577,6 +49023,157 @@ export interface operations {
             };
         };
     };
+    readonly list_handoffs_due: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HandoffSyncOut"];
+                };
+            };
+        };
+    };
+    readonly get_handoff_archive: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly handoff_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly post_handoff_part: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly handoff_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HandoffPartIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HandoffPartOut"];
+                };
+            };
+        };
+    };
+    readonly post_handoff_captured: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly handoff_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HandoffCapturedIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HandoffAckOut"];
+                };
+            };
+        };
+    };
+    readonly post_handoff_close: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly handoff_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HandoffCloseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HandoffAckOut"];
+                };
+            };
+        };
+    };
+    readonly post_handoff_restored: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly handoff_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HandoffRestoredIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HandoffAckOut"];
+                };
+            };
+        };
+    };
     readonly kept_conversations: {
         readonly parameters: {
             readonly query?: never;
@@ -50178,6 +50775,7 @@ export interface operations {
                 readonly pr?: string;
                 readonly since?: string | null;
                 readonly until?: string | null;
+                readonly runner?: string;
             };
             readonly header?: never;
             readonly path?: never;
@@ -50413,6 +51011,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TransferRequestOut"];
+                };
+            };
+        };
+    };
+    readonly transfer_all: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TransferAllIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TransferAllOut"];
                 };
             };
         };
@@ -50964,6 +51586,51 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["TransferOut"];
+                };
+            };
+        };
+    };
+    readonly list_handoffs: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HandoffOut"][];
+                };
+            };
+        };
+    };
+    readonly restore_handoff: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+                readonly handoff_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["HandoffOut"];
                 };
             };
         };

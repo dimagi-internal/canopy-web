@@ -102,6 +102,49 @@ an emdash task name alone is not an identity.
 - Cloud runners and the laptop `claude-cli` runtime only (`placement.fork_runner_supported`): emdash and the Claude app own their sessions. The menu is offered only there (`MessageContextMenu.canFork`); elsewhere a right-click is the browser's own.
 - The fork opens at once. In /ide every session sits in its own place; a session another was started from (`parent_session_id`: a fork, a Slack branch, a dispatched turn's session) also shows each child as a grey link row underneath, foldable per parent, that opens the real session (`ideTree.childLinks`). Links come from the viewer's own session list, so a child they cannot read is never linked. A runner-made session for a dispatched turn takes the turn's parent and the parent chat's people (`harness.session_sync._thread_session`).
 
+## A transfer carries the work
+
+`POST /{id}/transfer` (`placement.transfer_session`) re-points the binding and hands
+over the conversation; `apps/canopy_sessions/handoff.py` (`SessionHandoff`) carries
+the worktree. The transcript is no substitute — shell commands change files the
+transcript only names — so the SOURCE runner packs its own worktree with plain git
+(`runner/canopy_runner/canopy_runner/handoff.py`, shared by both runners): branch +
+HEAD, local-only commits (`git bundle`), the staged and unstaged diffs, untracked
+non-ignored files (a secret-looking name such as `.env.local` is skipped and named;
+ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
+
+- **Ask, then settle.** A reachable source (`Runner.is_reachable` — PAUSED counts: a
+  box whose account is out of tokens still runs its daemon) is asked through a
+  durable row it drains on the poll tick (`GET /runners/{id}/handoffs`, in
+  `_report_sweep` above the pause gate; the cloud box in `_sync_session_views`). The
+  transfer turn is enqueued when it answers, or after `CAPTURE_WAIT` (3 min, the
+  `canopy_sessions.settle_handoffs` tick). A source that is not reachable transfers
+  at once with **NO SNAPSHOT**, said in the prompt with the reason; so does a
+  sensitive conversation, whose work canopy-web never holds.
+- **Restore before the agent acts.** The target unpacks into the session's new
+  worktree (laptop: right after emdash creates the task, or after `make_worktree`
+  on the desktop/CLI runtimes; cloud: after `_turn_cwd`), refusing over tracked
+  changes or onto a different repo, then checks `git status`, HEAD and the diff
+  against the source's. Its report lands at `<git-dir>/canopy-handoff.json`; the
+  prompt's first command waits for it (emdash types the prompt as it creates the
+  task, so on a laptop the restore races the agent and the wait is what orders them).
+- **Conversation.** A cloud target is given the source's transcript under its own
+  Claude session id and resumes it (`resume_planned`): the epoch and `transcript_id`
+  are kept, so its ordinals continue the held rows, and the prompt says the
+  conversation was carried. If it cannot place it, it uses `cold_prompt`, and its
+  fresh session's new id opens an epoch on first ship. emdash and the Claude app
+  start their own Claude process and cannot be told to resume a placed file, so a
+  laptop target gets the preamble path.
+- **Close only when the work is elsewhere.** The source closes its task (the same
+  `close.close_session` the web's Close uses; on a cloud box, sets the session
+  directory aside) after a verified restore, or once a late snapshot is held.
+  Until then its session report does not file that task as a new session
+  (`handoff.suppressed_tasks`). A failed close is retried each tick and raises the
+  `transfer_left_open` alert; so does a task KEPT because it holds the only copy
+  (pack failed, restore mismatched, sensitive) — "Close it anyway" forces it.
+- **Batch.** `POST /transfer-all` moves every open session on one runner (what an
+  account switch does); `GET /?runner=<name>` lists them.
+
 ## Several people in one chat: drafts and authorship
 
 - **One draft per (session, author)** (`Draft`). A person's own `draft.updated` /

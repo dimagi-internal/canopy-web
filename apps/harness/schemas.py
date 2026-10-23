@@ -1904,6 +1904,60 @@ class CloseResultsOut(Schema):
     updated: int
 
 
+class HandoffDueOut(Schema):
+    """One thing a runner owes as the SOURCE of a transfer (`canopy_sessions/handoff.py`)."""
+    id: str
+    session_id: str
+    #: The task (emdash) or Claude session (cloud) whose worktree holds the work.
+    session_key: str
+    project: str = ""
+    #: Pack the Claude transcript too (the target resumes it).
+    transcript: bool = False
+    #: Pack the worktree and upload it.
+    capture: bool = False
+    #: Close the task: the target restored the work, or the snapshot is held here.
+    close: bool = False
+    close_error: str = ""
+
+
+class HandoffSyncOut(Schema):
+    handoffs: list[HandoffDueOut] = []
+
+
+class HandoffPartIn(Schema):
+    part: int
+    parts: int
+    #: Base64 of this chunk of the tar.gz.
+    data: str = Field(max_length=2_200_000)
+
+
+class HandoffPartOut(Schema):
+    received: int
+
+
+class HandoffCapturedIn(Schema):
+    ok: bool
+    #: What was packed (`runner/canopy_runner/canopy_runner/handoff.py::capture`).
+    manifest: dict | None = None
+    error: str = Field(default="", max_length=1000)
+
+
+class HandoffCloseIn(Schema):
+    ok: bool
+    error: str = Field(default="", max_length=1000)
+
+
+class HandoffRestoredIn(Schema):
+    #: `handoff.restore`'s report: ok, restored, branch, head, counts, mismatch, notes, error.
+    report: dict
+
+
+class HandoffAckOut(Schema):
+    capture_status: str
+    restore_status: str
+    close_status: str
+
+
 InvestigationStatus = Literal["open", "held", "debugger_failed", "resolved", "escalated"]
 
 

@@ -6,18 +6,21 @@ Registered on the harness router (`api.router`), in the order api.py imports
 this module, so the schema and the MCP tool names are unchanged."""
 from __future__ import annotations
 
+import base64
+import binascii
 import datetime as dt
 import logging
 import uuid
 
 from django.db.models import Q
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 from ninja.errors import HttpError
 
 from apps.agents.gates import agent_for_read
 from apps.api.route_gates import gate
-from apps.canopy_sessions.models import RunnerBinding, Session
+from apps.canopy_sessions import handoff
+from apps.canopy_sessions.models import HandoffArchive, RunnerBinding, Session, SessionHandoff
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
@@ -43,6 +46,13 @@ from .schemas import (
     CloseResultsIn,
     CloseResultsOut,
     CloseSyncOut,
+    HandoffAckOut,
+    HandoffCapturedIn,
+    HandoffCloseIn,
+    HandoffPartIn,
+    HandoffPartOut,
+    HandoffRestoredIn,
+    HandoffSyncOut,
     KeptConversationsIn,
     KeptConversationsOut,
     MenuAnswerResultIn,
@@ -398,6 +408,96 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
          "project": b.emdash_project or b.session.emdash_project, "close_error": b.close_error}
         for b in bindings
     ]}
+
+
+# ---- transfers carry the work: the runners' half of canopy_sessions/handoff.py ----
+
+def _handoff_for(runner, handoff_id: uuid.UUID, *, side: str):
+    """The handoff, if `runner` is its source (`side="source"`) or the box that
+    restores it (`"target"`: the transfer's target, or the box the session is on
+    now, for a late restore). Anything else is the same 404 as no such id."""
+    h = (SessionHandoff.objects.select_related("source_runner", "target_runner", "session")
+         .filter(pk=handoff_id).first())
+    if h is None:
+        raise HttpError(404, "no such handoff")
+    if side == "source" and h.source_runner_id == runner.id:
+        return h
+    if side == "target" and runner.id in (h.target_runner_id, RunnerBinding.objects.filter(
+            session_id=h.session_id).values_list("runner_id", flat=True).first()):
+        return h
+    raise HttpError(404, "no such handoff")
+
+
+def _ack(h) -> dict:
+    return {"capture_status": h.capture_status, "restore_status": h.restore_status,
+            "close_status": h.close_status}
+
+
+@router.get("/runners/{runner_id}/handoffs", response=HandoffSyncOut)
+@gate("runner")
+def list_handoffs_due(request: HttpRequest, runner_id: uuid.UUID):
+    """What this runner owes as the SOURCE of a transfer: worktrees to pack and
+    tasks to close. Drained on the poll tick above the pause gate, like closes —
+    a box parked because its account is out of tokens still hands its work over."""
+    return {"handoffs": handoff.due_for(runner_or_404(request, runner_id))}
+
+
+@router.post("/runners/{runner_id}/handoffs/{handoff_id}/archive", response=HandoffPartOut)
+@gate("runner", kind="runner-protocol")  # only a handoff this runner is the source of
+def post_handoff_part(request: HttpRequest, runner_id: uuid.UUID, handoff_id: uuid.UUID,
+                      payload: HandoffPartIn):
+    """One chunk of the packed worktree, in order (part 0 starts over)."""
+    h = _handoff_for(runner_or_404(request, runner_id), handoff_id, side="source")
+    try:
+        data = base64.b64decode(payload.data, validate=True)
+        return {"received": handoff.receive_part(h, part=payload.part, parts=payload.parts,
+                                                 data=data)}
+    except (binascii.Error, ValueError) as exc:
+        raise HttpError(422, str(exc))
+
+
+@router.post("/runners/{runner_id}/handoffs/{handoff_id}/captured", response=HandoffAckOut)
+@gate("runner", kind="runner-protocol")  # only a handoff this runner is the source of
+def post_handoff_captured(request: HttpRequest, runner_id: uuid.UUID, handoff_id: uuid.UUID,
+                          payload: HandoffCapturedIn):
+    """The source's answer: packed (the archive is complete and matches
+    `manifest.sha256`), or could not and why — which sends the transfer on with
+    NO SNAPSHOT and keeps this task open, since it holds the only copy."""
+    h = _handoff_for(runner_or_404(request, runner_id), handoff_id, side="source")
+    return _ack(handoff.record_capture(h, ok=payload.ok, manifest=payload.manifest,
+                                       error=payload.error))
+
+
+@router.post("/runners/{runner_id}/handoffs/{handoff_id}/close-result", response=HandoffAckOut)
+@gate("runner", kind="runner-protocol")  # only a handoff this runner is the source of
+def post_handoff_close(request: HttpRequest, runner_id: uuid.UUID, handoff_id: uuid.UUID,
+                       payload: HandoffCloseIn):
+    """Whether the source's task is gone. A failure stays due (retried next tick)
+    and raises an alert with its reason."""
+    h = _handoff_for(runner_or_404(request, runner_id), handoff_id, side="source")
+    return _ack(handoff.record_close(h, ok=payload.ok, error=payload.error))
+
+
+@router.get("/runners/{runner_id}/handoffs/{handoff_id}/archive",
+            summary="The packed work a transfer onto this runner carries")
+@gate("runner")  # only the box restoring it
+def get_handoff_archive(request: HttpRequest, runner_id: uuid.UUID, handoff_id: uuid.UUID):
+    """The tar.gz the source packed, for the box that restores it."""
+    h = _handoff_for(runner_or_404(request, runner_id), handoff_id, side="target")
+    archive = HandoffArchive.objects.filter(handoff=h).first()
+    if archive is None or not archive.data:
+        raise HttpError(404, "this handoff holds no snapshot")
+    return HttpResponse(bytes(archive.data), content_type="application/gzip")
+
+
+@router.post("/runners/{runner_id}/handoffs/{handoff_id}/restored", response=HandoffAckOut)
+@gate("runner", kind="runner-protocol")  # only the box restoring it
+def post_handoff_restored(request: HttpRequest, runner_id: uuid.UUID, handoff_id: uuid.UUID,
+                          payload: HandoffRestoredIn):
+    """The restore's report. Only a verified one (`ok`) lets the source close its
+    task; anything else keeps it open and raises an alert."""
+    h = _handoff_for(runner_or_404(request, runner_id), handoff_id, side="target")
+    return _ack(handoff.record_restore(h, payload.report))
 
 
 @router.post("/runners/{runner_id}/kept-conversations", response=KeptConversationsOut)

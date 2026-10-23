@@ -381,6 +381,52 @@ class Client:
         <reason>") instead of only in this box's log."""
         self._call("POST", f"/runners/{runner_id}/close-results", {"results": results})
 
+    # ---- a transfer's work (handoff.py; server: canopy_sessions/handoff.py) ----
+
+    def sync_handoffs(self, runner_id: str) -> list[dict]:
+        """What we owe as the SOURCE of a transfer: worktrees to pack, tasks to close."""
+        _, payload = self._call("GET", f"/runners/{runner_id}/handoffs")
+        return (payload or {}).get("handoffs", [])
+
+    def upload_handoff(self, runner_id: str, handoff_id: str, archive: bytes,
+                       chunks: list[bytes]) -> None:
+        """The packed worktree, in order, each chunk under the request ceiling."""
+        import base64
+
+        for i, chunk in enumerate(chunks):
+            self._call("POST", f"/runners/{runner_id}/handoffs/{handoff_id}/archive",
+                       {"part": i, "parts": len(chunks),
+                        "data": base64.b64encode(chunk).decode()})
+
+    def post_handoff_captured(self, runner_id: str, handoff_id: str, *, ok: bool,
+                              manifest: dict | None = None, error: str = "") -> dict:
+        _, payload = self._call("POST", f"/runners/{runner_id}/handoffs/{handoff_id}/captured",
+                                {"ok": ok, "manifest": manifest, "error": error[:1000]})
+        return payload or {}
+
+    def post_handoff_close(self, runner_id: str, handoff_id: str, *, ok: bool,
+                           error: str = "") -> None:
+        self._call("POST", f"/runners/{runner_id}/handoffs/{handoff_id}/close-result",
+                   {"ok": ok, "error": error[:1000]})
+
+    def download_handoff(self, runner_id: str, handoff_id: str) -> bytes:
+        """The snapshot a transfer onto this box carries. Raw bytes, so not `_call`."""
+        url = f"{self.base_url}/api/harness/runners/{runner_id}/handoffs/{handoff_id}/archive"
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Authorization", f"Bearer {self.token}")
+        _identify(req)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return resp.read()
+        except urllib.error.HTTPError as exc:
+            raise ClientError(f"GET handoff {handoff_id} -> {exc.code}", status=exc.code) from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            raise ClientError(f"GET handoff {handoff_id} -> {exc}", transient=True) from exc
+
+    def post_handoff_restored(self, runner_id: str, handoff_id: str, report: dict) -> None:
+        self._call("POST", f"/runners/{runner_id}/handoffs/{handoff_id}/restored",
+                   {"report": report})
+
     def sync_menu_answers(self, runner_id: str) -> list[dict]:
         """Answers a human has given that we have not pressed yet."""
         _, payload = self._call("GET", f"/runners/{runner_id}/menu-answers")
