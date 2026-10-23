@@ -12,6 +12,7 @@ from canopy_transcript import BLOCK_STRIDE
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
+from apps.harness import runner_requirements
 from apps.harness.models import Turn
 
 from . import authorship, staleness, transcript_ingest
@@ -625,8 +626,6 @@ SENSITIVE_BOX_BACKFILL_REFUSAL = (
 def backfill_refused(binding) -> bool:
     """Whether a backfill must never be asked of this binding's box: a
     sensitive-data runner ships no transcript, whatever the session."""
-    from apps.harness import runner_requirements
-
     runner = getattr(binding, "runner", None) if binding is not None else None
     return runner is not None and runner_requirements.is_sensitive_data_box(runner)
 
