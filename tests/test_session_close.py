@@ -2,6 +2,8 @@
 emdash task for this session? — because a server-only archive does not survive
 a local session: replace_reported_sessions un-archives anything re-reported as
 open, and the runner re-reports every ~10s."""
+from datetime import timedelta
+
 import pytest
 from unittest.mock import patch
 from django.contrib.auth.models import User
@@ -113,13 +115,29 @@ def test_an_unreachable_runner_refuses_up_front():
     """Never queue a close. A close that sits until a box comes back is
     indistinguishable from one that worked."""
     user, ws = _ctx()
-    runner = _runner(user, ws, paused=True)
+    runner = _runner(user, ws)
+    Runner.objects.filter(pk=runner.pk).update(
+        last_heartbeat_at=timezone.now() - timedelta(hours=2))
+    runner.refresh_from_db()
+    assert not runner.is_reachable
     s = _local_session(user, ws, runner)
     with patch("apps.realtime.groups.publish") as pub:
         assert control.close_session(session=s) == "unavailable"
     s.refresh_from_db()
     assert s.status == Session.ACTIVE
     assert pub.call_count == 0
+
+
+def test_a_paused_runner_still_closes():
+    """A pause stops STARTING work, never finishing it — a parked daemon keeps its
+    poll loop and drains closes. Refusing here forced an unpause of a rate-limited
+    box just to close its sessions."""
+    user, ws = _ctx()
+    s = _local_session(user, ws, _runner(user, ws, paused=True))
+    with patch("apps.realtime.groups.publish") as pub:
+        assert control.close_session(session=s) == "closing"
+    assert pub.call_count == 1
+    assert RunnerBinding.objects.get(session=s).close_requested
 
 
 def test_already_archived_is_a_refusal_not_a_second_close():

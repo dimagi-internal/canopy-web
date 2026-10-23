@@ -247,8 +247,11 @@ def close_session(*, session: Session) -> str:
 
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     if is_runner_reported(binding):
-        reachable = {Runner.ONLINE, Runner.DEGRADED}
-        if binding.runner.live_status not in reachable:
+        # `is_reachable`, not ONLINE/DEGRADED: a close FINISHES work, and a paused
+        # daemon keeps its poll loop (`_report_sweep` drains closes above the pause
+        # gate). Refusing it made a switch off a rate-limited box unpause that box
+        # just to close its sessions (2026-10-23, haldimagi-mbp-cdp).
+        if not binding.runner.is_reachable:
             return "unavailable"
         # Cancel BEFORE relaying. Deleting the emdash task kills the process the
         # turn runs in, so a live turn would otherwise stay EXECUTING with nobody

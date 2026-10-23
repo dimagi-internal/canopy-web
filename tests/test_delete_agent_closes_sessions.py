@@ -1,6 +1,8 @@
 """Deleting an agent closes its open sessions. Before, the delete only SET_NULLed
 Session.agent, so e2e test agents' sessions stayed listed on the cloud runner
 with no agent behind them."""
+from datetime import timedelta
+
 import pytest
 from unittest.mock import patch
 from django.contrib.auth.models import User
@@ -37,11 +39,13 @@ def _session(user, ws, agent, *, runner=None, key="t1"):
     return s
 
 
-def _runner(user, ws, name, *, paused=False):
-    # Paused reads as unreachable through live_status, like an offline box.
+def _runner(user, ws, name, *, offline=False):
+    # A lapsed heartbeat reads STALE through live_status: an offline box. (Not a
+    # pause — a paused daemon still polls and drains closes, so it is reachable.)
+    beat = timezone.now() - timedelta(hours=2) if offline else timezone.now()
     return Runner.objects.create(
         name=name, kind=Runner.EMDASH, host=name, owner=user, workspace=ws,
-        status=Runner.ONLINE, last_heartbeat_at=timezone.now(), paused=paused,
+        status=Runner.ONLINE, last_heartbeat_at=beat,
     )
 
 
@@ -49,7 +53,7 @@ def test_deleting_an_agent_closes_each_open_session(ctx):
     user, ws, agent, client = ctx
     unbound = _session(user, ws, agent, key="web")
     online = _session(user, ws, agent, runner=_runner(user, ws, "box-on"), key="on")
-    offline = _session(user, ws, agent, runner=_runner(user, ws, "box-off", paused=True), key="off")
+    offline = _session(user, ws, agent, runner=_runner(user, ws, "box-off", offline=True), key="off")
     other = Agent.objects.create(slug="keeper", name="Keeper", workspace=ws, turn_mode="manual")
     untouched = _session(user, ws, other, key="keep")
 
@@ -74,7 +78,7 @@ def test_a_queued_close_still_names_its_project_after_the_agent_is_gone(ctx):
     project is derived from the agent's slug, so it blanks on delete. The drain
     reads the binding's own copy."""
     user, ws, agent, client = ctx
-    runner = _runner(user, ws, "box-off", paused=True)
+    runner = _runner(user, ws, "box-off", offline=True)
     s = _session(user, ws, agent, runner=runner, key="off")
     RunnerBinding.objects.filter(session=s).update(emdash_project=agent.slug)
     with patch("apps.realtime.groups.publish"):
