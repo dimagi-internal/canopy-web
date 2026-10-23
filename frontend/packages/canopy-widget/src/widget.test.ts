@@ -726,6 +726,39 @@ describe('dragging the bubble out of the way', () => {
     expect(dock.style.left).toBe('120px')
   })
 
+  it('a window resize leaves a docked rail on the right and the bubble where it was put', () => {
+    // jsdom measures every element 0×0 at the origin — exactly what a hidden
+    // dock (covered by the open rail) measures in a real browser, which is how
+    // a resize used to throw both into the top-left corner.
+    const storage = memoryStorage({
+      'canopy.widget.position.connect-labs': JSON.stringify({ x: 120, y: 240 }),
+    })
+    const { root } = widgetHarness({ mode: 'docked', storage, open: true })
+    const panel = root.querySelector('.panel') as HTMLElement
+    const dock = root.querySelector('.dock') as HTMLElement
+
+    window.dispatchEvent(new Event('resize'))
+
+    expect(panel.style.left).toBe('')
+    expect(panel.style.top).toBe('')
+    expect(dock.style.left).toBe('120px')
+    expect(dock.style.top).toBe('240px')
+  })
+
+  it('a window resize does not throw a floating panel into the corner either', () => {
+    const storage = memoryStorage({
+      'canopy.widget.position.connect-labs': JSON.stringify({ x: 120, y: 240 }),
+    })
+    for (const mode of ['overlay', 'docked'] as const) {
+      const { root } = widgetHarness({ mode, storage, open: true })
+      const panel = root.querySelector('.panel') as HTMLElement
+      window.dispatchEvent(new Event('resize'))
+      expect(panel.style.left).not.toBe('8px')
+      expect(panel.style.top).not.toBe('8px')
+      root.host.remove()
+    }
+  })
+
   it('works with no storage at all — dragging is not a storage feature', () => {
     const { root } = widgetHarness({ storage: null })
     const dock = root.querySelector('.dock') as HTMLElement
@@ -869,10 +902,14 @@ describe('snapping a docked rail into the page', () => {
     expect(document.documentElement.style.paddingRight).toBe('560px')
   })
 
-  it('follows the rail\'s width as it is dragged', async () => {
-    const { root, fromFrame } = widgetHarness({ mode: 'docked', width: 400, open: true })
+  it('follows the rail\'s width as its divider is dragged, keeping the floating height', async () => {
+    const storage = memoryStorage({
+      'canopy.widget.size.connect-labs': JSON.stringify({ width: 400, height: 480 }),
+    })
+    const onResize = vi.fn()
+    const { root, fromFrame } = widgetHarness({ mode: 'docked', width: 400, open: true, storage, onResize })
     await fromFrame({ source: SOURCE, type: 'snap', snapped: true })
-    const grip = root.querySelector('.resize')!
+    const grip = root.querySelector('.divider')!
     const at = (type: string, x: number) => {
       const e = new Event(type) as Event & { clientX: number; clientY: number; pointerId: number }
       e.clientX = x
@@ -884,6 +921,27 @@ describe('snapping a docked rail into the page', () => {
     at('pointermove', 450)
     at('pointerup', 450)
     expect(document.documentElement.style.paddingRight).toBe('550px')
+    // Snapped it is full height, so that is what the host hears…
+    expect(onResize).toHaveBeenLastCalledWith({ width: 550, height: window.innerHeight })
+    // …while the shorter height chosen floating survives for when it floats.
+    expect(JSON.parse(storage.data['canopy.widget.size.connect-labs'])).toEqual({ width: 550, height: 480 })
+  })
+
+  it('a snapped rail is sized by its divider only — the corner grip steps aside', async () => {
+    const { root, fromFrame } = widgetHarness({ mode: 'docked', width: 400, open: true })
+    const panel = root.querySelector('.panel') as HTMLElement
+    await fromFrame({ source: SOURCE, type: 'snap', snapped: true })
+    expect(panel.dataset.snapped).toBe('true')
+    expect(root.querySelector('.divider')!.getAttribute('role')).toBe('separator')
+    // The rule that hides the grip and pins the height is CSS; jsdom has no
+    // cascade, so assert the rule exists rather than a computed style.
+    const css = root.querySelector('style')!.textContent!
+    expect(css).toMatch(/\.panel\[data-snapped="true"\] \.resize \{ display: none; \}/)
+    expect(css).toMatch(/\.panel\[data-snapped="true"\] \{[^}]*height: auto !important/)
+  })
+
+  it('an overlay panel has no divider', () => {
+    expect(widgetHarness({ open: true }).root.querySelector('.divider')).toBeNull()
   })
 
   it('lets go while expanded, and takes the room back on collapse', async () => {

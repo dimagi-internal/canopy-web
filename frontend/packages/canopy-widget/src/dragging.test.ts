@@ -8,6 +8,7 @@ import {
   readSaved,
   readSavedSize,
   resizePanel,
+  snappedWidth,
   storageKeyFor,
   writeSaved,
 } from './dragging'
@@ -156,5 +157,20 @@ describe('remembering the size', () => {
     expect(readSavedSize(store('{"width":-1,"height":600}'), 'k')).toBeNull()
     expect(readSavedSize(store('not json'), 'k')).toBeNull()
     expect(readSavedSize(null, 'k')).toBeNull()
+  })
+})
+
+describe('dragging a snapped rail\'s divider', () => {
+  it('widens as it is dragged left and narrows as it is dragged right', () => {
+    expect(snappedWidth(400, -100, 1400)).toBe(500)
+    expect(snappedWidth(400, 50, 1400)).toBe(350)
+  })
+
+  it('never goes below a usable composer', () => {
+    expect(snappedWidth(400, 300, 1400)).toBe(MIN_PANEL.width)
+  })
+
+  it('always leaves the page room beside it', () => {
+    expect(snappedWidth(400, -2000, 1400)).toBe(1400 - 360)
   })
 })

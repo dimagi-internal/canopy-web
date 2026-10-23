@@ -141,6 +141,23 @@ export function resizePanel(start: Size, delta: Point, room: Size, min: Size = M
   }
 }
 
+/** The least of the page a snapped rail leaves beside it, so dragging its
+ *  divider can never squeeze the host's own page out of the window. */
+export const MIN_PAGE_PX = 360
+
+/**
+ * A snapped rail's width after its divider is dragged by `dx`.
+ *
+ * Only the width moves: snapped, the rail is a column of the page and always
+ * full height. Dragging left (negative dx) widens it. The panel minimum gives
+ * way to nothing here — a window too narrow for both is the visitor's to fix by
+ * unpinning, not ours to solve by shrinking the composer.
+ */
+export function snappedWidth(start: number, dx: number, viewportWidth: number): number {
+  const max = Math.max(MIN_PANEL.width, viewportWidth - MIN_PAGE_PX)
+  return Math.round(Math.min(Math.max(start - dx, MIN_PANEL.width), max))
+}
+
 /** Read a saved panel size. Never throws, and never returns something unusable. */
 export function readSavedSize(storage: Pick<Storage, 'getItem'> | null, key: string): Size | null {
   if (!storage) return null
