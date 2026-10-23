@@ -115,3 +115,57 @@ export function writeSaved(
 export function storageKeyFor(app: string): string {
   return `canopy.widget.position.${app}`
 }
+
+export interface Size {
+  width: number
+  height: number
+}
+
+/** The smallest panel a corner drag can leave: still a usable composer. */
+export const MIN_PANEL: Size = { width: 300, height: 320 }
+
+/**
+ * The panel's size after its top-left corner is dragged by `delta`.
+ *
+ * The corner the grip sits in is the one AWAY from the bubble, so the panel
+ * grows up and to the left and its bottom-right stays where it was — dragging
+ * left (negative x) widens it. `room` is the most it may take; the minimum
+ * gives way to it, so a window smaller than the minimum still gets a panel
+ * that fits rather than one pushed off the edge.
+ */
+export function resizePanel(start: Size, delta: Point, room: Size, min: Size = MIN_PANEL): Size {
+  const clamp = (value: number, lo: number, hi: number) => Math.min(Math.max(value, Math.min(lo, hi)), hi)
+  return {
+    width: Math.round(clamp(start.width - delta.x, min.width, room.width)),
+    height: Math.round(clamp(start.height - delta.y, min.height, room.height)),
+  }
+}
+
+/** Read a saved panel size. Never throws, and never returns something unusable. */
+export function readSavedSize(storage: Pick<Storage, 'getItem'> | null, key: string): Size | null {
+  if (!storage) return null
+  try {
+    const raw = storage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<Size>
+    const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0
+    if (!ok(parsed?.width) || !ok(parsed?.height)) return null
+    return { width: parsed.width, height: parsed.height }
+  } catch {
+    // As for a position: a lost size is the default panel.
+    return null
+  }
+}
+
+export function writeSavedSize(storage: Pick<Storage, 'setItem'> | null, key: string, size: Size): void {
+  try {
+    storage?.setItem(key, JSON.stringify(size))
+  } catch {
+    // Forgetting the size must never break changing it.
+  }
+}
+
+/** Per app, like a position. */
+export function sizeKeyFor(app: string): string {
+  return `canopy.widget.size.${app}`
+}

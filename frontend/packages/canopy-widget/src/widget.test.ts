@@ -736,6 +736,68 @@ describe('dragging the bubble out of the way', () => {
   })
 })
 
+describe('resizing the panel by its corner', () => {
+  function pointer(type: string, x: number, y: number) {
+    const e = new Event(type, { bubbles: true, cancelable: true }) as Event & {
+      clientX: number
+      clientY: number
+      pointerId: number
+    }
+    e.clientX = x
+    e.clientY = y
+    e.pointerId = 1
+    return e
+  }
+
+  function resize(grip: Element, from: [number, number], to: [number, number]) {
+    grip.dispatchEvent(pointer('pointerdown', ...from))
+    grip.dispatchEvent(pointer('pointermove', ...to))
+    grip.dispatchEvent(pointer('pointerup', ...to))
+  }
+
+  it('grows the panel as its top-left corner is dragged out, and remembers it', () => {
+    const storage = memoryStorage()
+    const { root } = widgetHarness({ app: 'canopy-web', storage, width: 400, open: true })
+    const panel = root.querySelector('.panel') as HTMLElement
+
+    resize(root.querySelector('.resize')!, [100, 100], [0, 50])
+
+    // jsdom has no layout, so the start is the configured width and the
+    // default height the panel falls back to.
+    expect(panel.style.width).toBe('500px')
+    expect(panel.style.height).toBe('550px')
+    expect(panel.dataset.resizing).toBe('false')
+    expect(JSON.parse(storage.data['canopy.widget.size.canopy-web'])).toEqual({ width: 500, height: 550 })
+  })
+
+  it('restores a saved size on the next load', () => {
+    const storage = memoryStorage({
+      'canopy.widget.size.canopy-web': JSON.stringify({ width: 520, height: 480 }),
+    })
+    const { root } = widgetHarness({ app: 'canopy-web', storage })
+    const panel = root.querySelector('.panel') as HTMLElement
+    expect(panel.style.width).toBe('520px')
+    expect(panel.style.height).toBe('480px')
+  })
+
+  it('a visitor-chosen size beats the height the frame asks for', async () => {
+    const { root, fromFrame } = widgetHarness({ open: true })
+    const panel = root.querySelector('.panel') as HTMLElement
+
+    resize(root.querySelector('.resize')!, [100, 100], [50, 50])
+    const chosen = panel.style.height
+    await fromFrame({ source: SOURCE, type: 'resize', height: 300 })
+
+    expect(panel.style.height).toBe(chosen)
+  })
+
+  it('is overlay only: no grip on a docked rail or an inline panel', () => {
+    expect(widgetHarness({ mode: 'docked' }).root.querySelector('.resize')).toBeNull()
+    document.body.innerHTML = '<div id="slot"></div>'
+    expect(widgetHarness({ mode: 'inline', target: '#slot' }).root.querySelector('.resize')).toBeNull()
+  })
+})
+
 describe('the page state channel', () => {
   it('pushes the view to an open frame, on its own message', async () => {
     const { widget, fromFrame, sent } = widgetHarness()

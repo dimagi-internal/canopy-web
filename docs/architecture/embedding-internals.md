@@ -173,6 +173,13 @@ injected `storage`; a host's `expand()` / `initialDisplay` is not. Esc collapses
 from either document (a full-screen View takes the first Esc). Tests:
 `canopy-widget/src/widget.test.ts` § expanding the panel, `src/embed/hostLink.test.ts`.
 
+An overlay panel also has a corner grip (`part=resize`, top-left, away from the
+bubble): the drag keeps the bottom-right fixed, sizes within `MIN_PANEL` and the
+window (`dragging.resizePanel`), and is remembered per `app`
+(`canopy.widget.size.<app>`). A visitor-chosen size makes the frame's `resize`
+request a no-op. Docked (host layout) and inline (host-sized) have no grip;
+expanded hides it. Tests: `dragging.test.ts` / `widget.test.ts` § resizing.
+
 ## Live host-grant probe
 
 Test connection's conformance stops where a visitor starts, because a real grant

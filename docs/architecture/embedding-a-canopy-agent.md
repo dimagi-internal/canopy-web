@@ -497,9 +497,10 @@ letter-spacing and so on:
 [data-canopy-widget]::part(launcher) { height: 40px; box-shadow: none; }
 [data-canopy-widget]::part(dismiss)  { display: none; }  /* prefer dismissible: false */
 [data-canopy-widget]::part(panel)    { border-radius: 16px; }
+[data-canopy-widget]::part(resize)   { display: none; }  /* no corner resizing */
 ```
 
-The parts are `launcher`, `dismiss` and `panel`. Only rules you write against
+The parts are `launcher`, `dismiss`, `panel` and `resize`. Only rules you write against
 them reach in.
 
 **Pick a mode:**
@@ -524,6 +525,11 @@ The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `setLauncherVisible()`, `ask()`, `destroy()`, and the older `provideContext()` (§5).
 
 ### A bigger panel for data work
+
+In `overlay` a visitor can drag the panel's top-left corner to resize it: it
+grows up and to the left, staying attached to the bubble, between a usable
+minimum and the window's edge. The size is remembered per site in `storage`, and
+once set it wins over the height the panel would otherwise pick for itself.
 
 In `overlay` and `docked` the panel header has an expand control: the panel grows
 to fill the window bar a 16px margin (all of it on a phone) and Esc or the control
