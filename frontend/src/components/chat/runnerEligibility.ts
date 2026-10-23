@@ -23,7 +23,10 @@ export function isSessionCapable(runner: Pick<RunnerOut, "capabilities">): boole
  * chat (a chat started on it binds to it), labelled so nobody mistakes it for a
  * box that shares load.
  */
-export function isDirectedOnly(runner: Pick<RunnerOut, "capabilities"> & { private?: boolean }): boolean {
+export function isDirectedOnly(runner: Pick<RunnerOut, "capabilities"> & { private?: boolean; directed?: boolean }): boolean {
+  // `directed` is the server's answer (the box's declaration, or a runner admin's
+  // override of it); a row from an older server falls back to the box's own word.
+  if (typeof runner.directed === 'boolean') return runner.directed;
   return runner.private === true || (runner.capabilities as { directed?: unknown } | null)?.directed === true;
 }
 

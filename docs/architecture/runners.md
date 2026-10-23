@@ -46,18 +46,26 @@ holds its device keys: it never claims or heartbeats and is left out of every fl
 list, routing picker and health report. See [`access.md`](access.md) → "Local use
 of an agent".
 
-### Runners dedicated to agents
+### Allowlisted agents, and directed-only by a person's word
 
-**Only these agents** is a setting on a runner (`PUT /api/harness/runners/{id}/only-agents`,
-owner or runner admin; `Runner.only_agents`): listed, the box runs only those agents'
-turns and chats — no other agent's, no repo turn, no agentless chat — however they
-reach it, a pin included. Empty lifts it. It never adds work: an agent still reaches
-the box only through its runner list or the order it follows. It is the person-set
-counterpart of a box's own agent unit and is asked in the same places
-(`routing.unit_refusal`, `turn_unit_refusal`, `runner_target_q`), so the claim, turn
-status, the unclaimable report, the vault and what the box prepares all agree. A ZDR
-box is the usual case: dedicate it to its PHI agents rather than making it
-directed-only, which would leave their routed turns with no taker.
+**Allowlist agents** is a setting on a runner (a switch, then the agents to tick;
+`GET`/`PUT /api/harness/runners/{id}/only-agents`, owner or runner admin;
+`Runner.only_agents`): on, the box runs only the ticked agents' turns and chats — no
+other agent's, no repo turn, no agentless chat — however they reach it, a pin included.
+Off (an empty list) lifts it. It never adds work: an agent still reaches the box only
+through its runner list or the order it follows. The choices are the agents in the
+workspaces the box serves that the caller can see. It is the person-set counterpart of
+a box's own agent unit and is asked in the same places (`routing.unit_refusal`,
+`turn_unit_refusal`, `runner_target_q`), so the claim, turn status, the unclaimable
+report, the vault and what the box prepares all agree.
+
+**Directed only** is a box's own declaration (`capabilities.directed`, `up.sh --test`),
+and a runner admin can decide it over the box from the runner page
+(`PUT /api/harness/runners/{id}/directed`, `Runner.directed_setting`: true / false /
+null to follow the box) — so putting a test box on routed work needs no shell on it.
+`Runner.directed_only` reads the person's word first; a private runner is always
+directed. A ZDR box is the usual case for both: allowlist its PHI agents and leave it
+off directed-only, which would leave their routed turns with no taker.
 
 ## Which workspaces a runner serves (the tenant gate)
 

@@ -79,7 +79,9 @@ from .schemas import (
     RunnerMintStartIn,
     RunnerMintUrlIn,
     RunnerOut,
+    RunnerDirectedIn,
     RunnerOnlyAgentsIn,
+    RunnerOnlyAgentsOut,
     RunnerPrivateIn,
     SendUpIn,
     SendUpOut,
@@ -857,6 +859,49 @@ def set_runner_private(request: HttpRequest, runner_id: uuid.UUID, payload: Runn
     out.can_manage = True
     out.can_administer = harness_runners.can_administer_runner(request.user, out)
     return _with_roots(request, out)
+
+
+@router.put("/runners/{runner_id}/directed", response=RunnerOut,
+            summary="Decide whether this runner takes only work put on it")
+@gate("runner-admin", setting=True)
+def set_runner_directed(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerDirectedIn):
+    """`true`: the box takes only turns pinned to it and chats bound to it, no routed
+    work. `false`: it takes routed work, whatever the box itself declares. `null`:
+    follow the box's own declaration. Owner or a runner administrator; a private
+    runner stays directed either way."""
+    runner = runner_admin_or_404(request, runner_id)
+    before = {"directed_setting": runner.directed_setting, "directed": runner.directed_only()}
+    if runner.directed_setting != payload.directed:
+        runner.directed_setting = payload.directed
+        runner.save(update_fields=["directed_setting"])
+    events_audit.note_change(scope=f"runner-directed:{runner.name}", before=before,
+                             after={"directed_setting": runner.directed_setting,
+                                    "directed": runner.directed_only()},
+                             workspace=runner.workspace)
+    out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
+           .prefetch_related("declared_flags").get(pk=runner.pk))
+    out.can_manage = out.owner_id in (request.user.id, None)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
+    return _with_roots(request, out)
+
+
+@router.get("/runners/{runner_id}/only-agents", response=RunnerOnlyAgentsOut,
+            summary="The agents this runner is dedicated to, and the ones it could be")
+@gate("runner-admin")
+def get_runner_only_agents(request: HttpRequest, runner_id: uuid.UUID):
+    """The current list, and every agent it could hold: in the workspaces the box
+    serves and visible to you. Owner or a runner administrator."""
+    runner = runner_admin_or_404(request, runner_id)
+    current = runner.only_agent_slugs()
+    # An agent already on the list stays a choice even if you could not see it,
+    # so unticking it is always possible.
+    choices = (Agent.objects.filter(workspace_id__in=routing.runner_tenant_slugs(runner))
+               .filter(Q(workspace_id__in=wsvc.user_workspace_slugs(request.user))
+                       | Q(slug__in=current))
+               .order_by("slug"))
+    return {"agents": sorted(current),
+            "choices": [{"slug": a.slug, "name": a.name, "workspace": a.workspace_id}
+                        for a in choices]}
 
 
 @router.put("/runners/{runner_id}/only-agents", response=RunnerOut,
