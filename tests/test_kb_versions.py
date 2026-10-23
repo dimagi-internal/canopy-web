@@ -80,7 +80,8 @@ def _delta(world, s3, bundle, client=None):
         return p, None, 0
     recs = {iid: rec for iid, _, rec in records.records(bundle)}
     parts = records.parts(bundle)
-    objs = [recs[i] for i in p["upload_docs"]] + [parts[n] for n in p["upload_parts"]]
+    texts = dict(records.texts(bundle, set(p["upload_docs"])))
+    objs = [recs[i] for i in p["upload_docs"]] + list(texts.values()) + [parts[n] for n in p["upload_parts"]]
     blobs = [{"sha256": records.sha(o), "gz_sha256": hashlib.sha256(records.encode(o)).hexdigest(),
               "bytes": len(records.encode(o))} for o in objs]
     sent = 0

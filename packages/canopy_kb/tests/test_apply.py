@@ -66,9 +66,10 @@ def _v2(tmp_path):
 
 def _delta(old_bundle, new_bundle):
     d = records.diff(records.state(old_bundle), records.state(new_bundle))
-    recs = {iid: rec for iid, _, rec in records.records(new_bundle)}
+    texts = dict(records.texts(new_bundle))
+    recs = {iid: records.join(rec, texts[rec["text_sha"]]) for iid, _, rec in records.records(new_bundle)}
     parts = records.parts(new_bundle)
-    tables = {n[len(records.TABLE):]: parts[n] for n in d["parts"] if n.startswith(records.TABLE)}
+    tables = records.tables({n: records.decode(records.encode(parts[n])) for n in d["parts"]})  # as stored
     return d, [recs[i] for i in d["added"] + d["changed"]], parts, tables
 
 
@@ -122,3 +123,34 @@ def test_a_record_is_addressed_by_its_content_not_the_curators_paths(tmp_path):
     assert "path" not in records.record(item)["original"]
     assert records.decode(records.encode(records.record(item)), records.sha(records.record(item)))["id"] == "x"
     assert records.encode({"a": 1}) == records.encode({"a": 1})
+
+
+def test_a_first_version_built_from_records_is_the_full_build(tmp_path, monkeypatch):
+    """No machine builds kb.sqlite: a knowledge base's first version is its records
+    applied to nothing, and that is the full build of the same content."""
+    import canopy_kb.kb
+    monkeypatch.setattr(canopy_kb.kb, "_now", lambda: "2026-10-23T00:00:00Z")  # both stamp first_seen
+    v2 = _v2(tmp_path)
+    full = tmp_path / "full.sqlite"
+    build(v2, full)
+    texts = dict(records.texts(v2))
+    recs = [records.join(rec, texts[rec["text_sha"]]) for _, _, rec in records.records(v2)]
+    parts = records.parts(v2)
+    tables = records.tables({n: records.decode(records.encode(v)) for n, v in parts.items()})
+    first = tmp_path / "first.sqlite"
+    s = apply(None, first, recs, manifest=parts["manifest"], aliases=parts["aliases"], tables=tables)
+    assert sorted(s["applied"]["new"]) == sorted(r["id"] for r in recs) and s["baseline"] is True
+    assert _dump(first) == _dump(full)
+    assert KB(first).whats_new()["changes"] == KB(full).whats_new()["changes"]
+
+
+def test_a_record_carries_its_text_by_reference(tmp_path):
+    """A metadata or card change re-sends a small record; the text is sent once."""
+    item = {"id": "x", "type": "page", "title": "T", "url": "u", "text": "long text " * 1000, "card": {"summary": "a"}}
+    rec = records.record(item)
+    assert "text" not in rec and rec["text_sha"] == records.sha(item["text"])
+    recarded = records.record({**item, "card": {"summary": "b"}})
+    assert records.sha(recarded) != records.sha(rec) and recarded["text_sha"] == rec["text_sha"]
+    assert len(records.encode(rec)) < 200
+    assert records.join(rec, item["text"]) == {k: v for k, v in item.items()}
+

@@ -6405,6 +6405,105 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/curation": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The curation state the last refresh saved, which the next one starts from */
+        readonly get: operations["kb_curation"];
+        /**
+         * Save a refresh's curation state when it published nothing
+         * @description 409 when another refresh saved since `base`: refresh again from that one. A
+         *     refresh that publishes sends its state with the commit (`…/kb/versions`) instead.
+         */
+        readonly put: operations["kb_save_curation"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/curation/lease": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Take or renew the lease a refresh holds while it runs
+         * @description 409 while another refresh holds an unexpired lease: one refresh at a time, so two
+         *     never pay for the same model calls.
+         */
+        readonly post: operations["kb_take_lease"];
+        /** Release a refresh's lease */
+        readonly delete: operations["kb_drop_lease"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/results": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Presigned uploads for the step results the store lacks
+         * @description Each result gzipped, under its step key (`canopy_kb.curate`); the PUT carries the
+         *     gzip's sha256, which storage checks.
+         */
+        readonly post: operations["kb_upload_results"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/objects/have": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Which step results, records or originals are stored */
+        readonly post: operations["kb_objects_have"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/objects/links": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Presigned downloads of stored step results, records or originals */
+        readonly post: operations["kb_objects_links"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspace-projects/{workspace}/{handle}/kb/file": {
         readonly parameters: {
             readonly query?: never;
@@ -25097,6 +25196,84 @@ export interface components {
              * @default 0
              */
             readonly uploaded_bytes: number;
+            readonly curation?: components["schemas"]["KbCurationIn"] | null;
+        };
+        /** KbCurationIn */
+        readonly KbCurationIn: {
+            /** Sha */
+            readonly sha: string;
+            /** Base */
+            readonly base?: string | null;
+        };
+        /**
+         * KbCurationOut
+         * @description The curation state the last refresh saved (empty before the first).
+         */
+        readonly KbCurationOut: {
+            /** Sha */
+            readonly sha?: string | null;
+            /** Saved At */
+            readonly saved_at?: string | null;
+            /**
+             * Saved By
+             * @default
+             */
+            readonly saved_by: string;
+            /** Version */
+            readonly version?: number | null;
+            readonly lease?: components["schemas"]["KbLeaseOut"] | null;
+        };
+        /** KbLeaseOut */
+        readonly KbLeaseOut: {
+            /** Holder */
+            readonly holder: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            readonly until: string;
+        };
+        /** KbLeaseIn */
+        readonly KbLeaseIn: {
+            /** Holder */
+            readonly holder: string;
+            /**
+             * Seconds
+             * @default 3600
+             */
+            readonly seconds: number;
+        };
+        /** KbObjectsHaveOut */
+        readonly KbObjectsHaveOut: {
+            /** Have */
+            readonly have: readonly string[];
+        };
+        /** KbObjectsIn */
+        readonly KbObjectsIn: {
+            /**
+             * Store
+             * @enum {string}
+             */
+            readonly store: "results" | "records" | "originals";
+            /** Keys */
+            readonly keys: readonly string[];
+        };
+        /** KbObjectLinkOut */
+        readonly KbObjectLinkOut: {
+            /** Key */
+            readonly key: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
+         * KbObjectLinksOut
+         * @description GET each `url`: results and records come gzipped, originals as themselves.
+         */
+        readonly KbObjectLinksOut: {
+            /** Links */
+            readonly links: readonly components["schemas"]["KbObjectLinkOut"][];
+            /** Expires In */
+            readonly expires_in: number;
         };
         /**
          * KbFileOut
@@ -42893,6 +43070,189 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KbCommitOut"];
+                };
+            };
+        };
+    };
+    readonly kb_curation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbCurationOut"];
+                };
+            };
+        };
+    };
+    readonly kb_save_curation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbCurationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbCurationOut"];
+                };
+            };
+        };
+    };
+    readonly kb_take_lease: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbLeaseIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbCurationOut"];
+                };
+            };
+        };
+    };
+    readonly kb_drop_lease: {
+        readonly parameters: {
+            readonly query: {
+                readonly holder: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbCurationOut"];
+                };
+            };
+        };
+    };
+    readonly kb_upload_results: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbBlobsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbOriginalsOut"];
+                };
+            };
+        };
+    };
+    readonly kb_objects_have: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbObjectsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbObjectsHaveOut"];
+                };
+            };
+        };
+    };
+    readonly kb_objects_links: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KbObjectsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KbObjectLinksOut"];
                 };
             };
         };

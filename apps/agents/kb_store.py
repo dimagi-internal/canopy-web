@@ -1,9 +1,10 @@
 """A workspace project's published knowledge base — where the bytes live and the
 copy each serving instance reads.
 
-The steward builds `kb.sqlite` on its own machine (`canopy kb build`) and
-publishes it here; canopy-web then answers the project's MCP tools from it
-(`apps/mcp/projects.py`). Readers never download anything: they call the tools.
+The steward publishes document records here and canopy-web builds `kb.sqlite` from
+them (`kb_index`; a whole built file is the fallback), then answers the project's MCP
+tools from it (`apps/mcp/projects.py`). Readers never download anything: they call
+the tools.
 
 * **Upload** goes straight to S3 on a presigned PUT (`upload_target`), never
   through the web dyno — a KB is a few hundred MB compressed.
@@ -23,6 +24,11 @@ publishes it here; canopy-web then answers the project's MCP tools from it
   PUTs that S3 checks against the sha256; the `original` tool hands a reader a
   15-minute download link. Never deleted: a file the publisher changed or removed is
   the version a KB's `originals` table still lists, and the reason to keep originals.
+* **Curation** (`results_upload`, `stored`, `links`, `save_curation`): what a refresh
+  needs from the last one, so it can run on any machine and fetch only what it
+  changes (`canopy_kb.curate`): step results (an extracted text, an OCR transcription)
+  gzipped under `results/<step key>`, and the curation state, one result the project
+  points at (`kb_curation`). Steward only: for a Drive source they are its owner's text.
 
 The bucket is `CANOPY_KB_BUCKET`, else the attachments bucket (same access: a
 bucket policy naming the task role). No bucket → `KbNotConfigured`, a clear 503,
@@ -31,6 +37,7 @@ never a half-published project.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import gzip
 import hashlib
 import shutil
@@ -166,30 +173,10 @@ def blobs_upload(project, blobs: list[dict]) -> dict:
     """Presigned PUTs for the records and parts in `blobs` ({sha256: of the canonical
     JSON, gz_sha256 and bytes: of the gzip the steward uploads}) that the store lacks.
     S3 checks the gzip's sha256; the index job checks the content's when it reads one."""
-    if len(blobs) > BLOBS_PER_REQUEST:
-        raise KbPublishError(f"at most {BLOBS_PER_REQUEST} records per request")
     for b in blobs:
-        for f in ("sha256", "gz_sha256"):
-            b[f] = (b.get(f) or "").strip().lower()
-            if not _is_sha256(b[f]):
-                raise KbPublishError(f"{f} is not a sha256: {b[f][:80]!r}")
         if not 0 < int(b.get("bytes") or 0) <= BLOB_MAX_BYTES:
-            raise KbPublishError(f"{b['sha256']}: a record is at most {BLOB_MAX_BYTES} bytes")
-    bucket, prefix, s3 = _bucket(), _blobs_prefix(project), _client()
-    have = _stored(prefix, {b["sha256"] for b in blobs})
-    uploads, asked = [], set()
-    for b in blobs:
-        if b["sha256"] in have or b["sha256"] in asked:
-            continue
-        asked.add(b["sha256"])
-        checksum = base64.b64encode(bytes.fromhex(b["gz_sha256"])).decode()
-        url = s3.generate_presigned_url(
-            "put_object", Params={"Bucket": bucket, "Key": prefix + b["sha256"], "ContentType": CONTENT_TYPE,
-                                  "ChecksumSHA256": checksum}, ExpiresIn=UPLOAD_TTL_SECONDS)
-        uploads.append({"sha256": b["sha256"], "url": url,
-                        "headers": {"Content-Type": CONTENT_TYPE, "x-amz-checksum-sha256": checksum}})
-    return {"have": len({b["sha256"] for b in blobs} - asked), "uploads": uploads,
-            "expires_in": UPLOAD_TTL_SECONDS}
+            raise KbPublishError(f"{b.get('sha256')}: a record is at most {BLOB_MAX_BYTES} bytes")
+    return _presigned_puts(project, _blobs_prefix(project), blobs)
 
 
 def missing_blobs(project, shas: set[str]) -> set[str]:
@@ -292,6 +279,140 @@ def original_link(project):
             ExpiresIn=ORIGINAL_LINK_SECONDS)
 
     return link
+
+
+# ---- curation: step results and the curation state (`canopy_kb.curate`) ----
+
+#: Where each kind of stored object lives. `results` are a curation's step results (an
+#: extracted text, an OCR transcription, the curation state itself), gzipped under
+#: their step key; `records` and `originals` are the ones above.
+RESULTS, RECORDS, ORIGINALS = "results", "records", "originals"
+#: How long a steward's download link works (a refresh fetches as it goes).
+STEWARD_LINK_SECONDS = UPLOAD_TTL_SECONDS
+
+
+def _results_prefix(project) -> str:
+    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/results/"
+
+
+def _store_prefix(project, store: str) -> str:
+    prefixes = {RESULTS: _results_prefix, RECORDS: _blobs_prefix, ORIGINALS: _originals_prefix}
+    if store not in prefixes:
+        raise KbPublishError(f"store is one of {sorted(prefixes)}, not {store!r}")
+    return prefixes[store](project)
+
+
+def _keys(values: list[str]) -> list[str]:
+    if len(values) > BLOBS_PER_REQUEST:
+        raise KbPublishError(f"at most {BLOBS_PER_REQUEST} keys per request")
+    out = [(v or "").strip().lower() for v in values]
+    for v in out:
+        if not _is_sha256(v):
+            raise KbPublishError(f"not a key (a sha256): {v[:80]!r}")
+    return out
+
+
+def stored(project, store: str, keys: list[str]) -> list[str]:
+    """Which of `keys` the project's `store` holds."""
+    return sorted(_stored(_store_prefix(project, store), set(_keys(keys))))
+
+
+def results_upload(project, blobs: list[dict]) -> dict:
+    """Presigned PUTs for step results ({sha256: the step key, gz_sha256 and bytes: of the
+    gzip uploaded}) the store lacks. A key names its inputs, not its bytes, so a stored
+    result is never replaced: the same key is the same result."""
+    for b in blobs:
+        if not 0 < int(b.get("bytes") or 0) <= ORIGINAL_MAX_BYTES:
+            raise KbPublishError(f"{b.get('sha256')}: a step result is at most {ORIGINAL_MAX_BYTES} bytes")
+    return _presigned_puts(project, _results_prefix(project), blobs)
+
+
+def _presigned_puts(project, prefix: str, blobs: list[dict]) -> dict:
+    _keys([b.get("sha256") for b in blobs])
+    for b in blobs:
+        for f in ("sha256", "gz_sha256"):
+            b[f] = (b.get(f) or "").strip().lower()
+            if not _is_sha256(b[f]):
+                raise KbPublishError(f"{f} is not a sha256: {b[f][:80]!r}")
+    bucket, s3 = _bucket(), _client()
+    have = _stored(prefix, {b["sha256"] for b in blobs})
+    uploads, asked = [], set()
+    for b in blobs:
+        if b["sha256"] in have or b["sha256"] in asked:
+            continue
+        asked.add(b["sha256"])
+        checksum = base64.b64encode(bytes.fromhex(b["gz_sha256"])).decode()
+        url = s3.generate_presigned_url(
+            "put_object", Params={"Bucket": bucket, "Key": prefix + b["sha256"], "ContentType": CONTENT_TYPE,
+                                  "ChecksumSHA256": checksum}, ExpiresIn=UPLOAD_TTL_SECONDS)
+        uploads.append({"sha256": b["sha256"], "url": url,
+                        "headers": {"Content-Type": CONTENT_TYPE, "x-amz-checksum-sha256": checksum}})
+    return {"have": len({b["sha256"] for b in blobs} - asked), "uploads": uploads,
+            "expires_in": UPLOAD_TTL_SECONDS}
+
+
+def links(project, store: str, keys: list[str]) -> dict:
+    """Presigned GETs for stored objects: a result or record comes gzipped, an original
+    as itself. A key not stored gets a link that answers 403/404."""
+    prefix, bucket, s3 = _store_prefix(project, store), _bucket(), _client()
+    out = [{"key": k, "url": s3.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": prefix + k},
+                                                         ExpiresIn=STEWARD_LINK_SECONDS)}
+           for k in _keys(keys)]
+    return {"links": out, "expires_in": STEWARD_LINK_SECONDS}
+
+
+class KbCurationConflict(ValueError):
+    """Another refresh saved the curation state since this one read it, or holds the lease."""
+
+
+#: The longest a refresh may hold its lease without renewing it.
+LEASE_MAX_SECONDS = 6 * 3600
+
+
+def take_lease(project, holder: str, seconds: int) -> dict:
+    """One refresh at a time per knowledge base (`project` locked by the caller): the lease
+    is free, expired, or this holder's already (a renewal). Another holder's is a conflict,
+    so two refreshes never both spend on the same work."""
+    holder = (holder or "").strip()[:200]
+    if not holder:
+        raise KbPublishError("a lease needs a holder (the refresh's run id)")
+    now = timezone.now()
+    cur = (project.kb_curation or {}).get("lease") or {}
+    until = cur.get("until")
+    if cur.get("holder") and cur["holder"] != holder and until and _dt.datetime.fromisoformat(until) > now:
+        raise KbCurationConflict(f"another refresh ({cur['holder']}) holds the lease until {until}")
+    lease = {"holder": holder, "until": (now + _dt.timedelta(seconds=max(60, min(int(seconds), LEASE_MAX_SECONDS))))
+             .isoformat()}
+    project.kb_curation = {**(project.kb_curation or {}), "lease": lease}
+    project.save(update_fields=["kb_curation", "updated_at"])
+    return project.kb_curation
+
+
+def drop_lease(project, holder: str) -> dict:
+    cur = (project.kb_curation or {}).get("lease") or {}
+    if cur.get("holder") == (holder or "").strip():
+        project.kb_curation = {k: v for k, v in (project.kb_curation or {}).items() if k != "lease"}
+        project.save(update_fields=["kb_curation", "updated_at"])
+    return project.kb_curation
+
+
+def save_curation(project, sha: str, base: str | None, *, saved_by: str, version: int | None = None) -> dict:
+    """Point a project (locked by the caller) at a curation state uploaded as a step
+    result under `sha`. `base` is the state the refresh started from (None before the
+    first): a refresh that raced another one is refused, never applied over it."""
+    (sha,) = _keys([sha])
+    current = (project.kb_curation or {}).get("sha")
+    if current and current != sha and (base or "").strip().lower() != current:
+        raise KbCurationConflict(f"the curation state was saved since ({current[:12]}) by another refresh; "
+                                 "refresh again from it")
+    if current == sha:
+        return project.kb_curation
+    if not _stored(_results_prefix(project), {sha}):
+        raise KbPublishError(f"no curation state {sha[:12]} uploaded")
+    project.kb_curation = {**(project.kb_curation or {}), "sha": sha, "saved_at": timezone.now().isoformat(),
+                           "saved_by": saved_by, "version": version if version is not None else project.kb_version_number}
+    project.save(update_fields=["kb_curation", "updated_at"])
+    return project.kb_curation
 
 
 # ---- the serving copy ----

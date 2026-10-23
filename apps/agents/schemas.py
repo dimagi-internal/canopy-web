@@ -985,12 +985,66 @@ class KbBlobsIn(StrictModel):
     blobs: list[KbBlobIn] = Field(max_length=1000)
 
 
+class KbCurationIn(StrictModel):
+    #: The curation state's step key, uploaded first as a result (`…/kb/results`).
+    sha: str = Field(min_length=64, max_length=64)
+    #: The state this refresh started from; null for a knowledge base's first.
+    base: str | None = None
+
+
+class KbLeaseIn(StrictModel):
+    #: The refresh's own id: the same holder renews, another waits.
+    holder: str = Field(min_length=1, max_length=200)
+    seconds: int = Field(default=3600, ge=60, le=6 * 3600)
+
+
+class KbLeaseOut(StrictModel):
+    holder: str
+    until: datetime
+
+
+class KbCurationOut(StrictModel):
+    """The curation state the last refresh saved (empty before the first)."""
+
+    sha: str | None = None
+    saved_at: datetime | None = None
+    saved_by: str = ""
+    #: The version published when it was saved.
+    version: int | None = None
+    #: The refresh running now, if one is.
+    lease: KbLeaseOut | None = None
+
+
+class KbObjectsIn(StrictModel):
+    store: Literal["results", "records", "originals"]
+    #: Results by step key, records and originals by sha256.
+    keys: list[str] = Field(max_length=1000)
+
+
+class KbObjectsHaveOut(StrictModel):
+    have: list[str]
+
+
+class KbObjectLinkOut(StrictModel):
+    key: str
+    url: str
+
+
+class KbObjectLinksOut(StrictModel):
+    """GET each `url`: results and records come gzipped, originals as themselves."""
+
+    links: list[KbObjectLinkOut]
+    expires_in: int
+
+
 class KbCommitIn(StrictModel):
     state: KbStateIn
     #: The version the plan was made against (null before the first).
     base: int | None = None
     #: What the steward uploaded for it, in bytes (recorded on the version).
     uploaded_bytes: int = Field(default=0, ge=0)
+    #: The refresh's curation state, saved with the version (or refused with it).
+    curation: KbCurationIn | None = None
 
 
 class KbVersionOut(StrictModel):

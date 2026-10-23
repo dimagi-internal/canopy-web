@@ -3,7 +3,8 @@
 For each pending `KbVersion` (oldest first, one per project at a time):
 
 1. take the base version's kb.sqlite — this instance's serving copy
-   (`kb_store.local_path`), fetched once per instance as for any read;
+   (`kb_store.local_path`), fetched once per instance as for any read; a knowledge
+   base's first version has no base and starts from an empty file;
 2. read the delta's records and changed parts from the content-addressed store, each
    checked against its address;
 3. `canopy_kb.apply` them into a NEW file (the base is only read): the per-document
@@ -111,26 +112,28 @@ def _fail(version: KbVersion, why: str) -> None:
 def build(version: KbVersion) -> None:
     project = AgentProject.objects.get(pk=version.project_id)
     base = version.base
-    if base is None or project.kb_version_id != base.pk:
+    if project.kb_version_id != (base.pk if base else None):
         _fail(version, "the project no longer serves this version's base (a newer publish or a rollback): "
                        "plan and publish again")
         return
     work = Path(tempfile.mkdtemp(prefix="kb-index-", dir=_scratch()))
     key = ""
     try:
-        previous = kb_store.local_path(project)
-        old, new = kb_store.get_blob(project, base.state_sha), kb_store.get_blob(project, version.state_sha)
+        # A first version (no base) is built from its records alone, into an empty file.
+        previous = kb_store.local_path(project) if base else None
+        old = kb_store.get_blob(project, base.state_sha) if base else kb_versions.EMPTY
+        new = kb_store.get_blob(project, version.state_sha)
         d = records.diff(old, new)
         ids = d["added"] + d["changed"]
         with cf.ThreadPoolExecutor(FETCH_WORKERS) as ex:
-            upserts = list(ex.map(lambda i: kb_store.get_blob(project, new["docs"][i]), ids))
+            upserts = list(ex.map(lambda i: _item(project, new["docs"][i]), ids))
         parts = {n: kb_store.get_blob(project, new["parts"][n]) for n in d["parts"]}
         aliases = parts.get(records.ALIASES)
         if aliases is None and records.ALIASES in new["parts"] and not kb_store.missing_blobs(
                 project, {new["parts"][records.ALIASES]}):
             aliases = kb_store.get_blob(project, new["parts"][records.ALIASES])
-        tables = {n[len(records.TABLE):]: rows for n, rows in parts.items() if n.startswith(records.TABLE)}
-        removed_rows = _rows(previous, d["removed"])
+        tables = records.tables(parts)
+        removed_rows = _rows(previous, d["removed"]) if previous else {}
         out = work / "kb.sqlite"
         summary = apply(previous, out, upserts, d["removed"], manifest=parts.get(records.MANIFEST),
                         aliases=aliases, tables=tables)
@@ -141,7 +144,7 @@ def build(version: KbVersion) -> None:
         rows = {r["id"]: r for r in upserts} | removed_rows
         with transaction.atomic():
             project = AgentProject.objects.select_for_update().get(pk=project.pk)
-            if project.kb_version_id != base.pk:
+            if project.kb_version_id != (base.pk if base else None):
                 raise RuntimeError("the project moved on while this version was built")
             version.kb_key, version.kb_sha256, version.kb_bytes = key, sha, size
             version.summary = {k: v for k, v in summary.items() if k != "applied"}
@@ -161,6 +164,19 @@ def build(version: KbVersion) -> None:
         _fail(version, f"{type(exc).__name__}: {exc}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def _item(project, sha: str) -> dict:
+    """A document as the index stores it: its record, with its text (a record carries
+    it by reference, `canopy_kb.records`) back in place."""
+    rec = kb_store.get_blob(project, sha)
+    if "text_sha" not in rec:
+        return rec  # published before records carried their text by reference
+    try:
+        text = kb_store.get_blob(project, rec["text_sha"])
+    except Exception as exc:  # noqa: BLE001 - say which, not a bare KeyError
+        raise RuntimeError(f"{rec.get('id')}: its text {rec['text_sha'][:12]} was not uploaded") from exc
+    return records.join(rec, text)
 
 
 def _rows(path: Path, ids: list[str]) -> dict[str, dict]:
