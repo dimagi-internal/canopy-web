@@ -9,19 +9,19 @@ import hashlib
 import json
 
 import pytest
+from canopy_kb import KB, build, records
 from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import kb_index
 from apps.agents.models import AgentProject, KbVersion
 from apps.workspaces.models import WorkspaceMembership
-from canopy_kb import KB, build, records
 from tests.fixtures import kb as kb_fixtures
-from tests.test_kb_versions import ITEMS, V2, _bundle, _delta
 
 pytestmark = pytest.mark.django_db
 
 s3, world = kb_fixtures.s3, kb_fixtures.world
+ITEMS, V2, _bundle, _delta = kb_fixtures.ITEMS, kb_fixtures.V2, kb_fixtures.bundle, kb_fixtures.delta
 
 J = "application/json"
 KB_URL = "/api/workspace-projects/connect/givewell-kb/kb"
