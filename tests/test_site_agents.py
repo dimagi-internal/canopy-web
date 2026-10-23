@@ -339,9 +339,17 @@ def test_a_failed_refetch_serves_the_last_good_copy_marked_stale(w, monkeypatch)
 
 
 def _fresh_keys(w):
-    url = site_doc.site_document_url(w["app"].jwks_url)
+    url = site_needs.document_url(w["app"].jwks_url)
     w["app"].refresh_from_db()
     return [site_needs._keys(w["app"], url)[0]]
+
+
+def test_site_json_sits_beside_the_keys_wherever_they_are():
+    assert (site_needs.document_url("https://labs.example.org/canopy/jwks.json")
+            == "https://labs.example.org/canopy/site.json")
+    assert (site_needs.document_url("https://labs.connect.dimagi.com/labs/canopy/jwks/")
+            == "https://labs.connect.dimagi.com/labs/canopy/site.json")
+    assert site_needs.document_url("https://labs.example.org/keys") == ""
 
 
 def test_no_jwks_url_means_nowhere_to_read(w):
