@@ -19,6 +19,7 @@ from apps.canopy_sessions.models import Session
 from apps.realtime.channels_auth import RealtimeAuthMiddleware
 from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.sensitive import vault_key
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -31,6 +32,7 @@ def _seed():
     mem = User.objects.create_user("mem", "mem@dimagi.com", "pw")
     EmailAddress.objects.create(user=mem, email=mem.email, verified=True, primary=True)
     WorkspaceMembership.objects.create(user=mem, workspace=ws, role=WorkspaceMembership.EDITOR)
+    vault_key(mem)  # a sensitive conversation is sealed to its people's vault keys
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     AppCredentialAgent.objects.create(app=app, agent=agent)
@@ -59,3 +61,27 @@ async def test_a_later_sensitive_token_stamps_an_older_session_over_the_socket()
     await comm.disconnect()
     meta = await database_sync_to_async(lambda: Session.objects.get(pk=session.pk).metadata)()
     assert meta["runner_requirements"] == ["sensitive_data"]
+
+
+def _seed_without_a_vault_key():
+    session, raw = _seed()
+    from apps.passkeys.models import UserVaultKeyset
+
+    UserVaultKeyset.objects.all().delete()
+    return session, raw
+
+
+async def test_a_send_nobody_could_read_back_is_refused_over_the_socket_in_words():
+    session, raw = await database_sync_to_async(_seed_without_a_vault_key)()
+    comm = WebsocketCommunicator(RealtimeAuthMiddleware(SessionConsumer.as_asgi()),
+                                 f"/ws/canopy-sessions/{session.id}/?ticket={ws_ticket.mint(raw)}")
+    comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
+    connected, code = await comm.connect()
+    assert connected, code
+    await comm.send_json_to({"action": "chat.send", "data": {"text": "hello", "client_id": "c1"}})
+    for _ in range(20):
+        frame = await comm.receive_json_from(timeout=3)
+        if frame.get("event") == "session.error":
+            break
+    await comm.disconnect()
+    assert frame["data"]["code"] == "cannot_hold" and "vault key" in frame["data"]["message"]

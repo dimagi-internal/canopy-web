@@ -397,6 +397,10 @@ def test_ui_message_through_a_sensitive_site_stamps_the_sites_requirements(w):
     from apps.tokens.models import DelegatedToken
 
     assert not rr.requirements_of_session(w["session"])
+    from tests.fixtures.sensitive import vault_key
+
+    vault_key(w["session"].created_by)  # the conversation's key is wrapped to its starter
+    vault_key(w["editor"])  # who may then send into it
     raw, _tok = DelegatedToken.issue(app=w["app"], user=w["editor"], ttl_seconds=600,
                                      runner_requirements=["sensitive_data"])
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
@@ -471,18 +475,39 @@ def test_slack_gets_the_result_text_and_a_link_for_a_view_and_nothing_for_other_
 
 
 def _sensitive(w):
-    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["sensitive_data"]}
-    w["session"].save(update_fields=["metadata"])
+    """The conversation becomes sensitive, with keys for its owner and the editor, and
+    its tool call stored as a sensitive conversation stores one: metadata columns, the
+    call sealed to the conversation's key."""
+    from apps.canopy_sessions import services as chat_services
+    from apps.canopy_sessions.models import SessionKeyWrap
+    from apps.harness import sensitivity
+    from tests.fixtures.sensitive import rewrap_for, vault_key
+
+    owner_key = vault_key(w["session"].created_by)
+    w["editor_key"] = vault_key(w["editor"])
+    chat_services.add_runner_requirements(w["session"], ["sensitive_data"])
+    wrap = rewrap_for(w["session"], w["session"].created_by, owner_key, w["editor"])
+    SessionKeyWrap.objects.create(session=w["session"], user=w["editor"], recipient_jkt=wrap.pop("recipient_jkt"),
+                                  wrap=wrap)
+    use = Message.objects.get(session=w["session"], role=Message.TOOL_USE)
+    _, use.content, use.sealed = sensitivity.seal(w["session"], use.turn_index, use.role, "", use.content)
+    use.save(update_fields=["content", "sealed"])
 
 
 def test_in_a_sensitive_conversation_the_view_gets_no_result_and_fetches_as_the_viewer(w, labs):
+    from tests.fixtures.sensitive import open_sealed
+
     _sensitive(w)
     r = through(labs, lambda: client_for(w["editor"]).get(base(w) + "/resource"))
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["tool_result"] is None
-    # The input is what the View re-fetches from, as the viewer.
-    assert body["tool_input"] == {"run_id": 5, "action": "coach", "arguments": {"worker": 9}}
+    # Which View the call has came from the metadata columns alone; its input, which
+    # the View re-fetches from as the viewer, is sealed for the viewer's browser.
+    assert body["tool_input"] == {} and "worker" not in str(body["tool_input_sealed"])
+    assert body["tool_input_path"] == "direct"
+    opened = open_sealed(body["tool_input_sealed"], w["session"], w["editor_key"], w["editor"])
+    assert opened["content"]["input"] == {"run_id": 5, "action": "coach", "arguments": {"worker": 9}}
     assert body["can_act"] is True and ("resources/read", TOKENS["editor"]) in labs.calls
 
 

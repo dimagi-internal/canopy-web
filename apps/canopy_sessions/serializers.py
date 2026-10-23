@@ -51,6 +51,9 @@ def message_dto(msg: Message) -> dict:
         **({"app": msg.app} if getattr(msg, "app", None) else {}),
         # A request for one of the agent's secrets (`agents.secret_requests.annotate`).
         **({"secret_request": msg.secret_request} if getattr(msg, "secret_request", None) else {}),
+        # A sensitive conversation's sealed words, for its own people's browsers to
+        # decrypt — set only by the gate (`sensitivity.readable`).
+        **({"sealed": msg.readable_sealed} if getattr(msg, "readable_sealed", None) else {}),
     }
 
 

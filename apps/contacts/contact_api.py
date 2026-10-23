@@ -23,6 +23,8 @@ from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
 from apps.api.route_gates import gate
+from apps.canopy_sessions.conversation_keys import CannotHold
+from apps.canopy_sessions.models import Session
 from apps.canopy_sessions.schemas import (
     MessagePageOut,
     PageActionOut,
@@ -546,6 +548,11 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
         raise HttpError(422, str(exc))
     # Server-owned, from the token: which site, and its runner requirements.
     session_services.stamp_host_metadata(metadata, request)
+    # A sensitive site's conversation is sealed to its people's vault keys, and a
+    # contact has none (spec 2026-10-23 §2): refused before the conversation exists.
+    if sensitivity.is_sensitive(Session(metadata=metadata)):
+
+        raise HttpError(422, str(CannotHold()))
     # The same constructor a user's session goes through — so a contact's
     # conversation is recorded the same way (its transcript is its record under a
     # real runner) — with no `created_by`: there is no user, and leaving it null is

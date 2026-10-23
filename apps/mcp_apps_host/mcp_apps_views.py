@@ -143,12 +143,13 @@ def host_tool_of(use: dict) -> tuple[str, str, dict]:
     return host_gateway.host_tool_name(name), "direct", args
 
 
-def _use_of(content, sealed) -> dict:
-    """A tool call's content: in a sensitive conversation its columns are metadata and
-    the call itself is sealed (`sensitivity.sealed_call`). What a View is (which host
-    tool, which resource) is derived from it here, server-side; the call's arguments
-    reach a viewer only through `resource`, behind `sensitivity.reads_content`."""
-    return sensitivity.sealed_call(content, sealed)
+def _use_of(content) -> dict:
+    """A tool call as the server knows it: in a sensitive conversation its metadata
+    columns alone (`sensitivity.call_of` — the call's id, its name and the host tool a
+    gateway call reached), which is all that deciding which View it has needs. Its
+    arguments are sealed to the conversation's people: `resource` hands their browser
+    the sealed call (`tool_input_sealed`), which it decrypts for the View."""
+    return sensitivity.call_of(content)
 
 
 def app_ref(app, use: dict) -> dict | None:
@@ -180,16 +181,16 @@ def annotate(session, messages) -> None:
         return
     uses = {}
     for m in messages:
-        content = _use_of(getattr(m, "content", None), getattr(m, "sealed", None))
+        content = _use_of(getattr(m, "content", None))
         if m.role == Message.TOOL_USE and content.get("id"):
             uses[content["id"]] = content
     wanted = [str((getattr(m, "content", None) or {}).get("tool_use_id") or "") for m in results]
     missing = [w for w in wanted if w and w not in uses]
     if missing:
-        for content, sealed in (Message.objects.filter(session=session, role=Message.TOOL_USE,
-                                                       content__id__in=missing)
-                                .values_list("content", "sealed")):
-            use = _use_of(content, sealed)
+        for content in (Message.objects.filter(session=session, role=Message.TOOL_USE,
+                                               content__id__in=missing)
+                        .values_list("content", flat=True)):
+            use = _use_of(content)
             uses[use.get("id")] = use
     for m, call_id in zip(results, wanted):
         # A call the host refused gets no View: there is nothing to show or act on, and
@@ -214,8 +215,8 @@ def app_for_result_block(session, block: dict) -> dict | None:
     if app is None or not (app.mcp_apps_index or {}).get("tools"):
         return None
     found = (Message.objects.filter(session=session, role=Message.TOOL_USE, content__id=call_id)
-             .values_list("content", "sealed").first())
-    use = _use_of(*found) if found else None
+             .values_list("content", flat=True).first())
+    use = _use_of(found) if found else None
     return app_ref(app, use) if use else None
 
 
@@ -248,8 +249,8 @@ def find(session, tool_call_id: str) -> ViewRow:
     app = site_app(session)
     found = (Message.objects.filter(session=session, role=Message.TOOL_USE,
                                     content__id=tool_call_id)
-             .values_list("content", "sealed").first()) if app is not None else None
-    use = _use_of(*found) if found else None
+             .values_list("content", flat=True).first()) if app is not None else None
+    use = _use_of(found) if found else None
     ref = app_ref(app, use) if use else None
     found = (Message.objects.filter(session=session, role=Message.TOOL_RESULT,
                                     content__tool_use_id=tool_call_id)
@@ -420,11 +421,16 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         or reason,
         "sign_in_url": (row.app.frame_origins() or [""])[0] if (reason and can_write) else "",
         # A sensitive conversation stores no result (spec 2026-10-22-sensitive-data-agents
-        # §4): the View fetches its data as the viewer, from the input —
-        # which only the conversation's own people read back (`reads_content`).
-        "tool_input": (tool_input(row) if sensitivity.reads_content(
-            session, chat_surface=viewer.chat_surface, user=viewer.user,
-            contact=viewer.contact) else {}),
+        # §4): the View fetches its data as the viewer, from the input. That input is
+        # sealed to the conversation's people (spec 2026-10-23 §2), so canopy-web sends
+        # it sealed — to a reader `reads_content` admits — and their browser decrypts
+        # it (`tool_input_sealed`; `tool_input_path` says where the arguments sit) and
+        # hands it to the View. An ordinary conversation's input goes as it is.
+        "tool_input": ({} if sensitivity.is_sensitive(session) else tool_input(row)),
+        "tool_input_sealed": sensitivity.sealed_call_for(
+            session, tool_call_id, chat_surface=viewer.chat_surface, user=viewer.user,
+            contact=viewer.contact),
+        "tool_input_path": row.ref["path"],
         "tool_result": None if sensitivity.is_sensitive(session) else tool_result(row),
         "receipts": receipts_for(session, tool_call_id),
     }

@@ -12076,6 +12076,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/participants/recipient": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The vault key to wrap a sensitive chat's key to
+         * @description Before adding someone to a SENSITIVE conversation: their user id and current
+         *     vault public key, which your browser wraps the conversation's key to. 404 when
+         *     nobody with that email is in the workspace; 409 `no_vault_key` when they have no
+         *     vault key yet (they could not read it).
+         */
+        readonly get: operations["participant_recipient"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/participants/{user_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -16681,6 +16704,8 @@ export interface components {
             readonly created_at: string;
             readonly app?: components["schemas"]["MessageAppOut"] | null;
             readonly secret_request?: components["schemas"]["MessageSecretRequestOut"] | null;
+            /** Sealed */
+            readonly sealed?: string | null;
         };
         /**
          * MessagePageOut
@@ -32666,6 +32691,80 @@ export interface components {
              */
             readonly note: string;
         };
+        /**
+         * SealedKeyOut
+         * @description What the reader's browser needs to read a sensitive conversation
+         *     (`conversation_keys.reader_key`): unlock your vault key, unwrap `wrap`
+         *     (info `canopy-chat/v1/wrap|<conversation>|<your user id>`), then open each
+         *     message's `sealed` with the conversation key.
+         */
+        readonly SealedKeyOut: {
+            /** Conversation */
+            readonly conversation: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            readonly wrap?: components["schemas"]["SealedKeyWrapOut"] | null;
+            /**
+             * Recipient Jkt
+             * @default
+             */
+            readonly recipient_jkt: string;
+            /**
+             * Current
+             * @default false
+             */
+            readonly current: boolean;
+            readonly keyset?: components["schemas"]["SealedKeysetOut"] | null;
+            /**
+             * Needs Migration
+             * @default false
+             */
+            readonly needs_migration: boolean;
+        };
+        /**
+         * SealedKeyWrapOut
+         * @description `{alg: "ecdh-es", epk, n, ct}` — the conversation's private key, wrapped to one
+         *     person's vault key (`zk.ts::wrapEcdhEs`).
+         */
+        readonly SealedKeyWrapOut: {
+            /**
+             * Alg
+             * @constant
+             */
+            readonly alg: "ecdh-es";
+            /** Epk */
+            readonly epk: string;
+            /** N */
+            readonly n: string;
+            /** Ct */
+            readonly ct: string;
+        };
+        /**
+         * SealedKeysetOut
+         * @description The reader's own vault keyset — its public half and its seals, never a private
+         *     key — so a surface with no browser session (the embedded panel) can unlock it.
+         */
+        readonly SealedKeysetOut: {
+            /** User Id */
+            readonly user_id: string;
+            /** Prf Input */
+            readonly prf_input: string;
+            /**
+             * Exists
+             * @default true
+             */
+            readonly exists: boolean;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Seals */
+            readonly seals: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
         /** SessionDetailOut */
         readonly SessionDetailOut: {
             /**
@@ -32855,6 +32954,7 @@ export interface components {
             readonly has_more_before: boolean;
             /** Oldest Loaded Turn Index */
             readonly oldest_loaded_turn_index?: number | null;
+            readonly sealed_key?: components["schemas"]["SealedKeyOut"] | null;
         };
         /**
          * SessionBindingInfoOut
@@ -33051,7 +33151,9 @@ export interface components {
         };
         /**
          * ParticipantAddIn
-         * @description Give a teammate this chat. They must already be in its workspace.
+         * @description Give a teammate this chat. They must already be in its workspace. In a
+         *     sensitive conversation `wrap` is their copy of its key, made in your browser;
+         *     required unless they already hold a current one.
          */
         readonly ParticipantAddIn: {
             /** Email */
@@ -33062,6 +33164,46 @@ export interface components {
              * @enum {string}
              */
             readonly role: "editor" | "viewer";
+            readonly wrap?: components["schemas"]["SealedKeyWrapIn"] | null;
+        };
+        /**
+         * SealedKeyWrapIn
+         * @description A sensitive conversation's key, wrapped in your browser to the person you add:
+         *     `{alg: "ecdh-es", epk, n, ct}` for info `canopy-chat/v1/wrap|<conversation>|<their
+         *     user id>`, and the thumbprint of the vault key it is for
+         *     (`GET /{id}/participants/recipient`).
+         */
+        readonly SealedKeyWrapIn: {
+            /**
+             * Alg
+             * @constant
+             */
+            readonly alg: "ecdh-es";
+            /** Epk */
+            readonly epk: string;
+            /** N */
+            readonly n: string;
+            /** Ct */
+            readonly ct: string;
+            /** Recipient Jkt */
+            readonly recipient_jkt: string;
+        };
+        /**
+         * ParticipantRecipientOut
+         * @description The vault key to wrap a sensitive conversation's key to, for the person you
+         *     are about to add.
+         */
+        readonly ParticipantRecipientOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Jkt */
+            readonly jkt: string;
         };
         /** SendOut */
         readonly SendOut: {
@@ -50291,6 +50433,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
+                };
+            };
+        };
+    };
+    readonly participant_recipient: {
+        readonly parameters: {
+            readonly query: {
+                readonly email: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ParticipantRecipientOut"];
                 };
             };
         };

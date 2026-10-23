@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import pytest
+
+from tests.fixtures.sensitive import vault_key
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -29,6 +31,7 @@ def _capable(r):
 @pytest.fixture
 def fleet():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(jj)  # a sensitive conversation is sealed to its people's vault keys
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     echo = Agent.objects.create(slug="echo", name="Echo", workspace=ws,

@@ -168,6 +168,57 @@ class MessageOut(Schema):
     #: Set on a tool_result that opened a request for one of the agent's
     #: secrets (`agents.secret_requests.annotate`): the chat shows the seal card.
     secret_request: MessageSecretRequestOut | None = None
+    #: A SENSITIVE conversation's words, sealed to the conversation's key (a `cc1:`
+    #: envelope, `conversation_keys`): `plaintext` and `content` are metadata, and the
+    #: reader's browser decrypts this with `SessionDetailOut.sealed_key`. Only for the
+    #: conversation's own people on its chat surfaces (`sensitivity.readable`); null
+    #: for every other reader and every ordinary conversation.
+    sealed: str | None = None
+
+    # Read off the gate's own attribute, never the row's column: a route that forgot
+    # `sensitivity.readable` hands out nothing rather than the ciphertext.
+    @staticmethod
+    def resolve_sealed(obj) -> str | None:
+        if isinstance(obj, MessageOut):  # already built (a response re-validates it)
+            return obj.sealed
+        return getattr(obj, "readable_sealed", None)
+
+
+class SealedKeyWrapOut(Schema):
+    """`{alg: "ecdh-es", epk, n, ct}` — the conversation's private key, wrapped to one
+    person's vault key (`zk.ts::wrapEcdhEs`)."""
+    alg: Literal["ecdh-es"]
+    epk: str
+    n: str
+    ct: str
+
+
+class SealedKeysetOut(Schema):
+    """The reader's own vault keyset — its public half and its seals, never a private
+    key — so a surface with no browser session (the embedded panel) can unlock it."""
+    user_id: str
+    prf_input: str
+    exists: bool = True
+    public_jwk: dict
+    seals: list[dict]
+
+
+class SealedKeyOut(Schema):
+    """What the reader's browser needs to read a sensitive conversation
+    (`conversation_keys.reader_key`): unlock your vault key, unwrap `wrap`
+    (info `canopy-chat/v1/wrap|<conversation>|<your user id>`), then open each
+    message's `sealed` with the conversation key."""
+    conversation: str
+    public_jwk: dict
+    #: Your copy of the conversation key; null when nobody has given you one.
+    wrap: SealedKeyWrapOut | None = None
+    recipient_jkt: str = ""
+    #: False when `wrap` was made for a vault key you have since replaced.
+    current: bool = False
+    keyset: SealedKeysetOut | None = None
+    #: Some of its words are still under canopy's earlier field key and read again
+    #: once `manage.py reseal_sensitive_conversations` moves them.
+    needs_migration: bool = False
 
 
 class MessagePageOut(Schema):
@@ -378,6 +429,9 @@ class SessionDetailOut(SessionOut):
     # window starts, for scroll-back / "load full". See transcript_read.SESSION_TAIL_DEFAULT.
     has_more_before: bool = False
     oldest_loaded_turn_index: int | None = None
+    # A SENSITIVE conversation's key, as you read it: null for an ordinary one, and
+    # for anyone not in it (`sensitivity.sealed_key_for`).
+    sealed_key: SealedKeyOut | None = None
 
 
 class SessionBindingInfoOut(Schema):
@@ -471,10 +525,34 @@ class ParticipantOut(Schema):
     joined_at: str | None = None
 
 
+class SealedKeyWrapIn(Schema):
+    """A sensitive conversation's key, wrapped in your browser to the person you add:
+    `{alg: "ecdh-es", epk, n, ct}` for info `canopy-chat/v1/wrap|<conversation>|<their
+    user id>`, and the thumbprint of the vault key it is for
+    (`GET /{id}/participants/recipient`)."""
+    alg: Literal["ecdh-es"]
+    epk: str
+    n: str
+    ct: str
+    recipient_jkt: str
+
+
 class ParticipantAddIn(Schema):
-    """Give a teammate this chat. They must already be in its workspace."""
+    """Give a teammate this chat. They must already be in its workspace. In a
+    sensitive conversation `wrap` is their copy of its key, made in your browser;
+    required unless they already hold a current one."""
     email: str
     role: Literal["editor", "viewer"] = "editor"
+    wrap: SealedKeyWrapIn | None = None
+
+
+class ParticipantRecipientOut(Schema):
+    """The vault key to wrap a sensitive conversation's key to, for the person you
+    are about to add."""
+    user_id: int
+    email: str
+    public_jwk: dict
+    jkt: str
 
 
 class StreamStateOut(Schema):

@@ -31,6 +31,8 @@ export interface RestMessage {
   app?: Message["app"];
   /** A request for one of the agent's secrets (`MessageOut.secret_request`). */
   secret_request?: Message["secret_request"];
+  /** A sensitive conversation's sealed words (`MessageOut.sealed`). */
+  sealed?: string | null;
 }
 
 /**
@@ -56,5 +58,6 @@ export function restToKitMessage(m: RestMessage): Message {
     created_at: m.created_at,
     ...(m.app ? { app: m.app } : {}),
     ...(m.secret_request ? { secret_request: m.secret_request } : {}),
+    ...(m.sealed ? { sealed: m.sealed } : {}),
   };
 }

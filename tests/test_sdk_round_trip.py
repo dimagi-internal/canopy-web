@@ -298,12 +298,32 @@ def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site
     assert r.status_code == 200, r.content
     auth = {"HTTP_AUTHORIZATION": f"Bearer {r.json()['token']}"}
     c = Client()
-    started = c.post("/api/contact/sessions", data={"agent_slug": "ace"},
+    # A visitor with no canopy account has no vault key, so cannot hold a conversation
+    # sealed to its people (spec 2026-10-23 §2): refused in a sentence.
+    refused = c.post("/api/contact/sessions", data={"agent_slug": "ace"},
+                     content_type="application/json", **auth)
+    assert refused.status_code == 422 and "vault key" in refused.json()["detail"]
+    # A member with a vault key, arriving through the same site, can.
+    from allauth.account.models import EmailAddress
+
+    from tests.fixtures.sensitive import vault_key
+
+    member = User.objects.create_user("mem", "mem@dimagi.com", "pw")
+    EmailAddress.objects.create(user=member, email=member.email, verified=True, primary=True)
+    WorkspaceMembership.objects.create(user=member, workspace=site["ws"], role=WorkspaceMembership.EDITOR)
+    vault_key(member)
+    arrived = Client().post(contract.ARRIVAL_PATH, data={
+        "assertion": sign_visitor_assertion(host.config, "member-1", name="Mem", email=member.email,
+                                            email_verified=True),
+        "agent_slug": "ace"}, content_type="application/json")
+    assert arrived.status_code == 200 and arrived.json()["kind"] == "user", arrived.content
+    auth = {"HTTP_AUTHORIZATION": f"Bearer {arrived.json()['token']}"}
+    started = c.post("/api/canopy-sessions/", data={"agent_slug": "ace"},
                      content_type="application/json", **auth)
     assert started.status_code == 200, started.content
     sid = started.json()["id"]
     assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["sensitive_data"]
-    sent = c.post(f"/api/contact/sessions/{sid}/send", data={"text": "hello"},
+    sent = c.post(f"/api/canopy-sessions/{sid}/send", data={"text": "hello"},
                   content_type="application/json", **auth)
     assert sent.status_code == 200, sent.content
     turn = Turn.objects.get(chat_session_id=sid)

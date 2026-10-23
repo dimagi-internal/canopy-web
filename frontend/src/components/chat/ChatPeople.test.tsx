@@ -9,6 +9,9 @@ vi.mock('@/api/chat', () => ({
   listParticipants: (...a: unknown[]) => listParticipants(...a),
   addParticipant: (...a: unknown[]) => addParticipant(...a),
   removeParticipant: (...a: unknown[]) => removeParticipant(...a),
+  // An ordinary conversation: adding someone needs no key (ChatPeople.sealed.test.tsx).
+  getSession: async () => ({ sensitive: false, sealed_key: null }),
+  participantRecipient: vi.fn(),
 }))
 
 const { ChatPeoplePanel } = await import('./ChatPeople')

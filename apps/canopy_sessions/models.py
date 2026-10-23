@@ -217,11 +217,13 @@ class Message(models.Model):
     # The Turn a user line was delivered by, from the same marker. What lets the
     # queued list (`send.queued_messages`) know a send has landed.
     source_turn_id = models.UUIDField(null=True, blank=True, db_index=True)
-    # A SENSITIVE conversation's words ({"plaintext", "content"}), encrypted
-    # (`apps/common/encryption.py`) and kept apart from the columns above, which
-    # hold metadata only — a database read, a backup or a shell sees ciphertext.
-    # Opened through `harness.sensitivity.reads_content` alone: the conversation's
-    # own people, on its own chat surfaces. Every other reader sees the columns.
+    # A SENSITIVE conversation's words ({"plaintext", "content"}), sealed to the
+    # conversation's public key (`conversation_keys`, a `cc1:` envelope) and kept
+    # apart from the columns above, which hold metadata only. canopy-web holds no key
+    # that opens it: it hands the ciphertext, through `harness.sensitivity.readable`,
+    # to the conversation's own people on its own chat surfaces, whose browsers
+    # decrypt it. (A row from before keys were per conversation may still be under
+    # the field key, until `reseal_sensitive_conversations` moves it.)
     sealed = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -260,6 +262,51 @@ class SessionParticipant(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"participant:{self.session_id.hex[:8]}:{self.user_id}:{self.role}"
+
+
+class SessionKey(models.Model):
+    """A SENSITIVE conversation's key pair, public half only
+    (`conversation_keys`; spec 2026-10-23-sensitive-conversations-sealed-to-their-people §2).
+
+    Every stored message's words are sealed to `public_jwk`; the private half exists
+    only wrapped to each of the conversation's people (`SessionKeyWrap`), so canopy-web
+    can write the conversation and never read it back."""
+
+    session = models.OneToOneField(Session, on_delete=models.CASCADE, related_name="conversation_key")
+    #: The conversation the key pair was made for, bound into every seal and wrap. The
+    #: session's own id, except on a fork or successor that carries the same key on.
+    conversation = models.UUIDField()
+    #: {kty, crv, x, y} — EC P-256, public members only.
+    public_jwk = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"session-key:{self.session_id.hex[:8]}"
+
+
+class SessionKeyWrap(models.Model):
+    """One person's copy of a conversation's private key, wrapped (ECDH-ES) to their
+    vault key. Made by canopy-web for the starter when the key is made, and by a
+    browser already in the conversation for anyone it adds."""
+
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="key_wraps")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    #: {"alg": "ecdh-es", "epk", "n", "ct"} — `zk.ts::wrapEcdhEs`.
+    wrap = models.JSONField()
+    #: The RFC 7638 thumbprint of the vault key it was wrapped to: a person who has
+    #: since replaced their vault key is told so instead of failing to open it.
+    recipient_jkt = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "user"], name="one_key_wrap_per_session_user"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"session-key-wrap:{self.session_id.hex[:8]}:{self.user_id}"
 
 
 class PageAction(models.Model):

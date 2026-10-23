@@ -377,6 +377,9 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     'sandbox',
     'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox',
   )
+  // A sensitive conversation is read with the visitor's own vault key, which a
+  // passkey can unlock in the frame (canopy's origin) only if the page delegates it.
+  iframe.setAttribute('allow', 'publickey-credentials-get')
   panel.appendChild(iframe)
   root.appendChild(panel)
 

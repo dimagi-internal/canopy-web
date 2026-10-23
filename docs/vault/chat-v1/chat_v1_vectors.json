@@ -1,0 +1,44 @@
+{
+  "format": "canopy-chat/v1",
+  "inputs": {
+    "conversation": "0b7c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3",
+    "conversation_priv_scalar_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "conversation_pub_jwk": {
+      "crv": "P-256",
+      "kty": "EC",
+      "x": "9osd4PXOaGGS9L0P00Fjhj8uidOF-Lz7hZeVM6V6ybA",
+      "y": "TwIqtrCWyL9CgE2OZ9OLP4iGaYDMkD9o_enS4UPZMmc"
+    },
+    "ephemeral_message_scalar_hex": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+    "ephemeral_wrap_scalar_hex": "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e",
+    "nonce_message_hex": "0c0d0e0f1011121314151617",
+    "nonce_wrap_hex": "000102030405060708090a0b",
+    "turn_index": 12,
+    "user_id": "7",
+    "user_priv_scalar_hex": "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+    "user_pub_jwk": {
+      "crv": "P-256",
+      "kty": "EC",
+      "x": "SAAR_YYOrjCMxCke6XTqpA3tbpnhpRzKXR5pT9uFWvs",
+      "y": "v2ZBPJXTmcqI5YxiOBZtyzwH9sF1Ca-O0bi7Fc5KSf0"
+    },
+    "words": {
+      "content": {
+        "text": "The patient's name is Ada."
+      },
+      "plaintext": "The patient's name is Ada."
+    }
+  },
+  "outputs": {
+    "message_info": "canopy-chat/v1/message|0b7c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3|12",
+    "sealed": "cc1:eyJjIjoiMGI3YzFkMmUtM2Y0MC00YTViLThjNmQtN2U4ZjkwYTFiMmMzIiwiaSI6MTIsImFsZyI6ImVjZGgtZXMiLCJlcGsiOiJCR1pmdUt0SHlONUt2Ry1qSDRpVGZabFotRzR6bHFWNTItR3NwZ3NHdllNMnJjbk5ITzVvTWNkY0FtbWNxSmhnOTZ5c2FmX1FBOFNXeUdqaXV1MUpFdzQiLCJuIjoiREEwT0R4QVJFaE1VRlJZWCIsImN0IjoieEYxTXV5b1F3dFJBY1VkUXhyR1BidkhHclFqbmIzVUVKekZ1clZDMmJ0VHVhczVtSEl6TnRrQm9CZ1hZb1VjdDVzaDY3cmMyQXhRVmRNenBJQ3ZvWnNja1VCNGNDUFllZU1nWmxoN192QUlodE9uVFFWZEpZc09VWmVodHAzaEl5U01neXM4WnMwZlozQSJ9",
+    "user_jkt": "Ny3BdCDPLVykMhfBcwXfqI5i95Spg32h-3X1HNCLdH4",
+    "wrap": {
+      "alg": "ecdh-es",
+      "ct": "S1l65TxddlhA7amneD1a7-SWwi2hzxEipR26eHuqatnCzXfrrofxlH_Yorh8NPGA",
+      "epk": "BAObhS22IkCKvlihjA8FZjGmykss_uwZiq4lAXytCdTo4gi2FuDcV3Wl2EB3XTja_UZ22jQQAhXovoV77SukrDA",
+      "n": "AAECAwQFBgcICQoL"
+    },
+    "wrap_info": "canopy-chat/v1/wrap|0b7c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3|7"
+  }
+}

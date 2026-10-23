@@ -16,7 +16,7 @@ from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.realtime.groups import chat_user_group, session_group
 
-from . import access, agui, attach, doors, drafts, presence, serializers, stream_map
+from . import access, agui, attach, conversation_keys, doors, drafts, presence, serializers, stream_map
 from . import control as chat_control
 from . import send as chat_send
 from . import transcript_ingest as chat_transcript_ingest
@@ -361,7 +361,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         data = data or {}
         text = data.get("text") if isinstance(data.get("text"), str) else None
         client_id = str(data.get("client_id") or "")[:100]
-        user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
+        try:
+            user_message_id = await database_sync_to_async(self._commit_and_send)(text, client_id)
+        except conversation_keys.CannotHold as exc:
+            # A sensitive conversation is sealed to its people's vault keys: say so,
+            # in the sentence the REST door gives as a 422.
+            await self._error("cannot_hold", str(exc), detail={"client_id": client_id})
+            return
         draft = await database_sync_to_async(drafts.draft_for)(self.session, self.user)
         if user_message_id is not None:
             # A send commits the SENDER's own draft. Broadcast draft.committed +

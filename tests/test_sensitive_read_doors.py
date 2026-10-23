@@ -95,7 +95,8 @@ def test_a_views_arguments_follow_the_real_surface(w):
     from apps.mcp_apps_host import mcp_apps_views
 
     _converse(w["hot"])
-    row = mock.Mock(app=mock.Mock(name="labs"), ref={"resource_uri": "ui://x", "tool": "data_query"})
+    row = mock.Mock(app=mock.Mock(name="labs"), ref={"resource_uri": "ui://x", "tool": "data_query",
+                                                            "path": "gateway"})
     calls = []
 
     def reads(session, *, chat_surface, user=None, contact=None):
@@ -110,7 +111,7 @@ def test_a_views_arguments_follow_the_real_surface(w):
             mock.patch.object(mcp_apps_views.sensitivity, "reads_content", side_effect=reads), \
             mock.patch.object(row.app, "refresh_from_db"):
         out = mcp_apps_views.resource(w["hot"], mcp_apps_views.Viewer(user=w["user"]), "tu1")
-    assert calls == [False] and out["tool_input"] == {}
+    assert calls == [False] and out["tool_input"] == {} and out["tool_input_sealed"] is None
 
 
 # --- 3. the panel's own token -----------------------------------------------------------

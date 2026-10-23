@@ -507,7 +507,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                 # and a tool's result is not kept at all (`sensitivity.seal`).
                 sealed_text = scrub_nul(text)
                 text, content, sealed = sensitivity.seal(
-                    role, sealed_text, storage_content(scrub_nul(content), sealed_text))
+                    locked, index, role, sealed_text, storage_content(scrub_nul(content), sealed_text))
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
             prepared.append((index, role, text, content, author, turn_hex, sealed))
@@ -785,7 +785,7 @@ def project_events(turn: Turn, rows) -> int:
             if sensitive:
                 # The signal's rows carry the live words; the stored row keeps
                 # metadata, the words sealed (`sensitivity.seal`).
-                _, payload, sealed = sensitivity.seal(role, str(payload.get("text", "")), payload)
+                _, payload, sealed = sensitivity.seal(session, index, role, str(payload.get("text", "")), payload)
             Message.objects.create(
                 session=session, turn=turn, turn_index=index, role=role,
                 content={**payload, "source_seq": row.seq},

@@ -11,6 +11,8 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+
+from tests.fixtures.sensitive import vault_key
 from allauth.account.models import EmailAddress
 from canopy_sdk import contract
 from canopy_sdk.host import HostConfig, sign_visitor_assertion
@@ -85,6 +87,7 @@ def _member(site):
     EmailAddress.objects.create(user=u, email=u.email, verified=True, primary=True)
     WorkspaceMembership.objects.create(user=u, workspace=site["ws"],
                                        role=WorkspaceMembership.EDITOR)
+    vault_key(u)  # a sensitive conversation is sealed to its people's vault keys
     return u
 
 
@@ -122,9 +125,13 @@ def test_an_unknown_flag_refuses_the_arrival(site, key):
     assert not ContactToken.objects.exists() and not DelegatedToken.objects.exists()
 
 
-def test_a_session_started_under_that_token_is_stamped(site, key):
-    session = _contact_session(_arrive(key, requirements=["sensitive_data"]).json()["token"])
-    assert session.metadata["runner_requirements"] == ["sensitive_data"]
+def test_a_contact_cannot_start_one_under_that_token(site, key):
+    """A contact has no vault key, so it cannot hold a conversation sealed to its people
+    (spec 2026-10-23 §2): refused in a sentence, before anything exists."""
+    raw = _arrive(key, requirements=["sensitive_data"]).json()["token"]
+    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "ace"}, content_type="application/json")
+    assert r.status_code == 422 and "vault key" in r.json()["detail"]
+    assert not Session.objects.exists()
 
 
 def test_a_session_started_without_the_claim_is_not_stamped(site, key):
@@ -143,8 +150,9 @@ def test_a_member_session_created_through_the_site_is_stamped(site, key):
 
 def test_a_body_cannot_set_or_clear_it(site, key):
     # Under a sensitive token, a body naming an empty list is dropped, not obeyed.
-    raw = _arrive(key, requirements=["sensitive_data"]).json()["token"]
-    r = _bearer(raw).post("/api/contact/sessions",
+    _member(site)
+    raw = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
+    r = _bearer(raw).post("/api/canopy-sessions/",
                           {"agent_slug": "ace", "metadata": {"runner_requirements": []}},
                           content_type="application/json")
     assert r.status_code == 200, r.content
@@ -167,17 +175,24 @@ def _send(raw, session):
 
 
 def test_a_later_token_without_the_claim_does_not_unstamp(site, key):
-    session = _contact_session(_arrive(key, requirements=["sensitive_data"]).json()["token"])
-    later = _arrive(key).json()["token"]
-    _send(later, session)
-    session.refresh_from_db()
-    assert session.metadata["runner_requirements"] == ["sensitive_data"]
+    _member(site)
+    raw = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
+    sid = _bearer(raw).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+                            content_type="application/json").json()["id"]
+    later = _arrive(key, email="mem@dimagi.com", verified=True).json()["token"]
+    r = _bearer(later).post(f"/api/canopy-sessions/{sid}/send", {"text": "hello"},
+                            content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["sensitive_data"]
 
 
 def test_a_later_token_with_the_claim_stamps_an_older_session(site, key):
     session = _contact_session(_arrive(key).json()["token"])
     assert "runner_requirements" not in session.metadata
-    _send(_arrive(key, requirements=["sensitive_data"]).json()["token"], session)
+    # Stamped — and then the contact's send is refused: they hold no vault key.
+    r = _bearer(_arrive(key, requirements=["sensitive_data"]).json()["token"]).post(
+        f"/api/contact/sessions/{session.pk}/send", {"text": "hello"}, content_type="application/json")
+    assert r.status_code == 422 and "vault key" in r.json()["detail"]
     session.refresh_from_db()
     assert session.metadata["runner_requirements"] == ["sensitive_data"]
 

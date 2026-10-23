@@ -33,6 +33,10 @@ from tests.fixtures.sensitive import (
     _socket,
     _turn,
     _unowned_thread,
+    browser_said,
+    open_sealed,
+    rewrap_for,
+    vault_key,
     world,
 )
 
@@ -155,10 +159,14 @@ def _said(page) -> str:
 
 def test_the_words_are_sealed_beside_metadata_columns_and_a_result_is_never_kept(w):
     _converse(w["hot"])
-    rows = {m.role: sensitivity.unseal(m) for m in Message.objects.filter(session=w["hot"])}
-    assert rows[Message.USER].plaintext == ASKED
-    assert rows[Message.ASSISTANT].plaintext == REPLY
-    assert rows[Message.TOOL_USE].content["input"]["arguments"] == {"q": "Amina"}
+    rows = {m.role: m for m in Message.objects.filter(session=w["hot"])}
+    # Sealed to the conversation's key: its person's key opens them, as a browser would.
+    def opened(role):
+        return open_sealed(rows[role].sealed, w["hot"], w["key"], w["user"])
+
+    assert opened(Message.USER)["plaintext"] == ASKED
+    assert opened(Message.ASSISTANT)["plaintext"] == REPLY
+    assert opened(Message.TOOL_USE)["content"]["input"]["arguments"] == {"q": "Amina"}
     assert rows[Message.TOOL_RESULT].sealed is None and ROW not in str(rows[Message.TOOL_RESULT].__dict__)
     # Every column — `sealed` included, which is ciphertext — is unreadable to a
     # database read, a backup or a shell.
@@ -170,24 +178,34 @@ def test_the_words_are_sealed_beside_metadata_columns_and_a_result_is_never_kept
 
 
 def test_the_person_who_started_it_reads_it_back_on_the_chat_page(w):
+    """The server hands its own person the ciphertext and their wrap; their browser
+    reads it. The response itself carries none of the words."""
     _converse(w["hot"])
-    tail = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"]
-    assert ASKED in _said(tail) and REPLY in _said(tail)
+    detail = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()
+    tail, key = detail["messages"], detail["sealed_key"]
+    assert ASKED not in str(detail) and REPLY not in str(detail)
+    assert key["current"] and key["wrap"]["alg"] == "ecdh-es"
+    said = browser_said(tail, key, w["key"], w["user"].pk)
+    assert ASKED in said and REPLY in said
     assert ROW not in str(tail)  # a result is not kept for anyone
     page = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}/messages?before=999").json()["messages"]
-    assert REPLY in _said(page)
+    assert REPLY in browser_said(page, key, w["key"], w["user"].pk)
 
 
 def test_a_participant_reads_it_back_multiplayer(w):
-    from apps.canopy_sessions.models import SessionParticipant
-
+    """Added from a browser already in it, which wraps the key to their vault key."""
     _converse(w["hot"])
     peer = User.objects.create_user("peer", "peer@dimagi.com", "pw")
+    peer_key = vault_key(peer)
     WorkspaceMembership.objects.create(user=peer, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
-    SessionParticipant.objects.create(session=w["hot"], user=peer, role=SessionParticipant.VIEWER)
+    r = w["c"].post(f"/api/canopy-sessions/{w['hot'].pk}/participants", data={
+        "email": "peer@dimagi.com", "role": "viewer",
+        "wrap": rewrap_for(w["hot"], w["user"], w["key"], peer)}, content_type="application/json")
+    assert r.status_code == 200, r.content
     c = Client()
     c.force_login(peer)
-    assert REPLY in _said(c.get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"])
+    detail = c.get(f"/api/canopy-sessions/{w['hot'].pk}").json()
+    assert REPLY in browser_said(detail["messages"], detail["sealed_key"], peer_key, peer.pk)
 
 
 def test_no_token_or_ai_door_reads_it_back_even_for_its_own_person(w):
@@ -223,7 +241,9 @@ def test_the_socket_admits_a_browser_or_the_widget_never_a_token():
         {"auth_method": "session", "session": {"_canopy_debug_session": True}})
 
 
-def test_the_visitor_reads_their_own_conversation_back_in_the_widget(w):
+def test_a_visitor_cannot_hold_one_and_nothing_of_its_words_is_kept(w):
+    """A contact has no canopy account and so no vault key: they cannot start one, and
+    a sensitive conversation that has a contact and no key keeps no words at all."""
     from apps.contacts.models import Contact
     from apps.tokens.models import AppCredential, ContactToken
 
@@ -233,13 +253,14 @@ def test_the_visitor_reads_their_own_conversation_back_in_the_widget(w):
     s = Session.objects.create(workspace=w["ws"], agent=w["agent"], contact=visitor,
                                metadata={**SENSITIVE, "embed_app": "connect-labs"})
     _converse(s)
+    assert not Message.objects.filter(session=s, sealed__isnull=False).exists()
     raw, _ = ContactToken.issue(app=app, contact=visitor, ttl_seconds=600)
-    page = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").get(
-        f"/api/contact/sessions/{s.pk}/messages?before=999").json()["messages"]
-    assert ASKED in _said(page) and REPLY in _said(page)
-    other = Contact.objects.create(workspace=w["ws"], app=app, external_id="v-2",
-                                   display_name="Other", source=Contact.SOURCE_EMBED)
-    assert not sensitivity.reads_content(s, chat_surface=True, contact=other)
+    visitor_client = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    page = visitor_client.get(f"/api/contact/sessions/{s.pk}/messages?before=999").json()["messages"]
+    assert ASKED not in str(page) and REPLY not in str(page)
+    r = visitor_client.post(f"/api/contact/sessions/{s.pk}/send", data={"text": "hello"},
+                            content_type="application/json")
+    assert r.status_code == 422 and "vault key" in r.json()["detail"]
 
 
 # --- forced retention -------------------------------------------------------------------
@@ -444,7 +465,8 @@ def test_a_confined_turns_reply_arrives_with_no_binding_and_each_turn_lands_afte
     # The next turn is a fresh Claude session: its rows start at ordinal 0 again.
     assert _ship(w, w["runner"], "cli-2", [("user", "and last month?"),
                                            ("assistant", "9 visits")]).status_code == 200
-    said = _said(w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"])
+    detail = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()
+    said = browser_said(detail["messages"], detail["sealed_key"], w["key"], w["user"].pk)
     assert REPLY in said and "9 visits" in said
     # Still sealed: nothing readable in the columns.
     assert REPLY not in str(list(Message.objects.filter(session=w["hot"]).values("plaintext", "content")))
@@ -474,7 +496,8 @@ def test_a_resumed_session_reships_its_transcript_and_only_the_new_turn_lands(w)
     assert r.status_code == 200
     rows = list(Message.objects.filter(session=w["hot"]).order_by("turn_index"))
     assert [m.turn_index for m in rows[:len(held)]] == held and len(rows) == len(held) + 2
-    said = _said(w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"])
+    detail = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()
+    said = browser_said(detail["messages"], detail["sealed_key"], w["key"], w["user"].pk)
     assert said.count(REPLY) == 1 and said.count("9 visits") == 1
     # The same ship again (a retry) adds nothing.
     assert _ship(w, w["runner"], "cli-1", turn_one + [("user", "and last month?"),

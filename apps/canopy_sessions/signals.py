@@ -7,14 +7,28 @@ independent consumer of it.
 """
 from __future__ import annotations
 
+from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from apps.harness import sensitivity
 from apps.harness.signals import (
     sessions_reported,
     transcript_rows_streamed,
     turn_events_appended,
     turn_status_changed,
 )
+
+from . import conversation_keys
+
+
+@receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="chat_sensitive_session_key")
+def _key_a_sensitive_session_at_birth(sender, instance, created, **kwargs):
+    """A conversation born sensitive (a sensitive site's token, a sensitive parent)
+    gets its key before its first row (`conversation_keys.ensure_key`)."""
+    if not created:
+        return
+    if sensitivity.is_sensitive(instance):
+        conversation_keys.ensure_key(instance)
 
 
 @receiver(turn_events_appended, dispatch_uid="chat_project_messages")
