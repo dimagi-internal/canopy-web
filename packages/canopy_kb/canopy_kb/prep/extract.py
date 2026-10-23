@@ -101,7 +101,8 @@ def extract_one(kind_: str, path: str, page_selector: str | None = None, title_s
         if kind_ == "doc":
             from canopy_kb.prep.html import to_markdown
             if not shutil.which("textutil"):
-                return {"error": "no textutil here (macOS) to read Word 97 .doc"}
+                # A fact about this machine, not the file: never a result to keep.
+                return {"unavailable": "no textutil here (macOS) to read Word 97 .doc"}
             with tempfile.TemporaryDirectory() as td:
                 src, dst = Path(td) / "in.doc", Path(td) / "out.html"
                 src.write_bytes(p.read_bytes())
@@ -123,6 +124,20 @@ def extract_one(kind_: str, path: str, page_selector: str | None = None, title_s
     except Exception as e:  # noqa: BLE001
         return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
     return {"error": f"no reader for {kind_}"}
+
+
+#: What a format's result names when it reads a file's whole bytes (for `extract_bytes`).
+SUFFIX = {"page": ".html", "gdoc": ".html", "pdf": ".pdf", "xlsx": ".xlsx", "xls": ".xls", "doc": ".doc",
+          "docx": ".docx"}
+
+
+def extract_bytes(kind_: str, body: bytes, page_selector: str | None = None, title_suffix: str = "") -> dict:
+    """`extract_one` on bytes in memory (a refresh with no data directory). A result with
+    `unavailable` says this machine cannot read the format: keep no result for it."""
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / ("in" + SUFFIX.get(kind_, ""))
+        p.write_bytes(body)
+        return extract_one(kind_, str(p), page_selector, title_suffix)
 
 
 def cache_path(data: Path, row: dict, kind_: str) -> Path:

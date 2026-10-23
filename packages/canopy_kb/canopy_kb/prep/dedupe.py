@@ -25,12 +25,20 @@ def _shortest(it: dict):
     return len(it["url"])
 
 
-def collapse_duplicates(items: list[dict], prefer: Callable[[dict], object] = _shortest) -> tuple[list[dict], int]:
+def norm_key(text: str) -> str:
+    """What two texts share when they say the same (case, spacing, punctuation aside)."""
+    return sha(re.sub(r"\W+", "", text.lower())[:2_000_000])
+
+
+def collapse_duplicates(items: list[dict], prefer: Callable[[dict], object] = _shortest,
+                        key: Callable[[dict], str] | None = None) -> tuple[list[dict], int]:
     """Keep the item `prefer` ranks first (lowest) of each group of identical texts; list
-    the others' urls (`meta.also_at`), ids (`meta.also_ids`) and referrers."""
+    the others' urls (`meta.also_at`), ids (`meta.also_ids`) and referrers. `key` says
+    which texts are identical without the text (a refresh's descriptors carry `norm`)."""
+    key = key or (lambda it: norm_key(it["text"]))
     groups: dict[str, list] = collections.defaultdict(list)
     for it in items:
-        groups[sha(re.sub(r"\W+", "", it["text"].lower())[:2_000_000])].append(it)
+        groups[key(it)].append(it)
     final, dups, seen = [], 0, set()
     for g in groups.values():
         g.sort(key=prefer)
@@ -89,3 +97,67 @@ def collapse_shared_tabs(items: list[dict], types: tuple[str, ...] = ("cea_model
             it["text"] = "".join(out)
             it["meta"]["shared_tabs_in"] = sorted(pointed)
     return len(home)
+
+
+# -- the same, on a refresh's descriptors (no text in hand) ---------------------------------
+
+def tab_keys(text: str) -> list[list]:
+    """[name, key or None] for each `## Sheet:` part of a workbook's text, in order: what
+    `shared_homes` needs to know of it without the text."""
+    def key(part: str) -> str | None:
+        if not part.startswith("## Sheet:") or len(part) < SHARED_TAB_MIN:
+            return None
+        body = part.split("\n", 1)[1] if "\n" in part else ""
+        return hashlib.md5(" ".join(body.split()).encode()).hexdigest()
+
+    out = []
+    for part in _TAB_SPLIT.split(text):
+        name = part.split("\n", 1)[0][len("## Sheet: "):].strip() if part.startswith("## Sheet:") else ""
+        out.append([name, key(part)])
+    return out
+
+
+def shared_homes(items: list[dict], keep: dict[str, str] | None = None,
+                 types: tuple[str, ...] = ("cea_model", "dataset")) -> dict[str, str]:
+    """{tab key: the item id that keeps its rows} for tabs in several workbooks. Items carry
+    `tabs` (`tab_keys`) and `chars`. A home in `keep` stays while it is still one of the
+    copies, so a change in link counts does not move a tab's rows between 89 workbooks;
+    a new group's home is the most linked-to copy, then the shortest, then the first id."""
+    keep = keep or {}
+    where: dict[str, list[dict]] = collections.defaultdict(list)
+    for it in items:
+        if it["type"] in types:
+            for k in {k for _, k in it.get("tabs") or [] if k}:
+                where[k].append(it)
+    homes = {}
+    for k, its in where.items():
+        if len(its) < 2:
+            continue
+        ids = {it["id"] for it in its}
+        if keep.get(k) in ids:
+            homes[k] = keep[k]
+        else:
+            homes[k] = min(its, key=lambda it: (-len(it["meta"].get("linked_from") or []), it.get("chars", 0),
+                                                it["id"]))["id"]
+    return homes
+
+
+def pointers(it: dict, homes: dict[str, str]) -> dict[str, str]:
+    """{tab key: home id} for the tabs of `it` whose rows live in another workbook."""
+    return {k: homes[k] for _, k in it.get("tabs") or [] if k and k in homes and homes[k] != it["id"]}
+
+
+def point(text: str, ptrs: dict[str, str], titles: dict[str, str]) -> str:
+    """A workbook's text with each tab whose rows live elsewhere (`ptrs`) as a pointer."""
+    if not ptrs:
+        return text
+    out = []
+    for part, (name, k) in zip(_TAB_SPLIT.split(text), tab_keys(text), strict=True):
+        if k in ptrs:
+            h = ptrs[k]
+            out.append(f"## Sheet: {name}\n(Identical to the tab \"{name}\" in {h} \"{titles.get(h, '')}\"; "
+                       f"its rows are there.)\n\n")
+        else:
+            out.append(part)
+    return "".join(out)
+

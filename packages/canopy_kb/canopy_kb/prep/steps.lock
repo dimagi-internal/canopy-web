@@ -1,0 +1,73 @@
+{
+ "aliases": {
+  "libraries": {},
+  "revision": "1",
+  "sources": "5bf82084f185a790492ed4a5d31bdcb218f276ee5dca26832e81742dd06926a9"
+ },
+ "card": {
+  "libraries": {},
+  "revision": "1",
+  "sources": "9b99280e98c8bf8f7fb8e383b859ccc6209b8d38ee9707034242e0b83af6758b"
+ },
+ "extract:doc": {
+  "libraries": {
+   "beautifulsoup4": "4.15.0",
+   "lxml": "6.1.3",
+   "markdownify": "1.2.3"
+  },
+  "revision": "2",
+  "sources": "fbdc862cbf16945ddb0445b821ac8a3aaa3504dadcb423257dda7683a8c7f2ef"
+ },
+ "extract:docx": {
+  "libraries": {
+   "python-docx": "1.2.0"
+  },
+  "revision": "2",
+  "sources": "94a7f7d5093b6e6349d0c9c7f11299626217a4e4176d00d70f6ba28f25a58ae5"
+ },
+ "extract:gdoc": {
+  "libraries": {
+   "beautifulsoup4": "4.15.0",
+   "lxml": "6.1.3",
+   "markdownify": "1.2.3"
+  },
+  "revision": "2",
+  "sources": "fbdc862cbf16945ddb0445b821ac8a3aaa3504dadcb423257dda7683a8c7f2ef"
+ },
+ "extract:page": {
+  "libraries": {
+   "beautifulsoup4": "4.15.0",
+   "lxml": "6.1.3",
+   "markdownify": "1.2.3"
+  },
+  "revision": "2",
+  "sources": "fbdc862cbf16945ddb0445b821ac8a3aaa3504dadcb423257dda7683a8c7f2ef"
+ },
+ "extract:pdf": {
+  "libraries": {
+   "pymupdf": "2.0"
+  },
+  "revision": "2",
+  "sources": "0ab3eb844f3103871bf81912e0e8baaf24fe9be0cdae5f0b7cf4759b1b214f2a"
+ },
+ "extract:xls": {
+  "libraries": {
+   "openpyxl": "3.1.5",
+   "xlrd": "2.0.2"
+  },
+  "revision": "2",
+  "sources": "b7260fd361ab99ead565d1dd10d19c770d1f1662140f0b94b7c9adbe2be2d94a"
+ },
+ "extract:xlsx": {
+  "libraries": {
+   "openpyxl": "3.1.5"
+  },
+  "revision": "2",
+  "sources": "b7260fd361ab99ead565d1dd10d19c770d1f1662140f0b94b7c9adbe2be2d94a"
+ },
+ "ocr": {
+  "libraries": {},
+  "revision": "1",
+  "sources": "884d44599dd5a70d3d6a231135f44711e4e7adf203a466bba04c0376ebd5f66f"
+ }
+}
