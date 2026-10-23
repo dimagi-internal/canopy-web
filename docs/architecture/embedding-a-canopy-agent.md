@@ -517,7 +517,7 @@ no launcher to reopen it with.
 **Other options:** `theme` (above); `agent: 'labs-helper'` skips the picker; `metadata: {…}`
 stamps opaque data on sessions the widget creates; `onInvalidate(resource)` is
 called when data your page shows has changed (§5a); `dismissible`, `storage`,
-`csrfCookieName`, `csrfToken` as above; plus `width`, `title`, `open: true`.
+`csrfCookieName`, `csrfToken` as above; `onResize` (below); plus `width`, `title`, `open: true`.
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `expand()`, `collapse()`, `isExpanded()`,
@@ -526,10 +526,20 @@ The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 
 ### A bigger panel for data work
 
-In `overlay` a visitor can drag the panel's top-left corner to resize it: it
-grows up and to the left, staying attached to the bubble, between a usable
-minimum and the window's edge. The size is remembered per site in `storage`, and
-once set it wins over the height the panel would otherwise pick for itself.
+A visitor can resize the panel. In `overlay` they drag its top-left corner: it
+grows up and to the left, staying attached to the bubble. In `docked` they drag
+the rail's left edge (the handle mid-height) to change its width. Either way it
+stays between a usable minimum and the window's edge, is remembered per site in
+`storage`, and once set wins over the height the panel would pick for itself.
+
+A docked rail is drawn over your page, so if you set aside a column for it, pass
+`onResize` to follow its width (it is also called once at load with a
+remembered size):
+
+```js
+canopy.init({ /* … */ mode: 'docked',
+  onResize: ({ width }) => { main.style.marginRight = width + 'px' } })
+```
 
 In `overlay` and `docked` the panel header has an expand control: the panel grows
 to fill the window bar a 16px margin (all of it on a phone) and Esc or the control

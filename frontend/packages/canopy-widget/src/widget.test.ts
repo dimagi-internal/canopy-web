@@ -791,8 +791,34 @@ describe('resizing the panel by its corner', () => {
     expect(panel.style.height).toBe(chosen)
   })
 
-  it('is overlay only: no grip on a docked rail or an inline panel', () => {
-    expect(widgetHarness({ mode: 'docked' }).root.querySelector('.resize')).toBeNull()
+  it('a docked rail resizes by width only, and tells the host', () => {
+    const storage = memoryStorage()
+    const onResize = vi.fn()
+    const { root } = widgetHarness({ mode: 'docked', app: 'canopy-web', storage, width: 400, open: true, onResize })
+    const panel = root.querySelector('.panel') as HTMLElement
+
+    resize(root.querySelector('.resize')!, [600, 300], [450, 100])
+
+    expect(panel.style.width).toBe('550px')
+    // The rail's height stays the window's (100vh in CSS), never pinned inline.
+    expect(panel.style.height).toBe('')
+    expect(onResize).toHaveBeenLastCalledWith({ width: 550, height: window.innerHeight })
+    expect(JSON.parse(storage.data['canopy.widget.size.canopy-web']).width).toBe(550)
+  })
+
+  it('restores a docked width and reports it, so the host can lay out for it', () => {
+    const storage = memoryStorage({
+      'canopy.widget.size.canopy-web': JSON.stringify({ width: 520, height: 480 }),
+    })
+    const onResize = vi.fn()
+    const { root } = widgetHarness({ mode: 'docked', app: 'canopy-web', storage, onResize })
+    const panel = root.querySelector('.panel') as HTMLElement
+    expect(panel.style.width).toBe('520px')
+    expect(panel.style.height).toBe('')
+    expect(onResize).toHaveBeenCalledWith({ width: 520, height: window.innerHeight })
+  })
+
+  it('an inline panel has no grip — the host sizes it', () => {
     document.body.innerHTML = '<div id="slot"></div>'
     expect(widgetHarness({ mode: 'inline', target: '#slot' }).root.querySelector('.resize')).toBeNull()
   })
