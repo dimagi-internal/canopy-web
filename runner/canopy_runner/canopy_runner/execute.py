@@ -236,7 +236,7 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
                     task, turn_id, _preview(line), choice)
         client.post_events(turn_id, [{"kind": "status",
             "payload": {"status": "collision", "task": task, "choice": choice,
-                        "line": _preview(line)}}])
+                        "line": _preview(line), **_late_collision_fields(res)}}])
         if choice == dialog.NEW:
             caller.clear_pending(task)
             return None                         # leave the prompt untouched; create fresh
@@ -263,7 +263,8 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
     # retype blind: a message that lands late would then arrive twice. The only
     # retype is `_recover_delivery`'s, into a composer it has just seen empty.
     _TYPED_TURNS[turn_id] = time.monotonic()
-    _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=agent)
+    _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=agent,
+                         sent=res)
     reason = _undelivered(client, turn_id, task, verifier, work_prompt,
                           port=cfg.cdp_port, project=agent)
     if reason:
@@ -437,8 +438,13 @@ BUSY_WAIT_POLL = 3.0
 SNAPSHOT_AFTER_SEND = True
 
 
-def _snapshot_after_send(client, turn_id: str, task: str, *, port: int, project: str) -> None:
-    """Best-effort: post what the composer holds just after our Enter. Never raises."""
+def _snapshot_after_send(client, turn_id: str, task: str, *, port: int, project: str,
+                         sent: dict | None = None) -> None:
+    """Best-effort: post what the composer holds just after our Enter. Never raises.
+
+    `sent` is the sidecar's open-send result; its `pre` is what the composer read
+    BEFORE typing. Turn 64cada76 (2026-10-23) read empty there while a human's draft
+    sat in the composer, and nothing recorded it — so it rides along here."""
     if not SNAPSHOT_AFTER_SEND:
         return
     try:
@@ -448,7 +454,25 @@ def _snapshot_after_send(client, turn_id: str, task: str, *, port: int, project:
     _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
         "status": "delivery_snapshot", "task": task, "found": bool(state.get("found")),
         "running": bool(state.get("running")), "line": _preview(state.get("typed") or ""),
+        **_pre_send_fields(sent),
         **({"detail": state["error"]} if state.get("error") else {})}}])
+
+
+def _late_collision_fields(res: dict) -> dict:
+    """A collision the sidecar caught only at or after typing (composer_check.mjs):
+    which look caught it, and whether our text was taken back off the human's draft."""
+    if not res.get("when"):
+        return {}
+    return {"when": res["when"], "restored": bool(res.get("restored")),
+            **_pre_send_fields(res)}
+
+
+def _pre_send_fields(sent: dict | None) -> dict:
+    """The sidecar's pre-type composer read, for an event payload ({} if absent)."""
+    pre = (sent or {}).get("pre")
+    if not isinstance(pre, dict):
+        return {}
+    return {"pre_found": bool(pre.get("found")), "pre_line": _preview(pre.get("typed") or "")}
 
 
 def _await_idle(verifier, prompt: str, task: str, *, port: int, project: str,
@@ -1036,6 +1060,9 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
                 choice = _chat_collision_choice(task, line)
                 logger.info("chat collision on '%s' (turn=%s): unsent text in prompt %r — "
                             "human chose %r", task, turn_id, _preview(line), choice)
+            _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+                "status": "collision", "task": task, "choice": choice,
+                "line": _preview(line), **_late_collision_fields(res)}}])
             if choice == dialog.CLEAR:
                 cdp_control.open_and_send(task, prompt, clear_first=True, port=cfg.cdp_port,
                                           project=target)
@@ -1057,7 +1084,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # 2026-10-02). Never retype blind: a late landing would arrive twice (the one
         # retype is `_recover_delivery`'s, into a composer it has just seen empty).
         _TYPED_TURNS[turn_id] = time.monotonic()
-        _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target)
+        _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target,
+                             sent=res)
         reason = _undelivered(client, turn_id, task, verifier, prompt,
                               port=cfg.cdp_port, project=target)
         if reason:

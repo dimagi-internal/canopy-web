@@ -32,7 +32,7 @@ def test_no_enter_directly_after_insert_text_in_open_send():
 
 def test_every_open_send_goes_through_submit():
     branch = _open_send_branch()
-    assert branch.count("await submit(text)") == 2
+    assert branch.count("await submit(text, ") == 2
     assert branch.count("insertText(") == 1          # the one inside submit
 
 
