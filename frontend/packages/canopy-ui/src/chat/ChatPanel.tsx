@@ -22,7 +22,8 @@ export interface ChatPanelProps {
   /** The viewer's user id — null for a contact (a widget visitor), who is
    *  identified by `state.current_contact_id` instead. */
   currentUserId: number | null;
-  onSend: () => void;
+  /** Called with the composer's text — pass it on to `sendChat`. */
+  onSend: (body: string) => void;
   onStop: (messageId: string | null) => void;
   /** Withdraw one of your own still-queued sends (`useSessionSocket().unqueueChat`).
    *  Omit and queued rows offer no Cancel. */

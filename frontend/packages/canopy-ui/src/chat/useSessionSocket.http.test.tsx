@@ -48,6 +48,13 @@ describe('sending over HTTP', () => {
     expect(FakeSocket.sent.filter((f) => f.includes('chat.send') || f.includes('draft.update'))).toEqual([])
   })
 
+  it('sends the text it is handed even when no keystroke reached the hook', async () => {
+    // A contact's composer restored from storage on load never called updateDraft.
+    const { hook, sendOverHttp } = contact()
+    await act(async () => hook.result.current.sendChat('restored from last time'))
+    expect(sendOverHttp).toHaveBeenCalledWith('restored from last time', expect.any(String))
+  })
+
   it('shows the line and waits for the reply, as a user send does', async () => {
     const { hook } = contact()
     act(() => hook.result.current.updateDraft('are we on track?'))

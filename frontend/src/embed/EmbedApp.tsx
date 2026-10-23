@@ -951,7 +951,7 @@ function EmbedChat({
     }
   }, [client, sessionId])
 
-  const onSend = useCallback(() => {
+  const onSend = useCallback((body: string) => {
     // The page snapshot rides the FIRST message rather than an opening turn of
     // its own. An automatic turn on open would claim a runner and produce an
     // agent reply before the user had said anything — and metadata alone never
@@ -960,11 +960,8 @@ function EmbedChat({
     // session already exists, so it does not name an emdash task — but a reader
     // scrolling the transcript should still see the question before the JSON.
     const context = contextPreamble.current
-    if (context) {
-      contextPreamble.current = null
-      socket.updateDraft(`${socket.state.active_draft?.body ?? ''}\n\n${context}`)
-    }
-    socket.sendChat()
+    contextPreamble.current = null
+    socket.sendChat(context ? `${body}\n\n${context}` : body)
   }, [socket, contextPreamble])
 
   return (

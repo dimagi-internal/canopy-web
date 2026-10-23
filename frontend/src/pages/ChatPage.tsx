@@ -394,12 +394,12 @@ export function ChatPage({
           state={socket.state}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={() => {
+          onSend={(body) => {
             // The server consumes whatever the session is holding, so the chips
             // are spent the moment we send — leaving them would imply they will
             // ride along again on the next message.
             clearAttachments()
-            socket.sendChat()
+            socket.sendChat(body)
           }}
           onStop={socket.stopChat}
           onUnqueue={socket.unqueueChat}
