@@ -1306,6 +1306,10 @@ def pair_or_load() -> str:
                 _api("PATCH", f"/runners/{rid}",
                      {"capabilities": {k: v for k, v in RUNNER_CAPS.items() if k != "projects"}})
                 return rid
+            if status == 404:
+                # Retired: what this box kept for that runner's sensitive conversations
+                # belongs to nobody now, whatever this box pairs as next.
+                forget_all_kept_conversations("this runner was retired")
     if UNIT:
         _log(f"FATAL: unit {UNIT}'s runner is gone from canopy-web (retired?) — re-run "
              "canopy-pair (`sudo systemctl restart canopy-pair`) after a new invitation")
@@ -3604,14 +3608,79 @@ def _rule_tool(rule: str) -> str:
     return str(rule).split("(", 1)[0].strip()
 
 
-def sensitive_data_settings(confined: dict | None = None) -> dict:
+#: Tools that read a path, scoped on a sensitive-data box by `Read(path)` rules (which
+#: Claude Code applies to Grep and Glob too) instead of granted whole.
+_SENSITIVE_DATA_READ_TOOLS = ("Read", "Grep", "Glob")
+
+
+def _abs_read_rule(path, suffix: str = "") -> str:
+    """`Read(//abs/path<suffix>)`: `//` anchors an absolute path in a permission rule."""
+    return f"Read(/{os.path.realpath(str(path))}{suffix})"
+
+
+def _sensitive_data_read_denies() -> list[str]:
+    """What no sensitive-data turn's read tools may open, whatever it is allowed:
+    every Claude transcript on the box (the CLI writes and resumes its own without a
+    tool call), the conversations this box keeps, and every other per-turn or box
+    secret under ~/.canopy and ~/.claude — profiles, chat keys, scoped and agent
+    tokens, delegations, the device key, the runner's own state, the per-turn env
+    root, the box-wide logs and session sidecars. A rule only governs a tool call,
+    so none of this stops Claude Code or the runner reading its own files."""
+    home = pathlib.Path.home()
+    claude = _claude_home()
+    dirs = [KEPT_ROOT, PROFILE_ROOT, CHAT_KEY_ROOT, SCOPED_TOKEN_ROOT, AGENT_TOKEN_ROOT,
+            home / ".canopy" / "delegated", home / ".canopy" / "device-key",
+            home / ".canopy-runner", claude / "canopy", claude / "todos",
+            claude / "file-history", claude / "session-env", CALLER_ROOT / "pending",
+            home / ".ssh", home / ".aws", home / ".config"]
+    env_root = _turn_env_root(create=False)
+    if env_root is not None:
+        dirs.append(env_root)
+    rules = [_abs_read_rule(CLAUDE_PROJECTS_HOME, "/**/*.jsonl")]
+    rules += [_abs_read_rule(d, "/**") for d in dirs]
+    rules += [_abs_read_rule(f) for f in (STATE_FILE, claude / "history.jsonl",
+                                          claude / ".credentials.json", home / ".claude.json")]
+    return rules
+
+
+def _sensitive_data_turn_reads(cwd, caller_path) -> tuple[list[str], list[str]]:
+    """(allow, deny) read rules for one sensitive-data turn: its read tools reach its
+    own working directory, its own sessions' oversized tool output (saved beside its
+    transcripts) and its own caller envelope — and, by name, not any other turn's
+    envelope or any other directory's sessions on the box (the allow list already
+    leaves them out; a deny holds even if an allow ever widens)."""
+    own_project = CLAUDE_PROJECTS_HOME / _encode_project_dir(pathlib.Path(cwd))
+    allow = [_abs_read_rule(cwd, "/**"), _abs_read_rule(own_project, "/*/tool-results/**")]
+    deny: list[str] = []
+    if caller_path:
+        allow.append(_abs_read_rule(caller_path))
+        own = os.path.realpath(str(caller_path))
+        with contextlib.suppress(OSError):
+            deny += [_abs_read_rule(p) for p in sorted(CALLER_ROOT.glob("*.json"))
+                     if os.path.realpath(str(p)) != own]
+    else:
+        deny.append(_abs_read_rule(CALLER_ROOT, "/**"))
+    with contextlib.suppress(OSError):
+        if CLAUDE_PROJECTS_HOME.is_dir():
+            deny += [_abs_read_rule(d, "/**") for d in sorted(CLAUDE_PROJECTS_HOME.iterdir())
+                     if d.is_dir() and d.name != own_project.name]
+    return allow, deny
+
+
+def sensitive_data_settings(confined: dict | None = None, *, cwd=None,
+                            caller_path=None) -> dict:
     """The `--settings` document for a sensitive-data turn: the locked profile, narrowed
     further by a confined turn's own rules when it has them
     (`native_permissions.cli_settings`).
 
-    Deny is the union. Allow is the confined turn's own list when it has one (its
-    capability decides), minus anything `SENSITIVE_DATA_DENY` holds; otherwise
-    `SENSITIVE_DATA_ALLOW`. Either way bypass and auto mode are disabled and unlisted
+    Deny is the union, plus every read no turn here may make
+    (`_sensitive_data_read_denies`). Allow is the confined turn's own list when it has
+    one (its capability decides), minus anything `SENSITIVE_DATA_DENY` holds;
+    otherwise `SENSITIVE_DATA_ALLOW`. Either way a read tool granted whole is granted
+    only inside the turn's own working directory (`cwd`; and its caller envelope,
+    `caller_path`), never the box's other conversations, and other turns' envelopes
+    and other directories' sessions are denied by name
+    (`_sensitive_data_turn_reads`). Bypass and auto mode are disabled and unlisted
     tools are refused.
     """
     doc = dict(confined or {})
@@ -3619,12 +3688,21 @@ def sensitive_data_settings(confined: dict | None = None) -> dict:
     allow = perms.get("allow") if confined else None
     allow = (list(SENSITIVE_DATA_ALLOW) if allow is None
              else [a for a in allow if _rule_tool(a) not in SENSITIVE_DATA_DENY])
+    deny = {*SENSITIVE_DATA_DENY, *(perms.get("deny") or []), *_sensitive_data_read_denies()}
+    if any(a in _SENSITIVE_DATA_READ_TOOLS for a in allow):
+        allow = [a for a in allow if a not in _SENSITIVE_DATA_READ_TOOLS]
+        if cwd is not None:
+            reads, others = _sensitive_data_turn_reads(cwd, caller_path)
+            allow += reads
+            deny |= set(others)
+    elif cwd is not None:
+        deny |= set(_sensitive_data_turn_reads(cwd, caller_path)[1])
     perms.update({
         "defaultMode": "dontAsk",
         "disableAutoMode": "disable",
         "disableBypassPermissionsMode": "disable",
-        "allow": allow,
-        "deny": sorted({*SENSITIVE_DATA_DENY, *(perms.get("deny") or [])}),
+        "allow": list(dict.fromkeys(allow)),
+        "deny": sorted(deny),
     })
     doc["permissions"] = perms
     doc["env"] = {**(doc.get("env") or {}), **SENSITIVE_DATA_ENV}
@@ -3729,10 +3807,11 @@ def _data_mode_check() -> None:
     _set_check("claude.sensitive_data", "ok" if ok else "fail", note or "sensitive-data mode")
 
 
-def _sensitive_data_settings_file(turn: dict, confined_path: str | None) -> str:
-    """Write this sensitive-data turn's settings (merging a confined turn's own) and
-    return the path. Raises ConfineError: a sensitive-data turn without its profile is
-    not run."""
+def _sensitive_data_settings_file(turn: dict, confined_path: str | None, *, cwd=None,
+                                  caller_path=None) -> str:
+    """Write this sensitive-data turn's settings (merging a confined turn's own, and
+    scoping its reads to `cwd` and its `caller_path`) and return the path. Raises
+    ConfineError: a sensitive-data turn without its profile is not run."""
     confined = None
     if confined_path:
         try:
@@ -3741,7 +3820,7 @@ def _sensitive_data_settings_file(turn: dict, confined_path: str | None) -> str:
             raise ConfineError(f"could not read the turn's permission layer: {exc}") from exc
     path = PROFILE_ROOT / f"cloud-{turn['id']}.sensitive-data-settings.json"
     try:
-        _write_private(path, sensitive_data_settings(confined))
+        _write_private(path, sensitive_data_settings(confined, cwd=cwd, caller_path=caller_path))
     except OSError as exc:
         raise ConfineError(f"could not write the sensitive-data permission profile: {exc}") from exc
     return str(path)
@@ -3975,11 +4054,19 @@ def _kept_busy(conv: str, delta: int) -> None:
             _KEPT_BUSY.pop(conv, None)
 
 
+#: canopy-web's answers to the kept-conversations ask that mean this box may keep
+#: nothing: it no longer signs in (401), may not ask (403) or is retired (404).
+KEPT_REFUSED_STATUSES = (401, 403, 404)
+
+
 def sweep_kept_conversations(runner_id: str = "", *, now: float | None = None) -> int:
     """Forget every kept conversation that has been idle past its deadline, whose
     transcript is gone, or that canopy-web says is closed (asked only with a
-    `runner_id`; an unanswered ask closes nothing). A conversation a turn is running
-    in is left alone. Returns how many were forgotten."""
+    `runner_id`; an unanswered ask closes nothing, but a refusal —
+    `KEPT_REFUSED_STATUSES`, a retired box among them — closes them all). A
+    conversation a turn is running in is left alone, and so is one whose record
+    changed while canopy-web was asked (a turn finished in it and kept a newer
+    session). Returns how many were forgotten."""
     if not SENSITIVE_DATA_MODE:
         return 0
     now = time.time() if now is None else now
@@ -3990,13 +4077,19 @@ def sweep_kept_conversations(runner_id: str = "", *, now: float | None = None) -
     if runner_id:
         status, reply = _api("POST", f"/runners/{runner_id}/kept-conversations",
                              {"session_ids": sorted(c for c, r in kept.items() if r)})
-        if status == 200 and isinstance(reply, dict) and isinstance(reply.get("open"), list):
+        if status in KEPT_REFUSED_STATUSES:
+            closed = set(kept)
+            _log(f"sensitive-data mode: canopy-web refused the kept-conversation ask "
+                 f"({status}); forgetting every kept conversation")
+        elif status == 200 and isinstance(reply, dict) and isinstance(reply.get("open"), list):
             closed = set(kept) - {str(c) for c in reply["open"]}
     forgotten = 0
     for conv, rec in kept.items():
         with _KEPT_LOCK:
             if conv in _KEPT_BUSY:
                 continue
+            if rec != (_kept_record(conv) if _KEPT_ID.fullmatch(conv) else None):
+                continue  # a turn kept a newer session since it was read: the next sweep judges it
             if not rec:
                 why = "unreadable"
             elif conv in closed:
@@ -4030,6 +4123,24 @@ def maybe_sweep_kept(runner_id: str, *, now: float | None = None) -> bool:
     except Exception as exc:  # noqa: BLE001 — a sweep must never cost the beat
         _log(f"sensitive-data mode: kept-conversation sweep failed ({exc})")
     return True
+
+
+def forget_all_kept_conversations(why: str) -> int:
+    """Forget every kept conversation now, busy or not: the box is going away (its
+    system is shutting down) or canopy-web will no longer have it (retired). Returns
+    how many were forgotten."""
+    if not SENSITIVE_DATA_MODE:
+        return 0
+    forgotten = 0
+    with _KEPT_LOCK:
+        for conv, rec in _kept_conversations().items():
+            if rec:
+                _forget_kept_session(rec)
+            _unlink_or_rmtree(KEPT_ROOT / f"{conv}.json")
+            forgotten += 1
+    if forgotten:
+        _log(f"sensitive-data mode: forgot {forgotten} kept conversation(s) ({why})")
+    return forgotten
 
 
 def _kept_files() -> set[pathlib.Path]:
@@ -8977,38 +9088,68 @@ def _result_note(text: str, turn: dict) -> str:
     return (text or "")[:2000]
 
 
-def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) -> None:
+#: How long the turn-end ship waits before each retry of a refused or failed post.
+SHIP_RETRY_DELAYS = (2.0, 5.0, 10.0)
+
+
+def _transcript_record_count(cwd, sid: str) -> int:
+    """How many records the Claude transcript `sid` under `cwd` holds now; 0 when
+    there is none or it cannot be read (then nothing is skipped: canopy-web keeps
+    each row once)."""
+    ct = _transcript_core()
+    if ct is None or not sid or cwd is None:
+        return 0
+    try:
+        path = ct.resolve_cli_transcript(cwd, sid, claude_home=CLAUDE_PROJECTS_HOME)
+        return len(ct.read_records(path)) if path is not None else 0
+    except Exception:  # noqa: BLE001 — unreadable: ship it all
+        return 0
+
+
+def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str,
+                          since_record: int = 0) -> bool:
     """Ship this session's transcript rows so a cloud session's durable record is
     the SAME shape as a laptop session's — ordinal-keyed, full fidelity.
 
     Only meaningful for session-targeted turns: an agent or project turn has no
-    canopy Session to stream into. Best-effort throughout; the record is
-    re-derivable from the transcript on disk, so a failure here costs freshness,
-    never history.
+    canopy Session to stream into. `since_record` is how many of the transcript's
+    records canopy-web already holds — the ones a resumed session carried in from
+    its earlier turns, or that this turn's live tail already shipped — so only the
+    records after it are read into rows and sent, with their ordinals unchanged.
+    Sent in chunks (`_post_stream_rows`), never one request: a long resumed
+    conversation's rows outgrow the server's request ceiling, and that one refused
+    post was the whole reply. A failed post is tried again (`SHIP_RETRY_DELAYS`);
+    canopy-web keeps each row once, so a retry adds nothing it already has.
+    True when the rows landed (or there were none to send).
     """
     session_id = _chat_session_id(turn)
     if not session_id:
-        return
+        return True
     ct = _transcript_core()
     if ct is None:
-        return
+        return False
     path = ct.resolve_cli_transcript(cwd, cli_session_id, claude_home=CLAUDE_PROJECTS_HOME)
     if path is None:
         _log(f"turn {turn['id'][:8]}: no transcript at {cwd} for {cli_session_id[:8]}")
-        return
-    rows = ct.conversational_messages(ct.read_records(path), -1)
+        return False
+    records = ct.read_records(path)
+    start = min(max(int(since_record or 0), 0), len(records))
+    rows = ct.conversational_messages(records[start:], -1, record_offset=start)
     if not rows:
-        return
-    events = [ct.stream_event(r) for r in rows]
+        return True
     # The transcript these ordinals index: a confined turn that starts fresh begins
     # again at ordinal 0, and without its id its rows would land on the last one's and
     # be dropped as already held. A turn that resumed its sensitive conversation's
-    # session (`kept_resume`) ships the same transcript again under the same id: the
-    # rows already held are skipped and only this turn's are added.
-    status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
-                     {"session_id": session_id, "events": events,
-                      "transcript_id": cli_session_id})
-    _log(f"turn {turn['id'][:8]}: shipped {len(events)} transcript rows -> {status}")
+    # session (`kept_resume`) ships under the same id, after the records it held.
+    for delay in (0.0, *SHIP_RETRY_DELAYS):
+        if delay:
+            time.sleep(delay)
+        if _post_stream_rows(runner_id, session_id, rows, cli_session_id):
+            _log(f"turn {turn['id'][:8]}: shipped {len(rows)} transcript rows "
+                 f"(after record {start})")
+            return True
+    _log(f"warn: turn {turn['id'][:8]}: could not ship {len(rows)} transcript rows")
+    return False
 
 
 #: How often a running confined turn's transcript is read for new rows.
@@ -9043,6 +9184,7 @@ class _TurnTail:
         self.runner_id, self.session_id, self.cwd = runner_id, session_id, cwd
         self.interval = TURN_TAIL_SECONDS if interval is None else interval
         self._lock = threading.Lock()
+        self._tick_lock = threading.Lock()
         self._sid = ""
         self._reader = None
         self._reader_sid = ""
@@ -9055,21 +9197,27 @@ class _TurnTail:
             self._before[resumed] = self._records_in(resumed)
 
     def _records_in(self, sid: str) -> int:
-        ct = _transcript_core()
-        if ct is None:
-            return 0
-        path = ct.resolve_cli_transcript(self.cwd, sid, claude_home=CLAUDE_PROJECTS_HOME)
-        try:
-            return len(ct.read_records(path)) if path is not None else 0
-        except Exception:  # noqa: BLE001 — unreadable: ship it all, canopy-web dedupes
-            return 0
+        return _transcript_record_count(self.cwd, sid)
+
+    def shipped_through(self, sid: str) -> int:
+        """How many of transcript `sid`'s records canopy-web holds by this tail's
+        account: the ones it held before the turn, then every one a post landed for.
+        The turn-end ship starts after them."""
+        with self._lock:
+            done = self._count if self._reader is not None and self._reader_sid == sid else 0
+        return max(done, self._before.get(sid, 0))
 
     def follow(self, cli_session_id: str) -> None:
         with self._lock:
             self._sid = cli_session_id or self._sid
 
     def tick(self) -> int:
-        """Ship whatever the transcript gained since the last tick. Rows shipped."""
+        """Ship whatever the transcript gained since the last tick. Rows shipped.
+        One tick at a time: the last one (`stop`) never races the clock's."""
+        with self._tick_lock:
+            return self._tick()
+
+    def _tick(self) -> int:
         ct = _transcript_core()
         with self._lock:
             sid = self._sid
@@ -9106,9 +9254,17 @@ class _TurnTail:
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop the clock, then tick once more: what Claude wrote between the last
+        tick and the turn's end — the reply's last rows — is shipped here too, not
+        left to the turn-end ship alone."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=30)
+        try:
+            self.tick()
+        except Exception as exc:  # noqa: BLE001 — the turn-end ship still carries it
+            _log(f"warn: last tail of {self.session_id[:8]}: {exc}")
+            self._reader = None
 
 
 # ── live streaming: /streams + /backfills ────────────────────────────────────
@@ -9897,7 +10053,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 if confined and not _TURN_ENV.settings:
                     raise ConfineError("the turn's own permission layer could not be built "
                                        "(see the runner log)")
-                _TURN_ENV.settings = _sensitive_data_settings_file(turn, _TURN_ENV.settings)
+                _TURN_ENV.settings = _sensitive_data_settings_file(
+                    turn, _TURN_ENV.settings,
+                    cwd=cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8],
+                    caller_path=str(CALLER_ROOT / f"{turn_id}.json") if confined else None)
                 _TURN_ENV.mcp_config = _sensitive_data_mcp_config(turn)
             except ConfineError as exc:
                 _api("POST", f"/turns/{turn_id}/finish",
@@ -9937,6 +10096,12 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # `session-stream` route its turn-end ship takes.
         tail = (_TurnTail(runner_id, _chat_session_id(turn), cwd, resumed=resume_id or "")
                 if confined and _chat_session_id(turn) and cwd is not None else None)
+        # What a sensitive conversation's resumed session already holds from its
+        # earlier turns, each of which shipped its rows under this same transcript id:
+        # the turn-end ship starts after them. (Any other resume — a fork among them,
+        # whose copied history canopy-web holds under another id — ships it all, and
+        # canopy-web keeps each row once.)
+        held_before = tail.shipped_through(resume_id) if tail is not None and resume_id else 0
         with _SESSION_HOOKS_LOCK:
             if not confined:
                 _SESSION_HOOKS[turn_id] = _on_session
@@ -9987,7 +10152,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     continue  # already recorded when the session started
                 try:
                     if fn is None:
-                        _ship_transcript_rows(runner_id, turn, cwd, cli_session_id)
+                        since = held_before if cli_session_id == resume_id else 0
+                        if tail is not None:
+                            since = max(since, tail.shipped_through(cli_session_id))
+                        _ship_transcript_rows(runner_id, turn, cwd, cli_session_id, since)
                     else:
                         fn(runner_id, turn, cli_session_id)
                 except Exception as exc:  # noqa: BLE001
@@ -10497,10 +10665,28 @@ def main() -> None:
         run_over_rest(runner_id)
 
 
+def _system_shutting_down(run=subprocess.run) -> bool:
+    """True while the box itself is powering off or rebooting (systemd says
+    `stopping`), as against this unit being restarted (an update, a self-refresh)."""
+    try:
+        out = run(["systemctl", "is-system-running"], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return (out.stdout or "").strip() == "stopping"
+
+
 def _handle_stop(*_a):
     global _stop
     _stop = True
     _log("stopping after current turn")
+    if SENSITIVE_DATA_MODE and _system_shutting_down():
+        # A box that is stopped or terminated never sweeps again: what its sensitive
+        # conversations kept goes now. A restart (an update) keeps them; the next
+        # start sweeps them as usual.
+        try:
+            forget_all_kept_conversations("the box is shutting down")
+        except Exception as exc:  # noqa: BLE001 — the stop must still happen
+            _log(f"sensitive-data mode: could not forget kept conversations at shutdown ({exc})")
 
 
 def _units_cli(argv: list[str]) -> int:

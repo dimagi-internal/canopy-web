@@ -102,11 +102,21 @@ WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 
 #: Credential stores a caller's session never needs, whatever its paths say — denied
 #: to Read when every read_path is inside the worktree, and to every file-writing tool
-#: (as `Edit(…)`) when every write_path is.
+#: (as `Edit(…)`) when every write_path is. Also every Claude transcript on the box
+#: (the CLI writes and resumes its own without a tool call; a session's oversized tool
+#: output, saved beside its transcript, stays readable) and the per-turn state other
+#: sessions keep under ~/.canopy: the conversations a sensitive-data box keeps, chat
+#: keys, scoped and agent tokens. Not `~/.canopy/caller/**` whole: the session's OWN
+#: envelope lives there, and a deny would beat the allow that lets it read it — the
+#: other envelopes are outside every allow rule, and `profile_guard` lets a session
+#: read its own envelope alone.
 SENSITIVE_PATHS = (
     "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "~/.config/gh/**", "~/.config/op/**",
     "~/.docker/**", "~/.netrc", "~/.claude.json", "~/.claude/canopy/**",
     "~/.canopy/profiles/**", "~/.canopy/caller/pending/**", "~/.canopy/runner.json",
+    "~/.claude/projects/**/*.jsonl", "~/.claude/history.jsonl", "~/.claude/.credentials.json",
+    "~/.canopy/kept-conversations/**", "~/.canopy/chat/**", "~/.canopy/scoped/**",
+    "~/.canopy/agent-token/**", "~/.canopy/delegated/**", "~/.canopy/device-key/**",
 )
 
 
@@ -245,17 +255,23 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
     deny: list[str] = [t for t in GATED_TOOLS if not granted(t)]
     allow: list[str] = []
 
-    # Read/Glob/Grep are scoped by read_paths, the file-writing tools by write_paths
+    # Read/Glob/Grep are scoped by read_paths — or, with none, to the session's own
+    # working directory, never granted whole (a whole-disk Read reaches every other
+    # session's transcript on the box) — and the file-writing tools by write_paths
     # (below); anything else is granted whole.
-    scoped = set(WRITE_TOOLS) | ({"Read", "Glob", "Grep"} if read_paths else set())
+    reads = ("Read", "Glob", "Grep")
+    scoped = set(WRITE_TOOLS) | set(reads)
     allow += [t for t in ("Read",) + GATED_TOOLS
               if t != "Bash" and granted(t) and t not in scoped]
+    if not read_paths and cwd and any(granted(t) for t in reads):
+        read_paths = ["{cwd}/**"]
     if bash:
         allow += [f"Bash({_subst(b, cwd=cwd, thread_id=thread_id)})" for b in bash]
         mine = {_program(b) for b in bash}
         deny += [f"Bash({p} *)" for p in HIGH_RISK_PROGRAMS if p not in mine]
 
-    # Reads: grant exactly the read_paths, and the caller's own envelope.
+    # Reads: grant exactly the read_paths, and the caller's own envelope. A Read(path)
+    # rule is what Claude Code checks Grep and Glob against too.
     if granted("Read"):
         allow += [_path_rule("Read", _subst(rp, cwd=cwd, thread_id=thread_id)) for rp in read_paths]
     if caller_path:

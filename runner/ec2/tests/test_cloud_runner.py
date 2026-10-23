@@ -1308,8 +1308,12 @@ def test_the_rows_name_the_transcript_they_index(cloud_runner, monkeypatch):
             return []
 
         @staticmethod
-        def conversational_messages(records, last):
+        def conversational_messages(records, last, record_offset=0):
             return [{"index": 0}]
+
+        @staticmethod
+        def chunk_rows(events):
+            return [events]
 
         @staticmethod
         def stream_event(row):

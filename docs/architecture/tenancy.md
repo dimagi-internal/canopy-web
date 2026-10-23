@@ -402,11 +402,16 @@ THE predicate; every surface below asks it, one test each in
   `kept_resume` / `keep_conversation`), told by the claim that the turn is in one
   (`ClaimedTurnOut.sensitive_conversation`); it keeps only that session's transcript and
   sidecar, until the conversation has been idle 24 hours or is closed (the box asks
-  `POST /runners/{id}/kept-conversations`). Otherwise the turn starts fresh and is told so
+  `POST /runners/{id}/kept-conversations`; a 401, 403 or 404 there, a retired box among
+  them, forgets them all, and so does the box's own shutdown). Otherwise the turn starts fresh and is told so
   (`conversation.starts_fresh`, which the runner adds to the envelope and the canopy
   plugin's hook renders): canopy-web never reads the sealed words back to hand them on,
-  so the envelope carries no history. The resumed turn's ship re-sends the transcript
-  under the same id, and only its new rows land (`session_sync.ingest_turn_end_rows`). A
+  so the envelope carries no history. The resumed turn's ship sends only the records after
+  the resume point (and after what its live tail already landed), in chunks, under the same
+  id, retrying a failed post (`session_sync.ingest_turn_end_rows` keeps each row once). No
+  turn's read tools reach another conversation's kept words: they are scoped to the turn's
+  own directory and envelope, and every transcript, the kept-conversation records and the
+  other per-turn state under `~/.canopy` are denied by name (`sensitive_data_settings`). A
   member's `who_is_asking` is gated like its REST twin (`can_read_turn_content`), so a
   sensitive turn is "turn not found".
 - **No door around the gate** (`tests/test_sensitive_read_doors.py`): a session minted from a

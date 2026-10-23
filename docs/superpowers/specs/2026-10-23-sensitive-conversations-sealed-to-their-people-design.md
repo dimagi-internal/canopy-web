@@ -36,6 +36,17 @@ nothing here.
   it (the same deletion `_sensitive_data_forget_turn` does today, deferred). A box
   restart sweeps anything past its deadline. The caller envelope, profiles and
   scratch files are still deleted at the end of every turn.
+- Kept data never outlives the box's right to it: a refused sweep ask (401/403/404,
+  a retired runner), a retired runner's start and the box's own shutdown forget every
+  kept conversation, and the sweep re-reads a record before deleting it so a turn
+  that kept a newer session meanwhile loses nothing.
+- No turn reads another conversation's kept session: a sensitive-data turn's read
+  tools reach only its own directory, its own tool output and its own envelope, and
+  every transcript, the kept records and the other per-turn state are denied by name.
+  `profile_guard` refuses a payload it cannot parse.
+- A resumed turn ships only what it added — the records after the resume point and
+  after what its live tail landed — in chunks, with retries; the tail ticks once more
+  as it stops, so the reply's last rows are never left behind.
 - `sensitivity.history` and the envelope's `conversation.history` are removed; the
   canopy plugin hook ignores an absent field.
 
