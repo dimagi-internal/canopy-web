@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from . import cli_extras
 from .device_key import canopy_cli
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,10 @@ def check(home: Optional[Path] = None, run: Runner = subprocess.run) -> str:
                        ".".join(map(str, have)) or "?", ".".join(map(str, want)))
         return "no uv"
     try:
-        out = run([uv, "tool", "install", "--reinstall", "--force", str(marketplace_clone(home))],
+        # Keep what was installed beside canopy (the KB engine, readers): a bare reinstall
+        # drops every `--with` (cli_extras).
+        out = run([uv, "tool", "install", "--reinstall", "--force",
+                   *cli_extras.with_args(home), str(marketplace_clone(home))],
                   capture_output=True, text=True, timeout=TIMEOUT, env=env)
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("canopy CLI reinstall failed (%s)", e)
