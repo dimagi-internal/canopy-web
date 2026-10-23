@@ -217,6 +217,11 @@ class Message(models.Model):
     # The Turn a user line was delivered by, from the same marker. What lets the
     # queued list (`send.queued_messages`) know a send has landed.
     source_turn_id = models.UUIDField(null=True, blank=True, db_index=True)
+    # A SENSITIVE conversation's words ({"plaintext", "content"}), kept apart from
+    # the columns above, which hold metadata only. Read through
+    # `harness.sensitivity.reads_content` alone: the conversation's own people, on
+    # its own chat surfaces. Every other reader sees the columns.
+    sealed = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

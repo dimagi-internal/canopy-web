@@ -49,3 +49,19 @@ def test_a_zdr_box_refuses_an_unconfined_turn(load_cloud_runner, monkeypatch, tm
     assert "exec" not in calls
     [f] = _finish(calls)
     assert f["status"] == "failed" and f["result_note"].startswith("zdr_unconfined")
+
+
+def test_a_confined_turn_ships_its_transcript_before_it_is_deleted(
+        load_cloud_runner, monkeypatch, tmp_path):
+    """The rows carry the reply to the asker (canopy-web seals them); deleting the
+    transcript first left the visitor with no reply."""
+    monkeypatch.setenv("RUNNER_NAME", "cloud-zdr-1")
+    monkeypatch.setenv("RUNNER_DATA_MODE", "zdr")
+    mod = load_cloud_runner()
+    calls = _wire(mod, monkeypatch, tmp_path)
+    order = []
+    monkeypatch.setattr(mod, "_ship_transcript_rows", lambda *a: order.append("ship"))
+    monkeypatch.setattr(mod, "_zdr_forget_turn", lambda *a, **k: order.append("forget"))
+    mod._run_turn("r-1", _turn(chat_session_id="5e55-1"))
+    assert calls.get("exec"), _finish(calls)
+    assert order == ["ship", "forget"]

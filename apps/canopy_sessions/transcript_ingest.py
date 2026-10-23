@@ -416,7 +416,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             ).values_list("turn_index", flat=True)
         )
         next_index = None
-        prepared: list[tuple[int, str, str, dict, dict | None, str | None]] = []
+        prepared: list[tuple[int, str, str, dict, dict | None, str | None, dict | None]] = []
         claimed: set[int] = set()
         from apps.harness import sensitivity
 
@@ -495,21 +495,23 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
-            if withhold and role == Message.TOOL_RESULT:
-                text, content = "", sensitivity.strip_result(content)
-            elif withhold:
-                # Metadata only: the row records that something was said (a tool
-                # call's name, an id), never the words or the arguments.
-                text, content = "", sensitivity.redact_payload(content)
+            sealed = None
+            if withhold:
+                # The columns record that something was said (a tool call's name,
+                # an id); the words are sealed for the conversation's own people,
+                # and a tool's result is not kept at all (`sensitivity.seal`).
+                sealed_text = scrub_nul(text)
+                text, content, sealed = sensitivity.seal(
+                    role, sealed_text, storage_content(scrub_nul(content), sealed_text))
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
-            prepared.append((index, role, text, content, author, turn_hex))
+            prepared.append((index, role, text, content, author, turn_hex, sealed))
         # `held` was computed above, before matching — reused here, not
         # re-queried.
         fresh = [
             Message(session=locked, turn_index=i, role=r, plaintext=t, content=c,
-                    author=a, source_turn_id=uuid.UUID(h) if h else None)
-            for (i, r, t, c, a, h) in prepared
+                    author=a, source_turn_id=uuid.UUID(h) if h else None, sealed=sealed)
+            for (i, r, t, c, a, h, sealed) in prepared
             if i not in held
         ]
         # What the session DID (activity.py). Context (cwd / gitBranch) is a set
@@ -771,14 +773,15 @@ def project_events(turn: Turn, rows) -> int:
             if Message.objects.filter(turn=turn, content__source_seq=row.seq).exists():
                 continue
             payload = row.payload or {}
+            sealed = None
             if sensitive:
                 # The signal's rows carry the live words; the stored row keeps
-                # metadata only (`sensitivity.redact_payload`).
-                payload = sensitivity.redact_payload(payload)
+                # metadata, the words sealed (`sensitivity.seal`).
+                _, payload, sealed = sensitivity.seal(role, str(payload.get("text", "")), payload)
             Message.objects.create(
                 session=session, turn=turn, turn_index=index, role=role,
                 content={**payload, "source_seq": row.seq},
-                plaintext=str(payload.get("text", "")),
+                plaintext=str(payload.get("text", "")), sealed=sealed,
             )
             act.row(role, str(payload.get("text", "")), payload)
             index += 1

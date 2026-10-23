@@ -50,7 +50,7 @@
 "apps/canopy_sessions/access.py" = ["PLC0415"]  # 5
 "apps/canopy_sessions/activity.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/agui.py" = ["PLC0415"]  # 1
-"apps/canopy_sessions/api.py" = ["PLC0415"]  # 30
+"apps/canopy_sessions/api.py" = ["PLC0415"]  # 29
 "apps/canopy_sessions/app_views_api.py" = ["PLC0415"]  # 3
 "apps/canopy_sessions/apps.py" = ["PLC0415"]  # 4
 "apps/canopy_sessions/attachment_storage.py" = ["PLC0415"]  # 3

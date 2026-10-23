@@ -310,20 +310,26 @@ THE predicate; every surface below asks it, one test each in
   live frame keep `{tool_use_id, is_error, withheld}`, never the result
   (`sensitivity.strip_result`, in `ledger.append_events`, `persist_transcript_rows` and
   `post_session_stream`).
-- **Metadata, never content:** every stored event and `Message` (the person's, the
-  agent's, a tool call's) keeps kind, tool name, argument names, ids, error flags, size and
-  hash only (`sensitivity.redact_payload`, `send.py`, `transcript_ingest`); the live frame
-  carries the words and nothing writes them. The prompt is wiped at the turn's end
-  (`closing.close_turn`), the result note withheld, and there is no owner-ask line, live
-  tail (`RunnerBinding.tail`) or autotitle. A reload shows metadata only.
-- **Delivered live:** a confined turn (a caller's, e.g. a site visitor in the widget) on a
-  ZDR box leaves no transcript, so its reply, tool calls and outcomes reach the session
-  socket as the ledger's live frames (`sensitivity.reply_is_live_only`, read by
-  `realtime.signals._session_chat_events`); every other transcript-sourced turn replies
-  through its transcript, so a reply never arrives twice.
+- **Metadata in every readable column:** every stored event and every `Message`'s
+  `plaintext`/`content` (the person's, the agent's, a tool call's) keeps kind, tool name,
+  argument names, ids, error flags, size and hash only (`sensitivity.redact_payload`). The
+  prompt is wiped at the turn's end (`closing.close_turn`), the result note withheld, and
+  there is no owner-ask line, live tail (`RunnerBinding.tail`) or autotitle.
+- **The conversation, sealed for its own people:** the words of a `Message` (not a tool's
+  result) are kept in `Message.sealed` (`sensitivity.seal`, from `send.py` and
+  `transcript_ingest`), so a person can come back to it and a participant can join it. ONE
+  gate reads them, `sensitivity.reads_content`: the conversation's own people (its creator,
+  its participants, its contact) on its own chat surfaces (a browser session, the widget or
+  SDK's contact or site token; never MCP, a PAT, OAuth or a minted session). It is asked by
+  the chat REST reads (`GET /{id}`, `/messages`), the contact's `/messages`, the socket
+  snapshot and an MCP Apps View's `tool_input`, through `sensitivity.readable`. Every other
+  reader — search, human inputs, a session review, an agent's or the fleet's reads, an
+  admin who is not in it — reads the columns, so a new reader is closed until it asks.
+  The reply reaches the asker the one way every turn's does: its transcript rows (a ZDR box
+  ships a confined turn's before deleting it).
 - **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
-  `tool_input`; a receipt keeps no excerpt; `ui/update-model-context` is accepted and not
-  kept (`apps/mcp_apps_host/mcp_apps_views.py`).
+  `tool_input`, which it reads back from the sealed call; a receipt keeps no excerpt;
+  `ui/update-model-context` is accepted and not kept (`apps/mcp_apps_host/mcp_apps_views.py`).
 - **Never re-exposed:** share-link upload (403), Slack share / new thread (403) and
   mirroring (`slack.relay`), export (403), the usage scan's title.
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the

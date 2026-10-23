@@ -9129,7 +9129,6 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.settings = None
         _TURN_ENV.confined = None
         _TURN_ENV.chat_session = ""
-        _zdr_forget_turn(str(turn_id), cwd, cli_session_id, confined)
         if cli_session_id and cwd is not None:
             _record_session_cwd(cli_session_id, cwd)
         if cli_session_id:
@@ -9148,6 +9147,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                         fn(runner_id, turn, cli_session_id)
                 except Exception as exc:  # noqa: BLE001
                     _log(f"warn: could not {step} for {turn_id[:8]}: {exc}")
+        # AFTER the rows above shipped: a confined ZDR turn's transcript is deleted
+        # here, and it is how its reply reaches the asker. canopy-web keeps the words
+        # sealed for the conversation's own people (`sensitivity.seal`).
+        _zdr_forget_turn(str(turn_id), cwd, cli_session_id, confined)
         # ALWAYS over REST. #448 fixed turns being orphaned when the WebSocket
         # died mid-turn and the finish frame raised; the worker never touches the
         # socket at all, so that failure class is now structurally impossible

@@ -152,18 +152,26 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   allowlist). The turn's prompt, which the runner reads at claim, is wiped when the turn
   ends (`closing.close_turn`); its result note is withheld (`[zdr] note withheld (N
   bytes)`); no owner-ask line, no live tail, no title (a title is the first sentence
-  verbatim, and a person may type a name in it). The live frame still carries the words
-  to the person watching, over the socket, and nothing writes them, so **after a reload
-  the earlier words are gone**. Follow-up: history from the ZDR box itself while the
-  conversation is live. No `TurnTranscript` either (a ZDR box does not even send it).
+  verbatim, and a person may type a name in it). No `TurnTranscript` either (a ZDR box
+  does not even send it).
+- **The conversation is kept sealed, for its own people** (Jonathan, 2026-10-23: a
+  conversation that cannot be recovered is a problem, and the SDK needs multiplayer).
+  The words of each `Message` — not a tool's result — are kept in `Message.sealed`,
+  beside the metadata columns above, and ONE gate reads them,
+  `sensitivity.reads_content`: the conversation's own people (its creator, the
+  participants added to it, its contact) on its own chat surfaces (the chat page, the
+  widget, the SDK). An MCP call, a PAT, a session review, the fleet's readers, another
+  AI and an admin who is not in the conversation read the metadata columns. A reload, a
+  second tab and a participant joining all read it back. There is one delivery path: the
+  transcript rows every turn ships (a ZDR box ships a confined turn's, then deletes it).
   What metadata there is stays under a retention rule enforced for sensitive sessions
   whatever `CANOPY_RETENTION_ENFORCE` says (default 30 days).
 - **A tool result keeps no rows.** A `TOOL_RESULT` `Message` in a sensitive session is
   stored as `{tool_use_id, is_error}` with empty `plaintext` — the result body never
   reaches canopy-web's database, from the runner's transcript rows or from a live
   `tool_end` event, and the live frame carries the same stripped row, so a reload and a
-  live view agree. The `TOOL_USE` row keeps the call's metadata (above), not its
-  arguments. An MCP Apps View (`apps/tokens/mcp_apps_views.py`)
+  live view agree. The `TOOL_USE` row's columns keep the call's metadata (above); its
+  arguments are sealed with the conversation, so a View can read them back. An MCP Apps View (`apps/tokens/mcp_apps_views.py`)
   therefore gets `tool_result: null` in a sensitive session and fetches its data **as
   the viewer**, through the host's app-only tool, from `tool_input` — the way connect-labs'
   coaching View already works (a View built on path D already has to, since the runner

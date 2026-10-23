@@ -13,6 +13,7 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from apps.harness import initiator as who
+from apps.harness import sensitivity
 from apps.realtime.groups import chat_user_group, session_group
 
 from . import access, agui, attach, doors, drafts, presence, serializers, stream_map
@@ -699,6 +700,11 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         # falling back to the binding tail for a local session with no Message rows.
         # REST and this snapshot MUST agree — see tests/test_transcript_parity.py.
         messages, _has_more, _oldest = chat_transcript_read.visible_transcript(self.session)
+        # The same gate as REST (`sensitivity.reads_content`): a sensitive
+        # conversation reads back for its own people on its own chat surfaces.
+        messages = sensitivity.readable(
+            messages, self.session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
+            user=self.user, contact=getattr(self, "contact", None))
         from apps.agents.credentials import secret_requests
         from apps.mcp_apps_host import mcp_apps_views
 

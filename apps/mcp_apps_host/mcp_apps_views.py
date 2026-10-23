@@ -139,6 +139,15 @@ def host_tool_of(use: dict) -> tuple[str, str, dict]:
     return host_gateway.host_tool_name(name), "direct", args
 
 
+def _use_of(content, sealed) -> dict:
+    """A tool call's content: in a sensitive conversation its columns are metadata and
+    the call itself is sealed (`sensitivity.seal`). What a View is (which host tool,
+    which resource) is derived from it here, server-side; the call's arguments reach
+    a viewer only through `resource`, behind `sensitivity.reads_content`."""
+    inner = sealed.get("content") if isinstance(sealed, dict) else None
+    return inner if isinstance(inner, dict) else (content if isinstance(content, dict) else {})
+
+
 def app_ref(app, use: dict) -> dict | None:
     """The `app` a row carries when its tool call has a View, else None."""
     call_id = use.get("id")
@@ -168,16 +177,17 @@ def annotate(session, messages) -> None:
         return
     uses = {}
     for m in messages:
-        content = getattr(m, "content", None)
-        if m.role == Message.TOOL_USE and isinstance(content, dict) and content.get("id"):
+        content = _use_of(getattr(m, "content", None), getattr(m, "sealed", None))
+        if m.role == Message.TOOL_USE and content.get("id"):
             uses[content["id"]] = content
     wanted = [str((getattr(m, "content", None) or {}).get("tool_use_id") or "") for m in results]
     missing = [w for w in wanted if w and w not in uses]
     if missing:
-        for content in (Message.objects.filter(session=session, role=Message.TOOL_USE,
-                                               content__id__in=missing)
-                        .values_list("content", flat=True)):
-            uses[content.get("id")] = content
+        for content, sealed in (Message.objects.filter(session=session, role=Message.TOOL_USE,
+                                                       content__id__in=missing)
+                                .values_list("content", "sealed")):
+            use = _use_of(content, sealed)
+            uses[use.get("id")] = use
     for m, call_id in zip(results, wanted):
         # A call the host refused gets no View: there is nothing to show or act on, and
         # an empty card beside the agent's corrected retry is noise (2026-10-09: the agent
@@ -200,8 +210,9 @@ def app_for_result_block(session, block: dict) -> dict | None:
     app = site_app(session)
     if app is None or not (app.mcp_apps_index or {}).get("tools"):
         return None
-    use = (Message.objects.filter(session=session, role=Message.TOOL_USE, content__id=call_id)
-           .values_list("content", flat=True).first())
+    found = (Message.objects.filter(session=session, role=Message.TOOL_USE, content__id=call_id)
+             .values_list("content", "sealed").first())
+    use = _use_of(*found) if found else None
     return app_ref(app, use) if use else None
 
 
@@ -232,9 +243,10 @@ def find(session, tool_call_id: str) -> ViewRow:
     from apps.canopy_sessions.models import Message
 
     app = site_app(session)
-    use = (Message.objects.filter(session=session, role=Message.TOOL_USE,
-                                  content__id=tool_call_id)
-           .values_list("content", flat=True).first()) if app is not None else None
+    found = (Message.objects.filter(session=session, role=Message.TOOL_USE,
+                                    content__id=tool_call_id)
+             .values_list("content", "sealed").first()) if app is not None else None
+    use = _use_of(*found) if found else None
     ref = app_ref(app, use) if use else None
     found = (Message.objects.filter(session=session, role=Message.TOOL_RESULT,
                                     content__tool_use_id=tool_call_id)
@@ -405,8 +417,10 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         or reason,
         "sign_in_url": (row.app.frame_origins() or [""])[0] if (reason and can_write) else "",
         # A sensitive conversation stores no result (spec 2026-10-22-phi-agents-on-
-        # zdr-runners §4): the View fetches its data as the viewer, from the input.
-        "tool_input": tool_input(row),
+        # zdr-runners §4): the View fetches its data as the viewer, from the input —
+        # which only the conversation's own people read back (`reads_content`).
+        "tool_input": (tool_input(row) if sensitivity.reads_content(
+            session, chat_surface=True, user=viewer.user, contact=viewer.contact) else {}),
         "tool_result": None if sensitivity.is_sensitive(session) else tool_result(row),
         "receipts": receipts_for(session, tool_call_id),
     }

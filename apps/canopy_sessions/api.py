@@ -24,7 +24,7 @@ from apps.api.auth import session_auth
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
-from apps.harness import provenance
+from apps.harness import provenance, sensitivity
 from apps.harness import runner_requirements as rr
 from apps.realtime import groups
 from apps.workspaces import services as wsvc
@@ -838,6 +838,14 @@ def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
     return _session_or_404(request, matches[0])
 
 
+def _readable(request: HttpRequest, session, rows) -> list:
+    # A sensitive conversation reads back only for its own people, on its chat
+    # surfaces (`sensitivity.reads_content`): an MCP call, a PAT or a co-tenant
+    # who is not in it gets the metadata columns.
+    return sensitivity.readable(rows, session, user=request.user,
+                                chat_surface=sensitivity.request_is_chat_surface(request))
+
+
 @router.get("/{session_id}", response=SessionDetailOut, summary="Get a session + transcript tail")
 @gate("session-acl")
 def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False):
@@ -858,6 +866,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
         session = _session_by_key_or_404(request, session_id)
     data = _out(session)
     rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
+    rows = _readable(request, session, rows)
     from apps.agents.credentials import secret_requests
     from apps.embedding import delegation
     from apps.mcp_apps_host import mcp_apps_views
@@ -991,6 +1000,7 @@ def list_messages(
     session = _session_or_404(request, session_id)
     limit = clamp_limit(limit)
     rows, has_more = transcript_read.messages_before(session, before=before, limit=limit)
+    rows = _readable(request, session, rows)
     from apps.agents.credentials import secret_requests
     from apps.embedding import delegation
     from apps.mcp_apps_host import mcp_apps_views
@@ -1720,8 +1730,6 @@ def export_session(request: HttpRequest, session_id: uuid.UUID):
     session = _session_or_404(request, session_id)
     if session.created_by_id is None or session.created_by_id != request.user.pk:
         raise HttpError(403, "only the person who started this session can export it")
-    from apps.harness import sensitivity
-
     if sensitivity.is_sensitive(session):
         raise HttpError(403, sensitivity.REFUSAL)
     markdown, count = exports.build_markdown(session)
