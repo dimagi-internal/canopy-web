@@ -350,6 +350,89 @@ def _not_received_note(task: str, reason: str = "") -> str:
 _TYPED_TURNS: dict[str, float] = {}
 TYPED_TURN_TTL = 6 * 3600.0
 
+# turn id -> (emdash task, when) for every session this runner CREATED for a turn.
+# Creating a session delivers the turn's prompt, so a turn that has one is never
+# created again: a crash after the create used to fail the turn with no session key,
+# the server requeued it as a non-attempt, and the re-claim made a SECOND session
+# with the same prompt in it (Slack turn f7cb8694, 2026-10-23: record-session 500'd
+# mid-deploy on both attempts, two worktrees, and the web listed the orphan as its
+# own session). `main._claim_and_execute` reads this to fail a crash terminally.
+_CREATED_TURNS: dict[str, tuple[str, float]] = {}
+
+
+def created_task(turn_id: str) -> str:
+    """The emdash task this runner created for `turn_id`, or ""."""
+    now = time.monotonic()
+    for key, (_, when) in list(_CREATED_TURNS.items()):
+        if now - when > TYPED_TURN_TTL:
+            del _CREATED_TURNS[key]
+    entry = _CREATED_TURNS.get(turn_id)
+    return entry[0] if entry else ""
+
+
+def _note_created(turn_id: str, task: str) -> None:
+    _CREATED_TURNS[turn_id] = (task, time.monotonic())
+
+
+def _already_created(client, turn_id: str) -> bool:
+    """True — and the turn is finished FAILED, naming its session — when this runner
+    already created a session for this turn. The prompt is in that session; a second
+    one would be a duplicate conversation doing the same work."""
+    task = created_task(turn_id)
+    if not task:
+        return False
+    logger.warning("turn=%s already has session '%s' — NOT creating another", turn_id, task)
+    _post_events_best_effort(client, turn_id, [{"kind": "status",
+        "payload": {"status": "not_recreated", "task": task}}])
+    client.finish(turn_id, note=f"already started in session '{task}'; not started twice",
+                  status="failed", emdash_task_id=task)
+    return True
+
+
+# record-session calls that failed AFTER their session was created, keyed by task:
+# (args, kwargs, when). The session exists and the prompt is in it, so the turn goes
+# on; the link is re-sent each tick (`retry_unrecorded`, ahead of the session report)
+# until canopy takes it. Reporting first would file the task as a session of its own
+# — the duplicate row this exists to prevent.
+_UNRECORDED: dict[str, tuple[tuple, dict, float]] = {}
+UNRECORDED_TTL = 3600.0
+
+
+def _record_created(client, turn_id: str, task: str, *args, **kwargs) -> None:
+    """`client.record_session(*args, **kwargs)` for a session that now exists; a
+    failure is deferred to `retry_unrecorded`, never raised into the turn."""
+    try:
+        client.record_session(*args, **kwargs)
+    except ClientError as exc:
+        logger.warning("record-session failed for task=%s turn=%s (%s) — retrying next tick",
+                       task, turn_id, str(exc)[:200])
+        _UNRECORDED[task] = (args, kwargs, time.monotonic())
+        _post_events_best_effort(client, turn_id, [{"kind": "status",
+            "payload": {"status": "record_deferred", "task": task}}])
+
+
+def retry_unrecorded(cfg, client) -> None:
+    """Re-send each deferred record-session. Stops at the first transient failure
+    (canopy is still having its moment); a 4xx or an hour of trying gives up."""
+    now = time.monotonic()
+    for task, (args, kwargs, when) in list(_UNRECORDED.items()):
+        if now - when > UNRECORDED_TTL:
+            del _UNRECORDED[task]
+            logger.error("record-session for task=%s never succeeded; giving up", task)
+            continue
+        try:
+            client.record_session(*args, **kwargs)
+        except ClientError as exc:
+            if exc.transient:
+                logger.info("deferred record-session for task=%s still failing: %s",
+                            task, str(exc)[:200])
+                return
+            del _UNRECORDED[task]
+            logger.error("deferred record-session for task=%s refused: %s", task, str(exc)[:200])
+            continue
+        del _UNRECORDED[task]
+        logger.info("deferred record-session for task=%s recorded", task)
+
 
 def _already_typed(client, turn_id: str, task: str) -> bool:
     """True — and the turn is finished FAILED without typing — when this runner has
@@ -1102,6 +1185,8 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         logger.info("chat turn=%s reused emdash task=%s (agent=%s) %s", turn_id, task, target,
                     whois.brief(turn))
     else:
+        if _already_created(client, turn_id):
+            return f"failed:{turn_id}"
         name = _task_name(target, turn)
         if not _confine(client, turn, name):
             return f"failed:{turn_id}"
@@ -1123,13 +1208,15 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             logger.error("chat create unconfirmed turn=%s agent=%s: %s", turn_id, target, missing)
             client.fail_turn(turn_id, f"chat create failed: {missing}"[:300])
             return f"failed:{turn_id}"
+        _note_created(turn_id, task or name)
         if task and task != name:
             _repoint(name, task, turn, envelope)
             if not _confine(client, turn, task):
                 return f"failed:{turn_id}"
         _native_confine(cfg, client, turn, task)
         startup_watch.note_created(target, task)
-        client.record_session(
+        _record_created(
+            client, turn_id, task,
             runner_id, agent_slug, thread_key, project=project, workspace=workspace,
             emdash_task_id=task, summary=None,
         )
@@ -1270,6 +1357,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         logger.error("CREATE skipped turn=%s agent=%s: %s", turn_id, agent, missing_project)
         client.fail_turn(turn_id, missing_project)
         return f"failed:{turn_id}"
+    if _already_created(client, turn_id):
+        return f"failed:{turn_id}"
     name = _task_name(agent, turn)
     if not _confine(client, turn, name):
         return f"failed:{turn_id}"
@@ -1292,6 +1381,7 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
         readiness.mark_failed(cfg, missing)
         client.fail_turn(turn_id, missing)
         return f"failed:{turn_id}"
+    _note_created(turn_id, task or name)
     # emdash may name the task differently from what was asked; the guard keys on
     # the REAL name. Until this lands, a renamed caller session's tool calls find
     # no profile and are refused — closed, never open.
@@ -1307,7 +1397,8 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     _post_events_best_effort(client, turn_id, [{"kind": "status",
         "payload": {"status": "created_session", "task": task, "thread_key": thread_key,
                     "rehydrated": bool(summary)}}])
-    client.record_session(
+    _record_created(
+        client, turn_id, task,
         runner_id, agent_slug, thread_key, project=project, workspace=workspace,
         emdash_task_id=task,
         agent_task_ext_id=ref.get("agent_task_ext_id"),

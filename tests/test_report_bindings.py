@@ -268,3 +268,49 @@ def test_reporting_one_project_does_not_revive_anothers_archived_namesake():
 
     ace.refresh_from_db()
     assert ace.status == Session.ARCHIVED
+
+
+# --- a chat's task whose record-session never landed ---------------------------
+
+def _chat_with_turn(task="c-hello-3bda", claimed=True):
+    """An agent chat whose turn's runner created `task` but never linked it (the
+    record-session call failed), as Slack turn f7cb8694 did mid-deploy."""
+    import uuid
+
+    from apps.agents.models import Agent
+    from apps.harness.models import Turn
+
+    jj = _user()
+    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=jj)
+    runner = Runner.objects.create(name="laptop", workspace=ws, location=Runner.LOCAL,
+                                   host="jj@mbp", owner=jj)
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace=ws)
+    chat = Session.objects.create(workspace=ws, agent=eva, created_by=jj, title="hello")
+    Turn.objects.create(chat_session=chat, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="hello",
+                        idempotency_key=uuid.uuid4().hex, session_key=task,
+                        claimed_by=runner if claimed else None)
+    return runner, ws, chat
+
+
+def test_an_unlinked_chat_task_is_bound_to_its_chat_not_filed_as_a_new_session():
+    runner, ws, chat = _chat_with_turn()
+    replace_reported_sessions(runner, ws, [_reported("c-hello-3bda", [], project="eva")])
+    b = RunnerBinding.objects.get(session_key="c-hello-3bda")
+    assert b.session_id == chat.pk, "one conversation, one row"
+    assert b.thread_key == str(chat.pk), "the chat's next turn reuses this task"
+    assert b.runner_id == runner.pk and b.emdash_project == "eva"
+    assert Session.objects.count() == 1
+
+
+def test_a_chat_already_on_a_task_is_never_moved_to_another():
+    runner, ws, chat = _chat_with_turn()
+    RunnerBinding.objects.create(session=chat, session_key="c-other-1111", emdash_project="eva",
+                                 thread_key=str(chat.pk), runner=runner, host=runner.host)
+    replace_reported_sessions(runner, ws, [_reported("c-hello-3bda", [], project="eva")])
+    assert RunnerBinding.objects.get(session=chat).session_key == "c-other-1111"
+
+
+def test_another_runners_turn_binds_nothing():
+    runner, ws, chat = _chat_with_turn(claimed=False)
+    replace_reported_sessions(runner, ws, [_reported("c-hello-3bda", [], project="eva")])
+    assert not RunnerBinding.objects.filter(session=chat).exists()
