@@ -186,7 +186,7 @@
 "apps/harness/unit_pairing.py" = ["PLC0415"]  # 4
 "apps/harness/views.py" = ["PLC0415"]  # 6
 "apps/host_grants/client_identity.py" = ["PLC0415"]  # 3
-"apps/host_grants/host_gateway.py" = ["PLC0415"]  # 25
+"apps/host_grants/host_gateway.py" = ["PLC0415"]  # 24
 "apps/host_grants/host_grants.py" = ["PLC0415"]  # 6
 "apps/host_grants/live_probe.py" = ["PLC0415"]  # 11
 "apps/host_grants/outbound.py" = ["PLC0415"]  # 3

@@ -29,7 +29,9 @@ What is checked, all fail-closed:
   access token it carries;
 * ``sub`` is the person the host is serving (``subject``, the delegated token's subject);
 * ``uri`` names the resource being read (``same_resource``: scheme, authority and path;
-  the query — a page of it — may differ).
+  the query — a page of it — may differ);
+* with ``rpc``, the statement's ``rpc`` claim is this very JSON-RPC request
+  (``contract.rpc_digest`` of its method and params) — not another read riding its token.
 """
 from __future__ import annotations
 
@@ -91,13 +93,16 @@ def same_resource(stated: str, actual: str) -> bool:
 
 
 def verify_view(request, *, config, client_keys, replay_store, uri: str, subject: str,
-                jkt: str | None = None, access_token: str | None = None) -> View:
+                jkt: str | None = None, access_token: str | None = None,
+                rpc: tuple[str, Mapping] | None = None) -> View:
     """Verify the ``Canopy-View`` statement on ``request`` (anything with ``.headers``, or
     a header mapping) for a read of ``uri`` as ``subject``. ``config`` is the host's
     ``HostConfig``; ``client_keys`` a ``ClientKeyResolver``; ``replay_store`` a
     ``JtiStore``. ``jkt`` defaults to the key ``DPoPGate`` proved on this request,
-    ``access_token`` to the one in ``Authorization``. Returns the ``View`` or raises
-    ``ViewRefused``."""
+    ``access_token`` to the one in ``Authorization``. ``rpc`` — ``(method, params)`` of
+    the JSON-RPC request in front of the host — requires the statement to be for exactly
+    that request (``contract.rpc_digest``); a host should always pass it. Returns the
+    ``View`` or raises ``ViewRefused``."""
     headers = _headers_or_refuse(request)
     if _get(headers, contract.EXECUTION_HEADER):
         raise ViewRefused("agent_call", "an agent's call is never the person's own View")
@@ -139,6 +144,9 @@ def verify_view(request, *, config, client_keys, replay_store, uri: str, subject
         raise ViewRefused("wrong_person", "the statement is for another person")
     if not same_resource(str(claims.get("uri") or ""), uri):
         raise ViewRefused("wrong_resource", "the statement is for another resource")
+    if rpc is not None and not constant_time_equal(str(claims.get("rpc") or ""),
+                                                   contract.rpc_digest(*rpc)):
+        raise ViewRefused("wrong_request", "the statement is for a different request")
     if not str(claims.get("session") or ""):
         raise ViewRefused("missing_claim", "the statement names no conversation")
 

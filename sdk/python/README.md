@@ -785,7 +785,7 @@ When a person's own MCP Apps View reads a resource you keep (`resources/read`), 
 adds `Canopy-View: <JWT>` (`typ: canopy-view+jwt`), signed by the same client key:
 `actor: "view"`, `sub` = YOUR id for the person (the delegated grant's subject), `uri` =
 the resource, `session` = the conversation, `iat`/`exp` (≤ 60s), single-use `jti`,
-`cnf.jkt` and `ath` (required), plus informational `viewer` and `agent`. canopy sends it
+`cnf.jkt` and `ath` (required), `rpc` (below), plus informational `viewer` and `agent`. canopy sends it
 only when the principal behind the View request is a person acting as themselves — never
 an agent's turn, a conversation's caller token or an agent's own login — and only for a
 conversation that person is in. It never rides beside `Canopy-Execution`.
@@ -799,6 +799,12 @@ try:
 except ViewRefused as exc:                       # no_statement, agent_call, wrong_person,
     ...                                          # wrong_resource, expired, replayed, unbound, ...
 ```
+
+**Both statements name the request they ride.** `rpc` = `contract.rpc_digest(method,
+params)` of the JSON-RPC request (for `tools/call` the tool name and arguments, for
+`resources/read` the URI, query sorted). Pass `rpc=(method, params)` to `verify_execution`
+/ `verify_view` and a statement lifted from one call cannot ride another on the same
+token (`wrong_request`).
 
 If you release more to a person's View than to an agent, release it on a verified
 `View` only. **No statement means refused**, not "the person is looking": anything that

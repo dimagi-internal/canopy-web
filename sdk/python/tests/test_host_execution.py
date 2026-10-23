@@ -143,3 +143,15 @@ def test_another_token_type_is_not_a_statement(world):
 def test_sensitive_clearance_needs_every_fact(world, change, code):
     ex = _verify(world, _headers(_statement(world, {**FACTS, **change})))
     assert ex.sensitive_clearance(agents={"labsdata"}) == code
+
+
+def test_a_statement_is_bound_to_its_request(world):
+    call = ("tools/call", {"name": "data_query", "arguments": {"sql": "select 1"}})
+    raw = consumer.execution_statement(world.client.client_key, CLIENT_ID, RESOURCE, FACTS,
+                                       jkt=_jkt(world), access_token=TOKEN, rpc=contract.rpc_digest(*call))
+    assert _verify(world, _headers(raw), rpc=call).agent == "labsdata"
+    other = ("tools/call", {"name": "data_query", "arguments": {"sql": "select * from visits"}})
+    raw = consumer.execution_statement(world.client.client_key, CLIENT_ID, RESOURCE, FACTS,
+                                       jkt=_jkt(world), access_token=TOKEN, rpc=contract.rpc_digest(*call))
+    assert _refused(world, _headers(raw), rpc=other) == "wrong_request"
+    assert _refused(world, _headers(_statement(world)), rpc=call) == "wrong_request"

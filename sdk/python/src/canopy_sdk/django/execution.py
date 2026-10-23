@@ -14,7 +14,8 @@ from .stores import DjangoJtiStore
 __all__ = ["Execution", "ExecutionRefused", "View", "ViewRefused", "verify_execution", "verify_view"]
 
 
-def verify_execution(request, *, jkt: str | None = None, access_token: str | None = None) -> Execution:
+def verify_execution(request, *, jkt: str | None = None, access_token: str | None = None,
+                     rpc=None) -> Execution:
     """The verified statement, or ``ExecutionRefused``. ``request`` is a Django or
     Starlette request (anything with ``.headers``) or a header mapping; ``jkt``
     defaults to the key ``dpop_gate`` proved on this request."""
@@ -22,11 +23,11 @@ def verify_execution(request, *, jkt: str | None = None, access_token: str | Non
 
     return _execution.verify_execution(
         request, config=conf.get_host_config(), client_keys=ClientKeyResolver(cache=cache),
-        replay_store=DjangoJtiStore(), jkt=jkt, access_token=access_token)
+        replay_store=DjangoJtiStore(), jkt=jkt, access_token=access_token, rpc=rpc)
 
 
 def verify_view(request, *, uri: str, subject: str, jkt: str | None = None,
-                access_token: str | None = None) -> View:
+                access_token: str | None = None, rpc=None) -> View:
     """The verified ``Canopy-View`` statement for a read of ``uri`` as ``subject`` (the
     host's id for the person the delegated token serves), or ``ViewRefused``."""
     from django.core.cache import cache
@@ -35,4 +36,5 @@ def verify_view(request, *, uri: str, subject: str, jkt: str | None = None,
 
     return _view.verify_view(
         request, config=conf.get_host_config(), client_keys=ClientKeyResolver(cache=cache),
-        replay_store=DjangoJtiStore(), uri=uri, subject=subject, jkt=jkt, access_token=access_token)
+        replay_store=DjangoJtiStore(), uri=uri, subject=subject, jkt=jkt, access_token=access_token,
+        rpc=rpc)

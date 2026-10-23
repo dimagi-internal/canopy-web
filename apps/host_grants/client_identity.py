@@ -201,23 +201,24 @@ def client_assertion(audience: str) -> str:
     return consumer.client_assertion(_client_key(), client_id(), audience)
 
 
-def execution_statement(audience: str, facts: dict, *, access_token: str | None = None) -> str:
+def execution_statement(audience: str, facts: dict, *, access_token: str | None = None,
+                        rpc: str | None = None) -> str:
     """`Canopy-Execution` for ONE request to a host (`apps/tokens/execution.py`):
     signed by the client key the host already trusts, bound to canopy's DPoP key
     and to the access token it rides with, 60s, single-use."""
     return consumer.execution_statement(_client_key(), client_id(), audience, facts,
-                                        jkt=dpop_jkt(), access_token=access_token)
+                                        jkt=dpop_jkt(), access_token=access_token, rpc=rpc)
 
 
 def view_statement(audience: str, *, subject: str, uri: str, session: str, access_token: str,
-                   viewer: str = "", agent: str = "") -> str:
+                   viewer: str = "", agent: str = "", rpc: str | None = None) -> str:
     """`Canopy-View` for ONE request a person's own View makes to a host
     (`mcp_apps_views.view_facts` decides it may): `actor: "view"`, the person as the host
     knows them, the resource, the conversation; signed by the same client key, bound to
     canopy's DPoP key and the access token, 60s, single-use."""
     return consumer.view_statement(_client_key(), client_id(), audience, subject=subject, uri=uri,
                                    session=session, jkt=dpop_jkt(), access_token=access_token,
-                                   viewer=viewer, agent=agent)
+                                   viewer=viewer, agent=agent, rpc=rpc)
 
 
 def sign_site_agents(site_name: str, content: dict) -> str:

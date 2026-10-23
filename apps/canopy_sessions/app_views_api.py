@@ -79,8 +79,10 @@ def _run(fn, *args):
 @router.get("/{session_id}/apps/{tool_call_id}/resource", response=dict,
             summary="Load an app view, as the person looking at it")
 # MCP Apps View plumbing (apps/mcp_apps_host/mcp_apps_views.py): a session reader may
-# load a View read-only; every act (call/read/context/message) needs a WRITE
-# role in the session and the viewer's OWN host grant, and a PAT is refused.
+# load a View read-only. call/context/message need a WRITE role in the session and the
+# viewer's OWN host grant; read/subscribe need the viewer's own grant and `may_read` (any
+# session reader of an ordinary conversation; a sensitive one's people on its chat
+# surfaces only). A PAT is refused.
 @gate("session-acl")
 def app_view_resource(request: HttpRequest, session_id: uuid.UUID, tool_call_id: str):
     session = _session(request, session_id)

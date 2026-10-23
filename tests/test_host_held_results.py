@@ -347,11 +347,39 @@ def test_site_read_reads_as_the_visitor_and_audits_only_the_uri(w, host):
     assert uri in audit.args_summary and SENTINEL not in audit.args_summary and audit.ok
 
 
-def test_site_read_of_someone_elses_result_is_the_hosts_refusal(w, host):
+def test_site_read_of_a_result_this_conversation_was_not_given_never_reaches_the_host(w, host):
     sg.grant(w)
     theirs = host.store.save("query", {"rows": ROWS}, owner="sub-vera", name="r")["uri"]
-    with sg.visitor(w), pytest.raises(Exception, match="forbidden"):
-        sg.call(host, "site_read", {"uri": theirs})
+    host.seen.clear()
+    for uri in (theirs, "https://evil.test/rows", "other-scheme://x"):
+        with sg.visitor(w), pytest.raises(Exception, match="results the site gave me|does not declare"):
+            sg.call(host, "site_read", {"uri": uri})
+    assert host.seen == []
+
+
+def test_site_read_of_a_returned_result_the_host_refuses_is_its_refusal(w, host, monkeypatch):
+    """A link this conversation was given, which the host's own ACL then refuses."""
+    sg.grant(w)
+    out = _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
+    uri = _link(out.structured_content)["uri"]
+    monkeypatch.setattr(host.store, "read", lambda *a, **k: (_ for _ in ()).throw(Exception("forbidden")))
+    with sg.visitor(w), pytest.raises(Exception):  # noqa: B017 - the host's refusal, whatever its words
+        sg.call(host, "site_read", {"uri": uri})
+
+
+def test_site_read_follows_the_owners_ceiling(w, host):
+    """A result is read back only while the tool that produced it is inside the ceiling."""
+    sg.grant(w)
+    out = _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
+    uri = _link(out.structured_content)["uri"]
+    caps = dict(IFACE["capabilities"])
+    caps["connect"] = {**caps["connect"], "ceiling": ["mcp__*connect_labs__marketplace_*"]}
+    w["agent"].interface = parse({"capabilities": caps})
+    w["agent"].save(update_fields=["interface"])
+    host.seen.clear()
+    with sg.visitor(w), pytest.raises(Exception, match="may not use"):
+        sg.call(host, "site_read", {"uri": uri})
+    assert host.seen == []
 
 
 def _sensitive(w):
@@ -376,7 +404,8 @@ def _sensitive(w):
 def test_site_read_is_a_tool_a_sensitive_capability_holds(w, host):
     _sensitive(w)
     sg.grant(w)
-    uri = host.store.save("query", {"rows": ROWS}, owner="u-42", name="r")["uri"]
+    out = _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
+    uri = _link(out.structured_content)["uri"]
     with sg.visitor(w):
         names = {t.name for t in async_to_sync(mcp.list_tools)()}
     assert {"site_tools", "site_call", "site_read"} <= names
@@ -551,11 +580,11 @@ def test_nothing_canopy_stores_for_a_sensitive_conversation_holds_a_row(w, host,
 VIEW_H, EXEC_H = contract.VIEW_HEADER.lower(), contract.EXECUTION_HEADER.lower()
 
 
-def _view_of(headers, *, uri, subject, token):
+def _view_of(headers, *, uri, subject, token, rpc=None):
     config, keys, jtis = sg.host_side()
     return verify_view({k.title(): v for k, v in headers.items()}, config=config, client_keys=keys,
                        replay_store=jtis, uri=uri, subject=subject, jkt=client_identity.dpop_jkt(),
-                       access_token=token)
+                       access_token=token, rpc=rpc or ("resources/read", {"uri": uri}))
 
 
 def _read_as(w, host, who, uri):
@@ -571,13 +600,15 @@ def test_the_persons_own_view_read_carries_a_view_statement_and_no_execution(w, 
     r = _read_as(w, host, "owner", link["uri"])
     assert r.status_code == 200 and SENTINEL in r.content.decode()
     stated = [h for h in host.seen if VIEW_H in h]
-    assert stated, "the View's read must carry Canopy-View"
+    assert len(stated) == 1, "the View's read — and only the read, not its initialize — carries Canopy-View"
     assert not any(EXEC_H in h for h in host.seen), "a View is never an agent's call"
     view = _view_of(stated[-1], uri=link["uri"], subject="grant-owner", token="grant-owner")
     assert view.session == str(w["mine"].pk) and view.agent == "ace"
     assert view.viewer == f"user:{w['owner'].pk}"
-    # Each request gets its own statement: none is reusable on another.
-    assert len({h[VIEW_H] for h in stated}) == len(stated)
+    # Bound to that very request: not to a read of another page or another call.
+    for rpc in (("resources/read", {"uri": link["uri"] + "?page=2"}), ("tools/call", {"name": "data_query"})):
+        with pytest.raises(ViewRefused, match="different request"):
+            _view_of(stated[-1], uri=link["uri"], subject="grant-owner", token="grant-owner", rpc=rpc)
 
 
 def test_a_view_statement_is_bound_to_its_person_resource_token_and_use(w, host):
@@ -634,6 +665,22 @@ def test_site_read_carries_the_agents_execution_statement_and_never_a_view(w, ho
     _visitor_call(w, host, "site_read", {"uri": uri})
     assert host.seen and all(EXEC_H in h for h in host.seen)
     assert not any(VIEW_H in h for h in host.seen)
+    # Each execution statement is bound to its own JSON-RPC request.
+    from canopy_sdk.host import verify_execution
+
+    config, keys, _ = sg.host_side()
+    rpcs = {jwt_claims(h[EXEC_H]).get("rpc") for h in host.seen}
+    assert contract.rpc_digest("resources/read", {"uri": uri}) in rpcs and len(rpcs) == len(host.seen)
+    read = [h for h in host.seen if jwt_claims(h[EXEC_H])["rpc"] == contract.rpc_digest("resources/read", {"uri": uri})]
+    verify_execution({k.title(): v for k, v in read[0].items()}, config=config, client_keys=keys,
+                     replay_store=MemoryJtiStore(), jkt=client_identity.dpop_jkt(),
+                     access_token=sg.HOST_TOKEN, rpc=("resources/read", {"uri": uri}))
+
+
+def jwt_claims(raw):
+    import jwt
+
+    return jwt.decode(raw, options={"verify_signature": False})
 
 
 # --- can an agent reach the View's own door at all? (the suspicion, tested) -----------------
@@ -753,3 +800,38 @@ def test_the_view_read_probe_shows_both_halves(w, host):
     assert SENTINEL not in text
     with_view = [h for h in host.seen if VIEW_H in h]
     assert with_view and len(with_view) < len(host.seen)
+
+
+def test_who_may_read_and_subscribe_through_a_view(w, host):
+    """Not `may_act`: a VIEWER participant reads an ordinary conversation's results with
+    their own grant. A sensitive conversation's are read only by its own people on its
+    chat surface — and only they get Canopy-View."""
+    from apps.workspaces.models import WorkspaceMembership as WM
+
+    link = _link(_converse(w, host, sensitive=False))
+    olga = User.objects.create_user("olga", "olga@dimagi.com", "pw")
+    WM.objects.create(user=olga, workspace=w["ws"], role=WM.EDITOR)
+    SessionParticipant.objects.create(session=w["mine"], user=olga, role=SessionParticipant.VIEWER)
+    SUBJECTS["grant-olga"] = "sub-olga"
+    try:
+        _grant(w["app"], "grant-olga", olga)
+        w["olga"] = olga
+        r = _read_as(w, host, "olga", link["uri"])
+        assert r.status_code in (200, 403) and host.seen   # reached the host: its ACL decides
+        assert any(VIEW_H in h for h in host.seen)          # a person in the conversation
+    finally:
+        SUBJECTS.pop("grant-olga", None)
+
+    viewer = mcp_apps_views.Viewer(user=w["owner"], person=True, chat_surface=False)
+    mcp_apps_views.may_read(w["mine"], viewer)              # ordinary: the session ACL decides
+    from apps.canopy_sessions import services as chat_services
+
+    chat_services.add_runner_requirements(w["mine"], ["sensitive_data"])
+    w["mine"].refresh_from_db()
+    with pytest.raises(mcp_apps_views.ViewRefusal):
+        mcp_apps_views.may_read(w["mine"], viewer)          # not on its chat surface
+    outsider = User.objects.create_user("omar", "omar@dimagi.com", "pw")
+    with pytest.raises(mcp_apps_views.ViewRefusal):
+        mcp_apps_views.may_read(w["mine"], mcp_apps_views.Viewer(user=outsider, person=True, chat_surface=True))
+    mcp_apps_views.may_read(w["mine"], mcp_apps_views.Viewer(user=w["owner"], person=True, chat_surface=True))
+    assert mcp_apps_views.view_facts(w["mine"], viewer, w["grants"]["owner"]) is None

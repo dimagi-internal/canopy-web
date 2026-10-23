@@ -30,11 +30,11 @@ def _jkt(world):
 
 
 def _statement(world, *, audience=RESOURCE, token=TOKEN, key=None, subject=PERSON, uri=URI,
-               session="s-1", **over) -> str:
+               session="s-1", rpc=None, **over) -> str:
     raw = consumer.view_statement(key or world.client.client_key, CLIENT_ID, audience,
                                   subject=subject, uri=uri, session=session,
                                   jkt=over.pop("jkt", _jkt(world)), access_token=token,
-                                  viewer="user:7", agent="labsdata")
+                                  viewer="user:7", agent="labsdata", rpc=rpc)
     if over:
         claims = {**jwt.decode(raw, options={"verify_signature": False}), **over}
         claims = {k: v for k, v in claims.items() if v is not None}
@@ -176,3 +176,31 @@ def test_same_resource():
     assert same_resource("labs-result://a", "LABS-RESULT://a?page=2")
     assert not same_resource("labs-result://a", "labs-result://b")
     assert not same_resource("", "labs-result://a")
+
+
+# --- the statement rides ONE request ----------------------------------------------------------
+
+
+def test_a_view_statement_is_bound_to_its_request(world):
+    read = ("resources/read", {"uri": URI + "?page_size=5&page=2"})
+    raw = _statement(world, rpc=contract.rpc_digest(*read))
+    # The host rebuilt the URI with its query in another order: the same request.
+    assert _verify(world, _headers(raw), rpc=("resources/read", {"uri": URI + "?page=2&page_size=5"})).uri == URI
+    assert _refused(world, _headers(_statement(world, rpc=contract.rpc_digest(*read))),
+                    rpc=("resources/read", {"uri": URI + "?page=3&page_size=5"})) == "wrong_request"
+    assert _refused(world, _headers(_statement(world, rpc=contract.rpc_digest(*read))),
+                    rpc=("tools/call", {"name": "data_query", "arguments": {}})) == "wrong_request"
+    # A statement with no request binding does not pass a host that asks for one.
+    assert _refused(world, _headers(_statement(world)), rpc=read) == "wrong_request"
+
+
+def test_rpc_digest_covers_the_call_not_its_envelope():
+    call = {"name": "data_query", "arguments": {"sql": "x", "opportunity_ids": [1]}}
+    same = {"arguments": {"opportunity_ids": [1], "sql": "x"}, "name": "data_query", "_meta": {"progressToken": 3}}
+    assert contract.rpc_digest("tools/call", call) == contract.rpc_digest("tools/call", same)
+    assert contract.rpc_digest("tools/call", call) != contract.rpc_digest(
+        "tools/call", {**call, "arguments": {"sql": "y", "opportunity_ids": [1]}})
+    body = b'{"jsonrpc":"2.0","id":7,"method":"tools/call","params":' + __import__("json").dumps(call).encode() + b"}"
+    assert contract.rpc_digest_of_body(body) == contract.rpc_digest("tools/call", call)
+    assert contract.rpc_of_body(body) == ("tools/call", call)
+    assert contract.rpc_digest_of_body(b"") is None and contract.rpc_digest_of_body(b"[1]") is None

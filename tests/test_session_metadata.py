@@ -42,6 +42,8 @@ def test_the_list_names_every_key_its_owner_writes():
     assert {"slack_team", "slack_channel", "slack_thread_ts", "requested_runner_id"} <= owned
     from apps.slack.share import DETACHED_KEY
     assert DETACHED_KEY in owned
+    from apps.host_grants.host_gateway import LINKS_KEY
+    assert LINKS_KEY in owned
 
 
 @pytest.fixture()

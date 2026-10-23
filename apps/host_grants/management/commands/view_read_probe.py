@@ -54,7 +54,7 @@ class Command(BaseCommand):
             raise CommandError("the conversation holds no kept result link")
         tool_call_id, uri = target
         row = views.find(convo, tool_call_id)
-        ctx = views.resolve_for_viewer(convo, views.Viewer(user=user, person=True), row)
+        ctx = views.resolve_for_viewer(convo, views.Viewer(user=user, person=True, chat_surface=True), row)
         if ctx.view is None:
             raise CommandError(f"{email} is not a person in this conversation: no view statement")
         self.stdout.write(f"reading {uri} at {ctx.site} as {email}")

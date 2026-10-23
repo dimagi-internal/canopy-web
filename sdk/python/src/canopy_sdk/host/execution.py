@@ -141,12 +141,16 @@ def _access_token(headers: Mapping) -> str | None:
 
 
 def verify_execution(request, *, config, client_keys, replay_store, jkt: str | None = None,
-                     access_token: str | None = None, now: float | None = None) -> Execution:
+                     access_token: str | None = None, rpc: tuple[str, Mapping] | None = None,
+                     now: float | None = None) -> Execution:
     """Verify the ``Canopy-Execution`` statement on ``request`` (anything with
     ``.headers``, or a header mapping). ``config`` is the host's ``HostConfig``
     (``canopy_client_id``, ``resource``); ``client_keys`` a ``ClientKeyResolver``;
     ``replay_store`` a ``JtiStore``. ``jkt`` defaults to the key ``DPoPGate``
     proved on this request; ``access_token`` to the one in ``Authorization``.
+    ``rpc`` — ``(method, params)`` of the JSON-RPC request in front of the host —
+    requires the statement to be for exactly that request (its ``rpc`` claim,
+    ``contract.rpc_digest``); a host should always pass it.
     Returns the ``Execution``, or raises ``ExecutionRefused``."""
     headers = _headers(request)
     raw = _get(headers, contract.EXECUTION_HEADER)
@@ -183,6 +187,9 @@ def verify_execution(request, *, config, client_keys, replay_store, jkt: str | N
     if "ath" in claims and (not token or not constant_time_equal(str(claims["ath"]),
                                                                   contract.ath(token))):
         raise ExecutionRefused("unbound", "the statement is for a different access token")
+    if rpc is not None and not constant_time_equal(str(claims.get("rpc") or ""),
+                                                   contract.rpc_digest(*rpc)):
+        raise ExecutionRefused("wrong_request", "the statement is for a different request")
 
     try:
         replay_store.consume([(f"execution:{client_id}", jti, int(claims["exp"]) + contract.LEEWAY_SECONDS)])

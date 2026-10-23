@@ -23,7 +23,7 @@ import hmac
 import json
 import time
 from collections.abc import Iterable, Mapping
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 # --- version -------------------------------------------------------------------
 
@@ -269,6 +269,57 @@ def b64url(data: bytes) -> str:
 def ath(access_token: str) -> str:
     """The DPoP ``ath`` claim: base64url(SHA-256(ASCII access token)), RFC 9449 §4.2."""
     return b64url(hashlib.sha256(access_token.encode("ascii")).digest())
+
+
+def _resource_key(uri) -> str:
+    """A resource URI as a statement names it: scheme lower-cased, query pairs sorted, so
+    a host that rebuilds the URI from its template computes the same digest."""
+    parts = urlsplit(str(uri or ""))
+    query = "&".join(f"{k}={v}" for k, v in sorted(parse_qsl(parts.query, keep_blank_values=True)))
+    return urlunsplit((parts.scheme.lower(), parts.netloc, parts.path, query, ""))
+
+
+def rpc_digest(method: str, params=None) -> str:
+    """The ``rpc`` claim: what ONE JSON-RPC request asks, hashed, so a statement rides only
+    the request it was made for. base64url(SHA-256(canonical JSON of the method and its
+    subject)): for ``tools/call`` the tool ``name`` and ``arguments``; for ``resources/read``
+    the ``uri`` (``_resource_key``); for any other method the method alone. ``_meta`` and
+    the JSON-RPC ``id`` are not part of it — a host's framework seldom shows them."""
+    method = str(method or "")
+    p = params if isinstance(params, Mapping) else {}
+    if method == "tools/call":
+        subject = {"name": str(p.get("name") or ""), "arguments": p.get("arguments") or {}}
+    elif method == "resources/read":
+        subject = {"uri": _resource_key(p.get("uri"))}
+    else:
+        subject = {}
+    canonical = json.dumps({"method": method, **subject}, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, default=str)
+    return b64url(hashlib.sha256(canonical.encode("utf-8")).digest())
+
+
+def rpc_digest_of_body(body) -> str | None:
+    """``rpc_digest`` of a JSON-RPC request body (bytes or str), or None when the body is
+    not one request (empty, a batch, a response)."""
+    try:
+        msg = json.loads(body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else (body or ""))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(msg, Mapping) or not isinstance(msg.get("method"), str):
+        return None
+    return rpc_digest(msg["method"], msg.get("params"))
+
+
+def rpc_of_body(body) -> tuple[str, dict] | None:
+    """``(method, params)`` of a JSON-RPC request body, or None."""
+    try:
+        msg = json.loads(body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else (body or ""))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(msg, Mapping) or not isinstance(msg.get("method"), str):
+        return None
+    params = msg.get("params")
+    return msg["method"], dict(params) if isinstance(params, Mapping) else {}
 
 
 def token_checksum(raw: str) -> str:

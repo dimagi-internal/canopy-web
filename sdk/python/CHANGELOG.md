@@ -22,6 +22,14 @@ statement would otherwise read as the person.
   `bad_actor`, `expired`, `too_long`, `unbound`, `wrong_person`, `wrong_resource`,
   `replayed`, ...). `same_resource(stated, actual)` compares scheme, authority and path
   (a page of a result is the result). Django: `canopy_sdk.django.execution.verify_view`.
+- **Both statements bind the JSON-RPC request they ride** (`rpc` claim,
+  `contract.rpc_digest(method, params)`: the method plus, for `tools/call`, the tool name
+  and arguments, for `resources/read` the URI with its query sorted; `_meta` and `id` are
+  not part of it). `execution_statement(..., rpc=)` / `view_statement(..., rpc=)` sign it;
+  `verify_execution(..., rpc=(method, params))` / `verify_view(..., rpc=...)` refuse a
+  statement for another request (`wrong_request`), or one with no `rpc` when the host asks.
+  Helpers: `contract.rpc_digest_of_body`, `contract.rpc_of_body`. A host that does not pass
+  `rpc` sees no change.
 - Unchanged: 0.19.0's migration `canopy_host.0003_drop_artifact` still drops the
   `canopy_host_artifact` table on a host that upgrades from 0.18.x.
 
