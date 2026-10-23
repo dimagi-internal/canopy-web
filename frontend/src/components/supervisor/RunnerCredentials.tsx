@@ -22,6 +22,7 @@ import {
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { Link } from 'react-router-dom'
 import { vaultHref } from '@/lib/scopedLinks'
+import { Button } from 'canopy-ui/ui'
 import { RunnerReauth } from './RunnerReauth'
 
 export type { CredentialStatus }
@@ -460,8 +461,8 @@ function RunnerVaultRow({ runnerId, workspace, vaults, busy, run, create, unlock
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border p-2 text-[12px]"
         data-testid="runner-vault-none">
         <span className="text-muted-foreground">Tokens and keys are kept by canopy. Keep them in a vault only this runner can open instead.</span>
-        <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-create"
-          onClick={() => void run(create, 'Failed to make the vault')}>Keep them in a vault</button>
+        <Button type="button" size="sm" disabled={busy} data-testid="runner-vault-create"
+          onClick={() => void run(create, 'Failed to make the vault')}>Keep them in a vault</Button>
       </div>
     )
   }
@@ -470,9 +471,9 @@ function RunnerVaultRow({ runnerId, workspace, vaults, busy, run, create, unlock
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[12px]"
         data-testid="runner-vault-no-key">
         <span className="text-foreground">{vault.name} has no key yet. Your passkey makes it: a copy for you and one for this runner.</span>
-        <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-make-key"
+        <Button type="button" size="sm" disabled={busy} data-testid="runner-vault-make-key"
           onClick={() => void run(async () => makeWorkspaceVaultKey(vault.vault_id, await unlock()),
-            'Failed to make the vault’s key')}>Make its key</button>
+            'Failed to make the vault’s key')}>Make its key</Button>
       </div>
     )
   }
@@ -484,13 +485,13 @@ function RunnerVaultRow({ runnerId, workspace, vaults, busy, run, create, unlock
         : <span className="text-foreground">{vault.name}</span>}
       <span className="text-[11px] text-foreground-subtle">opened only by this runner&rsquo;s own key</span>
       {waiting > 0 && (
-        <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-grant"
+        <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="runner-vault-grant"
           onClick={() => void run(async () => {
             await grantWorkspaceVaultPending(vault.vault_id, await unlock())
             setWaiting(0)
           }, 'Failed to give out the vault’s key')}>
           Give {waiting === 1 ? 'the one waiting' : `the ${waiting} waiting`} a copy
-        </button>
+        </Button>
       )}
     </div>
   )
