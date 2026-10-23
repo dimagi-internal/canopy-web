@@ -344,3 +344,149 @@ def test_the_banner_outranks_our_prefix_opinion(cm):
     assert cm.extract_token(announced) == "sk-ant-api03-0123456789abcdefghij"
     # ...but unanchored, the same string is refused.
     assert cm.extract_token(b"sk-ant-api03-0123456789abcdefghij") is None
+
+
+# ── a renderer that only redraws what changed ──────────────────────────────
+#
+# cloud-ec2-2, 2026-10-16 to 10-23: from Claude Code 2.1.301 every setup-token
+# was stored as `sk-ant-at01-…` and was dead on its first probe. The CLI draws
+# its screen by moving the cursor and rewriting only the cells that changed; the
+# old strip deleted the moves, so a token character that matched what was
+# already on screen at that cell was simply never in the stream. The `o` of
+# `oat01` was. The token is now read off a replayed screen.
+
+_FIXTURE_2_1_309 = _HERE / "fixtures" / "setup_token_2_1_309_pty.bin"
+
+
+def test_the_replayed_screen_is_what_a_person_saw(cm):
+    """A real capture from `claude` 2.1.309 (a bogus code entered, so nothing
+    was minted): its words are positioned by `ESC[nG` and the error is drawn
+    over the erased prompt with relative moves. The replay reads it as text with
+    its spaces, which the strip never could."""
+    screen = cm.render_screen(_FIXTURE_2_1_309.read_bytes())
+    assert "OAuth error: Request failed with status code 400" in screen
+    assert "Press Enter to retry." in screen
+    assert "Paste code here if prompted" not in screen, "the erased prompt is gone"
+
+
+def test_the_authorize_url_still_comes_from_the_2_1_309_capture(cm):
+    url = cm.extract_authorize_url(_FIXTURE_2_1_309.read_bytes())
+    assert url is not None and url.endswith("state=REDACTED_STATE")
+
+
+_TOKEN = "sk-ant-oat01-Zq3_xY9-0123456789abcdefghijklmnopqrstuv"
+
+
+def _drawn_over(previous: str, token: str) -> bytes:
+    """The token row as a cell-diffing renderer emits it: the row first held
+    `previous`; the new frame steps over every cell that already matches."""
+    out = b"\r\x1b[1A"   # back to the row, as the CLI does
+    col = 0
+    for i, ch in enumerate(token):
+        if i < len(previous) and previous[i] == ch:
+            continue
+        if col != i:
+            out += f"\x1b[{i + 1}G".encode()
+        out += ch.encode()
+        col = i + 1
+    return out
+
+
+def test_a_token_drawn_over_matching_cells_is_read_whole(cm):
+    """The regression. An earlier frame left an `o` in the very cell the
+    token's `o` lands in, so the renderer never sends it — and the strip read
+    `sk-ant-at01`, exactly what cloud-ec2-2 logged."""
+    previous = "???????o" + "?" * 46
+    raw = (b"Your OAuth token (valid for 1 year):\r\n" + previous.encode() + b"\r\n"
+           + _drawn_over(previous, _TOKEN) + b"\r\n\r\nStore this token securely.\r\n")
+    assert cm.strip_terminal(raw).count("sk-ant-at01") == 1, "the bug, reproduced"
+    assert cm.extract_token(raw) == _TOKEN
+
+
+def test_cursor_moves_and_erases_are_applied(cm):
+    assert cm.render_screen(b"abc\x1b[1Gx") == "xbc"
+    assert cm.render_screen(b"abcdef\x1b[3G\x1b[K") == "ab"
+    assert cm.render_screen(b"one\r\ntwo\x1b[1A\x1b[2K") == "\ntwo"
+    assert cm.render_screen(b"ab\x1b[2Cc") == "ab  c"
+    assert cm.render_screen(b"\x1b[>0q\x1b[?u\x1b(Bok") == "ok", "private CSI is not text"
+
+
+def test_the_token_is_read_off_the_settled_screen(cm, monkeypatch):
+    """`_pump` answers on the first match, and the pattern matches 16 chars: a
+    token split across two pty reads would be stored cut short."""
+    monkeypatch.setattr(cm.os, "write", lambda fd, data: len(data))
+    monkeypatch.setattr(cm.time, "sleep", lambda s: None)
+    session = cm.MintSession()
+    session._fd = 7
+    head = b"Your OAuth token (valid for 1 year):\r\n" + _TOKEN[:24].encode()
+
+    def pump(timeout, extract):
+        session._buf = head
+        return extract(head)
+
+    def more():
+        session._buf += _TOKEN[24:].encode() + b"\r\nStore this token securely.\r\n"
+
+    monkeypatch.setattr(session, "_pump", pump)
+    monkeypatch.setattr(session, "_read_until_quiet", more)
+    monkeypatch.setattr(session, "close", lambda: None)
+    assert session.submit_code("THECODE#THESTATE") == _TOKEN
+
+
+# ── a sign-in is a success only once the token answers ─────────────────────
+#
+# Each of those dead tokens was reported "signed in; new token stored", and the
+# person was told it worked. The box now asks the token one question first.
+
+def _relay(cm, monkeypatch, probe_status):
+    posts = []
+    claims = iter([
+        (200, {"mint": {"id": "m1", "status": "requested", "slot": "token"}, "code": ""}),
+        (200, {"mint": {"id": "m1", "status": "completing", "slot": "token"}, "code": "CODE"}),
+    ])
+
+    def fake_api(method, path, body=None, **kw):
+        if method == "GET":
+            return next(claims)
+        posts.append((path, body))
+        return 200, {}
+
+    class FakeMint(cm.MintSession):
+        def start(self, timeout=60.0):
+            return "https://claude.com/cai/oauth/authorize?x=1"
+
+        def submit_code(self, code, timeout=90.0):
+            return _TOKEN
+
+    probed = []
+
+    def probe(entry):
+        probed.append(entry)
+        return {"label": entry[0], "status": probe_status, "detail": "Not logged in · Please run /login",
+                "reset": None, "at": 0.0}
+
+    monkeypatch.setattr(cm, "_api", fake_api)
+    monkeypatch.setattr(cm, "MintSession", FakeMint)
+    monkeypatch.setattr(cm, "_probe_entry", probe)
+    monkeypatch.setattr(cm, "_reload_claude_credentials", lambda: False)
+    cm._drain_mint("rid")
+    cm._drain_mint("rid")
+    return [b for p, b in posts if p.endswith("/mint/result")], probed
+
+
+def test_a_token_claude_refuses_is_reported_as_a_failure_and_not_stored(cm, monkeypatch):
+    results, probed = _relay(cm, monkeypatch, "dead")
+    assert probed == [("minted", "CLAUDE_CODE_OAUTH_TOKEN", _TOKEN)]
+    assert len(results) == 1
+    assert "token" not in results[0], "a token Claude refuses is never stored"
+    assert "refused" in results[0]["detail"]
+    assert "Not logged in" in results[0]["detail"]
+    assert _TOKEN not in results[0]["detail"]
+
+
+@pytest.mark.parametrize("status", ["ok", "capped", "unknown"])
+def test_a_token_that_answers_or_cannot_be_checked_is_stored(cm, monkeypatch, status):
+    """Capped is a real token at its limit; unknown (a hung probe) must never
+    throw away a credential the person has just created."""
+    results, _ = _relay(cm, monkeypatch, status)
+    assert results == [{"token": _TOKEN}]

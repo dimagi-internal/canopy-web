@@ -458,3 +458,34 @@ def test_the_tick_reprobes_a_cap_once_its_reset_passes(cr, monkeypatch):
     assert started == [["subscription-1"]]
 
 
+
+
+# ── a re-probe never reads as a pass ───────────────────────────────────────
+#
+# cloud-ec2-2, 2026-10-23: the box dropped a replaced token's failing check while
+# it re-probed, canopy-web read the missing check as fixed and resolved the
+# alert, and the probe found the new token dead three seconds later. The old
+# check now stays until the new answer overwrites it.
+
+def test_a_replaced_value_keeps_its_failing_check_until_reprobed(cr, monkeypatch):
+    monkeypatch.setattr(cr, "_CLAUDE_CRED_RUNNER_ID", "rid")
+    cr._CLAUDE_CREDS[:] = [("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "tok-1")]
+    cr._record_probe(_probe("subscription-1", "dead"))
+    _api_log(cr, monkeypatch, {("GET", "/runners/rid/credential"): (
+        200, {"claude_token": "tok-NEW", "logins": []})})
+    monkeypatch.setattr(cr, "_reconcile_logins", lambda *a: None)
+    monkeypatch.setattr(cr, "box_login_ready", lambda **kw: False)
+    monkeypatch.setattr(cr, "_probe_in_background", lambda labels: None)
+    assert cr._reload_claude_credentials() is True
+    assert cr._HEALTH["claude.probe.subscription-1"]["status"] == "fail"
+    assert "subscription-1" not in cr._PROBES, "readiness forgets the old answer"
+    cr._record_probe(_probe("subscription-1", "ok"))
+    assert cr._HEALTH["claude.probe.subscription-1"]["status"] == "ok"
+
+
+def test_reprobe_keeps_the_check_until_the_new_answer(cr, monkeypatch):
+    cr._record_probe(_probe("api-key", "dead"))
+    monkeypatch.setattr(cr, "_probe_in_background", lambda labels: None)
+    cr._reprobe(["api-key"])
+    assert cr._HEALTH["claude.probe.api-key"]["status"] == "fail"
+    assert "api-key" not in cr._PROBES
