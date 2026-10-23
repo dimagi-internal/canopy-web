@@ -159,6 +159,76 @@ def test_the_live_frame_carries_the_stripped_row(w, monkeypatch):
     assert ROW not in str(list(Message.objects.filter(session=w["hot"]).values()))
 
 
+# --- deliver live ----------------------------------------------------------------------
+
+
+REPLY = "Amina has 12 visits"
+
+
+def _session_frames(published, session):
+    from apps.realtime import groups
+
+    return [m for g, m in published
+            if g == groups.session_group(session.pk) and m["type"] == "chat.turn_event"]
+
+
+def _ask(w, django_capture_on_commit_callbacks, monkeypatch, *, session, capability):
+    from apps.canopy_sessions import services as chat_services
+
+    session.metadata = {**session.metadata, chat_services.TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata"])
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+    t = _turn(session, capability=capability)
+    with django_capture_on_commit_callbacks(execute=True):
+        ledger.append_events(t, [
+            {"kind": "tool_start", "payload": {"id": "tu1", "name": "mcp__canopy-web__site_call",
+                                               "input": {"tool": "data_query"}}},
+            {"kind": "tool_end", "payload": {"tool_use_id": "tu1", "is_error": False,
+                                             "content": [{"type": "text", "text": ROW}]}},
+            {"kind": "assistant", "payload": {"text": REPLY}},
+        ])
+    return t, _session_frames(published, session)
+
+
+def test_a_confined_zdr_turns_reply_reaches_its_asker_and_is_never_stored(
+        w, django_capture_on_commit_callbacks, monkeypatch):
+    """A site visitor's turn on a ZDR box: the box keeps no transcript of it, so the
+    ledger's live frames are the only way the reply reaches the widget."""
+    from apps.canopy_sessions import stream_map
+
+    t, frames = _ask(w, django_capture_on_commit_callbacks, monkeypatch,
+                     session=w["hot"], capability="data")
+    assert [f["event"]["kind"] for f in frames] == ["tool_start", "tool_end", "assistant"]
+    # What the widget renders, from the same mapping the socket uses.
+    client = [c for f in frames for c in stream_map.turn_event_to_frames(f["event"], lambda _s: "m")]
+    done = next(c for c in client if c["event"] == "chat.stream_complete")
+    assert done["data"]["plaintext"] == REPLY
+    # Progress: the call and its outcome, paired on the call id; the result withheld.
+    use = next(c for c in client if c["event"] == "chat.tool_use")["data"]["block"]
+    result = next(c for c in client if c["event"] == "chat.tool_result")["data"]["block"]
+    assert use["id"] == "tu1" and use["name"] == "mcp__canopy-web__site_call"
+    assert {k: result[k] for k in ("tool_use_id", "is_error", "withheld")} == {
+        "tool_use_id": "tu1", "is_error": False, "withheld": True}
+    assert ROW not in str(frames)
+    # ...and nothing stores the words.
+    stored = str(list(TurnEvent.objects.filter(turn=t).values("payload")))
+    assert REPLY not in stored and ROW not in stored
+    assert REPLY not in str(list(Message.objects.filter(session=w["hot"]).values()))
+
+
+def test_other_turns_still_reply_through_their_transcript(
+        w, django_capture_on_commit_callbacks, monkeypatch):
+    # A full-profile ZDR turn keeps its transcript and streams it: a ledger copy too
+    # would show every reply twice. So would an ordinary confined turn.
+    _, frames = _ask(w, django_capture_on_commit_callbacks, monkeypatch,
+                     session=w["hot"], capability="")
+    assert frames == []
+    _, frames = _ask(w, django_capture_on_commit_callbacks, monkeypatch,
+                     session=w["cold"], capability="data")
+    assert frames == []
+
+
 # --- forced retention -------------------------------------------------------------------
 
 

@@ -15,7 +15,9 @@ What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
 * **refuse re-exposure** — share links, Slack share and mirroring, export, MCP Apps
   receipts and view context, the usage scan's and autotitle's title;
 * **refuse re-processing** — auto-debug, and the fleet's transcript readers (there
-  is no transcript to read).
+  is no transcript to read);
+* **deliver live** — a confined turn's reply reaches its asker as live frames only
+  (`reply_is_live_only`), since no transcript of it ever reaches canopy.
 """
 from __future__ import annotations
 
@@ -57,6 +59,15 @@ def strip_result(payload: dict | None) -> dict:
     out = {k: v for k, v in payload.items() if k not in _RESULT_KEYS}
     out["withheld"] = True
     return out
+
+
+def reply_is_live_only(turn) -> bool:
+    """True when a sensitive turn's reply reaches its asker only as the ledger's live
+    frames. A confined turn (a caller's: a site visitor through the widget) is never
+    recorded as a resumable session, and a ZDR box deletes its transcript when it
+    ends, so no transcript row ever carries the reply. The frames go to whoever is
+    watching and nothing stores the words (`ledger.append_events` keeps metadata)."""
+    return bool(getattr(turn, "capability", "")) and is_sensitive(turn)
 
 
 def any_sensitive(*objs) -> bool:
