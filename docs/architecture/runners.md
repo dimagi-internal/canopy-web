@@ -518,6 +518,17 @@ asking a backfill (`transcript_read.backfill_refused`), resetting one, filing a
 reported session (`session_sync.session_home`) or posting `session-backfill` is refused,
 with 409 on the routes. `tests/test_sensitive_box_uploads.py`.
 
+On the box (`runner/ec2/README.md` § Sensitive-data mode): every turn's read tools are
+scoped to its own working directory and caller envelope, and every transcript, the
+kept-conversation records and the other per-turn state under `~/.canopy` are denied by
+name (`sensitive_data_settings`; a confined session elsewhere gets the same denies from
+`native_permissions`, and a read tool with no `read_paths` reaches only its worktree).
+A sensitive conversation's kept session is forgotten when it idles, closes, the box's
+ask is refused (401/403/404, a retired box) or the box shuts down; the sweep never
+deletes a record a finishing turn rewrote meanwhile. A resumed turn ships only the
+records after its resume point, chunked, with retries, and its live tail ticks once
+more as it stops. `runner/ec2/tests/test_sensitive_data_box.py`.
+
 - A **host** requires flags of its visitors' conversations with
   `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["sensitive_data"]` (SDK `dimagi-canopy`); the SDK signs
   them into the visitor assertion (`canopy_runner_requirements`), and canopy stamps

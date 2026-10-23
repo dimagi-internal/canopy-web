@@ -36,7 +36,7 @@ def cr(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner, "_record_session_resume",
                         lambda rid, turn, sid: calls["recorded"].append(sid))
     monkeypatch.setattr(cloud_runner, "_ship_transcript_rows",
-                        lambda rid, turn, cwd, sid: calls["shipped"].append(sid))
+                        lambda rid, turn, cwd, sid, since=0: calls["shipped"].append(sid))
 
     def fake_execute(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
         env = cloud_runner._agent_env(agent_slug)

@@ -5,6 +5,7 @@ docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §5.
 from __future__ import annotations
 
 import json
+import pathlib
 
 CAP ={"name": "data", "entry": None, "tools": ["Read"], "bash": [], "read_paths": ["{cwd}/**"],
        "data": "sensitive"}
@@ -519,6 +520,9 @@ def test_a_confined_chat_turn_tails_while_it_runs_and_stops_before_the_ship(
         def stop(self):
             order.append("stop")
 
+        def shipped_through(self, sid):
+            return 0
+
     def fake_execute(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
         mod._announce_session(turn_id, "cli-1")
         return True, "ok", "cli-1"
@@ -529,3 +533,221 @@ def test_a_confined_chat_turn_tails_while_it_runs_and_stops_before_the_ship(
     mod._run_turn("r-1", _turn(origin_ref={"chat_session_id": "5e55-1"}))
     assert _finish(calls)[0]["status"] == "done"
     assert order == [("tail", "5e55-1"), "start", ("follow", "cli-1"), "stop", "ship"]
+
+
+# ── a long resumed conversation's last reply reaches the asker ───────────────
+def test_the_turn_end_ship_is_chunked_skips_held_records_and_retries(
+        load_cloud_runner, monkeypatch, tmp_path):
+    """One giant post of a resumed conversation's whole transcript outgrew the
+    server's request ceiling and lost the reply: the ship sends only the records
+    after the resume point, in chunks, with their ordinals unchanged, and tries a
+    refused post again."""
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "SHIP_RETRY_DELAYS", (0.0, 0.0, 0.0))
+    path = _transcript(mod, tmp_path, "kept-1")
+    _say(path, "user", "an earlier question")
+    _say(path, "assistant", "an earlier answer")
+    _say(path, "user", "and now?")
+    _say(path, "assistant", "the last reply")
+    ct = mod._transcript_core()
+    monkeypatch.setattr(ct, "chunk_rows", lambda rows: [[r] for r in rows])
+    answers = iter([(502, {}), (200, {}), (200, {})])
+    posts = []
+    monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: posts.append(b) or next(answers))
+    assert mod._ship_transcript_rows("r-1", _turn(origin_ref={"chat_session_id": "5e55-1"}),
+                                     tmp_path, "kept-1", 2)
+    landed = [e for b in posts[1:] for e in b["events"]]
+    assert [len(b["events"]) for b in posts] == [1, 1, 1]  # one refused, then one per chunk
+    assert [e["payload"]["text"] for e in landed] == ["and now?", "the last reply"]
+    whole = [r["index"] for r in ct.conversational_messages(ct.read_records(path), -1)]
+    assert [e["index"] for e in landed] == whole[2:]
+    assert {b["transcript_id"] for b in posts} == {"kept-1"}
+
+
+def test_the_ship_gives_up_after_its_retries_and_says_so(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "SHIP_RETRY_DELAYS", (0.0, 0.0))
+    _say(_transcript(mod, tmp_path, "cli-1"), "assistant", "hello")
+    posts = []
+    monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: posts.append(b) or (502, {}))
+    assert not mod._ship_transcript_rows("r-1", _turn(origin_ref={"chat_session_id": "5e55-1"}),
+                                         tmp_path, "cli-1")
+    assert len(posts) == 3
+
+
+def test_stopping_the_tail_ships_what_was_written_after_its_last_tick(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    posts = _posts(mod, monkeypatch)
+    path = _transcript(mod, tmp_path, "cli-1")
+    tail = mod._TurnTail("r-1", "5e55-1", tmp_path, interval=3600)
+    tail.follow("cli-1")
+    _say(path, "user", "how many visits?")
+    assert tail.tick() == 1
+    _say(path, "assistant", "There were 12.")  # written after the last tick
+    tail.start()
+    tail.stop()
+    assert [e["payload"]["text"] for _p, b in posts for e in b["events"]] == [
+        "how many visits?", "There were 12."]
+    assert tail.shipped_through("cli-1") == 2 and tail.shipped_through("other") == 0
+
+
+def test_a_resumed_turn_ships_only_what_it_added(load_cloud_runner, monkeypatch, tmp_path):
+    """Through the real worker: the kept session's earlier records are not sent again,
+    and what the live tail already landed is not sent twice."""
+    mod, calls, project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    mod._run_turn("r-1", _conv_turn())
+    sid = json.loads((tmp_path / "kept" / f"{CONV}.json").read_text())["cli_session_id"]
+    path = project / f"{sid}.jsonl"
+    path.write_text("")
+    _say(path, "user", "an earlier question")
+    _say(path, "assistant", "an earlier answer")
+    shipped = []
+    monkeypatch.setattr(mod, "_ship_transcript_rows", lambda *a: shipped.append(a[3:]))
+
+    def resumed(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        assert resume_session_id == sid
+        mod._announce_session(turn_id, sid)
+        _say(path, "user", "and now?")
+        _say(path, "assistant", "the last reply")
+        return True, "ok", sid
+
+    monkeypatch.setattr(mod, "execute_prompt", resumed)
+    mod._run_turn("r-1", _conv_turn(tid="3f2b8c1e-0000-4000-8000-0000000000bb"))
+    # The tail (stopped with a last tick) landed all four records; the ship starts after them.
+    assert shipped == [(sid, 4)]
+    texts = [e["payload"]["text"] for m, p, b in calls["api"] if p.endswith("/session-stream")
+             for e in b["events"]]
+    assert texts == ["and now?", "the last reply"]
+
+
+# ── nothing a turn reads reaches another conversation's words ─────────────────
+def test_a_sensitive_turns_reads_stay_in_its_own_directory(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    monkeypatch.setattr(mod, "CALLER_ROOT", tmp_path / "caller")
+    monkeypatch.setattr(mod, "PROFILE_ROOT", tmp_path / "profiles")
+    cwd = tmp_path / "work" / "sessions" / CONV
+    other = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(tmp_path / "work" / "sessions" / "c-2")
+    _leave(other / "sid-2.jsonl")
+    mine = _leave(tmp_path / "caller" / f"{TID}.json", "{}")
+    theirs = _leave(tmp_path / "caller" / "another-turn.json", "{}")
+    perms = mod.sensitive_data_settings(None, cwd=cwd, caller_path=str(mine))["permissions"]
+    rule = mod._abs_read_rule
+    assert not {"Read", "Grep", "Glob"} & set(perms["allow"])
+    assert rule(cwd, "/**") in perms["allow"] and rule(mine) in perms["allow"]
+    own_project = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(cwd)
+    assert rule(own_project, "/*/tool-results/**") in perms["allow"]
+    for denied in (rule(mod.CLAUDE_PROJECTS_HOME, "/**/*.jsonl"), rule(tmp_path / "kept", "/**"),
+                   rule(tmp_path / "profiles", "/**"), rule(theirs), rule(other, "/**"),
+                   rule(mod.CHAT_KEY_ROOT, "/**"), rule(mod.SCOPED_TOKEN_ROOT, "/**"),
+                   rule(mod.AGENT_TOKEN_ROOT, "/**")):
+        assert denied in perms["deny"], denied
+    assert rule(mine) not in perms["deny"]
+    # A confined turn's own scoped rules are kept; a whole-disk Read in them is not.
+    doc = mod.sensitive_data_settings({"permissions": {"allow": ["Read", "Read(//x/**)"]}},
+                                      cwd=cwd, caller_path=str(mine))
+    assert "Read" not in doc["permissions"]["allow"]
+    assert "Read(//x/**)" in doc["permissions"]["allow"]
+    # The heartbeat's hash reads no turn's files: the same with or without them.
+    assert mod.sensitive_data_settings() == mod.sensitive_data_settings()
+    assert rule(theirs) not in mod.sensitive_data_settings()["permissions"]["deny"]
+
+
+def test_the_turn_writes_its_scoped_profile(load_cloud_runner, monkeypatch, tmp_path):
+    """Through the real worker: the settings file it runs under scopes its reads."""
+    mod, calls, _project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    seen = {}
+    real = mod._sensitive_data_settings_file
+
+    def spy(turn, confined_path, **kw):
+        path = real(turn, confined_path, **kw)
+        seen["doc"] = json.loads(pathlib.Path(path).read_text())
+        return path
+
+    monkeypatch.setattr(mod, "_sensitive_data_settings_file", spy)
+    mod._run_turn("r-1", _conv_turn())
+    perms = seen["doc"]["permissions"]
+    assert mod._abs_read_rule(tmp_path, "/**") in perms["allow"]
+    assert mod._abs_read_rule(tmp_path / "caller" / f"{TID}.json") in perms["allow"]
+    assert mod._abs_read_rule(mod.CLAUDE_PROJECTS_HOME, "/**/*.jsonl") in perms["deny"]
+
+
+# ── the sweep never deletes what a finishing turn just kept ───────────────────
+def test_a_conversation_kept_again_while_canopy_is_asked_is_not_swept(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    _kept_conversation(mod, tmp_path, age=48 * 3600)  # idle past its day when read
+    cwd = tmp_path / "work" / "sessions" / CONV
+    project = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(cwd)
+    fresh = _leave(project / "sid-2.jsonl")
+
+    def ask(m, p, b=None, **k):
+        # A turn finishes in the conversation while the box waits on canopy-web.
+        mod._write_private(mod.KEPT_ROOT / f"{CONV}.json",
+                           {"cli_session_id": "sid-2", "last_used": 1_000_000.0, "cwd": str(cwd),
+                            "capability": "data", "agent": "labsdata"})
+        return 200, {"open": []}
+
+    monkeypatch.setattr(mod, "_api", ask)
+    assert mod.sweep_kept_conversations("r-1", now=1_000_000.0) == 0
+    assert fresh.exists() and mod._kept_record(CONV)["cli_session_id"] == "sid-2"
+
+
+# ── kept data does not outlive the box's right to it ─────────────────────────
+def test_a_refused_ask_forgets_every_kept_conversation(load_cloud_runner, monkeypatch, tmp_path):
+    for status in (401, 403, 404):
+        mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+        monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / f"kept-{status}")
+        files = _kept_conversation(mod, tmp_path, conv="c-a") + _kept_conversation(mod, tmp_path, conv="c-b")
+        monkeypatch.setattr(mod, "_api", lambda m, p, b=None, _s=status, **k: (_s, {"detail": "x"}))
+        assert mod.sweep_kept_conversations("r-1", now=1_000_000.0) == 2, status
+        assert not any(p.exists() for p in files) and not list((tmp_path / f"kept-{status}").glob("*"))
+
+
+def test_a_box_shutting_down_forgets_its_kept_conversations(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    files = _kept_conversation(mod, tmp_path)
+    monkeypatch.setattr(mod, "_system_shutting_down", lambda: False)
+    mod._handle_stop()  # a restart (an update): kept
+    assert all(p.exists() for p in files)
+    mod._kept_busy(CONV, 1)  # even with a turn in it: the box is going away
+    monkeypatch.setattr(mod, "_system_shutting_down", lambda: True)
+    mod._handle_stop()
+    assert not any(p.exists() for p in files) and not list((tmp_path / "kept").glob("*"))
+    mod._kept_busy(CONV, -1)
+
+
+def test_the_system_state_decides_what_a_stop_is(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+
+    class _Out:
+        def __init__(self, out):
+            self.stdout = out
+
+    assert mod._system_shutting_down(run=lambda *a, **k: _Out("stopping\n"))
+    assert not mod._system_shutting_down(run=lambda *a, **k: _Out("running\n"))
+
+    def missing(*a, **k):
+        raise FileNotFoundError("systemctl")
+
+    assert not mod._system_shutting_down(run=missing)
+
+
+def test_a_retired_runner_forgets_its_kept_conversations_at_start(
+        load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    files = _kept_conversation(mod, tmp_path)
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"runner_id": "r-gone"}))
+    monkeypatch.setattr(mod, "STATE_FILE", state)
+    monkeypatch.setattr(mod, "UNIT", "u1")
+    monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: (404, {"detail": "not found"}))
+    try:
+        mod.pair_or_load()
+    except SystemExit:
+        pass
+    assert not any(p.exists() for p in files)

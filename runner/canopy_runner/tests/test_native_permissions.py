@@ -1,6 +1,7 @@
 """The second layer: a caller's capability, restated as Claude Code permission rules
 in the session worktree's `.claude/settings.json`."""
 import json
+import os
 
 import pytest
 
@@ -75,6 +76,30 @@ def test_bash_and_paths_are_allowed_exactly_with_placeholders_filled(tmp_path):
 def test_credential_stores_are_denied_to_the_path_tools():
     deny = _perms()["deny"]
     assert "Read(~/.ssh/**)" in deny and "Read(~/.canopy/profiles/**)" in deny
+
+
+def test_other_sessions_words_are_denied_to_the_path_tools():
+    """Every transcript on the box and the per-turn state other sessions keep — but
+    not the caller directory whole, where this session's own envelope lives."""
+    deny = _perms()["deny"]
+    for rule in ("Read(~/.claude/projects/**/*.jsonl)", "Read(~/.canopy/kept-conversations/**)",
+                 "Read(~/.canopy/chat/**)", "Read(~/.canopy/scoped/**)",
+                 "Read(~/.canopy/agent-token/**)"):
+        assert rule in deny, rule
+    assert "Read(~/.canopy/caller/**)" not in deny
+
+
+def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
+    """Granted whole it reached every other session's transcript on the box."""
+    wt = tmp_path / "cx-a-1234-xyz12"
+    wt.mkdir()
+    envelope = tmp_path / "caller.json"
+    perms = _perms({**ASK, "read_paths": [], "tools": ["Read", "Grep", "Glob"]}, wt=str(wt),
+                   caller_path=str(envelope))
+    assert not {"Read", "Grep", "Glob"} & set(perms["allow"])
+    assert f"Read(/{os.path.realpath(wt)}/**)" in perms["allow"]
+    assert f"Read(/{os.path.realpath(envelope)})" in perms["allow"]
+    assert "Read(~/.claude/projects/**/*.jsonl)" in perms["deny"]
 
 
 # ACE's live `ask` capability (2026-10-02): Write granted, Edit not, writes confined

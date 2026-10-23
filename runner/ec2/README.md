@@ -668,7 +668,12 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   `claude.sensitive_data` fails.
 - **A locked profile on every turn**: `claude -p --permission-mode dontAsk` with a
   settings document that denies Bash, file writes, the web, subagents and scheduling,
-  allows only read tools and canopy-web's MCP, and disables bypass and auto mode. ACP
+  allows only read tools and canopy-web's MCP, and disables bypass and auto mode. The read
+  tools reach only the turn's own working directory, its own sessions' oversized tool
+  output and its own caller envelope; every Claude transcript on the box, the
+  kept-conversation records, other turns' envelopes, profiles, chat keys and tokens, the
+  runner's state and the per-turn env root are denied by name (rules govern tool calls
+  only, so Claude Code still writes and resumes its own transcript). ACP
   is not used. Telemetry, error reporting, non-essential model calls and the canopy
   plugin's fleet auto-update are off. Only confined turns run, each with its own
   permission layer (a turn whose layer cannot be built is not run).
@@ -691,7 +696,13 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   A kept session is deleted once the conversation has been idle
   `SENSITIVE_KEEP_IDLE_HOURS` (24), or when canopy-web says it is closed (the box asks
   `POST /runners/{id}/kept-conversations` every `SENSITIVE_KEEP_SWEEP_SECONDS`, 900, and
-  at start); never while a turn runs in it. At start the box also sweeps whatever a
+  at start); never while a turn runs in it, nor when a turn kept a newer session while
+  canopy-web was being asked. A 401, 403 or 404 to that ask (a retired box) forgets every
+  kept conversation, as does a retired runner's start and the box's own shutdown
+  (`systemctl is-system-running` says `stopping`; a plain restart, an update, keeps them).
+  A confined chat turn's rows also ship while it runs (a live tail with a last tick at
+  the end), and the turn-end ship sends, in chunks and with retries, only what the tail
+  and the resumed session's earlier turns did not. At start the box also sweeps whatever a
   crashed turn left (envelopes, profiles, every transcript but a kept conversation's).
 - **No transcript leaves the box** except a confined turn's turn-end rows, which
   canopy-web seals: no live stream, no backfill, and the usage report carries token
