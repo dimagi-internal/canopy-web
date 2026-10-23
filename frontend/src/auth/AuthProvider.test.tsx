@@ -11,6 +11,8 @@ const noteAuthSucceeded = vi.fn()
 vi.mock('@/api/me', () => ({ getMe }))
 vi.mock('@/api/csrf', () => ({ bootstrapCsrf }))
 vi.mock('@/api/client.v2', () => ({ isLoginBounceInFlight, noteAuthSucceeded }))
+const getVaultSetup = vi.fn(async () => ({ required: false, has_passkey: true, has_vault_key: true }))
+vi.mock('@/api/vault', () => ({ getVaultSetup, getKeyset: vi.fn() }))
 
 afterEach(() => {
   cleanup()
@@ -83,5 +85,24 @@ describe('AuthProvider anonymous rendering', () => {
 
     await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy())
     expect(noteAuthSucceeded).toHaveBeenCalled()
+  })
+
+  it('asks a person with no vault key to set one up before anything else', async () => {
+    getMe.mockResolvedValue({ email: 'a@dimagi.com', name: 'A', avatar_url: null })
+    getVaultSetup.mockResolvedValueOnce({ required: true, has_passkey: false, has_vault_key: false })
+
+    await renderProvider()
+
+    await waitFor(() => expect(screen.getByTestId('vault-setup')).toBeTruthy())
+    expect(screen.queryByText('protected content')).toBeNull()
+  })
+
+  it('never locks anyone out when the check itself fails', async () => {
+    getMe.mockResolvedValue({ email: 'a@dimagi.com', name: 'A', avatar_url: null })
+    getVaultSetup.mockRejectedValueOnce(new Error('boom'))
+
+    await renderProvider()
+
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy())
   })
 })

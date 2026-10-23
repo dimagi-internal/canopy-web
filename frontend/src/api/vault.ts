@@ -160,3 +160,10 @@ export async function removeWorkspaceVaultMember(vaultId: string, userId: number
   return need<WorkspaceVaultOut>(await apiV2.DELETE('/api/vaults/{vault_id}/members/{user_id}', {
     params: { path: { vault_id: vaultId, user_id: userId } } }), 'Could not remove them from the vault')
 }
+
+export type VaultSetupOut = Schemas['VaultSetupOut']
+
+/** Must this person set up a passkey and vault key before anything else? */
+export async function getVaultSetup(): Promise<VaultSetupOut> {
+  return need<VaultSetupOut>(await apiV2.GET('/api/vault/setup'), 'Could not check your vault key')
+}

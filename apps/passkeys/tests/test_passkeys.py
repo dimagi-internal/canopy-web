@@ -291,3 +291,26 @@ def test_the_step_up_refusal_is_problem_json_with_a_top_level_error(browser):
     assert body["error"] == "step_up_required"
     assert body["status"] == 403 and body["has_passkey"] is True
     assert body["register_url"] == "/settings#passkeys"
+
+
+# ---- GET /api/vault/setup: the sign-in step everyone takes once ---------------
+
+def test_vault_setup_is_required_for_a_person_at_a_browser_without_a_vault_key(browser):
+    body = browser.get("/api/vault/setup").json()
+    assert body == {"required": True, "has_passkey": False, "has_vault_key": False}
+
+
+def test_vault_setup_is_done_once_the_person_has_a_vault_key(jj, browser):
+    from apps.passkeys.models import UserVaultKeyset
+
+    Passkey.objects.create(user=jj, credential_id="c1", public_key=b"k")
+    UserVaultKeyset.objects.create(user=jj, public_jwk={"kty": "EC"}, seals=[])
+    body = browser.get("/api/vault/setup").json()
+    assert body == {"required": False, "has_passkey": True, "has_vault_key": True}
+
+
+def test_vault_setup_is_never_required_of_a_token(jj):
+    # A token can never step up, so it could never make a vault key.
+    res = Client().get("/api/vault/setup", HTTP_AUTHORIZATION=f"Bearer {_pat(jj)}")
+    assert res.status_code == 200, res.content
+    assert res.json()["required"] is False

@@ -52,6 +52,16 @@ class StepUpStatusOut(StrictModel):
 
 # ---- the person's zero-knowledge vault keyset (canopy-web#1550) --------------
 
+class VaultSetupOut(StrictModel):
+    #: The SPA must ask for a passkey and a vault key before anything else: a
+    #: person at a browser with no vault key yet. False for a token or a
+    #: token-minted session, which can never make one.
+    required: bool
+    has_passkey: bool
+    has_vault_key: bool
+
+
+
 class VaultKeysetIn(StrictModel):
     #: EC P-256 PUBLIC JWK {kty, crv, x, y}.
     public_jwk: dict[str, Any]
