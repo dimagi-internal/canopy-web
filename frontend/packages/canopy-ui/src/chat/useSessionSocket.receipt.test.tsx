@@ -78,6 +78,13 @@ describe('a send carries its own text and waits for a receipt', () => {
     expect(sentSend().client_id).toBeTruthy()
   })
 
+  it('sends the text it is handed even when no keystroke reached the hook', () => {
+    // A composer restored from storage on load has never called updateDraft.
+    const hook = user()
+    act(() => hook.result.current.sendChat('restored from last time'))
+    expect(sentSend().text).toBe('restored from last time')
+  })
+
   it('the receipt confirms the SAME row rather than adding a second', () => {
     const hook = user()
     act(() => hook.result.current.updateDraft('deploy it'))

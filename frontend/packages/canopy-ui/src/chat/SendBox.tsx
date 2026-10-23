@@ -41,7 +41,9 @@ interface Props {
   isStreaming: boolean;
   streamingMessageId: string | null;
   onUpdate: (body: string) => void;
-  onSend: () => void;
+  /** Called with the text on screen. Send THAT, not the host's own copy: a
+   *  body restored from `persistKey` storage never reached `onUpdate`. */
+  onSend: (body: string) => void;
   /** messageId is null when the turn is still QUEUED — no reply exists yet.
    *  The server cancels every non-terminal turn regardless, so a null id is
    *  a valid cancel, not a no-op. */
@@ -296,7 +298,7 @@ export function SendBox({
     // echo back — a round trip the person sending has no reason to wait on.
     setLocalBody("");
     if (persistKey) clearStoredDraft(store, persistKey);
-    onSend();
+    onSend(body);
   };
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {

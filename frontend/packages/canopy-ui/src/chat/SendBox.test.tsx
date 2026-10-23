@@ -610,6 +610,22 @@ describe("SendBox — draft persistence across unmount", () => {
     expect(box().value).toBe("");
   });
 
+  it("sends the restored text, not the host's empty copy of it", () => {
+    // Nothing but this box holds a restored body — the host was never told
+    // (no keystroke, no onUpdate) — so Send must hand it over itself. It
+    // used to call onSend() bare: the box cleared, the host found an empty
+    // draft and sent nothing.
+    const storage = fakeStorage();
+    const first = mount(storage);
+    fireEvent.change(box(), { target: { value: "left half-typed" } });
+    first.unmount();
+
+    const onSend = vi.fn();
+    mount(storage, { onSend });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    expect(onSend).toHaveBeenCalledWith("left half-typed");
+  });
+
   it("does not carry one session's text into another", () => {
     const storage = fakeStorage();
     const first = mount(storage, { persistKey: "sess-1" });

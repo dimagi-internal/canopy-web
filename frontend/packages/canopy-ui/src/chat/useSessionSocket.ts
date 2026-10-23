@@ -163,7 +163,9 @@ export interface UseSessionSocketResult {
    *  message until the first token), and it is what keeps Stop reachable while
    *  a turn is stuck. */
   awaitingReply: boolean;
-  sendChat: () => void;
+  /** `text` is what the composer shows; without it, the last body `updateDraft`
+   *  was given. Pass it — a body restored from storage never reached `updateDraft`. */
+  sendChat: (text?: string) => void;
   stopChat: (messageId: string | null) => void;
   /** Withdraw one of your own queued sends (a `QueuedMessage.turn_id`). Its row
    *  leaves the screen at once; the server's `session.queued` confirms it. */
@@ -560,7 +562,7 @@ export function useSessionSocket({
     };
   }, [connect]);
 
-  const sendChat = useCallback(() => {
+  const sendChat = useCallback((text?: string) => {
     // The text goes IN the send, with a client_id, rather than relying on an
     // earlier draft.update having reached the server. That frame and this one
     // could both vanish into a socket that reads OPEN but is dead (a phone
@@ -572,7 +574,7 @@ export function useSessionSocket({
       window.clearTimeout(draftDebounceRef.current);
       draftDebounceRef.current = null;
     }
-    const body = (pendingDraftBodyRef.current ?? stateRef.current.active_draft?.body ?? "").trim();
+    const body = (text ?? pendingDraftBodyRef.current ?? stateRef.current.active_draft?.body ?? "").trim();
     pendingDraftBodyRef.current = null;
     if (!body) return;
     const clientId = newClientId();
@@ -775,8 +777,8 @@ export function useSessionSocket({
     );
   }, []);
 
-  const sendChatOverHttp = useCallback(() => {
-    const body = (localDraft?.body ?? "").trim();
+  const sendChatOverHttp = useCallback((text?: string) => {
+    const body = (text ?? localDraft?.body ?? "").trim();
     if (!body || !sendOverHttp) return;
     // ONE id for both halves of this send — the optimistic row and the REST
     // body — so the server's queued-turn projection and this row compare
