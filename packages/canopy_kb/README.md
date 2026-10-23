@@ -21,7 +21,7 @@ organisation or program), `doc` (outline, links, versions), `read` (a section),
 | `research.py` | the research tools, as text |
 | `vectors.py` | dormant: what a passage's vector would be made of, for a host that turns vectors on |
 | `tools.py` | MCP tool specs and dispatch |
-| `prep/` | the curator's toolkit: raw cache, a reader per format, OCR, dedupe, cards, aliases, originals (extra `[prep]`) |
+| `prep/` | the curator's toolkit: raw cache, a reader per format, dedupe, cards, aliases, originals (extra `[prep]`) |
 
 **Originals.** An item's text is a reading copy of a file (a PDF, a spreadsheet, a page):
 it is what search, `read` and `grep` work on. The file stays the record. A curator puts

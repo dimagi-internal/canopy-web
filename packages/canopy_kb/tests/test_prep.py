@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from canopy_kb.prep import cards, dedupe, extract, ocr, originals
+from canopy_kb.prep import cards, dedupe, extract, originals
 
 
 def _item(i, text, typ="page", url=None, **meta):
@@ -62,16 +62,6 @@ def test_each_format_goes_to_its_reader():
     assert extract.kind("https://x/y", {**ok, "ctype": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}) == "xlsx"
     assert extract.kind("https://x", {"status": 404, "file": "f", "ctype": "text/html"}) is None
     assert extract.kind("https://x/i.png", {**ok, "ctype": "image/png"}) is None
-
-
-def test_a_scan_takes_its_transcription_only_for_the_same_bytes():
-    row = {"sha256": "s1"}
-    scan = {"text": "", "pdf": {"pages": 4, "empty_pages": 4}}
-    texty = {"text": "real text", "pdf": {"pages": 4, "empty_pages": 0}}
-    done = {"u": {"sha256": "s1", "text": "# Transcribed"}}
-    assert ocr.text_for(done, "u", row, scan) == "# Transcribed"
-    assert ocr.text_for(done, "u", row, texty) is None
-    assert ocr.text_for(done, "u", {"sha256": "s2"}, scan) is None
 
 
 def test_an_original_records_the_file_with_a_usable_name(tmp_path):

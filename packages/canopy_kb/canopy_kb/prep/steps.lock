@@ -16,14 +16,14 @@
    "markdownify": "1.2.3"
   },
   "revision": "2",
-  "sources": "7bc8ce97a1fd84c4881974a7e5f9f7b44cc511ef94f57599a6e32cf45061c52a"
+  "sources": "574d2cb04c4d42e7bafba344dbd26b1e5fc5065cf2aa4a17ab66b2b75e0026ed"
  },
  "extract:docx": {
   "libraries": {
    "python-docx": "1.2.0"
   },
   "revision": "2",
-  "sources": "f8546e71a7b51a65582aa4a06ec6f6534380ea47af367dacf86def75b9eb213a"
+  "sources": "d228e6439090c982fb27e6f94b427da6ad48813363810929f8cc0fff9e20408c"
  },
  "extract:gdoc": {
   "libraries": {
@@ -32,7 +32,7 @@
    "markdownify": "1.2.3"
   },
   "revision": "2",
-  "sources": "7bc8ce97a1fd84c4881974a7e5f9f7b44cc511ef94f57599a6e32cf45061c52a"
+  "sources": "574d2cb04c4d42e7bafba344dbd26b1e5fc5065cf2aa4a17ab66b2b75e0026ed"
  },
  "extract:page": {
   "libraries": {
@@ -41,14 +41,14 @@
    "markdownify": "1.2.3"
   },
   "revision": "2",
-  "sources": "7bc8ce97a1fd84c4881974a7e5f9f7b44cc511ef94f57599a6e32cf45061c52a"
+  "sources": "574d2cb04c4d42e7bafba344dbd26b1e5fc5065cf2aa4a17ab66b2b75e0026ed"
  },
  "extract:pdf": {
   "libraries": {
    "pymupdf": "2.0"
   },
   "revision": "2",
-  "sources": "fec88feb691a612d6400ba4e51c79828adf3202bcf756f30f8ce60a9fefe9e2b"
+  "sources": "ac9de7101e39ddbe54e5802ae204722b7cd2601b87fef8444aa21aa5779e84ec"
  },
  "extract:xls": {
   "libraries": {
@@ -56,18 +56,13 @@
    "xlrd": "2.0.2"
   },
   "revision": "2",
-  "sources": "7199c74fb067cbe142d153a405c3e77dc4a6aa450a7770b62a5d0a336c5346f8"
+  "sources": "b746b0a2d2b0f69a1f8fae64d7ca1bf48a5fe0b2cebfd0bea657c608b85c8038"
  },
  "extract:xlsx": {
   "libraries": {
    "openpyxl": "3.1.5"
   },
   "revision": "2",
-  "sources": "7199c74fb067cbe142d153a405c3e77dc4a6aa450a7770b62a5d0a336c5346f8"
- },
- "ocr": {
-  "libraries": {},
-  "revision": "1",
-  "sources": "884d44599dd5a70d3d6a231135f44711e4e7adf203a466bba04c0376ebd5f66f"
+  "sources": "b746b0a2d2b0f69a1f8fae64d7ca1bf48a5fe0b2cebfd0bea657c608b85c8038"
  }
 }

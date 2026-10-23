@@ -54,9 +54,9 @@ def test_the_state_is_saved_in_chunks_and_an_unchanged_chunk_is_not_sent_again()
     st = State({"fetch": {f"https://x/{n}": {"status": 200, "sha256": str(n)} for n in range(500)}})
     root = st.upload(store)
     first = len(store.objects["results"])
-    store.kb_curation["sha"] = root
+    store.versions.append({"number": 1, "file": b"", "curation": root})  # the version it was built for
     again = State.load(store)
-    assert again.sections == st.sections and again.root == root
+    assert again.sections == st.sections and again.root == root and again.version == 1
     again.section("fetch")["https://x/7"]["sha256"] = "changed"
     again.upload(store)
     assert len(store.objects["results"]) == first + 2  # one chunk and the root
@@ -82,41 +82,39 @@ def test_a_model_result_is_stored_the_moment_it_is_made():
 def test_the_budget_stops_a_run_before_its_first_model_call():
     b = Budget(2)
     b.plan(Step("card", "1", cost=0.001), 10904)
-    b.plan(Step("ocr", "1", cost=0.03), 10)
-    with pytest.raises(OverBudget, match=r"card: 10904 calls .*--budget 12"):
+    with pytest.raises(OverBudget, match=r"card: 10904 calls .*--budget 11"):
         b.check()
     Budget(12).check()
 
 
-def test_publishing_sends_what_changed_a_card_change_sends_no_text_and_the_state_goes_with_it():
+def test_a_version_carries_its_state_and_an_unchanged_refresh_sends_and_saves_nothing():
     store = MemoryStore()
     docs = {"a": _doc("a", "Alpha " * 500), "b": _doc("b", "Beta " * 500)}
     with Curation(store) as cur:
         cur.state.section("fetch")["https://x/a"] = {"status": 200}
         out = _publish(cur, docs)
-    assert out["published"] and out["version"] == 1 and out["state_saved"]
-    assert store.kb_curation["sha"] and store.kb_curation["version"] == 1
+    assert out["published"] and out["version"] == 1 and store.versions[0]["curation"]
     assert store.item("a")["text"] == "Alpha " * 500
 
-    with Curation(store) as cur:  # nothing new: nothing sent, no version, state unchanged
+    with Curation(store) as cur:  # another machine: it starts from version 1's state
+        assert cur.state.version == 1 and cur.state.section("fetch") == {"https://x/a": {"status": 200}}
+        cur.state.section("fetch")["https://x/a"]["etag"] = "e2"  # a refetch that found the same content
         out = _publish(cur, docs)
-    assert out == {**out, "published": False, "unchanged": True, "state_saved": False}
-    assert not any(c.startswith("publish") for c in store.calls[-3:])
-    assert len(store.versions) == 1
+    assert out["published"] is False and out["unchanged"] and len(store.versions) == 1
+    assert not any(c.startswith(("publish", "put results")) and not c.endswith(" 0") for c in store.calls[-2:])
 
-    with Curation(store) as cur:  # a new card on "a": its small record only
+    with Curation(store) as cur:  # a new card on "a": a version, but no news for readers
         rec, text = _doc("a", "Alpha " * 500, card={"summary": "new"})
         out = _publish(cur, {**docs, "a": (rec, text)})
-    assert out["published"] and out["changed"] == 1 and out["version"] == 2
-    assert store.item("a")["card"]["summary"] == "new" and store.item("b")["text"] == "Beta " * 500
-    assert store.versions[-1]["changes"]["changed"] == []  # a new card on the same text: no news for readers
+    assert out["published"] and out["version"] == 2 and store.item("a")["card"]["summary"] == "new"
+    assert store.item("b")["text"] == "Beta " * 500 and store.versions[-1]["changes"]["changed"] == 0
 
     with Curation(store) as cur:  # a new text is news
-        out = _publish(cur, {**docs, "a": _doc("a", "Alpha, revised " * 500)})
-    assert store.versions[-1]["changes"]["changed"] == ["a"] and store.versions[-1]["changes"]["rows"]["a"]["url"]
+        _publish(cur, {**docs, "a": _doc("a", "Alpha, revised " * 500)})
+    assert store.versions[-1]["changes"]["changed"] == 1
 
 
-def test_a_refresh_that_would_remove_much_stops_and_a_second_refresh_waits():
+def test_a_refresh_that_would_remove_much_stops():
     store = MemoryStore()
     docs = {str(n): _doc(str(n), f"text {n}") for n in range(100)}
     with Curation(store) as cur:
@@ -126,26 +124,34 @@ def test_a_refresh_that_would_remove_much_stops_and_a_second_refresh_waits():
     assert len(store.versions) == 1
     with Curation(store) as cur:
         assert _publish(cur, {k: v for k, v in docs.items() if int(k) >= 10}, allow_removals=True)["removed"] == 10
-    with Curation(store, holder="a"), pytest.raises(curate.CurationError, match="holds the lease"):
-        Curation(store, holder="b").__enter__()
 
 
-def test_a_stale_state_cannot_be_committed():
+def test_two_refreshes_from_one_version_the_second_to_publish_loses_and_keeps_what_it_paid_for():
+    store = MemoryStore()
+    with Curation(store) as cur:
+        _publish(cur, {"a": _doc("a", "one")})
+    one, two = Curation(store).__enter__(), Curation(store).__enter__()
+    two.put("c" * 64, {"card": "paid"}, now=True)
+    _publish(two, {"a": _doc("a", "two")})
+    one.put("d" * 64, {"card": "paid too"}, now=True)
+    with pytest.raises(curate.CurationError, match="at version 2, not 1"):
+        _publish(one, {"a": _doc("a", "three")})
+    assert len(store.versions) == 2 and store.item("a")["text"] == "two"
+    assert {"c" * 64, "d" * 64} <= set(store.objects["results"])  # neither result is lost
+
+
+def test_a_rollback_rolls_the_state_back_too():
     store = MemoryStore()
     with Curation(store) as cur:
         cur.state.section("x")["k"] = 1
         _publish(cur, {"a": _doc("a", "one")})
-    one, two = Curation(store, holder="1").__enter__(), None
-    store.drop_lease("1")
-    two = Curation(store, holder="2").__enter__()
-    two.state.section("x")["k"] = 2
-    _publish(two, {"a": _doc("a", "two")})
-    store.drop_lease("2")
-    store.take_lease("1", 60)
-    one.state.section("x")["k"] = 3
-    with pytest.raises(curate.CurationError, match="saved since"):
-        _publish(one, {"a": _doc("a", "three")})
-    assert len(store.versions) == 2 and store.item("a")["text"] == "two"
+    with Curation(store) as cur:
+        cur.state.section("x")["k"] = 2
+        _publish(cur, {"a": _doc("a", "two")})
+    store.rollback(1)
+    with Curation(store) as cur:
+        assert cur.state.version == 3 and cur.state.section("x") == {"k": 1}
+        assert _publish(cur, {"a": _doc("a", "one")})["unchanged"]  # version 1's content, as served
 
 
 # ---- fetching from the curation state (canopy_kb.prep.fetch) ----------------------------
@@ -228,7 +234,7 @@ def test_a_google_export_that_says_the_same_keeps_its_row_and_original(monkeypat
 
 
 def test_the_toolkits_lock_describes_its_code():
-    """A reader, OCR, card or alias change lands with its REVISION decision (see
+    """A reader, card or alias change lands with its REVISION decision (see
     canopy_kb/prep/steps.py): bump it if the output can change, then relock."""
     pytest.importorskip("pymupdf")
     from canopy_kb.prep import steps

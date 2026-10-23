@@ -9,7 +9,6 @@ call these for the rest:
 |---|---|
 | `raw.py` | the raw HTTP cache every stage reads (`Raw`), and file helpers |
 | `extract.py` | each format to markdown (`html`, `pdf`, `xlsx` readers), cached by sha256 |
-| `ocr.py` | scanned PDFs transcribed by Gemini |
 | `dedupe.py` | identical documents once; shared spreadsheet tabs once |
 | `cards.py` | a catalog card per item (Gemini Flash) |
 | `aliases.py` | entity names that are one thing (Gemini Pro) |

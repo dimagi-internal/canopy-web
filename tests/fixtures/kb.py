@@ -7,7 +7,7 @@ import io
 import json
 
 import pytest
-from canopy_kb import build, records
+from canopy_kb import build
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
 
@@ -102,25 +102,27 @@ def bundle(tmp_path, name, items, grants=None):
     return b
 
 
-def full(world, s3, tmp_path, bundle):
-    """The first publish: the whole file, with its state."""
+def head(world) -> int | None:
+    """The version the project serves: what a steward's next publish is made from."""
+    project = AgentProject.objects.get(pk=world["project"].pk)
+    return project.kb_version.number if project.kb_version_id else None
+
+
+def full(world, s3, tmp_path, bundle, *, previous=None, base="head", curation="", expect=200):
+    """A publish the way the steward's refresh makes one: build the whole file (from the
+    `previous` kb.sqlite, so its history carries on), upload it, publish it made from
+    `base` (default: the head) with the `curation` state it was built from."""
     db = tmp_path / f"{bundle.name}.sqlite"
-    build(bundle, db)
+    build(bundle, db, previous=previous)
     body = gzip.compress(db.read_bytes())
     c = world["client"]
     up = c.post(f"{KB_URL}/upload", content_type=J).json()
     s3.objects[up["key"]] = body
     r = c.post(f"{KB_URL}/publish", {"key": up["key"], "sha256": hashlib.sha256(body).hexdigest(),
-                                     "state": records.state(bundle)}, content_type=J)
-    assert r.status_code == 200, r.content
+                                     "base": head(world) if base == "head" else base, "curation": curation},
+               content_type=J)
+    assert r.status_code == expect, r.content
     return r
-
-
-def plan(world, bundle, client=None) -> dict:
-    """What publishing `bundle` would change (`…/kb/plan`)."""
-    r = (client or world["client"]).post(f"{KB_URL}/plan", {"state": records.state(bundle)}, content_type=J)
-    assert r.status_code == 200, r.content
-    return r.json()
 
 
 V2 = [dict(ITEMS[0], text=ITEMS[0]["text"] + " Zinc too.", sha256="a2"),  # changed

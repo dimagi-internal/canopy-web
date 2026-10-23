@@ -2,16 +2,20 @@
 
 canopy-web never builds an index (#1971: building in its web process ran it out of
 memory). The machine that refreshes builds kb.sqlite (`canopy_kb.curate`, or `canopy kb
-build`) and publishes it whole (`publish_full`): canopy-web stores it, serves it, and
-records it as a version.
+build`) and publishes it whole (`publish_full`): canopy-web checks it, stores it, serves
+it, and records it as a version.
 
-A publish names its STATE — every document record's and corpus part's sha256
-(`canopy_kb.records.state`) — so `plan(state)` can say a refresh changed nothing (no
-upload, no version) and a version can list what it added, changed and removed
-(`KbChange`, which `whats_new` reads; the builder reports content changes, else the
-state diff). A Drive-sourced knowledge base's state is vetted: a document its owner
-has not approved is refused (`kb_drive.check_ids`). `rollback` points the project at an
-earlier version's file.
+A version carries the curation state it was built from (`curation_sha`, a root in the
+steward's results store; `canopy_kb.curate.State`): a refresh starts from the head
+version's, so the state and the file readers see can never disagree, and a `rollback`
+rolls the state back with the file. A publish names the version it was made from
+(`base`) and is refused when another landed since (`KbConflict`): one refresh wins, and
+the loser keeps every result it paid for.
+
+What changed is the file's own history (its `changes` table, which `whats_new` reads):
+the builder records only documents whose content changed. A Drive-sourced knowledge
+base's file is opened and every document in it checked against the owner's approvals
+(`kb_drive.check_ids`) before it is served.
 
 Only the newest `KEEP_FILES` versions keep their kb.sqlite.gz (`prune`); older ones
 stay in the log and can no longer be rolled back to. A project with a Drive replica
@@ -24,33 +28,21 @@ import tempfile
 import threading
 from pathlib import Path
 
-from canopy_kb import records
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
 from . import kb_drive, kb_store
-from .models import Agent, AgentProject, KbChange, KbVersion
+from .models import Agent, AgentProject, KbVersion
 
 log = logging.getLogger(__name__)
 
 KEEP_FILES = 5
-#: A version still on its way: one at a time per project.
-_LIVE =(KbVersion.PENDING, KbVersion.BUILDING)
-#: What a knowledge base with no version yet holds.
-EMPTY = {"docs": {}, "parts": {}}
+#: A version still on its way (a delta canopy-web was to build, before #1971).
+_LIVE = (KbVersion.PENDING, KbVersion.BUILDING)
 
 
 class KbConflict(RuntimeError):
-    """The log moved since the steward planned (another publish, a rollback)."""
-
-
-def _state_ok(state) -> dict:
-    if not isinstance(state, dict) or not isinstance(state.get("docs"), dict) or not isinstance(state.get("parts"), dict):
-        raise kb_store.KbPublishError("state must be {docs: {item_id: sha256}, parts: {name: sha256}}")
-    for k, v in list(state["docs"].items()) + list(state["parts"].items()):
-        if not isinstance(k, str) or not k or not kb_store._is_sha256(str(v)):
-            raise kb_store.KbPublishError(f"state: {str(k)[:80]!r} is not addressed by a sha256")
-    return state
+    """The log moved since the steward started (another publish, a rollback)."""
 
 
 def publisher(user) -> str:
@@ -61,71 +53,43 @@ def publisher(user) -> str:
     return agent.slug if agent else (user.email or "")
 
 
-def head_state(project) -> dict | None:
-    """The state the project serves: EMPTY before its first version, None when its head
-    is a whole-file publish that carried no state (publish the whole file once more)."""
-    head = project.kb_version
-    if head is None:
-        return EMPTY
-    if not head.state_sha:
-        return None
-    return kb_store.get_blob(project, head.state_sha)
-
-
 def _next_number(project) -> int:
     last = KbVersion.objects.filter(project=project).order_by("-number").values_list("number", flat=True).first()
     return (last or 0) + 1
 
 
-def plan(project, state: dict) -> dict:
-    """What publishing `state` would change, and what to upload for it."""
-    _state_ok(state)
-    head = project.kb_version
-    base = head.number if head else None
-    current = head_state(project)
-    if current is None:
-        return {"base": base, "full_required": True, "unchanged": False, "added": 0, "changed": 0, "removed": 0,
-                "upload_docs": [], "upload_parts": [],
-                "reason": "the published knowledge base carries no state yet: publish the whole file once"}
-    d = records.diff(current, state)
-    unchanged = not (d["added"] or d["changed"] or d["removed"] or d["parts"])
-    return {"base": base, "full_required": False, "unchanged": unchanged, "added": len(d["added"]),
-            "changed": len(d["changed"]), "removed": len(d["removed"]),
-            "upload_docs": d["added"] + d["changed"], "upload_parts": d["parts"], "reason": ""}
+def _counts(changes: dict | None) -> dict:
+    out = {}
+    for k in ("added", "changed", "removed"):
+        v = (changes or {}).get(k)
+        out[k] = max(0, int(v)) if isinstance(v, int) and not isinstance(v, bool) else 0
+    return out
 
 
-def publish_full(project, key: str, sha256: str, state: dict | None = None, *, published_by: str = "",
+def publish_full(project, key: str, sha256: str, *, base: int | None, curation: str = "", published_by: str = "",
                  changes: dict | None = None, check_ids=None):
-    """The whole-file publish (`kb_store.publish`), recorded as a FULL version."""
-    if state is not None:
-        _state_ok(state)
-    if check_ids is not None:  # a Drive-sourced KB: every document it names must be approved
-        if state is None:
-            raise kb_store.KbPublishError("a knowledge base with a Drive source publishes with its state, "
-                                          "so its documents can be checked against the owner's approvals")
-        check_ids(list(state["docs"]))
+    """The whole-file publish (`kb_store.publish`), recorded as a FULL version made from
+    version `base` (None: the first). `curation` is the state it was built from, already
+    in the results store. `changes` counts the documents whose content changed."""
+    if curation and not kb_store.stored(project, "results", [curation]):
+        raise kb_store.KbPublishError(f"curation state {curation[:12]} is not stored: upload it first")
+    if check_ids is not None:  # a Drive-sourced KB: every document in the file must be approved
+        check_ids(kb_store.item_ids(project, key))
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
-        # A whole file built elsewhere (the refresh's runner) supersedes a delta still
-        # waiting for canopy-web to build it: its builder, if one is running, finds the
-        # project moved on and stops, and the served version is never touched by it.
+        head = project.kb_version
+        if (head.number if head else None) != base:
+            raise KbConflict(f"the knowledge base is at version {head.number if head else 'none'}, not {base}: "
+                             "another publish or a rollback landed since this refresh started; refresh again")
+        # A delta canopy-web was still to build (before #1971) never will be.
         KbVersion.objects.filter(project=project, status__in=_LIVE).update(
             status=KbVersion.FAILED, error="superseded by a whole-file publish", finished_at=timezone.now())
-        previous = head_state(project) if state is not None and project.kb_version_id else None
-        head = project.kb_version
         project = kb_store.publish(project, key, sha256)
         version = KbVersion.objects.create(
             project=project, number=_next_number(project), kind=KbVersion.FULL, status=KbVersion.READY,
-            base=head, state_sha=kb_store.put_blob(project, state) if state is not None else "",
-            kb_key=project.kb_key, kb_sha256=project.kb_sha256, kb_bytes=project.kb_bytes,
-            uploaded_bytes=project.kb_bytes or 0, published_by=published_by,
-            started_at=timezone.now(), finished_at=timezone.now())
-        if changes:
-            d = {k: [str(i) for i in changes.get(k) or []] for k in ("added", "changed", "removed")}
-            _log_ids(version, d, {str(i): r for i, r in (changes.get("rows") or {}).items() if isinstance(r, dict)})
-        elif previous is not None:
-            d = records.diff(previous, state)
-            _log_ids(version, d)
+            base=head, curation_sha=curation, kb_key=project.kb_key, kb_sha256=project.kb_sha256,
+            kb_bytes=project.kb_bytes, uploaded_bytes=project.kb_bytes or 0, published_by=published_by,
+            started_at=timezone.now(), finished_at=timezone.now(), **_counts(changes))
         project.kb_version = version
         project.save(update_fields=["kb_version"])
         if project.kb_drive_replica:
@@ -134,24 +98,9 @@ def publish_full(project, key: str, sha256: str, state: dict | None = None, *, p
     return project, version
 
 
-def _log_ids(version: KbVersion, d: dict, rows: dict | None = None) -> None:
-    """The version's KbChange rows; `rows` gives (type, title, url, date) by id where known
-    (a full publish and a rollback know only ids: `whats_new` fills the rest in)."""
-    rows = rows or {}
-    out = []
-    for change, ids in ((KbChange.NEW, d["added"]), (KbChange.CHANGED, d["changed"]), (KbChange.REMOVED, d["removed"])):
-        for iid in ids:
-            r = rows.get(iid) or {}
-            out.append(KbChange(version=version, item_id=iid[:300], change=change, type=str(r.get("type") or "")[:60],
-                                title=str(r.get("title") or ""), url=str(r.get("url") or ""),
-                                date=str(r.get("date") or "")[:40]))
-    KbChange.objects.bulk_create(out, batch_size=2000)
-    version.added, version.changed, version.removed = len(d["added"]), len(d["changed"]), len(d["removed"])
-    version.save(update_fields=["added", "changed", "removed"])
-
-
 def rollback(project, number: int, *, published_by: str = "") -> KbVersion:
-    """Point the project at version `number`'s file again, as a new version of the log."""
+    """Serve version `number`'s file again, with the state it was built from, as a new
+    version of the log."""
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
         target = KbVersion.objects.filter(project=project, number=number).first()
@@ -163,16 +112,11 @@ def rollback(project, number: int, *, published_by: str = "") -> KbVersion:
         head = project.kb_version
         if head is not None and head.kb_key == target.kb_key:
             raise kb_store.KbPublishError(f"version {number} is what the project serves already")
-        if KbVersion.objects.filter(project=project, status__in=_LIVE).exists():
-            raise KbConflict("a version is still being built; wait for it, then roll back")
         version = KbVersion.objects.create(
             project=project, number=_next_number(project), kind=KbVersion.ROLLBACK, status=KbVersion.READY,
-            base=head, rollback_of=target, state_sha=target.state_sha, kb_key=target.kb_key,
+            base=head, rollback_of=target, curation_sha=target.curation_sha, kb_key=target.kb_key,
             kb_sha256=target.kb_sha256, kb_bytes=target.kb_bytes, summary=target.summary,
             published_by=published_by, started_at=timezone.now(), finished_at=timezone.now())
-        if head is not None and head.state_sha and target.state_sha:
-            _log_ids(version, records.diff(kb_store.get_blob(project, head.state_sha),
-                                           kb_store.get_blob(project, target.state_sha)))
         kb_store.point(project, target.kb_key, target.kb_sha256, target.kb_bytes or 0, version)
     return version
 
@@ -191,39 +135,6 @@ def prune(project) -> list[str]:
     if gone:
         KbVersion.objects.filter(project=project, kb_key__in=gone).update(kb_key="")
     return gone
-
-
-def whats_new(project, kb, since: str = "", limit: int = 100) -> dict:
-    """The `whats_new` tool from the version log: what each version since `since` added,
-    changed and removed, newest first. History from before the log (carried in the
-    file the first logged version published) follows it."""
-    versions = list(KbVersion.objects.filter(project=project, status=KbVersion.READY).order_by("-number"))
-    if not versions:
-        return kb.whats_new(since, limit)
-    first = versions[-1]
-    since_ok = [v for v in versions if not since or (v.finished_at and v.finished_at.isoformat() >= since)]
-    changes = []
-    for row in (KbChange.objects.filter(version__in=since_ok).select_related("version")
-                .order_by("-version__number", "change", "item_id")[:limit]):
-        r = {"at": row.version.finished_at.strftime("%Y-%m-%dT%H:%M:%SZ"), "version": row.version.number,
-             "item_id": row.item_id, "change": row.change, "type": row.type, "title": row.title,
-             "url": row.url, "date": row.date}
-        if not r["title"]:
-            it = kb.item_row(row.item_id)
-            if it is not None:
-                r.update(type=it["type"], title=it["title"], url=it["url"], date=it["date"])
-        changes.append(r)
-    log_rows = [{"version": v.number, "kind": v.kind, "at": v.finished_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                 "added": v.added, "changed": v.changed, "removed": v.removed,
-                 **({"rollback_to": v.rollback_of.number} if v.rollback_of_id else {})} for v in since_ok]
-    out = {"version": versions[0].number, "versions": log_rows, "changes": changes, "note": ""}
-    first_at = first.finished_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-    if len(changes) < limit and (not since or since < first_at):
-        older = [c for c in kb.whats_new(since, limit - len(changes))["changes"] if (c.get("at") or "") < first_at]
-        if older:
-            out["changes"] += older
-            out["note"] = f"changes before version {first.number} ({first_at[:10]}) are from the file's own history"
-    return out
 
 
 def _replicate_later(project_pk: int, version_pk: int) -> None:

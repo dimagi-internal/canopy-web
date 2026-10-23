@@ -330,15 +330,16 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
 def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPublishIn) -> AgentProjectOut:
     """The project answers its tools at `mcp_path` from this upload from now on
     (every serving instance re-fetches it by its sha256), as a new FULL version of its
-    log (`…/kb/versions`). With the `state` it was built from, the next publish can send
-    only what changed (`…/kb/plan`). Earlier versions' files are kept for rollback
-    (the newest few)."""
+    log (`…/kb/versions`) made from version `base`: 409 when another landed since. It
+    carries the `curation` state it was built from, which the next refresh starts from.
+    A Drive-sourced file is opened and its documents checked against the owner's
+    approvals first (422). Earlier versions' files are kept for rollback (the newest few)."""
 
     project = _workspace_project_or_404(request, workspace, handle)
     agent_for_work(request, project.agent.slug)
-    state = payload.state.model_dump() if payload.state else None
     try:
-        project, _ = _kb_call(lambda: kb_versions.publish_full(project, payload.key, payload.sha256, state,
+        project, _ = _kb_call(lambda: kb_versions.publish_full(project, payload.key, payload.sha256,
+                                                               base=payload.base, curation=payload.curation,
                                                                published_by=kb_versions.publisher(request.user),
                                                                changes=payload.changes,
                                                                check_ids=kb_drive.check_ids(project)))

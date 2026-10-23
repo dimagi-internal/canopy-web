@@ -27,7 +27,8 @@ KB with a Drive source, only its owner, its steward and the readers its owner na
 (`kb_drive.may_read`). Anyone else sees no tools and every call is refused, with the
 same answer as a project that does not exist.
 
-`whats_new` answers from the project's version log (`kb_versions.whats_new`).
+`whats_new` answers from the file's own history: its builder records only documents
+whose content changed.
 """
 from __future__ import annotations
 
@@ -98,7 +99,7 @@ def _specs(workspace: str, handle: str) -> list[dict]:
 
 
 def _call(workspace: str, handle: str, name: str, arguments: dict):
-    from apps.agents import kb_rerank, kb_store, kb_vectors, kb_versions
+    from apps.agents import kb_rerank, kb_store, kb_vectors
     from canopy_kb import KBError
     from canopy_kb.tools import run
 
@@ -112,9 +113,6 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         rerank = kb_rerank.reranker() if name == "search" else None
         semantic = kb_vectors.semantic_for(project) if name == "search" else None
         link = kb_store.original_link(project) if name == "original" else None
-        if name == "whats_new":  # the version log, not the file's own history
-            return kb_versions.whats_new(project, kb, str(arguments.get("since") or ""),
-                                         int(arguments.get("limit") or 100))
         return run(kb, name, arguments, semantic, rerank, link)
     except (KBError, KeyError, ValueError, TypeError) as exc:
         raise ToolError(f"{name}: {exc}") from exc

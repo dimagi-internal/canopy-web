@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-# canopy_kb.prep, the curator's toolkit (fetch, read each format, OCR, cards); the engine needs none.
+# canopy_kb.prep, the curator's toolkit (fetch, read each format, cards); the engine needs none.
 # The readers are pinned: a step result is keyed by the code that made it, and a reader
 # library is part of that code (prep/steps.lock records their versions; a refresh refuses
 # to run on others until a curator relocks, bumping a reader's REVISION if output moves).

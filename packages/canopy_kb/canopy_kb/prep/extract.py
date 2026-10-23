@@ -6,7 +6,7 @@ refresh re-reads only what changed; `extracted` returns one cached result. A cur
 assemble step turns the results into items (its ids, types and titles are its own).
 
 Formats: HTML pages (a whole content region to markdown), PDFs (PyMuPDF in reading
-order; `ocr` for scans), xlsx and xls (row-per-line with headers, number formats,
+order; a scan with no text layer reads as almost nothing: there is no OCR), xlsx and xls (row-per-line with headers, number formats,
 formulas and notes; large record tabs returned separately as `data`), Google Docs
 (exported html), docx, and Word 97 .doc (macOS `textutil`, where it exists).
 """

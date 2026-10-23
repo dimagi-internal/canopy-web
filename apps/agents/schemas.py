@@ -936,45 +936,19 @@ class KbUploadOut(StrictModel):
     expires_in: int
 
 
-class KbStateIn(StrictModel):
-    """What a publish IS (`canopy_kb.records.state`): each document record's and corpus
-    part's sha256 — `docs` by item id, `parts` by name (manifest, aliases, table:<name>)."""
-
-    docs: dict[str, str]
-    parts: dict[str, str]
-
-
 class KbPublishIn(StrictModel):
     key: str = Field(min_length=1, max_length=300)
     #: sha256 of the uploaded file — what serving instances cache by and verify.
     sha256: str = Field(min_length=64, max_length=64)
-    #: The state the file was built from, so the next publish can send only a delta.
-    state: KbStateIn | None = None
-    #: What changed in content ({added, changed, removed: [ids], rows: {id: {type,
-    #: title, url, date}}}), as the builder saw it: the version log (`whats_new`) lists
-    #: these, not every record whose address moved. Without it, the state diff.
+    #: The version this file was made from (null for a knowledge base's first): the
+    #: publish is refused (409) when another version landed since.
+    base: int | None
+    #: The curation state it was built from, uploaded first as a result (`…/kb/results`):
+    #: the next refresh starts from it. Blank for a file built without one.
+    curation: str = Field(default="", max_length=64)
+    #: How many documents' CONTENT it added, changed and removed ({added, changed,
+    #: removed}), as the builder counted them: the version log shows these.
     changes: dict | None = None
-
-
-class KbPlanIn(StrictModel):
-    state: KbStateIn
-
-
-class KbPlanOut(StrictModel):
-    """What publishing a state would change. `unchanged`: send nothing, no version is
-    made. Otherwise `upload_docs` and `upload_parts` are what changed since the head:
-    the steward applies them to the served file, builds, and publishes the whole file
-    (`…/kb/upload`, `…/kb/publish`). canopy-web never builds one (#1971)."""
-
-    base: int | None = None
-    full_required: bool
-    unchanged: bool
-    added: int
-    changed: int
-    removed: int
-    upload_docs: list[str]
-    upload_parts: list[str]
-    reason: str = ""
 
 
 class KbBlobIn(StrictModel):
@@ -989,39 +963,9 @@ class KbBlobsIn(StrictModel):
     blobs: list[KbBlobIn] = Field(max_length=1000)
 
 
-class KbCurationIn(StrictModel):
-    #: The curation state's step key, uploaded first as a result (`…/kb/results`).
-    sha: str = Field(min_length=64, max_length=64)
-    #: The state this refresh started from; null for a knowledge base's first.
-    base: str | None = None
-
-
-class KbLeaseIn(StrictModel):
-    #: The refresh's own id: the same holder renews, another waits.
-    holder: str = Field(min_length=1, max_length=200)
-    seconds: int = Field(default=3600, ge=60, le=6 * 3600)
-
-
-class KbLeaseOut(StrictModel):
-    holder: str
-    until: datetime
-
-
-class KbCurationOut(StrictModel):
-    """The curation state the last refresh saved (empty before the first)."""
-
-    sha: str | None = None
-    saved_at: datetime | None = None
-    saved_by: str = ""
-    #: The version published when it was saved.
-    version: int | None = None
-    #: The refresh running now, if one is.
-    lease: KbLeaseOut | None = None
-
-
 class KbObjectsIn(StrictModel):
-    store: Literal["results", "records", "originals"]
-    #: Results by step key, records and originals by sha256.
+    store: Literal["results", "originals"]
+    #: Results by step key, originals by sha256.
     keys: list[str] = Field(max_length=1000)
 
 
@@ -1035,7 +979,7 @@ class KbObjectLinkOut(StrictModel):
 
 
 class KbObjectLinksOut(StrictModel):
-    """GET each `url`: results and records come gzipped, originals as themselves."""
+    """GET each `url`: results come gzipped, originals as themselves."""
 
     links: list[KbObjectLinkOut]
     expires_in: int
@@ -1059,6 +1003,8 @@ class KbVersionOut(StrictModel):
     finished_at: datetime | None = None
     #: The Drive replica's outcome, when the project keeps one.
     replica: str = ""
+    #: The curation state it was built from: a refresh of the head starts from it.
+    curation_sha: str = ""
     #: The version the project serves now.
     current: bool = False
     #: Its file is kept, so the project can be pointed back at it.
