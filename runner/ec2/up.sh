@@ -57,7 +57,7 @@ usage: ./up.sh [options]
                             (RunnerProjects='') and no chat-session turns (RunnerSessions=0).
                             Agent work reaches it only through assignment rows / drills.
   --test                    a directed-only TEST box: it claims only turns pinned to it and
-                            chats bound to it (RunnerDirected=1), serves no agent
+                            chats bound to it (its invitation pairs it directed), serves no agent
                             (RunnerAgents=''), takes chats (RunnerSessions=1) for --projects.
                             Not for the live name; needs --workspace. Then: ./wire.sh --test
   --projects <a,b>          the repos a --test box holds (default canopy-web)
@@ -388,7 +388,7 @@ if [[ "$STANDBY" == "1" ]]; then
   PARAMS+=("RunnerProjects=" "RunnerSessions=0")
 fi
 if [[ "$TEST" == "1" ]]; then
-  PARAMS+=("RunnerAgents=" "RunnerProjects=${PROJECTS:-canopy-web}" "RunnerSessions=1" "RunnerDirected=1")
+  PARAMS+=("RunnerAgents=" "RunnerProjects=${PROJECTS:-canopy-web}" "RunnerSessions=1")
 fi
 [[ -n "$UNITS" ]] && PARAMS+=("RunnerUnits=${UNITS}")
 # shellcheck disable=SC2206 # EXTRA_PARAMS is documented as space-separated Key=Val
@@ -551,10 +551,12 @@ if [[ "$NEED_INVITE" == "1" ]]; then
       --query PublicKey --output text 2>/dev/null || true)
     printf '%s %s\n' "$uid" "$der" >> "$TMPC/unit-ders"
   done
-  BODY=$(NAME="$NAME" WS="$WORKSPACE" ROLE="$ROLE_ARN" DER="$ECDH_DER" UNITS_JSON="$UNITS_JSON" \
+  BODY=$(NAME="$NAME" WS="$WORKSPACE" ROLE="$ROLE_ARN" DER="$ECDH_DER" UNITS_JSON="$UNITS_JSON" TEST="$TEST" \
          UNIT_DERS="$TMPC/unit-ders" python3 - <<'PY'
 import base64, json, os
 body = {"name": os.environ["NAME"], "workspace": os.environ["WS"], "role_arn": os.environ["ROLE"]}
+if os.environ.get("TEST") == "1":
+    body["directed"] = True  # a test box is directed from the moment it pairs
 
 
 def jwk_of(text):

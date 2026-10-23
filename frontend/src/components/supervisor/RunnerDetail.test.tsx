@@ -247,7 +247,7 @@ describe('RunnerDetail — pause', () => {
 
 describe('RunnerDetail — Slack & chat sessions', () => {
   it('says when a box is directed only', () => {
-    render(<RunnerDetail runner={runner({ capabilities: { sessions: true, directed: true } })} agents={agents} onBack={() => {}} />)
+    render(<RunnerDetail runner={runner({ directed: true, capabilities: { sessions: true } })} agents={agents} onBack={() => {}} />)
     expect(screen.getByTestId('runner-directed').textContent).toContain('Directed only')
   })
 

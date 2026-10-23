@@ -312,11 +312,11 @@ class Runner(models.Model):
     #: box's own agent unit (`unit()`); both apply when both are set
     #: (`routing.dedicated_agent_slugs`).
     only_agents = models.ManyToManyField("agents.Agent", blank=True, related_name="dedicated_runners")
-    #: A person's word on `directed_only`, over the box's own declaration
-    #: (`capabilities.directed`): None follows the box, True/False decide. So a box
-    #: stood up directed (`up.sh --test`) can take routed work again from the runner
-    #: page, with no shell on it. Set by a runner administrator, never by the box.
-    directed_setting = models.BooleanField(null=True, blank=True, default=None)
+    #: Directed only: the box takes only what is PUT on it (`directed_only`). A
+    #: runner administrator's setting (the runner page, `PUT /runners/{id}/directed`),
+    #: or the invitation's for a box paired as a test box (`up.sh --test`) — never
+    #: what the box says about itself.
+    directed = models.BooleanField(default=False)
     #: The egress lock a person set for this runner (`PUT …/egress`, `apps/harness/egress.py`):
     #: locked, and the hosts it admits beyond the box's base set. Root on the box reads it
     #: by its instance role (`POST /api/harness/runners/box-egress`) and applies it. It
@@ -429,16 +429,10 @@ class Runner(models.Model):
         """Whether this box takes only what is PUT on it: turns pinned to it and
         turns of sessions bound to it — no routed agent turn (even with an
         enabled assignment row), no repo turn, no unbound chat, no inherited
-        workspace order. Box-declared (`capabilities.directed`, a cloud box's
-        `RUNNER_DIRECTED=1`) and safe to trust for the same reason `cannot_serve`
-        is: it can only make a box take less. It stays session-capable, so a chat
-        can still be started on it, and that chat binds to it. A runner
-        administrator's `directed_setting` overrides the box's declaration."""
-        if self.private:
-            return True
-        if self.directed_setting is not None:
-            return self.directed_setting
-        return bool((self.capabilities or {}).get("directed", False))
+        workspace order. A private runner always; otherwise `directed`, a person's
+        setting. It stays session-capable, so a chat can still be started on it,
+        and that chat binds to it."""
+        return self.private or self.directed
 
     @property
     def live_status(self) -> str:
@@ -2045,6 +2039,9 @@ class RunnerInvitation(models.Model):
     #: `workspace` by its instance role (`units_of`). `runner_id` is filled in when
     #: the box pairs.
     units = models.JSONField(default=list, blank=True)
+    #: Pair its runners directed-only (`Runner.directed`): a test box (`up.sh
+    #: --test`) is directed from the moment it pairs, before anyone could route to it.
+    directed = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
     expires_at = models.DateTimeField()
     approved_at = models.DateTimeField(null=True, blank=True)

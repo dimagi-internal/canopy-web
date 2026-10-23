@@ -189,7 +189,7 @@ an emdash task name alone is not an identity.
   anonymous chooses a box. Slack's move-to-cloud additionally requires the clicker
   to administer the cloud box, even when they are an agent admin: a Slack identity
   is a weaker principal than a browser session (`apps/slack/services.py::_move_to_cloud`).
-- **A directed-only box** (`capabilities.directed`, a test box from `up.sh --test`)
+- **A directed-only box** (`Runner.directed`, e.g. a test box from `up.sh --test`)
   is still offered, labelled "directed only": a chat started on it binds to it, and
   it takes nothing else.
 

@@ -141,8 +141,8 @@ def test_only_rule_routes_do_not_count(fleet):
 
 def test_directed_only_runner_raises_its_own_reason(fleet):
     box = _runner(fleet, "pinned-box")
-    box.capabilities = {"agents": [], "directed": True}
-    box.save(update_fields=["capabilities"])
+    box.directed = True
+    box.save(update_fields=["directed"])
     RunnerAssignment.objects.create(agent=fleet["eva"], runner=box, rank=0)
     r = _raises()["agent:eva:routing"]
     assert r.title == "Eva's runners (pinned-box) only take directed turns"
@@ -152,8 +152,8 @@ def test_directed_only_runner_raises_its_own_reason(fleet):
 
 def test_inherited_directed_only_runner_raises_its_own_reason(fleet):
     box = _runner(fleet, "pinned-box")
-    box.capabilities = {"agents": [], "directed": True}
-    box.save(update_fields=["capabilities"])
+    box.directed = True
+    box.save(update_fields=["directed"])
     WorkspaceRunnerOrder.objects.create(workspace=fleet["ws"], runner=box, rank=0)
     assert _raises()["agent:eva:routing"].title == "Eva's runners (pinned-box) only take directed turns"
 

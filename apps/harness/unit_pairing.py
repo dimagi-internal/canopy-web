@@ -225,7 +225,8 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
                     caps["unit"] = unit_capability(spec, roots.get(spec["workspace"], spec["workspace"]))
                     runner = Runner.objects.create(
                         name=u.name, kind=Runner.CLOUD, host=u.host, capabilities=caps,
-                        owner=invitation.created_by, workspace_id=spec["workspace"], machine_id=machine)
+                        owner=invitation.created_by, workspace_id=spec["workspace"], machine_id=machine,
+                        directed=invitation.directed)
                     # The unit's ECDH key is approved with the invitation when the
                     # invitation named it (up.sh read it from KMS); any other waits
                     # for a person, as a new ECDH key always does.

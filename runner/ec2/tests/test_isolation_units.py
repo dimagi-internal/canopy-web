@@ -14,7 +14,7 @@ import pytest
 
 BOX = {"RUNNER_NAME": "cloud-ec2-9", "RUNNER_WORKSPACE": "dimagi", "CANOPY_BASE_URL": "https://canopy.dimagi.com",
        "RUNNER_AGENTS": "ace,ada,eva", "AGENT_SLUGS": "ace,ada,eva", "RUNNER_PROJECTS": "canopy-web",
-       "RUNNER_SESSIONS": "1", "RUNNER_DIRECTED": "0", "RUNNER_EXECUTOR": "acp",
+       "RUNNER_SESSIONS": "1", "RUNNER_EXECUTOR": "acp",
        "RUNNER_UNITS": "tree:dimagi,tree:marshellis,agent:eva"}
 
 

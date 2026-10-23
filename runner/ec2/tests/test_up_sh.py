@@ -406,9 +406,13 @@ def test_up_test_mode_params(tmp_path, canopy):
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-fork", "--test", "--workspace", "canopy")
     assert res.returncode == 0, res.stdout + res.stderr
     deploy = _deploy(state)
-    for p in ("RunnerName=cloud-ec2-fork", "RunnerDirected=1", "RunnerSessions=1", "RunnerAgents=",
+    for p in ("RunnerName=cloud-ec2-fork", "RunnerSessions=1", "RunnerAgents=",
               "RunnerProjects=canopy-web", "RunnerWorkspace=canopy"):
         assert f" {p} " in deploy, (p, deploy)
+    assert "RunnerDirected" not in deploy
+    # Directed is canopy-web's setting: the invitation pairs the box directed.
+    (_, body), = [p for p in canopy.handler.posted if p[0] == "/api/harness/runner-invitations/"]
+    assert body["directed"] is True
     assert "./wire.sh --name cloud-ec2-fork --test" in res.stdout
 
 
@@ -447,7 +451,8 @@ def test_up_workspace_names_where_the_box_pairs(tmp_path, canopy):
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "canopy")
     assert res.returncode == 0, res.stdout + res.stderr
     assert " RunnerWorkspace=canopy " in _deploy(state)
-    assert "RunnerDirected" not in _deploy(state)
+    (_, body), = [p for p in canopy.handler.posted if p[0] == "/api/harness/runner-invitations/"]
+    assert "directed" not in body
 
 
 # ---- isolation units (spec 2026-10-19-runner-isolation-units, plan Task 6.6) -----

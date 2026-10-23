@@ -46,7 +46,6 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     private_runner_id: null,
     only_agents: [],
     directed: false,
-    directed_setting: null,
     egress_locked: false,
     egress_allow: [],
     egress_forced: false,
@@ -250,30 +249,25 @@ describe("parkedSummary — the hidden ones that are waiting", () => {
 });
 
 describe("directed-only boxes", () => {
-  it("reads the server's answer, which a runner admin can set over the box's", () => {
+  it("reads the runner's directed setting, not what the box declares", () => {
     expect(isDirectedOnly(runner({ directed: true, capabilities: { sessions: true } }))).toBe(true);
-    // Turned off by an admin although the box declares it.
-    expect(isDirectedOnly(runner({ directed: false, capabilities: { sessions: true, directed: true } }))).toBe(false);
+    expect(isDirectedOnly(runner({ directed: false, capabilities: { sessions: true, directed: true } as never }))).toBe(false);
   });
 
-  it("falls back to capabilities.directed, defensively, for an older server's row", () => {
-    const old = (caps: object, extra: object = {}) =>
-      ({ ...runner({ capabilities: caps as never }), directed: undefined, ...extra }) as never;
-    expect(isDirectedOnly(old({ sessions: true, directed: true }))).toBe(true);
-    expect(isDirectedOnly(old({ sessions: true }))).toBe(false);
-    expect(isDirectedOnly(old({ directed: "yes" }))).toBe(false);
-    expect(isDirectedOnly(old({ sessions: true }, { private: true }))).toBe(true);
+  it("treats a private runner as directed only — it takes no routed work", () => {
+    expect(isDirectedOnly(runner({ private: true, capabilities: { sessions: true } }))).toBe(true);
+    expect(isDirectedOnly(runner({ private: false, capabilities: { sessions: true } }))).toBe(false);
   });
 
   it("is still offered for a chat — a chat started on it binds to it", () => {
-    const box = runner({ id: "t", directed: true, capabilities: { sessions: true, directed: true } });
+    const box = runner({ id: "t", directed: true, capabilities: { sessions: true } });
     expect(onlineSessionCapableRunners([box]).map((r) => r.id)).toEqual(["t"]);
   });
 
   it("is labelled directed only wherever it is offered", () => {
     expect(runnerOptionLabel(runner({ name: "cloud-ec2-test", directed: true, capabilities: { sessions: true } })))
       .toBe("cloud-ec2-test · directed only");
-    expect(runnerOptionLabel(runner({ name: "jj-mbp", private: true, directed: true, capabilities: { sessions: true } })))
+    expect(runnerOptionLabel(runner({ name: "jj-mbp", private: true, capabilities: { sessions: true } })))
       .toBe("jj-mbp · directed only");
     expect(runnerOptionLabel(runner({ name: "cloud-ec2-2", capabilities: { sessions: true } }))).toBe("cloud-ec2-2");
   });

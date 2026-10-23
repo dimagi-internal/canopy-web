@@ -134,8 +134,7 @@ class RunnerOnlyAgentsIn(Schema):
 
 
 class RunnerDirectedIn(Schema):
-    # True/False decide; null follows what the box itself declares.
-    directed: bool | None
+    directed: bool
 
 
 class RunnerAgentChoiceOut(Schema):
@@ -292,11 +291,9 @@ class RunnerOut(Schema):
     # The agents a person dedicated this box to (`Runner.only_agents`): it runs only
     # their turns and chats. [] = no restriction.
     only_agents: list[str] = []
-    # Whether it takes only what is put on it (`Runner.directed_only`), and where
-    # that comes from: `directed_setting` is a person's override (null: follows the
-    # box's own `capabilities.directed`).
+    # Whether it takes only what is put on it (`Runner.directed_only`): a person's
+    # setting, and always for a private runner.
     directed: bool = False
-    directed_setting: bool | None = None
     # The egress lock a person set (`PUT …/egress`); `egress_forced`: a ZDR box,
     # locked whatever is set. Root on the box applies it within a minute.
     egress_locked: bool = False
@@ -2056,6 +2053,8 @@ class RunnerInvitationIn(Schema):
     role_arn: str = Field(min_length=1, max_length=300)
     ecdh_public_jwk: dict[str, Any] | None = None
     units: list[RunnerUnitIn] | None = Field(default=None, max_length=8)
+    # Pair its runners directed-only: a test box (`up.sh --test`).
+    directed: bool = False
 
 
 class RunnerInvitationUnitOut(Schema):
@@ -2089,6 +2088,8 @@ class RunnerInvitationOut(Schema):
     created_at: dt.datetime
     expires_at: dt.datetime
     created_by_email: str = ""
+    # Its runners pair directed-only (a test box).
+    directed: bool = False
     approved_at: dt.datetime | None = None
     #: Whether the box's ECDH key is part of what approving covers.
     has_ecdh_key: bool = False

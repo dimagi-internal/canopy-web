@@ -98,9 +98,8 @@ export async function getRunnerOnlyAgents(runnerId: string): Promise<RunnerOnlyA
   return { agents: Array.from(out.agents), choices: Array.from(out.choices) }
 }
 
-// Whether a runner takes only what is put on it: true/false decide, null follows
-// what the box itself declares.
-export async function setRunnerDirected(runnerId: string, directed: boolean | null): Promise<RunnerOut> {
+// Whether a runner takes only what is put on it (pins and the chats bound to it).
+export async function setRunnerDirected(runnerId: string, directed: boolean): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/directed', {
     params: { path: { runner_id: runnerId } },
     body: { directed },

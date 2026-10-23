@@ -308,7 +308,7 @@ class TopologyRunnerOut(StrictModel):
     owner_email: str | None
     flags: list[str]
     agent_count: int
-    # Directed-only (`capabilities.directed`): it takes turns pinned to it and
+    # Directed-only (`Runner.directed_only`): it takes turns pinned to it and
     # chats bound to it, never routed work — an order or list naming it is skipped.
     directed: bool = False
     # Running the code the deployed server expects for its kind? None = unknown

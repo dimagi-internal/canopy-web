@@ -59,12 +59,11 @@ a box's own agent unit and is asked in the same places (`routing.unit_refusal`,
 `turn_unit_refusal`, `runner_target_q`), so the claim, turn status, the unclaimable
 report, the vault and what the box prepares all agree.
 
-**Directed only** is a box's own declaration (`capabilities.directed`, `up.sh --test`),
-and a runner admin can decide it over the box from the runner page
-(`PUT /api/harness/runners/{id}/directed`, `Runner.directed_setting`: true / false /
-null to follow the box) — so putting a test box on routed work needs no shell on it.
-`Runner.directed_only` reads the person's word first; a private runner is always
-directed. A ZDR box is the usual case for both: allowlist its PHI agents and leave it
+**Directed only** is a runner setting (`Runner.directed`; the runner page,
+`PUT /api/harness/runners/{id}/directed`, owner or runner admin), never something the
+box declares. A test box (`up.sh --test`) pairs with it on: its invitation carries
+`directed`, so it is directed from the moment it pairs. A private runner is always
+directed (`Runner.directed_only`). A ZDR box is the usual case for both: allowlist its PHI agents and leave it
 off directed-only, which would leave their routed turns with no taker.
 
 ## Which workspaces a runner serves (the tenant gate)
@@ -339,13 +338,13 @@ In order, each a hard stop:
    closed on the off-request clock (below), not by the claim.
 3. Candidate filter: pinned here, or (`runner_target_q` ∧ routing kind); a cloud
    runner never takes `local_only`. A **directed-only** box
-   (`capabilities.directed`, `Runner.directed_only`) targets only the sessions
+   (`Runner.directed_only`) targets only the sessions
    bound to it, so it claims just its pins and its bound chats — no routed agent
    turn (even with an enabled assignment row), no repo turn, no unbound chat, no
    inherited order. Every routed list drops it (`assignment_rows_for`, the
    workspace order, `inherited_orders` → `InheritedOrder.directed`), so it neither
-   claims nor counts as a better rank; it routes and prepares no agent. Box-declared
-   (`RUNNER_DIRECTED=1`) and trusted as such: it can only make a box take less. `profile_q`: a confined (caller) turn only to a
+   claims nor counts as a better rank; it routes and prepares no agent. A person's
+   setting (above), not the box's. `profile_q`: a confined (caller) turn only to a
    runner reporting `profiles >= PROFILES_VERSION` and `envelope >= ENVELOPE_VERSION`
    — not bypassable by a pin. Agents/sessions with an executing turn are excluded
    (`busy_agent_ids` / `busy_session_ids`; the `isnull=False` filters in them are

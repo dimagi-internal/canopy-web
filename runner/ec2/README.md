@@ -84,7 +84,7 @@ Promote a proven standby by enabling its row on the agent's Settings → Runners
 **A test box that serves nothing until a chat is put on it** (`--test`):
 ```bash
 ./up.sh   --name cloud-ec2-fork --test --workspace canopy [--projects canopy-web,connect-labs]
-                                  # directed-only: RunnerDirected=1, RunnerSessions=1, RunnerAgents='',
+                                  # directed-only (its invitation pairs it directed), RunnerSessions=1, RunnerAgents='',
                                   # RunnerProjects=--projects (default canopy-web), RunnerWorkspace=canopy
 ./wire.sh --name cloud-ec2-fork --test
                                   # discover it, stage its credentials, wait for one to answer
@@ -92,7 +92,7 @@ Promote a proven standby by enabling its row on the agent's Settings → Runners
                                   # workspace-order change, no --agents. Prints the chat URL.
 ./down.sh --name cloud-ec2-fork
 ```
-A directed-only box (`capabilities.directed`) claims only turns pinned to it and
+A directed-only box (`Runner.directed`, a setting on its runner page) claims only turns pinned to it and
 chats bound to it — never routed agent work, a repo turn, an unbound chat or an
 inherited workspace order, even where a list names it. It stays session-capable,
 so the chat "Run on" picker offers it ("directed only"): start a chat on it and the
@@ -599,8 +599,8 @@ Flags: `--name` (→ `RunnerName`), `--workspace` (→ `RunnerWorkspace`; requir
 stack and for `--test`, an update passes back the stack's own value, so the template default no longer
 decides where a box pairs), `--approve-minutes` (how long to wait for the invitation),
 `--standby` (→ `RunnerProjects=''`, `RunnerSessions=0`),
-`--test` (→ `RunnerDirected=1`, `RunnerSessions=1`, `RunnerAgents=''`, `RunnerProjects` from
-`--projects`),
+`--test` (→ `RunnerSessions=1`, `RunnerAgents=''`, `RunnerProjects` from `--projects`, and an
+invitation that pairs it directed),
 `--volume-size` (→ `VolumeSize`, default **40** GiB — 20 filled up), `--instance-type`.
 Anything else: `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
 `InstanceType` (t3.medium), `CanopyBaseUrl`, `RunnerProjects`, `RunnerAgents`,

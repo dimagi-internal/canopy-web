@@ -40,6 +40,7 @@ function invitation(over: Partial<RunnerInvitationOut> = {}): RunnerInvitationOu
     approved_at: null,
     has_ecdh_key: true,
     runner_id: null,
+    directed: false,
     units: [],
     ...over,
   }
@@ -147,5 +148,13 @@ describe('RunnerInvitationApprovePage', () => {
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
     expect(await screen.findByText(/has expired/)).toBeTruthy()
+  })
+})
+
+describe('RunnerInvitationApprovePage — a test box', () => {
+  it('says the box pairs directed only', async () => {
+    getRunnerInvitation.mockResolvedValue(invitation({ directed: true }))
+    renderPage()
+    expect((await screen.findByTestId('invitation-directed')).textContent).toContain('directed only')
   })
 })

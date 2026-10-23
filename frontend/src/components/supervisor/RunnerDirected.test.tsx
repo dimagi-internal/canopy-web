@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunnerOut } from '@/api/harness'
 
-// A runner admin turns "directed only" off on a box that declared it — no shell.
+// A runner admin turns "directed only" on or off from the runner page.
 
 const setRunnerDirected = vi.fn()
 vi.mock('@/api/harness', () => ({
@@ -12,10 +12,7 @@ vi.mock('@/api/harness', () => ({
 
 const { RunnerDirected } = await import('./RunnerDirected')
 
-const box = {
-  id: 'r1', name: 'cloud-zdr-1', private: false, directed: true, directed_setting: null,
-  capabilities: { directed: true },
-} as unknown as RunnerOut
+const box = { id: 'r1', name: 'cloud-zdr-1', private: false, directed: true } as unknown as RunnerOut
 const onChange = vi.fn()
 
 afterEach(() => {
@@ -24,21 +21,20 @@ afterEach(() => {
 })
 
 describe('RunnerDirected', () => {
-  it('says the box declares it, and turns it off', async () => {
-    setRunnerDirected.mockResolvedValue({ ...box, directed: false, directed_setting: false })
+  it('turns a directed box off', async () => {
+    setRunnerDirected.mockResolvedValue({ ...box, directed: false })
     render(<RunnerDirected runner={box} onChange={onChange} />)
-    expect(screen.getByText(/The box declares it/)).toBeTruthy()
+    expect(screen.getByText(/no routed work/)).toBeTruthy()
     fireEvent.click(screen.getByRole('switch', { name: 'Directed only' }))
     await waitFor(() => expect(setRunnerDirected).toHaveBeenCalledWith('r1', false))
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
   })
 
-  it('offers going back to the box’s own setting once overridden', async () => {
+  it('turns it back on', async () => {
     setRunnerDirected.mockResolvedValue(box)
-    const off = { ...box, directed: false, directed_setting: false } as unknown as RunnerOut
-    render(<RunnerDirected runner={off} onChange={onChange} />)
-    expect(screen.getByText(/the box itself says directed/)).toBeTruthy()
-    fireEvent.click(screen.getByTestId('runner-directed-follow-box'))
-    await waitFor(() => expect(setRunnerDirected).toHaveBeenCalledWith('r1', null))
+    render(<RunnerDirected runner={{ ...box, directed: false } as unknown as RunnerOut} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('switch', { name: 'Directed only' }))
+    await waitFor(() => expect(setRunnerDirected).toHaveBeenCalledWith('r1', true))
   })
 
   it('cannot be turned off on a private runner', () => {
