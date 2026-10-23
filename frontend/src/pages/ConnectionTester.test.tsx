@@ -166,8 +166,8 @@ describe('the site health table', () => {
 
 describe('what a site requires of runners', () => {
   it('says so when the host declared a requirement', () => {
-    render(<RunnerRequirements app={{ runner_requirements: ['zdr'] }} />)
-    expect(screen.getByText('Requires ZDR runners (declared by the host)')).toBeTruthy()
+    render(<RunnerRequirements app={{ runner_requirements: ['sensitive_data'] }} />)
+    expect(screen.getByText('Requires sensitive-data runners (declared by the host)')).toBeTruthy()
   })
 
   it('says nothing when it declared none', () => {

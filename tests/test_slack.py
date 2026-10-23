@@ -118,7 +118,7 @@ def test_a_routed_runner_without_sessions_is_named_not_reported_as_no_runner(sla
     assert "no runner is set up" not in line["text"]
 
 
-def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
+def test_unrouted_line_names_a_sensitive_requirement(slack, linked, hal):
     from types import SimpleNamespace
 
     from apps.harness import claim
@@ -126,15 +126,15 @@ def test_unrouted_line_names_a_zdr_requirement(slack, linked, hal):
 
     mention(f"<@{BOT}> hal summarise this thread")
     turn = Turn.objects.select_related("chat_session__agent").get()
-    turn.chat_session.metadata = {**turn.chat_session.metadata, "runner_requirements": ["zdr"]}
+    turn.chat_session.metadata = {**turn.chat_session.metadata, "runner_requirements": ["sensitive_data"]}
     turn.chat_session.save(update_fields=["metadata"])
     text, _ = slack_status.render(turn, reach=SimpleNamespace(
         kind=claim.UNROUTED, runners=[], blocked_by_requirements=True))
-    assert "needs a ZDR runner" in text and "none of `hal`'s runners is declared ZDR" in text
-    # Not the blocker (the routing is): the ordinary unrouted line, no ZDR.
+    assert "needs a sensitive-data runner" in text and "none of `hal`'s runners is declared one" in text
+    # Not the blocker (the routing is): the ordinary unrouted line, no sensitive-data.
     text, _ = slack_status.render(turn, reach=SimpleNamespace(
         kind=claim.UNROUTED, runners=[], blocked_by_requirements=False))
-    assert "ZDR" not in text and "no runner is set up" in text
+    assert "sensitive-data" not in text and "no runner is set up" in text
 
 
 def test_slack_redelivery_does_not_ask_the_agent_twice(slack, linked, hal):

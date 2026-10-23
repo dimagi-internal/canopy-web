@@ -163,7 +163,7 @@ class BearerTokenAuthMiddleware:
             request.contact = ctok.contact
             request.contact_token = ctok
             request.delegated_app = ctok.app
-            # The site's runner requirements (ZDR), from the token — never from
+            # The site's runner requirements (`sensitive_data`), from the token — never from
             # anything the request itself carries.
             request.runner_requirements = tuple(ctok.runner_requirements or ())
             # The one agent the site bound this arrival to, if it did.

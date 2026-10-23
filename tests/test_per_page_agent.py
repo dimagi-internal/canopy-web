@@ -1,6 +1,6 @@
 """A page that chose its agent binds its visitor's token to that agent.
 
-connect-labs puts `labsdata` (under ZDR) on its data pages and keeps ACE (no ZDR)
+connect-labs puts `labsdata` (on sensitive-data runners) on its data pages and keeps ACE (on any runner)
 on the marketplace. The page signs its choice into the visitor assertion
 (`canopy_agent`, `canopy_sdk.contract.AGENT_CLAIM`); canopy checks it is the agent
 the arrival names and one the site offers, then holds the token — every door a
@@ -89,9 +89,9 @@ def _token(response):
 
 
 def test_a_bound_arrival_mints_a_token_bound_to_its_agent(site, key):
-    _token(_arrive(key, bound="labsdata", requirements=["zdr"]))
+    _token(_arrive(key, bound="labsdata", requirements=["sensitive_data"]))
     token = ContactToken.objects.get()
-    assert token.bound_agent == site["labsdata"] and token.runner_requirements == ["zdr"]
+    assert token.bound_agent == site["labsdata"] and token.runner_requirements == ["sensitive_data"]
 
 
 def test_an_unbound_arrival_is_what_it_always_was(site, key):

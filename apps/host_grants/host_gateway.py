@@ -54,7 +54,7 @@ from datetime import timedelta
 from canopy_sdk import consumer, contract
 from django.utils import timezone
 
-from apps.agents import phi
+from apps.agents import sensitive_data
 
 from . import execution
 
@@ -192,8 +192,8 @@ def resolve(turn_id: str) -> SiteContext:
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
 
     # The grant is per (site, visitor), not per conversation: a visitor who
-    # arrived under ZDR can reach it from an OLDER conversation that no ZDR
-    # arrival stamped. So the grant's own requirements count too, and they are
+    # arrived under `sensitive_data` can reach it from an OLDER conversation that no
+    # such arrival stamped. So the grant's own requirements count too, and they are
     # written onto the conversation — refused or not — so its next turn routes
     # to a runner that satisfies them.
     grant_reqs = rr.requirements_of_grant(grant)
@@ -207,13 +207,13 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal(
             "runner_requirements",
             f"this conversation must run on a {rr.describe(effective)} runner, and this one is not")
-    # A ZDR conversation's data reaches only a capability its interface marks
-    # `data: phi` (spec 2026-10-22-phi-agents-on-zdr-runners §6).
-    if "zdr" in effective and not phi.is_phi(agent, turn.capability):
+    # A sensitive conversation's data reaches only a capability its interface says
+    # handles sensitive data (`data: sensitive`; spec 2026-10-22-sensitive-data-agents §6).
+    if rr.SENSITIVE_DATA in effective and not sensitive_data.handles_sensitive(agent, turn.capability):
         raise GatewayRefusal(
             "undeclared",
-            f"{site} gives its real data only to a capability marked PHI-safe (`data: phi`), "
-            "and this turn's is not; ask the agent's owner to set it")
+            f"{site} gives its real data only to a capability that handles sensitive data "
+            "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
     return context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
                              ceiling=list(cap.get("ceiling") or []),
                              execution=execution.facts_for(turn, agent, session, effective))

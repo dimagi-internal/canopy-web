@@ -57,7 +57,7 @@ def member():
 
 HIJACK = {"slack_thread": "T1:C1:1.0", "slack_team": "T1", "slack_channel": "C-anyone",
           "slack_thread_ts": "1.0", "email_thread_key": "ace:18c9abc", "transcript_sourced": False,
-          "embed_app": "someone-else", "requested_runner_id": "x", "runner_requirements": ["zdr"]}
+          "embed_app": "someone-else", "requested_runner_id": "x", "runner_requirements": ["sensitive_data"]}
 
 
 def test_a_member_cannot_aim_the_slack_relay_or_capture_an_email_thread(member):

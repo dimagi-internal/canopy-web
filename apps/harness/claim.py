@@ -271,10 +271,10 @@ class Reach:
 
     kind: str
     runners: list
-    #: True only when the conversation's runner requirements (ZDR) are what
+    #: True only when the conversation's runner requirements (`sensitive_data`) are what
     #: keeps it from a live runner: some runner would take it without them. A
     #: turn stuck for another reason (no routing, a box that cannot confine a
-    #: caller's turn) must not be blamed on ZDR — that sends its owner to the
+    #: caller's turn) must not be blamed on them — that sends its owner to the
     #: wrong fix.
     blocked_by_requirements: bool = False
     #: The executing turn this one waits behind (`blocking_turn`): its session's
@@ -540,7 +540,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         elif reqs and t.pk in blocked_by_reqs:
             kind = "config"
             reason = (f"this conversation's site requires a {rr.describe(reqs)} runner, and "
-                      f"no runner that serves it is declared {rr.describe(reqs)}")
+                      "no runner that serves it is declared one")
         elif said := _unserving_said(t, by_unserving):
             kind = "config"
             if t.acting_agent is not None:

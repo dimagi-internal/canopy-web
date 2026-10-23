@@ -1,6 +1,6 @@
 # Runner requirements (ZDR first) — a host can require that its visitors' work runs only on zero-data-retention boxes
 
-**Status:** built (#1037). Hardened and extended by `2026-10-22-phi-agents-on-zdr-runners-design.md` (flags only a person may declare, a `phi` flag, requirement inheritance).
+**Status:** built (#1037). Hardened and extended by `2026-10-22-sensitive-data-agents-design.md` (flags only a person may declare, a `phi` flag, requirement inheritance).
 **Layers onto:** directed runner routing (2026-07-24), source rules (2026-07-27),
 actor rules (2026-09-05), per-rule turn mode (2026-09-23), host grant contract v1
 (`sdk/python/README.md`).

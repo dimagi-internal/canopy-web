@@ -421,7 +421,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
         from apps.harness import sensitivity
 
         # A sensitive conversation keeps which call and whether it failed, never
-        # the result (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+        # the result (spec 2026-10-22-sensitive-data-agents §4).
         withhold = sensitivity.is_sensitive(locked)
         vouched = _vouched_markers(locked, rows)
         pool = _MatchPool(locked) if attribute else None

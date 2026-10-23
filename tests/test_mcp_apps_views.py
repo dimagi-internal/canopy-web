@@ -388,9 +388,9 @@ def test_ui_message_is_a_message_from_the_viewer_that_starts_a_turn(w):
                                   plaintext__startswith="Sent").exists()
 
 
-def test_ui_message_through_a_zdr_site_stamps_the_sites_requirements(w):
+def test_ui_message_through_a_sensitive_site_stamps_the_sites_requirements(w):
     # The session was started without the site's floor (in canopy itself, or
-    # before the site required ZDR). A member's `ui/message` arriving through
+    # before the site required sensitive-data). A member's `ui/message` arriving through
     # the site's delegated token is a send under that token like any other: it
     # must route under the site's requirements, as the REST send does.
     from apps.harness import runner_requirements as rr
@@ -398,12 +398,12 @@ def test_ui_message_through_a_zdr_site_stamps_the_sites_requirements(w):
 
     assert not rr.requirements_of_session(w["session"])
     raw, _tok = DelegatedToken.issue(app=w["app"], user=w["editor"], ttl_seconds=600,
-                                     runner_requirements=["zdr"])
+                                     runner_requirements=["sensitive_data"])
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
     r = post(c, base(w) + "/message", {"text": "Sent", "client_id": "z1"})
     assert r.status_code == 200, r.content
     w["session"].refresh_from_db()
-    assert rr.requirements_of_session(w["session"]) == {"zdr"}
+    assert rr.requirements_of_session(w["session"]) == {"sensitive_data"}
 
 
 # --- the contact path (the embed panel) ---------------------------------------------------
@@ -467,11 +467,11 @@ def test_slack_gets_the_result_text_and_a_link_for_a_view_and_nothing_for_other_
     assert _message_for(other, turn) == ""
 
 
-# --- a sensitive conversation (spec 2026-10-22-phi-agents-on-zdr-runners §4) ------------------
+# --- a sensitive conversation (spec 2026-10-22-sensitive-data-agents §4) ------------------
 
 
 def _sensitive(w):
-    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
+    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["sensitive_data"]}
     w["session"].save(update_fields=["metadata"])
 
 

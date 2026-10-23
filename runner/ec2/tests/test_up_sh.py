@@ -318,7 +318,7 @@ def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):
 def test_a_new_boxs_invitation_lists_its_one_unit(tmp_path, canopy):
     # A new box runs as isolation units (one: tree:<workspace>, named the box) and
     # pairs listing it; an invitation without it is refused at every pairing call
-    # however it is approved (cloud-zdr-1, 2026-10-22).
+    # however it is approved (found standing up the first sensitive-data box, 2026-10-22).
     _fake(tmp_path)
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect")
     assert res.returncode == 0, res.stdout + res.stderr

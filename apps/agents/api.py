@@ -44,7 +44,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, mailbox, phi, services
+from . import access, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, zk
@@ -86,7 +86,7 @@ from .schemas import (
     AgentSyncOut,
     AgentTurnIn,
     AgentTurnOut,
-    CapabilityPhiIn,
+    CapabilitySensitiveIn,
     CredentialSourceIn,
     DeviceBindingIn,
     RepoCheckIn,
@@ -609,16 +609,16 @@ def publish_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn
 
 
 def _save_interface(request: HttpRequest, agent, doc, source: str) -> dict:
-    """The one way an interface is saved — the YAML editor and the PHI-safe switch
+    """The one way an interface is saved — the YAML editor and the sensitive-data switch
     both come here, so they are validated and audited alike."""
     try:
         parsed = parse(doc)
     except InterfaceError as exc:
         raise HttpError(422, str(exc)) from exc
-    # `data: phi` needs nothing more than any other interface change: the agent's
-    # owner or an admin, from the browser or a token. What makes it safe is that
-    # `parse` refuses a phi capability that could leak, and the save is audited
-    # (spec 2026-10-22-phi-agents-on-zdr-runners §5).
+    # `data: sensitive` needs nothing more than any other interface change: the
+    # agent's owner or an admin, from the browser or a token. What makes it safe is
+    # that `parse` refuses such a capability if it could leak, and the save is audited
+    # (spec 2026-10-22-sensitive-data-agents §5).
     agent.interface = parsed
     agent.interface_source = source
     agent.interface_published_at = timezone.now()
@@ -628,12 +628,13 @@ def _save_interface(request: HttpRequest, agent, doc, source: str) -> dict:
     return _interface_out(agent)
 
 
-@router.put("/{slug}/interface/capabilities/{name}/phi", response=AgentInterfaceOut,
-            summary="Turn PHI-safe on or off for one capability: writes or removes its `data: phi` in the saved YAML")
+@router.put("/{slug}/interface/capabilities/{name}/sensitive", response=AgentInterfaceOut,
+            summary="Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML")
 @gate("agent-admin", setting=True)
-def set_capability_phi(request: HttpRequest, slug: str, name: str, payload: CapabilityPhiIn):
+def set_capability_sensitive(request: HttpRequest, slug: str, name: str,
+                             payload: CapabilitySensitiveIn):
     # The switch is the YAML path with the typing done for you: it edits the saved
-    # source in place (comments kept, `phi.with_phi`) and saves it through
+    # source in place (comments kept, `sensitive_data.with_sensitive`) and saves it through
     # `_save_interface` — same parse, same audit — so the YAML and
     # the switch never disagree. An interface saved as a mapping (no source) is
     # edited as a mapping.
@@ -641,26 +642,28 @@ def set_capability_phi(request: HttpRequest, slug: str, name: str, payload: Capa
     caps = (agent.interface or {}).get("capabilities") or {}
     if name not in caps:
         raise HttpError(404, f"{agent.slug} has no capability {name!r} in its saved interface")
-    before = phi.phi_capabilities(agent.interface)
+    before = sensitive_data.sensitive_capabilities(agent.interface)
     source = agent.interface_source or ""
     if source.strip():
         try:
-            source = phi.with_phi(source, name, payload.phi_safe)
-        except phi.SourceEditError as exc:
+            source = sensitive_data.with_sensitive(source, name, payload.handles_sensitive)
+        except sensitive_data.SourceEditError as exc:
             raise HttpError(422, f"{exc} — edit the YAML instead") from exc
         doc = yaml.safe_load(source) or {}
     else:
         doc = copy.deepcopy(agent.interface)
         cap = doc["capabilities"][name]
-        if payload.phi_safe:
-            cap["data"] = phi.PHI
+        if payload.handles_sensitive:
+            cap["data"] = sensitive_data.SENSITIVE
         else:
             cap.pop("data", None)
     out = _save_interface(request, agent, doc, source)
     audit.note_change(scope=f"interface:{agent.slug}/{name}",
-                      before={"phi_capabilities": before},
-                      after={"phi_capabilities": phi.phi_capabilities(agent.interface)},
-                      summary=f"PHI-safe {'on' if payload.phi_safe else 'off'} for {agent.slug}/{name}")
+                      before={"sensitive_capabilities": before},
+                      after={"sensitive_capabilities":
+                             sensitive_data.sensitive_capabilities(agent.interface)},
+                      summary=(f"handles sensitive data {'on' if payload.handles_sensitive else 'off'}"
+                               f" for {agent.slug}/{name}"))
     return out
 
 

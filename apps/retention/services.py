@@ -15,7 +15,7 @@ the short version:
   live-state caches and is archived;
 - a shared transcript is deleted.
 
-A SENSITIVE conversation (it requires ZDR runners — `apps.harness.sensitivity`)
+A SENSITIVE conversation (it requires sensitive-data runners — `apps.harness.sensitivity`)
 is purged after `CANOPY_SENSITIVE_KEEP_DAYS` (30) whatever the rules and
 `CANOPY_RETENTION_ENFORCE` say; a shorter rule still wins (`_sweep_sensitive`).
 """
@@ -253,7 +253,7 @@ def sensitive_rule() -> RetentionRule:
 
 def _sweep_sensitive(tally, *, now, apply, limit) -> None:
     """Sensitive conversations past the forced period, and the session-less
-    turns started from them (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+    turns started from them (spec 2026-10-22-sensitive-data-agents §4).
     Runs whatever `CANOPY_RETENTION_ENFORCE` says. A workspace rule that is
     SHORTER still applies through `_sweep_chats` when enforcement is on."""
     from apps.canopy_sessions.models import Session

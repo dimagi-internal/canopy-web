@@ -361,7 +361,7 @@ class AppCredential(models.Model):
     #: that never contain a credential. Blank on a pass.
     last_probe_step = models.CharField(max_length=64, blank=True, default="")
     last_probe_reason = models.CharField(max_length=500, blank=True, default="")
-    #: The runner requirements (`canopy_runner_requirements`, e.g. ["zdr"]) the
+    #: The runner requirements (`canopy_runner_requirements`, e.g. ["sensitive_data"]) the
     #: site's most recent verified arrival carried — so an owner can see what the
     #: host is asking for without reading a token. Informational: each TOKEN
     #: carries its own copy, and that copy is what reaches a session.
@@ -788,9 +788,9 @@ class HostGrant(models.Model):
     #: The thumbprint of the DPoP key the token is bound to. A rotated DPoP key
     #: makes every stored token useless, and this says so instead of a 401.
     dpop_jkt = models.CharField(max_length=64)
-    #: The runner requirements (ZDR) of the arrival that minted this grant.
+    #: The runner requirements (`sensitive_data`) of the arrival that minted this grant.
     #: A grant is per (site, visitor), NOT per conversation, so it can be
-    #: reached from a conversation no ZDR arrival ever stamped; the gateway
+    #: reached from a conversation no sensitive-data arrival ever stamped; the gateway
     #: enforces these alongside the session's own and stamps them onto it.
     #: Replaced by each redemption: the latest arrival is the host's word.
     runner_requirements = models.JSONField(default=list, blank=True)

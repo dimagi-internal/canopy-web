@@ -255,49 +255,49 @@ def test_host_tool_names_normalise(name, expected):
 # --- a host's runner requirements are a floor under the gateway too ----------------
 
 
-def _zdr_turn(w, *, flags=(), runner=True):
+def _sensitive_turn(w, *, flags=(), runner=True):
     from apps.harness.models import Runner, RunnerFlag
 
-    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
+    w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["sensitive_data"]}
     w["session"].save()
     if runner:
         r = Runner.objects.create(name="box", workspace=w["ws"], kind=Runner.CLOUD,
                                   status=Runner.ONLINE, owner=w["owner"], host="box")
         for f in flags:
             RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
-        _reports_zdr(r)
+        _reports_sensitive(r)
         Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
 
 
-def test_a_zdr_conversation_on_a_non_zdr_runner_is_refused(w):
+def test_a_sensitive_conversation_on_a_ordinary_runner_is_refused(w):
     _grant(w)
-    _zdr_turn(w)
+    _sensitive_turn(w)
     with pytest.raises(host_gateway.GatewayRefusal) as exc:
         host_gateway.resolve(str(w["turn"].pk))
     assert exc.value.code == "runner_requirements"
-    assert "ZDR" in exc.value.message
+    assert "sensitive-data" in exc.value.message
 
 
-def test_a_zdr_conversation_with_no_claiming_runner_is_refused(w):
+def test_a_sensitive_conversation_with_no_claiming_runner_is_refused(w):
     _grant(w)
-    _zdr_turn(w, runner=False)
+    _sensitive_turn(w, runner=False)
     with pytest.raises(host_gateway.GatewayRefusal) as exc:
         host_gateway.resolve(str(w["turn"].pk))
     assert exc.value.code == "runner_requirements"
 
 
 def _declared(w):
-    """`connect` set PHI-safe: what a ZDR conversation's data needs (spec
-    2026-10-22-phi-agents-on-zdr-runners §6)."""
+    """`connect` handles sensitive data: what a sensitive conversation's data needs (spec
+    2026-10-22-sensitive-data-agents §6)."""
     caps = dict(IFACE["capabilities"])
-    caps["connect"] = {**caps["connect"], "data": "phi"}
+    caps["connect"] = {**caps["connect"], "data": "sensitive"}
     w["agent"].interface = parse({"capabilities": caps})
     w["agent"].save(update_fields=["interface"])
 
 
-def test_the_same_turn_on_a_zdr_runner_resolves(w):
+def test_the_same_turn_on_a_sensitive_runner_resolves(w):
     _grant(w)
-    _zdr_turn(w, flags=("zdr",))
+    _sensitive_turn(w, flags=("sensitive_data",))
     _declared(w)
     assert host_gateway.resolve(str(w["turn"].pk)).site == "connect-labs"
 
@@ -312,37 +312,37 @@ def _runner(w, *, flags=()):
                               status=Runner.ONLINE, owner=w["owner"], host="box")
     for f in flags:
         RunnerFlag.objects.create(runner=r, flag=f, declared_by=w["owner"])
-    _reports_zdr(r)
+    _reports_sensitive(r)
     Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=r)
     return r
 
 
-def test_an_unstamped_session_cannot_carry_a_zdr_grant_to_a_non_zdr_runner(w):
-    """The leak: a visitor arrived under ZDR (fresh grant) but continues an OLDER
-    conversation on the same site that no ZDR arrival ever touched."""
+def test_an_unstamped_session_cannot_carry_a_sensitive_grant_to_a_ordinary_runner(w):
+    """The leak: a visitor arrived under sensitive-data (fresh grant) but continues an OLDER
+    conversation on the same site that no sensitive-data arrival ever touched."""
     from apps.harness import runner_requirements as rr
 
-    _grant(w, runner_requirements=["zdr"])
+    _grant(w, runner_requirements=["sensitive_data"])
     _runner(w)
     assert not rr.requirements_of_session(w["session"])
     with pytest.raises(host_gateway.GatewayRefusal) as exc:
         host_gateway.resolve(str(w["turn"].pk))
     assert exc.value.code == "runner_requirements"
-    assert "ZDR" in exc.value.message
+    assert "sensitive-data" in exc.value.message
     # ...and the conversation now carries the floor, so its NEXT turn routes right.
     w["session"].refresh_from_db()
-    assert rr.requirements_of_session(w["session"]) == frozenset({"zdr"})
+    assert rr.requirements_of_session(w["session"]) == frozenset({"sensitive_data"})
 
 
-def test_a_zdr_grant_on_a_zdr_runner_resolves_and_stamps_the_session(w):
+def test_a_sensitive_grant_on_a_sensitive_runner_resolves_and_stamps_the_session(w):
     from apps.harness import runner_requirements as rr
 
-    _grant(w, runner_requirements=["zdr"])
-    _runner(w, flags=("zdr",))
+    _grant(w, runner_requirements=["sensitive_data"])
+    _runner(w, flags=("sensitive_data",))
     _declared(w)
     assert host_gateway.resolve(str(w["turn"].pk)).site == "connect-labs"
     w["session"].refresh_from_db()
-    assert rr.requirements_of_session(w["session"]) == frozenset({"zdr"})
+    assert rr.requirements_of_session(w["session"]) == frozenset({"sensitive_data"})
 
 
 @pytest.mark.parametrize("where", ["grant", "session"])
@@ -351,20 +351,20 @@ def test_a_malformed_requirement_at_the_gateway_is_refused(w, where):
         _grant(w, runner_requirements=["not-a-flag"])
     else:
         _grant(w)
-        w["session"].metadata = {**w["session"].metadata, "runner_requirements": "zdr"}
+        w["session"].metadata = {**w["session"].metadata, "runner_requirements": "sensitive_data"}
         w["session"].save()
-    _runner(w, flags=("zdr",))
+    _runner(w, flags=("sensitive_data",))
     with pytest.raises(host_gateway.GatewayRefusal) as exc:
         host_gateway.resolve(str(w["turn"].pk))
     assert exc.value.code == "runner_requirements"
 
 
-def _reports_zdr(runner):
-    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+def _reports_sensitive(runner):
+    """The box reports sensitive-data mode on its heartbeat: without it a person's `sensitive_data`
     declaration is not in force (runner_requirements.in_force)."""
     from apps.harness.models import Runner as _Runner
 
-    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "sensitive_data"}
     _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
     return runner
 

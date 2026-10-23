@@ -106,7 +106,7 @@ ASSERTION_REQUIRED_CLAIMS: tuple[str, ...] = ("iss", "sub", "aud", "exp", "iat",
 RUNNER_REQUIREMENTS_CLAIM = "canopy_runner_requirements"
 #: Every flag a runner's owner may declare and a host may require. The ONLY list:
 #: canopy-web imports it rather than keeping a copy.
-RUNNER_FLAGS: frozenset[str] = frozenset({"zdr"})
+RUNNER_FLAGS: frozenset[str] = frozenset({"sensitive_data"})
 
 
 def parse_runner_requirements(value) -> tuple[str, ...]:
@@ -164,7 +164,7 @@ DPOP_NONCE_HEADER = "DPoP-Nonce"
 ACTOR_HEADER = "Canopy-Actor"
 #: canopy's signed statement about the call in front of the host: which agent, at
 #: which commit, under which declaration, on which runner, in which conversation
-#: (spec 2026-10-22-phi-agents-on-zdr-runners §6). Unlike ``Canopy-Actor`` it IS
+#: (spec 2026-10-22-sensitive-data-agents-design §6). Unlike ``Canopy-Actor`` it IS
 #: verifiable: ``canopy_sdk.host.verify_execution``.
 EXECUTION_HEADER = "Canopy-Execution"
 EXECUTION_TYP = "canopy-execution+jwt"

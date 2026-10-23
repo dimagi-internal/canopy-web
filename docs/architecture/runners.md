@@ -63,7 +63,7 @@ report, the vault and what the box prepares all agree.
 `PUT /api/harness/runners/{id}/directed`, owner or runner admin), never something the
 box declares. A test box (`up.sh --test`) pairs with it on: its invitation carries
 `directed`, so it is directed from the moment it pairs. A private runner is always
-directed (`Runner.directed_only`). A ZDR box is the usual case for both: allowlist its PHI agents and leave it
+directed (`Runner.directed_only`). A sensitive-data box is the usual case for both: allowlist its sensitive-data agents and leave it
 off directed-only, which would leave their routed turns with no taker.
 
 ## Which workspaces a runner serves (the tenant gate)
@@ -264,11 +264,12 @@ routes). Don't let a runner-assignment row be the trust boundary: the editor tie
 writes those rows. A teammate whose laptop should run an agent's work needs an admin
 grant on that agent. An agent's own canopy login is not a holder.
 
-A **ZDR box is dedicated**: one with a declared `zdr` flag OR reporting `data_mode:
-zdr` (`runner_requirements.is_zdr_box` — either alone, unlike routing's `in_force`, which needs
-both) holds only an agent with a `data: phi` capability, whoever owns it. So no other
-agent's full profile, secrets or GitHub identity shares a box with a PHI conversation.
-Guarded by `tests/test_zdr_box_is_dedicated.py`.
+A **sensitive-data box is dedicated**: one with a declared `sensitive_data` flag OR
+reporting a `data_mode` (`runner_requirements.is_sensitive_data_box` — either alone, unlike
+routing's `in_force`, which needs both) holds only an agent with a `data: sensitive`
+capability, whoever owns it. So no other agent's full profile, secrets or GitHub identity
+shares a box with a sensitive conversation. Guarded by
+`tests/test_sensitive_data_box_is_dedicated.py`.
 
 ## Which agents a box runs — one rule
 
@@ -501,10 +502,17 @@ runs manual — a forged `From:` may pick a box, never drive an unreviewed agent
 (`tests/test_turn_mode_rules.py`). Spec:
 `docs/superpowers/specs/2026-09-23-per-rule-turn-mode-design.md`.
 
-## Runner flags and host requirements (ZDR)
+## Runner flags and host requirements (sensitive-data runners)
+
+A **sensitive-data runner** (flag `sensitive_data`) is a box set up for a host's
+sensitive data. It is not "zero data retention" itself: it runs Claude only on a ZDR API
+key, runs every turn under a locked harness, limits egress to an allowlist of hosts
+(`runner/ec2/README.md` § Egress lock), keeps nothing after a turn, and holds only agents
+that handle sensitive data. The box runs in that mode with `RUNNER_DATA_MODE=sensitive_data`
+and reports it on every heartbeat; any other non-empty value takes no turn.
 
 - A **host** requires flags of its visitors' conversations with
-  `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["zdr"]` (SDK `dimagi-canopy`); the SDK signs
+  `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["sensitive_data"]` (SDK `dimagi-canopy`); the SDK signs
   them into the visitor assertion (`canopy_runner_requirements`), and canopy stamps
   them on the session's `metadata["runner_requirements"]` — server-owned,
   union-only, never lifted by a later token that omits them. A host grant carries

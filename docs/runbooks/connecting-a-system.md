@@ -180,19 +180,20 @@ jwt.encode({"iss": "ace-web", "sub": email,
 Passing this with **no pasted key registered** is the thing that proves the
 JWKS path is live rather than merely configured.
 
-## Requiring ZDR runners for your visitors
+## Requiring sensitive-data runners for your visitors
 
-Some hosts must not have their visitors' conversations run on a box that uses
-retaining Claude keys. Two steps, one on each side:
+Some hosts must have their visitors' conversations run only on a sensitive-data runner:
+a box that runs Claude on a zero-data-retention (ZDR) API key, under a locked harness,
+with egress limited to an allowlist, keeping nothing after a turn. Two steps, one on each side:
 
 1. **The box's owner or a runner admin declares the flag** on the box that qualifies:
-   `/supervisor` → Runners → the box → **Declared by the owner** → ZDR. canopy cannot
-   verify it (it is an attestation, recorded with who made it), so declare it only for
-   a box that uses zero-data-retention keys.
-2. **The host asks for it**: set `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["zdr"]` and pin
+   `/supervisor` → Runners → the box → **Declared by the owner** → Sensitive data. canopy
+   cannot verify it (it is an attestation, recorded with who made it), so declare it only
+   for a box running in sensitive-data mode (`RUNNER_DATA_MODE=sensitive_data`).
+2. **The host asks for it**: set `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["sensitive_data"]` and pin
    the current `dimagi-canopy` ([SDK README § Install](../../sdk/python/README.md#install)). Every visitor assertion then carries the requirement, and
    that visitor's conversation runs only on a flagged runner. There is no fallback: with
-   no ZDR runner online the turn says so and waits.
+   no sensitive-data runner online the turn says so and waits.
 
 The Connected site shows the last requirement the host sent. Spec:
 `docs/superpowers/specs/2026-09-30-zdr-runners-design.md`.

@@ -12,17 +12,18 @@ import { SettingRow, Switch } from '@/components/supervisor/SettingRow'
 // canopy cannot inspect a box's Claude keys, so every flag is a promise, and the
 // sentence saying so sits beside the switch rather than in a help page.
 const WORDS: Record<string, { label: string; sentence: string }> = {
-  zdr: {
-    label: 'ZDR',
+  sensitive_data: {
+    label: 'Sensitive data',
     sentence:
-      'This box runs in ZDR mode: one zero-data-retention key for Claude and a locked profile on every turn. You are vouching for this; canopy cannot check the key.',
+      'This box is set up for sensitive data: Claude runs only on a zero-data-retention (ZDR) API key, every turn runs under a locked profile, egress is limited to an allowlist of hosts, nothing is kept on the box after a turn, and it holds only agents that handle sensitive data. You are vouching for this; canopy cannot check the key.',
   },
 }
 
 // A flag that names a data mode counts only while the box itself reports that mode
 // on its heartbeat (apps/harness/runner_requirements.py `FLAG_NEEDS_DATA_MODE`):
-// a declared ZDR on a box that is not running in ZDR mode routes no ZDR work.
-const NEEDS_DATA_MODE: Record<string, string> = { zdr: 'zdr' }
+// a declared sensitive-data box that is not running in sensitive-data mode routes no
+// sensitive work.
+const NEEDS_DATA_MODE: Record<string, string> = { sensitive_data: 'sensitive_data' }
 
 function notInForce(runner: RunnerOut, flag: string): boolean {
   const mode = NEEDS_DATA_MODE[flag]
@@ -76,7 +77,8 @@ export function RunnerFlags({
           >
             {notInForce(runner, flag) && (
               <p className="text-[12px] text-warning" data-testid={`runner-flag-not-in-force-${flag}`}>
-                Not in force: this box is not reporting ZDR mode, so it takes no ZDR work.
+                Not in force: this box is not reporting sensitive-data mode, so it takes no sensitive
+                conversations.
               </p>
             )}
           </SettingRow>

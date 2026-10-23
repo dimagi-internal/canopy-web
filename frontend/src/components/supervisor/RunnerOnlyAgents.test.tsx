@@ -14,7 +14,7 @@ vi.mock('@/api/harness', () => ({
 
 const { RunnerOnlyAgents } = await import('./RunnerOnlyAgents')
 
-const open = { id: 'r1', name: 'cloud-zdr-1', only_agents: [] } as unknown as RunnerOut
+const open = { id: 'r1', name: 'cloud-sensitive-1', only_agents: [] } as unknown as RunnerOut
 const choices = {
   agents: [],
   choices: [
@@ -59,7 +59,7 @@ describe('RunnerOnlyAgents', () => {
 
   it('shows the server error', async () => {
     getRunnerOnlyAgents.mockResolvedValue(choices)
-    setRunnerOnlyAgents.mockRejectedValue(new Error('cloud-zdr-1 cannot serve ace'))
+    setRunnerOnlyAgents.mockRejectedValue(new Error('cloud-sensitive-1 cannot serve ace'))
     render(<RunnerOnlyAgents runner={open} onChange={onChange} />)
     fireEvent.click(screen.getByRole('switch', { name: 'Allowlist agents' }))
     fireEvent.click(await screen.findByTestId('runner-only-agents-ace'))

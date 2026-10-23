@@ -70,7 +70,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     can_administer: true,
     open_sessions: 0,
     flags: [],
-    known_flags: ['zdr'],
+    known_flags: ['sensitive_data'],
     private: false,
     private_runner_id: null,
     only_agents: [],
@@ -101,14 +101,14 @@ afterEach(() => {
 })
 
 describe('RunnerAssignments', () => {
-  it('badges a default-list runner that declares ZDR, and only that one', async () => {
+  it('badges a default-list runner that declares sensitive data, and only that one', async () => {
     getAgentRunners.mockResolvedValue([runner('a', { rank: 1 }), runner('b', { rank: 2 })])
-    listRunners.mockResolvedValue([fleetRunner('a', { flags: ['zdr'] }), fleetRunner('b')])
+    listRunners.mockResolvedValue([fleetRunner('a', { flags: ['sensitive_data'] }), fleetRunner('b')])
 
     render(<RunnerAssignments agentSlug="echo" />)
 
-    expect(await screen.findByTestId('zdr-badge-chip-a')).toBeTruthy()
-    expect(screen.queryByTestId('zdr-badge-chip-b')).toBeNull()
+    expect(await screen.findByTestId('sensitive-data-badge-chip-a')).toBeTruthy()
+    expect(screen.queryByTestId('sensitive-data-badge-chip-b')).toBeNull()
   })
 
   it('renders chips in rank order', async () => {

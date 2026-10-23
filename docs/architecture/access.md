@@ -153,22 +153,22 @@ Asked in this order; the first row that matches decides.
 | 6 | viewer / contact whose class a capability lists | `confined` to it | the routing ladder | no | — |
 | 7 | anyone else | `none` | — | — | — |
 
-* **Over the table: the PHI rule** (`access._phi_rule`, spec
-  `2026-10-22-phi-agents-on-zdr-runners` §5). A capability its interface marks
-  PHI-safe (`data: phi`, `apps/agents/phi.py`) — the one a turn names, or the
+* **Over the table: the sensitive-data rule** (`access._sensitive_rule`, spec
+  `2026-10-22-sensitive-data-agents` §5). A capability its interface says
+  handles sensitive data (`data: sensitive`, `apps/agents/sensitive_data.py`) — the one a turn names, or the
   one its conversation's site or page selects — is **confined for everyone**: whoever
   the table gave FULL (owner, admin, `system`, a `full:` rule, an editor, a session
   writer) runs that capability's profile instead, keeping their role, mode and pin
-  rights (`basis: phi:<capability>`). Any turn in a conversation that requires ZDR
-  runners must end in its phi door; anything else — full, another capability, or a
+  rights (`basis: sensitive:<capability>`). Any turn in a sensitive conversation (one
+  that requires sensitive-data runners) must end in that capability; anything else — full, another capability, or a
   caller the door does not list — is refused. The setting is an interface setting,
   saved by the agent's owner or an admin, browser or token — as YAML (`publish_interface`)
-  or with the capability's PHI-safe switch, which edits that YAML (`set_capability_phi`) — and audited
+  or with the capability's sensitive-data switch, which edits that YAML (`set_capability_sensitive`) — and audited
   like any setting change (`docs/architecture/settings-audit.md`; the agent's Settings
-  → Interface shows its history); a phi capability that holds a shell, writes, or any
+  → Interface shows its history); such a capability that holds a shell, writes, or any
   tool but the gateway's site tools, `current_page`, `who_is_asking` and read-only
   local tools is a 422. The turn runs the agent's current code; no commit is pinned.
-  A ZDR-mode runner refuses any unconfined envelope (`zdr_unconfined`).
+  A runner in sensitive-data mode refuses any unconfined envelope (`sensitive_data_unconfined`).
 * Row 3 before row 4 keeps an owner's chosen domain-wide setup intact:
   Eva's members get her whole through `full: [member]`, in her routing's mode.
 * Row 4 (the **editor tier**): an editor may EDIT the agent (its definition and
@@ -259,7 +259,7 @@ access requests from a whole email domain).
 
 | Runner role | Who | May |
 |---|---|---|
-| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (ZDR), read its admin list, **start readiness drills and read their results**, and **route agents' work onto the box**: add it to an agent's default runner list, a source rule or a person's route (`_runners_for_routing`). That means a runner admin can direct which agents' work a box takes — and so whose Claude subscription it spends; that is the owner's explicit choice, not a side effect. The agent side is unchanged: the caller needs the agent's write tier, its **admin** for any `turn_mode: auto`, and the box must still be able to hold the agent (`runner_may_hold_agent`). Routing decides what the box runs, never who it speaks as — heartbeat, claim and the credential fetch stay the owner's. A drill on an agent also needs that agent's **admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the editor tier's always-`manual` rule; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
+| **runner admin** | the runner's owner, or a `RunnerAdmin` grant (`can_administer_runner`) | Set its credentials and browser sign-in, declare its flags (`sensitive_data`), read its admin list, **start readiness drills and read their results**, and **route agents' work onto the box**: add it to an agent's default runner list, a source rule or a person's route (`_runners_for_routing`). That means a runner admin can direct which agents' work a box takes — and so whose Claude subscription it spends; that is the owner's explicit choice, not a side effect. The agent side is unchanged: the caller needs the agent's write tier, its **admin** for any `turn_mode: auto`, and the box must still be able to hold the agent (`runner_may_hold_agent`). Routing decides what the box runs, never who it speaks as — heartbeat, claim and the credential fetch stay the owner's. A drill on an agent also needs that agent's **admin** (`Agent.is_admin`) unless the caller is the runner's owner — a drill turn runs as `system` in the agent's routing mode, so letting an editor start one would lift the editor tier's always-`manual` rule; the owner's box can only claim it when the owner is the agent's admin anyway (`runner_may_hold_agent`). |
 | **runner owner** | `Runner.owner` — whoever paired it | Everything above, plus everything that speaks FOR the box with the owner's memberships: heartbeat, claim, executing turns (drill turns included), pause, retire, capabilities, granting and revoking runner admins. |
 
 Anyone else — a member, viewer or contact — gets the runner-admin routes' **404**,

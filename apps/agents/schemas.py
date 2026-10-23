@@ -627,10 +627,10 @@ class AgentInterfaceIn(StrictModel):
     interface: dict | None = None
 
 
-class CapabilityPhiIn(StrictModel):
-    # On writes `data: phi` into the capability's block of the saved YAML; off
-    # removes it. An ordinary interface edit, as the YAML path is.
-    phi_safe: bool
+class CapabilitySensitiveIn(StrictModel):
+    # On writes `data: sensitive` into the capability's block of the saved YAML;
+    # off removes it. An ordinary interface edit, as the YAML path is.
+    handles_sensitive: bool
 
 
 class AgentInterfaceOut(StrictModel):

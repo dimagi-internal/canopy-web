@@ -2,7 +2,7 @@
 may show and on what terms (spec ``2026-10-22-canopy-site-agents-api-design`` §1).
 
 A site used to keep hand-typed copies of canopy's facts — agent slugs, which
-of them are PHI-safe, the runner flags canopy knows — and nothing checked the
+of them handle sensitive data, the runner flags canopy knows — and nothing checked the
 copies until a visitor's call reached the site and an agent silently did not
 appear. This API replaces the copies: the site asks, canopy answers with one
 signed document, and the site's settings are CHOSEN from it.
@@ -25,7 +25,7 @@ No new secrets. Both trust anchors already exist:
     except SiteAgentsError as exc:
         ...                                   # exc.code: unreachable, bad_signature...
     agent = listing.agent("labsdata")
-    if agent and agent.ready and agent.phi_safe and agent.ready_with_flag("zdr"):
+    if agent and agent.ready and agent.handles_sensitive and agent.ready_with_flag("sensitive_data"):
         ...
 
 A Django host reads ``canopy_sdk.django.site_agents.current()`` instead: cached,
@@ -220,18 +220,18 @@ class AgentCapability:
     description: str = ""
     #: Caller classes the capability is published for (``contact``, ``member``…).
     callers: tuple[str, ...] = ()
-    #: The capability is ``data: phi`` on the agent's published interface.
-    phi_safe: bool = False
-    #: Who published the interface holding the setting, and when ("" when not PHI-safe).
-    phi_set_by: str = ""
-    phi_set_at: str = ""
+    #: The capability is ``data: sensitive`` on the agent's published interface.
+    handles_sensitive: bool = False
+    #: Who published the interface holding the setting, and when ("" when it does not handle sensitive data).
+    sensitive_set_by: str = ""
+    sensitive_set_at: str = ""
 
     @classmethod
     def from_mapping(cls, value: Mapping) -> AgentCapability:
         return cls(name=str(value.get("name") or ""), description=str(value.get("description") or ""),
-                   callers=_strs(value.get("callers")), phi_safe=value.get("phi_safe") is True,
-                   phi_set_by=str(value.get("phi_set_by") or ""),
-                   phi_set_at=str(value.get("phi_set_at") or ""))
+                   callers=_strs(value.get("callers")), handles_sensitive=value.get("handles_sensitive") is True,
+                   sensitive_set_by=str(value.get("sensitive_set_by") or ""),
+                   sensitive_set_at=str(value.get("sensitive_set_at") or ""))
 
 
 @dataclass(frozen=True)
@@ -254,9 +254,9 @@ class SiteAgent:
     problems: tuple[str, ...] = ()
 
     @property
-    def phi_safe(self) -> bool:
-        """Some capability for this site is PHI-safe."""
-        return any(c.phi_safe for c in self.capabilities)
+    def handles_sensitive(self) -> bool:
+        """Some capability for this site handles sensitive data."""
+        return any(c.handles_sensitive for c in self.capabilities)
 
     def ready_with_flag(self, flag: str) -> bool:
         return self.ready_with.get(flag) is True

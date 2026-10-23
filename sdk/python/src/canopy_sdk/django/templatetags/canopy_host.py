@@ -4,9 +4,9 @@
 
 at the end of the page. A page over real data picks its own agent and requirements::
 
-    {% canopy_panel resource=... agent="labsdata" runner_requirements=zdr panel=wide %}
+    {% canopy_panel resource=... agent="labsdata" runner_requirements=sensitive_data panel=wide %}
 
-(``zdr``/``wide`` from the view's context: ``["zdr"]``, ``{"mode": "docked", "width": 560}``). Renders nothing unless ``CANOPY_HOST`` is configured —
+(``sensitive_data``/``wide`` from the view's context: ``["sensitive_data"]``, ``{"mode": "docked", "width": 560}``). Renders nothing unless ``CANOPY_HOST`` is configured —
 a launcher that opens onto an error the page cannot explain is worse than none.
 Override ``canopy_host/panel.html`` to restyle it.
 """

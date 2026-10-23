@@ -32,9 +32,9 @@ from apps.workspaces.testing import enrolled
 pytestmark = pytest.mark.django_db
 
 SITE = "connect-labs"
-PHI_IFACE = {"capabilities": {"data": {
+SENSITIVE_IFACE = {"capabilities": {"data": {
     "description": "Ask data questions about the workflow you are looking at",
-    "callers": ["contact", "member"], "sites": [SITE], "data": "phi",
+    "callers": ["contact", "member"], "sites": [SITE], "data": "sensitive",
     "tools": ["mcp__*canopy-web__who_is_asking"]}}}
 PLAIN_IFACE = {"capabilities": {"connect": {
     "callers": ["contact"], "sites": [SITE], "tools": ["mcp__*canopy-web__who_is_asking"]}}}
@@ -54,7 +54,7 @@ def w():
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner)
     WorkspaceMembership.objects.create(user=owner, workspace=ws, role=WorkspaceMembership.OWNER)
     labsdata = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=owner,
-                                    description="data questions", interface=parse(PHI_IFACE),
+                                    description="data questions", interface=parse(SENSITIVE_IFACE),
                                     interface_published_by=owner,
                                     interface_published_at=timezone.now())
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner,
@@ -72,14 +72,14 @@ def w():
             "app": app, "key": key}
 
 
-def _runner(w, *agents, zdr=False, online=True, name="jo-mbp"):
+def _runner(w, *agents, sensitive=False, online=True, name="jo-mbp"):
     runner = enrolled(Runner.objects.create(
         name=name, kind=Runner.EMDASH, host=name, owner=w["owner"],
         status=Runner.ONLINE if online else Runner.DISCONNECTED, ready=True,
         last_heartbeat_at=timezone.now() if online else None,
-        capabilities={"data_mode": "zdr"} if zdr else {}))
-    if zdr:
-        RunnerFlag.objects.create(runner=runner, flag="zdr", declared_by=w["owner"])
+        capabilities={"data_mode": "sensitive_data"} if sensitive else {}))
+    if sensitive:
+        RunnerFlag.objects.create(runner=runner, flag="sensitive_data", declared_by=w["owner"])
     for agent in agents:
         RunnerAssignment.objects.create(agent=agent, runner=runner, rank=1, enabled=True)
     return runner
@@ -193,44 +193,44 @@ def test_an_agent_of_another_workspace_is_never_listed(w):
     assert "foreign" not in _agents(w).slugs
 
 
-def test_phi_safe_reflects_the_interface_setting(w):
+def test_handles_sensitive_reflects_the_interface_setting(w):
     got = _agents(w)
     data = got.agent("labsdata").capability("data")
-    assert data.phi_safe and data.phi_set_by == "Jo Owner" and data.phi_set_at
+    assert data.handles_sensitive and data.sensitive_set_by == "Jo Owner" and data.sensitive_set_at
     assert data.callers == ("contact", "member")
-    assert not got.agent("ace").phi_safe
-    assert got.agent("ace").capability("connect").phi_set_by == ""
+    assert not got.agent("ace").handles_sensitive
+    assert got.agent("ace").capability("connect").sensitive_set_by == ""
 
 
 def test_runners_and_readiness_reflect_the_fleet(w):
     got = _agents(w)
     data = got.agent("labsdata")
-    assert not data.ready and data.flags_available == () and not data.ready_with_flag("zdr")
+    assert not data.ready and data.flags_available == () and not data.ready_with_flag("sensitive_data")
     assert any("no runner takes" in p and "#running" in p for p in data.problems)
 
     _runner(w, w["labsdata"], w["ace"])
     got = _agents(w)
     data = got.agent("labsdata")
-    assert data.ready and not data.ready_with_flag("zdr")
-    assert any(p.startswith("no ready runner with zdr") for p in data.problems)
+    assert data.ready and not data.ready_with_flag("sensitive_data")
+    assert any(p.startswith("no ready runner with sensitive") for p in data.problems)
     assert got.agent("ace").ready and got.agent("ace").problems == ()
 
-    _runner(w, w["labsdata"], zdr=True, name="zdr-box")
+    _runner(w, w["labsdata"], sensitive=True, name="sensitive-box")
     data = _agents(w).agent("labsdata")
-    assert data.flags_available == ("zdr",) and data.ready_with_flag("zdr") and data.problems == ()
+    assert data.flags_available == ("sensitive_data",) and data.ready_with_flag("sensitive_data") and data.problems == ()
 
 
 def test_a_declared_flag_the_box_contradicts_is_not_available(w):
-    runner = _runner(w, w["labsdata"], zdr=True)
+    runner = _runner(w, w["labsdata"], sensitive=True)
     Runner.objects.filter(pk=runner.pk).update(capabilities={"data_mode": "standard"})
     data = _agents(w).agent("labsdata")
-    assert data.flags_available == () and not data.ready_with_flag("zdr")
+    assert data.flags_available == () and not data.ready_with_flag("sensitive_data")
 
 
 def test_an_offline_runner_is_listed_but_not_ready(w):
-    _runner(w, w["labsdata"], zdr=True, online=False)
+    _runner(w, w["labsdata"], sensitive=True, online=False)
     data = _agents(w).agent("labsdata")
-    assert data.flags_available == ("zdr",) and not data.ready_with_flag("zdr") and not data.ready
+    assert data.flags_available == ("sensitive_data",) and not data.ready_with_flag("sensitive_data") and not data.ready
     assert any("is ready now" in p for p in data.problems)
 
 
@@ -262,7 +262,7 @@ def test_the_response_is_signed_by_the_execution_key(w):
 # --- the site's needs, on the Connected sites page -------------------------------
 
 
-NEEDS = {"real_data": {"requires": {"phi_safe": True, "runner_flag": "zdr"}},
+NEEDS = {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
          "uses": {"agents": ["ace", "labsdata", "ghost"], "real_data_agents": ["labsdata"],
                   "version": "v-old"}}
 PAGES = [{"key": "labs:workflow:run:data", "title": "A workflow run, read-only",
@@ -299,17 +299,17 @@ def _needs(w):
 
 def test_the_page_shows_the_sites_needs_and_who_meets_them(w, monkeypatch):
     calls = _publish(w, monkeypatch)
-    _runner(w, w["labsdata"], w["ace"], zdr=True)
+    _runner(w, w["labsdata"], w["ace"], sensitive=True)
     body = _needs(w)
     assert calls == ["https://labs.example.org/canopy/site.json"]
     assert body["available"] and not body["stale"]
     assert body["pages"] == PAGES
-    assert body["requires"] == {"phi_safe": True, "runner_flag": "zdr"}
+    assert body["requires"] == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
     rows = {r["slug"]: r for r in body["agents"]}
     assert rows["labsdata"]["offered"] and rows["labsdata"]["real_data"]
     assert rows["labsdata"]["meets_real_data"] and rows["labsdata"]["why_not"] == []
     assert rows["ace"]["offered"] and not rows["ace"]["meets_real_data"]
-    assert any("not PHI-safe" in why for why in rows["ace"]["why_not"])
+    assert any("does not handle sensitive data" in why for why in rows["ace"]["why_not"])
     assert not rows["bare"]["offered"] and not rows["bare"]["ready"]
     assert body["not_allowed"] == ["ghost"]
     assert body["uses_version"] == "v-old" and body["site_agents_version"] != "v-old"
@@ -317,12 +317,12 @@ def test_the_page_shows_the_sites_needs_and_who_meets_them(w, monkeypatch):
     assert len(calls) == 1, "a good copy is cached"
 
 
-def test_without_a_zdr_runner_the_real_data_agent_falls_short_and_says_why(w, monkeypatch):
+def test_without_a_sensitive_runner_the_real_data_agent_falls_short_and_says_why(w, monkeypatch):
     _publish(w, monkeypatch)
     _runner(w, w["labsdata"])
     row = next(r for r in _needs(w)["agents"] if r["slug"] == "labsdata")
     assert not row["meets_real_data"]
-    assert any(why.startswith("no ready runner with zdr") and "#running" in why
+    assert any(why.startswith("no ready runner with sensitive") and "#running" in why
                for why in row["why_not"])
 
 

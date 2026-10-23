@@ -47,7 +47,7 @@ from .models import (
     Turn,
     WorkspaceRunnerOrder,
 )
-from .runner_requirements import is_zdr_box
+from .runner_requirements import is_sensitive_data_box
 from .schemas import (
     ClaimedTurnOut,
     FleetHoldIn,
@@ -799,8 +799,9 @@ def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, worksp
             summary="Declare what this runner's owner vouches for")
 @gate("runner-admin", setting=True)
 def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerFlagsIn):
-    """Replace the runner's declared flags. `zdr`: this box uses only
-    zero-data-retention keys for Claude. canopy cannot check a declaration; it
+    """Replace the runner's declared flags. `sensitive_data`: this box is set up for
+    sensitive data (a ZDR API key for Claude, a locked harness, egress limited to an
+    allowlist, nothing kept after a turn). canopy cannot check a declaration; it
     records who made it. A host may require a flag of every conversation its
     visitors hold, and those conversations then run only on runners declaring it.
     """
@@ -956,19 +957,19 @@ def set_runner_egress(request: HttpRequest, runner_id: uuid.UUID, payload: Runne
     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
     hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
     applies it within a minute, on top of the box's own setting, which it never
-    loosens. A ZDR box is always locked; adding a host to one needs a person in a
+    loosens. A sensitive-data box is always locked; adding a host to one needs a person in a
     browser behind a passkey. Owner or a runner administrator."""
     runner = runner_admin_or_404(request, runner_id)
     try:
         allow = egress.normalize_allow(payload.allow)
     except ValueError as exc:
         raise HttpError(422, str(exc))
-    zdr = is_zdr_box(runner)
-    if zdr and not payload.locked:
+    forced = is_sensitive_data_box(runner)
+    if forced and not payload.locked:
         raise HttpError(422, egress.FORCED)
-    if zdr and egress.loosens(runner, locked=payload.locked, allow=allow):
-        # A ZDR box reaching one more host is a person's decision, as its `zdr`
-        # declaration is: 403 `step_up_required` for a browser, a plain 403 for a token.
+    if forced and egress.loosens(runner, locked=payload.locked, allow=allow):
+        # A sensitive-data box reaching one more host is a person's decision, as its
+        # `sensitive_data` declaration is: 403 `step_up_required` for a browser, a plain 403 for a token.
         from apps.passkeys import stepup  # noqa: PLC0415 — lazy like set_runner_flags' own
 
         stepup.require_recent_step_up(request)

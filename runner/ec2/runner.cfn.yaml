@@ -31,15 +31,17 @@ Parameters:
     Description: Comma-separated agent slugs this runner may drive.
   RunnerDataMode:
     Type: String
-    AllowedValues: ['', 'zdr']
+    AllowedValues: ['', 'sensitive_data']
     Default: ''
     Description: >
-      `zdr` puts the box in ZDR mode: Claude runs only on the credential bundle's
-      API-key slot (a key from an Anthropic organisation with zero data
-      retention), every turn runs under a locked permission profile, and the
-      box reports the mode on every heartbeat so a person's `zdr` declaration
-      is in force. See docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md.
-      ZDR mode needs RunnerEgress=locked.
+      `sensitive_data` puts the box in sensitive-data mode: Claude runs only on
+      the ZDR API key in the credential bundle's API-key slot (a key from an
+      Anthropic organisation with zero data retention), every turn runs under a
+      locked permission profile, nothing a turn read is kept on the box, and the
+      box reports the mode on every heartbeat so a person's `sensitive_data`
+      declaration is in force. See
+      docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md.
+      Sensitive-data mode needs RunnerEgress=locked.
   RunnerEgress:
     Type: String
     AllowedValues: ['', 'locked']
@@ -48,7 +50,7 @@ Parameters:
       `locked`: the box's isolation units reach the network only through a local
       proxy that admits an allowlist of hostnames on 443 (canopy-web, the model,
       GitHub, plus RunnerEgressAllow); root's iptables chain rejects the rest,
-      DNS included. Any box may lock its egress; ZDR mode requires it.
+      DNS included. Any box may lock its egress; sensitive-data mode requires it.
   RunnerEgressAllow:
     Type: String
     Default: ''

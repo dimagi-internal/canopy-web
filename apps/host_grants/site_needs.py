@@ -115,9 +115,10 @@ def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]
     rows = []
     for agent in content["agents"]:
         why: list[str] = []
-        if requires.get("phi_safe") and not any(c["phi_safe"] for c in agent["capabilities"]):
-            why.append(f"not PHI-safe in canopy: no capability of {agent['name']} for this site "
-                       "says `data: phi`")
+        if requires.get("handles_sensitive") and not any(
+                c["handles_sensitive"] for c in agent["capabilities"]):
+            why.append(f"does not handle sensitive data in canopy: no capability of "
+                       f"{agent['name']} for this site says `data: sensitive`")
         if flag and not agent["runners"]["ready_with"].get(flag):
             # The site agents API's own sentence when it has one: it names where to fix it.
             why.append(next((p for p in agent["problems"]

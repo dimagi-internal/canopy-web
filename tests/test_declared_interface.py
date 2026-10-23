@@ -373,10 +373,10 @@ def test_a_changed_reported_value_is_still_refused(w, claimable):
 
 @pytest.mark.parametrize("key", ["data_mode", "data_mode_hash"])
 def test_the_data_mode_cannot_be_declared_by_hand(w, claimable, key):
-    # A `zdr` declaration counts only while the box itself reports ZDR mode
+    # A `sensitive_data` declaration counts only while the box itself reports sensitive-data mode
     # (runner_requirements.in_force): a hand edit would make the report a person's.
     c, rid = claimable
-    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"agents": ["ace"], key: "zdr"}},
+    r = c.patch(f"/api/harness/runners/{rid}", {"capabilities": {"agents": ["ace"], key: "sensitive_data"}},
                 content_type="application/json")
     assert r.status_code == 422
 

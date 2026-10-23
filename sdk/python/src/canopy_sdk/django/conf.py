@@ -25,7 +25,7 @@
         "PAGE_PATTERNS": {},        # key mode: {key: regex over location.pathname}
         "WRITABLE_SCOPES": [],
         # Key mode: the agent (and extra runner requirements) a page chose —
-        # {key: {"agent": "labsdata", "runner_requirements": ["zdr"]}}. In
+        # {key: {"agent": "labsdata", "runner_requirements": ["sensitive_data"]}}. In
         # signed mode a page chooses through panel_context(agent=...,
         # runner_requirements=...) instead, signed into its page token.
         "PAGE_AGENTS": {},
@@ -34,12 +34,12 @@
         "SUBJECT_ACTIVE": None,     # sub -> bool; default: an active user with that pk
         "USER_CLAIMS": None,        # user -> {"name", "email", "email_verified"}
         "RETIRED_KEYS": [],
-        "RUNNER_REQUIREMENTS": ["zdr"],  # optional: only run my visitors on ZDR runners
+        "RUNNER_REQUIREMENTS": ["sensitive_data"],  # optional: only run my visitors on sensitive-data runners
         "PAGE_TOKEN_MAX_AGE": 7200,
         # What this site asks of canopy's agents, published signed at
         # canopy/site.json (canopy_sdk.site): a callable (or dotted path)
-        # returning {"real_data": {"requires": {"phi_safe": True,
-        # "runner_flag": "zdr"}}, "uses": {"agents": [...], "real_data_agents":
+        # returning {"real_data": {"requires": {"handles_sensitive": True,
+        # "runner_flag": "sensitive_data"}}, "uses": {"agents": [...], "real_data_agents":
         # [...], "version": "<site agents version>"}, "titles": {page_key: title}}.
         # The pages and their scopes are PAGE_SCOPES; PAGE_TITLES names them.
         "SITE_NEEDS": None,

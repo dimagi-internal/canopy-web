@@ -32,7 +32,7 @@ SERVER_OWNED_METADATA = frozenset({
     # History of detached threads (apps/slack/share.py); retention classes on it.
     "slack_detached",
     "email_thread_key", "via", "capability",
-    # A host's runner requirements (ZDR, apps/harness/runner_requirements.py),
+    # A host's runner requirements (`sensitive_data`, apps/harness/runner_requirements.py),
     # copied from the token that started or sent into the session.
     "runner_requirements",
     # MCP Apps receipts + model context (apps/mcp_apps_host/mcp_apps_views.py): canopy's
@@ -67,7 +67,7 @@ def stamp_host_metadata(metadata: dict, request) -> dict:
     """Stamp the SERVER-OWNED host keys onto a new session's `metadata`, from the
     request's delegated token — never from the body: `embed_app` (which site
     created it, so one host's widget cannot create or list under another's name)
-    and the site's runner requirements (ZDR). A request with no acting site (a
+    and the site's runner requirements (`sensitive_data`). A request with no acting site (a
     browser, a PAT) stamps nothing. One rule for a user's and a contact's
     session."""
     from apps.harness import runner_requirements as rr

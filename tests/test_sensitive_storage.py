@@ -1,8 +1,8 @@
-"""A sensitive conversation (it requires ZDR runners) keeps the host's data inside
+"""A sensitive conversation (it requires sensitive-data runners) keeps the host's data inside
 the boundary: canopy stores less, purges on its own clock, and never re-exposes or
 re-processes it. One test per surface.
 
-Spec: docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §4.
+Spec: docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §4.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-ZDR = {"runner_requirements": ["zdr"]}
+SENSITIVE = {"runner_requirements": ["sensitive_data"]}
 ROW = "patient Amina, HIV+, visit 2026-10-01"
 
 
@@ -42,7 +42,7 @@ def w():
     runner = Runner.objects.create(name="box", workspace=ws, location=Runner.LOCAL,
                                    status=Runner.ONLINE, owner=user)
     hot = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="hot",
-                                 metadata=dict(ZDR))
+                                 metadata=dict(SENSITIVE))
     cold = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="cold")
     c = Client()
     c.force_login(user)
@@ -260,7 +260,7 @@ def test_the_visitor_reads_their_own_conversation_back_in_the_widget(w):
     visitor = Contact.objects.create(workspace=w["ws"], app=app, external_id="v-1",
                                      display_name="Visitor", source=Contact.SOURCE_EMBED)
     s = Session.objects.create(workspace=w["ws"], agent=w["agent"], contact=visitor,
-                               metadata={**ZDR, "embed_app": "connect-labs"})
+                               metadata={**SENSITIVE, "embed_app": "connect-labs"})
     _converse(s)
     raw, _ = ContactToken.issue(app=app, contact=visitor, ttl_seconds=600)
     page = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").get(
@@ -398,7 +398,7 @@ def _unowned_thread(w):
     """A runner-discovered conversation nobody started: the agent's admins stand in
     as its owner (`access.role_for`) — they read and share it, but are not IN it."""
     s = Session.objects.create(workspace=w["ws"], agent=w["agent"], origin=Session.ORIGIN_RUNNER,
-                               metadata=dict(ZDR))
+                               metadata=dict(SENSITIVE))
     RunnerBinding.objects.create(session=s, runner=w["runner"], session_key="unowned")
     return s
 

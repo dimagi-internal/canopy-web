@@ -1,5 +1,5 @@
 """The member widget sends every follow-up over the chat socket, so the site's
-runner requirements (ZDR) must reach the session from there too — not only
+runner requirements (`sensitive_data`) must reach the session from there too — not only
 from the REST send."""
 from __future__ import annotations
 
@@ -34,16 +34,16 @@ def _seed():
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=owner)
     app = AppCredential.create_credential(name="connect-labs", created_by=owner, workspace=ws)
     AppCredentialAgent.objects.create(app=app, agent=agent)
-    # An older conversation, started through the site before it asked for ZDR.
+    # An older conversation, started through the site before it asked for sensitive-data.
     session = services.create_session(workspace=ws, created_by=mem, agent=agent,
                                       metadata={"embed_app": app.name})
     raw, _ = DelegatedToken.issue(app=app, user=mem, ttl_seconds=600,
                                   assurance=DelegatedToken.ASSURANCE_HOST_SIGNED,
-                                  runner_requirements=("zdr",))
+                                  runner_requirements=("sensitive_data",))
     return session, raw
 
 
-async def test_a_later_zdr_token_stamps_an_older_session_over_the_socket():
+async def test_a_later_sensitive_token_stamps_an_older_session_over_the_socket():
     session, raw = await database_sync_to_async(_seed)()
     path = f"/ws/canopy-sessions/{session.id}/"
     comm = WebsocketCommunicator(RealtimeAuthMiddleware(SessionConsumer.as_asgi()),
@@ -58,4 +58,4 @@ async def test_a_later_zdr_token_stamps_an_older_session_over_the_socket():
             break
     await comm.disconnect()
     meta = await database_sync_to_async(lambda: Session.objects.get(pk=session.pk).metadata)()
-    assert meta["runner_requirements"] == ["zdr"]
+    assert meta["runner_requirements"] == ["sensitive_data"]

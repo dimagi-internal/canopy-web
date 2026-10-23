@@ -415,8 +415,8 @@ def resource(session, viewer: Viewer, tool_call_id: str) -> dict:
         "read_only_reason": ("" if can_write else "You can read this conversation but not act in it.")
         or reason,
         "sign_in_url": (row.app.frame_origins() or [""])[0] if (reason and can_write) else "",
-        # A sensitive conversation stores no result (spec 2026-10-22-phi-agents-on-
-        # zdr-runners §4): the View fetches its data as the viewer, from the input —
+        # A sensitive conversation stores no result (spec 2026-10-22-sensitive-data-agents
+        # §4): the View fetches its data as the viewer, from the input —
         # which only the conversation's own people read back (`reads_content`).
         "tool_input": (tool_input(row) if sensitivity.reads_content(
             session, chat_surface=True, user=viewer.user, contact=viewer.contact) else {}),

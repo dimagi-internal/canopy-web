@@ -54,7 +54,7 @@ export function useRunnerPlacement(
   }, [])
 
   const boundOffline = isBoundRunnerOffline(meta?.runner_name, fleetRunners, meta?.runner_online)
-  // Only runners the conversation's host allows (ZDR): the server refuses any
+  // Only runners the conversation's host allows (e.g. sensitive-data runners): the server refuses any
   // other placement, so offering one would only produce an error.
   const runnerRequirements = meta?.runner_requirements
   const continueOptions = useMemo(

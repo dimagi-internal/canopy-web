@@ -136,7 +136,7 @@ instead needs the grant of the person who clicked. Add
 3. `context_for_grant(app, grant, …)` (:209) applies the same expiry, resource
    and DPoP-key checks. The ceiling is the session's capability ceiling, if it
    has one. It can narrow and never widen.
-4. **Runner requirements (ZDR)** do not apply. No runner touches a View call;
+4. **Runner requirements (`sensitive_data`)** do not apply. No runner touches a View call;
    canopy-web makes it directly.
 
 **Gate order for a View `tools/call`.** Each refusal is a JSON-RPC error to the

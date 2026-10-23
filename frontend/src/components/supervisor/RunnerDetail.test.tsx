@@ -79,7 +79,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     can_manage: true,
     can_administer: true,
     flags: [],
-    known_flags: ['zdr'],
+    known_flags: ['sensitive_data'],
     ...overrides,
   } as RunnerOut
 }
@@ -156,7 +156,7 @@ describe('RunnerDetail', () => {
     expect(note.textContent).toContain('jjackson@dimagi.com')
   })
 
-  it('tells an admin who is not the owner that they may declare the box ZDR', () => {
+  it('tells an admin who is not the owner that they may declare the box a sensitive-data runner', () => {
     render(<RunnerDetail runner={runner({ can_manage: false, can_administer: true })} agents={agents} onBack={() => {}} />)
     const note = screen.getByTestId('runner-detail-readonly')
     expect(note.textContent).toMatch(/declare what it runs with/)

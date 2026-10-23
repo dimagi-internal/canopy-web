@@ -39,7 +39,7 @@ function runner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut {
     can_manage: true,
     can_administer: true,
     flags: [],
-    known_flags: ['zdr'],
+    known_flags: ['sensitive_data'],
     ...overrides,
   } as RunnerOut
 }

@@ -413,18 +413,18 @@ def test_the_four_operations_are_mcp_tools_with_the_spec_names(db):
         assert name not in tools
 
 
-# --- zero data retention: nothing from a ZDR session is ever written ---------------
+# --- nothing from a sensitive conversation is ever written ----------------------------------
 #
-# Owner rule (2026-10-08). A turn is ZDR when its conversation requires it, when a
-# runner flagged `zdr` claimed it, or when it descends from such a turn.
+# Owner rule (2026-10-08). A turn is sensitive-data when its conversation requires it, when a
+# runner flagged `sensitive_data` claimed it, or when it descends from such a turn.
 
 
-def _zdr_runner():
+def _sensitive_runner():
     from apps.harness.models import Runner, RunnerFlag
 
-    r = Runner.objects.create(name="zdr-box", kind=Runner.CLOUD, capabilities={})
-    RunnerFlag.objects.create(runner=r, flag="zdr")
-    _reports_zdr(r)
+    r = Runner.objects.create(name="sensitive-box", kind=Runner.CLOUD, capabilities={})
+    RunnerFlag.objects.create(runner=r, flag="sensitive_data")
+    _reports_sensitive(r)
     return r
 
 
@@ -439,19 +439,19 @@ def _add_body(turn):
             "declarationType": "user-declared", "sourceContext": f"turn:{turn.pk}"}
 
 
-def test_an_hcp_write_from_a_zdr_runners_session_is_refused_and_leaves_nothing(w):
-    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _zdr_runner())
+def test_an_hcp_write_from_a_sensitive_runners_session_is_refused_and_leaves_nothing(w):
+    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _sensitive_runner())
     r = _post(_as(w["ace"].user), f"/v1/preferences/add?turn={turn.pk}", _add_body(turn))
-    assert r.status_code == 403 and "zero data retention" in r.json()["detail"]
+    assert r.status_code == 403 and "sensitive data" in r.json()["detail"]
     assert not PersonFact.objects.exists()
     assert not _events(w["person"], "preference.created")
     # reads are not writes: the same session may still recall
     assert _search(_as(w["ace"].user), turn).status_code == 200
 
 
-def test_an_update_from_a_zdr_session_is_refused_but_the_entry_stays(w):
+def test_an_update_from_a_sensitive_session_is_refused_but_the_entry_stays(w):
     f = _add(w["person"], w["ws"], "KC metrics lead.")
-    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _zdr_runner())
+    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _sensitive_runner())
     r = _as(w["ace"].user).put(f"{BASE}/v1/preferences/urn:uuid:{f.entry_id}?turn={turn.pk}",
                                data=json.dumps({"updatedPreference": "Changed.", "reason": "r"}),
                                content_type="application/json")
@@ -460,40 +460,40 @@ def test_an_update_from_a_zdr_session_is_refused_but_the_entry_stays(w):
     assert f.is_live and f.statement == "KC metrics lead."
 
 
-def test_a_conversation_that_requires_zdr_is_zdr_whatever_runner_it_is_on(w):
+def test_a_conversation_that_requires_sensitive_is_sensitive_whatever_runner_it_is_on(w):
     from apps.canopy_sessions.models import Session
 
     chat = Session.objects.create(agent=w["ace"], workspace=w["ws"], title="c",
-                                  metadata={"runner_requirements": ["zdr"]})
+                                  metadata={"runner_requirements": ["sensitive_data"]})
     turn = _turn(w["ace"], w["lili"], "zc")
     Turn.objects.filter(pk=turn.pk).update(chat_session=chat, agent=None)
     turn.refresh_from_db()
-    assert hcp.is_zdr_turn(turn)
-    with pytest.raises(hcp.ZdrRefused):
+    assert hcp.is_sensitive_turn(turn)
+    with pytest.raises(hcp.SensitiveRefused):
         people.record_fact(person=w["person"], workspace=w["ws"], kind="role", statement="x",
                            by_agent=w["ace"], source_turn=turn)
     assert not PersonFact.objects.exists()
 
 
-def test_a_turn_descended_from_a_zdr_session_is_zdr_too(w):
-    parent = _claimed_by(_turn(w["ace"], w["lili"], "p"), _zdr_runner())
+def test_a_turn_descended_from_a_sensitive_session_is_sensitive_too(w):
+    parent = _claimed_by(_turn(w["ace"], w["lili"], "p"), _sensitive_runner())
     child = _turn(w["hal"], w["lili"], "c")
     Turn.objects.filter(pk=child.pk).update(parent_turn=parent)
     child.refresh_from_db()
-    assert hcp.is_zdr_turn(child)
-    assert not hcp.is_zdr_turn(_turn(w["hal"], w["lili"], "plain"))
+    assert hcp.is_sensitive_turn(child)
+    assert not hcp.is_sensitive_turn(_turn(w["hal"], w["lili"], "plain"))
 
 
 def test_the_cli_path_is_caught_by_the_parent_turn_header_and_an_unnamed_agent_write_is_refused(w):
-    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _zdr_runner())
+    turn = _claimed_by(_turn(w["ace"], w["lili"], "z"), _sensitive_runner())
     c = _as(w["ace"].user)
     url = f"/api/people/{w['person'].pk}/facts/"
     body = {"workspace": "connect", "kind": "role", "statement": "KC lead.", "basis": "declared"}
-    # `canopy people remember` on a ZDR box: the CLI sends X-Canopy-Parent-Turn
+    # `canopy people remember` on a sensitive-data box: the CLI sends X-Canopy-Parent-Turn
     r = c.post(url, data=json.dumps(body), content_type="application/json",
                HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
     assert r.status_code == 403
-    # no turn named at all: an agent's write cannot prove it is not from a ZDR session
+    # no turn named at all: an agent's write cannot prove it is not from a sensitive conversation
     r = c.post(url, data=json.dumps(body), content_type="application/json")
     assert r.status_code == 403 and "must name the turn" in r.json()["detail"]
     assert not PersonFact.objects.exists()
@@ -504,18 +504,18 @@ def test_the_cli_path_is_caught_by_the_parent_turn_header_and_an_unnamed_agent_w
     assert r.status_code == 201
 
 
-def test_zdr_conversations_are_never_listed(w):
-    zdr = _claimed_by(_turn(w["ace"], w["lili"], "z", prompt="secret"), _zdr_runner())
+def test_sensitive_conversations_are_never_listed(w):
+    sensitive = _claimed_by(_turn(w["ace"], w["lili"], "z", prompt="secret"), _sensitive_runner())
     plain = _turn(w["ace"], w["lili"], "p", prompt="hello")
     got = {t.pk for t in people.conversations(w["person"], w["ace"])}
-    assert plain.pk in got and zdr.pk not in got
+    assert plain.pk in got and sensitive.pk not in got
 
 
-def _reports_zdr(runner):
-    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+def _reports_sensitive(runner):
+    """The box reports sensitive-data mode on its heartbeat: without it a person's `sensitive_data`
     declaration is not in force (runner_requirements.in_force)."""
     from apps.harness.models import Runner as _Runner
 
-    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "sensitive_data"}
     _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
     return runner

@@ -177,16 +177,16 @@ def test_a_cloud_runner_can_fork_and_a_fork_of_a_fork_shares_the_root_directory(
 
 def test_a_fork_keeps_the_conversations_runner_requirements():
     # The fork holds the same conversation, so it runs on the same runners
-    # (spec 2026-10-22-phi-agents-on-zdr-runners §3).
+    # (spec 2026-10-22-sensitive-data-agents §3).
     user, ws, runner, c = _ctx()
     s = _session(ws, runner, user)
-    s.metadata = {**s.metadata, "runner_requirements": ["zdr"]}
+    s.metadata = {**s.metadata, "runner_requirements": ["sensitive_data"]}
     s.save(update_fields=["metadata"])
 
     r = _fork(c, s, 2 * S)
 
     assert r.status_code == 200, r.content
-    assert Session.objects.get(pk=r.json()["id"]).metadata["runner_requirements"] == ["zdr"]
+    assert Session.objects.get(pk=r.json()["id"]).metadata["runner_requirements"] == ["sensitive_data"]
 
 
 def test_a_fork_of_an_unrestricted_conversation_requires_nothing():

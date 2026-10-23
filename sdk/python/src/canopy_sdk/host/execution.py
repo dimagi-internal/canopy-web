@@ -2,9 +2,9 @@
 the call in front of it, then decide whether to release real data.
 
 canopy's gateway adds ``Canopy-Execution: <JWT>`` to every request it makes to a
-host's MCP server on an agent's turn (spec 2026-10-22-phi-agents-on-zdr-runners
+host's MCP server on an agent's turn (spec 2026-10-22-sensitive-data-agents-design
 §6). It says which agent is calling, in which capability and whether its
-interface marks it PHI-safe (`data: phi`, and who set that), on which runner (its flags in force, and who declared them), and in
+interface marks it as handling sensitive data (`data: sensitive`, and who set that), on which runner (its flags in force, and who declared them), and in
 which conversation with which requirements. ``Canopy-Actor`` only NAMES the agent
 and must never be trusted; this is signed by canopy's published client key.
 
@@ -15,7 +15,7 @@ and must never be trusted; this is signed by canopy's published client key.
                                      replay_store=jtis)
     except ExecutionRefused as exc:
         ...                                  # exc.code: no_statement, bad_signature, replayed...
-    refusal = execution.phi_clearance(agents={"labsdata"})
+    refusal = execution.sensitive_clearance(agents={"labsdata"})
     if refusal:
         ...                                  # synthetic data only, and say why
 
@@ -53,8 +53,8 @@ from .client_keys import MetadataError
 
 log = logging.getLogger("canopy_sdk.host")
 
-PHI = "phi"
-ZDR = "zdr"
+SENSITIVE = "sensitive"
+SENSITIVE_DATA = "sensitive_data"
 
 
 class ExecutionRefused(Exception):
@@ -72,8 +72,8 @@ class Execution:
 
     agent: str
     #: ``{data, capability, declared_by, declared_at}`` — the capability's
-    #: ``data: phi`` setting and who last published the interface holding it — or
-    #: None: the capability is not PHI-safe.
+    #: ``data: sensitive`` setting and who last published the interface holding it — or
+    #: None: the capability does not handle sensitive data.
     declaration: dict | None
     #: ``{id, name, flags: [{flag, declared_by, declared_at}]}`` — flags IN FORCE.
     runner: dict
@@ -92,24 +92,26 @@ class Execution:
         return frozenset(str(f.get("flag") or "") for f in self.runner.get("flags") or []
                          if isinstance(f, Mapping))
 
-    def phi_clearance(self, *, agents: Iterable[str], require: Iterable[str] = (ZDR,)) -> str | None:
-        """None when this call may be given real (PHI) data; else the refusal code.
+    def sensitive_clearance(self, *, agents: Iterable[str], require: Iterable[str] = (SENSITIVE_DATA,)) -> str | None:
+        """None when this call may be given real (sensitive) data; else the refusal code.
 
         The conjunction of the spec's rule plus the host's own allowlist: the agent
         is one the host accepts the claim from; its interface marks the capability
-        PHI-safe (``data: phi``); the runner carries every
-        required flag, declared by a person and in force; and the conversation has
-        required them (from its first turn — canopy never drops a requirement).
+        as handling sensitive data (``data: sensitive``); the runner is a
+        sensitive-data runner — it carries every required flag, declared by a
+        person and in force, and reports ``data_mode: sensitive_data`` itself;
+        and the conversation has required them (from its first turn — canopy
+        never drops a requirement).
         """
         need = frozenset(require)
         if self.agent not in set(agents):
             return "agent_not_allowed"
         decl = self.declaration
-        if not isinstance(decl, Mapping) or decl.get("data") != PHI:
+        if not isinstance(decl, Mapping) or decl.get("data") != SENSITIVE:
             return "undeclared"
         if not need <= self.runner_flags:
             return "runner_flags"
-        if ZDR in need and self.runner_posture.get("data_mode") != ZDR:
+        if SENSITIVE_DATA in need and self.runner_posture.get("data_mode") != SENSITIVE_DATA:
             return "runner_posture"
         if not need <= frozenset(self.requirements):
             return "requirements"

@@ -1,9 +1,9 @@
 """The egress lock (`RUNNER_EGRESS=locked`): a unit reaches the network only through
 the local CONNECT proxy, to an allowlist of hosts; root's CANOPY-EGRESS chain rejects
-the rest, DNS included. A runner setting of its own — any box may lock — which ZDR
-mode requires.
+the rest, DNS included. A runner setting of its own — any box may lock — which
+sensitive-data mode requires.
 
-docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §1.
+docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §1.
 """
 from __future__ import annotations
 
@@ -14,11 +14,11 @@ import subprocess
 
 import pytest
 
-BOX = {"RUNNER_NAME": "cloud-zdr-1", "RUNNER_WORKSPACE": "dimagi",
+BOX = {"RUNNER_NAME": "cloud-sensitive-1", "RUNNER_WORKSPACE": "dimagi",
        "CANOPY_BASE_URL": "https://canopy.dimagi.com", "RUNNER_UNITS": "tree:dimagi"}
-UNITS = [{"id": "dimagi", "uid": 1001, "gid": 1001, "name": "cloud-zdr-1", "kind": "tree", "slug": "",
+UNITS = [{"id": "dimagi", "uid": 1001, "gid": 1001, "name": "cloud-sensitive-1", "kind": "tree", "slug": "",
           "workspace": "dimagi", "user": "cu-dimagi", "home": "/home/cu-dimagi"},
-         {"id": "agent-eva", "uid": 1002, "gid": 1002, "name": "cloud-zdr-1-agent-eva", "kind": "agent",
+         {"id": "agent-eva", "uid": 1002, "gid": 1002, "name": "cloud-sensitive-1-agent-eva", "kind": "agent",
           "slug": "eva", "workspace": "dimagi", "user": "cu-agent-eva", "home": "/home/cu-agent-eva"}]
 
 
@@ -122,10 +122,10 @@ def test_a_locked_box_whose_rules_are_refused_does_not_come_up_open(cloud_runner
                                   run=Recorder(fail=lambda argv: argv[0] == "ip6tables" and argv[1] == "-A"))
 
 
-# ---- the plan: the box's floor, ZDR mode, and canopy-web ------------------------
+# ---- the plan: the box's floor, sensitive-data mode, and canopy-web ------------------------
 
 def test_canopy_web_locks_one_unit_and_adds_its_hosts(cloud_runner):
-    plan = cloud_runner.egress_plan(BOX, UNITS, {"cloud-zdr-1-agent-eva": {"locked": True,
+    plan = cloud_runner.egress_plan(BOX, UNITS, {"cloud-sensitive-1-agent-eva": {"locked": True,
                                                                           "allow": ["slack.com"]}})
     assert plan["dimagi"]["locked"] is False
     assert plan["agent-eva"]["locked"] is True and "slack.com" in plan["agent-eva"]["allow"]
@@ -133,13 +133,13 @@ def test_canopy_web_locks_one_unit_and_adds_its_hosts(cloud_runner):
 
 
 def test_canopy_web_cannot_unlock_what_the_box_locks(cloud_runner):
-    for box in ({**BOX, "RUNNER_EGRESS": "locked"}, {**BOX, "RUNNER_DATA_MODE": "zdr"}):
-        plan = cloud_runner.egress_plan(box, UNITS, {"cloud-zdr-1": {"locked": False}})
+    for box in ({**BOX, "RUNNER_EGRESS": "locked"}, {**BOX, "RUNNER_DATA_MODE": "sensitive_data"}):
+        plan = cloud_runner.egress_plan(box, UNITS, {"cloud-sensitive-1": {"locked": False}})
         assert plan["dimagi"]["locked"] is True and plan["agent-eva"]["locked"] is True
 
 
 def test_a_bad_host_from_canopy_web_is_skipped_not_fatal(cloud_runner):
-    plan = cloud_runner.egress_plan(BOX, UNITS, {"cloud-zdr-1": {"locked": True,
+    plan = cloud_runner.egress_plan(BOX, UNITS, {"cloud-sensitive-1": {"locked": True,
                                                                 "allow": ["ok.example.com", "bad/host"]}})
     assert "ok.example.com" in plan["dimagi"]["allow"] and "bad/host" not in plan["dimagi"]["allow"]
 
@@ -149,12 +149,12 @@ def test_the_box_reads_canopy_web_by_its_role(cloud_runner):
 
     def post(url, body):
         seen.update(url=url, body=body)
-        return 200, {"runners": [{"name": "cloud-zdr-1", "locked": True, "allow": ["slack.com"]}]}
+        return 200, {"runners": [{"name": "cloud-sensitive-1", "locked": True, "allow": ["slack.com"]}]}
 
     got = cloud_runner.fetch_box_egress("https://canopy.dimagi.com", post=post, proof=lambda url: "PROOF")
     assert seen["url"] == "https://canopy.dimagi.com/api/harness/runners/box-egress"
     assert seen["body"] == {"proof": "PROOF"}
-    assert got == {"cloud-zdr-1": {"locked": True, "allow": ["slack.com"]}}
+    assert got == {"cloud-sensitive-1": {"locked": True, "allow": ["slack.com"]}}
     assert cloud_runner.fetch_box_egress("https://x", post=lambda u, b: (401, {}), proof=lambda u: "P") is None
     assert cloud_runner.fetch_box_egress("https://x", post=post, proof=lambda u: "") is None
 
@@ -171,7 +171,7 @@ def _apply(cr, tmp_path, *, box=BOX, server=None, boot=False, idle=True, run=Non
 def test_boot_applies_the_plan_writes_env_and_starts_the_proxy(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
     applied, run = _apply(cloud_runner, tmp_path, boot=True,
-                          server={"cloud-zdr-1": {"locked": True, "allow": ["slack.com"]}})
+                          server={"cloud-sensitive-1": {"locked": True, "allow": ["slack.com"]}})
     assert applied == {"dimagi": True, "agent-eva": False}
     assert "slack.com" in (tmp_path / "dimagi.egress.allow").read_text().split()
     env = (tmp_path / "dimagi.env").read_text()
@@ -187,9 +187,9 @@ def test_boot_applies_the_plan_writes_env_and_starts_the_proxy(cloud_runner, mon
 def test_a_lock_set_in_canopy_web_waits_for_an_idle_unit(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
     _apply(cloud_runner, tmp_path, boot=True, server={})
-    busy, run = _apply(cloud_runner, tmp_path, server={"cloud-zdr-1": {"locked": True}}, idle=False)
+    busy, run = _apply(cloud_runner, tmp_path, server={"cloud-sensitive-1": {"locked": True}}, idle=False)
     assert busy["dimagi"] is False and run.appended() == []        # a turn is running: not yet
-    done, run = _apply(cloud_runner, tmp_path, server={"cloud-zdr-1": {"locked": True}}, idle=True)
+    done, run = _apply(cloud_runner, tmp_path, server={"cloud-sensitive-1": {"locked": True}}, idle=True)
     assert done["dimagi"] is True
     assert "HTTPS_PROXY=http://127.0.0.1:21001" in (tmp_path / "dimagi.env").read_text()
     assert ["systemctl", "restart", "--no-block", "canopy-runner@dimagi.service"] in run.calls
@@ -198,7 +198,7 @@ def test_a_lock_set_in_canopy_web_waits_for_an_idle_unit(cloud_runner, monkeypat
 
 def test_an_unreadable_canopy_web_keeps_the_last_answer(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
-    _apply(cloud_runner, tmp_path, boot=True, server={"cloud-zdr-1": {"locked": True, "allow": ["slack.com"]}})
+    _apply(cloud_runner, tmp_path, boot=True, server={"cloud-sensitive-1": {"locked": True, "allow": ["slack.com"]}})
     applied, run = _apply(cloud_runner, tmp_path, server=None)      # read failed
     assert applied["dimagi"] is True
     assert "slack.com" in (tmp_path / "dimagi.egress.allow").read_text().split()
@@ -214,7 +214,7 @@ def test_nothing_locked_stops_the_proxy_and_opens_the_chain(cloud_runner, monkey
 
 def test_the_box_floor_locks_at_boot_with_no_canopy_web(cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setattr(cloud_runner.shutil, "which", lambda t: None)
-    applied, _run = _apply(cloud_runner, tmp_path, box={**BOX, "RUNNER_DATA_MODE": "zdr"}, boot=True,
+    applied, _run = _apply(cloud_runner, tmp_path, box={**BOX, "RUNNER_DATA_MODE": "sensitive_data"}, boot=True,
                            server=None)
     assert applied == {"dimagi": True, "agent-eva": True}
 
@@ -337,7 +337,7 @@ def test_the_allowlist_is_read_per_connection(cloud_runner, tmp_path):
     assert first.startswith(b"HTTP/1.1 403") and second.startswith(b"HTTP/1.1 403")
 
 
-# ---- the unit's own check, and ZDR mode -------------------------------------------
+# ---- the unit's own check, and sensitive-data mode -------------------------------------------
 
 @pytest.fixture()
 def locked(load_cloud_runner, monkeypatch):
@@ -390,9 +390,9 @@ def test_a_locked_box_reports_the_check(locked, monkeypatch):
 
 
 @pytest.fixture()
-def zdr_box(load_cloud_runner, monkeypatch):
+def sensitive_box(load_cloud_runner, monkeypatch):
     def make(egress: str):
-        monkeypatch.setenv("RUNNER_DATA_MODE", "zdr")
+        monkeypatch.setenv("RUNNER_DATA_MODE", "sensitive_data")
         monkeypatch.setenv("RUNNER_EGRESS", egress)
         cr = load_cloud_runner()
         cr._CLAUDE_CREDS.clear()
@@ -401,23 +401,23 @@ def zdr_box(load_cloud_runner, monkeypatch):
     return make
 
 
-def test_zdr_mode_with_egress_open_is_not_ready(zdr_box):
-    cr = zdr_box("")
-    ok, note = cr.zdr_readiness()
+def test_sensitive_data_mode_with_egress_open_is_not_ready(sensitive_box):
+    cr = sensitive_box("")
+    ok, note = cr.sensitive_data_readiness()
     assert not ok and "started open" in note
     cr._egress_check()
     assert cr._HEALTH["egress"]["status"] == "fail"
 
 
-def test_zdr_mode_whose_lock_is_not_holding_is_not_ready(zdr_box, monkeypatch):
-    cr = zdr_box("locked")
+def test_sensitive_data_mode_whose_lock_is_not_holding_is_not_ready(sensitive_box, monkeypatch):
+    cr = sensitive_box("locked")
     monkeypatch.setattr(cr, "egress_probe", lambda **k: ("fail", "the egress proxy is not answering"))
-    ok, note = cr.zdr_readiness()
+    ok, note = cr.sensitive_data_readiness()
     assert not ok and "not holding" in note
     monkeypatch.setattr(cr, "egress_probe", lambda **k: ("ok", "locked"))
-    assert cr.zdr_readiness() == (True, "")
+    assert cr.sensitive_data_readiness() == (True, "")
 
 
-def test_the_posture_hash_covers_the_egress_setting(zdr_box):
-    locked_hash = zdr_box("locked").zdr_posture()["data_mode_hash"]
-    assert zdr_box("").zdr_posture()["data_mode_hash"] != locked_hash
+def test_the_posture_hash_covers_the_egress_setting(sensitive_box):
+    locked_hash = sensitive_box("locked").sensitive_data_posture()["data_mode_hash"]
+    assert sensitive_box("").sensitive_data_posture()["data_mode_hash"] != locked_hash

@@ -32,7 +32,7 @@ its own data, nothing more. That is the trust argument, and it is why key mode
 is safe without a signature — and why it refuses write scopes by default.
 
 **Which agent, under which runner requirements.** A page may also choose its
-agent and add runner requirements (``"labsdata"`` under ``["zdr"]`` on a page
+agent and add runner requirements (``"labsdata"`` under ``["sensitive_data"]`` on a page
 over real data, while the rest of the site keeps its default agent and no
 requirement). That choice travels with the page exactly as its scopes do, and
 for the same reason: the scopes were granted with that agent in mind, so a
@@ -233,7 +233,7 @@ class PageTokens(PageRegistry):
 
         ``agent`` / ``runner_requirements`` are the page's choice, signed in
         beside the route so the mint reads them from here and nowhere else. A
-        page that grants no scopes may still choose them (a ZDR page with no
+        page that grants no scopes may still choose them (a sensitive-data page with no
         grant), so a route outside the registry gets a token when it does."""
         agent, reqs = _agent_choice(agent, runner_requirements, where=f"page {route!r}")
         if not route or user_id in (None, "") or (route not in self.pages

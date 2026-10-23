@@ -321,7 +321,7 @@ class SessionOut(Schema):
     # (canopy_sessions.feed), so the feed and the phone cannot disagree.
     feed_status: str = ""
     # What this conversation's host requires of the runner it runs on (e.g.
-    # `zdr`), so placement offers only runners whose `flags` include every one.
+    # `sensitive_data`), so placement offers only runners whose `flags` include every one.
     # A malformed stored value comes back as an entry no runner can declare.
     runner_requirements: list[str] = []
     # Who opened it (a member's email; null for a contact's or a runner-discovered

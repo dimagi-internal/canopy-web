@@ -34,7 +34,7 @@ box_egress_router = Router(auth=None, tags=["harness"])
 @gate("device-proof", kind="runner-protocol")
 def box_egress(request: HttpRequest, payload: BoxEgressIn):
     """Prove this box's EC2 instance role (`proof`, bound to this URL): every live
-    runner on that machine with its egress lock — `locked` (a ZDR box always is) and
+    runner on that machine with its egress lock — `locked` (a sensitive-data box always is) and
     `allow`, the hosts beyond the box's base set. Root applies it on top of the box's
     own setting, never below it. Any bad proof: one uniform 401."""
     try:

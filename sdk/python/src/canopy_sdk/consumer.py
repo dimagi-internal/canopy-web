@@ -209,7 +209,7 @@ def client_assertion(key, client_id: str, audience: str, *, now: float | None = 
 def execution_statement(key, client_id: str, audience: str, facts: dict, *, jkt: str,
                         access_token: str | None = None, now: float | None = None) -> str:
     """canopy's ``Canopy-Execution`` statement for ONE request to a host
-    (spec 2026-10-22-phi-agents-on-zdr-runners §6): ``facts`` (agent, capability,
+    (spec 2026-10-22-sensitive-data-agents-design §6): ``facts`` (agent, capability,
     declaration, runner, runner_posture, requirements, turn, session) signed by
     canopy's CLIENT key, for ``audience`` (the host's MCP resource), living 60s,
     single-use ``jti``, bound to the DPoP key (``cnf.jkt``) and, when given, to

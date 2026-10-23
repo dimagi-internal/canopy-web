@@ -332,25 +332,25 @@ def test_state_sets_partition_every_state():
 
 # -- a queued turn says what its conversation requires of the box --------------
 
-def _zdr_turn(status=Turn.QUEUED):
+def _sensitive_turn(status=Turn.QUEUED):
     t = _turn(status, agent_slug="ace")
     t.chat_session_id = 1
     t.chat_session = types.SimpleNamespace(
         agent_id=1, agent=types.SimpleNamespace(slug="ace"),
-        metadata={"runner_requirements": ["zdr"]})
+        metadata={"runner_requirements": ["sensitive_data"]})
     return t
 
 
-def test_a_queued_zdr_turn_carries_its_requirement_when_it_is_the_blocker():
-    st = ts.derive(_zdr_turn(), reach=_reach("unrouted", blocked_by_requirements=True))
-    assert st.requires == ("zdr",)
-    assert st.as_dict()["requires"] == ["zdr"]
+def test_a_queued_sensitive_turn_carries_its_requirement_when_it_is_the_blocker():
+    st = ts.derive(_sensitive_turn(), reach=_reach("unrouted", blocked_by_requirements=True))
+    assert st.requires == ("sensitive_data",)
+    assert st.as_dict()["requires"] == ["sensitive_data"]
 
 
-def test_a_queued_zdr_turn_blocked_by_something_else_does_not_blame_zdr():
-    # e.g. the ZDR box exists but cannot confine a caller's turn: the fix is the
-    # runner's update, not a ZDR declaration.
-    st = ts.derive(_zdr_turn(), reach=_reach("unrouted"))
+def test_a_queued_sensitive_turn_blocked_by_something_else_does_not_blame_sensitive():
+    # e.g. the sensitive-data box exists but cannot confine a caller's turn: the fix is the
+    # runner's update, not a sensitive-data declaration.
+    st = ts.derive(_sensitive_turn(), reach=_reach("unrouted"))
     assert st.requires == ()
 
 
@@ -360,4 +360,4 @@ def test_a_turn_without_one_carries_none():
 
 
 def test_a_settled_turn_does_not_carry_it():
-    assert ts.derive(_zdr_turn(Turn.DONE)).requires == ()
+    assert ts.derive(_sensitive_turn(Turn.DONE)).requires == ()

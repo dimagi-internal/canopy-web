@@ -173,7 +173,7 @@ export function turnNotice(
     ? { name: status.cloud_runner, id: status.cloud_runner_id }
     : null;
   const runners = status.runners.join(", ");
-  const need = status.requires?.length ? status.requires.map((r) => r.toUpperCase()).join(", ") : "";
+  const need = status.requires?.length ? status.requires.map((r) => r.replace(/_/g, "-")).join(", ") : "";
   switch (status.state) {
     case "waiting_runner":
       if (status.parked) {

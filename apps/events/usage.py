@@ -106,7 +106,7 @@ def record(runner, sessions: list[dict], *, full: bool = False) -> dict:
                 continue
             who = _attribution(runner, str(s.get("repo") or "")[:100], session, turn)
             # A session's first prompt is its title here; a sensitive one's is the
-            # host's data (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+            # host's data (spec 2026-10-22-sensitive-data-agents §4).
             title = "" if sensitivity.any_sensitive(session, turn) else str(s.get("title") or "")[:200]
             matched += who["workspace_id"] is not None
             agent = who["agent"]

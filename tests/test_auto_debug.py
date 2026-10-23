@@ -393,14 +393,14 @@ def test_an_ordinary_editor_cannot_see_investigations(ada, ws, runner):
                   data={"note": "x"}, content_type="application/json").status_code == 404
 
 
-def test_a_turn_that_must_stay_on_zdr_runners_is_never_re_processed(ada, ws, runner):
+def test_a_turn_that_must_stay_on_sensitive_runners_is_never_re_processed(ada, ws, runner):
     # Its note can quote what the turn read, and the debugger runs wherever ada does
-    # (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+    # (spec 2026-10-22-sensitive-data-agents §4).
     from apps.canopy_sessions.models import Session
 
     ace = _agent(ws, "ace")
     s = Session.objects.create(agent=ace, workspace=ws, title="chat",
-                               metadata={"runner_requirements": ["zdr"]})
+                               metadata={"runner_requirements": ["sensitive_data"]})
     n = next(_seq)
     turn = Turn.objects.create(
         origin="canopy_web_chat", idempotency_key=f"t-{n}-{uuid.uuid4()}",

@@ -121,7 +121,7 @@ an emdash task name alone is not an identity.
   inline; what differs per door is a row of `doors.DOORS`. Who may send, the
   initiator and door-only follow-ups stay at the door
   (`tests/test_one_chat_send_path.py`). `runner_requirements` has no default:
-  every door a site's token can reach passes the token's requirements (ZDR),
+  every door a site's token can reach passes the token's requirements (`sensitive_data`),
   so a turn sent there routes under the site's floor; a door no site reaches
   (Slack) passes `()` explicitly.
 - **A send only enqueues.** `send.queued_messages` (derived, never stored) shows

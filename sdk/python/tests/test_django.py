@@ -517,8 +517,8 @@ def test_runner_requirements_are_read_from_the_setting(host):
     from canopy_sdk.django import conf
     with override_settings(CANOPY_HOST={
             "SIGNING_KEY": private_pem(host.host_key), "CANOPY_BASE_URL": CANOPY,
-            "APP_NAME": "connect-labs", "RUNNER_REQUIREMENTS": ["zdr"]}):
-        assert conf.get_host_config().runner_requirements == ("zdr",)
+            "APP_NAME": "connect-labs", "RUNNER_REQUIREMENTS": ["sensitive_data"]}):
+        assert conf.get_host_config().runner_requirements == ("sensitive_data",)
 
 
 # --- a page that chooses its own agent and runner requirements ------------------------------
@@ -549,11 +549,11 @@ def test_a_page_that_chose_its_agent_binds_the_mint_to_it(host, user):
     assert payload["agent_slug"] == "labsdata"
     assertion = _claims(payload["assertion"])
     assert assertion[contract.AGENT_CLAIM] == "labsdata"
-    assert assertion[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+    assert assertion[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
     assert _claims(payload["id_jag"])["scope"] == "data:read"
 
 
-def test_the_rest_of_the_site_keeps_its_default_agent_unbound_and_without_zdr(host, user):
+def test_the_rest_of_the_site_keeps_its_default_agent_unbound_and_without_sensitive_data(host, user):
     client = Client()
     client.force_login(user)
     with override_settings(CANOPY_HOST=_data_host(host)):
@@ -570,11 +570,11 @@ def test_the_rest_of_the_site_keeps_its_default_agent_unbound_and_without_zdr(ho
 def test_a_page_can_raise_the_sites_requirements_never_lower_them(host, user):
     client = Client()
     client.force_login(user)
-    with override_settings(CANOPY_HOST={**_data_host(host), "RUNNER_REQUIREMENTS": ["zdr"]}):
+    with override_settings(CANOPY_HOST={**_data_host(host), "RUNNER_REQUIREMENTS": ["sensitive_data"]}):
         token = _rendered_token(client.get("/marketplace/network/").content.decode())
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
             client.post(f"/canopy/panel-token/?page={token}")
-    assert _claims(mint.call_args.args[1]["assertion"])[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+    assert _claims(mint.call_args.args[1]["assertion"])[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
 
 
 def test_the_choice_is_inside_the_signature(host, user):
@@ -588,7 +588,7 @@ def test_the_choice_is_inside_the_signature(host, user):
         token = _rendered_token(client.get("/data/visits/").content.decode())
         payload, _, sig = token.partition(".")
         claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        assert claims["a"] == "labsdata" and claims["r"] == ["zdr"]
+        assert claims["a"] == "labsdata" and claims["r"] == ["sensitive_data"]
         claims.pop("a")
         forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
@@ -602,9 +602,9 @@ def test_a_page_with_no_scopes_may_still_choose_its_agent(host, user):
     from canopy_sdk.django.pages import panel_context
 
     rf_request = mock.Mock(user=user, resolver_match=mock.Mock(view_name="unregistered"))
-    ctx = panel_context(rf_request, agent="labsdata", runner_requirements=["zdr"])
+    ctx = panel_context(rf_request, agent="labsdata", runner_requirements=["sensitive_data"])
     page = conf.page_for(ctx["page_token"], user)
-    assert page.scopes == () and page.agent == "labsdata" and page.runner_requirements == ("zdr",)
+    assert page.scopes == () and page.agent == "labsdata" and page.runner_requirements == ("sensitive_data",)
     assert panel_context(rf_request)["page_token"] == "", "no choice and no scopes: no token"
 
 
@@ -634,7 +634,7 @@ def test_an_unknown_panel_key_or_bad_requirement_is_refused_where_it_is_written(
 
 def test_key_mode_reads_the_pages_agent_from_page_agents(spa, user):
     settings = {**conf.raw(), "PAGE_AGENTS": {"network": {"agent": "labsdata",
-                                                          "runner_requirements": ["zdr"]}}}
+                                                          "runner_requirements": ["sensitive_data"]}}}
     client = Client()
     client.force_login(user)
     with override_settings(CANOPY_HOST=settings):

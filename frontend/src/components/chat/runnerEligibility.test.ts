@@ -41,7 +41,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     can_administer: true,
     open_sessions: 0,
     flags: [],
-    known_flags: ['zdr'],
+    known_flags: ['sensitive_data'],
     private: false,
     private_runner_id: null,
     only_agents: [],
@@ -86,12 +86,12 @@ describe("onlineSessionCapableRunners", () => {
   it("offers only runners declaring every flag the conversation requires", () => {
     const fleet = [
       runner({ id: "plain", flags: [] }),
-      runner({ id: "zdr", flags: ["zdr"] }),
-      runner({ id: "zdr-offline", status: "offline", flags: ["zdr"] }),
+      runner({ id: "sensitive", flags: ["sensitive_data"] }),
+      runner({ id: "sensitive-offline", status: "offline", flags: ["sensitive_data"] }),
     ];
-    expect(onlineSessionCapableRunners(fleet, ["zdr"]).map((r) => r.id)).toEqual(["zdr"]);
+    expect(onlineSessionCapableRunners(fleet, ["sensitive_data"]).map((r) => r.id)).toEqual(["sensitive"]);
     // No requirement: nothing narrows.
-    expect(onlineSessionCapableRunners(fleet, []).map((r) => r.id)).toEqual(["plain", "zdr"]);
+    expect(onlineSessionCapableRunners(fleet, []).map((r) => r.id)).toEqual(["plain", "sensitive"]);
     // A requirement no runner can declare (a malformed stored value) offers nothing.
     expect(onlineSessionCapableRunners(fleet, ["__malformed__"])).toEqual([]);
   });
@@ -99,8 +99,8 @@ describe("onlineSessionCapableRunners", () => {
 
 describe("satisfiesRequirements", () => {
   it("is true only when every requirement is among the runner's flags", () => {
-    expect(satisfiesRequirements({ flags: ["zdr"] }, ["zdr"])).toBe(true);
-    expect(satisfiesRequirements({ flags: [] }, ["zdr"])).toBe(false);
+    expect(satisfiesRequirements({ flags: ["sensitive_data"] }, ["sensitive_data"])).toBe(true);
+    expect(satisfiesRequirements({ flags: [] }, ["sensitive_data"])).toBe(false);
     expect(satisfiesRequirements({ flags: [] }, [])).toBe(true);
     expect(satisfiesRequirements({ flags: [] }, undefined)).toBe(true);
   });

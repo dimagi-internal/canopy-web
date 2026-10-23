@@ -30,7 +30,7 @@ def append_events(turn: Turn, events: list[dict]) -> int:
     sensitive = sensitivity.is_sensitive(turn)
     if sensitive and any(e.get("kind") in sensitivity.RESULT_KINDS for e in events):
         # A sensitive conversation's tool results are never stored (spec
-        # 2026-10-22-phi-agents-on-zdr-runners §4): the row keeps which call and
+        # 2026-10-22-sensitive-data-agents §4): the row keeps which call and
         # whether it failed, and so does the live frame built from it.
         events = [{**e, "payload": sensitivity.strip_result(e.get("payload"))}
                   if e.get("kind") in sensitivity.RESULT_KINDS else e for e in events]
@@ -135,8 +135,8 @@ def append_transcript(turn: Turn, raw_lines: list[str], *, batch_id: str = "") -
     from . import sensitivity
 
     if sensitivity.is_sensitive(turn):
-        # A sensitive conversation keeps no transcript (spec 2026-10-22-phi-agents-
-        # on-zdr-runners §4). The runner still gets its success, so it never retries.
+        # A sensitive conversation keeps no transcript (spec 2026-10-22-sensitive-data-agents
+        # §4). The runner still gets its success, so it never retries.
         return TurnTranscript(turn=turn, line_count=0, bytes_raw=0, truncated=False)
 
     # Drop truly-empty elements (see docstring) before both the count and the

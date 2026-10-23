@@ -1,8 +1,14 @@
-# PHI agents on ZDR runners — an agent may work over a host's production data only when its author declares it PHI-safe and it runs on a box that really is zero-data-retention
+# Sensitive-data agents — an agent may work over a host's production data only when its author declares that it handles sensitive data and it runs on a sensitive-data runner
 
 **Status:** design, agreed with Jonathan 2026-10-22. Being built in the order of
 [Rollout](#rollout). connect-labs' half of the rule is live (connect-labs
 `labs/canopy_panel.py`).
+**Vocabulary** (renamed after the first build): a **sensitive conversation** carries the
+host's requirement `sensitive_data`; a capability that **handles sensitive data** says
+`data: sensitive` (it was `data: phi`, "PHI-safe"); a **sensitive-data runner** (flag and
+data mode `sensitive_data`, it was `zdr`) is a box that runs Claude on a ZDR API key, under a
+locked harness, with egress limited to an allowlist, keeping nothing — the box is not
+"zero data retention" itself, its key is.
 **Layers onto:** runner requirements (ZDR first) `2026-09-30-zdr-runners-design.md`
 (built, #1037), host grant contract v1, embedded caller delegation
 (`2026-09-26-embedded-caller-delegation-design.md`).
@@ -19,7 +25,7 @@ have that hold through every path the data can take, not just the first one.
 
 What exists today holds only the first one. What the 2026-10-21 deep dive found:
 
-1. **The `zdr` flag is self-promotable.** A box's own `RunnerAccessToken` may `PUT
+1. **The `sensitive_data` flag is self-promotable.** A box's own `RunnerAccessToken` may `PUT
    /api/harness/runners/{its id}/flags` (`runner_auth.py` allows every method under the
    runner's own routes; `set_runner_flags` checks only runner-admin), and so may a PAT
    (`tests/test_runner_flags_api.py::test_a_token_can_declare_it`). The 09-30 spec said
@@ -27,13 +33,13 @@ What exists today holds only the first one. What the 2026-10-21 deep dive found:
 2. **No box could honestly carry it.** The cloud runner's credential cascade is box
    login → subscription-1 → subscription-2 → API key (`cloud_runner.py:5326`); a
    subscription is never ZDR, and nothing speaks Vertex or a dedicated key. No runner is
-   flagged `zdr` today.
+   flagged `sensitive_data` today.
 3. **The harness is not locked down.** Every turn runs with
    `--dangerously-skip-permissions` / `bypassPermissions`; no `--strict-mcp-config`;
    Claude Code's telemetry, error reporting and non-essential model calls are on; the
    `acp` executor (the CloudFormation default) passes no native settings at all
    (`cloud_runner.py:1218` vs `run_acp`).
-4. **The data leaves the boundary afterwards.** canopy-web stores a ZDR conversation in
+4. **The data leaves the boundary afterwards.** canopy-web stores a sensitive conversation in
    plaintext — `TurnEvent.payload` (full tool results, including `site_call` output),
    `TurnTranscript.raw_jsonl_gz`, `Message` — and then re-processes or re-exposes it with
    no requirement check: share links, Slack share, export, auto-debug (an `ada` turn on
@@ -57,9 +63,9 @@ A host's real data reaches an agent only through canopy's gateway, and the host
 releases it only when canopy has told it, in a statement the host verifies, that **all**
 of these hold for the call in front of it:
 
-- the agent's author has declared this capability PHI-safe, at the commit that is
+- the agent's author has declared that this capability handles sensitive data, at the commit that is
   executing;
-- the runner executing the turn carries `zdr`, declared by a person, and is reporting ZDR
+- the runner executing the turn carries `sensitive_data`, declared by a person, and is reporting sensitive-data
   mode on its heartbeat;
 - the conversation carries the host's requirement, and has from its first turn.
 
@@ -72,16 +78,16 @@ made by a person, recorded, refused when it is structurally false, and cross-che
 against what the box reports about itself — and then enforces the conjunction everywhere
 the data goes.
 
-## 1. A ZDR runner (the box)
+## 1. A sensitive-data runner (the box)
 
-**ZDR mode** — one runner setting, `RUNNER_DATA_MODE=zdr`, that the cloud runner reads
+**sensitive-data mode** — one runner setting, `RUNNER_DATA_MODE=sensitive_data`, that the cloud runner reads
 at boot:
 
 - **One credential.** Claude runs only on a dedicated Anthropic API key from an
   organisation with zero data retention enabled (Jonathan's choice, 2026-10-22). The key
-  goes in the runner's credential bundle's API-key slot; in ZDR mode the cascade is that
+  goes in the runner's credential bundle's API-key slot; in sensitive-data mode the cascade is that
   one slot.
-  slot are refused: the box will not start (health `claude.zdr` = fail) while any is
+  slot are refused: the box will not start (health `claude.sensitive_data` = fail) while any is
   present, and never falls back. A usage cap waits; it does not cascade.
 - **Locked harness on every turn**, on both executors:
   - `--strict-mcp-config` with a rendered MCP config holding only canopy-web (whose
@@ -100,17 +106,17 @@ at boot:
 - **Nothing kept on the box.** Each turn in its own isolation unit; after it finishes,
   its transcript under `~/.claude/projects`, its caller envelope, its profile and its
   per-turn work directory are deleted. Encrypted EBS.
-- **A dedicated box.** A ZDR box — declared `zdr` OR reporting ZDR mode, either alone
-  (`runner_requirements.is_zdr_box`) — holds only an agent with a `data: phi` capability, whoever
+- **A dedicated box.** A sensitive-data box — declared `sensitive_data` OR reporting sensitive-data mode, either alone
+  (`runner_requirements.is_sensitive_data_box`) — holds only an agent with a `data: sensitive` capability, whoever
   owns it (`runner_may_hold_agent` refuses the rest, so claim, pins, credentials and
   routing writes all do).
 - **Egress locked.** Agent processes reach only an allowlist of hosts: canopy-web,
   `api.anthropic.com` and what the box itself needs. Egress is its own runner setting,
   set in canopy-web (runner page or MCP, an audited setting) and read by root on the box
-  by its instance role, never relayed by a unit. Any box may be locked; ZDR mode locks
-  every unit of its box, canopy-web refuses to unlock a ZDR box, and adding a host to
+  by its instance role, never relayed by a unit. Any box may be locked; sensitive-data mode locks
+  every unit of its box, canopy-web refuses to unlock a sensitive-data box, and adding a host to
   one is a person behind a passkey.
-- **Posture on every heartbeat.** The box reports `data_mode: "zdr"` and a hash of the
+- **Posture on every heartbeat.** The box reports `data_mode: "sensitive_data"` and a hash of the
   config that produced it (settings, MCP config, environment allowlist, credential slot
   kinds — never the key). That is a self-report and proves nothing; what it buys is
   drift detection: a flagged box whose report is missing or disagrees cannot claim
@@ -118,17 +124,17 @@ at boot:
 
 ## 2. Flags a person declares (canopy-web)
 
-- `zdr` keeps its vocabulary entry and gains its teeth: it now means *"this box runs in ZDR
-  mode"*. No second flag — a host that serves PHI requires `zdr`.
+- `sensitive_data` keeps its vocabulary entry and gains its teeth: it now means *"this box runs in
+  sensitive-data mode"*. No second flag — a host that serves real data requires `sensitive_data`.
 - `set_runner_flags` is refused for a `RunnerAccessToken` (by path in `runner_auth.py`
   and in the view), for PATs and for every `is_machine` caller, and requires a passkey
   step-up: it is a person vouching for a box. The 09-30 test that lets a token declare
   it is inverted.
 - **A declaration counts only while the box agrees** (built: `runner_requirements.in_force`):
-  a person's `zdr` routes ZDR work — claim, placement, the gateway — only while the box's
-  latest heartbeat reports `data_mode: "zdr"`. A declared box that is not in ZDR mode takes
-  no ZDR work, and the runner page says *"Not in force: this box is not reporting ZDR
-  mode"*. A box reporting the mode with no declaration is not ZDR either. The report and
+  a person's `sensitive_data` routes sensitive work — claim, placement, the gateway — only while the box's
+  latest heartbeat reports `data_mode: "sensitive_data"`. A declared box that is not in sensitive-data mode takes
+  no sensitive work, and the runner page says *"Not in force: this box is not reporting
+  sensitive-data mode"*. A box reporting the mode with no declaration is not one either. The report and
   its hash are written every beat and cannot be set by hand.
 
 ## 3. The requirement is never dropped
@@ -136,13 +142,13 @@ at boot:
 `requirements_of(turn)` reads the union of the turn's session, its ancestors
 (`parent_turn`), and — for auto-debug and dispatched turns — the turn they were made
 from. `fork_session` copies `runner_requirements`. A turn with requirements and no
-session (a schedule a ZDR conversation set up) stores them on the turn itself
+session (a schedule a sensitive conversation set up) stores them on the turn itself
 (`Turn.runner_requirements`, server-owned).
 
-## 4. PHI stays inside the boundary in canopy-web
+## 4. Sensitive data stays inside the boundary in canopy-web
 
 One predicate, `apps.harness.sensitivity.is_sensitive(session | turn)` — true when the
-requirements include `zdr` — read everywhere below, with one test per surface:
+requirements include `sensitive_data` — read everywhere below, with one test per surface:
 
 - **Metadata, never content** (Jonathan, 2026-10-22). A stored event, and every
   `Message` of the conversation (the person's, the agent's, a tool call's), keeps what
@@ -150,9 +156,9 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   arguments and the host tool a gateway call reaches, the ids that pair a call to its
   result, error flags, and the payload's size and hash (`sensitivity.redact_payload`, an
   allowlist). The turn's prompt, which the runner reads at claim, is wiped when the turn
-  ends (`closing.close_turn`); its result note is withheld (`[zdr] note withheld (N
+  ends (`closing.close_turn`); its result note is withheld (`[sensitive] note withheld (N
   bytes)`); no owner-ask line, no live tail, no title (a title is the first sentence
-  verbatim, and a person may type a name in it). No `TurnTranscript` either (a ZDR box
+  verbatim, and a person may type a name in it). No `TurnTranscript` either (a sensitive-data box
   ships a turn's transcript ROWS, which are sealed below, and no raw transcript).
 - **The conversation is kept sealed, for its own people** (Jonathan, 2026-10-23: a
   conversation that cannot be recovered is a problem, and the SDK needs multiplayer).
@@ -163,7 +169,7 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   widget, the SDK). An MCP call, a PAT, a session review, the fleet's readers, another
   AI and an admin who is not in the conversation read the metadata columns. A reload, a
   second tab and a participant joining all read it back. There is one delivery path: the
-  transcript rows every turn ships (a ZDR box ships a confined turn's, then deletes it).
+  transcript rows every turn ships (a sensitive-data box ships a confined turn's, then deletes it).
   The live chat socket, adding a participant and a fork ask the same gate; turn reads
   and the turn socket never carry a sensitive turn's words. The one other reader is the
   conversation's own next turn: its confined, never-resumed session gets the
@@ -184,7 +190,7 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   app-only read tool; canopy never stores rows to spare it the call. Receipts keep no
   result excerpt (ids, tool, who, when, `is_error`).
 - **The agent still has the result.** The model reads a tool's answer inside the
-  turn, on the ZDR box, through the ZDR key: `site_call`'s answer goes from the gateway
+  turn, on the sensitive-data box, through the ZDR API key: `site_call`'s answer goes from the gateway
   (canopy-web, in memory, never written — MCP audit rows record the tool and the
   argument summary, not the answer) straight back to the box's session. A later turn of
   the same conversation resumes that Claude session on the box while the box keeps it;
@@ -195,9 +201,9 @@ requirements include `zdr` — read everywhere below, with one test per surface:
 - **Refuse re-processing.** Auto-debug files the failure with its id and error class
   only; the fleet reviewers skip sensitive turns (the transcript endpoints refuse them
   anyway, since they hold no transcript).
-- **Memory, people, contributors** — already refused for ZDR turns.
+- **Memory, people, contributors** — already refused for sensitive turns.
 
-## 5. The author's PHI-safe declaration
+## 5. The author's declaration: the capability handles sensitive data
 
 On the agent's published interface, per capability:
 
@@ -205,16 +211,16 @@ On the agent's published interface, per capability:
 capabilities:
   data:
     sites: [connect-labs]
-    data: phi            # new: this capability may serve a host's PHI
+    data: sensitive            # this capability may serve a host's sensitive data
 ```
 
-- `data: phi` is set by the agent's owner or an admin, from the browser or a token, like
+- `data: sensitive` is set by the agent's owner or an admin, from the browser or a token, like
   any other interface setting: no passkey. The settings audit records who set it, through
   what, and the before and after.
 - Two ways to set it, one stored setting: the YAML, or the per-capability switch on
-  Settings → Interface (`PUT …/interface/capabilities/{name}/phi`), which writes or
-  removes the `data: phi` line in the saved YAML and saves it down the same path.
-- **Refused when it is structurally false:** a `phi` capability's tool set may hold only
+  Settings → Interface (`PUT …/interface/capabilities/{name}/sensitive`), which writes or
+  removes the `data: sensitive` line in the saved YAML and saves it down the same path.
+- **Refused when it is structurally false:** a `data: sensitive` capability's tool set may hold only
   the gateway's site tools, `current_page` and read-only local tools. Drive, email,
   memory, Slack, the web or a shell in the capability → the declaration is a 422 naming
   them.
@@ -224,22 +230,22 @@ capabilities:
 - The declaration is what an author claims; whether a host accepts it is the host's
   allowlist (§6).
 
-### A `data: phi` capability is confined for everyone
+### A `data: sensitive` capability is confined for everyone
 
 Today an owner's, an admin's and canopy's own turns run the agent's FULL profile
 (`access.decide` row 1), and a fleet turn runs with `--dangerously-skip-permissions`.
-That cannot stand next to PHI: a declaration is about a capability's tool set, and a
+That cannot stand next to sensitive data: a declaration is about a capability's tool set, and a
 full-profile turn is not in any capability.
 
-- **The rule.** A turn whose capability is `data: phi`, and **any** turn in a session
-  whose requirements include `zdr`, runs the declared capability's confined profile
+- **The rule.** A turn whose capability is `data: sensitive`, and **any** turn in a session
+  whose requirements include `sensitive_data`, runs the declared capability's confined profile
   whatever the caller's relationship — owner, admin and `system` included.
   `access.decide` asks it before row 1: the capability is the one the turn names, else
   the one its site or page selects (`_site_capability`/`_page_capability`); for an
-  owner, admin or `system` the caller-class check is skipped (they may use any phi
-  capability), for everyone else it holds as today. A `zdr` session in which no `phi`
+  owner, admin or `system` the caller-class check is skipped (they may use any such
+  capability), for everyone else it holds as today. A `sensitive_data` session in which no `data: sensitive`
   capability resolves is refused (`none`, "this conversation needs a capability declared
-  PHI-safe"), never run full. `Decision.basis` is `phi:<capability>`; the role, the turn
+  handles sensitive data"), never run full. `Decision.basis` is `sensitive:<capability>`; the role, the turn
   mode and `may_request_auto` are unchanged — confinement is about what the turn can
   reach, not who asked.
 - **How it is enforced.** It rides the confinement that already exists (access.md "How
@@ -247,8 +253,8 @@ full-profile turn is not in any capability.
   `profile: confined`; only a runner reporting `profiles` may claim it; the runner runs it
   in its own `cx-` session with the profile written first, the `profile_guard` hook and
   the native deny rules; it gets a caller token, never the owner's PAT, and no agent
-  `.env`. On a ZDR-mode box the runner adds a second check of its own: it refuses (fails
-  the turn with `zdr_unconfined`) any turn whose envelope is not `profile: confined` with
+  `.env`. On a sensitive-data-mode box the runner adds a second check of its own: it refuses (fails
+  the turn with `sensitive_data_unconfined`) any turn whose envelope is not `profile: confined` with
   a capability, so a canopy-web bug cannot hand it a full turn; and the locked harness of
   §1 (no skip-permissions, `--strict-mcp-config`, allow-list settings) applies on top.
 - **Red team (step 8)**: the agent's owner, from canopy's own UI and from the CLI, opens a
@@ -267,27 +273,27 @@ published key (the same JWKS the host already reads for canopy's client metadata
 | --- | --- |
 | `agent` | slug |
 | `agent_sha` | the commit the turn is executing |
-| `declaration` | `{data: "phi", sha, declared_by, declared_at}` or absent |
+| `declaration` | `{data: "sensitive", sha, declared_by, declared_at}` or absent |
 | `runner` | id, and `flags: [{flag, declared_by, declared_at}]` |
 | `runner_posture` | the latest heartbeat's `data_mode` and config hash |
 | `requirements` | the session's requirements |
 | `turn`, `session` | ids |
 
 The gateway refuses to call a host at all when the session's requirements are not met
-(as today), and now also when a `zdr` session's capability has no declaration covering the
+(as today), and now also when a `sensitive_data` session's capability has no declaration covering the
 executing SHA. The SDK gains the host half: `canopy_sdk.host.verify_execution(request)` →
 the claims, or a named refusal.
 
 **The host's side (connect-labs).** Labs' `CANOPY_EXECUTION_STATEMENTS` turns on, and
-`real_data_clearance` (today: the agent is in `CANOPY_PHI_AGENTS`, and labs requires
-`zdr`) adds, per call: a valid statement; `agent` in labs' allowlist; a declaration whose
-SHA equals `agent_sha`; the runner's flags in force ⊇ {`zdr`}; requirements ⊇ {`zdr`}.
+`real_data_clearance` (today: the agent is in `CANOPY_SENSITIVE_AGENTS`, and labs requires
+`sensitive_data`) adds, per call: a valid statement; `agent` in labs' allowlist; a declaration whose
+SHA equals `agent_sha`; the runner's flags in force ⊇ {`sensitive_data`}; requirements ⊇ {`sensitive_data`}.
 Labs records the agent, SHA, runner and declarer on `AuditEvent` and `MCPAuditLog`.
 
 *Amended:* with no commit pinned (§5), the statement carries no `agent_sha` and the
-declaration no `sha`; `declaration` is the capability's `data: phi` setting with who last
-published the interface and when. The gateway refuses a `zdr` session whose capability
-is not `data: phi`; `phi_clearance` drops the SHA check (dimagi-canopy 0.13.0).
+declaration no `sha`; `declaration` is the capability's `data: sensitive` setting with who last
+published the interface and when. The gateway refuses a `sensitive_data` session whose capability
+is not `data: sensitive`; `sensitive_clearance` drops the SHA check (dimagi-canopy 0.13.0).
 
 **The side door closes.** Every agent's own connect-labs credential is a
 no-uservisit-data PAT. Real data is reachable only as a visitor, through the gateway.
@@ -301,7 +307,7 @@ agent reads the real production data down to row level and raw form JSON, plus t
 pipelines, semantic layer and workflow definition behind it, **and changes them** —
 fixes a pipeline's SQL, adds an indicator, rewrites the render code — in Labs.
 Not ACE: ACE's `connect` capability carries Write, Skill and Drive writes, and its
-owner/admin turns ran unconfined — neither can honestly be declared PHI-safe.
+owner/admin turns ran unconfined — neither can honestly be declared to handle sensitive data.
 
 **The line is where the data goes, not whether the agent writes** (Jonathan,
 2026-10-22): full understanding and editability of the workflow and its pipelines
@@ -312,7 +318,7 @@ capabilities:
   data:
     callers: [contact, member]  # a labs visitor is usually a contact; labs allowlists the agent
     sites: [connect-labs]
-    data: phi
+    data: sensitive
     tools: [Read, Grep, Glob, Skill, ToolSearch,
             "mcp__*canopy-web__current_page", "mcp__*canopy-web__who_is_asking"]
 ```
@@ -365,36 +371,36 @@ Each step ships on its own and fails closed until the next lands.
    the panel is not drawn over real data, and labs' MCP refuses canopy's calls there.
 2. **canopy-web: flags.** Machine callers and the runner's own token cannot declare a
    flag; passkey step-up; requirement inheritance (§3). Done (#1804).
-3. **canopy-web runner: ZDR mode** (§1), including the ACP settings fix and the posture
+3. **canopy-web runner: sensitive-data mode** (§1), including the ACP settings fix and the posture
    report; claim requires agreement (§2). Done (#1821).
-4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in ZDR
-   mode; Jonathan declares `zdr`. Done: `cloud-zdr-1`, declared and reporting ZDR mode.
-   The box holds only `data: phi` agents (§1, `is_zdr_box`). The egress lock is built
+4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in
+   sensitive-data mode; Jonathan declares `sensitive_data`. Done: `cloud-zdr-1`, declared and reporting sensitive-data mode.
+   The box holds only `data: sensitive` agents (§1, `is_sensitive_data_box`). The egress lock is built
    (a loopback CONNECT proxy per unit plus root's `CANOPY-EGRESS` chain, set in
    canopy-web and applied by root every minute; `runner/ec2/README.md` § Egress lock),
-   and ZDR mode is not ready without it.
+   and sensitive-data mode is not ready without it.
 5. **canopy-web: storage rules** (§4). Done (#1847).
 6. **Declarations + the execution statement** (§5, §6), with the SDK's host half and a
    `dimagi-canopy` release; connect-labs verifies it and flips
    `CANOPY_EXECUTION_STATEMENTS`. canopy-web half done: declarations, confinement for
    everyone and the declared commit (#1849); `Canopy-Execution` and
-   `canopy_sdk.host.verify_execution` / `Execution.phi_clearance` (dimagi-canopy 0.12.0).
+   `canopy_sdk.host.verify_execution` / `Execution.sensitive_clearance` (dimagi-canopy 0.12.0).
    The statement is also bound to the access token (`ath`). (The commit pin was
    dropped, §5 amended: no `agent_sha`, no `pins`.)
 7. **`labsdata`, `data:read` and `workflow:edit`** (§7). `data:read` is built in
    connect-labs; `workflow:edit` and the sandbox rule for render-code edits are next.
    Then connect-labs sets
-   `CANOPY_RUNNER_REQUIREMENTS=zdr` and `CANOPY_PHI_AGENTS=labsdata`.
+   `CANOPY_RUNNER_REQUIREMENTS=sensitive_data` and `CANOPY_SENSITIVE_AGENTS=labsdata`.
 8. **Red team, end to end:** a scripted run on a real opportunity that tries each exit —
-   Bash, a file write, WebFetch, a subagent, a non-ZDR runner, a self-declared flag, a
+   Bash, a file write, WebFetch, a subagent, a non-sensitive-data runner, a self-declared flag, a
    fork, a share link, Slack, export, auto-debug, an undeclared SHA, the agent's own PAT,
    the OWNER's own turn asking for Bash or a file write (§5: confined for everyone), an
    edit outside the bound workflow, a pipeline share, a template publish, a render-code
    edit on an unsandboxed workflow and one that fetches another host, an edit saved
    without its preview, and a
    stored `TOOL_RESULT` / `tool_end` / receipt holding a row (§4) — and asserts each is
-   refused or empty. Script: `scripts/e2e_phi_redteam.py` — a preflight (declaration,
-   box, dedication, self-declared flag) and, on a ZDR conversation a person opens from
+   refused or empty. Script: `scripts/e2e_sensitive_redteam.py` — a preflight (declaration,
+   box, dedication, self-declared flag) and, on a sensitive conversation a person opens from
    Labs, the exits above plus a canary that must appear in nothing canopy stores. The
    undeclared SHA no longer applies (no commit pin, §5); auto-debug is unit-tested only;
    the `workflow:edit` exits join when that scope lands.

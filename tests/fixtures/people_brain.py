@@ -55,7 +55,7 @@ def _finish(turn, status=Turn.DONE):
 
 def _fact(person, ws, kind="role", statement="Program lead for KC.", **kw):
     if kw.get("by_agent") is not None and "source_turn" not in kw:
-        # An agent's write names the turn it comes from (hcp.refuse_if_zdr).
+        # An agent's write names the turn it comes from (hcp.refuse_if_sensitive).
         kw["source_turn"] = _human_turn(kw["by_agent"], person.user,
                                         f"src-{PersonFact.objects.count()}-{statement[:20]}")
     return people.record_fact(person=person, workspace=ws, kind=kind, statement=statement, **kw)

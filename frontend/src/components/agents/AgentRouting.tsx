@@ -10,7 +10,7 @@ import {
 import { Segmented } from 'canopy-ui/ui'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { AgentDefaultRunners } from '@/components/agents/AgentDefaultRunners'
-import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
+import { SensitiveDataBadge, hasSensitiveData } from '@/components/agents/SensitiveDataBadge'
 import {
   ACTORLESS_SOURCES,
   ROUTABLE_SOURCES,
@@ -426,8 +426,8 @@ function RuleRowView({
                   ●
                 </span>
                 <span className="min-w-0 truncate font-mono" title={r.runner_name}>{r.runner_name}</span>
-                {hasZdr(fleet.find((f) => f.id === r.runner_id)) && (
-                  <ZdrBadge testId={`zdr-badge-${r.runner_name}`} />
+                {hasSensitiveData(fleet.find((f) => f.id === r.runner_id)) && (
+                  <SensitiveDataBadge testId={`sensitive-data-badge-${r.runner_name}`} />
                 )}
                 {m.runners.length > 1 && (
                   <>

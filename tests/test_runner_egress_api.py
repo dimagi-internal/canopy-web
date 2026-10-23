@@ -2,7 +2,7 @@
 and read by root on the box by its instance role (`POST …/box-egress`).
 
 The rules that matter: an administrator may lock a box and name hosts from any
-client (UI or MCP); a ZDR box is always locked, and adding a host to one is a
+client (UI or MCP); a sensitive-data box is always locked, and adding a host to one is a
 person's act in a browser behind a passkey; every change is an audited setting; and
 the box reads only its own runners, by a proof its units cannot make.
 """
@@ -61,8 +61,8 @@ def _put(c, runner, **body):
     return c.put(f"/api/harness/runners/{runner.pk}/egress", data=body, content_type="application/json")
 
 
-def _zdr(runner):
-    RunnerFlag.objects.create(runner=runner, flag="zdr")
+def _sensitive(runner):
+    RunnerFlag.objects.create(runner=runner, flag="sensitive_data")
 
 
 def test_an_admin_locks_a_box_from_a_token_and_hosts_are_normalised(w):
@@ -93,14 +93,14 @@ def test_someone_who_does_not_administer_the_box_cannot(w):
     assert _put(_browser(w["stranger"]), w["box"], locked=True).status_code == 404
 
 
-def test_a_zdr_box_cannot_be_unlocked(w):
-    _zdr(w["box"])
+def test_a_sensitive_box_cannot_be_unlocked(w):
+    _sensitive(w["box"])
     r = _put(_browser(w["owner"]), w["box"], locked=False)
     assert r.status_code == 422 and "always locked" in r.content.decode()
 
 
-def test_adding_a_host_to_a_zdr_box_is_a_person_behind_a_passkey(w):
-    _zdr(w["box"])
+def test_adding_a_host_to_a_sensitive_box_is_a_person_behind_a_passkey(w):
+    _sensitive(w["box"])
     assert _put(_token(w["owner"]), w["box"], locked=True, allow=["slack.com"]).status_code == 403
     no_step = _put(_browser(w["owner"], stepped_up=False), w["box"], locked=True, allow=["slack.com"])
     assert no_step.status_code == 403 and "step_up" in no_step.content.decode()
@@ -108,8 +108,8 @@ def test_adding_a_host_to_a_zdr_box_is_a_person_behind_a_passkey(w):
     assert ok.status_code == 200 and ok.json()["egress_forced"] is True
 
 
-def test_tightening_a_zdr_box_needs_no_passkey(w):
-    _zdr(w["box"])
+def test_tightening_a_sensitive_box_needs_no_passkey(w):
+    _sensitive(w["box"])
     Runner.objects.filter(pk=w["box"].pk).update(egress_locked=True, egress_allow=["slack.com"])
     w["box"].refresh_from_db()
     r = _put(_token(w["owner"]), w["box"], locked=True, allow=[])
@@ -117,8 +117,8 @@ def test_tightening_a_zdr_box_needs_no_passkey(w):
     assert r.json()["egress_allow"] == []
 
 
-def test_a_box_reporting_zdr_mode_counts_as_zdr(w):
-    Runner.objects.filter(pk=w["box"].pk).update(capabilities={"data_mode": "zdr"})
+def test_a_box_reporting_sensitive_mode_counts_as_sensitive(w):
+    Runner.objects.filter(pk=w["box"].pk).update(capabilities={"data_mode": "sensitive_data"})
     assert _put(_browser(w["owner"]), w["box"], locked=False).status_code == 422
 
 
@@ -150,8 +150,8 @@ def test_the_box_reads_its_own_runners_by_its_role(w, monkeypatch):
     assert rows["cloud-1-eva"]["locked"] is False
 
 
-def test_the_box_is_told_a_zdr_runner_is_locked_whatever_is_set(w, monkeypatch):
-    _zdr(w["box"])
+def test_the_box_is_told_a_sensitive_runner_is_locked_whatever_is_set(w, monkeypatch):
+    _sensitive(w["box"])
     [row] = _box_read(monkeypatch).json()["runners"]
     assert row["locked"] is True
 

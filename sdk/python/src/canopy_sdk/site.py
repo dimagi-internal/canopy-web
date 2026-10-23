@@ -13,7 +13,7 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
     {"v": 1, "iss": "connect-labs", "iat": 1792700000,
      "pages": [{"key": "labs:workflow:run", "title": "A workflow run",
                 "scopes": ["workflow:read", "workflow:act", "data:read"]}],
-     "real_data": {"requires": {"phi_safe": true, "runner_flag": "zdr"}},
+     "real_data": {"requires": {"handles_sensitive": true, "runner_flag": "sensitive_data"}},
      "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
               "version": "<site agents version chosen against>"}}
 
@@ -71,14 +71,14 @@ def _requires(value) -> dict:
         return {}
     if not isinstance(value, Mapping):
         raise SiteDocumentError("malformed", "real_data.requires must be a mapping")
-    extra = set(value) - {"phi_safe", "runner_flag"}
+    extra = set(value) - {"handles_sensitive", "runner_flag"}
     if extra:
         raise SiteDocumentError("malformed", f"real_data.requires: unknown key(s) {sorted(extra)}")
     out: dict = {}
-    if "phi_safe" in value:
-        if not isinstance(value["phi_safe"], bool):
-            raise SiteDocumentError("malformed", "real_data.requires.phi_safe must be true or false")
-        out["phi_safe"] = value["phi_safe"]
+    if "handles_sensitive" in value:
+        if not isinstance(value["handles_sensitive"], bool):
+            raise SiteDocumentError("malformed", "real_data.requires.handles_sensitive must be true or false")
+        out["handles_sensitive"] = value["handles_sensitive"]
     flag = value.get("runner_flag")
     if flag:
         if flag not in contract.RUNNER_FLAGS:
@@ -112,7 +112,7 @@ def _normalize(claims: Mapping) -> dict:
 def site_document(site_name: str, *, pages: Sequence[Mapping] = (), real_data: Mapping | None = None,
                   uses: Mapping | None = None, now: float | None = None) -> dict:
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
-    ``real_data`` as ``{"requires": {"phi_safe", "runner_flag"}}``, ``uses`` as
+    ``real_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "real_data_agents", "version"}``."""
     name = str(site_name or "").strip()
     if not name:
@@ -141,7 +141,7 @@ class SiteNeeds:
     site_name: str
     issued_at: int
     pages: tuple[SitePage, ...] = ()
-    #: ``{"phi_safe": bool, "runner_flag": str}`` — what an agent must be to read
+    #: ``{"handles_sensitive": bool, "runner_flag": str}`` — what an agent must be to read
     #: real data here; empty when the site names nothing.
     real_data_requires: Mapping = field(default_factory=dict)
     uses_agents: tuple[str, ...] = ()

@@ -746,9 +746,9 @@ CANOPY_VAULT_READ_BURST_LIMIT = env.int("CANOPY_VAULT_READ_BURST_LIMIT", default
 # `--apply` still purges on purpose. No rules also means nothing is purged.
 # See docs/superpowers/specs/2026-10-05-content-retention-design.md.
 CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
-# A SENSITIVE conversation (one that requires ZDR runners, apps/harness/sensitivity.py)
+# A SENSITIVE conversation (one that requires sensitive-data runners, apps/harness/sensitivity.py)
 # is purged after this many days WHATEVER CANOPY_RETENTION_ENFORCE says, by the same
-# heartbeat sweep (spec 2026-10-22-phi-agents-on-zdr-runners §4). A shorter rule wins.
+# heartbeat sweep (spec 2026-10-22-sensitive-data-agents §4). A shorter rule wins.
 CANOPY_SENSITIVE_KEEP_DAYS = env.int("CANOPY_SENSITIVE_KEEP_DAYS", default=30)
 
 

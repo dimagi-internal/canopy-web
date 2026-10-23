@@ -17,14 +17,14 @@ from apps.events import services as events
 from apps.harness.dispatch import dispatch, enqueue_task_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import inherited_orders
-from apps.harness.runner_requirements import is_zdr_box
+from apps.harness.runner_requirements import is_sensitive_data_box
 from apps.tokens.models import PersonalToken
 from apps.workspaces import permissions as perms
 from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import participants, phi
+from . import participants, sensitive_data
 from .definition import definition_key, siblings
 from .models import (
     MAX_TASK_DEPTH,
@@ -1526,13 +1526,14 @@ def runner_may_hold_agent(runner, agent) -> bool:
 
     Fails closed on a runner with no owner.
 
-    A ZDR box (`is_zdr_box`) is dedicated: it holds only an agent with a
-    `data: phi` capability, whoever owns it — so no other agent's full profile,
-    secrets or GitHub identity ever shares a box with a PHI conversation (spec
-    2026-10-22-phi-agents-on-zdr-runners §1, "A dedicated box")."""
+    A sensitive-data box (`is_sensitive_data_box`) is dedicated: it holds only an
+    agent with a capability that handles sensitive data, whoever owns it — so no
+    other agent's full profile, secrets or GitHub identity ever shares a box with a
+    sensitive conversation (spec
+    2026-10-22-sensitive-data-agents §1, "A dedicated box")."""
     if getattr(runner, "owner_id", None) is None:
         return False
-    if is_zdr_box(runner) and not phi.phi_capabilities(agent.interface):
+    if is_sensitive_data_box(runner) and not sensitive_data.sensitive_capabilities(agent.interface):
         return False
     return agent.is_admin(runner.owner)
 

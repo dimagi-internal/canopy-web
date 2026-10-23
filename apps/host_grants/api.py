@@ -79,8 +79,8 @@ class SitePageOut(Schema):
 
 
 class RealDataRequiresOut(Schema):
-    #: The site asks for a PHI-safe capability (`data: phi`).
-    phi_safe: bool = False
+    #: The site asks for a capability that handles sensitive data (`data: sensitive`).
+    handles_sensitive: bool = False
     #: The runner flag the site asks for ("" for none).
     runner_flag: str = ""
 

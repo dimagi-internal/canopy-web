@@ -477,7 +477,7 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
             by_agent=people.agent_of_login(request.user), source_turn=source_turn,
             project=project, instance_ref=payload.instance_ref, supersedes=supersedes,
             category=payload.category, dimension=payload.dimension, confidence=payload.confidence)
-    except hcp.ZdrRefused as exc:
+    except hcp.SensitiveRefused as exc:
         raise ProblemError(403, "Not written: zero data retention", type_=TYPE_FORBIDDEN,
                            detail=str(exc)) from None
     except people.FactError as exc:

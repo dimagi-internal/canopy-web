@@ -1,9 +1,9 @@
 """Whether a conversation holds a host's sensitive data — THE predicate every storage
-and re-exposure rule asks (spec 2026-10-22-phi-agents-on-zdr-runners §4).
+and re-exposure rule asks (spec 2026-10-22-sensitive-data-agents §4).
 
-A session or turn is SENSITIVE when what it requires of its runner includes `zdr`
-(`runner_requirements`): a host that serves real data requires ZDR runners for it,
-and the requirement is never dropped down a chain (§3). A requirement canopy cannot
+A session or turn is SENSITIVE when what it requires of its runner includes
+`sensitive_data` (`runner_requirements`): a host that serves real data requires
+sensitive-data runners for it, and the requirement is never dropped down a chain (§3). A requirement canopy cannot
 read counts as sensitive, as it counts as unsatisfiable for routing.
 
 What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
@@ -24,10 +24,10 @@ from __future__ import annotations
 
 from . import runner_requirements as rr
 
-ZDR = "zdr"
+SENSITIVE_DATA = rr.SENSITIVE_DATA
 #: The refusal every re-exposure door gives, so a person reads one sentence.
-REFUSAL = ("this conversation holds a host's sensitive data (it requires zero-data-retention "
-           "runners), so canopy does not share, export or copy it")
+REFUSAL = ("this conversation holds a host's sensitive data, so canopy does not share, export "
+           "or copy it")
 #: Why a door that would hand the words on refuses someone not in the conversation.
 NOT_IN_IT = ("this conversation holds a host's sensitive data: only the people in it can "
              "bring someone in or copy it")
@@ -38,11 +38,11 @@ RESULT_KINDS = frozenset({"tool_end", "tool_result"})
 
 
 def _is(reqs) -> bool:
-    return ZDR in reqs or rr.UNSATISFIABLE in reqs
+    return SENSITIVE_DATA in reqs or rr.UNSATISFIABLE in reqs
 
 
 def is_sensitive(obj) -> bool:
-    """True for a Session or a Turn whose runner requirements include `zdr`.
+    """True for a Session or a Turn whose runner requirements include `sensitive_data`.
 
     A turn is read through `requirements_of` (its session, the session it was
     started from and its ancestors), a session through its own metadata. None → False.
@@ -89,7 +89,7 @@ def claude_session_is_sensitive(claude_session: str) -> bool:
 # ── metadata, never content (Jonathan, 2026-10-22) ────────────────────────────
 # Beyond tool results: a sensitive conversation's readable rows keep only what
 # troubleshooting needs. What the person types, what the agent says and a tool's
-# arguments can all carry PHI (a name typed into a question, a case read back), so
+# arguments can all carry the host's data (a name typed into a question, a case read back), so
 # the stored event, every Message's columns, the prompt once the turn ends and the
 # result note keep metadata only. The live frame still carries the words to the
 # person watching (`ledger.append_events`), over the socket.
@@ -103,7 +103,7 @@ import json as _json
 
 #: What a redacted row says about itself, so a reader knows content was withheld on
 #: purpose rather than lost.
-REDACTED = "zdr"
+REDACTED = "sensitive"
 #: Payload keys that are metadata, never content. An allowlist: a key not named here
 #: is dropped, so a new field a runner starts sending is withheld until someone
 #: decides it is safe.
@@ -112,7 +112,7 @@ METADATA_KEYS = frozenset({
     "duration_ms", "model", "kind", "session_id", "stop_reason", "withheld",
 })
 MAX_META_STRING = 200
-WITHHELD_PREFIX = "[zdr] note withheld"
+WITHHELD_PREFIX = "[sensitive] note withheld"
 
 
 def _size_and_hash(value) -> tuple[int, str]:
@@ -287,7 +287,7 @@ def history(turn) -> list[dict] | None:
     confined and is never resumed, and the box deletes what it ran (spec §1), so
     without this the agent would meet each message with no memory of the last.
     It goes in the caller envelope, to the sensitive-data runner that runs the
-    turn through its ZDR key, and is deleted with the envelope when the turn ends.
+    turn through its ZDR API key, and is deleted with the envelope when the turn ends.
 
     What was said, by whom, oldest first: the person's lines and the agent's
     replies, never a tool's call or result. None for an ordinary conversation."""
