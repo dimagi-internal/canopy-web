@@ -1435,3 +1435,33 @@ def test_a_keepers_grant_to_a_person_is_emailed_to_the_vaults_managers(fleet, se
     assert res.status_code == 200, res.content
     [msg] = [m for m in mail.outbox if "now has" in m.subject]
     assert msg.to == [fleet.user.email] and user.email in msg.subject
+
+
+# ---- someone waiting for a vault's key: who is told, and what the vault page says ----------
+
+def test_a_member_waiting_for_a_workspace_vault_is_emailed_to_its_holders(fleet, mailoutbox):
+    from apps.agents.credentials import zk_notify
+    from apps.agents.models import ZkGrantNotice
+
+    assert _enable(fleet).status_code == 200
+    vid, _, _ = _ws_enabled(fleet, {"x": "y"})
+    ed, _ = _editor_with_a_key(fleet, name="ed5")   # full access to eva → a member of the attached vault
+    t0 = timezone.now()
+    zk_notify.sweep(t0)
+    notice = ZkGrantNotice.objects.get(vault_id=vid, kind="member", target=str(ed.pk))
+    mailoutbox.clear()
+    assert zk_notify.sweep(t0 + zk_notify.GRACE) >= 1
+    [msg] = [m for m in mailoutbox if "Shared" in m.subject]
+    assert msg.to == ["jj@dimagi.com"] and "ed5@dimagi.com" in msg.subject
+    assert f"/settings/secrets#ws-vault-{vid}" in msg.body and "a new admin" not in msg.body
+    assert notice.agent_id is None
+
+
+def test_the_vault_page_says_who_is_waiting_and_who_can_pass_the_key_on(fleet):
+    assert _enable(fleet).status_code == 200
+    ed, _ = _editor_with_a_key(fleet, name="ed6")
+    body = fleet.client.get("/api/agents/eva/vault/members").json()
+    rows = {m["email"]: m for m in body["members"]}
+    assert rows["jj@dimagi.com"]["has_copy"] is True
+    assert rows["ed6@dimagi.com"]["has_vault_key"] is True and rows["ed6@dimagi.com"]["has_copy"] is False
+    assert body["holders"] == {"has_key": True, "people": ["jj@dimagi.com"], "keepers": ["box"]}

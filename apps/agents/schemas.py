@@ -2164,6 +2164,21 @@ class VaultMemberOut(StrictModel):
     sources: list[str]
     #: They have a vault key of their own, so a copy of this vault's key can reach them.
     has_vault_key: bool
+    #: They hold a copy of the vault's current key. A member with a vault key and no
+    #: copy is WAITING: a keeper or a person who holds it passes it on.
+    has_copy: bool = False
+
+
+class VaultHoldersOut(StrictModel):
+    """Who can pass the vault's key on to someone waiting."""
+
+    #: The vault has a key yet (a zero-knowledge vault at kv ≥ 1).
+    has_key: bool = False
+    #: Members who hold a copy: each can grant with one passkey touch, and is emailed
+    #: when someone has waited 15 minutes.
+    people: list[str] = []
+    #: Runners holding a copy that pass it on by themselves, every two minutes while online.
+    keepers: list[str] = []
 
 
 class VaultAttachmentOut(StrictModel):
@@ -2184,6 +2199,7 @@ class WorkspaceVaultOut(StrictModel):
     attachments: list[VaultAttachmentOut]
     members: list[VaultMemberOut]
     you: str | None
+    holders: VaultHoldersOut = VaultHoldersOut()
 
 
 class VaultCreateIn(StrictModel):
@@ -2209,6 +2225,7 @@ class VaultMembersOut(StrictModel):
     members: list[VaultMemberOut]
     #: The caller's own role, or null when they are not a member.
     you: str | None
+    holders: VaultHoldersOut = VaultHoldersOut()
 
 
 class VaultMemberIn(StrictModel):

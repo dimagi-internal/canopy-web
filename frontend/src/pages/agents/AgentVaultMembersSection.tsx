@@ -6,6 +6,7 @@ import {
   setVaultAgentLink,
   type VaultMembersOut,
 } from '@/api/vault'
+import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
 
 // Who may open this agent's vault (spec 2026-10-22-vault-access-follows-canopy-
 // access-design.md). Membership is the vault's own: people added by name, plus
@@ -76,7 +77,9 @@ export function AgentVaultMembersSection({ slug }: { slug: string }) {
               <td className="py-1.5 text-muted-foreground">{ROLE_LABEL[m.role] ?? m.role}</td>
               <td className="py-1.5 text-muted-foreground">
                 {m.sources.map((s) => sourceLabel(s, slug)).join(' · ')}
-                {!m.has_vault_key && <span className="text-warning"> · no vault key yet</span>}
+                {memberWaiting(m, state.holders) && (
+                  <span className="text-warning"> · {memberWaiting(m, state.holders)}</span>
+                )}
               </td>
               <td className="py-1.5 text-right">
                 {manages && m.sources.includes('direct') && (
@@ -91,6 +94,7 @@ export function AgentVaultMembersSection({ slug }: { slug: string }) {
           ))}
         </tbody>
       </table>
+      <VaultWaitingNote members={state.members} holders={state.holders} testId="vault-waiting" />
       {manages && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <form className="flex flex-wrap items-center gap-2" data-testid="vault-add-form"

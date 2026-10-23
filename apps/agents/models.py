@@ -982,7 +982,11 @@ class ZkGrantNotice(models.Model):
     wrapped or stops qualifying. A target that needs a grant again at a later kv
     gets a new row."""
 
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="zk_grant_notices")
+    #: Exactly one of the two: an agent's own vault, or a workspace vault.
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="zk_grant_notices")
+    vault = models.ForeignKey("Vault", on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="grant_notices")
     kind = models.CharField(max_length=10)  # "device" | "member"
     #: The RunnerDeviceKey pk or the user id, as `zk.pending_targets` names it.
     target = models.CharField(max_length=64)
@@ -998,10 +1002,15 @@ class ZkGrantNotice(models.Model):
         ordering = ["-first_seen_at"]
         constraints = [
             models.UniqueConstraint(fields=["agent", "kind", "target", "kv"], name="one_zk_grant_notice_per_target"),
+            models.UniqueConstraint(fields=["vault", "kind", "target", "kv"],
+                                    name="one_vault_grant_notice_per_target"),
+            models.CheckConstraint(condition=(models.Q(agent__isnull=False, vault__isnull=True)
+                                              | models.Q(agent__isnull=True, vault__isnull=False)),
+                                   name="grant_notice_agent_xor_vault"),
         ]
 
     def __str__(self) -> str:
-        return f"{self.agent_id}:kv{self.kv}:{self.kind}:{self.target}"
+        return f"{self.agent_id or self.vault_id}:kv{self.kv}:{self.kind}:{self.target}"
 
 
 class AgentPatRotation(models.Model):

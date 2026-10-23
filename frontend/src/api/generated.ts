@@ -22131,6 +22131,27 @@ export interface components {
             /** Role */
             readonly role: string;
         };
+        /**
+         * VaultHoldersOut
+         * @description Who can pass the vault's key on to someone waiting.
+         */
+        readonly VaultHoldersOut: {
+            /**
+             * Has Key
+             * @default false
+             */
+            readonly has_key: boolean;
+            /**
+             * People
+             * @default []
+             */
+            readonly people: readonly string[];
+            /**
+             * Keepers
+             * @default []
+             */
+            readonly keepers: readonly string[];
+        };
         /** VaultMemberOut */
         readonly VaultMemberOut: {
             /** User Id */
@@ -22143,6 +22164,11 @@ export interface components {
             readonly sources: readonly string[];
             /** Has Vault Key */
             readonly has_vault_key: boolean;
+            /**
+             * Has Copy
+             * @default false
+             */
+            readonly has_copy: boolean;
         };
         /** VaultMembersOut */
         readonly VaultMembersOut: {
@@ -22157,6 +22183,14 @@ export interface components {
             readonly members: readonly components["schemas"]["VaultMemberOut"][];
             /** You */
             readonly you: string | null;
+            /**
+             * @default {
+             *       "has_key": false,
+             *       "people": [],
+             *       "keepers": []
+             *     }
+             */
+            readonly holders: components["schemas"]["VaultHoldersOut"];
         };
         /** VaultMemberIn */
         readonly VaultMemberIn: {
@@ -28366,6 +28400,14 @@ export interface components {
             readonly members: readonly components["schemas"]["VaultMemberOut"][];
             /** You */
             readonly you: string | null;
+            /**
+             * @default {
+             *       "has_key": false,
+             *       "people": [],
+             *       "keepers": []
+             *     }
+             */
+            readonly holders: components["schemas"]["VaultHoldersOut"];
         };
         /** VaultCreateIn */
         readonly VaultCreateIn: {

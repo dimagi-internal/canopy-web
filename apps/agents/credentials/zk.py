@@ -527,6 +527,23 @@ def pending_targets(agent) -> list[dict]:
     return out
 
 
+def copies(agent) -> tuple[set[int], list[str]]:
+    """Who holds the agent's CURRENT vault key and may pass it on now: the members with
+    a copy, and the names of the machines (keepers) that hold one, serve the agent and
+    work for a member. Empty before the vault has a key."""
+    if not agent.zk_enabled or not agent.zk_kv:
+        return set(), []
+    members = vault_members.agent_member_ids(agent)
+    rows = list(AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind__in=["member", "device"])
+                .select_related("device_key__runner"))
+    people = {w.user_id for w in rows if w.kind == "member" and w.user_id in members}
+    machines = sorted({w.device_key.runner.name for w in rows
+                       if w.kind == "device" and w.device_key.status == w.device_key.ACTIVE
+                       and vault_members.person_of_device(w.device_key) in members
+                       and device_keys.runner_serves_agent(w.device_key.runner, agent)})
+    return people, machines
+
+
 def state(agent, *, include_values: bool = False) -> dict:
     """Everything a member's client needs to grant, rotate or recover. Wraps
     are public data; values are ciphertext and only included on request."""
