@@ -1,36 +1,34 @@
-"""A workspace project's knowledge base as a version log: publish the difference.
+"""A workspace project's knowledge base as a version log of whole files.
 
-A publish names a STATE — every document record's and corpus part's sha256
-(`canopy_kb.records.state`). Against the head's state the server knows exactly what
-changed, so a steward:
+canopy-web never builds an index (#1971: building in its web process ran it out of
+memory). The machine that refreshes builds kb.sqlite (`canopy_kb.curate`, or `canopy kb
+build`) and publishes it whole (`publish_full`): canopy-web stores it, serves it, and
+records it as a version.
 
-1. `plan(state)` — what changed since the head, and which records and parts to send.
-   An unchanged state is `unchanged`: nothing is sent, no version is made.
-2. uploads those (`kb_store.blobs_upload`: presigned, content-addressed, only what the
-   store lacks), then
-3. `commit(state, base)` — a DELTA version, pending until the index job
-   (`kb_index`) applies it to the base's kb.sqlite and points the project at the
-   result. The published version is untouched until then, and if the job fails.
-
-A knowledge base's FIRST version is a delta from nothing: the index job builds it from
-its records, so no machine builds kb.sqlite. A FULL publish (`publish_full`, the
-presigned whole file) is the fallback; it carries its state when the steward sends
-one, so the next publish can be a delta. A commit may carry the refresh's curation
-state (`kb_store.save_curation`), saved with the version or refused with it. `rollback` points the project at an earlier version's file. Each version
-lists what it added, changed and removed (`KbChange`) — `whats_new` reads that log.
+A publish names its STATE — every document record's and corpus part's sha256
+(`canopy_kb.records.state`) — so `plan(state)` can say a refresh changed nothing (no
+upload, no version) and a version can list what it added, changed and removed
+(`KbChange`, which `whats_new` reads; the builder reports content changes, else the
+state diff). A Drive-sourced knowledge base's state is vetted: a document its owner
+has not approved is refused (`kb_drive.check_ids`). `rollback` points the project at an
+earlier version's file.
 
 Only the newest `KEEP_FILES` versions keep their kb.sqlite.gz (`prune`); older ones
-stay in the log and can no longer be rolled back to.
+stay in the log and can no longer be rolled back to. A project with a Drive replica
+(off by default) has each new file copied into its Drive folder afterwards.
 """
 from __future__ import annotations
 
 import logging
+import tempfile
+import threading
+from pathlib import Path
 
 from canopy_kb import records
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.utils import timezone
 
-from . import kb_index, kb_store
+from . import kb_drive, kb_store
 from .models import Agent, AgentProject, KbChange, KbVersion
 
 log = logging.getLogger(__name__)
@@ -38,9 +36,6 @@ log = logging.getLogger(__name__)
 KEEP_FILES = 5
 #: A version still on its way: one at a time per project.
 _LIVE =(KbVersion.PENDING, KbVersion.BUILDING)
-#: Records a commit checks are stored before it answers (a first publish of a large
-#: knowledge base changes every record: ~11,000 HEADs would outlast the request).
-CHECK_MAX = 1000
 #: What a knowledge base with no version yet holds.
 EMPTY = {"docs": {}, "parts": {}}
 
@@ -99,55 +94,16 @@ def plan(project, state: dict) -> dict:
             "upload_docs": d["added"] + d["changed"], "upload_parts": d["parts"], "reason": ""}
 
 
-def commit(project, state: dict, base: int | None, *, published_by: str = "", uploaded_bytes: int = 0,
-           check_ids=None, curation: dict | None = None) -> tuple[KbVersion | None, bool]:
-    """A pending DELTA version from `base` to `state`, or (head, False) when nothing
-    changed. `check_ids(ids)` vets the ids a source admits (a Drive source's approvals).
-    `curation` ({sha, base}) is saved in the same transaction, changed or not, so a
-    refresh's state and the version it published never disagree."""
-    _state_ok(state)
-    with transaction.atomic():
-        project = AgentProject.objects.select_for_update().get(pk=project.pk)
-        head = project.kb_version
-        if (head.number if head else None) != base:
-            raise KbConflict(f"the knowledge base is at version {head.number if head else 'none'}, not {base}: plan again")
-        if KbVersion.objects.filter(project=project, status__in=_LIVE).exists():
-            raise KbConflict("a version is still being built; wait for it, then plan again")
-        current = head_state(project)
-        if current is None:
-            raise kb_store.KbPublishError("publish the whole file once first (the head carries no state)")
-        d = records.diff(current, state)
-        if not (d["added"] or d["changed"] or d["removed"] or d["parts"]):
-            if curation:
-                kb_store.save_curation(project, curation.get("sha") or "", curation.get("base"),
-                                       saved_by=published_by, version=base)
-            return head, False
-        if check_ids is not None:
-            check_ids(d["added"] + d["changed"])
-        need = {state["docs"][i] for i in d["added"] + d["changed"]} | {state["parts"][n] for n in d["parts"]}
-        # Checked here up to CHECK_MAX (a HEAD each, inside this request); past that a
-        # sample, and the index job reads every record anyway: one missing fails the
-        # version, never the version readers see.
-        check = need if len(need) <= CHECK_MAX else set(sorted(need)[:CHECK_MAX])
-        missing = kb_store.missing_blobs(project, check)
-        if missing:
-            raise kb_store.KbPublishError(f"{len(missing)} records were not uploaded (first: {sorted(missing)[0]})")
-        version = KbVersion.objects.create(
-            project=project, number=_next_number(project), kind=KbVersion.DELTA, base=head,
-            state_sha=kb_store.put_blob(project, state), added=len(d["added"]), changed=len(d["changed"]),
-            removed=len(d["removed"]), uploaded_bytes=max(0, int(uploaded_bytes or 0)), published_by=published_by)
-        if curation:  # a conflict here undoes the version too
-            kb_store.save_curation(project, curation.get("sha") or "", curation.get("base"),
-                                   saved_by=published_by, version=version.number)
-        transaction.on_commit(kb_index.kick)
-    return version, True
-
-
 def publish_full(project, key: str, sha256: str, state: dict | None = None, *, published_by: str = "",
-                 changes: dict | None = None):
+                 changes: dict | None = None, check_ids=None):
     """The whole-file publish (`kb_store.publish`), recorded as a FULL version."""
     if state is not None:
         _state_ok(state)
+    if check_ids is not None:  # a Drive-sourced KB: every document it names must be approved
+        if state is None:
+            raise kb_store.KbPublishError("a knowledge base with a Drive source publishes with its state, "
+                                          "so its documents can be checked against the owner's approvals")
+        check_ids(list(state["docs"]))
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
         # A whole file built elsewhere (the refresh's runner) supersedes a delta still
@@ -172,6 +128,8 @@ def publish_full(project, key: str, sha256: str, state: dict | None = None, *, p
             _log_ids(version, d)
         project.kb_version = version
         project.save(update_fields=["kb_version"])
+        if project.kb_drive_replica:
+            transaction.on_commit(lambda: _replicate_later(project.pk, version.pk))
     prune(project)
     return project, version
 
@@ -266,3 +224,30 @@ def whats_new(project, kb, since: str = "", limit: int = 100) -> dict:
             out["changes"] += older
             out["note"] = f"changes before version {first.number} ({first_at[:10]}) are from the file's own history"
     return out
+
+
+def _replicate_later(project_pk: int, version_pk: int) -> None:
+    """Copy a version's file into the project's Drive folder (`kb_drive_replica`, off by
+    default), off the request: a stream from storage to Drive, never a build."""
+    threading.Thread(target=_replicate, args=(project_pk, version_pk), name="kb-replica", daemon=True).start()
+
+
+def _replicate(project_pk: int, version_pk: int) -> None:
+    try:
+        project, version = AgentProject.objects.get(pk=project_pk), KbVersion.objects.get(pk=version_pk)
+        with tempfile.TemporaryDirectory(prefix="kb-replica-") as td:
+            gz = Path(td) / "kb.sqlite.gz"
+            body = kb_store._client().get_object(Bucket=kb_store._bucket(), Key=version.kb_key)["Body"]
+            with open(gz, "wb") as fh:
+                for chunk in iter(lambda: body.read(1 << 20), b""):
+                    fh.write(chunk)
+            version.replica = f"drive:{kb_drive.write_replica(project, gz)}"
+    except Exception as exc:  # noqa: BLE001 - the replica is a convenience; the version stands
+        log.warning("kb replica for project %s failed: %s", project_pk, exc)
+        version = KbVersion.objects.filter(pk=version_pk).first()
+        if version is None:
+            return
+        version.replica = f"failed: {exc}"[:300]
+    finally:
+        close_old_connections()
+    version.save(update_fields=["replica"])

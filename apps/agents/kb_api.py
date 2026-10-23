@@ -1,10 +1,8 @@
 """A workspace project's knowledge base: its version log, its delta publish, its
 sources and — for a Drive source — the owner's review of what may be read.
 
-    POST …/kb/plan                      what a state changes; what to upload (the steward)
-    POST …/kb/blobs                     presigned PUTs for the records the store lacks
-    POST …/kb/versions                  commit a delta (the index job builds it)
-    GET  …/kb/versions                  the log
+    POST …/kb/plan                      whether a state changes anything (the steward)
+    GET  …/kb/versions                  the log (each version a whole file the steward built)
     GET  …/kb/file                      a download of the file it serves now
     POST …/kb/versions/{n}/rollback     serve version n's file again
     GET/PUT …/kb/curation               the curation state a refresh starts from (the steward)
@@ -21,7 +19,7 @@ sources and — for a Drive source — the owner's review of what may be read.
     POST …/kb/readers                   the owner names who may query a Drive KB
 
 The whole-file publish (`…/kb/upload`, `…/kb/publish`) stays in `fleet_api.py`.
-Services: `kb_versions`, `kb_index`, `kb_drive`.
+Services: `kb_versions`, `kb_drive`. canopy-web never builds an index (#1971).
 """
 from __future__ import annotations
 
@@ -43,8 +41,6 @@ from .schemas import (
     KbApprovalsIn,
     KbApprovalsOut,
     KbBlobsIn,
-    KbCommitIn,
-    KbCommitOut,
     KbCurationIn,
     KbCurationOut,
     KbDriveFileOut,
@@ -138,42 +134,13 @@ def _file_out(row: KbDriveFile, queued: set[str]) -> KbDriveFileOut:
              summary="What publishing a knowledge-base state would change, and what to upload for it")
 @gate("agent.work", kind="action")  # the steward's write gate; changes nothing
 def kb_plan(request: HttpRequest, workspace: str, handle: str, payload: KbPlanIn) -> KbPlanOut:
-    """Step one of a delta publish. Send the state (`canopy_kb.records.state`: each
-    record's and part's sha256). `unchanged` means stop: nothing to send, no version.
-    `full_required` means publish the whole file once (`…/kb/upload`, `…/kb/publish`
-    with this state). Else upload `upload_docs`' records and `upload_parts`' parts
-    (`…/kb/blobs`), then `POST …/kb/versions` with `base`."""
+    """What publishing a state would change. Send the state (`canopy_kb.records.state`:
+    each record's and part's sha256). `unchanged` means stop: nothing to build or send.
+    Else `upload_docs` are the documents added or changed since the head: the steward
+    applies them to the served file, builds, and publishes the whole file with this
+    state (`…/kb/upload`, `…/kb/publish`)."""
     project = _steward(request, workspace, handle)
     return KbPlanOut(**_conflict(lambda: kb_versions.plan(project, payload.state.model_dump())))
-
-
-@router.post(f"{_BASE}/blobs", response=KbOriginalsOut,
-             summary="Presigned uploads for the document records and parts a delta needs")
-@gate("agent.work", kind="content")
-def kb_upload_blobs(request: HttpRequest, workspace: str, handle: str, payload: KbBlobsIn) -> KbOriginalsOut:
-    """Each record is gzipped canonical JSON, stored under the sha256 of that JSON
-    (`canopy_kb.records`); the PUT carries the gzip's sha256, which storage checks.
-    `have` were stored already (the same content is never sent twice)."""
-    project = _steward(request, workspace, handle)
-    blobs = [b.model_dump() for b in payload.blobs]
-    return KbOriginalsOut(**_conflict(lambda: kb_store.blobs_upload(project, blobs)))
-
-
-@router.post(f"{_BASE}/versions", response=KbCommitOut,
-             summary="Commit a delta publish: a new version the index job applies")
-@gate("agent.work", kind="content")
-def kb_commit(request: HttpRequest, workspace: str, handle: str, payload: KbCommitIn) -> KbCommitOut:
-    """409 when the log moved since the plan (plan again); 422 when a record is missing
-    or a Drive document is not approved for indexing. The version is `pending` until
-    the index job has built it and the project serves it (`GET …/kb/versions`); the
-    published version is untouched until then, and if the build fails."""
-    project = _steward(request, workspace, handle)
-    version, created = _conflict(lambda: kb_versions.commit(
-        project, payload.state.model_dump(), payload.base, published_by=kb_versions.publisher(request.user),
-        uploaded_bytes=payload.uploaded_bytes, check_ids=kb_drive.check_ids(project),
-        curation=payload.curation.model_dump() if payload.curation else None))
-    project.refresh_from_db()
-    return KbCommitOut(created=created, version=_version_out(project, version) if version else None)
 
 
 # ---- curation: what a refresh needs from the last one, on any machine ----

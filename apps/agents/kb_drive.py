@@ -16,7 +16,7 @@ Only the project's OWNER decides (`may_decide`): `owner_user`, whoever that is â
 the steward agent, unless the agent's login is the owner. The steward then reads only
 `readable` files (`canopy kb drive sync`), checks each spreadsheet's column headers
 (`canopy_kb.sensitive.header_flags`) and HOLDS one that names or identifies people
-(`hold`), and indexes the rest. A commit naming a Drive document that is not
+(`hold`), and indexes the rest. A publish naming a Drive document that is not
 `indexable` is refused (`check_ids`), so a slip in a curator's pipeline cannot put an
 unapproved file into the index.
 
@@ -260,7 +260,12 @@ def hold(source: KbSource, file_id: str, headers: list[str]) -> KbDriveFile:
 
 
 def check_ids(project):
-    """A commit's vetting of the Drive documents it names (`kb_versions.commit`)."""
+    """A publish's vetting of the Drive documents it names (`kb_versions.publish_full`), or
+    None for a knowledge base with no Drive source (whose `drive:` ids, such as files a
+    publisher links on Drive, are not a folder owner's to approve)."""
+    if not KbSource.objects.filter(project=project, kind=KbSource.DRIVE).exists():
+        return None
+
     def check(ids: list[str]) -> None:
         drive_ids = [i[len(DOC_PREFIX):] for i in ids if i.startswith(DOC_PREFIX)]
         if not drive_ids:

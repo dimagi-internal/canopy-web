@@ -1,20 +1,18 @@
 """A workspace project's published knowledge base — where the bytes live and the
 copy each serving instance reads.
 
-The steward publishes document records here and canopy-web builds `kb.sqlite` from
-them (`kb_index`; a whole built file is the fallback), then answers the project's MCP
-tools from it (`apps/mcp/projects.py`). Readers never download anything: they call
-the tools.
+The steward builds `kb.sqlite` (on its runner, from the served file and what changed)
+and publishes the whole file here; canopy-web never builds one (#1971). It answers the
+project's MCP tools from it (`apps/mcp/projects.py`). Readers never download anything:
+they call the tools.
 
 * **Upload** goes straight to S3 on a presigned PUT (`upload_target`), never
   through the web dyno — a KB is a few hundred MB compressed.
 * **Publish** (`publish`) checks the object is there, under THIS project's
   prefix, then points the project at it (`point`). The previous object stays, as
   an earlier version's file (`kb_versions`, which prunes beyond the newest few).
-* **Records** (`blobs_upload`, `get_blob`, `put_blob`): a delta publish's document
-  records and corpus parts (`canopy_kb.records`), gzipped canonical JSON under
-  `records/<sha256 of the JSON>`; the index job (`kb_index`) reads them, checked
-  against their address, and stores what it builds (`upload_file`, `adopt`).
+* **States** (`get_blob`, `put_blob`): each version's state (`canopy_kb.records`),
+  gzipped canonical JSON under `records/<sha256 of the JSON>`.
 * **Read** (`open_kb`): each instance keeps the decompressed copy on local disk,
   keyed by the published object's sha256, so a new publish is picked up on the
   next call and an unchanged one is never fetched twice.
@@ -145,42 +143,8 @@ def delete_object(key: str) -> None:
         pass
 
 
-def upload_file(project, path: Path) -> tuple[str, str, int]:
-    """Store a kb.sqlite.gz canopy-web built itself (the index job). Returns its key,
-    sha256 and size."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
-    key = f"{_prefix(project)}{uuid.uuid4().hex}.sqlite.gz"
-    _client().upload_file(str(path), _bucket(), key, ExtraArgs={"ContentType": CONTENT_TYPE})
-    return key, digest.hexdigest(), path.stat().st_size
-
-
-# ---- document records and parts (`canopy_kb.records`), content-addressed ----
-
-#: Records and parts a steward may ask about in one request.
-BLOBS_PER_REQUEST = 1000
-#: A record holds one document's text: the largest GiveWell one is a few MB.
-BLOB_MAX_BYTES = 256 * 1024**2
-
-
 def _blobs_prefix(project) -> str:
     return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/records/"
-
-
-def blobs_upload(project, blobs: list[dict]) -> dict:
-    """Presigned PUTs for the records and parts in `blobs` ({sha256: of the canonical
-    JSON, gz_sha256 and bytes: of the gzip the steward uploads}) that the store lacks.
-    S3 checks the gzip's sha256; the index job checks the content's when it reads one."""
-    for b in blobs:
-        if not 0 < int(b.get("bytes") or 0) <= BLOB_MAX_BYTES:
-            raise KbPublishError(f"{b.get('sha256')}: a record is at most {BLOB_MAX_BYTES} bytes")
-    return _presigned_puts(project, _blobs_prefix(project), blobs)
-
-
-def missing_blobs(project, shas: set[str]) -> set[str]:
-    return set(shas) - _stored(_blobs_prefix(project), set(shas))
 
 
 def get_blob(project, sha: str):
@@ -300,6 +264,10 @@ def _store_prefix(project, store: str) -> str:
     if store not in prefixes:
         raise KbPublishError(f"store is one of {sorted(prefixes)}, not {store!r}")
     return prefixes[store](project)
+
+
+#: Objects a steward may ask about, or upload, in one request.
+BLOBS_PER_REQUEST = 1000
 
 
 def _keys(values: list[str]) -> list[str]:
@@ -472,19 +440,6 @@ def file_link(project) -> dict:
         "get_object", Params={"Bucket": _bucket(), "Key": project.kb_key}, ExpiresIn=ORIGINAL_LINK_SECONDS)
     return {"url": url, "sha256": project.kb_sha256, "bytes": project.kb_bytes or 0,
             "version": project.kb_version_number, "published_at": project.kb_published_at}
-
-
-def adopt(project, sha256: str, built: Path) -> None:
-    """Make a file this instance built (the index job) its serving copy for `sha256`."""
-    folder = _cache_root() / f"{project.owner_workspace_id}--{project.handle}"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{sha256}.sqlite"
-    with _lock(str(path)):
-        if not path.exists():
-            Path(built).replace(path)
-        for old in folder.glob("*.sqlite"):
-            if old != path:
-                old.unlink(missing_ok=True)
 
 
 def open_kb(project):

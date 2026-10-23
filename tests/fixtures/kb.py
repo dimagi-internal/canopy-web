@@ -116,32 +116,11 @@ def full(world, s3, tmp_path, bundle):
     return r
 
 
-def delta(world, s3, bundle, client=None):
-    """Plan, upload what the plan asks for, commit; returns (plan, commit response, bytes sent)."""
-    c = client or world["client"]
-    state = records.state(bundle)
-    plan = c.post(f"{KB_URL}/plan", {"state": state}, content_type=J)
-    assert plan.status_code == 200, plan.content
-    p = plan.json()
-    if p["unchanged"]:
-        return p, None, 0
-    recs = {iid: rec for iid, _, rec in records.records(bundle)}
-    parts = records.parts(bundle)
-    texts = dict(records.texts(bundle, set(p["upload_docs"])))
-    objs = [recs[i] for i in p["upload_docs"]] + list(texts.values()) + [parts[n] for n in p["upload_parts"]]
-    blobs = [{"sha256": records.sha(o), "gz_sha256": hashlib.sha256(records.encode(o)).hexdigest(),
-              "bytes": len(records.encode(o))} for o in objs]
-    sent = 0
-    if blobs:
-        ups = c.post(f"{KB_URL}/blobs", {"blobs": blobs}, content_type=J)
-        assert ups.status_code == 200, ups.content
-        by = {records.sha(o): o for o in objs}
-        for u in ups.json()["uploads"]:
-            key = u["url"].split("https://s3.test/", 1)[1].split("?", 1)[0]
-            s3.objects[key] = records.encode(by[u["sha256"]])
-            sent += len(s3.objects[key])
-    r = c.post(f"{KB_URL}/versions", {"state": state, "base": p["base"], "uploaded_bytes": sent}, content_type=J)
-    return p, r, sent
+def plan(world, bundle, client=None) -> dict:
+    """What publishing `bundle` would change (`…/kb/plan`)."""
+    r = (client or world["client"]).post(f"{KB_URL}/plan", {"state": records.state(bundle)}, content_type=J)
+    assert r.status_code == 200, r.content
+    return r.json()
 
 
 V2 = [dict(ITEMS[0], text=ITEMS[0]["text"] + " Zinc too.", sha256="a2"),  # changed

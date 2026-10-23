@@ -1,19 +1,21 @@
-"""A knowledge base publishes its differences: a version log, an incremental index
-that equals a full build, rollback, and Drive sources nobody reads until their owner
-approves them.
+"""A knowledge base is a version log of whole files its steward built (canopy-web never
+builds one, #1971): plan says when nothing changed, whats_new reads the log, rollback
+serves an earlier file, and a Drive source's documents are published only when their
+owner approved them.
 
-The steward's CLI is played here by hand: it computes a state, plans, PUTs the
-records the plan asks for (into the fake bucket), and commits; the index job
-(`kb_index.drain`) then builds the version.
+The steward's CLI is played here by hand: it builds, uploads the file (into the fake
+bucket) and publishes it with its state.
 """
 from __future__ import annotations
 
+import gzip
+import hashlib
+
 import pytest
-from canopy_kb import KB, build, records
+from canopy_kb import build
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents import kb_index, kb_store
 from apps.agents.models import AgentProject, KbDriveFile, KbVersion
 from apps.mcp import projects as project_mcp
 from apps.workspaces.models import WorkspaceMembership
@@ -25,7 +27,7 @@ pytestmark = pytest.mark.django_db
 s3, world = kb_fixtures.s3, kb_fixtures.world
 
 J, KB_URL, ITEMS, V2 = kb_fixtures.J, kb_fixtures.KB_URL, kb_fixtures.ITEMS, kb_fixtures.V2
-_bundle, _full, _delta = kb_fixtures.bundle, kb_fixtures.full, kb_fixtures.delta
+_bundle, _full, _plan = kb_fixtures.bundle, kb_fixtures.full, kb_fixtures.plan
 
 
 def _call(user, name, args):
@@ -42,102 +44,48 @@ def _call(user, name, args):
 def test_an_unchanged_republish_sends_nothing_and_makes_no_version(world, s3, tmp_path):
     b = _bundle(tmp_path, "v1", ITEMS)
     _full(world, s3, tmp_path, b)
-    before = len(s3.objects)
-    plan, commit, sent = _delta(world, s3, b)
-    assert plan["unchanged"] and commit is None and sent == 0
-    assert len(s3.objects) == before
-    r = world["client"].post(f"{KB_URL}/versions", {"state": records.state(b), "base": 1}, content_type=J)
-    assert r.status_code == 200 and r.json()["created"] is False
-    assert KbVersion.objects.count() == 1
+    assert _plan(world, b)["unchanged"] and KbVersion.objects.count() == 1
 
 
-def test_a_delta_uploads_only_what_changed_and_the_index_matches_a_full_build(world, s3, tmp_path):
+def test_canopy_web_never_builds_an_index(world, s3):
+    """#1971: building in the web process ran canopy-web out of memory. The routes that
+    took a delta to build are gone, and so is the builder."""
+    c = world["client"]
+    assert c.post(f"{KB_URL}/versions", {"state": {"docs": {}, "parts": {}}, "base": 1},
+                  content_type=J).status_code in (404, 405)
+    assert c.post(f"{KB_URL}/blobs", {"blobs": []}, content_type=J).status_code in (404, 405)
+    import importlib.util
+    assert importlib.util.find_spec("apps.agents.kb_index") is None
+
+
+def test_a_whole_file_publish_serves_it_keeps_the_last_and_whats_new_reads_the_log(world, s3, tmp_path):
     v1 = _bundle(tmp_path, "v1", ITEMS)
     _full(world, s3, tmp_path, v1)
+    first = AgentProject.objects.get(handle="givewell-kb").kb_key
     v2 = _bundle(tmp_path, "v2", V2)
-    plan, commit, sent = _delta(world, s3, v2)
-    assert (plan["added"], plan["changed"], plan["removed"]) == (1, 1, 1)
-    assert sorted(plan["upload_docs"]) == ["n:1", "p:1"] and plan["upload_parts"] == []
-    assert commit.status_code == 200, commit.content
-    assert commit.json()["version"]["status"] == "pending" and commit.json()["version"]["uploaded_bytes"] == sent
+    p = _plan(world, v2)
+    assert (p["added"], p["changed"], p["removed"]) == (1, 1, 1) and sorted(p["upload_docs"]) == ["n:1", "p:1"]
+    _full(world, s3, tmp_path, v2)
     project = AgentProject.objects.get(handle="givewell-kb")
-    served_before = project.kb_key
-
-    kb_index.drain()
-
-    v = KbVersion.objects.get(number=2)
-    assert v.status == "ready", v.error
-    project.refresh_from_db()
-    assert project.kb_version_id == v.pk and project.kb_key == v.kb_key != served_before
-    assert served_before in s3.objects  # v1's file is kept for rollback
-    # the server's index is the full build of the same content
-    full = tmp_path / "full.sqlite"
-    build(v2, full)
-    served = KB(kb_store.local_path(project))
-    want = KB(full)
-    assert {k: served.summary[k] for k in ("items", "passages", "entities", "links", "tables")} == \
-        {k: want.summary[k] for k in ("items", "passages", "entities", "links", "tables")}
-    for q in ("cholera", "chlorination grant", "zinc"):
-        assert served.find(q) == want.find(q)
-    # whats_new reads the version log
+    assert project.kb_version.number == 2 and project.kb_key != first and first in s3.objects
     out = _call(world["owner"], "whats_new", {})
     assert out["version"] == 2
-    assert {(c["item_id"], c["change"]) for c in out["changes"]} == {("n:1", "new"), ("p:1", "changed"),
-                                                                    ("r:1", "removed")}
-    assert next(c for c in out["changes"] if c["item_id"] == "r:1")["title"] == "ORS and zinc"
+    assert {(c["item_id"], c["change"]) for c in out["changes"]} >= {("n:1", "new"), ("p:1", "changed"),
+                                                                     ("r:1", "removed")}
     assert "Zinc too" in _call(world["owner"], "read", {"ref": "p:1"})
 
 
-def test_a_changed_table_ships_as_a_part_and_rollback_serves_the_old_file(world, s3, tmp_path):
-    v1 = _bundle(tmp_path, "v1", ITEMS)
-    _full(world, s3, tmp_path, v1)
+def test_rollback_serves_an_earlier_file(world, s3, tmp_path):
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
     first_key = AgentProject.objects.get(handle="givewell-kb").kb_key
-    v2 = _bundle(tmp_path, "v2", ITEMS, grants={"Grant": "ORS", "Recipient": "Dimagi Inc", "Amount": 5,
-                                                 "Date": "2026-01-01"})
-    plan, commit, _ = _delta(world, s3, v2)
-    assert plan["upload_docs"] == [] and plan["upload_parts"] == ["table:grants"]
-    kb_index.drain()
+    _full(world, s3, tmp_path, _bundle(tmp_path, "v2", ITEMS, grants={
+        "Grant": "ORS", "Recipient": "Dimagi Inc", "Amount": 5, "Date": "2026-01-01"}))
     assert _call(world["owner"], "grants", {"Recipient": "Dimagi"})["rows"][0]["Grant"] == "ORS"
-
     r = world["client"].post(f"{KB_URL}/versions/1/rollback", content_type=J)
     assert r.status_code == 200, r.content
     assert (r.json()["kind"], r.json()["number"], r.json()["current"]) == ("rollback", 3, True)
-    project = AgentProject.objects.get(handle="givewell-kb")
-    assert project.kb_key == first_key
+    assert AgentProject.objects.get(handle="givewell-kb").kb_key == first_key
     assert _call(world["owner"], "grants", {"Recipient": "Dimagi"})["rows"][0]["Grant"] == "Water pilot"
-    # the next delta builds on the rolled-back state
-    plan, commit, _ = _delta(world, s3, v2)
-    assert plan["base"] == 3 and plan["upload_parts"] == ["table:grants"]
-    log = world["client"].get(f"{KB_URL}/versions").json()
-    assert [(v["number"], v["kind"], v["status"]) for v in log] == [
-        (4, "delta", "pending"), (3, "rollback", "ready"), (2, "delta", "ready"), (1, "full", "ready")]
-
-
-def test_a_stale_base_is_a_conflict_and_a_missing_record_is_refused(world, s3, tmp_path):
-    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
-    v2 = _bundle(tmp_path, "v2", V2)
-    c = world["client"]
-    stale = c.post(f"{KB_URL}/versions", {"state": records.state(v2), "base": 7}, content_type=J)
-    assert stale.status_code == 409
-    missing = c.post(f"{KB_URL}/versions", {"state": records.state(v2), "base": 1}, content_type=J)
-    assert missing.status_code == 422 and "not uploaded" in missing.json()["detail"]
-
-
-def test_a_build_that_fails_leaves_the_published_version_serving(world, s3, tmp_path):
-    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
-    project = AgentProject.objects.get(handle="givewell-kb")
-    key = project.kb_key
-    v2 = _bundle(tmp_path, "v2", V2)
-    _delta(world, s3, v2)
-    # corrupt one uploaded record: its content no longer matches its address
-    rec_key = next(k for k in s3.objects if "/records/" in k and k.endswith(records.state(v2)["docs"]["n:1"]))
-    s3.objects[rec_key] = records.encode({"id": "n:1", "text": "tampered"})
-    kb_index.drain()
-    v = KbVersion.objects.get(number=2)
-    assert v.status == "failed" and "is not" in v.error
-    project.refresh_from_db()
-    assert project.kb_key == key and project.kb_version.number == 1
-    assert "WASHmobile" in _call(world["owner"], "read", {"ref": "p:1"})
 
 
 def test_only_the_newest_files_are_kept(world, s3, tmp_path, monkeypatch):
@@ -254,7 +202,9 @@ def test_new_files_queue_unless_the_folder_auto_approves_and_deleted_ones_are_go
     assert KbDriveFile.objects.get(file_id="f-consent").decision == "pending"  # a flag is never auto-approved
 
 
-def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_indexed(world, drive, s3, tmp_path):
+def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_published(world, drive, s3, tmp_path):
+    """canopy-web vets every whole-file publish of a Drive KB against its owner's
+    approvals: a slip in a steward's pipeline cannot put an unapproved file in."""
     _inventory(world, drive, _listing())
     _decide(world["client"], drive, {"file_id": ROOT, "decision": "approved"})
     c = world["client"]
@@ -263,15 +213,27 @@ def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_indexed(world, driv
     assert hold.status_code == 200 and hold.json()["indexable"] is False
     doc = {"id": "drive:f-proto", "type": "gdoc", "title": "KMC protocol", "url": "https://docs/x",
            "text": "Skin to skin.", "sha256": "p", "meta": {"source": "drive", "drive": {"file_id": "f-proto"}}}
-    v1 = _bundle(tmp_path, "d1", [doc])
-    _full(world, s3, tmp_path, v1)
+    _full(world, s3, tmp_path, _bundle(tmp_path, "d1", [doc]))
     held = {"id": "drive:f-pl", "type": "sheet", "title": "Patient list", "url": "https://docs/y", "text": "x",
             "sha256": "q", "meta": {"source": "drive"}}
-    plan, commit, _ = _delta(world, s3, _bundle(tmp_path, "d2", [doc, held]))
-    assert commit.status_code == 422 and "not approved for indexing" in commit.json()["detail"]
+    with pytest.raises(AssertionError, match="Drive documents are not approved"):
+        _full(world, s3, tmp_path, _bundle(tmp_path, "d2", [doc, held]))
+    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 1
     _decide(c, drive, {"file_id": "f-pl", "release_hold": True})
-    plan, commit, _ = _delta(world, s3, _bundle(tmp_path, "d3", [doc, held]))
-    assert commit.status_code == 200, commit.content
+    _full(world, s3, tmp_path, _bundle(tmp_path, "d3", [doc, held]))
+    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 2
+
+
+def test_a_drive_kb_publishes_with_its_state(world, drive, s3, tmp_path):
+    """Without the state there is nothing to vet: refused."""
+    db = tmp_path / "x.sqlite"
+    build(_bundle(tmp_path, "x", ITEMS), db)
+    body = gzip.compress(db.read_bytes())
+    up = world["client"].post(f"{KB_URL}/upload", content_type=J).json()
+    s3.objects[up["key"]] = body
+    r = world["client"].post(f"{KB_URL}/publish", {"key": up["key"], "sha256": hashlib.sha256(body).hexdigest()},
+                             content_type=J)
+    assert r.status_code == 422 and "with its state" in r.json()["detail"]
 
 
 def test_a_drive_kb_answers_only_its_readers(world, drive, s3, tmp_path):
