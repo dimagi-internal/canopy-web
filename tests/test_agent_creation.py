@@ -382,6 +382,29 @@ def test_a_box_that_cannot_read_the_mailbox_outranks_the_stored_token(editor, ws
     assert "client creds" not in mailbox["detail"]
 
 
+def test_a_failure_from_before_the_mailbox_was_connected_is_not_the_answer(editor, ws):
+    """fizzy, 2026-10-22: cloud-ec2-2 reported "No auth" on 15 Oct, Shayoni connected the
+    mailbox on the 22nd, and the row stayed red on the old report. A report older than the
+    stored sign-in is about the sign-in it replaced."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    agent = _agent(ws, editor)
+    report = AgentBootstrapReport.objects.create(
+        agent=agent, runner_name="cloud-ec2-2", mailbox_ok=False,
+        detail="gmail check failed: No auth for gmail scout@example.org.")
+    AgentBootstrapReport.objects.filter(pk=report.pk).update(
+        reported_at=timezone.now() - timedelta(days=7))
+    AgentCredential.objects.create(agent=agent, name="gog-token", value_enc="t")
+    mailbox = next(s for s in setup_steps(agent) if s["key"] == "mailbox")
+    assert mailbox["status"] == "done"
+    # The same box failing again AFTER the sign-in is the answer again.
+    AgentBootstrapReport.objects.filter(pk=report.pk).update(reported_at=timezone.now() + timedelta(minutes=1))
+    mailbox = next(s for s in setup_steps(agent) if s["key"] == "mailbox")
+    assert mailbox["status"] == "todo" and mailbox["detail"].startswith("cloud-ec2-2 cannot read")
+
+
 def test_the_scaffolds_own_skills_are_not_a_job(editor, ws):
     agent = _agent(ws, editor)
     assert "turn" in scaffold_skill_names()

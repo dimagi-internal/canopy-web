@@ -118,10 +118,16 @@ def _mailbox(agent: Agent, settings: str) -> dict:
     # `gog login`, which live in the vault rather than here — ada/hal/eva/echo read
     # "todo" under a token-only rule while cloud-ec2-2 had them working, 2026-10-15.)
 
+    # A failure reported BEFORE the stored sign-in was last written is about the sign-in it
+    # replaced, so it is not an answer any more (fizzy, 2026-10-22: cloud-ec2-2's 15 Oct "No
+    # auth" kept the row red after Shayoni connected the mailbox on the 22nd and her laptop
+    # was reading it). A box that fails AFTER the sign-in still turns the row red.
     reports = bootstrap_reports(agent)
+    token = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).order_by("-updated_at").first()
+    has = token is not None
     proved = next((r.runner_name for r in reports if r.turn_ready), "")
-    failing = next((r for r in reports if not r.mailbox_ok and r.turn_ready is not True), None)
-    has = AgentCredential.objects.filter(agent=agent, name=GOG_TOKEN_REF).exists()
+    failing = next((r for r in reports if not r.mailbox_ok and r.turn_ready is not True
+                    and not (has and r.reported_at < token.updated_at)), None)
     action = {"href": f"{settings}#cred-mailbox", "action": "Connect the mailbox"}
     if proved:
         return _step("mailbox", "Connect its mailbox", DONE,
