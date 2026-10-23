@@ -16,6 +16,8 @@ import datetime as dt
 import uuid
 
 import pytest
+
+from tests.fixtures.sensitive import vault_key
 from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
@@ -56,6 +58,7 @@ def _fresh_cache():
 @pytest.fixture()
 def w():
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    vault_key(user)  # a sensitive conversation is sealed to its people's vault keys
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=user,

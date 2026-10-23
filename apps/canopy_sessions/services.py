@@ -18,6 +18,7 @@ from apps.harness import provenance, sensitivity
 from apps.realtime import groups
 
 from . import activity as session_activity
+from . import conversation_keys
 from . import transcript_read
 from .models import Message, Session
 
@@ -149,6 +150,10 @@ def add_runner_requirements(session: Session, reqs) -> None:
             fields = {"metadata": meta, **({"title": ""} if became_sensitive else {})}
             Session.objects.filter(pk=s.pk).update(**fields)
             if became_sensitive:
+                # Its words are sealed from now on, to a key made for its people
+                # (`conversation_keys.ensure_key`; a starter with no vault key gets
+                # none, and the send door refuses them).
+                conversation_keys.ensure_key(s)
                 # Every open socket on it re-asks `reads_content`: a token's, or a
                 # co-tenant's who is not in it, closes now rather than reading on.
                 transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))

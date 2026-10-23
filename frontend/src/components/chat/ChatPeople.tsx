@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import {
   addParticipant,
+  getSession,
   listParticipants,
+  participantRecipient,
   removeParticipant,
   type Participant,
 } from "@/api/chat";
+import { openConversationKey, wrapForRecipient, type SealedKey } from "@/vault/sealedChat";
+import type { Unlocked } from "@/vault/operations";
+import { useVaultUnlock } from "@/vault/useVaultUnlock";
 import { AddPersonForm, PeopleTable, type PersonRow } from "@/components/people/PeopleTable";
 import type { RoleOption } from "@/components/people/roles";
 
@@ -29,7 +34,24 @@ const SHARE_ROLES: RoleOption[] = [
  * Changing a role re-POSTs the participant, which the API treats as "give them
  * this chat at this role".
  */
+/**
+ * Add someone to a chat. In a SENSITIVE conversation the server cannot give them its
+ * key (it never holds it): this browser unlocks your vault key, opens your copy of the
+ * conversation key, and wraps it to their vault key, which is what the server stores.
+ */
+export async function addPerson(sessionId: string, email: string, role: "editor" | "viewer",
+                                unlock: () => Promise<Unlocked>): Promise<Participant[]> {
+  const session = await getSession(sessionId);
+  const sealedKey = (session.sealed_key ?? null) as SealedKey | null;
+  if (!session.sensitive || !sealedKey) return addParticipant(sessionId, email, role);
+  if (!sealedKey.wrap) throw new Error("You hold no key to this conversation, so you cannot give it to anyone.");
+  const recipient = await participantRecipient(sessionId, email);
+  const key = await openConversationKey(sealedKey, await unlock());
+  return addParticipant(sessionId, email, role, await wrapForRecipient(key, recipient));
+}
+
 export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRole: string | null }) {
+  const vault = useVaultUnlock();
   const [people, setPeople] = useState<Participant[] | null>(null);
   const [error, setError] = useState("");
   const isOwner = myRole === "owner";
@@ -74,9 +96,10 @@ export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRo
             options={SHARE_ROLES}
             defaultRole="editor"
             onAdd={async (email, role) =>
-              setPeople(await addParticipant(sessionId, email, role as "editor" | "viewer"))
+              setPeople(await addPerson(sessionId, email, role as "editor" | "viewer", vault.unlock))
             }
           />
+          {vault.element}
           <p className="text-muted-foreground">They must already be in this workspace.</p>
         </div>
       ) : (

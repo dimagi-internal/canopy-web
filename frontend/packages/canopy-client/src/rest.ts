@@ -66,11 +66,24 @@ export class CanopyRestError extends Error {
   // was type-checked for the first time then — and did not compile.
   readonly status: number
   readonly path: string
+  /** canopy's own sentence for the refusal (problem+json `detail`), when it gave one —
+   *  what a person should be shown, e.g. why a sensitive conversation cannot start. */
+  readonly detail: string
 
-  constructor(status: number, path: string) {
-    super(`canopy request failed (${status}): ${path}`)
+  constructor(status: number, path: string, detail = '') {
+    super(detail || `canopy request failed (${status}): ${path}`)
     this.status = status
     this.path = path
+    this.detail = detail
+  }
+}
+
+async function problemDetail(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: unknown }
+    return typeof body?.detail === 'string' ? body.detail : ''
+  } catch {
+    return ''
   }
 }
 
@@ -100,7 +113,7 @@ export function createRest(config: RestConfig) {
 
   async function json<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await raw(path, init)
-    if (!response.ok) throw new CanopyRestError(response.status, path)
+    if (!response.ok) throw new CanopyRestError(response.status, path, await problemDetail(response))
     if (response.status === 204) return undefined as T
     return (await response.json()) as T
   }

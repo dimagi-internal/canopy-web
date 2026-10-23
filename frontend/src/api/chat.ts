@@ -437,13 +437,25 @@ export function listParticipants(id: string): Promise<Participant[]> {
   return request<Participant[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/participants`);
 }
 
-/** Owner only: give a workspace teammate this chat, or change their role. */
-export function addParticipant(id: string, email: string, role: "editor" | "viewer"): Promise<Participant[]> {
+export type SealedKeyWrapIn = components["schemas"]["SealedKeyWrapIn"];
+export type ParticipantRecipient = components["schemas"]["ParticipantRecipientOut"];
+
+/** Owner only: give a workspace teammate this chat, or change their role. In a
+ *  sensitive conversation a NEW person needs `wrap`: its key, wrapped in this
+ *  browser to their vault key (vault/sealedChat.ts::wrapForRecipient). */
+export function addParticipant(id: string, email: string, role: "editor" | "viewer",
+                               wrap?: SealedKeyWrapIn): Promise<Participant[]> {
   return request<Participant[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/participants`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, role }),
+    body: JSON.stringify(wrap ? { email, role, wrap } : { email, role }),
   });
+}
+
+/** The vault key to wrap a sensitive chat's key to, before adding `email`. */
+export function participantRecipient(id: string, email: string): Promise<ParticipantRecipient> {
+  return request<ParticipantRecipient>(
+    `/api/canopy-sessions/${encodeURIComponent(id)}/participants/recipient?email=${encodeURIComponent(email)}`);
 }
 
 /** Owner removes someone; anyone can remove themselves. */

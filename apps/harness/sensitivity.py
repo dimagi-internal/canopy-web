@@ -16,9 +16,11 @@ What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
   receipts and view context, the usage scan's and autotitle's title;
 * **refuse re-processing** — auto-debug, and the fleet's transcript readers (there
   is no transcript to read);
-* **read back by its own people only** — the words are kept SEALED on the message
-  (`seal`), and only the conversation's people, on its chat surfaces, read them
-  (`reads_content`, `unseal`): never a review, a search, a fleet reader or another AI.
+* **read back by its own people only** — the words are kept SEALED on the message,
+  to a key only the conversation's people hold (`seal`, `canopy_sessions.conversation_keys`):
+  canopy-web writes them and cannot read them back. The ciphertext goes only to the
+  conversation's people on its chat surfaces (`reads_content`, `readable`), whose
+  browsers decrypt it: never a review, a search, a fleet reader or another AI.
 """
 from __future__ import annotations
 
@@ -222,50 +224,58 @@ def withheld_note(note: str) -> str:
 # ── sealed: the conversation, for its own people only ────────────────────────
 # A sensitive conversation must still be recoverable — a reload, a second tab, a
 # participant joining — so its Messages keep the words in `Message.sealed`, beside
-# metadata-only columns. `sealed` is ciphertext (`apps/common/encryption.py`), so a
-# database read, a backup or a shell — the doors a debugging agent would use —
-# see nothing. Nothing opens it but `_open`, and nothing calls that without
-# `reads_content`: the primary interaction, never a review of it.
+# metadata-only columns. `sealed` is sealed to the conversation's own public key
+# (`canopy_sessions.conversation_keys`, spec 2026-10-23 §2): canopy-web can write it
+# and holds no key that reads it back. `readable` is the one door that hands the
+# ciphertext out, and only to a reader `reads_content` admits — the conversation's
+# own people, whose browsers hold the key.
 
 
-def seal(role: str, text: str, content: dict | None) -> tuple[str, dict, str | None]:
-    """(plaintext, content, sealed) as a sensitive conversation stores a Message.
+def seal(session, index: int, role: str, text: str, content: dict | None) -> tuple[str, dict, str | None]:
+    """(plaintext, content, sealed) as a sensitive conversation stores a Message at
+    `index` of `session`.
 
-    The columns are metadata. `sealed` holds the words, encrypted, except for a
-    tool's result, which is never kept (`strip_result`): what a tool showed the
-    person as a table or a chart is drawn again from the call's input, as the
-    viewer, never from a copy."""
-    from apps.common.encryption import encrypt_secret  # noqa: PLC0415 — reads settings
+    The columns are metadata. `sealed` holds the words, sealed to the conversation's
+    key, except for a tool's result, which is never kept (`strip_result`): what a tool
+    showed the person as a table or a chart is drawn again from the call's input, as
+    the viewer, never from a copy. None when the conversation has no key (a starter
+    with no vault key): then the words are not kept at all."""
+    from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
 
     content = content if isinstance(content, dict) else {}
     if role == "tool_result":
         return "", strip_result(content), None
     words = {"plaintext": text or "", "content": content}
-    return "", redact_payload(content), encrypt_secret(_json.dumps(words, sort_keys=True))
+    return "", redact_payload(content), conversation_keys.seal_words(session, index, words)
 
 
-def _open(sealed) -> dict | None:
-    """The words a `seal` kept, or None. Private: callers go through `unseal`
-    (behind `reads_content`) or `sealed_call` (no words leave it)."""
-    if not sealed or not isinstance(sealed, str):
+def call_of(content) -> dict:
+    """A TOOL_USE row's call as the server may know it, for deciding which View it
+    has: in a sensitive conversation the metadata columns alone — its id, its name and
+    the host tool a gateway call reached (`redact_payload`'s `input_tool`), never its
+    arguments, which only the conversation's people decrypt (`sealed_call_for`)."""
+    content = content if isinstance(content, dict) else {}
+    if content.get("redacted") != REDACTED:
+        return content
+    call = {k: content[k] for k in ("id", "name") if isinstance(content.get(k), str)}
+    if isinstance(content.get("input_tool"), str):
+        call["input"] = {"tool": content["input_tool"]}
+    return call
+
+
+def sealed_call_for(session, tool_call_id: str, *, chat_surface: bool, user=None, contact=None) -> str | None:
+    """The sealed words of the TOOL_USE row `tool_call_id` names, for a reader
+    `reads_content` admits (an MCP Apps View's input, which their browser decrypts and
+    hands the View). None for an ordinary conversation, or anyone else."""
+    if not is_sensitive(session) or not reads_content(
+            session, chat_surface=chat_surface, user=user, contact=contact):
         return None
-    from apps.common.encryption import decrypt_secret  # noqa: PLC0415 — reads settings
+    from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
+    from apps.canopy_sessions.models import Message  # noqa: PLC0415 — as above
 
-    try:
-        words = _json.loads(decrypt_secret(sealed))
-    except Exception:  # noqa: BLE001 — a row no key opens reads as metadata
-        return None
-    return words if isinstance(words, dict) else None
-
-
-def sealed_call(content, sealed) -> dict:
-    """A TOOL_USE row's call, for deciding server-side which View it has (its id,
-    name and host tool). In a sensitive conversation the columns are metadata, so
-    the call is opened here; its arguments reach a person only through
-    `mcp_apps_views.resource`, behind `reads_content`."""
-    words = _open(sealed)
-    inner = words.get("content") if words else None
-    return inner if isinstance(inner, dict) else (content if isinstance(content, dict) else {})
+    sealed = (Message.objects.filter(session=session, role=Message.TOOL_USE, content__id=tool_call_id)
+              .values_list("sealed", flat=True).first())
+    return sealed if conversation_keys.is_envelope(sealed) else None
 
 
 def is_conversation_person(session, *, user=None, contact=None) -> bool:
@@ -317,23 +327,36 @@ def reads_content(session, *, chat_surface: bool, user=None, contact=None) -> bo
     return chat_surface and is_conversation_person(session, user=user, contact=contact)
 
 
-def unseal(message):
-    """A copy of `message` carrying its sealed words, for a reader `reads_content`
-    admitted. A copy, so the instance a caller might save keeps its columns."""
-    sealed = _open(getattr(message, "sealed", None))
-    if sealed is None:
-        return message
-    out = _copy.copy(message)
-    out.plaintext = str(sealed.get("plaintext") or "")
-    out.content = {**(sealed.get("content") or {}),
-                   **{k: v for k, v in (message.content or {}).items() if k == "client_id"}}
+def readable(messages, session, *, chat_surface: bool, user=None, contact=None) -> list:
+    """`messages` as this reader receives them. Copies, each carrying
+    `readable_sealed`: the row's sealed words (ciphertext — the reader's browser
+    decrypts them with the conversation key, `conversation_keys.reader_key`) for the
+    conversation's own people on its chat surfaces; None for everyone else, who read
+    the metadata columns. Only a `cc1:` envelope is handed out: a row still under the
+    field key waits for `reseal_sensitive_conversations`."""
+    from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
+
+    rows = list(messages)
+    admitted = is_sensitive(session) and reads_content(
+        session, chat_surface=chat_surface, user=user, contact=contact)
+    out = []
+    for m in rows:
+        sealed = getattr(m, "sealed", None)
+        if admitted and conversation_keys.is_envelope(sealed):
+            m = _copy.copy(m)
+            m.readable_sealed = sealed
+        out.append(m)
     return out
 
 
-def readable(messages, session, *, chat_surface: bool, user=None, contact=None) -> list:
-    """`messages` as this reader may see them: unsealed for the conversation's own
-    people on its chat surfaces, the metadata columns for everyone else."""
-    rows = list(messages)
-    if not reads_content(session, chat_surface=chat_surface, user=user, contact=contact):
-        return rows
-    return [unseal(m) for m in rows]
+def sealed_key_for(session, *, chat_surface: bool, user=None, contact=None) -> dict | None:
+    """What this reader's browser needs to open the conversation
+    (`conversation_keys.reader_key`), behind the same gate as the words. None for an
+    ordinary conversation, a reader `reads_content` refuses, or a contact (who holds
+    no key)."""
+    if not is_sensitive(session) or contact is not None or not reads_content(
+            session, chat_surface=chat_surface, user=user, contact=contact):
+        return None
+    from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
+
+    return conversation_keys.reader_key(session, user)

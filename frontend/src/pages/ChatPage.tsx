@@ -26,6 +26,10 @@ import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
 import { useAttachments } from './chat/useAttachments'
+import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
+import { useVaultUnlock } from '@/vault/useVaultUnlock'
+import { useSealedConversation } from '@/vault/useSealedConversation'
+import type { ConversationKey, SealedKey } from '@/vault/sealedChat'
 import { useMenuAnswer } from './chat/useMenuAnswer'
 import { useMessageFork } from './chat/useMessageFork'
 import { useRunnerPlacement } from './chat/useRunnerPlacement'
@@ -67,7 +71,10 @@ export function ChatPage({
   onTitleChange?: () => void
 } = {}) {
   const { id = '' } = useParams()
-  const appHost = useMemo(() => appHostFor(id), [id])
+  // A sensitive conversation's Views get their call input decrypted here, with the
+  // conversation key once it is open (`sealed`, below).
+  const sealedKeyRef = useRef<ConversationKey | null>(null)
+  const appHost = useMemo(() => sealedAppHost(appHostFor(id), () => sealedKeyRef.current), [id])
   // The agent asked for one of its secrets: a card that seals it in this
   // browser. Once stored, a value-free note tells the agent to carry on.
   const secretRequestHost = useMemo<SecretRequestHost>(() => ({
@@ -110,6 +117,17 @@ export function ChatPage({
       onTitleChangeRef.current?.()
     }, [id, setMeta]),
   })
+
+  // A sensitive conversation arrives sealed: the words are opened here, with the
+  // person's vault key, and nowhere else (vault/sealedChat.ts).
+  const vault = useVaultUnlock()
+  const sealed = useSealedConversation(
+    (meta?.sealed_key ?? null) as SealedKey | null, socket.state.messages, vault.unlock)
+  sealedKeyRef.current = sealed.key
+  const panelState = useMemo(
+    () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
+    [socket.state, sealed.messages],
+  )
 
   const paging = useTranscriptPaging(id, socket.prependMessages)
   const placement = useRunnerPlacement(id, meta, setMeta)
@@ -391,6 +409,13 @@ export function ChatPage({
           can read it back. Canopy does not share, export or mirror it, and no review or other AI reads it.
         </p>
       )}
+      <SealedConversationBanner
+        state={sealed.state}
+        error={sealed.error}
+        onUnlock={() => void sealed.unlock()}
+        unlockElement={vault.element}
+        needsMigration={Boolean(meta?.sealed_key?.needs_migration)}
+      />
       <div className="min-h-0 flex-1" onContextMenu={fork.onMessageContextMenu}>
         {fork.messageMenu && (
           <MessageContextMenu
@@ -403,7 +428,7 @@ export function ChatPage({
           />
         )}
         <ChatPanel
-          state={socket.state}
+          state={panelState}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
           onSend={(body) => {

@@ -16,7 +16,7 @@ from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
 from . import activity as session_activity
-from . import services, transcript_ingest
+from . import conversation_keys, services, transcript_ingest
 from .models import Message, RunnerBinding, Session
 
 
@@ -404,6 +404,9 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
                 session=session, turn_index__gte=offset,
                 turn_index__lt=offset + records * BLOCK_STRIDE)
         ])
+        # The same conversation, so the same key and the same people's wraps: the
+        # copied rows are sealed to it (`conversation_keys.copy_key`).
+        conversation_keys.copy_key(session, fork)
         session_activity.rebuild(Session.objects.select_for_update().get(pk=fork.pk))
     return fork
 

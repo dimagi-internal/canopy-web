@@ -55,6 +55,10 @@ export interface Message {
   /** The agent asked for one of its declared secrets here: the host renders a
    *  seal card (`SecretRequestHostContext`). Set by the server, never guessed. */
   secret_request?: MessageSecretRequestRef | null;
+  /** A SENSITIVE conversation's words, sealed to a key only its people hold (a
+   *  `cc1:` envelope). `plaintext` / `content` are then metadata: the host decrypts
+   *  this in the browser and hands the kit the words. Absent on ordinary rows. */
+  sealed?: string | null;
 }
 
 /** `MessageOut.app` — mirrors `AppRef` in `mcpApps/AppView.tsx`. */

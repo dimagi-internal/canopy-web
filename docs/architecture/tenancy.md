@@ -315,26 +315,58 @@ THE predicate; every surface below asks it, one test each in
   argument names, ids, error flags, size and hash only (`sensitivity.redact_payload`). The
   prompt is wiped at the turn's end (`closing.close_turn`), the result note withheld, and
   there is no owner-ask line, live tail (`RunnerBinding.tail`) or autotitle.
-- **The conversation, sealed for its own people:** the words of a `Message` (not a tool's
-  result) are kept in `Message.sealed`, encrypted (`sensitivity.seal`, from `send.py` and
-  `transcript_ingest`; `apps/common/encryption.py`, so a database read, a backup or a shell
-  sees ciphertext), so a person can come back to it and a participant can join it. ONE
-  gate reads them, `sensitivity.reads_content`: the conversation's own people (its creator,
-  its participants, its contact) on its own chat surfaces (a browser session, the widget or
-  SDK's contact or site token; never MCP, a PAT, OAuth or a minted session). It is asked by
-  the chat REST reads (`GET /{id}`, `/messages`), the contact's `/messages`, the socket
-  snapshot and an MCP Apps View's `tool_input`, through `sensitivity.readable`. Every other
-  reader — search, human inputs, a session review, an agent's or the fleet's reads, an
-  admin who is not in it — reads the columns, so a new reader is closed until it asks.
-  The reply reaches the asker the one way every turn's does: its transcript rows (a sensitive-data box
-  ships a confined turn's before deleting it).
+- **The conversation, sealed to its own people** (spec
+  `2026-10-23-sensitive-conversations-sealed-to-their-people` §2,
+  `apps/canopy_sessions/conversation_keys.py`): canopy-web can WRITE a sensitive conversation
+  and cannot read it back.
+  - *The key.* When a session becomes sensitive (born so — a sensitive site's token, a
+    sensitive parent — or by `services.add_runner_requirements`) it gets a P-256 key pair
+    (`SessionKey.public_jwk`). The private half is wrapped at once (ECDH-ES + HKDF-SHA256 +
+    AES-256-GCM, the vault's `wrapEcdhEs`, info `canopy-chat/v1/wrap|<conversation>|<user>`)
+    to the starter's vault key (`UserVaultKeyset.public_jwk`), stored as a
+    `SessionKeyWrap`, and dropped. A fork, successor or branch (`parent_session`) carries
+    the same key and every wrap (`copy_key`).
+  - *Sealing.* Each stored message's words (`{plaintext, content}`; never a tool's result)
+    go into `Message.sealed` as a `cc1:` ECIES envelope to the conversation's public key,
+    info and AAD `canopy-chat/v1/message|<conversation>|<turn_index>` (`sensitivity.seal`,
+    from `send.py` and `transcript_ingest`). No key canopy-web holds — the field key, the
+    legacy `SECRET_KEY` key — opens it, and no private key is stored.
+    `docs/vault/chat-v1/chat_v1_vectors.json` pins the bytes for both languages.
+  - *Reading.* ONE gate hands the ciphertext out, `sensitivity.reads_content`: the
+    conversation's own people (its creator, its participants) on its own chat surfaces (a
+    browser session, the widget's site token; never MCP, a PAT, OAuth or a minted session).
+    The chat REST reads (`GET /{id}`, `/messages`) and the socket snapshot return each row's
+    `sealed` (`sensitivity.readable`) and `GET /{id}` the reader's own wrap
+    (`sealed_key`); the chat page and the embedded panel unlock the person's vault key
+    (passkey or passphrase), unwrap, and decrypt in the browser (`frontend/src/vault/sealedChat.ts`,
+    `useSealedConversation`). Live frames to the admitted sockets still carry the words in
+    transit; only what is stored is unreadable to canopy-web. Every other reader — search,
+    human inputs, a session review, an agent's or the fleet's reads, an admin who is not in
+    it — reads the metadata columns. The reply reaches the asker the one way every turn's
+    does: its transcript rows (a sensitive-data box ships a confined turn's before deleting it).
+  - *Who may hold one.* A canopy user with a vault key. A contact, or a starter with none,
+    is refused in a sentence ("a sensitive conversation needs a canopy account with a vault
+    key; set yours up at …") at create (422) and at every send door (`CannotHold`: 422 on
+    REST, `session.error` `cannot_hold` on the socket). Rows an agent ships into a keyless
+    sensitive conversation keep no words at all.
+  - *Multiplayer.* Adding someone is a browser act by someone in it: their browser unwraps
+    its copy and wraps it to the newcomer's current vault key (`POST …/participants` with
+    `wrap`; the server checks the shape and `recipient_jkt`). Removing someone deletes their
+    wrap; the key is not rotated (they could have kept what they read).
+  - *Rows from before.* Migration 0049 re-sealed field-key rows to their conversation's new
+    key, wrapped to the starter; a session whose starter had no vault key kept the field key,
+    is served to nobody, and is logged — `manage.py reseal_sensitive_conversations` moves it
+    once they have one (`sealed_key.needs_migration` says so meanwhile).
+  - *Not covered:* a person's in-progress draft (`drafts.py`) is still under the field key
+    while they type — it is the composer's live state, read back to send it.
 - **Live and log doors ask the same gate:** the chat socket (`SessionConsumer`), whose live
   frames carry the words, admits only `reads_content`; the turn socket's tail gets the stored
   metadata; and `turn_access.can_read_turn_content` is False for a sensitive turn, so no turn
   read (REST, MCP, the board, the unclaimable report, the caller envelope) returns its
   prompt, note or report while it runs. The `TURN_CREATED` log line keeps no prompt head.
-- **Only its people hand it on:** adding a participant and forking (which copies the
-  sealed words) need `reads_content` too, so an agent's admin who may open a thread they
+- **Only its people hand it on:** adding a participant (which needs their wrap, made in a
+  browser already in it) and forking (which copies the sealed words, the key and the wraps)
+  need `reads_content` too, so an agent's admin who may open a thread they
   are not in cannot add themselves or copy it.
 - **The agent's memory:** every turn of a sensitive conversation runs confined to the same
   capability, so it resumes the Claude session of the conversation's previous turn when it
@@ -371,8 +403,11 @@ THE predicate; every surface below asks it, one test each in
   refused (`embedding/connected_apps_api.py`).
 - **The chat page says so:** `SessionOut.sensitive` draws a banner and turns off Share to
   Slack.
-- **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
-  `tool_input`, which it reads back from the sealed call; a receipt keeps no excerpt;
+- **MCP Apps:** which View a call has is decided from its metadata columns alone (call id,
+  tool name, the host tool a gateway call reached: `sensitivity.call_of`); a View gets
+  `tool_result: null` and fetches its data as the viewer from its input, which the server
+  sends sealed (`tool_input_sealed`, `sensitivity.sealed_call_for`) and the browser decrypts
+  and hands it; a receipt keeps no excerpt;
   `ui/update-model-context` is accepted and not kept (`apps/mcp_apps_host/mcp_apps_views.py`).
 - **Never re-exposed:** share-link upload (403), Slack share / new thread (403) and
   mirroring (`slack.relay`), export (403), the usage scan's title.

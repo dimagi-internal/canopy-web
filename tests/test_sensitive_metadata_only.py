@@ -8,6 +8,8 @@ person types, what the agent says and a tool's arguments are stored as metadata 
 from __future__ import annotations
 
 import pytest
+
+from tests.fixtures.sensitive import vault_key
 from django.contrib.auth import get_user_model
 from django.dispatch import receiver
 
@@ -26,6 +28,7 @@ SECRET = "Amina Bello, 3 years, MUAC 11.2 cm"
 @pytest.fixture
 def ctx():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
+    vault_key(jj)  # a sensitive conversation is sealed to its people's vault keys
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="wfa", name="Workflow agent", workspace=ws)

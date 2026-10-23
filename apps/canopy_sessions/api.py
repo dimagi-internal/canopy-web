@@ -11,6 +11,7 @@ import datetime as dt
 import uuid
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Max
 from django.http import Http404, HttpRequest
@@ -22,7 +23,7 @@ from ninja.files import UploadedFile
 
 from apps.agents import services as agent_services
 from apps.api.auth import session_auth
-from apps.api.errors import ProblemError
+from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
@@ -36,6 +37,7 @@ from . import (
     attachment_storage,
     channel_bindings,
     control,
+    conversation_keys,
     doors,
     feed,
     filing,
@@ -74,6 +76,7 @@ from .schemas import (
     PageStateIn,
     PageStateOut,
     ParticipantAddIn,
+    ParticipantRecipientOut,
     ParticipantOut,
     PlaceIn,
     ResetIn,
@@ -341,6 +344,11 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     # host-chosen scope (ace-web derives one per ace workspace from a
     # membership-checked path). See tests/test_embed_session_provenance.py.
     services.stamp_host_metadata(metadata, request)
+    # A sensitive site's conversation is sealed to its people's vault keys: someone
+    # without one is refused HERE, before an empty conversation exists, in the
+    # sentence the panel shows them (`conversation_keys.CannotHold`).
+    if sensitivity.is_sensitive(Session(metadata=metadata)):
+        _holder_or_422(user=request.user)
     if payload.runner_id:
         from apps.harness.models import Runner
 
@@ -851,6 +859,13 @@ def _in_it_or_403(request: HttpRequest, session) -> None:
         raise HttpError(403, sensitivity.NOT_IN_IT)
 
 
+def _holder_or_422(*, user=None, contact=None) -> None:
+    try:
+        conversation_keys.check_holder(user=user, contact=contact)
+    except conversation_keys.CannotHold as exc:
+        raise HttpError(422, str(exc)) from None
+
+
 def _readable(request: HttpRequest, session, rows) -> list:
     # A sensitive conversation reads back only for its own people, on its chat
     # surfaces (`sensitivity.reads_content`): an MCP call, a PAT or a co-tenant
@@ -898,6 +913,9 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["turn_status"] = status_feed.status_for_session(session)
     data["my_role"] = access.role_for(request.user, session)
     data["can_move"] = filing.can_move(request.user, session)
+    # A sensitive conversation's key, for the reader's browser to open `sealed` with.
+    data["sealed_key"] = sensitivity.sealed_key_for(
+        session, user=request.user, chat_surface=sensitivity.request_is_chat_surface(request))
     return data
 
 
@@ -1205,9 +1223,54 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
         raise HttpError(404, "nobody with that email is in this workspace")
     if target.pk == session.created_by_id:
         raise HttpError(409, "that person owns this chat")
-    SessionParticipant.objects.update_or_create(
-        session=session, user=target, defaults={"role": payload.role})
+    with transaction.atomic():
+        if sensitivity.is_sensitive(session):
+            _store_wrap(request, session, target, payload.wrap)
+        SessionParticipant.objects.update_or_create(
+            session=session, user=target, defaults={"role": payload.role})
     return _participants(session)
+
+
+def _store_wrap(request: HttpRequest, session, target, wrap) -> None:
+    """A sensitive conversation's new person needs their copy of its key, which only a
+    browser already in it can make (canopy-web cannot unwrap the key). Not needed again
+    for a role change: they already hold a current one."""
+    if wrap is None:
+        if conversation_keys.has_current_wrap(session, target):
+            return
+        raise ProblemError(409, "Their copy of the key is needed", type_=TYPE_CONFLICT,
+                           detail="this conversation is sealed to its people: add them from a "
+                                  "browser already in it, which wraps its key to their vault key",
+                           members={"error": "wrap_required"})
+    try:
+        conversation_keys.add_wrap(session, target, wrap.model_dump(exclude={"recipient_jkt"}),
+                                   recipient_jkt=wrap.recipient_jkt, by=request.user)
+    except conversation_keys.WrapRefused as exc:
+        raise HttpError(422, str(exc)) from None
+
+
+@router.get("/{session_id}/participants/recipient", response=ParticipantRecipientOut,
+            summary="The vault key to wrap a sensitive chat's key to")
+@gate("session-acl")  # can_share (chat owner), and in the conversation
+def participant_recipient(request: HttpRequest, session_id: uuid.UUID, email: str):
+    """Before adding someone to a SENSITIVE conversation: their user id and current
+    vault public key, which your browser wraps the conversation's key to. 404 when
+    nobody with that email is in the workspace; 409 `no_vault_key` when they have no
+    vault key yet (they could not read it)."""
+    session = _session_or_404(request, session_id)
+    if not access.can_share(request.user, session):
+        raise HttpError(403, "only the chat's owner can share it")
+    _in_it_or_403(request, session)
+    target = get_user_model().objects.filter(email__iexact=email.strip()).first()
+    if target is None or not wsvc.is_member(target, session.workspace_id):
+        raise HttpError(404, "nobody with that email is in this workspace")
+    found = conversation_keys.recipient(target)
+    if found is None:
+        raise ProblemError(409, "No vault key", type_=TYPE_CONFLICT,
+                           detail=f"{target.email} has no vault key yet, so they cannot read a "
+                                  "sensitive conversation; ask them to set one up first",
+                           members={"error": "no_vault_key"})
+    return {**found, "email": target.email}
 
 
 @router.delete("/{session_id}/participants/{user_id}", response=list[ParticipantOut],
@@ -1223,6 +1286,9 @@ def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int
     if user_id != request.user.pk and not access.can_share(request.user, session):
         raise HttpError(403, "only the chat's owner can remove someone else")
     SessionParticipant.objects.filter(session=session, user_id=user_id).delete()
+    # Their copy of a sensitive conversation's key goes with them. (The key itself is
+    # not rotated: they could have kept what they read.)
+    conversation_keys.drop_wrap(session, user_id)
     # A tab they still hold on it re-asks who may read it — for a sensitive
     # conversation, someone no longer in it must stop hearing it now.
     transaction.on_commit(lambda: services.recheck_sockets(session.pk, user_ids=[user_id]))

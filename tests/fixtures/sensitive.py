@@ -21,10 +21,104 @@ ASKED = "how many visits did Amina have?"
 REPLY = "Amina has had 12 visits"
 
 
+def vault_key(user):
+    """Give `user` a vault keyset, as their browser would; returns its private key, which
+    only the test (standing in for that browser) holds."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.common import ecdh_es
+    from apps.passkeys.models import UserVaultKeyset
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    UserVaultKeyset.objects.update_or_create(user=user, defaults={
+        "public_jwk": ecdh_es.jwk_of(priv.public_key()), "seals": []})
+    return priv
+
+
+def unwrap(wrap: dict, priv, info: str) -> bytes:
+    """The browser's `unwrapEcdhEs`, for a test standing in for it. Never app code."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    from apps.common.ecdh_es import unb64u
+
+    epk = unb64u(wrap["epk"])
+    z = priv.exchange(ec.ECDH(), ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), epk))
+    me = priv.public_key().public_bytes(serialization.Encoding.X962,
+                                        serialization.PublicFormat.UncompressedPoint)
+    kek = HKDF(algorithm=hashes.SHA256(), length=32, salt=epk + me, info=info.encode()).derive(z)
+    return AESGCM(kek).decrypt(unb64u(wrap["n"]), unb64u(wrap["ct"]), info.encode())
+
+
+def open_sealed(sealed: str, session, person_priv, user) -> dict:
+    """What a person's browser reads from one stored `cc1:` row: unwrap their copy of
+    the conversation key, then open the envelope. Test-only."""
+    import json
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.canopy_sessions import conversation_keys
+    from apps.canopy_sessions.models import SessionKey, SessionKeyWrap
+    from apps.common.ecdh_es import unb64u
+
+    key = SessionKey.objects.get(session=session)
+    wrap = SessionKeyWrap.objects.get(session=session, user=user)
+    scalar = unwrap(wrap.wrap, person_priv, conversation_keys.wrap_info(key.conversation, user.pk))
+    conv = ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+    body = json.loads(unb64u(sealed[len(conversation_keys.PREFIX):]))
+    words = unwrap(body, conv, conversation_keys.message_info(body["c"], body["i"]))
+    return json.loads(words)
+
+
+def browser_said(messages, sealed_key: dict, person_priv, user_id) -> str:
+    """What the reader's browser shows of `messages` (REST or socket rows): it unwraps
+    its copy of the conversation key from `sealed_key` — as the API returned it — and
+    opens each row's `sealed`. Test-only."""
+    import json
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from apps.canopy_sessions import conversation_keys
+    from apps.common.ecdh_es import unb64u
+
+    scalar = unwrap(sealed_key["wrap"], person_priv,
+                    conversation_keys.wrap_info(sealed_key["conversation"], user_id))
+    conv = ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
+    out = []
+    for m in messages:
+        if m.get("sealed"):
+            body = json.loads(unb64u(m["sealed"][len(conversation_keys.PREFIX):]))
+            words = json.loads(unwrap(body, conv, conversation_keys.message_info(body["c"], body["i"])))
+            out.append(words["plaintext"])
+        else:
+            out.append(m["plaintext"])
+    return " ".join(out)
+
+
+def rewrap_for(session, from_user, from_priv, to_user, to_priv_public_jwk=None) -> dict:
+    """What an adder's browser sends to add `to_user`: its own copy of the key, opened
+    and wrapped again to their vault key. Test-only."""
+    from apps.canopy_sessions import conversation_keys
+    from apps.canopy_sessions.models import SessionKey, SessionKeyWrap
+    from apps.common import ecdh_es
+    from apps.passkeys.models import UserVaultKeyset
+
+    key = SessionKey.objects.get(session=session)
+    mine = SessionKeyWrap.objects.get(session=session, user=from_user)
+    scalar = unwrap(mine.wrap, from_priv, conversation_keys.wrap_info(key.conversation, from_user.pk))
+    theirs = to_priv_public_jwk or UserVaultKeyset.objects.get(user=to_user).public_jwk
+    return {**ecdh_es.wrap(scalar, theirs, conversation_keys.wrap_info(key.conversation, to_user.pk)),
+            "recipient_jkt": ecdh_es.jkt(theirs)}
+
+
 def world() -> dict:
     """An owner, their workspace, agent and runner, a sensitive session (`hot`) and an
     ordinary one (`cold`), and a browser signed in as the owner (`c`)."""
     user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
+    # A sensitive conversation is sealed to its people's vault keys: the owner has one.
+    key = vault_key(user)
     ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
     WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=user)
@@ -36,7 +130,7 @@ def world() -> dict:
     c = Client()
     c.force_login(user)
     return {"user": user, "ws": ws, "agent": agent, "runner": runner, "hot": hot, "cold": cold,
-            "c": c}
+            "c": c, "key": key}
 
 
 def _turn(session, **kw):

@@ -12,12 +12,18 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.harness import sensitivity
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
-from . import authorship, services, transcript_ingest, transcript_read
+from . import authorship, conversation_keys, services, transcript_ingest, transcript_read
 from . import placement as session_placement
 from .models import Message, RunnerBinding, Session
+
+
+def _contact_of(initiator):
+    """The contact behind a send, when it is one (`harness.initiator`)."""
+    return getattr(initiator, "contact", None)
 
 
 def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
@@ -218,7 +224,12 @@ def _send_message(
         # (`sensitivity.seal`); the turn's prompt is wiped when it ends. Asked of
         # the LOCKED row: the caller's copy may predate a requirement added since.
         sensitive = sensitivity.seals(locked)
-        plaintext, content, sealed = (sensitivity.seal(Message.USER, text, {"text": text})
+        if sensitive:
+            # Sealed to the conversation's key, which only its people hold: no key
+            # (a contact, a starter with no vault key) is a refusal, never words kept
+            # where nobody could read them back (`conversation_keys.require_key`).
+            conversation_keys.require_key(locked, user=user, contact=_contact_of(initiator))
+        plaintext, content, sealed = (sensitivity.seal(locked, index, Message.USER, text, {"text": text})
                                       if sensitive else (text, {"text": text}, None))
         if client_id:
             content["client_id"] = client_id
@@ -236,8 +247,9 @@ def _send_message(
             # The turn was started from a sensitive turn or conversation, and this
             # conversation took on its requirements: the row is sealed before the
             # transaction that wrote it commits, so no reader ever sees it open.
+            conversation_keys.require_key(locked, user=user, contact=_contact_of(initiator))
             message.plaintext, message.content, message.sealed = sensitivity.seal(
-                Message.USER, text, {"text": text})
+                locked, index, Message.USER, text, {"text": text})
             if client_id:
                 message.content["client_id"] = client_id
             session.metadata = locked.metadata
@@ -577,11 +589,19 @@ def _send_transcript_sourced_message(
     #
     # message=None: this path writes no durable user row, so the attachments'
     # sent_at stamp is the only thing stopping them riding along on every later send.
-    turn = _enqueue_chat_turn(
-        session=session, message=None, text=text, user=user, client_id=client_id,
-        fallback_key=uuid.uuid4().hex, placement=placement, origin=origin,
-        initiator=initiator, origin_ref=origin_ref, capability=capability, parent=parent,
-    )
+    with transaction.atomic():
+        # A sensitive conversation's rows will be sealed to its key as the transcript
+        # lands, so a send nobody could read back is refused before its turn exists —
+        # and after, when the turn is what made it sensitive (rolled back with it).
+        if sensitivity.seals(session):
+            conversation_keys.require_key(session, user=user, contact=_contact_of(initiator))
+        turn = _enqueue_chat_turn(
+            session=session, message=None, text=text, user=user, client_id=client_id,
+            fallback_key=uuid.uuid4().hex, placement=placement, origin=origin,
+            initiator=initiator, origin_ref=origin_ref, capability=capability, parent=parent,
+        )
+        if sensitivity.seals(session, turn):
+            conversation_keys.require_key(session, user=user, contact=_contact_of(initiator))
     return message, turn
 
 

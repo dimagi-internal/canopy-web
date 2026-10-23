@@ -8,6 +8,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Markdown } from '@/components/Markdown'
 import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
+import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
+import { unlockLocally } from '@/vault/localUnlock'
+import type { SealedKey } from '@/vault/sealedChat'
+import { useUnlockPrompt } from '@/vault/UnlockPrompt'
+import { useSealedConversation } from '@/vault/useSealedConversation'
 import { menuBlocksComposer } from '@/pages/chatPageLogic'
 
 import { buildPageContextBlock } from './pageContextBlock'
@@ -866,8 +871,37 @@ function EmbedChat({
   // Expanded, a View may use the panel's whole width and most of its height —
   // a results table or a chart is why somebody expanded it.
   const expanded = useExpanded(link)
-  const appHost = useMemo(() => embedAppHost(client, sessionBase(isContact, sessionId), expanded),
-                          [client, sessionId, isContact, expanded])
+
+  // A sensitive conversation arrives sealed to its people's vault keys: the panel
+  // opens it here, in the frame, with the visitor's own vault key — unlocked from the
+  // keyset the conversation carries (`sealed_key.keyset`), since the frame has no
+  // browser session for the vault's own routes. A contact holds no key, ever.
+  const [sealedKey, setSealedKey] = useState<SealedKey | null>(null)
+  const sealedRows = socket.state.messages.some((m) => typeof m.sealed === 'string')
+  useEffect(() => {
+    if (isContact) return
+    let live = true
+    void client.rest.json<{ sealed_key?: SealedKey | null }>(`/api/canopy-sessions/${encodeURIComponent(sessionId)}`)
+      .then((d) => live && setSealedKey(d.sealed_key ?? null))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [client, sessionId, isContact, sealedRows])
+  const unlocker = useUnlockPrompt()
+  const unlockVault = useCallback(async () => {
+    if (!sealedKey?.keyset) throw new Error('Set up your vault key in canopy (Settings → Vault key) to read this.')
+    return unlockLocally(sealedKey.keyset, unlocker.prompt)
+  }, [sealedKey, unlocker.prompt])
+  const sealed = useSealedConversation(sealedKey, socket.state.messages, unlockVault)
+  const keyRef = sealed.keyRef
+  const panelState = useMemo(
+    () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
+    [socket.state, sealed.messages],
+  )
+  const appHost = useMemo(
+    () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded), () => keyRef.current),
+    [client, sessionId, isContact, expanded, keyRef])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -1005,12 +1039,27 @@ function EmbedChat({
           </button>
         </span>
       </header>
+      <SealedConversationBanner
+        state={sealed.state}
+        error={sealed.error}
+        onUnlock={() => void sealed.unlock()}
+        unlockElement={unlocker.element}
+        needsMigration={Boolean(sealedKey?.needs_migration)}
+        // A frame the browser will not let use a passkey can still read it in
+        // canopy itself, where the vault has its own page.
+        openElsewhere={
+          <a href={`${currentFrameBaseUrl()}/w/${encodeURIComponent(agent.workspace)}/chat/${encodeURIComponent(sessionId)}`}
+             target="_blank" rel="noopener noreferrer" className="text-primary underline">
+            Read it in canopy
+          </a>
+        }
+      />
       <div className="min-h-0 flex-1">
         <ChatPanel
           // MCP Apps: a Connected site's View for a tool result, acting as this
           // visitor (their own host grant), narrow-panel sized.
           appHost={appHost}
-          state={socket.state}
+          state={panelState}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
           onSend={isContact ? socket.sendChat : onSend}
