@@ -35,6 +35,7 @@ one tenant tree, and is refused otherwise).
 from __future__ import annotations
 
 import contextvars
+import functools
 import json
 import logging
 import re
@@ -194,6 +195,40 @@ def tool_spec(schema: dict) -> dict:
         if kept:
             paths[path] = kept
     return {**schema, "paths": paths}
+
+
+# -- the same line, drawn for REST -----------------------------------------
+
+#: The canonical tenant prefix (`/api/w/{ws}/…`), which `WorkspaceResolveMiddleware`
+#: strips only AFTER the bearer middleware has asked `is_tool_route`.
+_TENANT_PATH = re.compile(r"^/api/w/[^/]+(?P<rest>/.*)$")
+_PATH_PARAM = re.compile(r"\{[^}]+\}")
+
+@functools.cache
+def _tool_routes() -> tuple[tuple[str, re.Pattern], ...]:
+    """Every operation `tool_spec` keeps, as (METHOD, path pattern). Built once,
+    from the schema `build_provider` builds the tool list from."""
+    routes = []
+    for path, item in tool_spec(api_schema())["paths"].items():
+        pattern = re.compile(
+            "^" + "[^/]+".join(re.escape(part) for part in _PATH_PARAM.split(path)) + "$")
+        routes.extend((method.upper(), pattern) for method in item)
+    return tuple(routes)
+
+
+def is_tool_route(method: str, path: str) -> bool:
+    """Whether `method path` is a REST operation this server serves as a tool.
+
+    A conversation's caller token reaches REST through exactly these
+    (`BearerTokenAuthMiddleware`, canopy-web#1782), so the two doors cannot
+    drift: what is left out above — minting a PAT, the person's own memory
+    switches and grants, the runner protocol — is as unreachable for that
+    session over REST as it is over MCP. A path that is not an API operation at
+    all matches nothing, so the answer fails closed."""
+    tenant = _TENANT_PATH.match(path)
+    flat = "/api" + tenant.group("rest") if tenant else path
+    method = method.upper()
+    return any(m == method and pattern.match(flat) for m, pattern in _tool_routes())
 
 
 # -- the in-process transport ---------------------------------------------
