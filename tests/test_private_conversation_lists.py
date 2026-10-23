@@ -5,9 +5,12 @@ Spec: docs/superpowers/specs/2026-10-23-sensitive-conversations-sealed-to-their-
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client
+from django.utils import timezone
 
 from apps.agents.models import AgentAdmin
 from apps.canopy_sessions import join_requests
@@ -173,6 +176,9 @@ def test_only_its_owner_in_it_declines_and_only_the_asker_withdraws(w):
     assert r.status_code == 200 and r.json()["status"] == "declined"
     assert w["c"].post(f"/api/canopy-sessions/join-requests/{req['id']}/decline").status_code == 409
     assert w["ac"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["your_join_request"] == "declined"
+    # Asking again waits an hour (tests/test_sealed_server_doors.py); after it, a new request.
+    assert w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").status_code == 429
+    JoinRequest.objects.filter(pk=req["id"]).update(created_at=timezone.now() - dt.timedelta(hours=2))
     again = w["ac"].post(f"/api/canopy-sessions/{w['hot'].pk}/join-requests").json()
     assert again["status"] == "pending" and again["id"] != req["id"]
     assert w["ac"].post(f"/api/canopy-sessions/join-requests/{again['id']}/cancel").json()["status"] == \

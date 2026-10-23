@@ -331,7 +331,7 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
         # A confined turn is never this session's binding, so its reply arrives
         # here unbound: accepted only from the runner that ran it, while it runs or
         # just after it ends (`_turn_end_session`).
-        session = _turn_end_session(runner, payload.session_id)
+        session = _turn_end_session(runner, payload.session_id, payload.transcript_id)
         if session is None:
             raise HttpError(404, "session not bound to this runner")
         return {"count": session_sync.ingest_turn_end_rows(
@@ -344,16 +344,38 @@ def post_session_stream(request: HttpRequest, runner_id: uuid.UUID, payload: Ses
 TURN_END_SHIP_WINDOW = dt.timedelta(minutes=15)
 
 
-def _turn_end_session(runner, session_id):
+def _turn_end_session(runner, session_id, transcript_id: str = ""):
     """The session, when `runner` claimed a CONFINED turn in it that is running or
-    ended within `TURN_END_SHIP_WINDOW`; else None. The only standing an unbound
-    runner has to write a session's rows."""
-    live = Q(status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
+    ended within `TURN_END_SHIP_WINDOW`, these rows are THAT turn's transcript, and
+    the runner may still hold the session's agent; else None. The only standing an
+    unbound runner has to write a session's rows.
+
+    Which transcript is the turn's: the Claude session id it reports at finish
+    (`Turn.session_key`), or — while it runs, before anything recorded one — the
+    first one it ships, stamped on the turn then (first write wins). A box cannot
+    ship a second transcript into the conversation under the same turn."""
+    transcript_id = (transcript_id or "")[:200]
+    if not transcript_id:
+        return None
+    live_states = (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
+    live = Q(status__in=live_states)
     recent = Q(finished_at__gte=timezone.now() - TURN_END_SHIP_WINDOW)
-    turn = (Turn.objects.select_related("chat_session")
-            .filter(chat_session_id=session_id, claimed_by=runner).exclude(capability="")
-            .filter(live | recent).first())
-    return turn.chat_session if turn is not None else None
+    turns = (Turn.objects.select_related("chat_session", "chat_session__agent")
+             .filter(chat_session_id=session_id, claimed_by=runner).exclude(capability="")
+             .filter(live | recent).order_by("-created_at"))
+    for turn in turns:
+        ours = turn.session_key == transcript_id or (
+            not turn.session_key and turn.status in live_states
+            and Turn.objects.filter(pk=turn.pk, session_key="").update(session_key=transcript_id))
+        if not ours:
+            continue
+        session = turn.chat_session
+        from apps.agents.services import runner_may_hold_agent  # noqa: PLC0415 — agents imports harness
+
+        if session.agent_id is None or not runner_may_hold_agent(runner, session.agent):
+            return None
+        return session
+    return None
 
 
 @router.get("/runners/{runner_id}/backfills", response=BackfillSyncOut)

@@ -51,8 +51,10 @@ def fleet():
 
 
 def _sensitive_session(fleet):
+    # Started by the person who sends into it: a sensitive conversation's key is its
+    # starter's, and nobody becomes its holder by sending (`conversation_keys.require_key`).
     return Session.objects.create(
-        agent=fleet["agent"], workspace=fleet["ws"], title="c",
+        agent=fleet["agent"], workspace=fleet["ws"], title="c", created_by=fleet["user"],
         metadata={"runner_requirements": ["sensitive_data"]},
     )
 

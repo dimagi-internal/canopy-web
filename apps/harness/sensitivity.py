@@ -39,6 +39,11 @@ NO_TITLE = ("this conversation holds a host's sensitive data, so canopy keeps no
 #: Why a door that would hand the words on refuses someone not in the conversation.
 NOT_IN_IT = ("this conversation holds a host's sensitive data: only the people in it can "
              "bring someone in or copy it")
+#: Why a fork of one is refused to anyone but its owner.
+NOT_OWNER_FORK = ("this conversation holds a host's sensitive data: only its owner can fork it")
+#: Why a send into one is refused: only its people, in canopy, may steer its agent.
+NOT_IN_IT_SEND = ("this conversation holds a host's sensitive data: only the people in it can "
+                  "send into it, from canopy's chat or the site's panel")
 #: Result-bearing keys a tool result may carry, from every runner and the gateway.
 _RESULT_KEYS = ("content", "text", "output", "result", "structured", "structuredContent")
 #: Event kinds whose payload is a tool's answer.
@@ -379,6 +384,23 @@ def is_conversation_person(session, *, user=None, contact=None) -> bool:
     return session.participants.filter(user=user).exists()
 
 
+def people_in(sessions, user) -> set:
+    """Which of `sessions` `user` is IN (`is_conversation_person`), for a whole page in
+    one query: its creator, or a participant someone added. A list asks this once,
+    never per row (`tests/test_bulk_authz_parity.py`)."""
+    rows = list(sessions)
+    if user is None or not getattr(user, "is_authenticated", False) or not rows:
+        return set()
+    mine = {s.pk for s in rows if s.created_by_id == user.pk}
+    rest = [s.pk for s in rows if s.pk not in mine]
+    if rest:
+        from apps.canopy_sessions.models import SessionParticipant  # noqa: PLC0415 — as above
+
+        mine |= set(SessionParticipant.objects.filter(session_id__in=rest, user=user)
+                    .values_list("session_id", flat=True))
+    return mine
+
+
 def request_is_chat_surface(request) -> bool:
     """A chat surface: the person at a browser, or the widget / SDK (a contact's or
     a connected site's token). Never an MCP tool call, a PAT, OAuth or a session
@@ -393,18 +415,16 @@ def request_is_chat_surface(request) -> bool:
 
 
 def scope_is_chat_surface(scope) -> bool:
-    """The socket's form of `request_is_chat_surface`."""
+    """The socket's form of `request_is_chat_surface`: a contact's or a site's widget,
+    or a person's own browser session. `RealtimeAuthMiddleware` says which door
+    signed the socket in (`auth_method`): "session" only for a cookie a person
+    signed in with — a session minted from a token is "minted"
+    (`channels_auth.MINTED`), a bearer is its token's kind, and none is a person."""
+    if scope.get("auth_method") == "minted":
+        return False
     if scope.get("via_widget") or scope.get("contact") is not None:
         return True
-    if scope.get("auth_method") != "session":
-        return False
-    from apps.common.views_debug import DEBUG_SESSION_MARKER  # noqa: PLC0415 — as above
-
-    session = scope.get("session")
-    try:
-        return not (session is not None and session.get(DEBUG_SESSION_MARKER))
-    except Exception:  # noqa: BLE001 — an unreadable session is not a person
-        return False
+    return scope.get("auth_method") == "session"
 
 
 def reads_content(session, *, chat_surface: bool, user=None, contact=None) -> bool:
@@ -437,14 +457,35 @@ def readable(messages, session, *, chat_surface: bool, user=None, contact=None) 
     return out
 
 
-def sealed_key_for(session, *, chat_surface: bool, user=None, contact=None) -> dict | None:
+def request_is_panel_browser(request) -> bool:
+    """Whether a request a site's delegated token carries comes from the person's
+    browser in canopy's own panel frame (`/embed/…`, served from canopy's origin,
+    so its fetches are `Sec-Fetch-Site: same-origin`) rather than from the site's
+    backend calling canopy server to server. Any request with no delegated token is
+    canopy's own signed-in page, and answers True.
+
+    Not a proof: a header a host's backend could forge. It keeps what only the
+    person's browser needs (`sealed_key.keyset`, the person's vault seals) out of
+    every ordinary server-to-server call; the trust boundary is in
+    docs/architecture/tenancy.md § Sensitive conversations."""
+    if not getattr(request, "delegated_app", None):
+        return True
+    return (request.headers.get("Sec-Fetch-Site") or "").lower() == "same-origin"
+
+
+def sealed_key_for(session, *, chat_surface: bool, user=None, contact=None,
+                   keyset: bool = True) -> dict | None:
     """What this reader's browser needs to open the conversation
     (`conversation_keys.reader_key`), behind the same gate as the words. None for an
     ordinary conversation, a reader `reads_content` refuses, or a contact (who holds
-    no key)."""
+    no key). `keyset=False` leaves out the reader's own vault keyset (its seals),
+    which only the panel's browser needs (`request_is_panel_browser`)."""
     if not is_sensitive(session) or contact is not None or not reads_content(
             session, chat_surface=chat_surface, user=user, contact=contact):
         return None
     from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
 
-    return conversation_keys.reader_key(session, user)
+    out = conversation_keys.reader_key(session, user)
+    if out is not None and not keyset:
+        out = {**out, "keyset": None}
+    return out

@@ -475,9 +475,9 @@ def test_slack_gets_the_result_text_and_a_link_for_a_view_and_nothing_for_other_
 
 
 def _sensitive(w):
-    """The conversation becomes sensitive, with keys for its owner and the editor, and
-    its tool call stored as a sensitive conversation stores one: metadata columns, the
-    call sealed to the conversation's key."""
+    """The conversation becomes sensitive, with keys for its owner and the editor; its
+    tool call, stored before, is sealed as it does (`conversation_keys.seal_existing`):
+    metadata columns, the call sealed to the conversation's key."""
     from apps.canopy_sessions import services as chat_services
     from apps.canopy_sessions.models import SessionKeyWrap
     from apps.harness import sensitivity
@@ -490,8 +490,7 @@ def _sensitive(w):
     SessionKeyWrap.objects.create(session=w["session"], user=w["editor"], recipient_jkt=wrap.pop("recipient_jkt"),
                                   wrap=wrap)
     use = Message.objects.get(session=w["session"], role=Message.TOOL_USE)
-    _, use.content, use.sealed = sensitivity.seal(w["session"], use.turn_index, use.role, "", use.content)
-    use.save(update_fields=["content", "sealed"])
+    assert use.content.get("redacted") == sensitivity.REDACTED and use.sealed.startswith("cc1:")
 
 
 def test_in_a_sensitive_conversation_the_view_gets_no_result_and_fetches_as_the_viewer(w, labs):

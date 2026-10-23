@@ -133,6 +133,18 @@ def _runner_status(runner) -> str | None:
     return None if runner is None else runner.live_status
 
 
+def _mark_people_in(rows, viewer) -> list:
+    """`rows`, each sensitive one told whether `viewer` is in it — one query for the
+    page (`sensitivity.people_in`), not one per row in `_out`."""
+    rows = list(rows)
+    sensitive = [s for s in rows if sensitivity.is_sensitive(s)]
+    if sensitive:
+        mine = sensitivity.people_in(sensitive, viewer)
+        for s in sensitive:
+            s._you_are_in_it = s.pk in mine
+    return rows
+
+
 def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
     binding = getattr(session, "runner_binding", None)  # reverse 1:1 -> None when absent
     waiting_on_you = serializers.pending_menu(session) is not None
@@ -233,7 +245,9 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "backfill_pending": bool(binding and binding.backfill_requested),
         "notify_every_completion": session.notify_every_completion,
         "sensitive": sensitive,
-        "you_are_in_it": (sensitivity.is_conversation_person(session, user=viewer)
+        # A list reads who is in which once per page (`_mark_people_in`).
+        "you_are_in_it": ((session._you_are_in_it if hasattr(session, "_you_are_in_it")
+                           else sensitivity.is_conversation_person(session, user=viewer))
                           if sensitive else None),
         "started_by_name": _started_by_name(session),
         "runner_requirements": sorted(rr.requirements_of_session(session)),
@@ -552,7 +566,7 @@ def list_sessions(
     rows = transcript_read.with_driving_turn(rows)
     if reply:
         rows = transcript_read.with_open_turn(transcript_read.with_last_reply(rows))
-    out = [_out(s, reply=reply, viewer=request.user) for s in rows]
+    out = [_out(s, reply=reply, viewer=request.user) for s in _mark_people_in(rows, request.user)]
     # Waiting first, then running, then genuinely-most-recent. Sorting by
     # created_at made a dead repo and a live one interleave arbitrarily (both
     # "created" in the same report sweep); last_activity_at is the real signal.
@@ -644,7 +658,7 @@ def search_sessions(
     more = len(page) > limit
     page = page[:limit]
     return {
-        "sessions": [_out(s, viewer=request.user) for s in page],
+        "sessions": [_out(s, viewer=request.user) for s in _mark_people_in(page, request.user)],
         "next_cursor": _encode_cursor(page[-1]._activity, page[-1].id) if more else None,
     }
 
@@ -983,7 +997,8 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["can_move"] = filing.can_move(request.user, session)
     # A sensitive conversation's key, for the reader's browser to open `sealed` with.
     data["sealed_key"] = sensitivity.sealed_key_for(
-        session, user=request.user, chat_surface=sensitivity.request_is_chat_surface(request))
+        session, user=request.user, chat_surface=sensitivity.request_is_chat_surface(request),
+        keyset=sensitivity.request_is_panel_browser(request))
     return data
 
 
@@ -993,10 +1008,26 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
 SESSION_INFO_TURNS = 50
 
 
-def _info_binding(binding) -> dict | None:
+#: The metadata keys Session info shows, and no others: what started it and where it
+#: belongs (the host's own linkage, the site, the requirements). Everything else canopy
+#: keeps there is its own bookkeeping — where each turn's transcript ends
+#: (`turn_end_epochs`), View receipts, Slack's history — and a new key stays unpublished
+#: until someone decides it is safe.
+INFO_METADATA_KEYS = frozenset({
+    "source", "origin_key", "opp_slug", "opp_run_id",
+    "embed_app", "via", "capability", "runner_requirements", "transcript_sourced",
+    "requested_runner_id", "slack_team", "slack_channel",
+})
+
+
+def _info_binding(binding, *, sensitive: bool = False) -> dict | None:
     if binding is None:
         return None
     runner = binding.runner if binding.runner_id else None
+    if sensitive:
+        # The box's own Claude session and the task summary say what the
+        # conversation is, and it says nothing outside its people.
+        return {**_info_binding(binding), "transcript_id": "", "summary": ""}
     return {
         "runner_id": runner.id if runner else None,
         "runner_name": runner.name if runner else None,
@@ -1053,11 +1084,11 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
     )
     turn_access.redact(turns, request.user)
     return {
-        "session": _out(session),
-        "metadata": session.metadata or {},
+        "session": _out(session, viewer=request.user),
+        "metadata": {k: v for k, v in (session.metadata or {}).items() if k in INFO_METADATA_KEYS},
         "contact": str(session.contact) if session.contact_id else None,
         "updated_at": session.updated_at,
-        "binding": _info_binding(binding),
+        "binding": _info_binding(binding, sensitive=sensitivity.is_sensitive(session)),
         "turns": turns,
         "turn_count": turns_qs.count(),
         "turns_limit": SESSION_INFO_TURNS,
@@ -1372,10 +1403,13 @@ def ask_to_join(request: HttpRequest, session_id: uuid.UUID):
     """A private (sensitive) conversation you can see listed but are not in: ask its
     owner to add you. The request names you and the conversation, nothing it said.
     Asking again returns the request already open. 409 for an ordinary
-    conversation, or one you are already in."""
+    conversation, or one you are already in; 429 when your last request into it,
+    declined or withdrawn, was made within the hour."""
     session = _session_or_404(request, session_id)
     try:
         req = join_requests.ask(session, request.user)
+    except join_requests.TooSoon as exc:
+        raise HttpError(429, str(exc))
     except ValueError as exc:
         raise HttpError(409, str(exc))
     return _join_request_out(req)
@@ -1405,6 +1439,7 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
         "rest", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
         runner_requirements=getattr(request, "runner_requirements", ()),
+        chat_surface=sensitivity.request_is_chat_surface(request),
         initiator=who.for_request(request, via=who.channel(request, "chat")),
         placement=payload.placement, origin=payload.origin, parent=payload.parent,
         origin_ref={"clear_prompt": True} if payload.clear_prompt else None,
@@ -1448,6 +1483,11 @@ def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
     message; 409 when the cut would fall inside a turn that is still running."""
     session = _session_or_404(request, session_id, write=True)
     _in_it_or_403(request, session)
+    # A fork of a sensitive conversation carries its key, its people's wraps and its
+    # agent's memory into a conversation its forker owns: the owner's act, as adding
+    # someone is (`access.can_share`), never an editor's.
+    if sensitivity.is_sensitive(session) and not access.can_share(request.user, session):
+        raise HttpError(403, sensitivity.NOT_OWNER_FORK)
     try:
         fork = placement.fork_session(session=session, turn_index=payload.turn_index,
                                      user=request.user)
@@ -1810,6 +1850,9 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
 def read_page_state(request: HttpRequest, session_id: uuid.UUID) -> PageStateOut:
     """How a surface other than the agent's MCP tool reads the current view."""
     session = _session_or_404(request, session_id)
+    # A sensitive conversation's page is its people's screen: read back behind the
+    # same gate as its words (`sensitivity.reads_content`).
+    _in_it_or_403(request, session)
     stored = page_state.current_page_state(session)
     return PageStateOut(state=stored, version=int(stored.get("version") or 0))
 

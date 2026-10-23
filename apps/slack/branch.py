@@ -34,6 +34,7 @@ from .services import (
     _link,
     _principal_name,
     _send,
+    private_refusal,
     resolve_principal,
     tenant_sessions,
     thread_key,
@@ -66,6 +67,10 @@ def handle(installation, inbound: Inbound, ask: str) -> Outcome:
               .exclude(status=Session.ARCHIVED).order_by("-created_at").first())
     if parent is None:
         return Outcome(EMPTY, NOT_IN_A_THREAD)
+    # A branch carries a private conversation's key and history on: never from Slack.
+    refused = private_refusal(parent)
+    if refused is not None:
+        return refused
     agent = parent.agent
     principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
     if refusal is not None:

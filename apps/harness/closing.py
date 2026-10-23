@@ -60,7 +60,8 @@ def close_turn(
         fields["result_note"] = note
     from . import sensitivity
 
-    if sensitivity.is_sensitive(turn):
+    sensitive = sensitivity.is_sensitive(turn)
+    if sensitive:
         # Metadata only (spec 2026-10-22 §4): the prompt was held only until the
         # turn ended, and the note is withheld -- an error can quote what was read.
         fields["prompt"] = ""
@@ -71,6 +72,8 @@ def close_turn(
     turn.refresh_from_db()
     if not updated:
         return False
+    if sensitive and turn.chat_session_id:
+        _forget_the_page(turn)
 
     # Whatever runs this turn has stopped: its agent logins die now.
     from .turn_agent_tokens import revoke_for_turn
@@ -130,6 +133,19 @@ def close_turn(
 
         debugger.on_turn_failed(turn)
     return True
+
+
+def _forget_the_page(turn: Turn) -> None:
+    """A sensitive conversation's page state (what the person's screen shows — a
+    patient's name in a filter, say) is kept only while a turn of it may read it
+    (`current_page`): once its last live turn ends it is forgotten, and the panel
+    declares the page again before its next send."""
+    if Turn.objects.filter(chat_session_id=turn.chat_session_id,
+                           status__in=list(Turn.NON_TERMINAL)).exists():
+        return
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — harness ↛ chat at import
+
+    Session.objects.filter(pk=turn.chat_session_id).exclude(page_state={}).update(page_state={})
 
 
 def close_riders(turn: Turn, status: str | None = None, *, now=None) -> None:

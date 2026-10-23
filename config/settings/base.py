@@ -750,6 +750,10 @@ CANOPY_RETENTION_ENFORCE = env.bool("CANOPY_RETENTION_ENFORCE", default=False)
 # is purged after this many days WHATEVER CANOPY_RETENTION_ENFORCE says, by the same
 # heartbeat sweep (spec 2026-10-22-sensitive-data-agents §4). A shorter rule wins.
 CANOPY_SENSITIVE_KEEP_DAYS = env.int("CANOPY_SENSITIVE_KEEP_DAYS", default=30)
+# A sensitive turn's prompt is the person's words in clear, held only so a runner can
+# run it. One still queued or claimed this long after it was asked is closed (MISSED)
+# and its prompt wiped (apps/harness/sweeps.py::expire_unrun_sensitive_turns).
+CANOPY_SENSITIVE_TURN_DEADLINE_SECONDS = env.int("CANOPY_SENSITIVE_TURN_DEADLINE_SECONDS", default=3600)
 
 
 # --- Auto-debug: a failed turn starts a debugger turn (apps/harness/auto_debug.py) ---

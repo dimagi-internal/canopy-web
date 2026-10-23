@@ -397,6 +397,10 @@ def _finish_audience(turn: Turn):
 
 
 def _finish_body(session: Session, turn: Turn) -> str:
+    if sensitivity.is_sensitive(session) or sensitivity.is_sensitive(turn):
+        # Its words are its people's, read in canopy; a lock screen gets only that
+        # there is something to read (never the withheld note's own wording).
+        return "Reply ready" if turn.status == Turn.DONE else "The turn failed"
     reply = (
         Message.objects.filter(session=session, role=Message.ASSISTANT)
         .exclude(plaintext="")

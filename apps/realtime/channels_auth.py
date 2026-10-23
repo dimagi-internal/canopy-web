@@ -45,8 +45,34 @@ def _header(scope, name: bytes) -> bytes | None:
     return None
 
 
+#: `scope["auth_method"]` for a socket a session MINTED from a token signed in
+#: (`POST /api/debug/mint-session/`, `views_debug.DEBUG_SESSION_MARKER`): a machine
+#: holding a cookie, not a person at a browser. Read from the session store here,
+#: because a socket's scope carries no Django session for anything later to ask.
+MINTED = "minted"
+
+
 @database_sync_to_async
 def _user_from_session(scope):
+    found = _session_user_sync(scope)
+    return found[0] if found is not None else None
+
+
+@database_sync_to_async
+def _session_principal(scope):
+    """(user, method) the session cookie signs in — `method` "session", or
+    `MINTED` when the session was minted from a token — or None."""
+    found = _session_user_sync(scope)
+    if found is None:
+        return None
+    user, minted = found
+    return user, (MINTED if minted else "session")
+
+
+def _session_user_sync(scope):
+    """(user, minted) for this socket's session cookie, or None."""
+    from apps.common.views_debug import DEBUG_SESSION_MARKER  # noqa: PLC0415 — loads the session models
+
     raw = _header(scope, b"cookie")
     if not raw:
         return None
@@ -70,7 +96,11 @@ def _user_from_session(scope):
     session_hash = session.get(HASH_SESSION_KEY)
     if not (session_hash and constant_time_compare(session_hash, user.get_session_auth_hash())):
         return None
-    return user
+    try:
+        minted = bool(session.get(DEBUG_SESSION_MARKER))
+    except Exception:  # noqa: BLE001 — an unreadable session is not a person
+        minted = True
+    return user, minted
 
 
 def _bearer_raw(scope) -> str:
@@ -144,7 +174,7 @@ async def still_signed_in(scope) -> bool:
     method = scope.get("auth_method")
     if method is None:
         return True
-    if method == "session":
+    if method in ("session", MINTED):
         again = await _user_from_session(scope)
     else:
         again = await _recheck_user(scope)
@@ -269,8 +299,11 @@ class RealtimeAuthMiddleware:
         # we" grade a turn's initiator carries (apps/harness/initiator.py). A PAT
         # and an app-delegated token resolve to the same user and are not the
         # same claim.
-        method = "session"
-        user = await _user_from_session(scope)
+        # A minted session is a machine (`MINTED`): it signs the socket in, and no
+        # surface that only a person at a browser may reach treats it as one
+        # (`sensitivity.scope_is_chat_surface`).
+        signed = await _session_principal(scope)
+        user, method = signed if signed is not None else (None, "session")
         found = None
         if user is None:
             found = await _resolve_principal(scope)

@@ -233,12 +233,8 @@ def test_an_mcp_call_is_not_a_chat_surface(w, rf):
     assert REPLY not in _said([{"plaintext": m.plaintext} for m in rows])
 
 
-def test_the_socket_admits_a_browser_or_the_widget_never_a_token():
-    assert sensitivity.scope_is_chat_surface({"auth_method": "session", "session": {}})
-    assert sensitivity.scope_is_chat_surface({"auth_method": "dlg", "via_widget": True})
-    assert not sensitivity.scope_is_chat_surface({"auth_method": "pat"})
-    assert not sensitivity.scope_is_chat_surface(
-        {"auth_method": "session", "session": {"_canopy_debug_session": True}})
+# The socket's own door — a browser, the widget, never a token or a minted cookie — is
+# driven through the real `RealtimeAuthMiddleware` in tests/test_sealed_server_doors.py.
 
 
 def test_a_visitor_cannot_hold_one_and_nothing_of_its_words_is_kept(w):

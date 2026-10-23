@@ -142,3 +142,27 @@ def test_runner_reads_are_the_rule_longhand(world):
         mine = administered_runner_ids(u, boxes)
         assert mine == {r.pk for r in boxes if r.owner_id and (
             r.owner_id == u.pk or RunnerAdmin.objects.filter(runner=r, user=u).exists())}, u.email
+
+
+def test_people_in_is_is_conversation_person_for_every_person_and_session(world):
+    """A list asks who is in which sensitive conversation once per page
+    (`sensitivity.people_in`); the one-at-a-time answer is `is_conversation_person`."""
+    from apps.canopy_sessions.models import Session, SessionParticipant
+    from apps.harness import sensitivity
+
+    users, workspaces, agents = world
+    sensitive = {"runner_requirements": ["sensitive_data"]}
+    sessions = []
+    for i, starter in enumerate(users[:4]):
+        s = Session.objects.create(workspace=workspaces[i % 3], agent=agents[i], created_by=starter,
+                                   metadata=dict(sensitive))
+        sessions.append(s)
+    sessions.append(Session.objects.create(workspace=workspaces[0], agent=agents[0],
+                                           origin=Session.ORIGIN_RUNNER, metadata=dict(sensitive)))
+    for s, (u, role) in zip(sessions, itertools.cycle([(users[4], SessionParticipant.VIEWER),
+                                                       (users[5], SessionParticipant.EDITOR)])):
+        SessionParticipant.objects.create(session=s, user=u, role=role)
+    for u in users:
+        bulk = sensitivity.people_in(sessions, u)
+        for s in sessions:
+            assert (s.pk in bulk) == sensitivity.is_conversation_person(s, user=u), (u.email, s.pk)

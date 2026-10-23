@@ -368,6 +368,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             # in the sentence the REST door gives as a 422.
             await self._error("cannot_hold", str(exc), detail={"client_id": client_id})
             return
+        except doors.NotInIt as exc:
+            await self._error("forbidden", str(exc), detail={"client_id": client_id})
+            return
         draft = await database_sync_to_async(drafts.draft_for)(self.session, self.user)
         if user_message_id is not None:
             # A send commits the SENDER's own draft. Broadcast draft.committed +
@@ -436,6 +439,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         msg, _turn = doors.send_from(
             "socket", session=self.session, text=text, user=self.user, client_id=client_id,
             runner_requirements=self.scope.get("runner_requirements", ()),
+            chat_surface=sensitivity.scope_is_chat_surface(self.scope),
             context=_socket_context(self.scope),
             initiator=who.for_scope(self.scope, via=who.channel(self.scope, "chat")),
         )

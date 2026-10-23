@@ -10,12 +10,22 @@ row of `DOORS` or an explicit argument, never a copy.
 What stays at the door: who may send (each door's own ACL query), the initiator
 (each door knows its own asker), and door-only follow-ups (the REST send clears
 the sender's server draft; Slack posts its own acknowledgement).
+
+One rule is here, not at the door: a SENSITIVE conversation takes a message only
+from one of its own people on one of its chat surfaces — the gate that reads it
+back (`sensitivity.reads_content`). Whoever may not read what the agent answers may
+not steer it either, and a send never makes the sender the key's holder
+(`NotInIt`). Every door passes the surface it is (`chat_surface`).
 """
 
 from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+
+from ninja.errors import HttpError
+
+from apps.harness import sensitivity
 
 from . import services
 from . import send
@@ -46,8 +56,16 @@ DOORS = {
 }
 
 
+class NotInIt(PermissionError):
+    """A send into a sensitive conversation from someone not in it, or through a
+    door that is not its chat surface (a PAT, MCP, a minted session, Slack)."""
+
+    def __init__(self):
+        super().__init__(sensitivity.NOT_IN_IT_SEND)
+
+
 def send_from(
-    door: str, *, session, text: str, user, initiator, runner_requirements,
+    door: str, *, session, text: str, user, initiator, runner_requirements, chat_surface: bool,
     client_id: str | None = "", context: dict | None = None, **send_kwargs,
 ):
     """Send `text` into `session` through `door`; returns `(message, turn)`.
@@ -60,9 +78,20 @@ def send_from(
     door send a sensitive-data site's member's turn with no floor at all. `context`: request provenance to bind around the send for a
     door with no HTTP request behind it (the socket; `apps/common/request_context`).
     Everything else (`placement`, `origin`, `origin_ref`, `parent`, ...) is
-    `send.send_message`'s own."""
+    `send.send_message`'s own. `chat_surface`: whether this request is a person's
+    chat surface (`sensitivity.request_is_chat_surface` / `scope_is_chat_surface`),
+    REQUIRED for the same reason.
+
+    NotInIt (403 on an HTTP door) for a sensitive conversation `reads_content`
+    refuses this sender."""
     spec = DOORS[door]
     services.add_runner_requirements(session, runner_requirements)
+    contact = getattr(initiator, "contact", None)
+    if not sensitivity.reads_content(session, chat_surface=chat_surface,
+                                     user=None if contact is not None else user, contact=contact):
+        if not spec.http:
+            raise NotInIt()
+        raise HttpError(403, sensitivity.NOT_IN_IT_SEND)
     if context is not None:
         from apps.common import request_context
 
@@ -79,8 +108,6 @@ def send_from(
     except ValueError as exc:
         if not spec.http:
             raise
-        from ninja.errors import HttpError
-
         raise HttpError(422, str(exc)) from None
     if spec.inline:
         send.maybe_execute_inline(turn)

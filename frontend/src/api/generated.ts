@@ -12172,7 +12172,8 @@ export interface paths {
          * @description A private (sensitive) conversation you can see listed but are not in: ask its
          *     owner to add you. The request names you and the conversation, nothing it said.
          *     Asking again returns the request already open. 409 for an ordinary
-         *     conversation, or one you are already in.
+         *     conversation, or one you are already in; 429 when your last request into it,
+         *     declined or withdrawn, was made within the hour.
          */
         readonly post: operations["ask_to_join"];
         readonly delete?: never;

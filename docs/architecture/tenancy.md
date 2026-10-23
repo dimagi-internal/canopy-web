@@ -349,7 +349,9 @@ THE predicate; every surface below asks it, one test each in
     (`sealed_key`); the chat page and the embedded panel unlock the person's vault key
     (passkey or passphrase), unwrap, and decrypt in the browser (`frontend/src/vault/sealedChat.ts`,
     `useSealedConversation`). Live frames to the admitted sockets still carry the words in
-    transit; only what is stored is unreadable to canopy-web. Every other reader — search,
+    transit; only what is stored is unreadable to canopy-web. Which socket is a chat surface
+    is read from the session STORE at the handshake (`channels_auth`): a cookie minted from a
+    token is `auth_method="minted"`, never "session", and `scope_is_chat_surface` refuses it. Every other reader — search,
     human inputs, a session review, an agent's or the fleet's reads, an admin who is not in
     it — reads the metadata columns. The reply reaches the asker the one way every turn's
     does: its transcript rows. A confined turn has no binding, so its box tails the turn's
@@ -359,6 +361,14 @@ THE predicate; every surface below asks it, one test each in
     end, before deleting it. Every ship of one transcript lands in the same epoch, and a row
     already held is neither stored nor fanned out again, so the final ship adds nothing the
     live tail sent. A sensitive-data box still runs no `/streams` tail or backfill.
+  - *Who may send into one.* Its own people on its chat surfaces, the read gate
+    (`reads_content`, asked in `doors.send_from` for every door: REST, socket, contact,
+    app view, MCP, Slack) — 403 `NOT_IN_IT_SEND` otherwise, `forbidden` on the socket.
+    Whoever may not read the answer may not steer the agent either. A leg that only lets
+    someone see one exists (an agent's admins, a co-tenant of a runner-discovered one)
+    gives them VIEWER, never owner or editor (`access.role_for`), and nobody becomes its
+    key's holder by sending: the key is its creator's (`require_key`), so a conversation
+    nobody started stays keyless and keeps no words.
   - *Who may hold one.* A canopy user with a vault key. A contact, or a starter with none,
     is refused in a sentence ("a sensitive conversation needs a canopy account with a vault
     key; set yours up at …") at create (422) and at every send door (`CannotHold`: 422 on
@@ -367,8 +377,19 @@ THE predicate; every surface below asks it, one test each in
   - *Multiplayer.* Adding someone is a browser act by someone in it: their browser unwraps
     its copy and wraps it to the newcomer's current vault key (`POST …/participants` with
     `wrap`; the server checks the shape and `recipient_jkt`). Removing someone deletes their
-    wrap; the key is not rotated (they could have kept what they read).
-  - *Rows from before.* Migration 0049 re-sealed field-key rows to their conversation's new
+    wrap; the key is not rotated (they could have kept what they read). Nothing else makes
+    anyone one of its people: `participants.ensure_participant` adds nobody to a sensitive
+    conversation who is not its creator and holds no wrap of its key, so no door — a Slack
+    reply, a dispatch's asker — can. Asking to join is once an hour per conversation
+    (`join_requests.TooSoon`, 429; `CANOPY_JOIN_REQUEST_REASK_SECONDS`).
+  - *Rows from before it became sensitive.* Sealed in the transaction that makes it
+    sensitive (`services.add_runner_requirements` → `conversation_keys.seal_existing`): the
+    server holds the conversation's PUBLIC key, so it seals what it can no longer read back,
+    clears the columns, and drops a tool's result; an ended turn's prompt is wiped and its
+    note withheld, its events reduced to metadata, its raw transcript deleted, and the
+    binding's tail, summary and dialog words cleared (`_withhold_what_it_kept`). A live
+    turn keeps its prompt until it ends.
+  - *Rows from before keys were per conversation.* Migration 0049 re-sealed field-key rows to their conversation's new
     key, wrapped to the starter; a session whose starter had no vault key kept the field key,
     is served to nobody, and is logged — `manage.py reseal_sensitive_conversations` moves it
     once they have one (`sealed_key.needs_migration` says so meanwhile).
@@ -377,6 +398,15 @@ THE predicate; every surface below asks it, one test each in
     never for a conversation whose messages all arrived live; its one click goes straight to
     the passkey (`unlockLocally`, `useVaultUnlock`), and a passphrase is asked only when the
     passkey is absent or failed.
+  - *The keyset and the host.* `sealed_key.keyset` (the reader's vault public key and its
+    seals) goes only to the person's browser: canopy's own signed-in page, or the panel's
+    frame, whose fetches are `Sec-Fetch-Site: same-origin` (`sensitivity.request_is_panel_browser`).
+    A site's backend calling canopy with the same delegated token gets `keyset: null`. The
+    trust boundary: a connected site vouches for who its visitor is, so it can always act
+    as them and read what canopy hands them — ciphertext and their wrap, never anything that
+    opens it. Their seals would let a site that forged the browser's header try passphrases
+    offline (a passkey seal cannot be attacked so); the header keeps them out of every
+    ordinary server-to-server call, and is not a proof against a site that forges it.
   - *Not covered:* a person's in-progress draft (`drafts.py`) is still under the field key
     while they type — it is the composer's live state, read back to send it.
 - **Memory is off, both ways:** nothing is written (`hcp.refuse_if_sensitive`), and nothing is
@@ -390,10 +420,22 @@ THE predicate; every surface below asks it, one test each in
   metadata; and `turn_access.can_read_turn_content` is False for a sensitive turn, so no turn
   read (REST, MCP, the board, the unclaimable report, the caller envelope) returns its
   prompt, note or report while it runs. The `TURN_CREATED` log line keeps no prompt head.
+  A sensitive turn no runner has started (QUEUED or CLAIMED) is closed MISSED through
+  `close_turn`, prompt wiped, `CANOPY_SENSITIVE_TURN_DEADLINE_SECONDS` (1 h) after it was
+  asked (`harness.sweeps.expire_unrun_sensitive_turns`, its own tick, and the sensitive
+  sweep). Session info (`GET /{id}/info`) shows an allowlist of metadata
+  (`api.INFO_METADATA_KEYS`) and, for a sensitive one, no box Claude session or summary.
+  Its "done" push says "Reply ready" or "The turn failed", nothing more.
 - **Only its people hand it on:** adding a participant (which needs their wrap, made in a
   browser already in it) and forking (which copies the sealed words, the key and the wraps)
   need `reads_content` too, so an agent's admin who may open a thread they
-  are not in cannot add themselves or copy it.
+  are not in cannot add themselves or copy it. A fork is the OWNER's act as well
+  (`access.can_share`): it carries the key, the wraps and the agent's memory into a
+  conversation its forker owns, so an editor in it cannot.
+- **Nothing from outside its people:** Slack takes no message into one — a reply in its
+  thread, a mention, a branch, a channel read, even from its owner — and says so with the
+  link (`slack.services.private_refusal`); an email in its thread runs as the agent's own
+  turn beside it (`channels.email.arrive`).
 - **The agent's memory:** every turn of a sensitive conversation runs confined to the same
   capability, so it resumes the Claude session of the conversation's previous turn when it
   runs on the same sensitive-data box, in the same capability for the same agent, and the
@@ -414,9 +456,18 @@ THE predicate; every surface below asks it, one test each in
   other per-turn state under `~/.canopy` are denied by name (`sensitive_data_settings`). A
   member's `who_is_asking` is gated like its REST twin (`can_read_turn_content`), so a
   sensitive turn is "turn not found".
-- **No door around the gate** (`tests/test_sensitive_read_doors.py`): a session minted from a
+- **No door around the gate** (`tests/test_sensitive_read_doors.py`,
+  `tests/test_sealed_server_doors.py`): a session minted from a
   token is refused by the app-view routes (`app_views_api.browser_only`) and the panel's
-  own token (`embed_api.embed_self_token`), both via `is_machine`; a View's `tool_input`
+  own token (`embed_api.embed_self_token`), both via `is_machine`, and by the chat socket
+  (`auth_method="minted"`); its page state (`GET /{id}/page-state`, MCP `read_page_state`)
+  asks `reads_content`, `current_page` over MCP leaves a sensitive one out (the turn in it
+  still reads its own, by its caller token or chat key), and the page is forgotten when its
+  last live turn ends (`closing._forget_the_page`); the unbound stream door
+  (`api_session_sync._turn_end_session`) takes only the confined turn's own transcript
+  (the first it ships, stamped on `Turn.session_key`) from a box that may still hold the
+  agent (`runner_may_hold_agent`); a list reads who is in which once per page
+  (`sensitivity.people_in`); a View's `tool_input`
   asks the request's real surface (`Viewer.chat_surface`); attachment bytes ask
   `reads_content` (404 otherwise).
 - **A blocked agent's dialog is metadata:** `RunnerBinding.pending_question` keeps source,

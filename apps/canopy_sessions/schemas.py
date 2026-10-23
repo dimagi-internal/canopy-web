@@ -505,7 +505,8 @@ class SessionInfoOut(Schema):
     """Everything canopy stores about a session, in one read — for the Session
     info panel. `session` is the same shape the list and detail reads serve."""
     session: SessionOut
-    #: Opaque product linkage (e.g. {"opp_slug": ...}), as stored.
+    #: What started it and where it belongs (the host's linkage, e.g. {"opp_slug": ...}, the
+    #: site, the requirements): `api.INFO_METADATA_KEYS`, never canopy's own bookkeeping.
     metadata: dict = {}
     #: The contact a visitor's session belongs to, by display name; null for a member's.
     contact: str | None = None

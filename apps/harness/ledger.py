@@ -48,7 +48,7 @@ def append_events(turn: Turn, events: list[dict]) -> int:
         # what the person and the agent said, and a tool's arguments, never rest here.
         rows = [
             TurnEvent(turn=turn, seq=current + i + 1, kind=e["kind"],
-                      payload=(_metadata(e) if sensitive else e.get("payload", {})))
+                      payload=(metadata_of(e) if sensitive else e.get("payload", {})))
             for i, e in enumerate(events)
         ]
         TurnEvent.objects.bulk_create(rows)
@@ -73,7 +73,7 @@ def append_events(turn: Turn, events: list[dict]) -> int:
     return len(rows)
 
 
-def _metadata(event: dict) -> dict:
+def metadata_of(event: dict) -> dict:
     """A sensitive event as its row stores it: metadata (`redact_payload`), plus — on
     a tool result — the host's resource links `strip_result` already checked: an
     address the person's View reads back from the host, never the data."""

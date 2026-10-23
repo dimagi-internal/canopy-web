@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from asgiref.sync import sync_to_async
 
+from apps.harness import sensitivity
 from apps.mcp.audit import current_user_id, write_audit
 from apps.mcp.server import mcp
 
@@ -56,7 +57,10 @@ def _visible_pages(user_id: int) -> list[dict]:
     # direction and the one an id-only filter would have got wrong.
     caller = User.objects.filter(pk=user_id).first()
     sessions = sessions_with_page_for(caller).exclude(page_state={})
-    return [_page_out(session) for session in sessions if session.page_state]
+    # MCP is never a sensitive conversation's chat surface (`sensitivity.reads_content`):
+    # its page is read only by the turn running in it (`_pages_of_turns`, `_page_of_chat`).
+    return [_page_out(session) for session in sessions
+            if session.page_state and sensitivity.reads_content(session, chat_surface=False, user=caller)]
 
 
 def _pages_of_turns(turn_ids: list[str]) -> list[dict]:
