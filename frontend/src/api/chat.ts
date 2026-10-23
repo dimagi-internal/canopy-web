@@ -23,6 +23,7 @@ export type StreamState = components["schemas"]["StreamStateOut"];
 export type BackfillState = components["schemas"]["BackfillStateOut"];
 export type SendResult = components["schemas"]["SendOut"];
 export type TurnPlacementResult = components["schemas"]["TurnOutMinimal"];
+export type SlashCommand = components["schemas"]["SlashCommandOut"];
 
 /** The shared `ApiError` (./problem) under its old name; callers branch on
  *  `.status` and `.code` (the problem type's tail, e.g. "not-found"). */
@@ -376,6 +377,11 @@ export async function uploadAttachment(sessionId: string, file: File): Promise<A
     throw ApiError.from(res.status, problem, `upload failed (${res.status})`);
   }
   return res.json();
+}
+
+/** The commands the composer offers after `/` (`useSlashCommands`). */
+export function listSlashCommands(sessionId: string): Promise<SlashCommand[]> {
+  return request<SlashCommand[]>(`/api/canopy-sessions/${sessionId}/slash-commands`);
 }
 
 /** Discard an attachment that has not been sent yet (the chip's "x"). */

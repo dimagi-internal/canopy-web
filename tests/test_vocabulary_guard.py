@@ -30,6 +30,13 @@ ALLOWED: dict[str, str] = {
     "/api/storyboards/{slug}/decisions/{key}/edit": "storyboards: edit one decision row",
     "edit_storyboard_decision": "storyboards: edit one decision row",
     "TransferDecisionIn": "canopy sessions: approving or declining a session transfer",
+    "/api/harness/runners/{runner_id}/slash-commands": "runners: the Claude Code slash commands a box's sessions can run",
+    "report_slash_commands": "runners: the Claude Code slash commands a box's sessions can run",
+    "SlashCommandIn": "runners: one Claude Code slash command a box reports",
+    "SlashCommandsIn": "runners: the Claude Code slash commands a box reports",
+    "/api/canopy-sessions/{session_id}/slash-commands": "canopy sessions: the composer's `/` menu of Claude Code slash commands",
+    "list_slash_commands": "canopy sessions: the composer's `/` menu of Claude Code slash commands",
+    "SlashCommandOut": "canopy sessions: one Claude Code slash command the composer offers",
 }
 
 

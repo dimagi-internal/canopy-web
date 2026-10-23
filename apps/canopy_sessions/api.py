@@ -43,6 +43,7 @@ from . import (
     secrets,
     serializers,
     services,
+    slash_commands,
     staleness,
     status_feed,
     transcript_ingest,
@@ -52,6 +53,7 @@ from . import activity as session_activity
 from . import send as cs_send
 from .models import Attachment, Session
 from .schemas import (
+    SlashCommandOut,
     AttachmentOut,
     BackfillStateOut,
     ForkIn,
@@ -954,6 +956,19 @@ def get_session_info(request: HttpRequest, session_id: uuid.UUID):
         "participant_count": session.participants.count(),
         "message_count": session.messages.count(),
     }
+
+
+@router.get("/{session_id}/slash-commands", response=list[SlashCommandOut],
+            summary="The slash commands the composer offers")
+@gate("session-acl")  # can_write: only someone who can send gets the list
+def list_slash_commands(request: HttpRequest, session_id: uuid.UUID):
+    """What `/` offers in this session's composer: the agent's launchable skills
+    and what the session's runner reported it can run. Empty for someone who can
+    read the session but not send to it."""
+    session = _session_or_404(request, session_id)
+    if not access.can_write(request.user, session):
+        return []
+    return slash_commands.for_session(session)
 
 
 @router.get(

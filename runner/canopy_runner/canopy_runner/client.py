@@ -396,6 +396,10 @@ class Client:
         _, payload = self._call("GET", f"/runners/{runner_id}/usage-scope")
         return payload or {}
 
+    def put_slash_commands(self, runner_id: str, commands: list[dict]) -> None:
+        """Every slash command a session on this box can run (`slash_commands.scan`)."""
+        self._call("PUT", f"/runners/{runner_id}/slash-commands", {"commands": commands})
+
     def post_usage(self, runner_id: str, sessions: list[dict], *, full: bool = False) -> dict:
         """One chunk of the usage report: per session, per UTC day, tokens — no content."""
         _, payload = self._call("POST", f"/runners/{runner_id}/usage", {"sessions": sessions, "full": full})

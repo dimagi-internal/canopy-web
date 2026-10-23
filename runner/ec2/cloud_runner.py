@@ -3851,12 +3851,14 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         if ask_human is not None:
             def make_agent(**kwargs):
                 return core.AcpAgent(ask_human=ask_human, **kwargs)
+        reducer = core.UpdateReducer()
         res = drive_turn(
-            prompt, make_agent=make_agent, reducer=core.UpdateReducer(), emit=emit,
+            prompt, make_agent=make_agent, reducer=reducer, emit=emit,
             cwd=workdir, env=_agent_env(agent_slug), resume=resume,
             on_start=lambda agent: _acp_register(turn_id, agent),
             on_session=on_session,
-            on_end=lambda agent: _acp_unregister(turn_id),
+            on_end=lambda agent: (_acp_unregister(turn_id),
+                                  _remember_acp_commands(reducer.available_commands)),
             cancelled=lambda: stop_requested(turn_id),
             mode=ACP_PERMISSION_MODE,
             session_start_timeout=ACP_SESSION_START_TIMEOUT_SECONDS,
@@ -8611,6 +8613,7 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
         if with_backfills:
             _drain_backfills(runner_id)
             _maybe_report_usage(runner_id)
+            _maybe_report_slash_commands(runner_id)
         _sync_session_streams(runner_id)
     except Exception as exc:  # noqa: BLE001 — never take the main loop down
         _log(f"session view sync error: {exc}")
@@ -8656,6 +8659,31 @@ def _maybe_report_usage(runner_id: str) -> None:
     _USAGE["scan_at"] = now + USAGE_INTERVAL_SECONDS
     if n or full:
         _log(f"usage report: {n} session(s){' (full rescan)' if full else ''}")
+
+
+# ── slash commands (the chat composer's `/` autocomplete) ───────────────────
+# What a session on this box can run — `canopy_runner.slash_commands`, the same
+# scan the laptop makes, plus what ACP sessions announced (`remember_acp`).
+def _remember_acp_commands(available: list) -> None:
+    try:
+        from canopy_runner import slash_commands  # noqa: PLC0415
+        slash_commands.remember_acp(available)
+    except Exception:  # noqa: BLE001 — bookkeeping must not cost the turn
+        pass
+
+
+def _maybe_report_slash_commands(runner_id: str) -> None:
+    try:
+        from canopy_runner import slash_commands  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — no package yet (pre-bootstrap): next tick
+        return
+
+    def send(commands):
+        code, _ = _api("PUT", f"/runners/{runner_id}/slash-commands", {"commands": commands})
+        if code not in (200, 204):
+            raise RuntimeError(f"slash command report refused: {code}")
+
+    slash_commands.maybe_report(send, home=pathlib.Path.home())
 
 
 # ── confined turns (who-is-asking phase 5, cloud) ────────────────────────────

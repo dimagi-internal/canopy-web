@@ -74,6 +74,7 @@ from .schemas import (
     RunnerIn,
     RunnerLoginOrderIn,
     RunnerLoginReportIn,
+    SlashCommandsIn,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
     RunnerMintOut,
@@ -301,6 +302,18 @@ def report_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: Ru
     harness_runners.report_runner_logins(
         runner, [r.dict() for r in payload.logins], adopt_default=payload.adopt_default)
     return harness_runners.runner_credential_status(runner)
+
+
+@router.put("/runners/{runner_id}/slash-commands", response={204: None},
+            summary="The runner reports the slash commands its sessions can run")
+@gate("runner", kind="runner-protocol")
+def report_slash_commands(request: HttpRequest, runner_id: uuid.UUID, payload: SlashCommandsIn):
+    """The chat composer's `/` autocomplete for sessions on this box. The whole
+    list, replacing what was held."""
+    runner = runner_or_404(request, runner_id)
+    Runner.objects.filter(pk=runner.pk).update(
+        slash_commands=[c.model_dump() for c in payload.commands])
+    return Status(204, None)
 
 
 @router.delete("/runners/{runner_id}/logins/{key}", response=RunnerCredentialStatusOut,
