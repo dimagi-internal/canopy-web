@@ -28,13 +28,27 @@ from apps.harness.models import (
     RunnerDeviceKey,
     RunnerLogin,
 )
-from apps.harness.runners import add_runner_credential, set_runner_credential
+from apps.agents.credentials import workspace_vaults
+from apps.agents.models import Vault, VaultSecret
+from apps.harness import runners as harness_runners
 from apps.push import services as push_services
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
 SOURCE = "apps.harness.alerts_runner_credential"
+
+
+def add_runner_credential(runner, *, kind, name=""):
+    """A token or API key whose value the runner's vault holds — the only kind there is."""
+    vault = harness_runners.open_runner_vault(runner)
+    if vault is None:
+        vault = workspace_vaults.create_for_runner(runner, by=runner.owner)
+        Vault.objects.filter(pk=vault.pk).update(kv=1)
+        vault.refresh_from_db()
+    entry = harness_runners.add_runner_credential(runner, kind=kind, name=name)
+    VaultSecret.objects.create(vault=vault, name=entry.vault_secret_name, value_zk="zk1:" + "A" * 60, kv=1)
+    return entry
 SIGNED_OUT = "not signed in — someone has to sign it in again · probed 2026-10-22T10:00:00Z"
 
 
@@ -61,7 +75,7 @@ def fleet(monkeypatch):
     RunnerAdmin.objects.create(runner=runner, user=admin)
     # The first token on the list, named "hal" — what the status view reports
     # as `claude_token_label`.
-    set_runner_credential(runner, claude_token="sk-ant-oat-1", claude_token_label="hal")
+    add_runner_credential(runner, kind=RunnerLogin.TOKEN, name="hal")
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=shayoni)
     RunnerAssignment.objects.create(agent=eva, runner=runner, rank=0)
     monkeypatch.setattr(alerts, "SOURCES", [SOURCE])
@@ -158,7 +172,7 @@ def test_label_for_each_kind_of_slot(fleet):
     runner = fleet["runner"]
     assert src.label_for(runner, "subscription-1") == "hal"
     assert src.label_for(runner, "subscription-2") == "secondary token"
-    tok = add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-2", name="echo spare")
+    tok = add_runner_credential(runner, kind=RunnerLogin.TOKEN, name="echo spare")
     assert src.label_for(runner, "subscription-2") == "echo spare"
     assert src.label_for(runner, f"token:{tok.key}") == "echo spare"
     RunnerLogin.objects.create(runner=runner, key="ab12cd34", kind=RunnerLogin.LOGIN,
@@ -170,11 +184,11 @@ def test_label_for_each_kind_of_slot(fleet):
     RunnerLogin.objects.create(runner=runner, key="ee55ff66", kind=RunnerLogin.LOGIN, position=7)
     assert src.label_for(runner, "box-login:ee55ff66") == "an unnamed login"
     assert src.label_for(runner, "api-key") == "API key"
-    key = add_runner_credential(runner, kind=RunnerLogin.API_KEY, value="sk-ant-api", name="metered")
+    key = add_runner_credential(runner, kind=RunnerLogin.API_KEY, name="metered")
     assert src.label_for(runner, "api-key") == "metered"
     assert src.label_for(runner, f"api-key:{key.key}") == "metered"
-    bare_tok = add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-3")
-    bare_key = add_runner_credential(runner, kind=RunnerLogin.API_KEY, value="sk-ant-api-2")
+    bare_tok = add_runner_credential(runner, kind=RunnerLogin.TOKEN)
+    bare_key = add_runner_credential(runner, kind=RunnerLogin.API_KEY)
     assert src.label_for(runner, f"token:{bare_tok.key}") == "an unnamed token"
     assert src.label_for(runner, f"api-key:{bare_key.key}") == "an unnamed API key"
     assert src.label_for(runner, "mystery") == "mystery"
@@ -211,7 +225,7 @@ def test_the_only_token_can_be_replaced_not_removed(fleet):
 
 def test_a_token_with_a_backup_can_be_replaced_or_removed(fleet):
     runner = fleet["runner"]
-    add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-ant-oat-2", name="spare")
+    add_runner_credential(runner, kind=RunnerLogin.TOKEN, name="spare")
     (r,) = src.reconcile(timezone.now())
     assert r.body == "Claude rejects it. Replace it with a new token, or remove it."
     alerts.tick(timezone.now())
@@ -222,7 +236,7 @@ def test_a_token_with_a_backup_can_be_replaced_or_removed(fleet):
 
 def test_remove_drops_the_token_and_closes_the_alert(fleet):
     runner = fleet["runner"]
-    add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-ant-oat-2", name="spare")
+    add_runner_credential(runner, kind=RunnerLogin.TOKEN, name="spare")
     alerts.tick(timezone.now())
     alerts.act(_alert(), fleet["jj"], "remove")
     assert list(RunnerLogin.objects.filter(runner=runner, kind=RunnerLogin.TOKEN)
@@ -240,7 +254,7 @@ def test_remove_drops_the_token_and_closes_the_alert(fleet):
 
 def test_remove_refused_when_it_became_the_last_token(fleet):
     runner = fleet["runner"]
-    spare = add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="sk-ant-oat-2", name="spare")
+    spare = add_runner_credential(runner, kind=RunnerLogin.TOKEN, name="spare")
     alerts.tick(timezone.now())
     a = _alert()
     RunnerLogin.objects.filter(pk=spare.pk).delete()

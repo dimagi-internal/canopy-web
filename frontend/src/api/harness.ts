@@ -218,26 +218,14 @@ export async function addVaultedRunnerCredential(
   return unwrap(res, 'addVaultedRunnerCredential') as unknown as RunnerVaultEntry
 }
 
-/** Add a pasted token or API key at the end of the runner's list. */
-export async function addRunnerCredential(
-  runnerId: string, kind: 'token' | 'api_key', value: string, name = '',
-): Promise<CredentialStatus> {
-  const res = await apiV2.POST('/api/harness/runners/{runner_id}/credentials', {
-    params: { path: { runner_id: runnerId } },
-    body: { kind, value, name },
-  })
-  return unwrap(res, 'addRunnerCredential') as unknown as CredentialStatus
-}
-
-/** Rename a token or API key, or give it a new value. Omitted fields are unchanged. */
-export async function updateRunnerCredential(
-  runnerId: string, key: string, change: { name?: string; value?: string },
-): Promise<CredentialStatus> {
+/** Rename a token or API key. A new VALUE is sealed into the runner's vault in the
+ *  browser (or by the box after a sign-in), never sent to canopy-web. */
+export async function renameRunnerCredential(runnerId: string, key: string, name: string): Promise<CredentialStatus> {
   const res = await apiV2.PATCH('/api/harness/runners/{runner_id}/credentials/{key}', {
     params: { path: { runner_id: runnerId, key } },
-    body: change,
+    body: { name },
   })
-  return unwrap(res, 'updateRunnerCredential') as unknown as CredentialStatus
+  return unwrap(res, 'renameRunnerCredential') as unknown as CredentialStatus
 }
 
 /** Remove any credential; the box drops it on its next re-read. */

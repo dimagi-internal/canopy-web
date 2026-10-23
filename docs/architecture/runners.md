@@ -706,31 +706,32 @@ or stops working. Three kinds:
   connectors: a setup-token is inference-only (`[claudeai-mcp] Missing
   user:mcp_servers scope`).
 - **Token** — a `claude setup-token`, made on the box through the same relay
-  (`slot: token`; `login_key` names the token to replace, "" adds one) and stored
-  encrypted in `value_enc`. Good for a year with nothing to renew. The box reads
-  the token off a replayed screen (`render_screen`: the CLI redraws only changed
-  cells, so stripping its cursor moves loses characters), then probes it before
-  reporting: a token Claude refuses is a failed sign-in, with Claude's words,
-  and is not stored.
-- **API key** — pasted, stored encrypted in `value_enc`. Billed per use: stepping
-  onto one raises the coalesced `claude_api_key_fallback` alert.
-- **In a vault:** a token's or API key's value can live in a vault serving the
-  runner instead (`docs/architecture/vault.md` § A runner's own vault). The bundle
-  then names it (`cascade[].vault_secret`), and the box opens it with its own
-  device key (`canopy vault runner-credentials`), using the entry's stored `value`
-  only for what the vault did not open. What it opened is kept until the bundle
-  changes or `VAULT_REREAD_SECONDS` (1 h) passes; the `claude.vault` check says how
-  it went. The status view marks each entry `in_vault` and lists the runner's
-  `vaults`. Once the runner has a vault with a key, the box seals in whatever
-  canopy-web still keeps (`seal_as`, once per bundle, hourly while it cannot) and
-  seals each token it signs in there instead of sending it; any failure falls back
-  to the stored copy, never a lost token.
+  (`slot: token`; `login_key` names the token to replace, "" adds one). Good for
+  a year with nothing to renew. The box reads the token off a replayed screen
+  (`render_screen`: the CLI redraws only changed cells, so stripping its cursor
+  moves loses characters), probes it (a token Claude refuses is a failed sign-in,
+  with Claude's words), names its entry (`POST …/mint/entry {vault_key}`), seals
+  it into the runner's vault (`canopy vault runner-seal`) and only then reports it
+  (`…/mint/result {vault_key}`) — done only if the vault holds it; any failure is a
+  failed sign-in saying why, and an entry made for it goes again.
+- **API key** — sealed into the runner's vault in the browser (`POST …/vault/entries`,
+  then `PUT /api/vaults/{id}/zk/values`). Billed per use: stepping onto one raises
+  the coalesced `claude_api_key_fallback` alert.
+
+**Values live only in the runner's vault** (`docs/architecture/vault.md` § A
+runner's own vault): canopy-web keeps the list — names, kinds, order — and never a
+token or key. The bundle names each value's secret (`cascade[].vault_secret`); the
+box opens them with its own device key (`canopy vault runner-credentials`), keeps
+what it opened until the bundle changes or `VAULT_REREAD_SECONDS` (1 h) passes, and
+says how it went in its `claude.vault` check. Nothing takes a plaintext value (no
+paste route, no fixed-slot write, no token in a sign-in result), so a runner needs a
+vault with a key before it can hold a token or API key; a login needs none.
 
 A token or key cannot say whose it is, so a person names it (`name`). The box
-reads the list as `cascade` on `GET …/credential`; the fixed-slot fields beside it
-(`claude_token`, `claude_token_secondary`, `claude_api_key` = the first two tokens
-and the first API key) and `logins` (the login entries) are what a box from before
-the list reads. Migration 0097 moved the old slots onto the list.
+reads the list as `cascade` on `GET …/credential`, with `logins` (the login
+entries) and `vault_open`. The status view's `has_claude_token`,
+`has_claude_token_secondary`, `has_claude_api_key` read the first two tokens and the
+first API key whose value the vault holds.
 
 - **On the box**, each login has its own config directory: `default` is the CLI's
   own (`~/.claude`, state in `~/.claude.json`); every other login is
@@ -742,8 +743,9 @@ the list reads. Migration 0097 moved the old slots onto the list.
   in the cascade only when its directory holds a login with the
   `user:mcp_servers` scope.
 - **Add** a login (`POST …/logins`) appends an entry and starts its sign-in; it
-  reads "not signed in yet" until the box reports otherwise. **Add** a token or
-  key (`POST …/credentials`), **rename or replace** one (`PATCH …/credentials/{key}`).
+  reads "not signed in yet" until the box reports otherwise. **Add** a token by
+  signing it in, an API key by sealing it (above); **rename** one
+  (`PATCH …/credentials/{key}`, `name` only — a `value` is refused).
   **Remove** any entry (`DELETE …/credentials/{key}`); on its next bundle read
   (≤5 min) the box drops it, deleting a login's directory (for `default`, only
   its `.credentials.json`). **Reorder** (`PUT …/credentials/order`) takes every
@@ -769,10 +771,10 @@ fails only when the list is empty, and nothing warns about how many there are. T
 `runner/ec2/tests/test_box_login.py`, `tests/test_runner_logins.py`,
 `tests/test_runner_mint.py`, `tests/test_runner_credential.py`.
 
-**Full logins never copy.** `wire.sh` copies a source box's long-lived tokens and
-API key (by name, printed), never its full logins, and prints each one it left
-behind with the new box's credentials link. A cloud box with no signed-in full
-login says so on its page.
+**Nothing copies between boxes.** `wire.sh` gives a new box its own vault (or, with
+`--vault`, attaches it to one it shares an isolation boundary with) and prints its
+Credentials tab, where its owner makes the key and signs it in; it never holds a
+token. A cloud box with no signed-in full login says so on its page.
 
 ### The credential probe: "ready" means a credential answered
 

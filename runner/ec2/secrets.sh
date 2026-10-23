@@ -3,7 +3,6 @@
 # (or stdin) so they never land in shell history.
 #
 #   ./secrets.sh canopy path/to/pat.txt          # canopy-web PAT
-#   ./secrets.sh claude path/to/claude-token.txt # claude OAuth token
 #   ./secrets.sh op path/to/sa-token.txt         # 1Password service-account token
 #                                                 # (wire.sh stages it into the runner's
 #                                                 # credential bundle for bootstrap_agents.sh)
@@ -11,7 +10,10 @@
 #                                                 # backend; without it every
 #                                                 # `gog auth tokens import` fails on a
 #                                                 # headless box (no TTY for the prompt)
-#   echo -n "<token>" | ./secrets.sh claude -     # or via stdin
+#   echo -n "<token>" | ./secrets.sh canopy -     # or via stdin
+#
+# No Claude token here: a box's Claude credentials live in its vault, signed in on
+# the runner's Credentials tab.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -22,10 +24,9 @@ AWS=(aws --profile "$PROFILE" --region "$REGION")
 kind="${1:-}"; src="${2:-}"
 case "$kind" in
   canopy) SECRET=canopy/cloud-runner/canopy-pat ;;
-  claude) SECRET=canopy/cloud-runner/claude-oauth-token ;;
   op)     SECRET=canopy/cloud-runner/op-service-account-token ;;
   gog)    SECRET=canopy/cloud-runner/gog-keyring-password ;;
-  *) echo "usage: ./secrets.sh {canopy|claude|op|gog} <file|->" >&2; exit 1 ;;
+  *) echo "usage: ./secrets.sh {canopy|op|gog} <file|->" >&2; exit 1 ;;
 esac
 [[ -n "$src" ]] || { echo "give a file path or - for stdin" >&2; exit 1; }
 

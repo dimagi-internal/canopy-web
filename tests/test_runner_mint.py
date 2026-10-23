@@ -40,6 +40,33 @@ def runner(owner):
     return Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=owner)
 
 
+ZK = "zk1:" + "A" * 60
+
+
+@pytest.fixture()
+def vaulted(owner):
+    """A cloud runner with its own vault, keyed — where its tokens' values live."""
+    from apps.agents.credentials import workspace_vaults
+    from apps.agents.models import Vault
+    from apps.workspaces.models import Workspace, WorkspaceMembership
+
+    ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
+    WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
+    r = Runner.objects.create(name="cloud-ec2-9", kind=Runner.CLOUD, owner=owner, workspace=ws)
+    Vault.objects.filter(pk=workspace_vaults.create_for_runner(r, by=owner).pk).update(kv=1)
+    return r
+
+
+def _held(runner, kind, name=""):
+    from apps.agents.models import VaultSecret
+    from apps.harness import runners
+
+    entry = runners.add_runner_credential(runner, kind=kind, name=name)
+    VaultSecret.objects.create(vault=runners.open_runner_vault(runner), name=entry.vault_secret_name,
+                               value_zk=ZK, kv=1)
+    return entry
+
+
 def _post(client, url, body=None):
     return client.post(url, data=json.dumps(body or {}), content_type="application/json")
 
@@ -90,7 +117,7 @@ def _legacy_mint(runner, slot=RunnerMint.PRIMARY):
     return RunnerMint.objects.create(runner=runner, slot=slot)
 
 
-def test_the_code_reaches_the_runner_and_the_token_lands_encrypted(client, runner):
+def test_the_code_reaches_the_runner_and_a_token_sent_back_is_refused(client, runner):
     _legacy_mint(runner)
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
     _post(client, f"{_base(runner)}/code", {"code": "  the-code  "})
@@ -99,13 +126,13 @@ def test_the_code_reaches_the_runner_and_the_token_lands_encrypted(client, runne
     assert claim["mint"]["status"] == RunnerMint.COMPLETING
     assert claim["code"] == "the-code", "whitespace from a paste must be trimmed"
 
+    # A token is sealed into the runner's vault on the box, never sent here: one that
+    # arrives anyway (a box from before the vault) fails the sign-in, unstored.
     r = _post(client, f"{_base(runner)}/result", {"token": "sk-ant-oat01-real"})
-    assert r.json()["status"] == RunnerMint.DONE
-
+    assert r.json()["status"] == RunnerMint.FAILED
+    assert "holds no copy of its vault" in r.json()["detail"]
     status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
-    assert status["has_claude_token"] is True
-    cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
-    assert cred["claude_token"] == "sk-ant-oat01-real"
+    assert status["credentials"] == []
 
 
 # ── the properties that keep a secret a secret ─────────────────────────────
@@ -239,45 +266,14 @@ def _sign_in(client, runner, *, slot=None, token):
     return _post(client, f"{_base(runner)}/result", {"token": token})
 
 
-def test_a_fallback_sign_in_leaves_the_primary_alone(client, runner):
-    # The defect: every sign-in wrote the primary, so "add a fallback" replaced
-    # the login that was working and left the fallback empty.
-    _sign_in(client, runner, token="sk-ant-oat01-primary")
-    _post(client, f"/api/harness/runners/{runner.id}/credential",
-          {"claude_token_label": "a@dimagi.com"})
-    r = _sign_in(client, runner, slot="secondary", token="sk-ant-oat01-fallback")
-    assert r.json()["slot"] == "secondary"
-
-    cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
-    assert cred["claude_token"] == "sk-ant-oat01-primary"
-    assert cred["claude_token_secondary"] == "sk-ant-oat01-fallback"
-    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
-    assert status["claude_token_label"] == "a@dimagi.com", "a sign-in keeps the login's name"
-
-
-def test_a_sign_in_keeps_the_old_name(client, runner):
-    # Re-signing an expired login is the common case, and it is the same account.
-    _sign_in(client, runner, token="sk-ant-oat01-old")
-    _post(client, f"/api/harness/runners/{runner.id}/credential",
-          {"claude_token_label": "a@dimagi.com"})
-    _sign_in(client, runner, token="sk-ant-oat01-new")
-    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
-    assert status["claude_token_label"] == "a@dimagi.com"
-
-
-def test_swapping_moves_token_and_name_together(client, runner):
-    _post(client, f"/api/harness/runners/{runner.id}/credential", {
-        "claude_token": "tok-a", "claude_token_label": "a@dimagi.com",
-        "claude_token_secondary": "tok-b", "claude_token_secondary_label": "b@dimagi.com",
-        "claude_api_key": "key",
-    })
-    r = _post(client, f"/api/harness/runners/{runner.id}/credential/swap")
+def test_swapping_moves_tokens_and_names_together(client, vaulted):
+    a, b = _held(vaulted, "token", "a@dimagi.com"), _held(vaulted, "token", "b@dimagi.com")
+    key = _held(vaulted, "api_key")
+    r = _post(client, f"/api/harness/runners/{vaulted.id}/credential/swap")
     assert r.status_code == 200, r.content
     assert r.json()["claude_token_label"] == "b@dimagi.com"
-
-    cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
-    assert (cred["claude_token"], cred["claude_token_secondary"]) == ("tok-b", "tok-a")
-    assert cred["claude_api_key"] == "key", "the API key is not part of the swap"
+    cascade = client.get(f"/api/harness/runners/{vaulted.id}/credential").json()["cascade"]
+    assert [c["key"] for c in cascade] == [b.key, a.key, key.key], "the API key is not part of the swap"
 
 
 def test_a_stranger_cannot_swap_someone_elses_logins(runner):
@@ -320,21 +316,6 @@ def test_a_box_sign_in_that_did_not_log_in_fails_with_the_reason(client, runner)
     assert "invalid code" in r.json()["detail"]
 
 
-def test_a_backup_token_can_be_signed_in_again(client, runner):
-    """A setup-token sign-in into a backup slot. Retired 2026-10-14 for looking
-    like the full sign-in; back because a box whose backups were removed had no
-    way to get one but a terminal, and went dark when its login stopped renewing
-    (cloud-ec2-2, 2026-10-15). The token lands in the slot asked for."""
-    for slot, key in (("primary", "claude_token"), ("secondary", "claude_token_secondary")):
-        r = _post(client, _base(runner), {"slot": slot})
-        assert r.status_code == 200, r.content
-        assert r.json()["slot"] == slot
-        r = _post(client, f"{_base(runner)}/result", {"token": f"sk-ant-oat01-{slot}"})
-        assert r.json()["status"] == RunnerMint.DONE
-        cred = client.get(f"/api/harness/runners/{runner.id}/credential").json()
-        assert cred[key] == f"sk-ant-oat01-{slot}"
-
-
 def test_a_sign_in_with_no_slot_is_the_full_login(client, runner):
     r = _post(client, _base(runner))
     assert r.json()["slot"] == "box"
@@ -342,40 +323,54 @@ def test_a_sign_in_with_no_slot_is_the_full_login(client, runner):
 
 # ── a long-lived token for the credential list ───────────────────────────────
 
-def _token_sign_in(client, runner, *, login_key="", token):
+def _token_sign_in(client, runner, *, login_key="", vault_key, seal=True):
+    """The box's side of a token sign-in: name the entry, seal the token into the
+    runner's vault (here: the vault row a seal writes), then report it."""
     r = _post(client, _base(runner), {"slot": "token", "login_key": login_key})
     assert r.status_code == 200, r.content
     _post(client, f"{_base(runner)}/url", {"url": "https://claude.com/cai/oauth/authorize?x=1"})
     _post(client, f"{_base(runner)}/code", {"code": "c"})
     client.get(f"{_base(runner)}/claim")
-    return _post(client, f"{_base(runner)}/result", {"token": token})
+    named = _post(client, f"{_base(runner)}/entry", {"vault_key": vault_key})
+    assert named.status_code == 200, named.content
+    if seal:
+        from apps.agents.models import VaultSecret
+        from apps.harness import runners
+        VaultSecret.objects.update_or_create(vault=runners.open_runner_vault(runner),
+                                             name=f"claude-token:{vault_key}",
+                                             defaults={"value_zk": ZK, "kv": 1})
+    return _post(client, f"{_base(runner)}/result", {"vault_key": vault_key})
 
 
-def test_a_token_sign_in_adds_a_token_at_the_end(client, runner):
-    from apps.harness import runners
+def test_a_token_sign_in_adds_a_token_at_the_end_once_the_vault_holds_it(client, vaulted):
+    key = _held(vaulted, "api_key")
+    r = _token_sign_in(client, vaulted, vault_key="0a1b2c3d")
+    assert r.json()["status"] == "done"
+    cascade = client.get(f"/api/harness/runners/{vaulted.id}/credential").json()["cascade"]
+    assert [(c["kind"], c["vault_secret"]) for c in cascade] == [
+        ("api_key", f"anthropic-api-key:{key.key}"), ("token", "claude-token:0a1b2c3d")]
 
-    runners.add_runner_credential(runner, kind="api_key", value="sk-ant-api")
-    assert _token_sign_in(client, runner, token="sk-ant-oat01-new").json()["status"] == "done"
-    cascade = client.get(f"/api/harness/runners/{runner.id}/credential").json()["cascade"]
-    assert [(c["kind"], c["value"]) for c in cascade] == [
-        ("api_key", "sk-ant-api"), ("token", "sk-ant-oat01-new")]
+
+def test_a_sign_in_whose_token_never_reached_the_vault_is_not_a_success(client, vaulted):
+    """The bug this flow exists to end: "signed in" for a token nobody can use."""
+    r = _token_sign_in(client, vaulted, vault_key="0a1b2c3d", seal=False)
+    assert r.json()["status"] == RunnerMint.FAILED
+    assert "did not reach the runner's vault" in r.json()["detail"]
+    status = client.get(f"/api/harness/runners/{vaulted.id}/credential/status").json()
+    assert status["credentials"] == [], "the entry made for it goes again"
 
 
-def test_a_token_sign_in_for_a_token_replaces_its_value_in_place(client, runner):
-    from apps.harness import runners
-
-    old = runners.add_runner_credential(runner, kind="token", value="tok-old", name="ace")
-    runners.add_runner_credential(runner, kind="api_key", value="sk-ant-api")
-    _token_sign_in(client, runner, login_key=old.key, token="tok-new")
-    status = client.get(f"/api/harness/runners/{runner.id}/credential/status").json()
+def test_a_token_sign_in_for_a_token_keeps_its_entry_and_name(client, vaulted):
+    old = _held(vaulted, "token", "ace")
+    _held(vaulted, "api_key")
+    r = _token_sign_in(client, vaulted, login_key=old.key, vault_key=old.key)
+    assert r.json()["status"] == "done"
+    status = client.get(f"/api/harness/runners/{vaulted.id}/credential/status").json()
     assert [(c["key"], c["name"]) for c in status["credentials"]][0] == (old.key, "ace")
-    cascade = client.get(f"/api/harness/runners/{runner.id}/credential").json()["cascade"]
-    assert [c["value"] for c in cascade] == ["tok-new", "sk-ant-api"]
+    assert len(status["credentials"]) == 2
 
 
-def test_a_token_sign_in_names_only_a_token(client, runner):
-    from apps.harness import runners
-
-    key = runners.add_runner_credential(runner, kind="api_key", value="k").key
-    r = _post(client, _base(runner), {"slot": "token", "login_key": key})
+def test_a_token_sign_in_names_only_a_token(client, vaulted):
+    key = _held(vaulted, "api_key").key
+    r = _post(client, _base(vaulted), {"slot": "token", "login_key": key})
     assert r.status_code == 404

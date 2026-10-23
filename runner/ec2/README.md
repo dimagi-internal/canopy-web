@@ -104,29 +104,24 @@ retires the runner row — only a row that has STOPPED heartbeating, so a same-n
 replacement that is still alive is never touched — then checks no agent's list or
 rules still name it. Secrets stay (they are shared by every runner stack).
 
-**Which Claude credentials a new box gets.** `wire.sh` copies the long-lived tokens and
-API key (with their labels) from a runner, in this order: `--credential-from
-<name|id>`; else the same-name predecessor (a rebuild keeps its own bundle); else the
-live cloud box — not retired, online, ready, not paused, latest heartbeat; else
-Secrets Manager's `claude-oauth-token`. It prints which source it used and why, and
-what it copied, by name. That is the design: the fleet's tokens live on the runner
-page and travel box to box; the Secrets Manager token is a rarely-used build fallback
-for a fleet with no live runner, so it being old or at its usage cap is expected.
+**Which Claude credentials a new box gets: none, until its owner signs it in.** A
+box's tokens and API keys live only in a vault its own device key opens (see
+`docs/architecture/vault.md`); canopy-web keeps their names and order, never a value.
+So `wire.sh` copies nothing and holds nothing: it gives the new box its own vault
+(`POST /runners/<id>/vault`), or with `--vault <id>` attaches one the box shares
+inside its isolation boundary, and prints the box's Credentials tab
+(`/w/<ws>/runners/<id>/credentials`). There the owner clicks **Make its key**
+(one passkey touch) and then **+ Token** (a `claude setup-token` sign-in the box
+runs and seals itself) or **+ API key** (sealed in the browser). `--credential-from`
+is refused: credentials are never copied between boxes. A full login is signed in
+on the same tab ("+ Add a login"); its refresh token rotates, so it never travels.
 
-**Full logins never travel.** Their refresh token rotates, so a copy breaks both
-boxes. `wire.sh` prints each signed-in full login on the source it did not copy
-("… — full logins stay on the box they were made on") and the new box's credentials
-link (`/supervisor?tab=runners&runner=<id>`), where "+ Add a login" signs one in.
-
-**A credential has to work before anything routes to it.** After staging, the box
-probes each credential with one short prompt (`claude.probe.<label>` health checks,
-see `docs/architecture/runners.md`). `wire.sh` waits up to `--probe-minutes` (default
-5; `0` skips) for one to be `ok`, prints every probe, and when none is, exits
-3 with the "+ Add a login" link before it retires, swaps or adds anything. Only
-probes taken after the staging moment count (the bundle's `updated_at`; each
-check's detail ends `· probed <ISO>`), so a result left from an earlier staging
-cannot pass. A running box (`--runner-id`) notices a re-staged bundle on its next
-re-read (≤5 min) before it probes, so give it `--probe-minutes 10`.
+**A credential has to work before anything routes to it.** The box probes each
+credential with one short prompt (`claude.probe.<label>` health checks, see
+`docs/architecture/runners.md`). `wire.sh` waits up to `--probe-minutes` (default
+15 — long enough to sign the box in; `0` skips) for a probe to be `ok`, prints every
+probe, and when none is, exits 3 with the Credentials link before it retires, swaps
+or adds anything.
 
 **Finding the new box.** `wire.sh --runner-id <uuid>` skips discovery. Otherwise it
 takes the cloud runner with that name that is online, heartbeated within the last 2
@@ -158,8 +153,7 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | operator token `~/.claude/canopy/workbench-token` authenticates (checked FIRST, before AWS) | `up.sh` | `/canopy:canopy-web-pat-mint` |
 | a NEW box's workspace (`--workspace <slug>`, one you belong to) | `up.sh` (lists yours) | pass `--workspace`; an update keeps the stack's own `RunnerWorkspace` |
 | approving the new box's pairing invitation (one passkey touch) | `up.sh` (prints the link, waits `--approve-minutes`, default 30) | open the `approve:` link; it is also emailed to you |
-| `canopy/cloud-runner/claude-oauth-token` (build fallback — must exist, may be old) | `up.sh` | set once: `claude setup-token` as the subscription account, `./secrets.sh claude <file>`; read only when no live runner has logins to copy |
-| a live Claude login on some cloud runner (what new boxes copy) | `wire.sh` (prints its source) | `/supervisor` → Runners → the box → Claude login (a human `claude setup-token` per subscription) |
+| a Claude credential in the new box's vault | `wire.sh` (waits for a probe) | the box's Credentials tab (`wire.sh` prints it): Make its key, then + Token / + API key |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
 | operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
 | per agent: its vault + service-account key | `wire.sh` (refuses in `--standby`) | `canopy agent vault --slug <slug> --workspace <ws>` (the setup checklist's Vault step) |
@@ -549,7 +543,7 @@ The imported file is never left on disk (`shred -u`, falling back to `rm -f`).
 
 ## Secrets (in Secrets Manager, under `canopy/cloud-runner/`)
 - `canopy/cloud-runner/canopy-pat` — **no longer needed by a new box.** A new stack sets `CanopyTokenSecret=''`, so the box holds no PAT and pairs by invitation (below); `up.sh` neither checks nor reads it. A stack made before that keeps its `CanopyTokenSecret` on update, and its box (already paired, keyless) does not need the PAT either; the boot script tolerates a named secret that is gone. So the secret can be deleted once no stack reads it — a **human AWS step after the deploy** (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/canopy-pat`), not done by any script.
-- `canopy/cloud-runner/claude-oauth-token` — the Claude **build fallback**: a long-lived, non-rotating `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`). Must exist (`up.sh` checks), but is intentionally rarely used: a box runs on its credential bundle from the runner page, which `wire.sh` copies from a live runner, and this is read (by `wire.sh`, on your machine — never by the box) only when there is none — so an old or capped value here is expected.
+- ~~`canopy/cloud-runner/claude-oauth-token`~~ — **gone.** A box's Claude credentials live only in its vault; nothing reads this secret, and it can be deleted (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/claude-oauth-token`).
 - `canopy/cloud-runner/gog-keyring-password` — read only by a box built before isolation units. A box of units derives each agent's keyring password from its unit's own secret; `up.sh` no longer requires this one. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh).
 - ~~`canopy/cloud-runner/op-service-account-token`~~ — **gone.** `wire.sh` no longer reads it, the credential bundle no longer carries it, and `RunnerCredential` no longer stores it. A box-wide 1Password key lived in the runner's environment, which every turn inherits: one credential that reads EVERY agent's vault, handed to each of them. Agent secrets are read with the per-agent and per-tenant keys canopy-web issues (see "Where secrets live"). The Secrets Manager entry can be deleted; nothing reads it.
 
@@ -707,7 +701,7 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   value), reports `ready: false` and claims no turn.
 
 Standing one up: deploy with `EXTRA_PARAMS="RunnerDataMode=sensitive_data"`,
-put the ZDR API key in the API-key slot with `canopy runner credential`, then a person
+seal the ZDR API key into the box's vault from its Credentials tab (+ API key), then a person
 declares `sensitive_data` on the runner page (passkey).
 
 ## Egress lock: a box that reaches only what it must
@@ -790,10 +784,9 @@ way to drop one, and the key is retained in KMS either way. A NEW unit's zero-kn
 existing "Grant pending" flow on the agent's page).
 
 **Wiring.** The box's own unit: `./wire.sh --name <box>`. Each other unit:
-`./wire.sh --name <box> --unit <unit> [--standby --agents …]`. Claude tokens are
-copied from the box's own unit by default (`--credential-from` to choose); a full
-login cannot be copied (its refresh token rotates) — sign one in on that unit's
-runner page if you want it. Nothing on a unit depends on a full login.
+`./wire.sh --name <box> --unit <unit> [--standby --agents …]`. Each unit gets its
+own vault (`--vault <id>` shares one, only inside the unit's isolation boundary);
+sign it in on that unit's Credentials tab. Nothing is copied between units.
 
 **What a unit does not protect against:** root on the box (trusted), and agents
 inside ONE unit (they share its user; the read rails are defence in depth, the unit

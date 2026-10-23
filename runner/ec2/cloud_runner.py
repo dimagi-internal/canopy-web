@@ -6424,7 +6424,7 @@ def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dic
         doc = _run_vault_cli(runner_id)
     except Exception as exc:  # noqa: BLE001 — a vault hiccup must not take the box down
         _set_check("claude.vault", "warn", f"could not open this runner's vault ({exc}); "
-                   "using the stored copy where there is one")
+                   "using what it last opened")
         _log(f"warn: could not open this runner's vault ({exc})")
         return _VAULT_VALUES["values"]
     values = {str(k): str(v) for k, v in doc["values"].items()}
@@ -6442,11 +6442,6 @@ def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dic
 #: Whether the runner's last bundle said it has a vault with a key (`vault_open`): a
 #: token this box signs in is then sealed there rather than sent to canopy-web.
 _VAULT_STATE: dict = {"open": False}
-#: When this box last tried to seal its stored values into the vault, and for which
-#: bundle — so a box still waiting for its copy of the key does not ask every re-read.
-_SEAL_TRIED: dict = {"stamp": None, "at": 0.0}
-
-
 def _run_seal_cli(runner_id: str, values: dict) -> dict:
     """`canopy vault runner-seal`, as this box: the values go in on stdin, never argv."""
     env = _child_safe_env()
@@ -6460,54 +6455,44 @@ def _run_seal_cli(runner_id: str, values: dict) -> dict:
     return doc
 
 
-def _seal_stored(runner_id: str, cred: dict, now: float | None = None) -> None:
-    """Move what canopy-web still keeps for this runner into its vault: each entry the
-    bundle marks `seal_as` (a value here, while the runner has a vault with a key) is
-    sealed in by this box, and canopy-web drops its copy. Once per bundle, and at most
-    hourly while it cannot (no copy of the key yet) — never a failed box."""
-    pending = {str(e["seal_as"]): str(e["value"]) for e in cred.get("cascade") or []
-               if isinstance(e, dict) and e.get("seal_as") and e.get("value")}
-    if not pending:
-        return
-    now = time.time() if now is None else now
-    stamp = (str(cred.get("updated_at") or ""), tuple(sorted(pending)))
-    if _SEAL_TRIED["stamp"] == stamp and now - _SEAL_TRIED["at"] < VAULT_REREAD_SECONDS:
-        return
-    _SEAL_TRIED.update(stamp=stamp, at=now)
-    try:
-        doc = _run_seal_cli(runner_id, pending)
-    except Exception as exc:  # noqa: BLE001 — the stored copy keeps serving
-        _set_check("claude.vault", "warn", f"could not seal {len(pending)} credential(s) into this "
-                   f"runner's vault yet ({exc}); the stored copy keeps serving")
-        _log(f"warn: could not seal {len(pending)} credential(s) into the vault ({exc})")
-        return
-    _log(f"sealed {len(doc['names'])} credential(s) into this runner's vault; canopy-web dropped its copy")
-
-
-def _seal_minted(runner_id: str, mint: dict, token: str, mint_id: str) -> bool:
-    """A setup-token this box just minted, sealed into the runner's vault so canopy-web
-    never sees it: the entry is named first (the sign-in's own, else a new key this box
-    chooses), then filled. False — send it the old way — when the runner has no vault
-    with a key, or canopy-web will not take the entry. Once the entry exists the token
-    is never lost: a seal that fails stores it on that entry instead."""
+def _seal_minted(runner_id: str, mint: dict, token: str, mint_id: str) -> None:
+    """A setup-token this box just minted goes into the runner's vault — never to
+    canopy-web — and the sign-in is reported only once it is there: name the entry (the
+    sign-in's own, else a new key this box chooses), seal the token under it, then
+    report it; canopy-web calls it done only if its vault holds the value. Anything that
+    stops that reports a failed sign-in with why, so nobody is told a token works when
+    it was never kept (cloud-ec2-2, 2026-10-23)."""
     if not _VAULT_STATE["open"]:
-        return False
+        _log(f"mint {mint_id[:8]}: the runner has no vault this box can seal into — not kept")
+        _api("POST", f"/runners/{runner_id}/mint/result", {"detail": NO_VAULT_COPY})
+        return
     key = str(mint.get("login_key") or "") or secrets.token_hex(4)
-    status, _ = _api("POST", f"/runners/{runner_id}/mint/result", {"vault_key": key})
+    status, body = _api("POST", f"/runners/{runner_id}/mint/entry", {"vault_key": key})
     if status != 200:
-        _log(f"mint {mint_id[:8]}: canopy-web did not take a vault entry ({status}); sending the token")
-        return False
-    name = f"{_VAULT_PREFIX['token']}{key}"
+        why = (body or {}).get("detail") if isinstance(body, dict) else ""
+        _log(f"mint {mint_id[:8]}: canopy-web did not take the entry ({status}) — not kept")
+        _api("POST", f"/runners/{runner_id}/mint/result",
+             {"detail": f"canopy-web would not name an entry for the token ({why or status})"[:900]})
+        return
     try:
-        _run_seal_cli(runner_id, {name: token})
-        _log(f"mint {mint_id[:8]}: signed in; new token sealed into the runner's vault "
-             f"(format {token[:12]}…, {len(token)} chars)")
-    except Exception as exc:  # noqa: BLE001 — keep the credential whatever happens
-        _log(f"mint {mint_id[:8]}: could not seal the new token ({exc}); storing it on its entry")
-        _api("PATCH", f"/runners/{runner_id}/credentials/{key}", {"value": token})
+        _run_seal_cli(runner_id, {f"{_VAULT_PREFIX['token']}{key}": token})
+    except Exception as exc:  # noqa: BLE001 — say why, never claim success
+        _log(f"mint {mint_id[:8]}: could not seal the new token ({exc}) — not kept")
+        _api("POST", f"/runners/{runner_id}/mint/result", {
+            "vault_key": key,
+            "detail": f"the sign-in completed, but this box could not seal the token into its vault: {exc}"[:900]})
+        return
+    _api("POST", f"/runners/{runner_id}/mint/result", {"vault_key": key})
+    _log(f"mint {mint_id[:8]}: signed in; new token sealed into the runner's vault "
+         f"(format {token[:12]}…, {len(token)} chars)")
     if _reload_claude_credentials():
         _log("picked up the freshly minted credential")
-    return True
+
+
+#: What a sign-in says when this box cannot keep its token (canopy-web's NO_VAULT_COPY).
+NO_VAULT_COPY = ("the sign-in completed, but this runner holds no copy of its vault's key, so it "
+                 "could not keep the token — make the vault's key (or give this box its copy) on "
+                 "the runner's Credentials tab, then sign in again")
 
 
 #: The vault secret a list entry's value lives under, by kind (canopy-web's
@@ -6517,18 +6502,16 @@ _VAULT_PREFIX = {"token": "claude-token:", "api_key": "anthropic-api-key:"}
 
 def _with_vault_values(runner_id: str, cred):
     """`cred` with every cascade entry that names a vault secret given the value opened
-    from the vault. An entry the vault did not open keeps the bundle's own `value` (the
-    stored copy, while there is one) — never a failed box."""
+    from the vault. An entry the vault did not open has no value, and the box moves on
+    to the next credential — never a failed box."""
     if not isinstance(cred, dict) or not isinstance(cred.get("cascade"), list):
         return cred
     _VAULT_STATE["open"] = bool(cred.get("vault_open"))
-    _seal_stored(runner_id, cred)
     names = sorted({str(e.get("vault_secret")) for e in cred["cascade"]
                     if isinstance(e, dict) and e.get("vault_secret")})
     if not names:
-        if not any(isinstance(e, dict) and e.get("seal_as") for e in cred["cascade"]):
-            with _HEALTH_LOCK:
-                _HEALTH.pop("claude.vault", None)
+        with _HEALTH_LOCK:
+            _HEALTH.pop("claude.vault", None)
         return cred
     values = _vault_values(runner_id, (str(cred.get("updated_at") or ""), tuple(names)))
     return {**cred, "cascade": [
@@ -8082,19 +8065,9 @@ def _drain_mint(runner_id: str) -> None:
                                     "That is a bug in the runner, not anything you did. "
                                     f"Claude said: {check['detail'] or 'not logged in'}"[:900]})
                     return
-                if _seal_minted(runner_id, mint, token, mint_id):
-                    return
-                # The token goes straight to canopy-web, which writes it into the
-                # encrypted bundle — it never touches the browser, so the only
-                # secret a human handled was the single-use code.
-                _api("POST", f"/runners/{runner_id}/mint/result", {"token": token})
-                # The FORMAT, never the secret: 12 characters is the prefix and
-                # nothing else, and it is the one fact we lacked when a real
-                # token was discarded for not looking like the format we assumed.
-                _log(f"mint {mint_id[:8]}: signed in; new token stored "
-                     f"(format {token[:12]}…, {len(token)} chars)")
-                if _reload_claude_credentials():
-                    _log("picked up the freshly minted credential")
+                # Into the runner's vault, never to canopy-web; reported only once
+                # it is there. The log names the FORMAT, never the secret.
+                _seal_minted(runner_id, mint, token, mint_id)
             finally:
                 _MINT_SESSION = None
                 _MINT_ID = ""

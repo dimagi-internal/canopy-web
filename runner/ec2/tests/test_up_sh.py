@@ -27,7 +27,6 @@ import pytest
 
 EC2 = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = EC2 / "up.sh"
-STAGED = ["canopy/cloud-runner/claude-oauth-token"]
 ROLE_ARN = "arn:aws:iam::123456789012:role/canopy-cloud-runner-test-RunnerRole-X"
 INV_ID = "0b4f7f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b"
 RID = "6f1c0d3e-0000-4000-8000-000000000001"
@@ -101,7 +100,7 @@ def canopy():
     srv.shutdown()
 
 
-def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=STAGED,
+def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=(),
           old_parts=0, stack_workspace="dimagi", pat_secret="", ecdh_slots="",
           stack_units="", ecdh_read="", units_read="") -> pathlib.Path:
     state = tmp / "state"
@@ -226,15 +225,6 @@ def test_the_seed_is_parts_then_manifest_and_stale_parts_go(tmp_path, canopy):
     deleted = [c for c in _calls(state) if "delete-secret" in c]
     assert len(deleted) == 6 - len(parts), deleted
     assert not any("runner-code" in c for c in writes), "the legacy secret must not be touched"
-
-
-@pytest.mark.parametrize("missing", STAGED)
-def test_a_missing_staged_secret_stops_before_anything_is_written(tmp_path, canopy, missing):
-    state = _fake(tmp_path, secrets=[s for s in STAGED if s != missing])
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi")
-    assert res.returncode != 0 and missing in res.stderr and "secrets.sh" in res.stderr
-    assert not any("put-secret" in c or "create-secret" in c or "deploy" in c
-                   for c in _calls(state))
 
 
 def test_no_canopy_pat_secret_is_needed(tmp_path, canopy):

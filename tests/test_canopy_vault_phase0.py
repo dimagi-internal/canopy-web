@@ -244,7 +244,7 @@ def test_secret_columns_are_discovered_not_listed():
     assert {
         "agents.AgentCredential.value_enc", "agents.Agent.op_sa_token_enc",
         "agents.AgentDelegation.secret_enc", "workspaces.Workspace.shared_op_sa_token_enc",
-        "harness.RunnerLogin.value_enc", "slack.SlackInstallation.bot_token_enc",
+        "slack.SlackInstallation.bot_token_enc",
         "contacts.HcpClient.webhook_secret_encrypted",
     } <= found
 

@@ -1,6 +1,6 @@
 # A runner's Claude credentials live in a vault
 
-**Status:** design, 2026-10-23. Jonathan asked for it after the cloud-ec2-2 token audit the same day (the token-misread fix is #1929). He settled the sharing model in that conversation (§Decisions).
+**Status:** built, 2026-10-23 — all three migration steps shipped (#1939, #1943, then step 3: `value_enc` dropped, no route takes a plaintext value, a sign-in is done only once its token is sealed). Jonathan asked for it after the cloud-ec2-2 token audit the same day (the token-misread fix is #1929). He settled the sharing model in that conversation (§Decisions).
 
 ## Intent
 
@@ -61,7 +61,7 @@ The plaintext `GET /runners/{id}/credential` keeps serving the non-secret parts 
 - **A sign-in on the box** (`RunnerMint`, `slot: token`): the box probes the new token (#1929), then seals it into the vault itself with its copy of the vault key and writes the ciphertext (`PUT /api/vaults/{id}/zk/values`, the workspace vault's own route). canopy-web never sees the token. `mint/result` carries only success and the row key.
 - **A token or API key pasted on the runner page:** the browser seals it, as it already does for a workspace vault's values (the person unlocks their vault key).
 - **The vault's key** is made by the runner's owner, in the browser, with one passkey touch on the runner's credentials page (Jonathan, 2026-10-23: a person makes keys, as for every other vault): a copy for them and one for the box. A box attached later gets its copy from "Give … a copy" there, or a keeper.
-- **A box with no copy of the vault key yet** cannot seal. Until step 3 it sends a signed-in token the old way, and seals it in by itself once it has its copy (below) — so for that window canopy-web holds it, as it does today.
+- **A box with no copy of the vault key yet** cannot seal, so its sign-in fails with a reason ("no copy of its vault's key") and nothing is kept; the owner grants the waiting box its copy on the vault's page and signs in again.
 
 ### A new box
 

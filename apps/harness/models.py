@@ -1243,8 +1243,11 @@ class RunnerLogin(models.Model):
       box (`~/.claude-logins/<key>`; `default` is the CLI's own `~/.claude`).
       `account` and `signed_in` are what the BOX reports, so nobody types a name
       that can disagree with the login it holds.
-    - `token`: a `claude setup-token` value, encrypted in `value_enc`.
-    - `api_key`: an Anthropic API key, encrypted in `value_enc`.
+    - `token`: a `claude setup-token`; `api_key`: an Anthropic API key. Their VALUES
+      are never here: each lives in a vault serving the runner, under
+      `vault_secret_name`, sealed by the box after a sign-in or by a person's browser,
+      and opened only by the box's own device key (docs/architecture/vault.md § A
+      runner's own vault).
 
     A token or API key cannot say whose it is, so a person names it (`name`).
     Adding a login row starts a sign-in; deleting any row makes the box drop it
@@ -1266,8 +1269,6 @@ class RunnerLogin(models.Model):
     position = models.PositiveIntegerField(default=0)
     #: A token's or API key's name, as a person gave it. Not a secret.
     name = models.CharField(max_length=200, blank=True, default="", db_default="")
-    #: A token's or API key's value, encrypted (apps/common/encryption.py). Empty for a login.
-    value_enc = models.TextField(blank=True, default="", db_default="")
     account = models.CharField(max_length=254, blank=True, default="")
     signed_in = models.BooleanField(default=False)
     reported_at = models.DateTimeField(null=True, blank=True)

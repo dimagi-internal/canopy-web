@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import {
-  addRunnerCredential,
   addRunnerLogin,
   addVaultedRunnerCredential,
   createRunnerVault,
   getRunnerCredentialStatus,
   orderRunnerCredentials,
   removeRunnerCredential,
-  updateRunnerCredential,
+  renameRunnerCredential,
   type CredentialKind,
   type CredentialStatus,
   type RunnerCredentialEntry,
@@ -192,16 +191,20 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
   /** Run a vault step, then reload the list. */
   const inVault = async (fn: () => Promise<unknown>, fallback: string) =>
     write(async () => { await fn(); return getRunnerCredentialStatus(runnerId) }, fallback)
+  // A token's or key's value goes only into the runner's vault, sealed in this browser
+  // (or by the box after a sign-in) — so without a vault key there is nowhere to put one.
   const addKey = (value: string, name: string) => openVault
     ? inVault(async () => {
       const entry = await addVaultedRunnerCredential(runnerId, 'api_key', name)
       await sealWorkspaceVaultValue(entry.vault_id, entry.secret_name, value, await unlock())
     }, 'Failed to seal the key into the vault')
-    : write(() => addRunnerCredential(runnerId, 'api_key', value, name), 'Failed to add the key')
+    : Promise.resolve(false)
   const replaceKey = (e: RunnerCredentialEntry, value: string) => openVault
     ? inVault(async () => sealWorkspaceVaultValue(openVault.vault_id, e.vault_secret, value, await unlock()),
       'Failed to seal the key into the vault')
-    : write(() => updateRunnerCredential(runnerId, e.key, { value }), 'Failed to save')
+    : Promise.resolve(false)
+  /** A kind whose value lives in the vault: none can be added before its key exists. */
+  const needsVault = (kind: CredentialKind) => kind !== 'login' && !openVault
 
   const reorder = (key: string, to: number) => {
     const next = moved(keys, key, to)
@@ -340,7 +343,7 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
                       entryKey={e.key}
                       name={e.name}
                       disabled={busy}
-                      onSave={(name) => write(() => updateRunnerCredential(runnerId, e.key, { name }), 'Failed to rename')}
+                      onSave={(name) => write(() => renameRunnerCredential(runnerId, e.key, name), 'Failed to rename')}
                     />
                   )}
                   <span className="ml-auto flex items-center gap-0.5">
@@ -369,7 +372,7 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
                   <RunnerReauth runnerId={runnerId} slot="token" loginKey={e.key} isSet onSignedIn={load} />
                 )}
                 {e.kind === 'api_key' && (
-                  <ReplaceKey disabled={busy} entryKey={e.key} onSave={(value) => replaceKey(e, value)} />
+                  <ReplaceKey disabled={busy || !openVault} entryKey={e.key} onSave={(value) => replaceKey(e, value)} />
                 )}
               </li>
             )
@@ -383,8 +386,8 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
             key={kind}
             type="button"
             onClick={() => startAdding(kind)}
-            disabled={busy}
-            title={KIND_HINT[kind]}
+            disabled={busy || needsVault(kind)}
+            title={needsVault(kind) ? 'Make the vault’s key first: its value is kept only there' : KIND_HINT[kind]}
             data-testid={`cred-add-${kind}`}
             className={`rounded-md border border-dashed px-2.5 py-1 text-[12px] hover:bg-muted hover:text-foreground disabled:opacity-40 ${
               adding === kind ? 'border-primary text-foreground' : 'border-border text-muted-foreground'
@@ -394,6 +397,11 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
           </button>
         ))}
       </div>
+      {!openVault && addable.some(needsVault) && (
+        <p className="text-[11px] text-foreground-subtle" data-testid="cred-needs-vault">
+          Tokens and API keys are kept only in this runner&rsquo;s vault, so make its key (above) before adding one.
+        </p>
+      )}
       <ul className="flex flex-col text-[11px] text-foreground-subtle">
         {addable.map((kind) => (
           <li key={kind}><span className="text-foreground-secondary">{KIND_LABEL[kind]}:</span> {KIND_HINT[kind]}</li>
@@ -422,7 +430,7 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
       {error && <span className="text-[12px] text-destructive" data-testid="runner-credentials-error">{error}</span>}
 
       <p className="text-[11px] text-foreground-subtle">
-        Tokens and keys are write-only: this page shows whether one is set, never what it is.
+        Tokens and keys are sealed in this runner&rsquo;s vault: this page shows whether one is set, never what it is.
       </p>
       {unlocker.element}
     </div>

@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 from canopy_cron import validate_cron, validate_timezone
 from canopy_sdk import contract
 from ninja import Schema
-from pydantic import Field, WithJsonSchema, field_validator, model_validator
+from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_validator
 
 from .models import Turn
 
@@ -1332,27 +1332,7 @@ class TurnSpecIn(Schema):
 
 
 # ---- Runner credentials (per-runner, cloud-only; laptop uses emdash) ----
-class RunnerCredentialIn(Schema):
-    """Set a cloud runner's credentials. A field left None is unchanged
-    (non-clobbering) — update just the Claude token without wiping the rest."""
-
-    claude_token: str | None = None
-    claude_token_secondary: str | None = None
-    claude_api_key: str | None = None
-    #: Whose subscription each login is (an email, or any name). Not a secret.
-    claude_token_label: str | None = Field(default=None, max_length=200)
-    claude_token_secondary_label: str | None = Field(default=None, max_length=200)
-
-
 CredentialKind = Literal["login", "token", "api_key"]
-
-
-class RunnerCredentialAddIn(Schema):
-    """A token or API key, pasted, added at the end of the list."""
-
-    kind: Literal["token", "api_key"]
-    value: str = Field(min_length=1, max_length=4000)
-    name: str = Field(default="", max_length=200)
 
 
 class RunnerVaultEntryIn(Schema):
@@ -1389,26 +1369,24 @@ class RunnerVaultValuesOut(Schema):
 
 
 class RunnerCredentialPatchIn(Schema):
-    """A new value and/or name for one token or API key. None leaves it unchanged."""
+    """A new name for one token or API key. None leaves it unchanged. Anything else —
+    a `value` above all — is refused: a value is sealed into the vault, never sent here."""
 
-    value: str | None = Field(default=None, max_length=4000)
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, max_length=200)
 
 
 class RunnerCascadeItem(Schema):
-    """One credential the box uses, in order. `value` is set for a token or API
-    key; a login's lives on the box."""
+    """One credential the box uses, in order. A token's or API key's value is in a
+    vault serving the runner (`vault_secret`); a login's lives on the box."""
 
     key: str
     kind: CredentialKind
-    value: str = ""
     #: The name its value has in a vault serving this runner, when one holds it: the
     #: box reads it from there (`…/credential/resolve`, with its device key) and uses
     #: `value` only when it cannot.
     vault_secret: str = ""
-    #: A value still kept here while the runner has a vault with a key: the name the
-    #: box seals it in under (`PUT …/vault/values`), after which the copy here goes.
-    seal_as: str = ""
 
 
 class RunnerLoginRef(Schema):
@@ -1419,16 +1397,13 @@ class RunnerLoginRef(Schema):
 
 
 class RunnerCredentialOut(Schema):
-    """The runner's own fetch — actual token values (HTTPS + PAT-authed, owner-gated)."""
+    """The runner's own credential list — no value: a token's or API key's lives in a
+    vault serving the runner, which the box opens with its device key."""
 
-    claude_token: str = ""
-    claude_token_secondary: str = ""
-    claude_api_key: str = ""
     #: The full logins this box should keep, first to last. Any login on the
     #: box that is not listed here is one a person removed.
     logins: list[RunnerLoginRef] = []
-    #: Every credential, in the order the box uses them. The fields above are
-    #: what a box from before the list reads.
+    #: Every credential, in the order the box uses them.
     cascade: list[RunnerCascadeItem] = []
     #: The runner has a vault with a key: a token the box signs in is sealed there
     #: rather than sent here (`RunnerMintResultIn.vault_key`).
@@ -1587,9 +1562,13 @@ class RunnerMintCodeIn(Schema):
     code: str
 
 
+class RunnerMintEntryIn(Schema):
+    vault_key: str = Field(max_length=8)
+
+
 class RunnerMintResultIn(Schema):
-    # Empty token = the attempt failed; `detail` says why, and is shown to the
-    # human who is sitting there waiting for it.
+    # A token is never accepted: one sent here (a box from before the vault) fails the
+    # sign-in, unstored. `detail` says why an attempt failed, to the human waiting.
     token: str = ""
     detail: str = ""
     # A `box` sign-in delivers no token — the login stays on the runner — so
@@ -1597,9 +1576,9 @@ class RunnerMintResultIn(Schema):
     logged_in: bool = False
     #: The account a `box` sign-in signed in as, read back off the box.
     account: str = Field(default="", max_length=254)
-    #: A `token` sign-in the box sealed into its own vault instead of sending: the
-    #: entry it fills (the sign-in's own, else a new key the box chose). The value
-    #: arrives by `PUT …/vault/values`; no `token` comes with it.
+    #: A `token` sign-in the box sealed into the runner's vault: the entry it filled
+    #: (named first with `…/mint/entry`). Done only if the vault holds it; with a
+    #: `detail`, the seal failed and an entry made for this sign-in goes again.
     vault_key: str = Field(default="", max_length=8)
 
 

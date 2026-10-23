@@ -27,7 +27,7 @@ def test_discovers_a_heartbeating_unstaged_box(tmp_path):
     assert res.returncode == 0, res.stdout + res.stderr
     assert f"==> runner: {NEW}" in res.stdout
     calls = (state / "calls").read_text()
-    assert f"POST /api/harness/runners/{NEW}/credential" in calls
+    assert f"POST /api/harness/runners/{NEW}/vault" in calls
     assert f"POST /api/harness/runners/{OTHER}/credential" not in calls
 
 
@@ -50,7 +50,7 @@ def test_a_retired_row_is_never_the_new_box(tmp_path):
     ], statuses={OTHER: UNSTAGED, NEW: UNSTAGED})
     res = _wire(tmp_path, "--name", "cloud-ec2-fork", runner_id=None)
     assert f"==> runner: {NEW}" in res.stdout
-    assert json.loads((tmp_path / "state" / "posted.json").read_text())
+    assert json.loads((tmp_path / "state" / "vaulted.json").read_text())
 
 
 def test_a_dead_unstaged_row_is_not_the_new_box(tmp_path):

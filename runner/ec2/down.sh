@@ -105,7 +105,7 @@ print(json.dumps({"items": list(seen.values())}))
 }
 
 # Purge guard FIRST, before anything is deleted: the secrets are shared, and the
-# live box re-reads canopy-pat / claude-oauth-token on every service start.
+# live box re-reads canopy-pat on every service start.
 if [[ "$PURGE" == "1" ]]; then
   OTHERS=$("${AWS[@]}" cloudformation list-stacks \
     --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE UPDATE_ROLLBACK_COMPLETE ROLLBACK_COMPLETE \
@@ -229,7 +229,6 @@ if [[ "$PURGE" == "1" ]]; then
   # purge-then-rebuild exists to rule out. Kept in step with
   # secrets.sh/up.sh/_lib.sh/runner.cfn.yaml by tests/test_purge_secrets_is_complete.py.
   for s in canopy/cloud-runner/canopy-pat \
-           canopy/cloud-runner/claude-oauth-token \
            canopy/cloud-runner/op-service-account-token \
            canopy/cloud-runner/gog-keyring-password \
            canopy/cloud-runner/runner-seed \

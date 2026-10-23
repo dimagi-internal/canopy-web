@@ -13,7 +13,6 @@ import secrets
 from django.db import transaction
 from django.utils import timezone
 
-from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.workspaces.models import MAX_DEPTH
 
 from .models import (
@@ -52,8 +51,6 @@ LAST_FALLBACK_REFUSAL = (
     "That is this runner's last token or API key. Keep at least one: a full login "
     "renews itself, and when its renewal fails a runner with nothing else stops "
     "(cloud-ec2-2, 2026-10-15). Add another first, then remove this one.")
-#: The name the old one-slot-each refusal went by.
-LAST_BACKUP_TOKEN_REFUSAL = LAST_FALLBACK_REFUSAL
 
 #: The kinds that hold a value here (a login's lives on the box).
 VALUE_KINDS = (RunnerLogin.TOKEN, RunnerLogin.API_KEY)
@@ -80,31 +77,23 @@ def _renumber(runner) -> None:
 
 
 def _would_leave_no_fallback(runner, removing: set[str]) -> bool:
-    """True when removing these entries takes away the runner's last token or API key —
-    held here or in a vault serving the runner."""
+    """True when removing these entries takes away the runner's last token or API key
+    (one whose value a vault serving the runner holds)."""
     in_vault = _vault_secret_names(runner)
-    held = {e.key for e in _entries(runner).filter(kind__in=VALUE_KINDS)
-            if e.value_enc or e.vault_secret_name in in_vault}
+    held = {e.key for e in _entries(runner).filter(kind__in=VALUE_KINDS) if e.vault_secret_name in in_vault}
     return bool(held) and not (held - removing)
 
 
-def add_runner_credential(runner, *, kind: str, value: str, name: str = "", by=None,
-                          in_vault: bool = False, key: str = ""):
-    """A token or API key, last in the list. `in_vault`: its value goes into a vault
-    serving the runner instead (`vault_secret_name`), written by whoever holds the
-    vault's key — a person's browser, or the box after a sign-in — so the entry is
-    made with no value here. `key` lets the box name the entry it is about to fill."""
+def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: str = ""):
+    """A token or API key, last in the list, with NO value here: its value goes into a
+    vault serving the runner (`vault_secret_name`), sealed by whoever holds that vault's
+    key — a person's browser, or the box after a sign-in. canopy-web never holds one.
+    `key` lets the box name the entry it is about to fill."""
 
     if kind not in VALUE_KINDS:
         raise CredentialRefused(f"a {kind} is not pasted in: sign it in instead")
-    value = (value or "").strip()
-    if in_vault:
-        if value:
-            raise CredentialRefused("a value kept in the vault is sealed there, never sent here")
-        if not open_runner_vault(runner):
-            raise CredentialRefused(f"{runner.name} has no vault with a key yet: make its key first")
-    elif not value:
-        raise CredentialRefused("paste the value")
+    if not open_runner_vault(runner):
+        raise CredentialRefused(f"{runner.name} has no vault with a key yet: make its key first")
     key = key or secrets.token_hex(4)
     if not _ENTRY_KEY.fullmatch(key) or _entries(runner).filter(key=key).exists():
         raise CredentialRefused(f"{key!r} is not a free entry key")
@@ -112,8 +101,7 @@ def add_runner_credential(runner, *, kind: str, value: str, name: str = "", by=N
         Runner.objects.select_for_update().filter(pk=runner.pk).first()
         last = _entries(runner).order_by("-position").first()
         entry = RunnerLogin.objects.create(
-            runner=runner, key=key, kind=kind, created_by=by,
-            value_enc=encrypt_secret(value) if value else "", name=(name or "").strip()[:200],
+            runner=runner, key=key, kind=kind, created_by=by, name=(name or "").strip()[:200],
             position=(last.position + 1) if last else 0)
         _touch(runner, by)
     return entry
@@ -136,41 +124,32 @@ class VaultWriteRefused(ValueError):
 
 def store_vault_values(runner, *, vault_id: str, kv: int, values: dict[str, str]) -> list[str]:
     """The box's own write: `zk1:` ciphertext for names its list uses, into a vault
-    serving it, at that vault's current key version. Each entry it fills drops the
-    copy kept here — the vault holds it now — and the bundle's stamp moves, so the
+    serving it, at that vault's current key version. The bundle's stamp moves, so the
     box (and any other box the vault serves) reads it again."""
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — cycle: it imports this module
 
     vault = next((v for v in workspace_vaults.runner_vaults(runner) if str(v.pk) == str(vault_id)), None)
     if vault is None:
         raise VaultWriteRefused(f"vault {vault_id} does not serve {runner.name}")
-    by_name = {e.vault_secret_name: e for e in _entries(runner).filter(kind__in=VALUE_KINDS)}
-    unknown = sorted(set(values) - set(by_name))
+    known = {e.vault_secret_name for e in _entries(runner).filter(kind__in=VALUE_KINDS)}
+    unknown = sorted(set(values) - known)
     if unknown:
         raise VaultWriteRefused(f"{', '.join(unknown)} is not on {runner.name}'s credential list")
     names = workspace_vaults.set_runner_values(vault, kv=kv, values=values, user=runner.owner)
-    RunnerLogin.objects.filter(pk__in=[by_name[n].pk for n in names]).update(value_enc="")
-    _touch(runner, runner.owner)
+    vault_values_written(vault, names)
     return names
 
 
-def update_runner_credential(runner, key: str, *, value: str | None = None,
-                             name: str | None = None, by=None) -> bool:
-    """A new value and/or name for one token or API key. False when there is no such entry."""
+def update_runner_credential(runner, key: str, *, name: str | None = None, by=None) -> bool:
+    """A new name for one token or API key (a new value is sealed into the vault, never
+    sent here). False when there is no such entry."""
 
     entry = _entries(runner).filter(key=key, kind__in=VALUE_KINDS).first()
     if entry is None:
         return False
-    new_value = value is not None and bool(value.strip())
-    if new_value:
-        entry.value_enc = encrypt_secret(value.strip())
     if name is not None:
         entry.name = name.strip()[:200]
-    entry.save()
-    if new_value:
-        # Only a new value moves the stamp: the box proves every credential
-        # again when it moves, and a name is nothing to prove.
-        _touch(runner, by)
+        entry.save(update_fields=["name"])
     return True
 
 
@@ -212,69 +191,9 @@ def order_runner_credentials(runner, keys: list[str], *, by=None) -> None:
         _touch(runner, by)
 
 
-def _nth_token(runner, n: int):
-    tokens = list(_entries(runner, RunnerLogin.TOKEN))
-    return tokens[n] if n < len(tokens) else None
-
-
-def _set_slot(runner, entry, kind: str, value: str | None, name: str | None, by) -> None:
-    """One old fixed slot, written onto the list: a value replaces the entry's
-    (or adds one at the end), "" removes it, a name renames it."""
-    if entry is None:
-        if value:
-            add_runner_credential(runner, kind=kind, value=value, name=name or "", by=by)
-        return
-    if value == "":
-        entry.delete()
-        _renumber(runner)
-        return
-    update_runner_credential(runner, entry.key, value=value, name=name, by=by)
-
-
-def set_runner_credential(runner, *, claude_token=None, claude_token_secondary=None,
-                          claude_api_key=None, claude_token_label=None,
-                          claude_token_secondary_label=None, updated_by=None):
-    """The old fixed-slot write, onto the list — what `wire.sh` and older callers
-    send. `claude_token`/`claude_token_secondary` are the first and second
-    tokens, `claude_api_key` the first API key. None leaves a slot unchanged."""
-    # An all-None call is a READ dressed as a write (the shape the CLI used before
-    # there was a status endpoint). Don't create a row and don't touch
-    # updated_at/updated_by for it — that timestamp is the audit trail for when a
-    # credential last actually changed.
-    if all(v is None for v in (claude_token, claude_token_secondary, claude_api_key,
-                               claude_token_label, claude_token_secondary_label)):
-        return getattr(runner, "credential", None)
-    with transaction.atomic():
-        Runner.objects.select_for_update().filter(pk=runner.pk).first()
-        first, second = _nth_token(runner, 0), _nth_token(runner, 1)
-        api_key = _entries(runner, RunnerLogin.API_KEY).first()
-        _set_slot(runner, first, RunnerLogin.TOKEN, claude_token, claude_token_label, updated_by)
-        _set_slot(runner, second, RunnerLogin.TOKEN, claude_token_secondary,
-                  claude_token_secondary_label, updated_by)
-        _set_slot(runner, api_key, RunnerLogin.API_KEY, claude_api_key, None, updated_by)
-        _touch(runner, updated_by)
-    return runner.credential
-
-
-def would_remove_last_backup_token(runner, *, claude_token=None,
-                                   claude_token_secondary=None, claude_api_key=None) -> bool:
-    """True when this old fixed-slot write would leave the runner with no token or
-    API key it had one before. A value written in the same call counts."""
-    if "" not in (claude_token, claude_token_secondary, claude_api_key):
-        return False
-    slots = _first_values(runner)
-    removing = {slots[k].key for k, v in (("claude_token", claude_token),
-                                         ("claude_token_secondary", claude_token_secondary),
-                                         ("claude_api_key", claude_api_key))
-                if v == "" and slots[k] is not None}
-    if any(v for v in (claude_token, claude_token_secondary, claude_api_key)):
-        return False  # something is written too: the runner still holds one after
-    return bool(removing) and _would_leave_no_fallback(runner, removing)
-
-
 def _first_values(runner) -> dict:
-    """The old fixed slots, read off the list (encrypted): the first two tokens
-    and the first API key."""
+    """The old fixed slots, read off the list: the first two tokens and the first
+    API key (the entries, never a value)."""
     tokens = list(_entries(runner, RunnerLogin.TOKEN))
     api_key = _entries(runner, RunnerLogin.API_KEY).first()
     return {
@@ -285,45 +204,33 @@ def _first_values(runner) -> dict:
 
 
 def get_runner_credential(runner) -> dict:
-    """Decrypt a runner's credentials for the runner to consume. Empty when unset.
-
-    `cascade` is the whole list in order. The fixed-slot fields and `logins` are
-    what a box from before the list reads: it tries its logins, then the first
-    two tokens, then the first API key."""
+    """The runner's credential list, for the box: every entry in order, a token's or API
+    key's `vault_secret` when a vault serving it holds the value (the box opens it with
+    its own device key, `…/credential/resolve`), and the logins it should keep. No
+    value: canopy-web holds none."""
 
     entries = list(_entries(runner))
-    slots = _first_values(runner)
     cred = getattr(runner, "credential", None)
     held = _vault_secret_names(runner)
-    vault_open = open_runner_vault(runner) is not None
     return {
-        **{k: decrypt_secret(e.value_enc) if e is not None else "" for k, e in slots.items()},
         "logins": [{"key": e.key, "account": e.account}
                    for e in entries if e.kind == RunnerLogin.LOGIN],
         "cascade": [{"key": e.key, "kind": e.kind,
-                     "value": decrypt_secret(e.value_enc) if e.kind in VALUE_KINDS and e.value_enc else "",
-                     "vault_secret": e.vault_secret_name if e.vault_secret_name in held else "",
-                     # Kept here, and the runner has a vault with a key: the box seals it
-                     # in under this name, and the copy here goes.
-                     "seal_as": e.vault_secret_name if (vault_open and e.value_enc
-                                                        and e.vault_secret_name not in held) else ""}
+                     "vault_secret": e.vault_secret_name if e.vault_secret_name in held else ""}
                     for e in entries],
-        "vault_open": vault_open,
+        "vault_open": open_runner_vault(runner) is not None,
         "updated_at": cred.updated_at if cred is not None else None,
     }
 
 
 def vault_values_written(vault, names) -> None:
     """Someone holding a vault's key sealed values into it: each runner the vault serves
-    whose list names one drops the copy it kept here (the vault holds it now), and its
-    bundle's stamp moves so the box reads the vault again."""
+    whose list names one has its bundle's stamp moved, so the box reads the vault again."""
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — cycle: it imports this module
 
     names = set(names)
     for runner in workspace_vaults.serving_runners(vault):
-        hit = [e.pk for e in _entries(runner).filter(kind__in=VALUE_KINDS) if e.vault_secret_name in names]
-        if hit:
-            RunnerLogin.objects.filter(pk__in=hit).update(value_enc="")
+        if any(e.vault_secret_name in names for e in _entries(runner).filter(kind__in=VALUE_KINDS)):
             _touch(runner)
 
 
@@ -351,6 +258,10 @@ def _vault_secret_names(runner) -> set[str]:
     return workspace_vaults.runner_secret_names(runner)
 
 
+def _held(entry, held: set[str]) -> bool:
+    return entry is not None and entry.vault_secret_name in held
+
+
 def runner_credential_status(runner) -> dict:
     """Masked view — which credentials are held, never their values. Names are
     not secrets, so they ride along."""
@@ -364,21 +275,26 @@ def runner_credential_status(runner) -> dict:
     return {
         "credentials": [{"key": e.key, "kind": e.kind, "name": e.name, "account": e.account,
                          "signed_in": e.signed_in,
-                         "has_value": bool(e.value_enc) or e.vault_secret_name in held,
+                         "has_value": e.vault_secret_name in held,
                          "in_vault": bool(e.vault_secret_name) and e.vault_secret_name in held,
                          "vault_secret": e.vault_secret_name,
                          "reported_at": e.reported_at} for e in entries],
         "vaults": [{"vault_id": str(v.pk), "name": v.name, "kv": v.kv} for v in vaults],
         "logins": [{"key": e.key, "account": e.account, "signed_in": e.signed_in,
                     "reported_at": e.reported_at} for e in entries if e.kind == RunnerLogin.LOGIN],
-        "has_claude_token": slots["claude_token"] is not None,
-        "has_claude_token_secondary": slots["claude_token_secondary"] is not None,
-        "has_claude_api_key": slots["claude_api_key"] is not None,
+        "has_claude_token": _held(slots["claude_token"], held),
+        "has_claude_token_secondary": _held(slots["claude_token_secondary"], held),
+        "has_claude_api_key": _held(slots["claude_api_key"], held),
         "claude_token_label": slots["claude_token"].name if slots["claude_token"] else "",
         "claude_token_secondary_label": (slots["claude_token_secondary"].name
                                          if slots["claude_token_secondary"] else ""),
         "updated_at": cred.updated_at if cred is not None else None,
     }
+
+
+def _nth_token(runner, n: int):
+    tokens = list(_entries(runner, RunnerLogin.TOKEN))
+    return tokens[n] if n < len(tokens) else None
 
 
 def swap_runner_logins(runner, *, updated_by=None):
@@ -817,14 +733,12 @@ def take_mint_code(mint) -> str:
 
 def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bool = False,
                        account: str = "", vault_key: str = ""):
-    """The runner reports the outcome; on success the token lands in the bundle,
-    in the slot the human chose.
+    """The runner reports how a sign-in ended. A token sign-in is done only when the
+    runner's vault holds the token under `vault_key`'s entry — sealed there by the box,
+    never sent here — so a sign-in can no longer read "signed in" for a token nobody
+    can use. The only secret a human handles is the single-use authorization code.
 
-    The token arrives HERE rather than in the browser on purpose: the only secret
-    a human ever handles in this flow is the single-use authorization code, and
-    the long-lived credential goes straight from the box into encrypted storage.
-
-    The slot keeps its name. The token cannot say whose it is (a setup-token is
+    The entry keeps its name. The token cannot say whose it is (a setup-token is
     scoped to inference only; the profile endpoint answers 403), and re-signing
     an expired login is the common case, which is the same account.
     """
@@ -840,47 +754,51 @@ def finish_runner_mint(mint, *, token: str = "", detail: str = "", logged_in: bo
         mint.code = ""
         mint.save(update_fields=["status", "detail", "code", "updated_at"])
         return mint
-    if vault_key and mint.slot == RunnerMint.TOKEN:
-        _note_vaulted_token(mint, vault_key)
+    entry = _entries(mint.runner, RunnerLogin.TOKEN).filter(key=vault_key).first() if vault_key else None
+    if (mint.slot == RunnerMint.TOKEN and entry is not None and not detail
+            and entry.vault_secret_name in _vault_secret_names(mint.runner)):
+        # Done only once the vault actually holds it: a sign-in that reports success
+        # for a token nobody can use is the failure this whole flow exists to end.
         mint.status = RunnerMint.DONE
-        mint.detail = detail or "signed in; the token is sealed in the runner's vault"
-    elif token:
-        _store_minted_token(mint, token)
-        mint.status = RunnerMint.DONE
-        mint.detail = detail or "signed in"
+        mint.detail = "signed in; the token is sealed in the runner's vault"
     else:
+        # A token is only ever sealed into the runner's vault on the box; one sent here
+        # is refused and never stored (spec 2026-10-23-runner-claude-credentials-in-the-
+        # vault-design.md, step 3). An entry named for this sign-in that never got its
+        # value goes again, unless the sign-in was for it.
+        if entry is not None and vault_key != mint.login_key \
+                and entry.vault_secret_name not in _vault_secret_names(mint.runner):
+            entry.delete()
+            _renumber(mint.runner)
         mint.status = RunnerMint.FAILED
-        mint.detail = detail or "the runner did not complete the sign-in"
+        mint.detail = ((NO_VAULT_COPY if token else "") or detail
+                       or ("the token did not reach the runner's vault" if vault_key else "")
+                       or "the runner did not complete the sign-in")
     mint.code = ""
     mint.save(update_fields=["status", "detail", "code", "updated_at"])
     return mint
 
 
-def _note_vaulted_token(mint, vault_key: str) -> None:
-    """A setup-token the box sealed into its own vault rather than sending here: the
-    entry it fills — the one the sign-in was for, else a new one at the end, named
-    `vault_key` by the box so it could seal under that name. The value arrives by
-    `store_vault_values`; canopy-web never sees it."""
+#: What a sign-in says when the box could not seal its token: it holds no copy of the
+#: runner's vault key yet (or the runner has no vault), and a token never comes here.
+NO_VAULT_COPY = ("the sign-in completed, but this runner holds no copy of its vault's key, so it "
+                 "could not keep the token — make the vault's key (or give this box its copy) on "
+                 "the runner's Credentials tab, then sign in again")
+
+
+def name_minted_entry(mint, vault_key: str) -> None:
+    """The entry a token the box just signed in will be sealed under — the one the
+    sign-in was for, else a new one at the end, named `vault_key` by the box so it can
+    seal under that name before it reports the sign-in (`finish_runner_mint`). The
+    value arrives by `store_vault_values`; canopy-web never sees it."""
+    if mint.slot != RunnerMint.TOKEN or mint.status != RunnerMint.COMPLETING:
+        raise CredentialRefused("no token sign-in is completing on this runner")
     runner, by = mint.runner, mint.requested_by
     if mint.login_key and _entries(runner, RunnerLogin.TOKEN).filter(key=mint.login_key).exists():
         if vault_key != mint.login_key:
             raise CredentialRefused(f"the sign-in was for {mint.login_key}, not {vault_key}")
         return
-    add_runner_credential(runner, kind=RunnerLogin.TOKEN, value="", by=by, in_vault=True, key=vault_key)
-
-
-def _store_minted_token(mint, token: str) -> None:
-    """A setup-token the box minted: a new value for the token the sign-in was
-    for, else a new token at the end of the list. `primary`/`secondary` are the
-    old fixed slots — the first and second token."""
-    runner, by = mint.runner, mint.requested_by
-    if mint.slot == RunnerMint.TOKEN:
-        if not (mint.login_key and update_runner_credential(runner, mint.login_key, value=token,
-                                                            by=by)):
-            add_runner_credential(runner, kind=RunnerLogin.TOKEN, value=token, by=by)
-        return
-    key = "claude_token_secondary" if mint.slot == RunnerMint.SECONDARY else "claude_token"
-    set_runner_credential(runner, **{key: token}, updated_by=by)
+    add_runner_credential(runner, kind=RunnerLogin.TOKEN, by=by, key=vault_key)
 
 
 def _record_signed_in(runner, login_key: str, account: str) -> None:

@@ -128,7 +128,7 @@ def test_configuration_routes_are_on_mcp(db):
     for name in ("upsert_agent", "replace_agent_runners",
                  "replace_agent_runner_rules", "set_turn_mode", "set_slack_enabled",
                  "connect_app", "set_push_config",
-                 "set_history", "pause_runner", "set_runner_credential"):
+                 "set_history", "pause_runner", "update_runner_credential"):
         assert name in tools, name
 
 
