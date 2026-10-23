@@ -10175,6 +10175,34 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/kept-conversations": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Kept Conversations
+         * @description Which of the sensitive conversations this box keeps a Claude session for are
+         *     still open.
+         *
+         *     A sensitive conversation's box keeps its session between turns, so its next turn
+         *     resumes it (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1),
+         *     until the conversation has been idle a day or is closed. Its turns are confined,
+         *     so it has no `RunnerBinding` and `/closes` never names it: the box asks here
+         *     instead, on its sweep. A conversation is open while it exists, is not archived,
+         *     and this runner claimed a confined turn in it; the box forgets every other.
+         */
+        readonly post: operations["kept_conversations"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/close-results": {
         readonly parameters: {
             readonly query?: never;
@@ -30137,6 +30165,11 @@ export interface components {
             readonly mcp_token?: string | null;
             /** Chat Key */
             readonly chat_key?: string | null;
+            /**
+             * Sensitive Conversation
+             * @default false
+             */
+            readonly sensitive_conversation: boolean;
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {
@@ -30444,6 +30477,22 @@ export interface components {
              * @default []
              */
             readonly closes: readonly components["schemas"]["CloseOut"][];
+        };
+        /** KeptConversationsOut */
+        readonly KeptConversationsOut: {
+            /**
+             * Open
+             * @default []
+             */
+            readonly open: readonly string[];
+        };
+        /** KeptConversationsIn */
+        readonly KeptConversationsIn: {
+            /**
+             * Session Ids
+             * @default []
+             */
+            readonly session_ids: readonly string[];
         };
         /** CloseResultsOut */
         readonly CloseResultsOut: {
@@ -48116,6 +48165,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CloseSyncOut"];
+                };
+            };
+        };
+    };
+    readonly kept_conversations: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KeptConversationsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["KeptConversationsOut"];
                 };
             };
         };

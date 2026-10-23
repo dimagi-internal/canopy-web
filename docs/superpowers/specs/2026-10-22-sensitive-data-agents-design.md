@@ -105,7 +105,10 @@ at boot:
     beyond the one key.
 - **Nothing kept on the box.** Each turn in its own isolation unit; after it finishes,
   its transcript under `~/.claude/projects`, its caller envelope, its profile and its
-  per-turn work directory are deleted. Encrypted EBS.
+  per-turn work directory are deleted. Encrypted EBS. (Since
+  `2026-10-23-sensitive-conversations-sealed-to-their-people-design.md` §1, a sensitive
+  conversation's own transcript is kept for its next turn until it has been idle 24
+  hours or is closed.)
 - **A dedicated box.** A sensitive-data box — declared `sensitive_data` OR reporting sensitive-data mode, either alone
   (`runner_requirements.is_sensitive_data_box`) — holds only an agent with a `data: sensitive` capability, whoever
   owns it (`runner_may_hold_agent` refuses the rest, so claim, pins, credentials and
@@ -179,10 +182,10 @@ requirements include `sensitive_data` — read everywhere below, with one test p
   second tab and a participant joining all read it back. There is one delivery path: the
   transcript rows every turn ships (a sensitive-data box ships a confined turn's, then deletes it).
   The live chat socket, adding a participant and a fork ask the same gate; turn reads
-  and the turn socket never carry a sensitive turn's words. The one other reader is the
-  conversation's own next turn: its confined, never-resumed session gets the
-  conversation so far in its caller envelope (`conversation.history`), on the box that
-  runs it.
+  and the turn socket never carry a sensitive turn's words. The conversation's own next
+  turn reads nothing from canopy-web: it resumes the Claude session its box kept
+  (superseded by `2026-10-23-sensitive-conversations-sealed-to-their-people-design.md`
+  §1, which removed `conversation.history`).
   What metadata there is stays under a retention rule enforced for sensitive sessions
   whatever `CANOPY_RETENTION_ENFORCE` says (default 30 days).
 - **A tool result keeps no rows.** A `TOOL_RESULT` `Message` in a sensitive session is

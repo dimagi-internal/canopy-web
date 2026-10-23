@@ -676,13 +676,23 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   server, canopy-web at this box's `CANOPY_BASE_URL`, with the turn's caller token as
   its bearer. It is named `plugin_canopy_canopy-web`, so tool names match the canopy
   plugin's (`mcp__plugin_canopy_canopy-web__*`).
-- **Nothing kept**: when a turn ends, however it ends, the box deletes its caller
-  envelope, profiles and MCP config and, for every session the turn opened (one per
-  credential it tried), the transcript, its sidecar directory (`tool-results/`), todos
-  and file history, plus the turn's stderr logs and the box-wide
-  `~/.claude/canopy/session-log.jsonl` and `~/.claude/history.jsonl`. At start it
-  sweeps whatever a crashed turn left (envelopes, profiles, every transcript: nothing
-  on the box is ever resumed).
+- **Nothing kept but a conversation's own session**: when a turn ends, however it ends,
+  the box deletes its caller envelope, profiles and MCP config and, for every session the
+  turn opened (one per credential it tried), the transcript, its sidecar directory
+  (`tool-results/`), todos, file history and session env, plus the turn's stderr logs and
+  the box-wide `~/.claude/canopy/session-log.jsonl` and `~/.claude/history.jsonl`.
+  The one exception is a turn in a **sensitive conversation** (the claim says
+  `sensitive_conversation`): the box keeps that conversation's last session, its
+  transcript and sidecar directory only, recorded in
+  `~/.canopy/kept-conversations/<chat session>.json` (session id, capability, agent, cwd,
+  last used). The conversation's next turn resumes it (`claude -p --resume`) when it runs
+  on this box, in the same capability for the same agent, and the transcript is still
+  there; otherwise it starts fresh and its envelope says so (`conversation.starts_fresh`).
+  A kept session is deleted once the conversation has been idle
+  `SENSITIVE_KEEP_IDLE_HOURS` (24), or when canopy-web says it is closed (the box asks
+  `POST /runners/{id}/kept-conversations` every `SENSITIVE_KEEP_SWEEP_SECONDS`, 900, and
+  at start); never while a turn runs in it. At start the box also sweeps whatever a
+  crashed turn left (envelopes, profiles, every transcript but a kept conversation's).
 - **No transcript leaves the box** except a confined turn's turn-end rows, which
   canopy-web seals: no live stream, no backfill, and the usage report carries token
   counts with blank titles. canopy-web refuses the rest too: a session it has no

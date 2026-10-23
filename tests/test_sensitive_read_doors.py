@@ -64,28 +64,22 @@ def test_who_is_asking_refuses_a_members_read_of_a_sensitive_turn(w):
     hot = _turn(w["hot"], prompt="and last month?")
     with pytest.raises(TurnNotFound):
         _envelope_sync(w["user"].pk, str(hot.pk))
-    # An ordinary turn still answers, with no history in it.
-    env = _envelope_sync(w["user"].pk, str(_turn(w["cold"]).pk))
-    assert env["conversation"]["history"] is None
-    # The turn's own box (its caller token) still remembers the conversation.
-    said = _envelope_for_caller_token(str(hot.pk))["conversation"]["history"]
-    assert said and said[0]["text"] == ASKED
+    # An ordinary turn still answers.
+    assert _envelope_sync(w["user"].pk, str(_turn(w["cold"]).pk))["turn_id"]
+    # The turn's own box (its caller token) re-reads its envelope, with none of the
+    # conversation's words in it: the agent remembers them in its own session.
+    env = _envelope_for_caller_token(str(hot.pk))
+    assert ASKED not in str(env) and REPLY not in str(env)
 
 
-def test_the_envelope_carries_history_only_when_asked(w):
-    _converse(w["hot"])
-    t = _turn(w["hot"], prompt="and last month?")
-    assert caller_context.build(t)["conversation"]["history"] is None
-    assert caller_context.build(t, with_history=True)["conversation"]["history"]
-
-
-def test_the_claim_hands_the_box_its_history(w):
+def test_neither_the_claim_nor_the_envelope_carries_the_words(w):
     from apps.harness.schemas import ClaimedTurnOut
 
     _converse(w["hot"])
     t = _turn(w["hot"], prompt="and last month?")
-    said = ClaimedTurnOut.resolve_caller_context(t)["conversation"]["history"]
-    assert [h["text"] for h in said] == [ASKED, REPLY]
+    for env in (caller_context.build(t), ClaimedTurnOut.resolve_caller_context(t)):
+        assert "history" not in env["conversation"]
+        assert ASKED not in str(env) and REPLY not in str(env)
 
 
 # --- 2. app views ------------------------------------------------------------------

@@ -3537,7 +3537,9 @@ RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
 # Every turn runs under a locked permission profile (no shell, no file writes, no
 # web, no subagents, only canopy-web's MCP), with telemetry, error reporting and
 # non-essential model calls off; the turn's caller envelope, profile and, for a
-# confined turn, its transcript are deleted when it ends.
+# confined turn, its transcript are deleted when it ends -- except a sensitive
+# conversation's own session, kept for its next turn until the conversation has been
+# idle for a day or is closed (`kept_resume`, `sweep_kept_conversations`).
 #
 # canopy cannot see which key this box uses. The box REPORTS its mode on every
 # heartbeat (`data_mode`, plus a hash of the config it produced), and canopy-web
@@ -3797,17 +3799,35 @@ def _sensitive_data_box_wide() -> list[pathlib.Path]:
     return [home / "canopy" / "session-log.jsonl", home / "history.jsonl"]
 
 
+def _session_paths(workdir: pathlib.Path, sid: str, *, keep_resumable: bool = False) -> list[pathlib.Path]:
+    """What one Claude session leaves on this box: its transcript and sidecar
+    directory (`tool-results/` holds whole tool outputs the transcript points at),
+    its todos, file history and session env. `keep_resumable` leaves out the first
+    two, which are what `--resume` reads."""
+    if not sid or not re.fullmatch(r"[0-9A-Za-z-]{1,64}", sid):
+        return []
+    project = CLAUDE_PROJECTS_HOME / _encode_project_dir(workdir)
+    home = _claude_home()
+    paths = [] if keep_resumable else [project / f"{sid}.jsonl", project / sid]
+    paths += [home / "file-history" / sid, home / "session-env" / sid]
+    paths += sorted((home / "todos").glob(f"{glob.escape(sid)}*"))
+    return paths
+
+
 def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_ids,
-                                confined: bool) -> None:
+                                confined: bool, keep: str = "") -> None:
     """After a sensitive-data turn, however it ended: delete what it left on disk that
     can hold what it read -- the caller envelope, its profiles and MCP config, the
-    box-wide logs (`_sensitive_data_box_wide`) and, for a confined turn (never
-    resumed), every session it opened (`session_ids`: one per credential it tried):
-    each one's transcript, its sidecar directory (`tool-results/` holds whole tool
-    outputs), its todos, file history and session env, and the turn's stderr logs.
-    A turn-id scratch directory goes whole. A conversation's own transcript stays
-    only while the conversation can resume it, and is swept with the session's work
-    directory."""
+    box-wide logs (`_sensitive_data_box_wide`) and, for a confined turn, every session
+    it opened or resumed (`session_ids`: one per credential it tried): each one's
+    transcript, its sidecar directory, its todos, file history and session env, and
+    the turn's stderr logs. A turn-id scratch directory goes whole.
+
+    `keep` is the session a SENSITIVE CONVERSATION keeps for its next turn
+    (`keep_conversation`): of it, only the transcript and sidecar stay, until the
+    conversation has been idle for SENSITIVE_KEEP_IDLE_SECONDS or is closed
+    (`sweep_kept_conversations`). An ordinary conversation's own transcript stays
+    while the conversation can resume it, and is swept with its work directory."""
     if not SENSITIVE_DATA_MODE:
         return
     paths = [CALLER_ROOT / f"{turn_id}.json"]
@@ -3815,13 +3835,9 @@ def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_
     paths += _sensitive_data_box_wide()
     if confined:
         workdir = cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8]
-        project = CLAUDE_PROJECTS_HOME / _encode_project_dir(workdir)
-        home = _claude_home()
         sids = [session_ids] if isinstance(session_ids, str) else list(session_ids or ())
-        for sid in dict.fromkeys(s for s in sids if s and re.fullmatch(r"[0-9A-Za-z-]{1,64}", s)):
-            paths += [project / f"{sid}.jsonl", project / sid,
-                      home / "file-history" / sid, home / "session-env" / sid]
-            paths += sorted((home / "todos").glob(f"{glob.escape(sid)}*"))
+        for sid in dict.fromkeys(s for s in sids if s):
+            paths += _session_paths(workdir, sid, keep_resumable=bool(keep) and sid == keep)
         paths += [workdir / "stderr.log", workdir / "stderr.resume-retry.log"]
         if workdir == pathlib.Path(WORK_DIR) / turn_id[:8]:
             paths.append(workdir)  # a scratch directory nothing else uses
@@ -3829,22 +3845,224 @@ def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_
         _unlink_or_rmtree(path)
 
 
-def sensitive_data_sweep_leftovers() -> int:
-    """At start, before any turn: what a turn that died with the process (a crash, a
-    kill, a reboot) left behind, which its own cleanup never reached. Every caller
-    envelope, every turn profile, every transcript and session sidecar under
-    CLAUDE_PROJECTS_HOME, the todos, file history and session envs, the box-wide
-    logs and the stderr logs under WORK_DIR.
+# ── a sensitive conversation keeps its own Claude session between turns ───────
+# (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1). Every turn of
+# a sensitive conversation is confined to the same capability for the same people,
+# so the rule that a confined turn is never resumed (which keeps a staff turn's
+# context out of a partner's on an email thread) protects nothing inside one. The
+# box keeps that conversation's last session -- its transcript and sidecar, nothing
+# else -- and the next turn resumes it when this box ran it, in the same capability
+# for the same agent, and the transcript is still here. Otherwise the turn starts
+# fresh and is told so (`conversation.starts_fresh` in its envelope): canopy-web
+# keeps no copy of the words it could hand back.
+#
+# Which session belongs to which conversation is recorded HERE, one file per
+# conversation under KEPT_ROOT, not on canopy-web: the box is the only place the
+# transcript exists, so it alone can say whether it can still be resumed, and
+# canopy-web learns nothing new about a sensitive conversation. A record goes, with
+# its transcript, when the conversation has been idle for SENSITIVE_KEEP_IDLE_SECONDS
+# or canopy-web says it is closed (`/runners/{id}/kept-conversations`) -- checked
+# every SENSITIVE_KEEP_SWEEP_SECONDS and at start.
 
-    Transcripts go whole because nothing on a sensitive-data box resumes one: the box
-    runs only confined turns (`_run_turn` refuses the rest), a chat's included, and a
-    confined turn never resumes and is never resumed. Returns how many were removed."""
+#: How long a sensitive conversation's session stays on the box after its last turn.
+SENSITIVE_KEEP_IDLE_SECONDS = float(os.environ.get("SENSITIVE_KEEP_IDLE_HOURS", "24")) * 3600
+#: How often the box sweeps idle conversations and asks which are closed.
+SENSITIVE_KEEP_SWEEP_SECONDS = float(os.environ.get("SENSITIVE_KEEP_SWEEP_SECONDS", "900"))
+#: One `<chat session id>.json` per kept conversation.
+KEPT_ROOT = pathlib.Path.home() / ".canopy" / "kept-conversations"
+_KEPT_LOCK = threading.Lock()
+#: Conversations a turn is running in right now (chat session id -> count): never swept.
+_KEPT_BUSY: dict[str, int] = {}
+_KEPT_STATE = {"at": 0.0}
+_KEPT_ID = re.compile(r"[0-9A-Za-z-]{1,64}")
+
+
+def _sensitive_conversation(turn: dict) -> str:
+    """The chat session id when this confined turn is in a SENSITIVE conversation on
+    a sensitive-data box (canopy-web's claim says `sensitive_conversation`); else "".
+    Only such a turn keeps or resumes a session."""
+    if not SENSITIVE_DATA_MODE or not turn.get("sensitive_conversation") or _capability(turn) is None:
+        return ""
+    conv = _chat_session_id(turn)
+    return conv if _KEPT_ID.fullmatch(conv or "") else ""
+
+
+def _kept_record(conv: str) -> dict | None:
+    try:
+        rec = json.loads((KEPT_ROOT / f"{conv}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def _kept_conversations() -> dict[str, dict | None]:
+    """Every kept conversation's record, None for one that cannot be read."""
+    out: dict[str, dict | None] = {}
+    with contextlib.suppress(OSError):
+        for path in sorted(KEPT_ROOT.glob("*.json")):
+            out[path.stem] = _kept_record(path.stem) if _KEPT_ID.fullmatch(path.stem) else None
+    return out
+
+
+def _kept_identity(turn: dict, cwd: pathlib.Path) -> dict:
+    """What must match for a turn to resume a kept session: the same capability,
+    agent and directory (Claude Code finds a transcript by its cwd)."""
+    return {"capability": str((_capability(turn) or {}).get("name") or ""),
+            "agent": _turn_agent_slug(turn), "cwd": str(cwd)}
+
+
+def _kept_expired(rec: dict, now: float) -> bool:
+    try:
+        return now - float(rec.get("last_used") or 0) >= SENSITIVE_KEEP_IDLE_SECONDS
+    except (TypeError, ValueError):
+        return True
+
+
+def kept_resume(turn: dict, cwd: pathlib.Path | None, *, now: float | None = None) -> str:
+    """The session this turn resumes: its sensitive conversation's kept one, when
+    this box ran it, in the same capability for the same agent, it is not past its
+    idle deadline and its transcript is still here. "" starts fresh."""
+    conv = _sensitive_conversation(turn)
+    if not conv or cwd is None:
+        return ""
+    rec = _kept_record(conv)
+    if not rec:
+        return ""
+    now = time.time() if now is None else now
+    sid = str(rec.get("cli_session_id") or "")
+    same = all(rec.get(k) == v for k, v in _kept_identity(turn, cwd).items())
+    if not same or _kept_expired(rec, now) or not _resume_target_exists(cwd, sid):
+        return ""
+    return sid
+
+
+def keep_conversation(turn: dict, cwd: pathlib.Path | None, cli_session_id: str, *,
+                      now: float | None = None) -> str:
+    """After a turn in a sensitive conversation: record `cli_session_id` as the
+    conversation's session for its next turn, and forget the one it replaces.
+    Returns the id kept, or "" when there is nothing to keep (not such a turn, or
+    no transcript), which leaves the previous record as it was."""
+    conv = _sensitive_conversation(turn)
+    if (not conv or cwd is None or not _KEPT_ID.fullmatch(cli_session_id or "")
+            or not _resume_target_exists(cwd, cli_session_id)):
+        return ""
+    now = time.time() if now is None else now
+    with _KEPT_LOCK:
+        old = _kept_record(conv)
+        _write_private(KEPT_ROOT / f"{conv}.json",
+                       {"cli_session_id": cli_session_id, "last_used": now,
+                        **_kept_identity(turn, cwd)})
+    if old and (old.get("cli_session_id"), old.get("cwd")) != (cli_session_id, str(cwd)):
+        _forget_kept_session(old)
+    return cli_session_id
+
+
+def _forget_kept_session(rec: dict) -> None:
+    cwd = rec.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        for path in _session_paths(pathlib.Path(cwd), str(rec.get("cli_session_id") or "")):
+            _unlink_or_rmtree(path)
+
+
+def _kept_busy(conv: str, delta: int) -> None:
+    if not conv:
+        return
+    with _KEPT_LOCK:
+        n = _KEPT_BUSY.get(conv, 0) + delta
+        if n > 0:
+            _KEPT_BUSY[conv] = n
+        else:
+            _KEPT_BUSY.pop(conv, None)
+
+
+def sweep_kept_conversations(runner_id: str = "", *, now: float | None = None) -> int:
+    """Forget every kept conversation that has been idle past its deadline, whose
+    transcript is gone, or that canopy-web says is closed (asked only with a
+    `runner_id`; an unanswered ask closes nothing). A conversation a turn is running
+    in is left alone. Returns how many were forgotten."""
+    if not SENSITIVE_DATA_MODE:
+        return 0
+    now = time.time() if now is None else now
+    kept = _kept_conversations()
+    if not kept:
+        return 0
+    closed: set[str] = set()
+    if runner_id:
+        status, reply = _api("POST", f"/runners/{runner_id}/kept-conversations",
+                             {"session_ids": sorted(c for c, r in kept.items() if r)})
+        if status == 200 and isinstance(reply, dict) and isinstance(reply.get("open"), list):
+            closed = set(kept) - {str(c) for c in reply["open"]}
+    forgotten = 0
+    for conv, rec in kept.items():
+        with _KEPT_LOCK:
+            if conv in _KEPT_BUSY:
+                continue
+            if not rec:
+                why = "unreadable"
+            elif conv in closed:
+                why = "closed"
+            elif _kept_expired(rec, now):
+                why = "idle"
+            elif not _resume_target_exists(pathlib.Path(str(rec.get("cwd") or "/")),
+                                           str(rec.get("cli_session_id") or "")):
+                why = "gone"
+            else:
+                continue
+            if rec:
+                _forget_kept_session(rec)
+            _unlink_or_rmtree(KEPT_ROOT / f"{conv}.json")
+        forgotten += 1
+        _log(f"sensitive-data mode: forgot conversation {conv[:8]}'s session ({why})")
+    return forgotten
+
+
+def maybe_sweep_kept(runner_id: str, *, now: float | None = None) -> bool:
+    """`sweep_kept_conversations`, every SENSITIVE_KEEP_SWEEP_SECONDS. Called from the
+    claiming thread after a heartbeat. Never raises; True when it swept."""
+    if not SENSITIVE_DATA_MODE:
+        return False
+    now = time.time() if now is None else now
+    if _KEPT_STATE["at"] and now - _KEPT_STATE["at"] < SENSITIVE_KEEP_SWEEP_SECONDS:
+        return False
+    _KEPT_STATE["at"] = now
+    try:
+        sweep_kept_conversations(runner_id, now=now)
+    except Exception as exc:  # noqa: BLE001 — a sweep must never cost the beat
+        _log(f"sensitive-data mode: kept-conversation sweep failed ({exc})")
+    return True
+
+
+def _kept_files() -> set[pathlib.Path]:
+    """The transcript and sidecar of every conversation still kept."""
+    out: set[pathlib.Path] = set()
+    for rec in _kept_conversations().values():
+        sid, cwd = str((rec or {}).get("cli_session_id") or ""), (rec or {}).get("cwd")
+        if isinstance(cwd, str) and cwd and _KEPT_ID.fullmatch(sid):
+            project = CLAUDE_PROJECTS_HOME / _encode_project_dir(pathlib.Path(cwd))
+            out |= {project / f"{sid}.jsonl", project / sid}
+    return out
+
+
+def sensitive_data_sweep_leftovers() -> int:
+    """At start, before any turn and after `sweep_kept_conversations`: what a turn
+    that died with the process (a crash, a kill, a reboot) left behind, which its own
+    cleanup never reached. Every caller envelope, every turn profile, every
+    transcript and session sidecar under CLAUDE_PROJECTS_HOME but a kept
+    conversation's (`_kept_files`), the todos, file history and session envs, the
+    box-wide logs and the stderr logs under WORK_DIR. Returns how many were removed."""
     if not SENSITIVE_DATA_MODE:
         return 0
     home = _claude_home()
+    keep = _kept_files()
+    keep_dirs = {p.parent for p in keep}
     found: list[pathlib.Path] = []
     found += sorted(CALLER_ROOT.glob("*.json")) + sorted(PROFILE_ROOT.glob("cloud-*"))
-    for parent in (CLAUDE_PROJECTS_HOME, home / "todos", home / "file-history", home / "session-env"):
+    for project in sorted(CLAUDE_PROJECTS_HOME.glob("*")) if CLAUDE_PROJECTS_HOME.is_dir() else []:
+        if project in keep_dirs:
+            found += [p for p in sorted(project.glob("*")) if p not in keep]
+        else:
+            found.append(project)
+    for parent in (home / "todos", home / "file-history", home / "session-env"):
         found += sorted(parent.glob("*")) if parent.is_dir() else []
     found += [p for p in _sensitive_data_box_wide() if p.exists()]
     work = pathlib.Path(WORK_DIR)
@@ -4377,6 +4595,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _log(f"resume target {resume_session_id!r} not found under {workdir} "
              f"(turn {turn_id[:8]}); treating as a fresh spawn")
         resume_session_id = None
+        _starting_fresh()
     cmd = _claude_cmd(prompt, resume_session_id)
     _log(f"exec: claude -p (turn {turn_id[:8]}) in {workdir}"
          + (f" --resume {resume_session_id}" if resume_session_id else ""))
@@ -4648,6 +4867,7 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         # silently duplicate work/tokens).
         _log(f"resume of session {resume_session_id!r} yielded nothing "
              f"(turn {turn_id[:8]}); falling back to a fresh spawn")
+        _starting_fresh()
         return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
                            resume_session_id=None, _resume_retried=True)
     return ok, final_text, cli_session_id
@@ -8799,9 +9019,11 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
     if not rows:
         return
     events = [ct.stream_event(r) for r in rows]
-    # The transcript these ordinals index: a confined turn is a fresh Claude session
-    # each time, and without its id the next turn's rows (from ordinal 0 again) would
-    # land on the last one's and be dropped as already held.
+    # The transcript these ordinals index: a confined turn that starts fresh begins
+    # again at ordinal 0, and without its id its rows would land on the last one's and
+    # be dropped as already held. A turn that resumed its sensitive conversation's
+    # session (`kept_resume`) ships the same transcript again under the same id: the
+    # rows already held are skipped and only this turn's are added.
     status, _ = _api("POST", f"/runners/{runner_id}/session-stream",
                      {"session_id": session_id, "events": events,
                       "transcript_id": cli_session_id})
@@ -9298,6 +9520,26 @@ def _write_envelope(turn: dict) -> dict:
     return {"CANOPY_CALLER": str(path)}
 
 
+def _note_fresh_start(turn: dict) -> None:
+    """Tell a turn in a sensitive conversation that it starts a fresh Claude session:
+    `conversation.starts_fresh` in its caller envelope, which the canopy plugin's hook
+    renders as a plain sentence. canopy-web keeps no copy of the conversation's words
+    it could hand back, so whatever was said before is not in this session."""
+    env = turn.get("caller_context")
+    if not isinstance(env, dict):
+        return
+    conv = env.get("conversation") if isinstance(env.get("conversation"), dict) else {}
+    env["conversation"] = {**conv, "starts_fresh": True}
+    _write_envelope(turn)
+
+
+def _starting_fresh() -> None:
+    """A resume this turn planned fell back to a fresh session (`run_claude`)."""
+    hook = getattr(_TURN_ENV, "fresh_start", None)
+    if hook is not None:
+        hook()
+
+
 def _provenance_brief(turn: dict) -> str:
     """`origin=… who=… credential=… client=… parent=…` from the claimed turn (the
     server's TurnOut.initiator / provenance / parent_*), mirroring the laptop
@@ -9421,9 +9663,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     turn_id = turn["id"]
     # What a sensitive-data turn's cleanup needs, filled in as the turn gets that
     # far; the cleanup itself runs in the `finally` below, however the turn ends.
-    forget = {"cwd": None, "confined": False, "cli_session_id": ""}
+    forget = {"cwd": None, "confined": False, "cli_session_id": "", "resumed": "", "keep": ""}
     _TURN_ENV.session_ids = []
     _TURN_ENV.mcp_config = None
+    _TURN_ENV.fresh_start = None
+    # A sensitive conversation's kept session is never swept while a turn runs in it.
+    conversation = _sensitive_conversation(turn)
+    _kept_busy(conversation, 1)
     try:
         confined = _capability(turn) is not None
         forget["confined"] = confined
@@ -9508,8 +9754,16 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         if confined:
             # Never resume, never be resumed: an email thread can hold a staff turn
             # (full) and a partner's (confined) on ONE canopy Session, and resuming
-            # would carry the full turn's context into the caller's session.
-            resume_id = None
+            # would carry the full turn's context into the caller's session. Except
+            # inside a SENSITIVE conversation, every turn of which is confined to the
+            # same capability for the same people: it resumes the session this box
+            # kept for it (`kept_resume`), and otherwise is told it starts fresh.
+            resume_id = (kept_resume(turn, cwd) if conversation else "") or None
+            forget["resumed"] = resume_id or ""
+            if conversation:
+                _TURN_ENV.fresh_start = lambda _turn=turn: _note_fresh_start(_turn)
+                if not resume_id:
+                    _note_fresh_start(turn)
             try:
                 prompt = _confined_prompt(turn)
                 # A confined session reads only its capability's paths, so the
@@ -9593,6 +9847,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             with _SESSION_HOOKS_LOCK:
                 _SESSION_HOOKS.pop(turn_id, None)
         forget["cli_session_id"] = cli_session_id
+        # The session a sensitive conversation's next turn resumes: kept BEFORE the
+        # rows ship and the cleanup runs, so neither can lose it.
+        if conversation and cli_session_id:
+            try:
+                forget["keep"] = keep_conversation(turn, cwd, cli_session_id)
+            except Exception as exc:  # noqa: BLE001 — the next turn starts fresh, that's all
+                _log(f"warn: could not keep {str(turn_id)[:8]}'s session: {exc}")
         _TURN_ENV.extra = {}
         _TURN_ENV.settings = None
         _TURN_ENV.mcp_config = None
@@ -9676,12 +9937,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         try:
             _sensitive_data_forget_turn(
                 str(turn_id), forget["cwd"],
-                [*(getattr(_TURN_ENV, "session_ids", None) or []), forget["cli_session_id"]],
-                forget["confined"])
+                [*(getattr(_TURN_ENV, "session_ids", None) or []), forget["resumed"],
+                 forget["cli_session_id"]],
+                forget["confined"], keep=forget["keep"])
         except Exception as exc:  # noqa: BLE001 — the secrets below must still go
             _log(f"warn: sensitive-data cleanup for {str(turn_id)[:8]} failed: {exc}")
         _TURN_ENV.session_ids = None
         _TURN_ENV.mcp_config = None
+        _TURN_ENV.fresh_start = None
+        _kept_busy(conversation, -1)
         # The turn's secrets end with it — done, failed, raised, stopped or timed out.
         remove_turn_env(str(turn_id))
         _remove_agent_token(str(turn_id))
@@ -9763,6 +10027,7 @@ def run_over_rest(runner_id: str) -> None:
         maybe_self_refresh(bool((beat or {}).get("refresh_pending")))
         maybe_sweep_disk()
         maybe_keep_vaults()
+        maybe_sweep_kept(runner_id)
         # Attached viewers are served on this path too — a runner that fell back
         # to REST must not also silently stop being watchable.
         _sync_session_views(runner_id)
@@ -9988,6 +10253,7 @@ def run_over_ws(runner_id: str) -> bool:
             maybe_self_refresh(bool((ack or {}).get("refresh_pending")))
             maybe_sweep_disk()
             maybe_keep_vaults()
+            maybe_sweep_kept(runner_id)
 
         try:
             _beat()  # register ONLINE immediately (claim_next_turn gates on a fresh heartbeat)
@@ -10081,7 +10347,13 @@ def main() -> None:
     _RUNNER_ID = runner_id
     # No turn runs yet: any per-turn env a previous process left is nobody's.
     sweep_turn_envs()
-    # Nor, on a sensitive-data box, anything a turn the last process ran left.
+    # Nor, on a sensitive-data box, anything a turn the last process ran left, but a
+    # sensitive conversation's session that is neither idle past its deadline nor closed.
+    try:
+        sweep_kept_conversations(runner_id)
+    except Exception as exc:  # noqa: BLE001 — the leftover sweep below still runs
+        _log(f"sensitive-data mode: kept-conversation sweep failed at start ({exc})")
+    _KEPT_STATE["at"] = time.time()
     sensitive_data_sweep_leftovers()
     if UNIT:
         # A unit's key was registered by canopy-pair; it has no instance role to enroll.

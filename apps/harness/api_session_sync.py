@@ -43,6 +43,8 @@ from .schemas import (
     CloseResultsIn,
     CloseResultsOut,
     CloseSyncOut,
+    KeptConversationsIn,
+    KeptConversationsOut,
     MenuAnswerResultIn,
     MenuAnswerResultOut,
     MenuAnswerSyncOut,
@@ -395,6 +397,33 @@ def list_closes(request: HttpRequest, runner_id: uuid.UUID):
          "project": b.emdash_project or b.session.emdash_project, "close_error": b.close_error}
         for b in bindings
     ]}
+
+
+@router.post("/runners/{runner_id}/kept-conversations", response=KeptConversationsOut)
+@gate("runner", kind="runner-protocol")  # only sessions this runner ran turns in
+def kept_conversations(request: HttpRequest, runner_id: uuid.UUID, payload: KeptConversationsIn):
+    """Which of the sensitive conversations this box keeps a Claude session for are
+    still open.
+
+    A sensitive conversation's box keeps its session between turns, so its next turn
+    resumes it (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §1),
+    until the conversation has been idle a day or is closed. Its turns are confined,
+    so it has no `RunnerBinding` and `/closes` never names it: the box asks here
+    instead, on its sweep. A conversation is open while it exists, is not archived,
+    and this runner claimed a confined turn in it; the box forgets every other.
+    """
+    runner = runner_or_404(request, runner_id)
+    ids = []
+    for raw in payload.session_ids:
+        try:
+            ids.append(uuid.UUID(str(raw)))
+        except ValueError:
+            continue
+    ran_here = (Turn.objects.filter(claimed_by=runner, chat_session_id__in=ids)
+                .exclude(capability="").values("chat_session_id"))
+    open_ = (Session.objects.filter(pk__in=ran_here).exclude(status=Session.ARCHIVED)
+             .values_list("pk", flat=True))
+    return {"open": sorted(str(pk) for pk in open_)}
 
 
 @router.post("/runners/{runner_id}/close-results", response=CloseResultsOut)

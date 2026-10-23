@@ -10,8 +10,8 @@ from canopy_sdk import contract
 from ninja import Schema
 from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_validator
 
+from . import sensitivity
 from .models import Turn
-
 from .runner_requirements import is_sensitive_data_box
 
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
@@ -944,6 +944,11 @@ class ClaimedTurnOut(TurnOut):
     # `X-Canopy-Chat-Key` header, it reaches this chat's secrets and page and
     # nothing else. Null for a turn that is not a chat's.
     chat_key: str | None = None
+    # True when the turn is in a chat whose conversation holds a host's sensitive
+    # data (`sensitivity.is_sensitive`). Such a conversation's turns are all confined
+    # to the same capability, so a sensitive-data runner resumes the Claude session
+    # it kept for the conversation's previous turn rather than start fresh.
+    sensitive_conversation: bool = False
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -960,12 +965,15 @@ class ClaimedTurnOut(TurnOut):
         return getattr(obj, "chat_key", None)
 
     @staticmethod
+    def resolve_sensitive_conversation(obj) -> bool:
+        session = getattr(obj, "chat_session", None)
+        return session is not None and sensitivity.any_sensitive(session, obj)
+
+    @staticmethod
     def resolve_caller_context(obj) -> dict:
         from .caller_context import build
 
-        # The claiming box runs the turn, so it alone is handed the conversation's
-        # sealed history (a sensitive conversation's memory).
-        return build(obj, with_history=True)
+        return build(obj)
 
 
 class TurnEventIn(Schema):
@@ -1835,6 +1843,17 @@ class CloseOut(Schema):
 
 class CloseSyncOut(Schema):
     closes: list[CloseOut] = []
+
+
+class KeptConversationsIn(Schema):
+    #: The chat sessions whose Claude session this sensitive-data box keeps on disk.
+    session_ids: list[str] = Field(default=[], max_length=500)
+
+
+class KeptConversationsOut(Schema):
+    #: Those of them still open, in which this runner has run a confined turn. The
+    #: runner forgets every other (closed, deleted, or never its own).
+    open: list[str] = []
 
 
 class CloseResultIn(Schema):

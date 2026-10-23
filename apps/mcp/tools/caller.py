@@ -45,8 +45,8 @@ def _envelope_for_caller_token(turn_id: str) -> dict:
                                         "initiator_contact").filter(pk=turn_id).first())
     if turn is None:
         raise TurnNotFound("turn not found")
-    # The turn's own box, re-reading what its claim handed it — history included.
-    return build(turn, with_history=True)
+    # The turn's own box, re-reading what its claim handed it.
+    return build(turn)
 
 
 def _envelope_sync(user_id, turn_id: str) -> dict:
