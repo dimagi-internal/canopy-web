@@ -18,6 +18,7 @@ What canopy-web enforces here, so a keeper adds no authority of its own:
 """
 from __future__ import annotations
 
+from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
 
 from ..models import Agent, AgentVaultWrap, Vault, VaultKeyWrap
@@ -25,12 +26,16 @@ from . import vault_members, workspace_vaults, zk, zk_endorse
 
 
 def _held(runner) -> list[AgentVaultWrap]:
-    """This box's device wraps at each zero-knowledge agent's current kv."""
+    """This box's device wraps at each zero-knowledge agent's current kv — only while
+    the box may hold that key NOW: it serves the agent and its person is a vault
+    member. Holding a copy is never itself permission to pass one on."""
     return [w for w in (AgentVaultWrap.objects
                         .filter(kind=AgentVaultWrap.DEVICE, device_key__runner=runner,
                                 device_key__status=RunnerDeviceKey.ACTIVE, agent__zk_enabled=True)
-                        .select_related("agent", "device_key"))
-            if w.kv == w.agent.zk_kv]
+                        .select_related("agent", "device_key__runner"))
+            if w.kv == w.agent.zk_kv
+            and vault_members.device_works_for_a_member(w.agent, w.device_key)
+            and device_keys.runner_serves_agent(runner, w.agent)]
 
 
 def work(runner) -> list[dict]:
@@ -65,12 +70,13 @@ def work(runner) -> list[dict]:
 
 
 def _held_workspace(runner) -> list[VaultKeyWrap]:
-    """This box's device wraps at each workspace vault's current kv."""
+    """This box's device wraps at each workspace vault's current kv — only while it
+    may hold that key now (`workspace_vaults.device_may_hold`)."""
     return [w for w in (VaultKeyWrap.objects
                         .filter(kind="device", device_key__runner=runner,
                                 device_key__status=RunnerDeviceKey.ACTIVE, vault__kv__gt=0)
-                        .select_related("vault", "device_key"))
-            if w.kv == w.vault.kv]
+                        .select_related("vault", "device_key__runner"))
+            if w.kv == w.vault.kv and workspace_vaults.device_may_hold(w.vault, w.device_key)]
 
 
 def grant_workspace(runner, vault_id, *, kv: int, wraps: list) -> int:

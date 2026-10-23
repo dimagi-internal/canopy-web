@@ -15,6 +15,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import (
     TYPE_AUTH,
     TYPE_CONFLICT,
+    TYPE_FORBIDDEN,
     TYPE_NOT_FOUND,
     TYPE_VALIDATION,
     ProblemError,
@@ -295,6 +296,12 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
     `wraps` are public data. `?values=true` adds the `zk1:` ciphertexts (what
     rotate and turn-off need), and records a read of each."""
     agent = agent_for_admin(request, slug)
+    if values and request.user.pk not in vault_members.agent_member_ids(agent):
+        # An agent admin who is not a member of its vault (the link was removed)
+        # may still hold an old copy of the key: the ciphertext goes to members only.
+        raise ProblemError(403, "Not a vault member", type_=TYPE_FORBIDDEN,
+                           detail=f"You are not a member of {agent.slug}'s vault; a manager of the vault must add you.",
+                           members={"error": "not_a_vault_member"})
     out = _zk_state(agent, include_values=values)
     if values and out.values:
         services.record_credential_reads(agent, list(out.values), user=request.user, via="zk-state")
@@ -439,7 +446,6 @@ def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMember
         vault_members.add_member(vault, user, role=payload.role, by=request.user)
     except vault_members.VaultMembershipError as exc:
         raise _membership_problem(exc) from exc
-    vault_members.reconcile(vault.agent)
     return _vault_out(vault, request.user)
 
 
@@ -449,15 +455,14 @@ def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMember
 def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> VaultMembersOut:
     """Removes only the DIRECT membership. Membership through a link stays until
     the person leaves the linked set (e.g. loses full access to the agent). A
-    person who is no longer a member loses their copies of the vault key, and
-    their machines theirs, at once."""
+    person who is no longer a member is refused the vault at once: canopy-web
+    hands them, and their machines, no copy of its key and none of its values."""
 
     _, vault = _agent_vault(request, slug, manage=True)
     try:
         vault_members.remove_member(vault, user_id)
     except vault_members.VaultMembershipError as exc:
         raise _membership_problem(exc) from exc
-    vault_members.reconcile(vault.agent)
     return _vault_out(vault, request.user)
 
 
@@ -475,7 +480,6 @@ def set_agent_vault_link(request: HttpRequest, slug: str, payload: VaultAgentLin
         vault_members.set_agent_link(vault, agent, linked=payload.linked, role=payload.role, by=request.user)
     except vault_members.VaultMembershipError as exc:
         raise _membership_problem(exc) from exc
-    vault_members.reconcile(vault.agent)
     return _vault_out(vault, request.user)
 
 

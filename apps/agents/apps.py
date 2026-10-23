@@ -21,8 +21,6 @@ class AgentsConfig(AppConfig):
         post_save.connect(_make_vault, sender=Agent, dispatch_uid="agents.make_vault")
 
         ticks.register("agents.zk_notify", _zk_notify, 60)
-        ticks.register("agents.vault_reconcile", _vault_reconcile, 60)
-        ticks.register("agents.workspace_vault_reconcile", _workspace_vault_reconcile, 60)
         ticks.register("agents.pat_rotation", _pat_rotation, pat_rotation.interval_s, dedupe=False)
         # A knowledge base delta waiting to be indexed (`kb_index`): the clock only kicks the
         # builder thread, and picks up a version whose builder died with its task.
@@ -34,22 +32,6 @@ def _make_vault(sender, instance, created, raw=False, **kwargs) -> None:
         from .credentials import vault_members  # noqa: PLC0415 — a signal handler: imported once the app is ready
 
         vault_members.vault_for_agent(instance)
-
-
-def _vault_reconcile() -> None:
-    """Key copies follow membership: a person who stopped being a member of an
-    agent's vault (or whose machine's person did) loses them within a minute,
-    whatever changed it — a role, a license, a link."""
-    from .credentials import vault_members  # noqa: PLC0415 — a tick: runs once the app is ready
-
-    vault_members.reconcile_all()
-
-
-def _workspace_vault_reconcile() -> None:
-    """A workspace vault's key copies follow its membership, within a minute."""
-    from .credentials import workspace_vaults  # noqa: PLC0415 — a tick: runs once the app is ready
-
-    workspace_vaults.reconcile_all()
 
 
 def _zk_notify() -> None:

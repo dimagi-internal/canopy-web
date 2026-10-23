@@ -24,7 +24,7 @@ from apps.harness import device_keys
 from apps.passkeys.models import UserVaultKeyset
 
 from ..models import AgentVaultEndorsement
-from . import zk
+from . import vault_members, zk
 from .zk import ZkError, _shape, b64u_bytes
 
 MAX_ENDORSEMENTS = 64
@@ -71,7 +71,10 @@ def endorsements(agent) -> list[dict]:
     endorser's public key so a client can verify it without a second read."""
 
     live = {(r["kind"], r["target"], r["key_jkt"]) for r in recipients(agent)}
-    rows = [e for e in AgentVaultEndorsement.objects.filter(agent=agent).select_related("endorser")
+    # Vouched for by someone who is a member NOW: an endorser who left vouches for nobody.
+    endorsers = vault_members.agent_member_ids(agent)
+    rows = [e for e in AgentVaultEndorsement.objects.filter(agent=agent, endorser_id__in=endorsers)
+            .select_related("endorser")
             if (e.kind, e.target, e.key_jkt) in live]
     keys = {ks.user_id: ks.public_jwk for ks in
             UserVaultKeyset.objects.filter(user_id__in={e.endorser_id for e in rows})}

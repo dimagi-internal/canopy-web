@@ -30,9 +30,16 @@ A person can be given a vault's key only once they have a vault key of their own
 
 `pending` (`zk.pending_targets`), every wrap write and every `zks1` seal read these two functions, so nothing else decides who may hold the key. A keeper's grant is checked again under the vault's lock and refused (409 `zk_not_pending`) for a target that already holds a copy, so two keepers make one grant. Replacing a person's vault key, or a machine's ECDH key, drops their copies in agent and workspace vaults alike.
 
-## Removal: key copies follow membership
+## Removal: membership is checked on every access, never swept
 
-`vault_members.reconcile(agent)` deletes every copy of the vault key, and every endorsement, that no longer has a vault member behind it: a person who left, or a machine whose person left. It runs on the off-request clock every minute (`agents.vault_reconcile`) and right after each membership write. Credential resolve also refuses a machine whose person is not a member (403 `not_a_vault_member`), whatever copies it still holds.
+Nothing deletes a copy of the vault key when someone stops being a member. Every place a copy, a value or an endorsement is used asks whether its person is a member **now**, so a leftover copy is ciphertext canopy-web never hands out:
+
+- a machine's resolve refuses one whose person is not a member (403 `not_a_vault_member`), for the agent's own vault and each workspace layer (`workspace_vaults.layers_payload`);
+- the browser's `GET …/vault/zk?values=true` gives the ciphertext only to a vault member (403 `not_a_vault_member`), so an agent admin outside an unlinked vault cannot pair it with an old copy;
+- a box is a keeper of a vault only while it may hold that key now (`vault_keeper._held`, `workspace_vaults.device_may_hold`);
+- `zk_notify.holders` and the endorsements a keeper checks (`zk_endorse.endorsements`) count current members only.
+
+"Holds a copy" is never itself a permission. A person who comes back opens the vault again with the copy they had. Copies are deleted only by the action that makes them useless: replacing a person's vault key or a machine's ECDH key (`zk.forget_member_wraps` / `forget_device_wraps`) or changing the vault key. A revoked device key is refused at every read. A copy made for someone who has since left still shows as not current (`rotation_recommended`), because it still opens the key it was made for.
 
 The vault key is **not** changed on removal: as in 1Password, the server stops serving the vault. "Change the key" (rotate), together with rotating the outside secrets, is the response when someone may have kept a copy.
 
@@ -46,6 +53,6 @@ A workspace may keep any number of vaults (`Vault`, `kind=workspace`), always ze
 
 - **Members:** made with two links: the workspace's owners (`manage`) and `attached`, everyone with full access to an agent the vault serves (`use`). Direct members as for an agent vault.
 - **What it serves:** `VaultAttachment` rows, one agent or every agent in a workspace and below (the vault's own tree only). A moved agent keeps an attachment only inside that tree (`move._vault_attachments`).
-- **Who may hold its key:** a member with a vault key; a machine whose person is a member and which serves an attached agent. Reconcile (every minute, and on each change) drops any other copy.
+- **Who may hold its key:** a member with a vault key; a machine whose person is a member and which serves an attached agent, checked on every read as for an agent vault.
 - **Reading:** credential resolve returns `vaults`, the workspace vaults layered under the agent's own values (root workspace first, then vaults attached to the agent; a later layer wins, and the agent's own values win over all), each with this device's copy of its key, or `wrap: null` when it may not open it. The client decrypts and merges.
 - **Routes:** `GET|POST /api/workspaces/{slug}/vaults` (making one needs `own`), `/api/vaults/{id}` with `members`, `attachments` and `secrets/{name}`, and `/api/vaults/{id}/zk` (`enable`, `values`, `wraps`) in the agent vault's shapes. The keeper grants them through `…/vault-keeper/vaults/{id}/wraps`. A machine is vouched for there by its approver's endorsement for an attached agent.

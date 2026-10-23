@@ -4514,8 +4514,8 @@ export interface paths {
          * Remove a person's direct membership of the agent's vault
          * @description Removes only the DIRECT membership. Membership through a link stays until
          *     the person leaves the linked set (e.g. loses full access to the agent). A
-         *     person who is no longer a member loses their copies of the vault key, and
-         *     their machines theirs, at once.
+         *     person who is no longer a member is refused the vault at once: canopy-web
+         *     hands them, and their machines, no copy of its key and none of its values.
          */
         readonly delete: operations["remove_agent_vault_member"];
         readonly options?: never;
@@ -8310,8 +8310,9 @@ export interface paths {
         readonly post?: never;
         /**
          * Remove a person's direct membership of a vault
-         * @description Only the DIRECT membership; a person who is then no longer a member loses
-         *     their copies of the vault's key, and their machines theirs, at once.
+         * @description Only the DIRECT membership; a person who is then no longer a member is
+         *     refused the vault at once — canopy-web hands them, and their machines, no
+         *     copy of its key and none of its values.
          */
         readonly delete: operations["remove_workspace_vault_member"];
         readonly options?: never;

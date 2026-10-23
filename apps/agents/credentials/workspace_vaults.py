@@ -17,7 +17,6 @@ for either with the same code, and a copy made for one can never open the other.
 """
 from __future__ import annotations
 
-import logging
 import uuid
 
 from django.db import transaction
@@ -31,8 +30,6 @@ from apps.workspaces import services as wsvc
 from ..models import Agent, Vault, VaultAttachment, VaultKeyWrap, VaultLink, VaultSecret
 from . import vault_members, zk
 from .zk import ZkError, _shape, check_ecdh_wrap, check_recovery_wrap, check_value_zk
-
-logger = logging.getLogger(__name__)
 
 
 def binding_id(vault: Vault) -> str:
@@ -133,6 +130,15 @@ def eligible_device_keys(vault: Vault) -> list:
                 .exclude(ecdh_jkt="")
                 .filter(Q(runner__owner_id__in=ids) | Q(runner__owner__isnull=True, approved_by_id__in=ids))
                 .select_related("runner"))
+
+
+def device_may_hold(vault: Vault, device_key) -> bool:
+    """May this ONE machine hold the vault's key now? Its person is a member and its
+    runner serves an agent the vault is attached to — `eligible_device_keys`, asked of
+    one key instead of listing every runner."""
+    if vault_members.person_of_device(device_key) not in vault_members.member_ids(vault):
+        return False
+    return any(device_keys.runner_serves_agent(device_key.runner, a) for a in attached_agents(vault))
 
 
 def _key(w) -> tuple:
@@ -331,6 +337,8 @@ def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[di
         if not v.kv:
             continue
         mine = None
+        # Checked on every read: a copy this device still holds opens nothing once
+        # its person has left the vault.
         if device_key is not None and vault_members.person_of_device(device_key) in vault_members.member_ids(v):
             mine = VaultKeyWrap.objects.filter(vault=v, kv=v.kv, kind="device", device_key=device_key).first()
         qs = VaultSecret.objects.filter(vault=v)
@@ -340,25 +348,3 @@ def layers_payload(agent: Agent, device_key, wanted: set[str] | None) -> list[di
                     "binding_id": binding_id(v), "kv": v.kv, "wrap": mine.wrap if mine else None,
                     "values": dict(qs.values_list("name", "value_zk")) if mine else {}})
     return out
-
-
-def reconcile(vault: Vault) -> int:
-    """Delete every copy of the vault's key that is no longer allowed: a person who is
-    not a member, and a machine that is not eligible — its person left, or it serves
-    no agent the vault is attached to any more (see `vault_members.reconcile`)."""
-    ids = vault_members.member_ids(vault)
-    n, _ = VaultKeyWrap.objects.filter(vault=vault, kind="member").exclude(user_id__in=ids).delete()
-    keep = {k.pk for k in eligible_device_keys(vault)}
-    m, _ = VaultKeyWrap.objects.filter(vault=vault, kind="device").exclude(device_key_id__in=keep).delete()
-    return n + m
-
-
-def reconcile_all() -> int:
-    n = 0
-    for v in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gt=0):
-        try:
-            with transaction.atomic():
-                n += reconcile(v)
-        except Exception:  # noqa: BLE001 — one bad vault must not stop the others
-            logger.exception("workspace vault reconcile failed for %s", v.pk)
-    return n
