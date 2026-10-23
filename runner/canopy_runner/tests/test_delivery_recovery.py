@@ -18,6 +18,8 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import re
+
 import pytest
 
 from canopy_runner import cdp_control, chat_bridge, delivery, emdash, execute
@@ -32,6 +34,12 @@ def _fast(monkeypatch):
     monkeypatch.setattr(execute, "BUSY_WAIT_TIMEOUT", 0.3)
     monkeypatch.setattr(execute, "BUSY_WAIT_POLL", 0.01)
     monkeypatch.setattr(execute, "SNAPSHOT_AFTER_SEND", False)
+
+    def no_screen(*a, **k):
+        raise cdp_control.CDPError("screen read not faked in this test")
+    # A recovery that gives up on a covered composer reads the screen as evidence
+    # (execute._post_screen_tail) — never a real one here.
+    monkeypatch.setattr(cdp_control, "read_terminal", no_screen)
     monkeypatch.setattr(emdash, "task_state", lambda *a, **k: "live")
     chat_bridge.IN_FLIGHT.clear()
     yield
@@ -338,7 +346,8 @@ def test_exhausted_retypes_fail_with_the_existing_note(monkeypatch, transcript):
     assert out == "failed:t1"
     assert len(s.sends) == 1 + execute.RECOVERY_ATTEMPTS
     assert client.retries() == [("retype", "no_trace")] * execute.RECOVERY_ATTEMPTS
-    assert client.failed == execute._not_received_note("c-you-were-just-brought-into-an-8202")
+    assert client.failed == execute._not_received_note("c-you-were-just-brought-into-an-8202",
+                                                       "retries_exhausted")
     # Failed WITH its session, so the server does not requeue it as a non-attempt.
     assert client.finished_status == "failed"
     assert client.finished_task == "c-you-were-just-brought-into-an-8202"
@@ -502,3 +511,54 @@ def test_a_snapshot_of_the_composer_is_posted_right_after_the_send(monkeypatch, 
              if e["payload"].get("status") == "delivery_snapshot"]
     assert first == [{"status": "delivery_snapshot", "task": "c-you-were-just-brought-into-an-8202",
                       "found": True, "running": True, "line": ""}]
+
+
+# ── the note names WHY recovery gave up, so causes stop sharing one investigation ──
+
+def test_a_covered_composer_fails_with_its_own_note_and_the_screen(monkeypatch, transcript):
+    """Investigation 2's fourth cause (turn d9de6f41, 2026-10-23): recovery left a
+    session whose input box was covered, and nothing recorded what covered it."""
+    s = _Session(monkeypatch, transcript, looks=[_state(found=False)], retype_lands=True)
+    frame = "⏺ earlier answer\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n"
+    monkeypatch.setattr(cdp_control, "read_terminal", lambda *a, **k: frame)
+    client = _Client()
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out == "failed:t1"
+    assert len(s.sends) == 1 and s.keys == []
+    assert "something other than its input box" in client.failed
+    shots = [e["payload"] for e in client.events
+             if e["payload"].get("status") == "delivery_screen"]
+    assert len(shots) == 1 and shots[0]["reason"] == "composer_not_visible"
+    assert "Do you want to proceed?" in shots[0]["screen_tail"]
+    undelivered = [e["payload"] for e in client.events
+                   if e["payload"].get("status") == "undelivered"]
+    assert undelivered[0]["reason"] == "composer_not_visible"
+
+
+def test_an_unreadable_screen_still_fails_with_the_note(monkeypatch, transcript):
+    _Session(monkeypatch, transcript, looks=[_state(found=False)], retype_lands=True)
+    client = _Client()       # read_terminal raises (_fast): evidence is best-effort
+
+    out = execute.execute_chat_turn(_cfg(), client, "r-1", _chat_turn())
+
+    assert out == "failed:t1"
+    assert "something other than its input box" in client.failed
+    assert "delivery_screen" not in client.statuses()
+
+
+def test_each_cause_gets_a_distinct_fingerprintable_note():
+    """auto_debug normalizes away quoted text, ids and numbers before hashing. The
+    cause sentences must survive that, or every cause merges into one investigation
+    again — so none may be quoted, and no two may be equal."""
+    task = "c-you-were-just-brought-into-an-8202"
+    base = execute._not_received_note(task)
+    notes = {r: execute._not_received_note(task, r) for r in execute._NOT_RECEIVED_CAUSES}
+    assert all(n.startswith(base) and n != base for n in notes.values())
+    assert len(set(notes.values())) == len(notes)
+    # auto_debug._QUOTED: double quotes, backticks, and a single quote that is not
+    # an apostrophe ("session's" is fine).
+    quoted = re.compile(r"[\"`“]|(?<!\w)'")
+    assert not any(quoted.search(c) for c in execute._NOT_RECEIVED_CAUSES.values())
+    assert execute._not_received_note(task, "no_such_reason") == base

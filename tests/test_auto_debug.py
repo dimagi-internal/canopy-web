@@ -19,7 +19,7 @@ from apps.events.models import Event
 from apps.harness import auto_debug, services
 from apps.harness import claim
 from apps.harness import initiator as who
-from apps.harness.models import FailureInvestigation, Runner, RunnerDrill, Turn
+from apps.harness.models import FailureInvestigation, Runner, RunnerDrill, Turn, TurnEvent
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_user, a_workspace
 
@@ -132,6 +132,23 @@ def test_normalization_strips_ids_paths_numbers_and_names():
         known={"cloud-ec2-1": "<runner>"})
     assert a == b
     assert "hasn't" in auto_debug.normalize_note("it hasn't shown up in that session's transcript")
+
+
+def test_each_undelivered_cause_is_its_own_investigation():
+    """The runner's "Couldn't confirm…" note now ends with WHY recovery gave up
+    (execute._NOT_RECEIVED_CAUSES). Investigation 2 merged four causes under one
+    fingerprint (2026-10-14 → 10-23); the cause sentence must survive normalization."""
+    base = ("Couldn't confirm your message was delivered. It was typed into the emdash "
+            "session \"c-can-you-share-live-urls-to-the-3218\", but it hasn't shown up in "
+            "that session's transcript, so it may or may not have arrived. Check the session "
+            "before sending it again, so it doesn't land twice.")
+    covered = base + (" When the runner looked again, the session was showing something "
+                      "other than its input box (a menu, a dialog or a scrolled view), so it "
+                      "left it alone.")
+    exhausted = base + " The runner sent it again and it still did not show up."
+    fps = {auto_debug.fingerprint("failed", auto_debug.normalize_note(n))
+           for n in (base, covered, exhausted)}
+    assert len(fps) == 3
 
 
 # ---- the skips -----------------------------------------------------------------------
@@ -411,3 +428,31 @@ def test_a_turn_that_must_stay_on_sensitive_runners_is_never_re_processed(ada, w
 
     assert not FailureInvestigation.objects.exists()
     assert not _debug_turns().exists()
+
+
+def test_the_prompt_carries_the_delivery_evidence_but_not_the_words(ada, ws, runner):
+    """Investigation 2: the debugger got 404 on the failed chat turns (the chat ACL),
+    so it could not see which recovery path the runner took. canopy copies the
+    diagnostic fields into the prompt; what the composer and screen showed stays
+    behind the ACL."""
+    ace = _agent(ws, "ace")
+    turn = Turn.objects.create(agent=ace, origin="slack", idempotency_key="evidence",
+                               status=Turn.RUNNING, claimed_by=runner, session_key="s-9")
+    for seq, payload in enumerate([
+        {"status": "delivery_snapshot", "task": "s-9", "found": True, "running": False,
+         "line": "my private words"},
+        {"status": "delivery_retry", "task": "s-9", "attempt": 1, "action": "leave",
+         "reason": "composer_not_visible"},
+        {"status": "delivery_screen", "task": "s-9", "attempt": 1,
+         "screen_tail": "a secret on screen"},
+        {"status": "reused_session", "task": "s-9"},
+    ], start=1):
+        TurnEvent.objects.create(turn=turn, seq=seq, kind="status", payload=payload)
+    prompt = auto_debug.render_prompt(
+        FailureInvestigation(pk=7, occurrences=1, first_seen=timezone.now(),
+                             last_seen=timezone.now()), turn)
+    assert "status=delivery_snapshot found=True running=False" in prompt
+    assert "reason=composer_not_visible" in prompt
+    assert "withheld here: line" in prompt and "withheld here: screen_tail" in prompt
+    assert "my private words" not in prompt and "a secret on screen" not in prompt
+    assert "reused_session" not in prompt

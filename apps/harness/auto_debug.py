@@ -411,6 +411,35 @@ def _iso(value) -> str:
     return value.isoformat(timespec="seconds") if value else "-"
 
 
+#: The runner's delivery ledger, copied into the prompt as evidence. A failed CHAT
+#: turn lives in a person's chat, and the one chat ACL (apps/canopy_sessions/
+#: access.py) keeps the debugger out of it: on investigation 2 (2026-10-20 and
+#: 10-23) Ada got 404 on both failed ACE turns and could not see the
+#: delivery_snapshot / delivery_retry events that decide which cause it was. The
+#: ACL stays as it is; canopy, which already holds the evidence, hands over the
+#: DIAGNOSTIC fields only — never `line` (what the composer held) or `screen_tail`
+#: (the screen), which can show the person's words.
+_EVIDENCE_STATUSES = re.compile(r"^(?:delivery_\w+|undelivered|composer_not_visible|not_retyped)$")
+_EVIDENCE_KEYS = ("status", "attempt", "action", "reason", "found", "running", "verdict",
+                  "waited_seconds", "max_seconds", "detail")
+_CONTENT_KEYS = ("line", "screen_tail")
+EVIDENCE_MAX_EVENTS = 30
+
+
+def _delivery_evidence(turn: Turn) -> list[str]:
+    rows = []
+    for ev in turn.events.filter(kind="status").order_by("seq"):
+        payload = ev.payload or {}
+        if not _EVIDENCE_STATUSES.match(str(payload.get("status") or "")):
+            continue
+        fields = " ".join(f"{k}={str(payload[k])[:200]}" for k in _EVIDENCE_KEYS if k in payload)
+        held = [k for k in _CONTENT_KEYS if payload.get(k)]
+        if held:
+            fields += f" (also recorded, withheld here: {', '.join(held)})"
+        rows.append(f"- {_iso(ev.ts)} {fields}")
+    return rows[-EVIDENCE_MAX_EVENTS:]
+
+
 def render_prompt(inv: FailureInvestigation, turn: Turn, riders=()) -> str:
     """Self-contained: the debugger must not need to look anything up to start.
 
@@ -464,6 +493,11 @@ def render_prompt(inv: FailureInvestigation, turn: Turn, riders=()) -> str:
         note,
         ">>>",
     ]
+    evidence = _delivery_evidence(turn)
+    if evidence:
+        lines += ["", "The runner's delivery events on the failed turn (diagnostic fields "
+                      "only; the withheld ones are readable by the chat's participants):"]
+        lines += evidence
     if riders:
         lines += ["", "Also carried by this turn — failures canopy recorded but did not "
                       "start a turn for (held by the rate cap, or their debug turn failed):"]

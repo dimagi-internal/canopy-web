@@ -264,10 +264,11 @@ def _deliver_to_existing(cfg, client, runner_id, turn, task, state, work_prompt,
     # retype is `_recover_delivery`'s, into a composer it has just seen empty.
     _TYPED_TURNS[turn_id] = time.monotonic()
     _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=agent)
-    if _undelivered(client, turn_id, task, verifier, work_prompt,
-                    port=cfg.cdp_port, project=agent):
+    reason = _undelivered(client, turn_id, task, verifier, work_prompt,
+                          port=cfg.cdp_port, project=agent)
+    if reason:
         caller.clear_pending(task)
-        _fail_typed(client, turn_id, task)
+        _fail_typed(client, turn_id, task, reason)
         return f"failed:{turn_id}"
 
     # Delivered — either the empty-line fast path, or a cleared-then-sent collision.
@@ -297,7 +298,31 @@ def _open_verifier(target: str, task: str, cfg):
     return reader
 
 
-def _not_received_note(task: str) -> str:
+#: One plain sentence per way recovery can give up, appended to the note. Plain
+#: (unquoted, no ids) on purpose: auto_debug fingerprints the normalized note, and
+#: quoted text and ids are normalized away. One shared note hid at least four
+#: different causes in ONE failure investigation (#2, 2026-10-14 → 10-23: a lost
+#: Enter, a notification racing the send, a lone "?", a covered composer), so each
+#: fix "did not hold" for a cause it was never about. Distinct sentences make
+#: distinct investigations.
+_NOT_RECEIVED_CAUSES = {
+    "composer_not_visible": "When the runner looked again, the session was showing something "
+                            "other than its input box (a menu, a dialog or a scrolled view), "
+                            "so it left it alone.",
+    "session_busy_timeout": "The session stayed busy for minutes afterwards, so the runner could "
+                            "not tell whether your message was queued or lost.",
+    "composer_holds_other_text": "The session's input box held other text, so the runner did "
+                                 "not press Enter on it.",
+    "pasted_text_on_screen": "A pasted block on screen might be your message, so the runner did "
+                             "not type it again.",
+    "unreadable": "The runner could not read the session's screen to check.",
+    "collision_on_retype": "Someone started typing in the session while the runner was retrying.",
+    "failed": "The runner's retry could not be sent.",
+    "retries_exhausted": "The runner sent it again and it still did not show up.",
+}
+
+
+def _not_received_note(task: str, reason: str = "") -> str:
     """What the HUMAN reads (relayed into Slack / the chat UI as the failure) when
     the keystrokes went out but the transcript never showed them arriving.
 
@@ -311,6 +336,7 @@ def _not_received_note(task: str) -> str:
         f"session \"{task}\", but it hasn't shown up in that session's transcript, so it "
         f"may or may not have arrived. Check the session before sending it again, so it "
         f"doesn't land twice."
+        + (f" {_NOT_RECEIVED_CAUSES[reason]}" if reason in _NOT_RECEIVED_CAUSES else "")
     )
 
 
@@ -340,47 +366,51 @@ def _already_typed(client, turn_id: str, task: str) -> bool:
     return True
 
 
-def _fail_typed(client, turn_id: str, task: str) -> None:
+def _fail_typed(client, turn_id: str, task: str, reason: str = "") -> None:
     """Fail a turn whose message WAS typed into `task`, naming the session.
 
     The session key is the load-bearing part. The server treats a failed turn with
     no session key as proof nothing reached an agent and requeues it
     (services.finish_turn, MAX_SESSIONLESS_RETRIES) — true for a send that never
     happened, false here: the keystrokes went out. Reporting the session makes the
-    failure terminal, so the message is typed at most once."""
-    client.finish(turn_id, note=_not_received_note(task), status="failed",
+    failure terminal, so the message is typed at most once. `reason` is why
+    recovery gave up, and picks the note's cause sentence."""
+    client.finish(turn_id, note=_not_received_note(task, reason), status="failed",
                   emdash_task_id=task)
 
 
 def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
-                 port: int = 9222, project: str = "") -> bool:
-    """True when the send verifiably did NOT reach Claude Code (see delivery.py),
-    after a bounded, duplicate-safe attempt to recover it (`_recover_delivery`).
+                 port: int = 9222, project: str = "") -> str:
+    """Why the send verifiably did NOT reach Claude Code (see delivery.py), after a
+    bounded, duplicate-safe attempt to recover it (`_recover_delivery`) — or "" when
+    it did (or cannot be checked).
 
     Posts the evidence either way it is not a clean confirmation, so a lost message
     is visible on the turn instead of looking exactly like a delivered one."""
     if verifier is None:
         _post_events_best_effort(client, turn_id, [{"kind": "status",
             "payload": {"status": "delivery_unverified", "task": task}}])
-        return False
+        return ""
     verdict = delivery.confirm(verifier, prompt)
     if verdict == delivery.CONFIRMED:
-        return False
+        return ""
     if verdict == delivery.UNMATCHED:
         logger.warning("delivery on '%s' (turn=%s): a prompt landed but did not match the "
                        "message text — treating as delivered", task, turn_id)
         _post_events_best_effort(client, turn_id, [{"kind": "status",
             "payload": {"status": "delivery_unmatched", "task": task}}])
-        return False
-    if _recover_delivery(client, turn_id, task, verifier, prompt, port=port, project=project):
-        return False
+        return ""
+    delivered, reason = _recover_delivery(client, turn_id, task, verifier, prompt,
+                                          port=port, project=project)
+    if delivered:
+        return ""
     logger.warning("UNDELIVERED turn=%s task=%s: sent, but nothing reached the transcript "
                    "within %.0fs, and recovery could not deliver it", turn_id, task,
                    delivery.CONFIRM_TIMEOUT)
     _post_events_best_effort(client, turn_id, [{"kind": "status",
-        "payload": {"status": "undelivered", "task": task,
+        "payload": {"status": "undelivered", "task": task, "reason": reason,
                     "waited_seconds": delivery.CONFIRM_TIMEOUT}}])
-    return True
+    return reason
 
 
 #: Extra delivery attempts after a MISSING confirm, each one look + one action
@@ -450,10 +480,32 @@ def _landed(verifier, prompt: str) -> bool:
     return delivery.classify(verifier.read_new(), prompt) is not None
 
 
+#: LEAVE reasons whose look says nothing about what WAS on screen. Investigation 2's
+#: fourth cause (turn d9de6f41, ace on haldimagi, 2026-10-23): recovery left the
+#: session with composer_not_visible and nothing recorded what covered the input
+#: box — the claim-bounce path (`_blocking_dialog_note`) already posts the frame,
+#: this path did not.
+_SCREEN_TAIL_REASONS = frozenset({"composer_not_visible", "session_busy_timeout"})
+
+
+def _post_screen_tail(client, turn_id: str, task: str, attempt: int, reason: str, *,
+                      port: int, project: str) -> None:
+    """Best-effort: post the bottom of the session's screen as evidence. Never raises."""
+    try:
+        screen = cdp_control.read_terminal(task, port=port, project=project)
+    except Exception as exc:  # noqa: BLE001 — evidence only; never blocks the failure
+        logger.debug("could not read the screen of %s: %s", task, exc)
+        return
+    _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
+        "status": "delivery_screen", "task": task, "attempt": attempt, "reason": reason,
+        "screen_tail": _screen_tail(screen)}}])
+
+
 def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
-                      port: int, project: str) -> bool:
+                      port: int, project: str) -> tuple[bool, str]:
     """After a MISSING confirm, try (boundedly) to get the message delivered without
-    ever putting it into the session twice. True when it is now believed delivered.
+    ever putting it into the session twice. (delivered, reason): delivered when it is
+    now believed delivered; otherwise reason says why recovery gave up.
 
     The incident (2026-10-07, ACE, a Slack message typed into a live session while
     Jonathan was using emdash): the keystrokes went out and nothing reached the
@@ -482,7 +534,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
             # The original arrived late — the 20s window was simply too short.
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivery_late", "task": task, "attempt": attempt}}])
-            return True
+            return True, ""
         try:
             state = cdp_control.read_composer(task, port=port, project=project)
         except cdp_control.CDPError as exc:
@@ -492,7 +544,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                 "status": "delivery_retry", "task": task, "attempt": attempt,
                 "action": delivery.LEAVE, "reason": "unreadable",
                 "detail": str(exc)[:200]}}])
-            return False
+            return False, "unreadable"
         action, reason = delivery.recovery_action(state, prompt)
         if (action, reason) == (delivery.LEAVE, "session_busy"):
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
@@ -502,7 +554,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
             if idle == "landed":
                 _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                     "status": "delivery_late", "task": task, "attempt": attempt}}])
-                return True
+                return True, ""
             if idle is None:
                 reason = "session_busy_timeout"
             else:
@@ -516,11 +568,14 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
             **({"line": _preview(state.get("typed") or "")}
                if action in (delivery.SUBMIT, delivery.LEAVE) and state.get("typed") else {})}}])
         if action == delivery.LEAVE:
-            return False
+            if reason in _SCREEN_TAIL_REASONS:
+                _post_screen_tail(client, turn_id, task, attempt, reason,
+                                  port=port, project=project)
+            return False, reason
         if action == delivery.SEEN:
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivery_seen_on_screen", "task": task, "attempt": attempt}}])
-            return True
+            return True, ""
         try:
             if action == delivery.SUBMIT:
                 cdp_control.send_keys(task, ["Enter"], port=port, project=project)
@@ -530,7 +585,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                 if _landed(verifier, prompt):
                     _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                         "status": "delivery_late", "task": task, "attempt": attempt}}])
-                    return True
+                    return True, ""
                 res = cdp_control.open_and_send(task, prompt, port=port, project=project)
                 if res.get("action") != "sent":
                     # Text appeared in the composer between our look and the send (a
@@ -539,14 +594,14 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                         "status": "delivery_retry", "task": task, "attempt": attempt,
                         "action": delivery.LEAVE, "reason": "collision_on_retype",
                         "line": _preview(res.get("line") or "")}}])
-                    return False
+                    return False, "collision_on_retype"
         except cdp_control.CDPError as exc:
             logger.warning("delivery recovery on '%s' (turn=%s): %s failed: %s",
                            task, turn_id, action, str(exc)[:200])
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivery_retry", "task": task, "attempt": attempt,
                 "action": action, "reason": "failed", "detail": str(exc)[:200]}}])
-            return False
+            return False, "failed"
         verdict = delivery.confirm(verifier, prompt, timeout=RECOVERY_CONFIRM_TIMEOUT)
         if verdict != delivery.MISSING:
             logger.info("delivery recovered on '%s' (turn=%s) by %s on attempt %d (%s)",
@@ -554,8 +609,8 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivery_recovered", "task": task, "attempt": attempt,
                 "action": action, "verdict": verdict}}])
-            return True
-    return False
+            return True, ""
+    return False, "retries_exhausted"
 
 
 def _repoint(asked: str, got: str, turn: dict, envelope) -> None:
@@ -1003,10 +1058,11 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         # retype is `_recover_delivery`'s, into a composer it has just seen empty).
         _TYPED_TURNS[turn_id] = time.monotonic()
         _snapshot_after_send(client, turn_id, task, port=cfg.cdp_port, project=target)
-        if _undelivered(client, turn_id, task, verifier, prompt,
-                        port=cfg.cdp_port, project=target):
+        reason = _undelivered(client, turn_id, task, verifier, prompt,
+                              port=cfg.cdp_port, project=target)
+        if reason:
             caller.clear_pending(task)
-            _fail_typed(client, turn_id, task)
+            _fail_typed(client, turn_id, task, reason)
             return f"failed:{turn_id}"
         if host is not None:
             host.add_rider(turn_id, prompt)
