@@ -843,3 +843,19 @@ def test_app_features_unreadable_cache_is_none(tmp_path, content):
         p.write_bytes(content)
     assert desktop.app_features(p) is None
     assert "unknown" in desktop.describe_app_features(None)
+
+
+def test_a_long_reply_is_cut_with_a_marker_linking_the_turn(cfg):
+    """canopy-web#1955: the note used to be a bare `[:2000]`, so a cut reply read as
+    a whole one and its reader dispatched follow-ups to get the rest."""
+    cfg.base_url = "https://canopy.example.org"
+    client = FakeClient()
+    turn = _turn(agent_slug="ace")
+    run = desktop.TurnRun(cfg, client, "r", turn, "th", {"reuse": False}, reuse="")
+    run.finish(True, "x" * 5000, "sid-1")
+    run.finish(True, "short", "sid-1")
+    long_note, short_note = (c[1][1] for c in client.of("finish"))
+    assert len(long_note) <= 2000
+    assert long_note.endswith(
+        "… [truncated — full reply: https://canopy.example.org/w/dimagi/agents/ace/turns#turn-0001-aaaa]")
+    assert short_note == "short"

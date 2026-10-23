@@ -1,0 +1,55 @@
+"""The note a runner stores when it finishes a turn, and where to read the rest.
+
+A turn's `result_note` is its final message, kept to `MAX_CHARS`. It used to be a
+bare `text[:2000]`, so a long reply simply stopped mid-sentence with nothing to
+say so. A caller reading it through `canopy agent turns` could not tell a cut
+reply from a short one, and dispatched a follow-up to get the rest, which started
+a new session with no memory of the first (canopy-web#1955: 12 of 17 notes were
+exactly 2,000 characters). A cut note now ends with a marker that says it was cut
+and links the page that holds the whole reply, within the same cap.
+
+Shared by both runners (cloud_runner, the laptop runner's desktop runtime).
+Stdlib only, like the rest of this package.
+"""
+from __future__ import annotations
+
+#: The longest note a runner sends. Unchanged from the old `[:2000]`.
+MAX_CHARS = 2000
+
+ELLIPSIS = "…"
+
+
+def turn_url(base: str, turn: dict) -> str:
+    """Where a person can read this turn's whole reply on canopy-web, from the
+    claimed-turn payload. Mirrors `apps.harness.auto_debug.turn_page_url`: a chat
+    turn lives in its chat, an agent turn on the agent's Turns tab (anchored to
+    its card, which shows the retained transcript), anything else in the
+    workspace's activity log. "" when there is no base to build on."""
+    base = (base or "").rstrip("/")
+    if not base:
+        return ""
+    ws = turn.get("workspace_slug") or ""
+    chat = (turn.get("origin_ref") or {}).get("chat_session_id") or ""
+    agent = turn.get("agent_slug") or ""
+    turn_id = str(turn.get("id") or "")
+    if chat and ws:
+        return f"{base}/w/{ws}/chat/{chat}"
+    if agent and ws:
+        anchor = f"#{turn_id}" if turn_id else ""
+        return f"{base}/w/{ws}/agents/{agent}/turns{anchor}"
+    if ws:
+        return f"{base}/w/{ws}/activity"
+    return f"{base}/activity"
+
+
+def cap(text: str, url: str = "", limit: int = MAX_CHARS) -> str:
+    """`text` unchanged when it fits in `limit`; otherwise cut so that it, plus a
+    marker naming the cut and `url`, fits in `limit` exactly or less."""
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    marker = (f" {ELLIPSIS} [truncated — full reply: {url}]" if url
+              else f" {ELLIPSIS} [truncated]")
+    if len(marker) >= limit:  # a cap too small for the marker: the marker alone
+        return marker.strip()[:limit]
+    return text[: limit - len(marker)].rstrip() + marker

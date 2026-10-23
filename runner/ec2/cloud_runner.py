@@ -8996,6 +8996,21 @@ def _import_transcript():
     return canopy_transcript
 
 
+def _result_note(text: str, turn: dict) -> str:
+    """The `result_note` a finish sends: the reply, capped, and — when the cap cut
+    it — ending with a marker that says so and links the page holding the whole
+    reply (canopy_transcript.result_note; canopy-web#1955). A finish must never
+    fail on this: without canopy_transcript it is the old bare cut."""
+    try:
+        if _transcript_core() is not None:
+            from canopy_transcript.result_note import cap, turn_url  # noqa: PLC0415
+
+            return cap(text or "", turn_url(BASE_URL, turn))
+    except Exception as exc:  # noqa: BLE001
+        _log(f"warn: could not mark a cut result note: {exc}")
+    return (text or "")[:2000]
+
+
 def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) -> None:
     """Ship this session's transcript rows so a cloud session's durable record is
     the SAME shape as a laptop session's — ordinal-keyed, full fidelity.
@@ -9889,7 +9904,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # ignored stop on its own (services.finish_turn).
             finish = "cancelled"
             text = f"stopped on request — {text}" if text else "stopped on request"
-        finish_body = {"status": finish, "result_note": text[:2000]}
+        finish_body = {"status": finish, "result_note": _result_note(text, turn)}
         if cli_session_id:
             # The session this turn drove — the key its close-out report and the
             # Turns page's link join on (Turn.session_key, which holds an
@@ -10099,7 +10114,7 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
     return None
 
 
-def _finish_turn(ws, turn_id: str, ok: bool, text: str) -> None:
+def _finish_turn(ws, turn_id: str, ok: bool, text: str, turn: dict | None = None) -> None:
     """Finish the turn, falling back to REST when the WebSocket is gone.
 
     The finish frame used to be a bare `_ws_request`. If the socket had died
@@ -10122,7 +10137,8 @@ def _finish_turn(ws, turn_id: str, ok: bool, text: str) -> None:
     on an already-terminal turn), so this fallback is safe even if the WS finish
     partially landed.
     """
-    body = {"status": "done" if ok else "failed", "result_note": text[:2000]}
+    body = {"status": "done" if ok else "failed",
+            "result_note": _result_note(text, turn or {"id": turn_id})}
     reason = ""
     try:
         acked = _ws_request(
