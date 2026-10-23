@@ -244,3 +244,14 @@ def test_urls_keep_the_order_they_were_first_fetched_in_across_machines(monkeypa
         assert list(cur.state.section("fetch")) != urls
         assert [u for u, _ in fetch.Fetch(cur).in_order()] == urls
 
+
+def test_a_large_publish_asks_the_host_a_batch_at_a_time():
+    """A first publish in the new record format sends every text: the host is asked which
+    it holds once per thousand, not once per text (10,868 texts made it a 502)."""
+    store = MemoryStore()
+    docs = {str(n): _doc(str(n), f"text {n}") for n in range(2500)}
+    with Curation(store) as cur:
+        _publish(cur, docs)
+    asks = [c for c in store.calls if c.startswith("have records")]
+    assert len(asks) <= 6, len(asks)  # records once, texts once, a batch of 1000 each
+
