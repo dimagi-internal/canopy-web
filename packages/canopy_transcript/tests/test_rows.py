@@ -358,3 +358,45 @@ def test_record_usage_reads_one_model_call():
         "cache_read_tokens": 900, "cache_creation_tokens": 12, "at": "2026-10-01T10:00:00Z"}
     synthetic = {"type": "assistant", "message": {"model": "<synthetic>", "usage": usage, "content": "x"}}
     assert record_usage(synthetic) == {} and record_usage({"type": "user", "message": {}}) == {}
+
+
+# --- resource links survive the cut -------------------------------------------------
+
+import json as _json
+
+from canopy_transcript.rows import TOOL_TEXT_MAX, rows_for_record, tool_result_links
+
+_LINK = {"type": "resource_link", "uri": "labs-result://abc", "name": "Visits", "mimeType": "application/json",
+         "description": "ignored", "_meta": {"rows": [1]}}
+_KEPT = {"type": "resource_link", "uri": "labs-result://abc", "name": "Visits", "mimeType": "application/json"}
+_FACTS = _json.dumps({"row_count": 40, "sample": ["x" * 200] * 60})
+
+
+def _result_row(content):
+    rec = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": content}]}}
+    [row] = rows_for_record(rec)
+    return row
+
+
+def test_a_direct_link_after_long_facts_is_kept_whole():
+    row = _result_row([{"type": "text", "text": _FACTS}, _LINK])
+    assert len(_FACTS) > TOOL_TEXT_MAX and "truncated" in row["text"]
+    assert row["content"] == {"tool_use_id": "t1", "is_error": False, "resource_links": [_KEPT]}
+
+
+def test_a_link_inside_a_gateway_answer_is_kept_whole():
+    answer = {"site": "s", "tool": "q", "is_error": False, "content": [{"type": "text", "text": _FACTS}],
+              "links": [_LINK], "structured": _json.loads(_FACTS)}
+    row = _result_row([{"type": "text", "text": _json.dumps(answer)}])
+    assert row["content"]["resource_links"] == [_KEPT]
+    # ...and the older shape, a link inside `content`, after the facts.
+    old = {**answer, "links": [], "content": [{"type": "text", "text": _FACTS}, _LINK]}
+    assert _result_row(_json.dumps(old))["content"]["resource_links"] == [_KEPT]
+
+
+def test_links_are_bounded_and_a_plain_result_has_none():
+    many = [{**_LINK, "uri": f"labs-result://{i}"} for i in range(30)]
+    assert len(tool_result_links(many)) == 10
+    assert tool_result_links([{**_LINK, "uri": "x:" + "y" * 3000}]) == []
+    assert "resource_links" not in _result_row("just text")["content"]

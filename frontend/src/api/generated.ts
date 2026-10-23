@@ -7690,8 +7690,7 @@ export interface paths {
          *     = its Connected-site name, `aud` = this URL, at most 60 s, single-use `jti`, and
          *     `uris` — the resource URIs that changed (1-50). `canopy_workspace` /
          *     `canopy_agent` name the tenant as for `GET /api/sites/agents`. Build and send it
-         *     with `canopy_sdk.resources.notify_updated` (or the Django host's
-         *     `artifacts.update` / `artifacts.notify_updated`). The body is ignored. Each View
+         *     with `canopy_sdk.resources.notify_updated`. The body is ignored. Each View
          *     that subscribed (`resources/subscribe`) to one of the URIs on this site gets the
          *     socket frame `app.resource_updated` — the URI and its tool call id, never data —
          *     and re-reads it as its viewer. Answers `{notified}`.

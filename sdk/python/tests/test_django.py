@@ -680,3 +680,14 @@ def test_kept_results_are_not_the_sdks(host):
         with pytest.raises(ImportError):
             importlib.import_module(gone)
     assert "canopy_host_artifact" not in connection.introspection.table_names()
+
+
+def test_a_bad_resource_scheme_fails_the_hosts_system_check(host):
+    from django.core import checks
+
+    for bad in (["labs-result", "https"], ["not a scheme"]):
+        with override_settings(CANOPY_HOST={**conf.raw(), "RESOURCE_SCHEMES": bad}):
+            errors = [e for e in checks.run_checks() if e.id == "canopy_host.E011"]
+        assert len(errors) == 1 and repr(bad[-1]) in errors[0].msg
+    with override_settings(CANOPY_HOST={**conf.raw(), "RESOURCE_SCHEMES": ["labs-result"]}):
+        assert not [e for e in checks.run_checks() if e.id.startswith("canopy_host.")]

@@ -2,6 +2,22 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.21.0 — 2026-10-23
+
+**What canopy keeps of a `resource_link` is an address, and only that.** In a sensitive
+conversation the link is the one thing canopy keeps of a tool's result, in plaintext, so it
+can no longer double as a place to put data.
+
+- `resources.MAX_URI_LENGTH` 2048 → **256**; `resources.MAX_LINKS` 20 → **10**.
+- `validate_link` / `validate_links` keep `{type, uri, name, mimeType}` and **never
+  `description`** (nor `_meta`, `annotations`). New `keep_name=False` keeps the URI's
+  scheme as `name` instead of the host's words (canopy uses it for a sensitive
+  conversation). `resource_link(..., description=)` still returns the description to the
+  model; canopy does not keep it.
+- Django: a system check, `canopy_host.E011`, fails startup on a
+  `CANOPY_HOST["RESOURCE_SCHEMES"]` entry `check_scheme` refuses — one bad scheme made the
+  whole signed `site.json` malformed, and canopy then read none of the site's facts.
+
 ## 0.20.0 — 2026-10-23
 
 **`Canopy-View`: canopy's positive word that a request is the person's own View.** A host

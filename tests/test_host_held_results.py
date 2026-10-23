@@ -24,10 +24,13 @@ from canopy_sdk import site as site_doc
 from canopy_sdk.host import ViewRefused, verify_view
 from canopy_sdk.keys import generate_private_key, public_pem
 from canopy_sdk.stores import MemoryJtiStore
+from canopy_transcript import conversational_messages
+from canopy_transcript.rows import TOOL_TEXT_MAX
 from django.contrib.auth.models import User
 from django.test import Client
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
+from fastmcp.tools import ToolResult
 from mcp.types import ResourceLink, TextContent
 
 from apps.agents.interface import parse
@@ -59,6 +62,11 @@ ROWS = [[SENTINEL, 12], ["Bisi", 3]]
 SUBJECTS = {sg.HOST_TOKEN: "u-42", "grant-owner": "sub-owner", "grant-eddie": "sub-eddie",
             "grant-vera": "sub-vera"}
 SITE_TOOL = "mcp__plugin_canopy_canopy-web__site_call"
+#: A realistic result: Labs' facts for 40 rows of 8 columns, 20 sampled, are over 8 KB.
+BIG_COLUMNS = ["worker", "visits", "district", "village", "form_id", "submitted", "status", "notes"]
+BIG_ROWS = [[SENTINEL if i == 0 else f"worker-{i:03d}", i, "Kano Municipal", f"Village {i}",
+             f"form-{i:05d}-{'x' * 40}", "2026-10-01T12:00:00Z", "approved", "n" * 300]
+            for i in range(40)]
 
 
 #: sg.IFACE with no owner's ceiling: the host's grant decides what the visitor reaches.
@@ -94,6 +102,16 @@ class ResultsHost:
                               owner=caller_subject(), name="Visits by worker", description="2 rows")
             told = facts(["name", "visits"], ROWS, sample=1)
             return [TextContent(type="text", text=json.dumps(told)), ResourceLink.model_validate(link)]
+
+        @server.tool(meta={"ui": {"resourceUri": VIEW, "visibility": ["model", "app"]}})
+        async def big_query(sql: str):
+            """Labs' real shape: facts over 8 KB (20 sample rows of 8 columns), as text AND
+            as structuredContent, then the link."""
+            link = store.save("query", {"columns": BIG_COLUMNS, "rows": BIG_ROWS, "sql": sql},
+                              owner=caller_subject(), name="Visits by worker", description="40 rows")
+            told = {**facts(BIG_COLUMNS, BIG_ROWS, sample=20), "sql": sql}
+            return ToolResult(content=[TextContent(type="text", text=json.dumps(told)),
+                                       ResourceLink.model_validate(link)], structured_content=told)
 
         @server.resource(VIEW, mime_type="text/html;profile=mcp-app")
         def view() -> str:
@@ -171,22 +189,22 @@ def w():
     w["grants"] = {"owner": _grant(w["app"], "grant-owner", w["owner"]),
                    "eddie": _grant(w["app"], "grant-eddie", w["eddie"]),
                    "vera": _grant(w["app"], "grant-vera", w["vera"])}
-    mcp_apps.record_tools(w["app"].pk, [("data_query", {"ui": {"resourceUri": VIEW,
-                                                               "visibility": ["model", "app"]}})])
+    mcp_apps.record_tools(w["app"].pk, [(t, {"ui": {"resourceUri": VIEW, "visibility": ["model", "app"]}})
+                                        for t in ("data_query", "big_query")])
     w["site_key"] = generate_private_key("EdDSA")
     w["app"].public_keys = [public_pem(w["site_key"])]
     w["app"].save(update_fields=["public_keys"])
     return w
 
 
-def _answer(w, host) -> dict:
-    """`site_call`'s answer for `data_query`, as the gateway returns it to the agent."""
+def _answer(w, host, tool="data_query") -> dict:
+    """`site_call`'s answer for `tool`, as the gateway returns it to the agent."""
     ctx = host_gateway.context_for_grant(w["app"], w["grants"]["owner"], turn_id="", agent_slug="ace",
                                          ceiling=[])
 
     async def main():
         async with host.lifespan():
-            return await host_gateway.call_tool(ctx, "data_query", {"sql": "select * from visits"})
+            return await host_gateway.call_tool(ctx, tool, {"sql": "select * from visits"})
     return async_to_sync(main)()
 
 
@@ -212,8 +230,18 @@ def _converse(w, host, *, sensitive: bool) -> dict:
 
 
 def _link(answer) -> dict:
-    [link] = [b for b in answer["content"] if b.get("type") == "resource_link"]
+    [link] = [b for b in answer.get("links", []) + answer["content"] if b.get("type") == "resource_link"]
     return link
+
+
+def _kept(link) -> dict:
+    """A link as canopy keeps it: its address only (`canopy_sdk.resources.validate_link`)."""
+    return {k: link[k] for k in ("type", "uri", "name", "mimeType")}
+
+
+def _sealed_kept(link) -> dict:
+    """...and in a sensitive conversation, with the scheme for a name: no host words."""
+    return {**_kept(link), "name": "labs-result"}
 
 
 def client_for(user):
@@ -238,8 +266,18 @@ def test_the_gateway_keeps_a_links_wire_names(w, host):
     link = _link(answer)
     assert link["uri"].startswith("labs-result://") and link["mimeType"] == "application/json"
     assert link["name"] == "Visits by worker"
+    assert answer["links"] == [link] and list(answer)[:4] == ["site", "tool", "is_error", "links"]
     facts = json.loads(answer["content"][0]["text"])
     assert facts["row_count"] == 2 and facts["columns"] == ["name", "visits"]
+
+
+def test_site_call_puts_the_link_first_and_carries_the_facts_once(w, host):
+    answer = _answer(w, host, "big_query")
+    assert answer["structured"]["row_count"] == 40
+    # MCP's text copy of `structured` is left out: the agent reads `structured`.
+    assert answer["content"] == [] and len(answer["links"]) == 1
+    text = json.dumps(answer)
+    assert text.index("labs-result://") < 300 < TOOL_TEXT_MAX < len(text)
 
 
 # --- strip_result keeps declared links, drops everything else ---------------------------
@@ -261,10 +299,28 @@ def test_strip_result_keeps_declared_links_and_drops_the_rest(w):
                           ({"tool_use_id": CALL, "is_error": False}, json.dumps(answer)),  # in plaintext
                           ({"tool_use_id": CALL, "content": answer["content"]}, "")):     # path D blocks
         out = sensitivity.strip_result(payload, session=w["mine"], text=text)
-        assert out["resource_links"] == [{"type": "resource_link", "uri": "labs-result://abc", "name": "r",
-                                          "mimeType": "application/json"}]
+        assert out["resource_links"] == [{"type": "resource_link", "uri": "labs-result://abc",
+                                          "name": "labs-result", "mimeType": "application/json"}]
         assert out["withheld"] is True and out["tool_use_id"] == CALL
         assert SENTINEL not in json.dumps(out)
+
+
+def test_strip_result_keeps_only_what_it_names(w):
+    payload = {"tool_use_id": CALL, "is_error": False, "status": "complete", "stdout": SENTINEL,
+               "summary": {"rows": ROWS}, "preview": SENTINEL, "resource_links": "not a list"}
+    out = sensitivity.strip_result(payload, session=w["mine"])
+    assert out == {"tool_use_id": CALL, "is_error": False, "status": "complete", "withheld": True}
+
+
+def test_a_link_canopy_keeps_carries_no_description_and_fits_its_bounds(w):
+    long_uri = {"type": "resource_link", "uri": "labs-result://" + "x" * 300, "name": "r", "mimeType": "a/b"}
+    good = {"type": "resource_link", "uri": "labs-result://abc", "name": "Amina's visits",
+            "mimeType": "application/json", "description": f"rows: {SENTINEL}"}
+    many = [{**good, "uri": f"labs-result://{i}"} for i in range(25)]
+    out = sensitivity.strip_result({"tool_use_id": CALL, "resource_links": [long_uri, good, *many]},
+                                   session=w["mine"])
+    assert len(out["resource_links"]) == 10 and out["resource_links"][0]["uri"] == "labs-result://abc"
+    assert SENTINEL not in json.dumps(out) and "Amina" not in json.dumps(out)
 
 
 def test_without_a_declared_scheme_or_a_site_no_link_is_kept(w, monkeypatch):
@@ -284,14 +340,16 @@ def test_the_stored_row_and_the_ledger_list_the_links_not_the_data(w, host):
     answer = _converse(w, host, sensitive=True)
     link = _link(answer)
     row = Message.objects.get(session=w["mine"], role=Message.TOOL_RESULT)
-    assert row.content["resource_links"] == [link] and row.plaintext == "" and row.sealed is None
+    assert row.content["resource_links"] == [_sealed_kept(link)] and row.plaintext == ""
+    assert row.sealed is None
     assert SENTINEL not in json.dumps(row.content)
     turn = Turn.objects.create(chat_session=w["mine"], prompt="q", initiator_user=w["owner"],
                                initiator_kind="user", idempotency_key=uuid.uuid4().hex)
     ledger.append_events(turn, [{"kind": "tool_end", "payload": {"tool_use_id": CALL, "is_error": False,
                                                                  "output": json.dumps(answer)}}])
     event = TurnEvent.objects.get(turn=turn)
-    assert event.payload["resource_links"] == [link] and event.payload["redacted"] == "sensitive"
+    assert event.payload["resource_links"] == [_sealed_kept(link)]
+    assert event.payload["redacted"] == "sensitive"
     assert SENTINEL not in json.dumps(event.payload)
 
 
@@ -303,7 +361,7 @@ def test_a_sensitive_view_gets_the_links_only_and_reads_the_rows_as_its_viewer(w
     r = through(host, lambda: client_for(w["owner"]).get(base(w) + "/resource"))
     assert r.status_code == 200, r.content
     body = r.json()
-    assert body["tool_result"] == {"content": [link], "structuredContent": None,
+    assert body["tool_result"] == {"content": [_sealed_kept(link)], "structuredContent": None,
                                    "_meta": {"canopy/withheld": True}, "isError": False}
     assert SENTINEL not in r.content.decode()
     # The owner reads the rows from the host, as themselves; a colleague the host's ACL
@@ -322,8 +380,150 @@ def test_an_ordinary_view_gets_the_result_as_it_was_links_included(w, host):
     answer = _converse(w, host, sensitive=False)
     r = through(host, lambda: client_for(w["owner"]).get(base(w) + "/resource"))
     result = r.json()["tool_result"]
-    assert result["content"] == answer["content"] and _link(result) == _link(answer)
+    assert result["content"] == answer["links"] + answer["content"] and _link(result) == _link(answer)
     assert "_meta" not in result
+
+
+# --- a realistic result (over 8 KB) still reaches its card ---------------------------------
+#
+# Driven through the transcript reader both runners use (`canopy_transcript`), which cuts a
+# result's text at TOOL_TEXT_MAX: the record is what Claude Code writes, the rows are what a
+# runner ships, and the View reads what was stored.
+
+
+def _record(tool_name: str, tool_input: dict, result_content) -> list[dict]:
+    """Claude Code's transcript records for one tool call and its result."""
+    return [
+        {"type": "user", "message": {"content": "how many visits?"}},
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": CALL, "name": tool_name, "input": tool_input}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": CALL, "content": result_content}]}},
+    ]
+
+
+def _ship(w, records, *, sensitive: bool):
+    session = w["mine"]
+    if sensitive:
+        from apps.canopy_sessions import services as chat_services
+
+        vault_key(w["owner"])
+        chat_services.add_runner_requirements(session, ["sensitive_data"])
+    rows = conversational_messages(records, -1)
+    [result] = [r for r in rows if r["role"] == "tool_result"]
+    assert len(result["text"]) < TOOL_TEXT_MAX + 100   # the runner cut it...
+    chat_transcript_ingest.persist_transcript_rows(session, rows)
+
+
+def _gateway_records(w, host):
+    import pydantic_core
+
+    answer = _answer(w, host, "big_query")
+    # What FastMCP hands Claude Code for `site_call`'s dict: one JSON text block.
+    text = pydantic_core.to_json(answer).decode()
+    assert len(text) > TOOL_TEXT_MAX
+    return answer, _record(SITE_TOOL, {"tool": "big_query", "arguments": {"sql": "x"}},
+                           [{"type": "text", "text": text}])
+
+
+def _direct_records(w, host):
+    """Labs attached to Claude Code directly: its own blocks, the link after 12 KB of facts."""
+    answer = _answer(w, host, "big_query")
+    blocks = [{"type": "text", "text": json.dumps(answer["structured"])}, *answer["links"]]
+    assert len(blocks[0]["text"]) > TOOL_TEXT_MAX
+    return answer, _record("mcp__connect_labs__big_query", {"sql": "x"}, blocks)
+
+
+def _card(w, host, viewer="owner"):
+    r = through(host, lambda: client_for(w[viewer]).get(base(w) + "/resource"))
+    assert r.status_code == 200, r.content
+    return r.json()["tool_result"]
+
+
+def _reads_rows(w, host, link):
+    r = through(host, lambda: post(client_for(w["owner"]), base(w) + "/read",
+                                   {"uri": link["uri"] + "?page=1&page_size=25"}))
+    assert r.status_code == 200, r.content
+    rows = json.loads(r.json()["contents"][0]["text"])["rows"]
+    assert len(rows) == 25 and rows[0][0] == SENTINEL
+
+
+@pytest.mark.parametrize("path", ["gateway", "direct"])
+def test_an_ordinary_card_over_8kb_still_has_its_link(w, host, path):
+    answer, records = (_gateway_records if path == "gateway" else _direct_records)(w, host)
+    _ship(w, records, sensitive=False)
+    stored = Message.objects.get(session=w["mine"], role=Message.TOOL_RESULT)
+    assert stored.content["resource_links"] == [_kept(_link(answer))]
+    result = _card(w, host)
+    assert _link(result) == _kept(_link(answer))
+    _reads_rows(w, host, _link(result))
+
+
+@pytest.mark.parametrize("path", ["gateway", "direct"])
+def test_a_sensitive_card_over_8kb_still_has_its_link(w, host, path):
+    answer, records = (_gateway_records if path == "gateway" else _direct_records)(w, host)
+    _ship(w, records, sensitive=True)
+    stored = Message.objects.get(session=w["mine"], role=Message.TOOL_RESULT)
+    assert stored.content["resource_links"] == [_sealed_kept(_link(answer))]
+    assert SENTINEL not in json.dumps(stored.content) and stored.plaintext == ""
+    result = _card(w, host)
+    assert result["content"] == [_sealed_kept(_link(answer))] and result["_meta"] == {"canopy/withheld": True}
+    _reads_rows(w, host, _link(result))
+
+
+def test_a_direct_result_no_longer_glues_a_link_marker_onto_its_facts():
+    from canopy_transcript.rows import _tool_result_text
+
+    blocks = [{"type": "text", "text": '{"row_count": 2}'},
+              {"type": "resource_link", "uri": "labs-result://a", "name": "r", "mimeType": "a/b"}]
+    assert json.loads(_tool_result_text(blocks)) == {"row_count": 2}
+    assert _tool_result_text(blocks[1:]) == "[resource_link]"   # a link alone still pairs
+
+
+# --- the gateway refuses an answer bigger than its cap -----------------------------------
+
+
+def test_the_gateway_refuses_an_answer_over_its_byte_cap(w, host, settings):
+    ctx = host_gateway.context_for_grant(w["app"], w["grants"]["owner"], turn_id="", agent_slug="ace",
+                                         ceiling=[])
+    uri = host.store.save("query", {"rows": BIG_ROWS}, owner="sub-owner", name="r")["uri"]
+
+    def outcome(call):
+        async def main():
+            async with host.lifespan():
+                try:
+                    return await call()
+                except host_gateway.GatewayRefusal as exc:
+                    return exc
+        return async_to_sync(main)()
+
+    settings.HOST_GATEWAY_MAX_RESPONSE_BYTES = 4_000
+    # `read_resource` (the agent's `site_read`) reads through `view_read`.
+    for call in (lambda: host_gateway.call_tool(ctx, "big_query", {"sql": "x"}),
+                 lambda: host_gateway.view_read(ctx, uri)):
+        refused = outcome(call)
+        assert isinstance(refused, host_gateway.GatewayRefusal), refused
+        assert refused.code == "too_large" and "smaller page_size" in refused.message
+    settings.HOST_GATEWAY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+    assert outcome(lambda: host_gateway.view_read(ctx, uri))
+
+
+def test_lapsed_subscriptions_are_swept_everywhere(w):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.common import ticks
+    from apps.mcp_apps_host import mcp_apps_views
+
+    now = timezone.now()
+    AppViewSubscription.objects.create(session=w["mine"], app=w["app"], tool_call_id=CALL,
+                                       uri="labs-result://old", expires_at=now - timedelta(minutes=1))
+    AppViewSubscription.objects.create(session=w["mine"], app=w["app"], tool_call_id=CALL,
+                                       uri="labs-result://live", expires_at=now + timedelta(hours=1))
+    assert "mcp_apps.subscription_sweep" in ticks.jobs()
+    assert mcp_apps_views.sweep_subscriptions() == 1
+    assert list(AppViewSubscription.objects.values_list("uri", flat=True)) == ["labs-result://live"]
 
 
 # --- site_read: the agent reads a result as the visitor ----------------------------------

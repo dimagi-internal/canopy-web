@@ -1124,38 +1124,77 @@ re-reads it there. The agent reads it with **`site_read`** (beside `site_call`),
 the visitor, only when it needs more than the facts — so a large result never has to
 be in its context. Your ACL and your audit apply to every read.
 
-**Sensitive conversations.** canopy stores no tool result for a sensitive
-conversation — only these links (URI, name, mimeType: addresses, not data). A View
-there receives `ui/notifications/tool-result` as
-`{content: [the links], structuredContent: null, _meta: {"canopy/withheld": true}}`
-and reads each link as its viewer. In an ordinary conversation the tool result
-reaches the View as it always did, links included. A link is kept only when it is a
-well-formed `resource_link` (at most 20, URI ≤ 2048 characters, name ≤ 200) under a
-**URI scheme your `site.json` declares** in `site.resource_schemes`; anything else
-is dropped. Declare your own scheme (`labs-result`), never `http(s)`, `data`, `ui`
-or `file`. canopy reads the declaration live from your signed document, with no
-owner step.
+**What canopy keeps of a tool result.** Exactly this, and nothing else:
+
+| | ordinary conversation | sensitive conversation |
+|---|---|---|
+| the call | `tool_use_id`, `is_error` | `tool_use_id`, `is_error`, `status`, `withheld: true` |
+| your text | the first 8,000 characters (a row's display text) | nothing |
+| `structuredContent` | inside that text, when your tool's answer is short enough | nothing |
+| each link | `{type, uri, name, mimeType}`, kept whole | `{type, uri, mimeType}` with `name` set to the URI's **scheme** |
+
+A link is kept only when it is a well-formed `resource_link` with a URI of at most **256
+characters**, under a **URI scheme your `site.json` declares** in `site.resource_schemes`;
+at most **10** per result. Its `description`, `_meta` and `annotations` are never kept,
+and in a sensitive conversation neither is its `name`: those links rest in plaintext, so
+nothing in them may be data — make the URI an opaque id (`labs-result://Zk3…`), never a
+query, a name or a filter. A link is pulled out of your result **before** the text is
+cut, so a long answer still reaches its card. Declare your own scheme (`labs-result`),
+never `http(s)`, `data`, `ui` or `file`; canopy reads the declaration live from your
+signed document, with no owner step.
+
+The agent gets your answer through `site_call` as `{site, tool, is_error, links,
+content, structured}`: your links first, then the rest, with MCP's text copy of
+`structuredContent` left out so the facts are carried once. What a View receives: in an
+ordinary conversation, your tool result as it was, with the kept links first. In a sensitive one, `ui/notifications/tool-result` is
+`{content: [the links], structuredContent: null, _meta: {"canopy/withheld": true}}`, and
+the View reads each link as its viewer. canopy refuses any answer from your MCP server
+over **4 MB** (`result too large; use a smaller page_size`), so page what you return.
 
 **A minimal host** — no SDK storage; a store of your own and two MCP handlers
-(FastMCP 2.12+ shown, any MCP server works the same way):
+(FastMCP 2.12+ shown, any MCP server works the same way). The resource handler applies
+**the same sensitive-data rule as the tool**: a result is a second door to the same rows,
+so a host that clears only `tools/call` lets an agent `site_read` back what its tool
+withheld.
 
 ```python
 import json, secrets
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError
+from fastmcp.server.dependencies import get_http_request
 from mcp.types import ResourceLink, TextContent
+from canopy_sdk.django import execution
 
 mcp = FastMCP("labs")
 RESULTS = {}   # yours: a table with an owner and an expiry, a cache, object storage...
 
+def cleared(uri: str | None = None) -> bool:
+    """Your ONE rule for releasing sensitive data, asked by every handler that returns rows.
+    A delegated request with neither statement is no one: never cleared."""
+    request = get_http_request()
+    if request.headers.get("Canopy-Execution"):                 # an agent's turn (§8a step 4)
+        try:
+            call = execution.verify_execution(request)
+        except execution.ExecutionRefused:
+            return False
+        return call.sensitive_clearance(agents={"labsdata"}) is None
+    if uri is not None:                                         # the person's own View (§8a step 5)
+        try:
+            execution.verify_view(request, uri=uri, subject=current_subject())
+        except execution.ViewRefused:
+            return False
+        return True
+    return False
+
 @mcp.tool
 def data_query(sql: str):
-    columns, rows = run_query(sql)                          # as the visitor, under your ACL
-    rid = secrets.token_urlsafe(18)                          # unguessable
-    RESULTS[rid] = {"owner": current_subject(), "columns": columns, "rows": rows}
+    columns, rows = run_query(sql, sensitive=cleared())     # as the visitor, under your ACL
+    rid = secrets.token_urlsafe(18)                          # unguessable, and short
+    RESULTS[rid] = {"owner": current_subject(), "sensitive": holds_sensitive(columns),
+                    "columns": columns, "rows": rows}
     facts = {"row_count": len(rows), "columns": columns, "sample": rows[:5], "sql": sql}
     link = ResourceLink(type="resource_link", uri=f"labs-result://{rid}", name="Visits by worker",
-                        mimeType="application/json", description=f"{len(rows)} rows")
+                        mimeType="application/json")
     return [TextContent(type="text", text=json.dumps(facts)), link]
 
 @mcp.resource("labs-result://{rid}{?page,page_size}", mime_type="application/json")
@@ -1163,6 +1202,8 @@ def result(rid: str, page: str = "1", page_size: str = "100"):
     kept = RESULTS.get(rid)
     if kept is None or not may_read(current_subject(), kept):   # the owner, or your ACL
         raise ResourceError("not found")
+    if kept["sensitive"] and not cleared(f"labs-result://{rid}"):  # the tool's rule, again
+        raise ResourceError("forbidden: sensitive")
     start = (int(page) - 1) * int(page_size)                    # a table pages here,
     return json.dumps({**kept, "rows": kept["rows"][start:start + int(page_size)]})  # never in chat
 ```
@@ -1171,7 +1212,9 @@ def result(rid: str, page: str = "1", page_size: str = "100"):
 visitor's `sub`). Expire results on your own schedule. Then **declare the scheme** in
 your signed `site.json`'s `site.resource_schemes` — with the Python SDK
 (`dimagi-canopy` ≥ 0.19) that is `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]`,
-or `site_document(..., site={"resource_schemes": ["labs-result"]})` without Django.
+or `site_document(..., site={"resource_schemes": ["labs-result"]})` without Django; from
+0.21 a bad entry fails the Django system check `canopy_host.E011` at startup, since it
+would make the whole `site.json` malformed.
 [SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--a-link).
 
 **Live updates.** A View may `resources/subscribe` to a link. canopy holds the

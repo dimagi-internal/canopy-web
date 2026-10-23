@@ -216,3 +216,14 @@ def test_reset_drops_stream_state_but_keeps_session_facts():
 
     r.apply({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "new reply"}})
     assert r.assistant_text == "new reply"
+
+
+def test_an_mcp_result_keeps_the_hosts_resource_link_whole():
+    link = {"type": "resource_link", "uri": "labs-result://abc", "name": "r", "mimeType": "application/json"}
+    r = UpdateReducer()
+    r.apply({"sessionUpdate": "tool_call", "toolCallId": "toolu_02", "status": "pending", "title": "q",
+             "kind": "other", "rawInput": {"sql": "x"}, "_meta": {"claudeCode": {"toolName": "mcp__labs__q"}}})
+    r.apply({"sessionUpdate": "tool_call_update", "toolCallId": "toolu_02", "status": "completed",
+             "rawOutput": [{"type": "text", "text": "x" * 9000}, link]})
+    _use, result = r.rows_for_tool_call("toolu_02")
+    assert result["content"]["resource_links"] == [link]
