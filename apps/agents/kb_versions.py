@@ -143,7 +143,8 @@ def commit(project, state: dict, base: int | None, *, published_by: str = "", up
     return version, True
 
 
-def publish_full(project, key: str, sha256: str, state: dict | None = None, *, published_by: str = ""):
+def publish_full(project, key: str, sha256: str, state: dict | None = None, *, published_by: str = "",
+                 changes: dict | None = None):
     """The whole-file publish (`kb_store.publish`), recorded as a FULL version."""
     if state is not None:
         _state_ok(state)
@@ -163,7 +164,10 @@ def publish_full(project, key: str, sha256: str, state: dict | None = None, *, p
             kb_key=project.kb_key, kb_sha256=project.kb_sha256, kb_bytes=project.kb_bytes,
             uploaded_bytes=project.kb_bytes or 0, published_by=published_by,
             started_at=timezone.now(), finished_at=timezone.now())
-        if previous is not None:
+        if changes:
+            d = {k: [str(i) for i in changes.get(k) or []] for k in ("added", "changed", "removed")}
+            _log_ids(version, d, {str(i): r for i, r in (changes.get("rows") or {}).items() if isinstance(r, dict)})
+        elif previous is not None:
             d = records.diff(previous, state)
             _log_ids(version, d)
         project.kb_version = version

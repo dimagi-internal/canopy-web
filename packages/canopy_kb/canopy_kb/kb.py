@@ -430,7 +430,8 @@ def apply(previous: Path | None, out: Path, upserts: Iterable[dict], removed: It
             else:
                 aliases = json.loads(meta["aliases"])
         idx = _Index(db, _now(), live_fts=True)
-        applied: dict[str, list[str]] = {"new": [], "changed": [], "removed": []}
+        # `changed`: every document re-put; `content_changed`: those whose text changed
+        applied: dict[str, list[str]] = {"new": [], "changed": [], "content_changed": [], "removed": []}
         seen: set[str] = set()
         for it in upserts:
             iid = it.get("id")
@@ -446,6 +447,7 @@ def apply(previous: Path | None, out: Path, upserts: Iterable[dict], removed: It
             else:
                 applied["changed"].append(iid)
                 if it.get("sha256") and old["sha256"] != it.get("sha256"):
+                    applied["content_changed"].append(iid)
                     idx.change(iid, "changed", row)
                 idx.drop(iid, removed=False)
             idx.put(it, old["first_seen"] if old else idx.now)

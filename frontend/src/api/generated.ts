@@ -25565,6 +25565,10 @@ export interface components {
             /** Sha256 */
             readonly sha256: string;
             readonly state?: components["schemas"]["KbStateIn"] | null;
+            /** Changes */
+            readonly changes?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * KbStateIn

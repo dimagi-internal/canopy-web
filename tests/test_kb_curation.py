@@ -168,3 +168,26 @@ def test_a_whole_file_publish_supersedes_a_delta_stuck_waiting_to_be_built(world
     assert project.kb_version.number == 3
     kb_index.drain()  # nothing left to build, and the served version stands
     assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 3
+
+
+def test_a_whole_file_publish_logs_the_changes_its_builder_reports(world, s3, tmp_path):
+    """A refresh's runner says which documents changed in content; `whats_new` lists those,
+    not every record a new format re-addressed."""
+    v1 = _bundle(tmp_path, "v1", ITEMS)
+    kb_fixtures.full(world, s3, tmp_path, v1)
+    db = tmp_path / "v2.sqlite"
+    v2 = _bundle(tmp_path, "v2", V2)
+    build(v2, db)
+    body = gzip.compress(db.read_bytes())
+    c = world["client"]
+    up = c.post(f"{KB_URL}/upload", content_type=J).json()
+    s3.objects[up["key"]] = body
+    r = c.post(f"{KB_URL}/publish", {"key": up["key"], "sha256": hashlib.sha256(body).hexdigest(),
+                                     "state": records.state(v2),
+                                     "changes": {"added": ["n:1"], "changed": [], "removed": ["r:1"],
+                                                 "rows": {"n:1": {"type": "blog_post", "title": "New grant"}}}},
+               content_type=J)
+    assert r.status_code == 200, r.content
+    from apps.agents.models import KbChange
+    logged = {(ch.item_id, ch.change, ch.title) for ch in KbChange.objects.filter(version__number=2)}
+    assert logged == {("n:1", "new", "New grant"), ("r:1", "removed", "")}

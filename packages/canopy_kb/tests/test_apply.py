@@ -84,7 +84,8 @@ def test_applying_a_delta_matches_a_full_build_of_the_same_content(tmp_path):
     assert d["removed"] == ["r:amf"] and set(d["added"]) == {"r:ors", "pdf:1"} and "b:1" not in d["changed"]
     inc = tmp_path / "inc.sqlite"
     s = apply(a, inc, upserts, d["removed"], manifest=parts["manifest"], aliases=parts["aliases"], tables=tables)
-    assert s["applied"] == {"new": ["pdf:1", "r:ors"], "changed": ["p:1", "r:amf2"], "removed": ["r:amf"]}
+    assert s["applied"] == {"new": ["pdf:1", "r:ors"], "changed": ["p:1", "r:amf2"], "content_changed": ["p:1"],
+                            "removed": ["r:amf"]}
     assert _dump(inc) == _dump(full)
     k_inc, k_full = KB(inc), KB(full)
     for q in QUERIES:
@@ -100,7 +101,7 @@ def test_an_empty_delta_changes_no_content_and_a_second_one_stacks(tmp_path):
     a = tmp_path / "a.sqlite"
     build(v1, a)
     same = tmp_path / "same.sqlite"
-    assert apply(a, same, [])["applied"] == {"new": [], "changed": [], "removed": []}
+    assert apply(a, same, [])["applied"] == {"new": [], "changed": [], "content_changed": [], "removed": []}
     assert _dump(same) == _dump(a)
     # v1 -> v2 -> v1 again, all by deltas, is a full build of v1 (history aside)
     v2 = _v2(tmp_path)

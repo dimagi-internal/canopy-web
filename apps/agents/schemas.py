@@ -950,6 +950,10 @@ class KbPublishIn(StrictModel):
     sha256: str = Field(min_length=64, max_length=64)
     #: The state the file was built from, so the next publish can send only a delta.
     state: KbStateIn | None = None
+    #: What changed in content ({added, changed, removed: [ids], rows: {id: {type,
+    #: title, url, date}}}), as the builder saw it: the version log (`whats_new`) lists
+    #: these, not every record whose address moved. Without it, the state diff.
+    changes: dict | None = None
 
 
 class KbPlanIn(StrictModel):

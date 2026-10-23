@@ -174,7 +174,7 @@ class Store(Protocol):
     def save_curation(self, sha: str, base: str | None) -> dict: ...
     def plan(self, state: dict) -> dict: ...
     def served(self, out: Path) -> Path | None: ...
-    def publish_file(self, gz: Path, sha256: str, state: dict) -> dict: ...
+    def publish_file(self, gz: Path, sha256: str, state: dict, changes: dict | None = None) -> dict: ...
 
 
 class MemoryStore:
@@ -252,12 +252,13 @@ class MemoryStore:
         out.write_bytes(self.versions[-1]["file"])
         return out
 
-    def publish_file(self, gz, sha256, state):
+    def publish_file(self, gz, sha256, state, changes=None):
         import gzip as _gz
         body = Path(gz).read_bytes()
         if __import__("hashlib").sha256(body).hexdigest() != sha256:
             raise CurationError("the uploaded file is not the one named")
-        self.versions.append({"number": len(self.versions) + 1, "state": state, "file": _gz.decompress(body)})
+        self.versions.append({"number": len(self.versions) + 1, "state": state, "file": _gz.decompress(body),
+                              "changes": changes})
         self.calls.append(f"publish {len(body)}")
         return {"version": len(self.versions)}
 
@@ -528,10 +529,13 @@ class Curation:
                     db.close()
                 ids = list(plan["upload_docs"])
 
+                rows: dict[str, dict] = {}
+
                 def items():
                     for batch in _batches(ids, 200):
                         got = text(batch)
                         for i in batch:
+                            rows[i] = {k: docs[i].get(k) for k in ("type", "title", "url", "date")}
                             if "text_sha" in docs[i] and sha(got[i]) != docs[i]["text_sha"]:
                                 raise CurationError(f"{i}: its text is not the one its record names")
                             yield records.join(docs[i], got[i]) if "text_sha" in docs[i] else docs[i]
@@ -548,7 +552,14 @@ class Curation:
                 with open(gz, "rb") as fh:
                     for chunk in iter(lambda: fh.read(1 << 20), b""):
                         digest.update(chunk)
-                v = self.store.publish_file(gz, digest.hexdigest(), state)
+                applied = summary.get("applied") or {}
+                # What readers' `whats_new` lists: documents whose content changed, not every
+                # record re-put (a new record format, a new card on an unchanged text).
+                changes = {"added": applied.get("new", []) if base is not None else [],
+                           "changed": applied.get("content_changed", []), "removed": applied.get("removed", []),
+                           "rows": {i: rows[i] for i in applied.get("new", []) + applied.get("content_changed", [])
+                                    if i in rows}}
+                v = self.store.publish_file(gz, digest.hexdigest(), state, changes)
                 out.update(published=True, version=v.get("version"), bytes=gz.stat().st_size,
                            items=summary.get("items"))
         root = self.state.upload(self.store)
