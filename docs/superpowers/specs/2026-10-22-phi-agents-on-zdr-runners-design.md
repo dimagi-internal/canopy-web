@@ -198,6 +198,9 @@ capabilities:
 - `data: phi` is set by the agent's owner or an admin, from the browser or a token, like
   any other interface setting: no passkey. The settings audit records who set it, through
   what, and the before and after.
+- Two ways to set it, one stored setting: the YAML, or the per-capability switch on
+  Settings → Interface (`PUT …/interface/capabilities/{name}/phi`), which writes or
+  removes the `data: phi` line in the saved YAML and saves it down the same path.
 - **Refused when it is structurally false:** a `phi` capability's tool set may hold only
   the gateway's site tools, `current_page` and read-only local tools. Drive, email,
   memory, Slack, the web or a shell in the capability → the declaration is a 422 naming

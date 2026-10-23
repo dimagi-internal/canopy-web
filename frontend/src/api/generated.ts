@@ -3405,6 +3405,23 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/interface/capabilities/{name}/phi": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /** Turn PHI-safe on or off for one capability: writes or removes its `data: phi` in the saved YAML */
+        readonly put: operations["set_capability_phi"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/admins": {
         readonly parameters: {
             readonly query?: never;
@@ -19548,6 +19565,11 @@ export interface components {
             readonly interface?: {
                 readonly [key: string]: unknown;
             } | null;
+        };
+        /** CapabilityPhiIn */
+        readonly CapabilityPhiIn: {
+            /** Phi Safe */
+            readonly phi_safe: boolean;
         };
         /** AgentAdminOut */
         readonly AgentAdminOut: {
@@ -38881,6 +38903,33 @@ export interface operations {
             readonly cookie?: never;
         };
         readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentInterfaceOut"];
+                };
+            };
+        };
+    };
+    readonly set_capability_phi: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["CapabilityPhiIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {

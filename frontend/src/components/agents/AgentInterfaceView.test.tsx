@@ -19,12 +19,14 @@ const getAgentInterface = vi.fn()
 const getAgentInterfaceHistory = vi.fn()
 const saveAgentInterface = vi.fn()
 const unpublishAgentInterface = vi.fn()
+const setCapabilityPhi = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
   getAgentInterface: (...a: unknown[]) => getAgentInterface(...a),
   getAgentInterfaceHistory: (...a: unknown[]) => getAgentInterfaceHistory(...a),
   saveAgentInterface: (...a: unknown[]) => saveAgentInterface(...a),
   unpublishAgentInterface: (...a: unknown[]) => unpublishAgentInterface(...a),
+  setCapabilityPhi: (...a: unknown[]) => setCapabilityPhi(...a),
 }))
 
 const { AgentInterfaceView, declaresPhi } = await import('./AgentInterfaceView')
@@ -203,5 +205,47 @@ describe('AgentInterfaceView — the PHI-safe setting', () => {
     expect(rows[0].textContent).toContain('Unpublished')
     expect(rows[2].textContent).toContain('mcp')
     expect(getAgentInterfaceHistory).toHaveBeenCalledWith('labsdata')
+  })
+
+  it('the switch turns one capability on at once, like any other edit', async () => {
+    const off = { ...PHI_ON, interface: { capabilities: { data: { callers: ['contact'], sites: ['connect-labs'], tools: ['Read'] } } } }
+    getAgentInterface.mockResolvedValue(off)
+    setCapabilityPhi.mockResolvedValue(PHI_ON)
+    render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
+    const sw = await screen.findByRole('switch', { name: 'PHI-safe for data' })
+    expect(sw.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(sw)
+    await waitFor(() => expect(setCapabilityPhi).toHaveBeenCalledWith('labsdata', 'data', true))
+    expect((await screen.findByTestId('phi-safe')).textContent).toBe('PHI-safe')
+  })
+
+  it('the switch turns one capability off at once, and is not offered to a non-admin', async () => {
+    getAgentInterface.mockResolvedValue(PHI_ON)
+    setCapabilityPhi.mockResolvedValue({ ...PHI_ON, interface: { capabilities: { data: { callers: ['contact'], sites: ['connect-labs'], tools: ['Read'] } } } })
+    const { unmount } = render(<AgentInterfaceView agentSlug="labsdata" />)
+    await screen.findByTestId('phi-safe')
+    expect(screen.queryByRole('switch')).toBeNull()
+    unmount()
+    render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
+    const sw = await screen.findByRole('switch', { name: 'PHI-safe for data' })
+    expect(sw.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(sw)
+    await waitFor(() => expect(setCapabilityPhi).toHaveBeenCalledWith('labsdata', 'data', false))
+    await waitFor(() => expect(screen.queryByTestId('phi-safe')).toBeNull())
+  })
+
+  it("names a switch change in the history, with PHI-safe after from what it recorded", async () => {
+    getAgentInterface.mockResolvedValue(PHI_ON)
+    getAgentInterfaceHistory.mockResolvedValue([
+      { ...change(2, 'set_capability_phi', { phi_safe: false }), target: 'labsdata / data',
+        changes: [{ scope: 'interface:labsdata/data', before: { phi_capabilities: ['data'] }, after: { phi_capabilities: [] } }] },
+      { ...change(1, 'set_capability_phi', { phi_safe: true }), target: 'labsdata / data',
+        changes: [{ scope: 'interface:labsdata/data', before: { phi_capabilities: [] }, after: { phi_capabilities: ['data'] } }] },
+    ])
+    render(<AgentInterfaceView agentSlug="labsdata" />)
+    const rows = await screen.findAllByTestId('interface-change')
+    expect(rows.map((r) => r.lastElementChild?.textContent)).toEqual(['off', 'on'])
+    expect(rows[0].textContent).toContain('PHI-safe off for data')
+    expect(rows[1].textContent).toContain('PHI-safe on for data')
   })
 })
