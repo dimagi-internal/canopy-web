@@ -237,6 +237,18 @@ class MemoryStore:
         self.versions.append({**old, "number": len(self.versions) + 1})
 
     # what a test asks of it
+    def item_ids(self) -> list[str]:
+        """The ids of the documents the served file holds, sorted."""
+        import sqlite3
+        import tempfile as _tf
+        with _tf.TemporaryDirectory() as td:
+            path = Path(td) / "kb.sqlite"
+            path.write_bytes(self.versions[-1]["file"])
+            db = sqlite3.connect(path)
+            ids = sorted(r[0] for r in db.execute("SELECT id FROM items"))
+            db.close()
+        return ids
+
     def item(self, iid: str) -> dict:
         """A published document, read back from the file the host serves."""
         import json as _json
