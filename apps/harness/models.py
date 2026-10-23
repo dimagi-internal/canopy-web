@@ -412,16 +412,12 @@ class Runner(models.Model):
         Per KIND, because the fleet runs two programs (see `code_sha` above); one
         derivation shared by RunnerOut and the heartbeat's update nudge so the
         alert and the nudge cannot disagree. Empty means UNKNOWN, never "stale"."""
-        from django.conf import settings
-
         setting = "RUNNER_CLOUD_CODE_SHA" if self.kind == Runner.CLOUD else "RUNNER_CODE_SHA"
         return getattr(settings, setting, "") or ""
 
     def expected_code_committed_at(self) -> int:
         """Committer epoch of `expected_code_sha`, per kind. 0 = unknown (a
         malformed build arg too: the alert then falls back to "different")."""
-        from django.conf import settings
-
         setting = "RUNNER_CLOUD_CODE_COMMITTED_AT" if self.kind == Runner.CLOUD else "RUNNER_CODE_COMMITTED_AT"
         try:
             return int(getattr(settings, setting, 0) or 0)

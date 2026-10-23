@@ -10,7 +10,7 @@ from canopy_sdk import contract
 from ninja import Schema
 from pydantic import Field, WithJsonSchema, field_validator, model_validator
 
-from .models import Runner, Turn
+from .models import Turn
 
 from .runner_requirements import is_zdr_box
 
