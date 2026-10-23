@@ -35,7 +35,10 @@
  * A docked rail can also be SNAPPED into the page: instead of being drawn over
  * the page's right edge, it reserves its width there (padding on the host's
  * `snapTarget`, the root element unless the host names another), so the page
- * reflows beside it. It follows the rail's width as the visitor drags it, and
+ * reflows beside it. Snapped it is a column of the page, not a panel on it:
+ * always full height, square, a single hairline against the page, and sized
+ * only by dragging that hairline (the divider) — the corner grip and any
+ * shorter height saved while floating step aside until it floats again. It
  * lets go whenever the rail is closed or expanded. Remembered per site.
  */
 
@@ -48,6 +51,7 @@ import {
   readSavedSize,
   resizePanel,
   sizeKeyFor,
+  snappedWidth,
   storageKeyFor,
   writeSaved,
   writeSavedSize,
@@ -162,8 +166,14 @@ const STYLES = `
     right: 0; top: 0; bottom: 0; width: var(--w);
     height: 100vh; border-radius: 0; border-width: 0 0 0 1px;
   }
-  /* Snapped into the page it is part of the layout, not floating over it. */
-  .panel[data-snapped="true"] { box-shadow: none; }
+  /* Snapped into the page it is part of the layout, not floating over it: the
+     full height of the window whatever height it was given floating (inline
+     styles, hence !important), square, and one hairline against the page. */
+  .panel[data-snapped="true"] {
+    top: 0 !important; bottom: 0 !important; height: auto !important;
+    border-width: 0 0 0 1px !important; border-radius: 0 !important;
+    box-shadow: none;
+  }
   .panel[data-mode="inline"] {
     position: static; right: auto; bottom: auto;
     width: 100%; height: 100%; border-radius: 0; border-width: 0;
@@ -203,7 +213,31 @@ const STYLES = `
   }
   .resize:hover::before, .panel[data-resizing="true"] .resize::before { opacity: 1; }
   .panel[data-theme="light"] .resize { color: rgba(0,0,0,.45); }
-  .panel[data-expanded="true"] .resize { display: none; }
+  .panel[data-expanded="true"] .resize,
+  .panel[data-snapped="true"] .resize { display: none; }
+  /* The divider: a snapped rail's whole left edge, which drags its width. The
+     hit area is wider than the hairline it lights up; at rest it is invisible
+     over the panel's own border, and on hover (or mid-drag) the accent runs
+     the full height with a grabber pill at the middle. */
+  .divider {
+    display: none;
+    position: absolute; top: 0; bottom: 0; left: 0; z-index: 1;
+    width: 6px; cursor: col-resize; touch-action: none;
+  }
+  .panel[data-snapped="true"] .divider { display: block; }
+  .divider::before {
+    content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 2px;
+    background: var(--canopy-accent, #c2410c);
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .divider::after {
+    content: ''; position: absolute; top: 50%; left: 0;
+    width: 4px; height: 32px; margin-top: -16px; border-radius: 0 2px 2px 0;
+    background: var(--canopy-accent, #c2410c);
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .divider:hover::before, .panel[data-resizing="true"] .divider::before { opacity: .7; }
+  .divider:hover::after, .panel[data-resizing="true"] .divider::after { opacity: 1; }
   /* Mid-drag the pointer crosses the iframe, which would swallow the moves. */
   .panel[data-resizing="true"] iframe { pointer-events: none; }
   /* The bubble would sit on top of the expanded panel's corner. */
@@ -465,7 +499,9 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       panel.dataset.short = 'true'
     }
     syncReserve()
-    options.onResize({ width: size.width, height: Math.min(size.height, docked ? window.innerHeight : size.height) })
+    // Snapped, CSS holds it at the window's height whatever was set above.
+    const fullHeight = docked && (size.height >= window.innerHeight || panel.dataset.snapped === 'true')
+    options.onResize({ width: size.width, height: fullHeight ? window.innerHeight : size.height })
   }
   /** The most an overlay panel may take, given where its bottom-right sits.
    *  Falls back to the window when there is no layout to measure (a closed
@@ -537,6 +573,49 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     grip.addEventListener('pointercancel', endResize)
   }
 
+  // The divider only shows on a snapped rail (CSS), so only docked has one.
+  if (docked) {
+    const divider = document.createElement('div')
+    divider.className = 'divider'
+    divider.setAttribute('part', 'divider')
+    divider.setAttribute('role', 'separator')
+    divider.setAttribute('aria-orientation', 'vertical')
+    divider.title = 'Drag to resize'
+    panel.appendChild(divider)
+
+    let fromX: number | null = null
+    let startWidth = 0
+    divider.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      fromX = event.clientX
+      startWidth = panel.getBoundingClientRect().width || panel.offsetWidth || options.width
+      panel.dataset.resizing = 'true'
+      divider.setPointerCapture?.(event.pointerId)
+    })
+    divider.addEventListener('pointermove', (event) => {
+      if (fromX === null) return
+      panel.style.width = `${snappedWidth(startWidth, event.clientX - fromX, window.innerWidth)}px`
+      syncReserve()
+      options.onResize({ width: parseFloat(panel.style.width), height: window.innerHeight })
+      sizedByVisitor = true
+    })
+    const endDivide = (event: PointerEvent) => {
+      if (fromX === null) return
+      divider.releasePointerCapture?.(event.pointerId)
+      fromX = null
+      panel.dataset.resizing = 'false'
+      // The width is the visitor's; the height is the one they chose floating,
+      // kept for when they float it again.
+      const floating = readSavedSize(options.storage, sizeKey)
+      writeSavedSize(options.storage, sizeKey, {
+        width: parseFloat(panel.style.width),
+        height: floating?.height ?? window.innerHeight,
+      })
+    }
+    divider.addEventListener('pointerup', endDivide)
+    divider.addEventListener('pointercancel', endDivide)
+  }
+
   let launcher: HTMLButtonElement | null = null
   let dock: HTMLDivElement | null = null
   //: Survives the dock being removed, which is what dismissing does.
@@ -595,8 +674,15 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       return at
     }
 
-    const saved = readSaved(storage, storageKey)
-    if (saved) place(saved)
+    /** Where the visitor put the bubble, before any clamping to the window.
+     *  Kept rather than read back off the DOM: a hidden dock (covered by a
+     *  docked rail, under an expanded panel, suppressed) measures 0×0 at the
+     *  origin, and re-placing from that threw the bubble — and the panel
+     *  anchored to it — into the top-left corner on every window resize. And
+     *  re-placing from the wanted spot, not the clamped one, lets a window
+     *  shrunk and then grown again put the bubble back where it was. */
+    let wanted: Point | null = readSaved(storage, storageKey)
+    if (wanted) place(wanted)
 
     let origin: Point | null = null
     let grabOffset: Point = { x: 0, y: 0 }
@@ -626,7 +712,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       origin = null
       if (!moved) return
       const rect = dock!.getBoundingClientRect()
-      writeSaved(storage, storageKey, { x: rect.left, y: rect.top })
+      wanted = { x: rect.left, y: rect.top }
+      writeSaved(storage, storageKey, wanted)
       if (api.isOpen()) placePanel()
     }
     launcher.addEventListener('pointerup', endDrag)
@@ -645,9 +732,8 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
 
     // A window that changes size can strand a bubble that was fine before.
     window.addEventListener('resize', () => {
-      if (dock?.dataset.moved !== 'true') return
-      const rect = dock.getBoundingClientRect()
-      place({ x: rect.left, y: rect.top })
+      if (dock?.dataset.moved !== 'true' || !wanted) return
+      place(wanted)
       if (api.isOpen()) placePanel()
     })
 
@@ -662,8 +748,12 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
    *  corner placement its CSS already gives it, so nothing changes for a host
    *  that never drags anything. */
   function placePanel() {
-    if (inline || !dock || dock.dataset.moved !== 'true') return
+    // A docked rail is the window's right edge wherever the bubble went.
+    if (inline || options.mode === 'docked' || !dock || dock.dataset.moved !== 'true') return
     const d = dock.getBoundingClientRect()
+    // A hidden dock measures 0×0 at the origin; anchoring to that is the
+    // top-left corner. Leave the panel where it is until there is a bubble.
+    if (!d.width && !d.height) return
     const at = panelPosition(
       { x: d.left, y: d.top, width: d.width, height: d.height },
       { width: panel.offsetWidth || options.width, height: panel.offsetHeight || 500 },

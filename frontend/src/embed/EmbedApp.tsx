@@ -4,7 +4,7 @@ import {
   type AppHost, type AppResourceUpdates, type AppViewResource, type CallToolResult,
 } from 'canopy-ui/chat'
 import { createCanopyClient, type CanopyClient } from 'canopy-client'
-import { Maximize2, Minimize2, Pin, PinOff } from 'lucide-react'
+import { Maximize2, Minimize2, Pin, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Markdown } from '@/components/Markdown'
@@ -88,6 +88,13 @@ function useExpanded(link: HostLink): boolean {
   return expanded
 }
 
+/** One size and hover for every icon control in the panel header, so the pin,
+ *  expand and close read as one row rather than three glyphs of different
+ *  widths. `aria-pressed` paints the on state of a toggle. */
+const HEADER_ICON =
+  'inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors ' +
+  'hover:bg-muted hover:text-foreground aria-pressed:bg-muted aria-pressed:text-foreground'
+
 /** Expand / collapse, beside ×. Drawn only when the host allows it (`init`). */
 function ExpandButton({ link, expandable }: { link: HostLink; expandable: boolean }) {
   const expanded = useExpanded(link)
@@ -100,7 +107,7 @@ function ExpandButton({ link, expandable }: { link: HostLink; expandable: boolea
       aria-label={label}
       aria-pressed={expanded}
       title={expanded ? 'Collapse (Esc)' : 'Expand'}
-      className="rounded px-1.5 text-muted-foreground hover:text-foreground"
+      className={HEADER_ICON}
     >
       {expanded ? (
         <Minimize2 className="h-3.5 w-3.5" aria-hidden />
@@ -132,9 +139,11 @@ function SnapButton({ link, snappable }: { link: HostLink; snappable: boolean })
       aria-label={label}
       aria-pressed={snapped}
       title={label}
-      className="rounded px-1.5 text-muted-foreground hover:text-foreground"
+      className={HEADER_ICON}
     >
-      {snapped ? <PinOff className="h-3.5 w-3.5" aria-hidden /> : <Pin className="h-3.5 w-3.5" aria-hidden />}
+      {/* A pin that is pressed in, not a struck-through one: the crossed-out
+          glyph read as "broken" sitting in the header of a pinned panel. */}
+      <Pin className={snapped ? 'h-3.5 w-3.5 fill-current' : 'h-3.5 w-3.5'} aria-hidden />
     </button>
   )
 }
@@ -585,9 +594,9 @@ function EmbedStart({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded px-2 text-muted-foreground hover:text-foreground"
+            className={HEADER_ICON}
           >
-            ×
+            <X className="h-3.5 w-3.5" aria-hidden />
           </button>
         </span>
       </header>
@@ -1099,9 +1108,9 @@ function EmbedChat({
             type="button"
             onClick={() => link.requestClose()}
             aria-label="Close"
-            className="rounded px-2 text-muted-foreground hover:text-foreground"
+            className={HEADER_ICON}
           >
-            ×
+            <X className="h-3.5 w-3.5" aria-hidden />
           </button>
         </span>
       </header>
