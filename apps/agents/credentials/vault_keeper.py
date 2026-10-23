@@ -166,6 +166,13 @@ def put_pins(runner, vault: Vault, *, kv: int, expected_version: int, value: str
             else {w.vault_id for w in _held_workspace(runner)})
     if (vault.agent_id if vault.kind == Vault.AGENT else vault.pk) not in held:
         raise zk.ZkError(403, "zk_not_a_holder", "this runner holds no copy of that vault's current key")
+    return store_pins(vault, kv=kv, expected_version=expected_version, value=value)
+
+
+def store_pins(vault: Vault, *, kv: int, expected_version: int, value: str) -> dict:
+    """Store a new record at the vault's current kv, over the version the writer read.
+    A keeper writes it (`put_pins`), and so does an owner's or admin's browser when it
+    grants someone: that grant is the confirmation of the key it granted to."""
     zk.check_value_zk(value, PINS_NAME)
     with transaction.atomic():
         v = Vault.objects.select_for_update().select_related("agent").get(pk=vault.pk)

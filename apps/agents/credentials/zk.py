@@ -30,6 +30,7 @@ from dataclasses import dataclass
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.harness import device_keys
 from apps.harness.models import RunnerDeviceKey
@@ -665,6 +666,9 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
         if ks is None:
             ks = UserVaultKeyset.objects.create(user=user, public_jwk=jwk, seals=checked)
         else:
+            changed = ks.public_jwk != jwk
             ks.public_jwk, ks.seals = jwk, checked
-            ks.save(update_fields=["public_jwk", "seals", "updated_at"])
+            if changed:
+                ks.replaced_at = timezone.now()
+            ks.save(update_fields=["public_jwk", "seals", "replaced_at", "updated_at"])
     return ks

@@ -1453,7 +1453,7 @@ def test_a_member_waiting_for_a_workspace_vault_is_emailed_to_its_holders(fleet,
     assert zk_notify.sweep(t0 + zk_notify.GRACE) >= 1
     [msg] = [m for m in mailoutbox if "Shared" in m.subject]
     assert msg.to == ["jj@dimagi.com"] and "ed5@dimagi.com" in msg.subject
-    assert f"/settings/secrets#ws-vault-{vid}" in msg.body and "a new admin" not in msg.body
+    assert f"/vaults/{vid}" in msg.body and "a new admin" not in msg.body
     assert notice.agent_id is None
 
 
@@ -1465,3 +1465,52 @@ def test_the_vault_page_says_who_is_waiting_and_who_can_pass_the_key_on(fleet):
     assert rows["jj@dimagi.com"]["has_copy"] is True
     assert rows["ed6@dimagi.com"]["has_vault_key"] is True and rows["ed6@dimagi.com"]["has_copy"] is False
     assert body["holders"] == {"has_key": True, "people": ["jj@dimagi.com"], "keepers": ["box"]}
+
+
+# ---- a person who started over with a new key: the browser grant confirms it ---------------
+
+def test_a_person_with_a_new_key_is_emailed_at_once_as_a_new_key(fleet, mailoutbox):
+    from apps.agents.credentials import zk_notify
+
+    assert _enable(fleet).status_code == 200
+    ed, _ = _editor_with_a_key(fleet, name="ed7")
+    UserVaultKeyset.objects.filter(user=ed).update(replaced_at=timezone.now())
+    t0 = timezone.now()
+    assert zk_notify.sweep(t0) >= 1           # no grace: no keeper grants a changed key
+    [msg] = [m for m in mailoutbox if "ed7@dimagi.com" in m.subject]
+    assert "new vault key" in msg.subject and "Check with them that it was them" in msg.body
+
+
+def test_replacing_your_key_records_when(fleet):
+    ks = UserVaultKeyset.objects.get(user=fleet.user)
+    assert ks.replaced_at is None
+    zk.put_keyset(fleet.user, public_jwk=_jwk(ec.generate_private_key(ec.SECP256R1()).public_key()),
+                  seals=ks.seals, replace=True)
+    assert UserVaultKeyset.objects.get(user=fleet.user).replaced_at is not None
+
+
+def test_an_owner_records_the_key_they_granted_to_from_the_browser(fleet):
+    assert _enable(fleet).status_code == 200
+    state = fleet.client.get(ZK).json()
+    assert state["pins"] == {"value": "", "kv": 0, "version": 0}
+    grant_step_up(fleet.client)
+    res = fleet.client.put(f"{ZK}/pins", content_type="application/json",
+                           data={"kv": 1, "expected_version": 0, "value": _pins_value(fleet)})
+    assert res.status_code == 200 and res.json()["version"] == 1, res.content
+    assert fleet.client.get(ZK).json()["pins"]["version"] == 1
+    res = fleet.client.put(f"{ZK}/pins", content_type="application/json",
+                           data={"kv": 1, "expected_version": 0, "value": _pins_value(fleet)})
+    assert res.status_code == 409 and res.json()["error"] == "keeper_pins_stale"
+
+
+def test_a_member_cannot_write_the_keepers_record(fleet):
+    from django.test import Client
+
+    assert _enable(fleet).status_code == 200
+    ed, _ = _editor_with_a_key(fleet, name="ed8")
+    c = Client()
+    c.force_login(ed)
+    grant_step_up(c)
+    res = c.put(f"{ZK}/pins", content_type="application/json",
+                data={"kv": 1, "expected_version": 0, "value": _pins_value(fleet)})
+    assert res.status_code == 403

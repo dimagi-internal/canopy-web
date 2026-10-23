@@ -37,6 +37,7 @@ from .credentials import (
     pat_rotation,
     secret_requests,
     vault_alerts,
+    vault_keeper,
     vault_members,
     zk,
     zk_endorse,
@@ -76,6 +77,8 @@ from .schemas import (
     SenderTrustIn,
     SenderTrustOut,
     VaultAgentLinkIn,
+    VaultKeeperPinsIn,
+    VaultKeeperPinsOut,
     VaultMemberIn,
     VaultMembersOut,
     ZkEnableIn,
@@ -281,7 +284,8 @@ def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
 
 def _zk_state(agent, *, include_values: bool = False) -> ZkStateOut:
 
-    return ZkStateOut(**zk.state(agent, include_values=include_values))
+    return ZkStateOut(**zk.state(agent, include_values=include_values),
+                      pins=vault_keeper.pins_of(vault_members.vault_for_agent(agent)))
 
 
 @router.get("/{slug}/vault/zk", response=ZkStateOut,
@@ -358,6 +362,23 @@ def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> Z
     except zk.ZkError as exc:
         raise zk_problem(exc) from exc
     return _zk_state(agent)
+
+
+@router.put("/{slug}/vault/zk/pins", response=VaultKeeperPinsOut,
+            summary="Record the keys a vault owner or admin just granted to, for the keepers")
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+def put_agent_zk_pins(request: HttpRequest, slug: str, payload: VaultKeeperPinsIn) -> VaultKeeperPinsOut:
+    """`{kv, expected_version, value}`: the keepers' record, re-encrypted under the
+    vault key with the people the caller just granted to. Granting someone is how an
+    owner or admin confirms their key — a first one, or one they started over with —
+    so keepers trust it from then on. 409 `keeper_pins_stale`: read again, merge."""
+
+    _, vault = _agent_vault(request, slug, manage=True)
+    try:
+        return VaultKeeperPinsOut(**vault_keeper.store_pins(
+            vault, kv=payload.kv, expected_version=payload.expected_version, value=payload.value))
+    except zk.ZkError as exc:
+        raise zk_problem(exc) from exc
 
 
 @router.post("/{slug}/vault/zk/rotate", response=ZkStateOut,
