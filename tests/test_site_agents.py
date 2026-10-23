@@ -11,8 +11,8 @@ import time
 
 import jwt
 import pytest
-from canopy_sdk import site_agents as wire
 from canopy_sdk import site as site_doc
+from canopy_sdk import site_agents as wire
 from canopy_sdk.host import ClientKeyResolver
 from canopy_sdk.keys import generate_private_key, public_jwk, public_pem
 from canopy_sdk.stores import MemoryCache
@@ -25,6 +25,7 @@ from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment, RunnerFlag
 from apps.host_grants import client_identity, site_needs
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from apps.workspaces.testing import enrolled
@@ -292,6 +293,7 @@ def _publish(w, monkeypatch, *, key=None, fail=False):
 def _needs(w):
     client = Client()
     client.force_login(w["owner"])
+    grant_step_up(client)  # connecting a site takes a passkey
     response = client.get(f"/api/workspaces/connect/connected-apps/{w['app'].pk}/needs")
     assert response.status_code == 200, response.content
     return response.json()
@@ -371,6 +373,7 @@ def test_a_non_member_cannot_read_a_sites_needs(w):
     stranger = get_user_model().objects.create_user("s", "s@dimagi.com", "pw")
     client = Client()
     client.force_login(stranger)
+    grant_step_up(client)  # connecting a site takes a passkey
     response = client.get(f"/api/workspaces/connect/connected-apps/{w['app'].pk}/needs")
     assert response.status_code == 404
 
@@ -472,6 +475,7 @@ def _serve_site_json(monkeypatch, signer, *, at="https://labs.example.org/.well-
 def _discover(w, user=None, **params):
     client = Client()
     client.force_login(user or w["owner"])
+    grant_step_up(client)  # connecting a site takes a passkey
     return client.get("/api/workspaces/connect/connected-apps/discover", params)
 
 
@@ -518,6 +522,7 @@ def test_adopting_the_facts_is_the_ordinary_audited_update(w, monkeypatch):
     monkeypatch.setattr("apps.embedding.jwks._refuse_private", lambda host: None)
     client = Client()
     client.force_login(w["owner"])
+    grant_step_up(client)  # connecting a site takes a passkey
     site = body["site"]
     response = client.patch(f"/api/workspaces/connect/connected-apps/{w['app'].pk}",
                             data={"origins": site["origins"], "jwks_url": site["jwks_url"],

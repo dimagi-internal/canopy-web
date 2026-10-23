@@ -30,8 +30,9 @@ from apps.agents.models import Agent
 from apps.contacts import hcp
 from apps.contacts.models import Contact, Person, PersonAuditEvent, PersonGrant
 from apps.embedding import assertions
-from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
 from apps.embedding.views_embed import FRAME_COOKIE
+from apps.passkeys.testing import grant_step_up
+from apps.tokens.models import AppCredential, AppCredentialAgent, ContactToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -358,12 +359,14 @@ def test_export_from_the_panel(world):
 def test_only_a_superuser_trusts_a_site(world):
     c = Client()
     c.force_login(world["owner"])
+    grant_step_up(c)  # connecting a site takes a passkey
     url = f"/api/workspaces/w1/connected-apps/{world['app'].pk}"
     r = c.patch(url, data={"asserts_verified_email": False}, content_type="application/json")
     assert r.status_code == 403
     root = User.objects.create_superuser("root", "root@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=root, workspace=world["ws"], role=WorkspaceMembership.OWNER)
     c.force_login(root)
+    grant_step_up(c)  # connecting a site takes a passkey
     r = c.patch(url, data={"asserts_verified_email": False}, content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json()["asserts_verified_email"] is False
@@ -372,6 +375,7 @@ def test_only_a_superuser_trusts_a_site(world):
 def test_changing_a_trusted_sites_keys_clears_the_trust(world):
     c = Client()
     c.force_login(world["owner"])
+    grant_step_up(c)  # connecting a site takes a passkey
     _priv, pub = _keypair()
     r = c.patch(f"/api/workspaces/w1/connected-apps/{world['app'].pk}",
                 data={"public_keys": [pub]}, content_type="application/json")

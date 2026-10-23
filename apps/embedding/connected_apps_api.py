@@ -19,6 +19,7 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.passkeys import stepup
 from apps.tokens.models import AppCredential, EmbedAuditLog
 
 from . import embed_apps
@@ -209,6 +210,31 @@ def _refuse(exc: embed_apps.EmbedAppError):
     return HttpError(_STATUS.get(exc.code, 400), f"{exc.code}: {exc.message}")
 
 
+# What a site may SIGN is who it may say a visitor is: a signed `email_verified`
+# claim resolves to a canopy member (`contacts.services.resolve_arrival`), whose
+# delegated token reads that member's own conversations, sensitive ones included.
+# So naming a site's signer — registering it, or changing its keys, key URL or
+# issuer — takes a person at a browser who just touched their passkey; a token
+# (a PAT, an MCP call, a minted session) never steps up and is refused.
+
+
+def _signer_fields(app: AppCredential) -> tuple:
+    return (tuple(str(k).strip() for k in (app.public_keys or [])),
+            (app.jwks_url or "").strip(), (app.host_issuer or "").strip())
+
+
+def _changes_signer(app: AppCredential, payload: UpdateIn) -> bool:
+    """Whether this PATCH changes what the site may sign. A form that sends the
+    fields back unchanged does not. Compared as typed, never fetched or resolved:
+    a spelling that only normalises to the same value asks for a passkey, which
+    is the safe way to be wrong."""
+    keys, jwks, issuer = _signer_fields(app)
+    return ((payload.public_keys is not None
+             and tuple(str(k).strip() for k in payload.public_keys) != keys)
+            or (payload.jwks_url is not None and payload.jwks_url.strip() != jwks)
+            or (payload.host_issuer is not None and payload.host_issuer.strip() != issuer))
+
+
 def _app_or_404(request: HttpRequest, slug: str, app_id: int) -> AppCredential:
     try:
         app = embed_apps.apps_for(request.user, slug).filter(pk=app_id).first()
@@ -234,7 +260,10 @@ def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut
                             summary="Connect a site")
 @gate("own", setting=True)
 def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
-    """Register a site in this workspace."""
+    """Register a site in this workspace. Needs a person at a browser who just
+    confirmed with their passkey (403 `step_up_required` otherwise); a token is
+    refused."""
+    stepup.require_recent_step_up(request)
     try:
         app = embed_apps.register(
             user=request.user, workspace_slug=slug, name=payload.name,
@@ -260,7 +289,13 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
 @gate("own", setting=True)
 def update_connected_app(request: HttpRequest, slug: str, app_id: int,
                          payload: UpdateIn) -> ConnectedAppOut:
+    """Change what a connected site may do. A change to what it may sign — its
+    public keys, key URL or issuer — needs a person at a browser who just
+    confirmed with their passkey (403 `step_up_required` otherwise); a token is
+    refused it."""
     app = _app_or_404(request, slug, app_id)
+    if _changes_signer(app, payload):
+        stepup.require_recent_step_up(request)
     if payload.asserts_verified_email is not None and not request.user.is_superuser:
         # The email-keyed person a trusted site's contacts join is canopy-wide, so
         # trusting a site is canopy's decision, not this tenant's.

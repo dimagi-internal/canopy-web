@@ -477,16 +477,33 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
 
     # -- group frame handlers (dots -> underscores) --
     async def access_recheck(self, message):
-        """This person's access changed somewhere (they left a workspace). Ask
-        the session ACL again and close if the answer is now no — an open tab
-        would otherwise keep receiving a conversation they can no longer read."""
+        """This person's access changed somewhere (they left a workspace, were
+        taken off this chat), or the conversation became sensitive. Ask the
+        session ACL and `sensitivity.reads_content` again and close if the answer
+        is now no — an open tab would otherwise keep receiving a conversation they
+        can no longer read."""
         workspaces = message.get("workspaces")
         if workspaces and self.session.workspace_id not in workspaces:
             return
-        self.role = await database_sync_to_async(access.role_for)(self.user, self.session)
-        if self.role is None:
+        only = message.get("session_id")
+        if only and str(only) != str(self.session.pk):
+            return
+        if self.contact is None:
+            self.role = await database_sync_to_async(access.role_for)(self.user, self.session)
+            if self.role is None:
+                await self._error("forbidden", "You no longer have access to this session.")
+                await self.close(code=4003)
+                return
+        # Re-read the session: the requirement that made it sensitive was written
+        # after this socket connected.
+        session = await self._get_session(str(self.session.pk))
+        if session is None or not await database_sync_to_async(sensitivity.reads_content)(
+                session, chat_surface=sensitivity.scope_is_chat_surface(self.scope),
+                user=self.user, contact=self.contact):
             await self._error("forbidden", "You no longer have access to this session.")
             await self.close(code=4003)
+            return
+        self.session = session
 
     async def chat_turn_event(self, message):
         evt = message["event"]

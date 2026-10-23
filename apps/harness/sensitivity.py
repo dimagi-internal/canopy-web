@@ -28,6 +28,8 @@ SENSITIVE_DATA = rr.SENSITIVE_DATA
 #: The refusal every re-exposure door gives, so a person reads one sentence.
 REFUSAL = ("this conversation holds a host's sensitive data, so canopy does not share, export "
            "or copy it")
+#: Why a sensitive conversation cannot be named: a title is shown everywhere its words are not.
+NO_TITLE = ("this conversation holds a host's sensitive data, so canopy keeps no title for it")
 #: Why a door that would hand the words on refuses someone not in the conversation.
 NOT_IN_IT = ("this conversation holds a host's sensitive data: only the people in it can "
              "bring someone in or copy it")
@@ -139,6 +141,41 @@ def redact_payload(payload) -> dict:
             if isinstance(tool_input.get(key), str):
                 out[f"input_{key}"] = tool_input[key][:MAX_META_STRING]
     out["bytes"], out["sha256"] = _size_and_hash(payload)
+    return out
+
+
+def menu_metadata(menu) -> dict | None:
+    """A blocked agent's dialog (`RunnerBinding.pending_question`) as a sensitive
+    conversation keeps it: that it is waiting, who produced the dialog and its
+    shape — how many options, numbered, and whether each question is pick-any —
+    never the question or an option's words, which can quote the host's data.
+    The digest of the words tells one ask from the next without keeping them.
+    None for no dialog."""
+    if not isinstance(menu, dict) or not menu:
+        return None
+    if menu.get("redacted") == REDACTED:
+        return menu
+
+    def numbered(options) -> list[dict]:
+        rows = [o for o in (options or []) if isinstance(o, dict)]
+        return [{"number": o.get("number") if isinstance(o.get("number"), int) else i,
+                 "label": str(o.get("number") if isinstance(o.get("number"), int) else i),
+                 "description": ""} for i, o in enumerate(rows, start=1)]
+
+    words = {"question": menu.get("question"), "title": menu.get("title"),
+             "body": menu.get("body"), "options": menu.get("options"),
+             "questions": menu.get("questions")}
+    out: dict = {"redacted": REDACTED, "question": "", "title": "", "body": "",
+                 "options": numbered(menu.get("options")),
+                 "sha256": _size_and_hash(words)[1]}
+    for key in ("source", "observed_at", "selected"):
+        if isinstance(menu.get(key), (bool, int, float, str)) and key in menu:
+            out[key] = menu[key] if not isinstance(menu[key], str) else menu[key][:MAX_META_STRING]
+    if isinstance(menu.get("questions"), list):
+        out["questions"] = [
+            {"index": q.get("index", i), "question": "", "header": "",
+             "multi_select": bool(q.get("multi_select")), "options": numbered(q.get("options"))}
+            for i, q in enumerate(q for q in menu["questions"] if isinstance(q, dict))]
     return out
 
 

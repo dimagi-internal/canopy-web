@@ -9,14 +9,19 @@ runners (`placement`), sending (`send`) and controlling a live session
 """
 from __future__ import annotations
 
+import logging
+
 from django.conf import settings
 from django.db import transaction
 
-from apps.harness import provenance
+from apps.harness import provenance, sensitivity
+from apps.realtime import groups
 
 from . import activity as session_activity
 from . import transcript_read
 from .models import Message, Session
+
+logger = logging.getLogger(__name__)
 
 #: Session metadata keys canopy itself writes and ACTS on. A caller — a user, a
 #: contact, a host — may never set one: `slack_*` decide which Slack channel an
@@ -132,9 +137,35 @@ def add_runner_requirements(session: Session, reqs) -> None:
         merged = sorted(current | reqs)
         if merged == sorted(current):
             return
+        was_sensitive = sensitivity.is_sensitive(s)
         meta[rr.METADATA_KEY] = merged
-        Session.objects.filter(pk=s.pk).update(metadata=meta)
+        s.metadata = meta
+        became_sensitive = not was_sensitive and sensitivity.is_sensitive(s)
+        # A sensitive conversation keeps no title: one typed or derived before it
+        # held the host's data may already quote it.
+        fields = {"metadata": meta, **({"title": ""} if became_sensitive else {})}
+        Session.objects.filter(pk=s.pk).update(**fields)
+        if became_sensitive:
+            # Every open socket on it re-asks `reads_content`: a token's, or a
+            # co-tenant's who is not in it, closes now rather than reading on.
+            transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))
     session.metadata = meta
+    if became_sensitive:
+        session.title = ""
+
+
+def recheck_sockets(session_id, *, user_ids=()) -> None:
+    """Ask the chat sockets open on one session to re-check who may read it
+    (`consumers.SessionConsumer.access_recheck`): every socket on it, or only
+    those `user_ids` hold. Best-effort — a socket also re-checks on every act."""
+    frame = {"type": "access.recheck", "session_id": str(session_id)}
+    targets = ([groups.chat_user_group(uid) for uid in user_ids] if user_ids
+               else [groups.session_group(session_id)])
+    for group in targets:
+        try:
+            groups.publish(group, frame)
+        except Exception:  # noqa: BLE001 — never fail the write that asked
+            logger.warning("could not ask %s to re-check", group, exc_info=True)
 
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
@@ -148,6 +179,10 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
     from .participants import ensure_participant
 
     meta = dict(metadata or {})
+    # A sensitive conversation keeps no title, from its first row: whoever starts
+    # it may name it after the host's data.
+    if sensitivity.is_sensitive(Session(metadata=meta)):
+        title = ""
     # A real runner will drive this session in emdash, so its transcript is the
     # record — stamped at birth, never inferred later, so a session can't change
     # its mind about where its history lives (see `transcript_sourced`). Under the

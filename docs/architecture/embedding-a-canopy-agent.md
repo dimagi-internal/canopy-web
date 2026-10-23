@@ -100,16 +100,19 @@ what you get from an address bar.
 > produces a widget that never appears with nothing to say why. See §11 for
 > canopy's own pages, where the whole thing is one button.
 
-**Alternatively, by API or MCP** (scripted setup): the page is two routes,
+**Alternatively, by API or MCP**: the page is two routes,
 `POST /api/workspaces/<ws>/connected-apps` (MCP `connect_app`) and
 `PATCH /api/workspaces/<ws>/connected-apps/<id>` (MCP `update_connected_app`), which take
 the same fields — `origins`, `agents`, `public_keys` or `jwks_url` — with the
 same validation; `GET /api/workspaces/<ws>/connected-apps/discover?address=…`
 (MCP `discover_site`, add `app_id` for a connected site) reads the site's
 declared facts for you to pass to them, and record each change in the settings audit
-(`settings-audit.md`). There is no management command for any of it: a command
-would skip both. For local setup, sign in and use the page, or call the routes
-with a personal access token.
+(`settings-audit.md`). Registering a site, and changing what it may sign (its
+`public_keys`, `jwks_url` or `host_issuer`), need a person at a browser who just
+confirmed with their passkey: a site's signed email names a canopy member, so a
+token (a PAT, an MCP call) is refused those and may change only the rest. There is
+no management command for any of it: a command would skip both. For local setup,
+sign in and use the page.
 
 ### Serving more than one canopy workspace
 

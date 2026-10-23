@@ -7548,7 +7548,9 @@ export interface paths {
         readonly put?: never;
         /**
          * Connect a site
-         * @description Register a site in this workspace.
+         * @description Register a site in this workspace. Needs a person at a browser who just
+         *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
+         *     refused.
          */
         readonly post: operations["connect_app"];
         readonly delete?: never;
@@ -7577,7 +7579,13 @@ export interface paths {
         readonly delete: operations["tokens_connected_apps_disconnect_app"];
         readonly options?: never;
         readonly head?: never;
-        /** Change what a connected site may do */
+        /**
+         * Change what a connected site may do
+         * @description Change what a connected site may do. A change to what it may sign — its
+         *     public keys, key URL or issuer — needs a person at a browser who just
+         *     confirmed with their passkey (403 `step_up_required` otherwise); a token is
+         *     refused it.
+         */
         readonly patch: operations["update_connected_app"];
         readonly trace?: never;
     };

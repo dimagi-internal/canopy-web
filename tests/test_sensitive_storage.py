@@ -7,7 +7,6 @@ Spec: docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §4.
 from __future__ import annotations
 
 import datetime as dt
-import uuid
 from unittest import mock
 
 import pytest
@@ -16,43 +15,32 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
-from apps.agents.models import Agent
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.events import usage
 from apps.events.models import SessionUsage
 from apps.harness import ledger, sensitivity
-from apps.harness.models import Runner, Turn, TurnEvent, TurnTranscript
+from apps.harness.models import Turn, TurnEvent, TurnTranscript
 from apps.retention import services as retention
 from apps.retention.models import RetentionSweep
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.workspaces.models import WorkspaceMembership
+from tests.fixtures.sensitive import (
+    ASKED,
+    REPLY,
+    ROW,
+    SENSITIVE,
+    _converse,
+    _socket,
+    _turn,
+    _unowned_thread,
+    world,
+)
 
 pytestmark = pytest.mark.django_db
 
-SENSITIVE = {"runner_requirements": ["sensitive_data"]}
-ROW = "patient Amina, HIV+, visit 2026-10-01"
-
-
 @pytest.fixture()
 def w():
-    user = User.objects.create_user("jj", "jj@dimagi.com", "pw")
-    ws = Workspace.objects.create(slug="w1", display_name="W1", created_by=user)
-    WorkspaceMembership.objects.create(user=user, workspace=ws, role=WorkspaceMembership.OWNER)
-    agent = Agent.objects.create(slug="labsdata", name="labsdata", workspace=ws, owner=user)
-    runner = Runner.objects.create(name="box", workspace=ws, location=Runner.LOCAL,
-                                   status=Runner.ONLINE, owner=user)
-    hot = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="hot",
-                                 metadata=dict(SENSITIVE))
-    cold = Session.objects.create(workspace=ws, agent=agent, created_by=user, title="cold")
-    c = Client()
-    c.force_login(user)
-    return {"user": user, "ws": ws, "agent": agent, "runner": runner, "hot": hot, "cold": cold,
-            "c": c}
-
-
-def _turn(session, **kw):
-    return Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
-                               idempotency_key=uuid.uuid4().hex, **{"prompt": "q", **kw})
+    return world()
 
 
 # --- the predicate ----------------------------------------------------------------------
@@ -160,23 +148,6 @@ def test_the_live_frame_carries_the_stripped_row(w, monkeypatch):
 
 
 # --- read back by its own people only --------------------------------------------------
-
-ASKED = "how many visits did Amina have?"
-REPLY = "Amina has had 12 visits"
-
-
-def _converse(session):
-    """A turn's rows as the runner ships them (`persist_transcript_rows`)."""
-    chat_transcript_ingest.persist_transcript_rows(session, [
-        {"index": 0, "role": "user", "text": ASKED},
-        {"index": 64, "role": "tool_use", "text": "",
-         "content": {"id": "tu1", "name": "site_call", "input": {"tool": "data_query",
-                                                                   "arguments": {"q": "Amina"}}}},
-        {"index": 65, "role": "tool_result", "text": ROW,
-         "content": {"tool_use_id": "tu1", "is_error": False, "text": ROW}},
-        {"index": 128, "role": "assistant", "text": REPLY},
-    ])
-
 
 def _said(page) -> str:
     return " ".join(m["plaintext"] for m in page)
@@ -378,31 +349,6 @@ def test_the_fleets_transcript_readers_find_nothing(w):
 # --- every live and log door -------------------------------------------------------------
 
 
-def _socket(session, user, *, auth_method="session"):
-    from asgiref.sync import async_to_sync
-    from channels.testing import WebsocketCommunicator
-
-    from apps.canopy_sessions.consumers import SessionConsumer
-
-    async def go():
-        comm = WebsocketCommunicator(SessionConsumer.as_asgi(), f"/ws/canopy-sessions/{session.id}/")
-        comm.scope.update(user=user, auth_method=auth_method, session={},
-                          url_route={"kwargs": {"session_id": str(session.id)}})
-        connected, _ = await comm.connect()
-        await comm.disconnect()
-        return connected
-    return async_to_sync(go)()
-
-
-def _unowned_thread(w):
-    """A runner-discovered conversation nobody started: the agent's admins stand in
-    as its owner (`access.role_for`) — they read and share it, but are not IN it."""
-    s = Session.objects.create(workspace=w["ws"], agent=w["agent"], origin=Session.ORIGIN_RUNNER,
-                               metadata=dict(SENSITIVE))
-    RunnerBinding.objects.create(session=s, runner=w["runner"], session_key="unowned")
-    return s
-
-
 def test_the_live_socket_is_its_own_peoples_alone(w):
     """The live frames carry the words, so the socket gate is `reads_content`."""
     assert _socket(w["hot"], w["user"])
@@ -451,10 +397,10 @@ def test_the_next_turn_remembers_the_conversation(w):
 
     _converse(w["hot"])
     t = _turn(w["hot"], prompt="and last month?")
-    said = caller_context.build(t)["conversation"]["history"]
+    said = caller_context.build(t, with_history=True)["conversation"]["history"]
     assert [h["role"] for h in said] == ["person", "agent"]
     assert said[0]["text"] == ASKED and said[1]["text"] == REPLY and ROW not in str(said)
-    assert caller_context.build(_turn(w["cold"]))["conversation"]["history"] is None
+    assert caller_context.build(_turn(w["cold"]), with_history=True)["conversation"]["history"] is None
 
 
 def test_the_chat_page_is_told(w):

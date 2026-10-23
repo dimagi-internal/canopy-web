@@ -28,9 +28,10 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.common.encryption import decrypt_secret
+from apps.embedding import assertions
 from apps.events.models import Event
 from apps.host_grants import client_identity, host_grants, outbound
-from apps.embedding import assertions
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -371,6 +372,7 @@ def test_host_config_is_editable_on_the_connected_site_and_checked(site, monkeyp
     monkeypatch.setattr(outbound, "refuse_private", lambda host: None)
     c = Client()
     c.force_login(site["owner"])
+    grant_step_up(c)  # connecting a site takes a passkey
     url = f"/api/workspaces/w1/connected-apps/{site['app'].pk}"
     r = c.patch(url, data={"host_issuer": "https://labs.test", "host_mcp_resource":
                            "https://labs.test/mcp/"}, content_type="application/json")

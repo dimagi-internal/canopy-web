@@ -587,7 +587,9 @@ def fire_sessions_closed(session_ids: list) -> None:
 def _ask_identity(menu):
     if not menu:
         return None
-    return (str(menu.get("question") or ""),
+    # A sensitive conversation's dialog keeps no words (`sensitivity.menu_metadata`),
+    # only their digest, which is what tells one ask from the next.
+    return (str(menu.get("question") or "") + str(menu.get("sha256") or ""),
             tuple(str(o.get("label") or "") for o in (menu.get("options") or [])
                   if isinstance(o, dict)))
 
@@ -868,6 +870,10 @@ def replace_reported_sessions(
             # directly with lightweight session objects, and a dialog must
             # never be the reason a liveness report fails.
             binding.pending_question = getattr(s, "question", None) or None
+            # A sensitive conversation's dialog is kept as metadata: the question
+            # and its options are the host's data as often as not.
+            if binding.pending_question and sensitivity.is_sensitive(binding.session):
+                binding.pending_question = sensitivity.menu_metadata(binding.pending_question)
             if was_asking != binding.pending_question:
                 menu_changes.append((binding.session_id, binding.pending_question))
                 # Whether this is a NEW ask, not the same one seen again. Every
@@ -1055,6 +1061,12 @@ def report_session_menu(runner: Runner, session_id, menu: dict | None) -> bool:
         return False
     was_asking = binding.pending_question or None
     binding.pending_question = menu or None
+    if binding.pending_question:
+        from . import sensitivity  # noqa: PLC0415 — as in the laptop's report above
+
+        # As the laptop's report above: a sensitive conversation's dialog is metadata.
+        if sensitivity.is_sensitive(binding.session):
+            binding.pending_question = sensitivity.menu_metadata(binding.pending_question)
     if was_asking == binding.pending_question:
         return True
     binding.save(update_fields=["pending_question"])

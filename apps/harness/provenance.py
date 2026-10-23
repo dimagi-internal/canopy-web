@@ -316,7 +316,9 @@ def session_record(session) -> dict:
         "origin": session.origin,
         "who": _session_who(session),
         **_common(session),
-        "title": (session.title or "")[:PROMPT_HEAD],
+        # A sensitive conversation keeps no title (`canopy_sessions.services`); the
+        # log line never carries one either way.
+        "title": "" if sensitivity.is_sensitive(session) else (session.title or "")[:PROMPT_HEAD],
     }
 
 
