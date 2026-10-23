@@ -150,3 +150,21 @@ def test_one_refresh_at_a_time(world, s3):
     assert c.delete(f"{KB_URL}/curation/lease?holder=run-a").status_code == 200
     assert c.post(f"{KB_URL}/curation/lease", {"holder": "run-b"}, content_type=J).status_code == 200
     assert c.get(f"{KB_URL}/curation").json()["sha"] == key
+
+
+def test_a_whole_file_publish_supersedes_a_delta_stuck_waiting_to_be_built(world, s3, tmp_path):
+    """canopy-web's build of a large delta can be killed by deploys; the refresh's runner
+    builds the file itself and publishes it whole, which ends the stuck one."""
+    v1 = _bundle(tmp_path, "v1", ITEMS)
+    _delta(world, s3, v1)
+    kb_index.drain()
+    plan, commit, _ = _delta(world, s3, _bundle(tmp_path, "v2", V2))  # left pending: no drain
+    assert commit.json()["version"]["status"] == "pending"
+    v3 = _bundle(tmp_path, "v3", V2)
+    kb_fixtures.full(world, s3, tmp_path, v3)
+    stuck = KbVersion.objects.get(number=2)
+    assert stuck.status == KbVersion.FAILED and "superseded" in stuck.error
+    project = AgentProject.objects.get(handle="givewell-kb")
+    assert project.kb_version.number == 3
+    kb_index.drain()  # nothing left to build, and the served version stands
+    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 3

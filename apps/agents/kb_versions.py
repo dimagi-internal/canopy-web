@@ -149,8 +149,11 @@ def publish_full(project, key: str, sha256: str, state: dict | None = None, *, p
         _state_ok(state)
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
-        if KbVersion.objects.filter(project=project, status__in=_LIVE).exists():
-            raise KbConflict("a version is still being built; wait for it, then publish")
+        # A whole file built elsewhere (the refresh's runner) supersedes a delta still
+        # waiting for canopy-web to build it: its builder, if one is running, finds the
+        # project moved on and stops, and the served version is never touched by it.
+        KbVersion.objects.filter(project=project, status__in=_LIVE).update(
+            status=KbVersion.FAILED, error="superseded by a whole-file publish", finished_at=timezone.now())
         previous = head_state(project) if state is not None and project.kb_version_id else None
         head = project.kb_version
         project = kb_store.publish(project, key, sha256)
