@@ -1,6 +1,6 @@
 """Runner administration — everything about a box that is not routing or work.
 
-Its declared flags (`RunnerFlag`, e.g. ZDR), its Claude credentials (one
+Its declared flags (`RunnerFlag`, e.g. `sensitive_data`), its Claude credentials (one
 ordered list of `RunnerLogin` rows: logins, tokens and API keys), refresh requests,
 its admins (`RunnerAdmin`), and the browser-driven re-authentication
 (`RunnerMint`). Split out of `services.py`; import these names from here.

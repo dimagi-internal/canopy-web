@@ -180,7 +180,7 @@ def put_contributor_summary(request: HttpRequest, slug: str, ref: str, person: s
 
     try:
         svc.write_summary(project, who, payload.model_dump(), by_agent=reader.agent)
-    except hcp.ZdrRefused as exc:
+    except hcp.SensitiveRefused as exc:
         raise HttpError(403, str(exc)) from None
     except svc.SummaryError as exc:
         raise HttpError(400, str(exc)) from None

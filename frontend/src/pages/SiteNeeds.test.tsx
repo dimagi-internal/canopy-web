@@ -15,14 +15,14 @@ const NEEDS: SiteNeeds = {
   fetched_at: '2026-10-22T22:00:00Z',
   stale: false,
   pages: [{ key: 'labs:workflow:run:data', title: 'A workflow run, read-only', scopes: ['workflow:read', 'data:read'] }],
-  requires: { phi_safe: true, runner_flag: 'zdr' },
+  requires: { handles_sensitive: true, runner_flag: 'sensitive_data' },
   uses_version: 'old',
   site_agents_version: 'new',
   agents: [
     { slug: 'labsdata', name: 'labsdata', offered: true, real_data: true, ready: true, meets_real_data: true, why_not: [] },
     {
       slug: 'ace', name: 'ACE', offered: true, real_data: true, ready: true, meets_real_data: false,
-      why_not: ['not PHI-safe in canopy: no capability of ACE for this site says `data: phi`'],
+      why_not: ['does not handle sensitive data in canopy: no capability of ACE for this site says `data: sensitive`'],
     },
   ],
   not_allowed: ['ghost'],
@@ -33,8 +33,8 @@ describe('SiteNeedsTable', () => {
     render(<SiteNeedsTable needs={NEEDS} />)
     expect(screen.getByText('A workflow run, read-only')).toBeTruthy()
     expect(screen.getByText('workflow:read data:read')).toBeTruthy()
-    expect(screen.getByText(/PHI-safe and a ready zdr runner/)).toBeTruthy()
-    expect(screen.getByText(/not PHI-safe in canopy/)).toBeTruthy()
+    expect(screen.getByText(/handles sensitive data and a ready sensitive-data runner/)).toBeTruthy()
+    expect(screen.getByText(/does not handle sensitive data in canopy/)).toBeTruthy()
     expect(screen.getByText(/older site agents version/)).toBeTruthy()
     expect(screen.getByText(/names ghost/)).toBeTruthy()
   })

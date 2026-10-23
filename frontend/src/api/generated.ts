@@ -3405,7 +3405,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/interface/capabilities/{name}/phi": {
+    readonly "/api/agents/{slug}/interface/capabilities/{name}/sensitive": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -3413,8 +3413,8 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
-        /** Turn PHI-safe on or off for one capability: writes or removes its `data: phi` in the saved YAML */
-        readonly put: operations["set_capability_phi"];
+        /** Say whether one capability handles sensitive data: writes or removes its `data: sensitive` in the saved YAML */
+        readonly put: operations["set_capability_sensitive"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -7890,7 +7890,7 @@ export interface paths {
         /**
          * A cloud box reads its runners' egress lock (instance role, no token)
          * @description Prove this box's EC2 instance role (`proof`, bound to this URL): every live
-         *     runner on that machine with its egress lock — `locked` (a ZDR box always is) and
+         *     runner on that machine with its egress lock — `locked` (a sensitive-data box always is) and
          *     `allow`, the hosts beyond the box's base set. Root applies it on top of the box's
          *     own setting, never below it. Any bad proof: one uniform 401.
          */
@@ -9185,8 +9185,9 @@ export interface paths {
         readonly get?: never;
         /**
          * Declare what this runner's owner vouches for
-         * @description Replace the runner's declared flags. `zdr`: this box uses only
-         *     zero-data-retention keys for Claude. canopy cannot check a declaration; it
+         * @description Replace the runner's declared flags. `sensitive_data`: this box is set up for
+         *     sensitive data (a ZDR API key for Claude, a locked harness, egress limited to an
+         *     allowlist, nothing kept after a turn). canopy cannot check a declaration; it
          *     records who made it. A host may require a flag of every conversation its
          *     visitors hold, and those conversations then run only on runners declaring it.
          */
@@ -9287,7 +9288,7 @@ export interface paths {
          *     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
          *     hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
          *     applies it within a minute, on top of the box's own setting, which it never
-         *     loosens. A ZDR box is always locked; adding a host to one needs a person in a
+         *     loosens. A sensitive-data box is always locked; adding a host to one needs a person in a
          *     browser behind a passkey. Owner or a runner administrator.
          */
         readonly put: operations["set_runner_egress"];
@@ -19664,10 +19665,10 @@ export interface components {
                 readonly [key: string]: unknown;
             } | null;
         };
-        /** CapabilityPhiIn */
-        readonly CapabilityPhiIn: {
-            /** Phi Safe */
-            readonly phi_safe: boolean;
+        /** CapabilitySensitiveIn */
+        readonly CapabilitySensitiveIn: {
+            /** Handles Sensitive */
+            readonly handles_sensitive: boolean;
         };
         /** AgentAdminOut */
         readonly AgentAdminOut: {
@@ -27356,10 +27357,10 @@ export interface components {
         /** RealDataRequiresOut */
         readonly RealDataRequiresOut: {
             /**
-             * Phi Safe
+             * Handles Sensitive
              * @default false
              */
-            readonly phi_safe: boolean;
+            readonly handles_sensitive: boolean;
             /**
              * Runner Flag
              * @default
@@ -39109,7 +39110,7 @@ export interface operations {
             };
         };
     };
-    readonly set_capability_phi: {
+    readonly set_capability_sensitive: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -39121,7 +39122,7 @@ export interface operations {
         };
         readonly requestBody: {
             readonly content: {
-                readonly "application/json": components["schemas"]["CapabilityPhiIn"];
+                readonly "application/json": components["schemas"]["CapabilitySensitiveIn"];
             };
         };
         readonly responses: {

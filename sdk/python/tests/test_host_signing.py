@@ -295,10 +295,10 @@ def _config(world, **overrides):
 
 
 class TestRunnerRequirements:
-    def test_a_host_requiring_zdr_says_so_in_every_assertion(self, world):
-        cfg = _config(world, runner_requirements=("zdr",))
+    def test_a_host_requiring_sensitive_data_says_so_in_every_assertion(self, world):
+        cfg = _config(world, runner_requirements=("sensitive_data",))
         claims = _read_claims(sign_visitor_assertion(cfg, "u-1"))
-        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
 
     def test_no_requirement_means_no_claim(self, world):
         claims = _read_claims(sign_visitor_assertion(world.config, "u-1"))
@@ -309,25 +309,25 @@ class TestRunnerRequirements:
             _config(world, runner_requirements=("nope",))
 
     def test_extra_cannot_forge_or_drop_the_requirement(self, world):
-        cfg = _config(world, runner_requirements=("zdr",))
+        cfg = _config(world, runner_requirements=("sensitive_data",))
         claims = _read_claims(sign_visitor_assertion(
             cfg, "u-1", extra={contract.RUNNER_REQUIREMENTS_CLAIM: []}))
-        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
 
     def test_extra_cannot_forge_a_requirement_the_host_does_not_have(self, world):
         claims = _read_claims(sign_visitor_assertion(
-            world.config, "u-1", extra={contract.RUNNER_REQUIREMENTS_CLAIM: ["zdr"]}))
+            world.config, "u-1", extra={contract.RUNNER_REQUIREMENTS_CLAIM: ["sensitive_data"]}))
         assert contract.RUNNER_REQUIREMENTS_CLAIM not in claims
 
 
 class TestPerPageAgent:
     def test_a_bound_arrival_signs_the_agent_and_the_pages_requirements(self, world):
         payload = arrival_payload(world.config, "u-1", agent_slug="labsdata", bind_agent=True,
-                                  runner_requirements=["zdr"])
+                                  runner_requirements=["sensitive_data"])
         claims = _read_claims(payload[contract.ARRIVAL_ASSERTION_FIELD])
         assert payload[contract.ARRIVAL_AGENT_FIELD] == "labsdata"
         assert claims[contract.AGENT_CLAIM] == "labsdata"
-        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
 
     def test_an_unbound_arrival_names_the_agent_but_signs_no_binding(self, world):
         payload = arrival_payload(world.config, "u-1", agent_slug="ace")
@@ -343,6 +343,6 @@ class TestPerPageAgent:
         assert contract.AGENT_CLAIM not in claims
 
     def test_page_requirements_union_with_the_sites(self, world):
-        cfg = _config(world, runner_requirements=("zdr",))
-        claims = _read_claims(sign_visitor_assertion(cfg, "u-1", runner_requirements=["zdr"]))
-        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["zdr"]
+        cfg = _config(world, runner_requirements=("sensitive_data",))
+        claims = _read_claims(sign_visitor_assertion(cfg, "u-1", runner_requirements=["sensitive_data"]))
+        assert claims[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]

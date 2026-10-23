@@ -320,7 +320,7 @@ class Runner(models.Model):
     #: The egress lock a person set for this runner (`PUT …/egress`, `apps/harness/egress.py`):
     #: locked, and the hosts it admits beyond the box's base set. Root on the box reads it
     #: by its instance role (`POST /api/harness/runners/box-egress`) and applies it. It
-    #: only ever adds to the box's own floor (box.env), and a ZDR box is locked
+    #: only ever adds to the box's own floor (box.env), and a sensitive-data box is locked
     #: whatever it says. Never reported by the box.
     egress_locked = models.BooleanField(default=False)
     egress_allow = models.JSONField(default=list, blank=True)
@@ -1613,8 +1613,8 @@ class RunnerAccessToken(models.Model):
 class RunnerFlag(models.Model):
     """One property a runner's OWNER vouches for (spec 2026-09-30-zdr-runners).
 
-    canopy cannot verify any of these -- `zdr` means "this box uses only
-    zero-data-retention keys for Claude", which is not observable from here -- so
+    canopy cannot verify any of these -- `sensitive_data` means "this box runs Claude
+    only on a ZDR API key, under a locked harness", which is not observable from here -- so
     each row is an attestation and records WHO made it. Set only through the
     flags route by a runner admin; nothing a runner REPORTS (heartbeat,
     capabilities) can create one.

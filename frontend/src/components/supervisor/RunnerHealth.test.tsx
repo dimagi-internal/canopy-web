@@ -24,7 +24,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     code_committed_at: 0, expected_code_committed_at: 0, workspace: 'dimagi',
     owner_email: 'jj@dimagi.com', can_manage: true, can_administer: true, open_sessions: 0,
     flags: [],
-    known_flags: ['zdr'],
+    known_flags: ['sensitive_data'],
     private: false,
     private_runner_id: null,
     only_agents: [],

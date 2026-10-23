@@ -197,7 +197,7 @@ def relay(turn, rows) -> int:
     if not getattr(turn, "chat_session_id", None):
         return 0
     if sensitivity.is_sensitive(turn):
-        return 0  # never mirrored (spec 2026-10-22-phi-agents-on-zdr-runners §4)
+        return 0  # never mirrored (spec 2026-10-22-sensitive-data-agents §4)
     dest = turn_destination(turn)
     if dest is None:
         return 0

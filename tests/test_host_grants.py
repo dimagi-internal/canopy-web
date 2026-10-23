@@ -239,9 +239,9 @@ def test_the_grant_remembers_the_runner_requirements_it_was_minted_under(site, h
     from canopy_sdk import contract
 
     r = _arrive(site, id_jag=_id_jag(site["priv"]),
-                **{contract.RUNNER_REQUIREMENTS_CLAIM: ["zdr"]})
+                **{contract.RUNNER_REQUIREMENTS_CLAIM: ["sensitive_data"]})
     assert r.status_code == 200, r.content
-    assert HostGrant.objects.get().runner_requirements == ["zdr"]
+    assert HostGrant.objects.get().runner_requirements == ["sensitive_data"]
     # A later arrival is the host's current word: it replaces, like the token.
     r = _arrive(site, id_jag=_id_jag(site["priv"]))
     assert HostGrant.objects.get().runner_requirements == []

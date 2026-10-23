@@ -25,7 +25,7 @@ from .core import (
     normalize_dimension,
     valid_category,
 )
-from .zdr import ZdrRefused
+from .sensitive import SensitiveRefused
 
 # --- entries -------------------------------------------------------------------
 
@@ -259,7 +259,7 @@ def add_entry(*, person: Person, workspace, category: str, statement: str,
             confidence=confidence, provenance_source=source, expires_at=expires_at,
             relationship=relationship, metadata=metadata, user_verified=user_verified,
             captured_by=captured_by_override or actor.id, actor=actor)
-    except ZdrRefused as exc:
+    except SensitiveRefused as exc:
         raise denied(str(exc)) from None
     except people.FactError as exc:
         raise malformed(str(exc)) from None
@@ -320,7 +320,7 @@ def update_entry(fact: PersonFact, *, statement: str, reason: str, actor: Actor,
             audit_detail=(f"category {fact.category} -> {new_category}; " if new_category != fact.category
                           else "") + (reason or ""),
             check_conflicts=not (was_conflicted and actor.is_person))
-    except ZdrRefused as exc:
+    except SensitiveRefused as exc:
         raise denied(str(exc)) from None
     except people.FactError as exc:
         raise malformed(str(exc)) from None

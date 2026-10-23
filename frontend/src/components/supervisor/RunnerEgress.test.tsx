@@ -14,7 +14,7 @@ const { RunnerEgress } = await import('./RunnerEgress')
 
 const open = { id: 'r1', name: 'cloud-ec2-2', kind: 'cloud', egress_locked: false, egress_allow: [],
   egress_forced: false } as unknown as RunnerOut
-const zdr = { ...open, name: 'cloud-zdr-1', egress_forced: true } as unknown as RunnerOut
+const sensitive = { ...open, name: 'cloud-sensitive-1', egress_forced: true } as unknown as RunnerOut
 const onChange = vi.fn()
 
 afterEach(() => {
@@ -39,12 +39,12 @@ describe('RunnerEgress', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalled())
   })
 
-  it('shows a ZDR box locked, and the lock cannot be turned off', () => {
-    render(<RunnerEgress runner={zdr} onChange={onChange} />)
+  it('shows a sensitive-data box locked, and the lock cannot be turned off', () => {
+    render(<RunnerEgress runner={sensitive} onChange={onChange} />)
     const box = screen.getByTestId('runner-egress-locked') as HTMLInputElement
     expect(box.checked).toBe(true)
     expect(box.disabled).toBe(true)
-    expect(screen.getByText(/Always locked on a ZDR box/)).toBeTruthy()
+    expect(screen.getByText(/Always locked on a sensitive-data box/)).toBeTruthy()
   })
 
   it('shows the server error', async () => {

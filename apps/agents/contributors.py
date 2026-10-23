@@ -136,8 +136,8 @@ def write_summary(project: AgentProject, person, payload: dict, *, by_agent=None
 
     # A summary re-reads many sessions; it is not one turn's learning, so it is not
     # REQUIRED to name a turn (unlike a fact). But when the request does come from
-    # a turn, a ZDR one writes nothing about a person.
-    hcp.refuse_if_zdr()
+    # a turn, a sensitive one writes nothing about a person.
+    hcp.refuse_if_sensitive()
     # A page claims IDEAS — the project's kind=idea tasks — never the agent's work.
     task_ids = {t.lower(): t for t in project.tasks.filter(kind="idea").values_list("ext_id", flat=True)}
     ideas = []

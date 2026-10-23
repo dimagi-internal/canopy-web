@@ -521,7 +521,7 @@ def heartbeat(
             fields.append("capabilities")
     # The box's data mode and its config hash (`runner_requirements.in_force`):
     # reported, same contract as `envelope` -- written every beat, absent = "", so a
-    # box that stops running in ZDR mode loses its `zdr` on the next beat.
+    # box that stops running in sensitive-data mode loses its `sensitive_data` on the next beat.
     from . import runner_requirements as rr
 
     for key, value in ((rr.DATA_MODE_KEY, (data_mode or "")[:32]),

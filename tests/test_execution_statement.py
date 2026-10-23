@@ -1,5 +1,5 @@
 """`Canopy-Execution`: canopy vouches for each call its gateway makes to a host, and
-the host verifies it with the SDK (spec 2026-10-22-phi-agents-on-zdr-runners §6).
+the host verifies it with the SDK (spec 2026-10-22-sensitive-data-agents §6).
 
 Driven end to end: the MOUNTED canopy MCP server, a real caller token, the gateway,
 a real FastMCP host (`tests/fixtures/site_gateway.py`), and the SDK's `verify_execution` on
@@ -38,20 +38,20 @@ def w():
     return sg.world()
 
 
-def _phi(w, *, zdr=True):
-    """`connect` set PHI-safe; the turn on a ZDR box."""
+def _sensitive_cap(w, *, sensitive=True):
+    """`connect` handles sensitive data; the turn on a sensitive-data box."""
     caps = dict(IFACE["capabilities"])
-    caps["connect"] = {**caps["connect"], "data": "phi"}
+    caps["connect"] = {**caps["connect"], "data": "sensitive"}
     w["agent"].interface = parse({"capabilities": caps})
     w["agent"].interface_published_by = w["owner"]
     w["agent"].save(update_fields=["interface", "interface_published_by"])
     box = Runner.objects.create(name="cloud-zdr-1", workspace=w["ws"], kind=Runner.CLOUD,
                                 status=Runner.ONLINE, owner=w["owner"],
                                 last_heartbeat_at=timezone.now(),
-                                capabilities={"data_mode": "zdr", "data_mode_hash": "abc123"})
-    RunnerFlag.objects.create(runner=box, flag="zdr", declared_by=w["owner"])
-    if zdr:
-        w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["zdr"]}
+                                capabilities={"data_mode": "sensitive_data", "data_mode_hash": "abc123"})
+    RunnerFlag.objects.create(runner=box, flag="sensitive_data", declared_by=w["owner"])
+    if sensitive:
+        w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["sensitive_data"]}
         w["session"].save(update_fields=["metadata"])
     Turn.objects.filter(pk=w["turn"].pk).update(claimed_by=box)
     return box
@@ -81,26 +81,26 @@ def _calls(w, host):
 
 
 def test_every_request_carries_a_statement_the_host_verifies(w, host):
-    box = _phi(w)
+    box = _sensitive_cap(w)
     assert _calls(w, host)["is_error"] is False
     seen = [h for h in host.seen if "canopy-execution" in h]
     assert seen and len(seen) == len(host.seen)  # every request of the MCP session
     ex = _verify(seen[-1])
     assert (ex.agent, ex.agent_sha, ex.turn) == ("ace", "", str(w["turn"].pk))
-    assert ex.declaration["data"] == "phi" and ex.declaration["declared_by"] == "op@dimagi.com"
+    assert ex.declaration["data"] == "sensitive" and ex.declaration["declared_by"] == "op@dimagi.com"
     assert "sha" not in ex.declaration and "agent_sha" not in ex.claims
-    assert ex.runner["id"] == str(box.pk) and ex.runner_flags == {"zdr"}
+    assert ex.runner["id"] == str(box.pk) and ex.runner_flags == {"sensitive_data"}
     assert ex.runner["flags"][0]["declared_by"] == "op@dimagi.com"
-    assert ex.runner_posture == {"data_mode": "zdr", "config_hash": "abc123"}
-    assert ex.requirements == ("zdr",) and ex.session == str(w["session"].pk)
-    assert ex.phi_clearance(agents={"ace"}) is None
+    assert ex.runner_posture == {"data_mode": "sensitive_data", "config_hash": "abc123"}
+    assert ex.requirements == ("sensitive_data",) and ex.session == str(w["session"].pk)
+    assert ex.sensitive_clearance(agents={"ace"}) is None
     # The statements are single-use, one per request.
     jtis = {_verify(h).claims["jti"] for h in seen}
     assert len(jtis) == len(seen)
 
 
 def test_a_statement_is_spent_once_and_bound_to_its_call(w, host):
-    _phi(w)
+    _sensitive_cap(w)
     _calls(w, host)
     h = host.seen[-1]
     config, keys, jtis = _host_side()
@@ -126,7 +126,7 @@ def test_a_statement_is_spent_once_and_bound_to_its_call(w, host):
 
 
 def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
-    _phi(w)
+    _sensitive_cap(w)
     _calls(w, host)
     config = HostConfig(signing_key=generate_private_key("EdDSA"), resource=RESOURCE,
                         canopy_client_id="https://evil.test/oauth/client.json")
@@ -140,34 +140,34 @@ def test_a_host_that_trusts_another_canopy_refuses_it(w, host):
     assert exc.value.code == "bad_issuer"
 
 
-def test_turning_phi_off_closes_the_door(w, host):
-    _phi(w)
+def test_turning_sensitive_off_closes_the_door(w, host):
+    _sensitive_cap(w)
     w["agent"].interface = parse(IFACE)
     w["agent"].save(update_fields=["interface"])
-    with pytest.raises(ToolError, match="marked PHI-safe"):
+    with pytest.raises(ToolError, match="handles sensitive data"):
         _calls(w, host)
     assert host.seen == []
 
 
-def test_outside_zdr_the_statement_says_there_is_no_declaration(w, host):
-    _calls(w, host)  # IFACE's `connect`: not phi; no requirements; no runner
+def test_outside_sensitive_the_statement_says_there_is_no_declaration(w, host):
+    _calls(w, host)  # IFACE's `connect`: not sensitive; no requirements; no runner
     ex = _verify(host.seen[-1])
     assert ex.declaration is None and ex.requirements == () and ex.agent_sha == ""
-    assert ex.phi_clearance(agents={"ace"}) == "undeclared"
+    assert ex.sensitive_clearance(agents={"ace"}) == "undeclared"
 
 
-def test_phi_clearance_refuses_each_missing_fact(w, host):
+def test_sensitive_clearance_refuses_each_missing_fact(w, host):
     import dataclasses
 
-    _phi(w)
+    _sensitive_cap(w)
     _calls(w, host)
     ex = _verify(host.seen[-1])
     ok = {"agents": {"ace"}}
-    assert ex.phi_clearance(agents={"echo"}) == "agent_not_allowed"
-    assert dataclasses.replace(ex, runner={**ex.runner, "flags": []}).phi_clearance(**ok) == "runner_flags"
-    assert dataclasses.replace(ex, runner_posture={"data_mode": ""}).phi_clearance(**ok) == "runner_posture"
-    assert dataclasses.replace(ex, requirements=()).phi_clearance(**ok) == "requirements"
-    assert dataclasses.replace(ex, declaration=None).phi_clearance(**ok) == "undeclared"
+    assert ex.sensitive_clearance(agents={"echo"}) == "agent_not_allowed"
+    assert dataclasses.replace(ex, runner={**ex.runner, "flags": []}).sensitive_clearance(**ok) == "runner_flags"
+    assert dataclasses.replace(ex, runner_posture={"data_mode": ""}).sensitive_clearance(**ok) == "runner_posture"
+    assert dataclasses.replace(ex, requirements=()).sensitive_clearance(**ok) == "requirements"
+    assert dataclasses.replace(ex, declaration=None).sensitive_clearance(**ok) == "undeclared"
 
 
 def test_a_view_call_carries_no_statement(w):

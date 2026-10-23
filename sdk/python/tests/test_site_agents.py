@@ -19,17 +19,17 @@ URL = wire.endpoint_url(CANOPY)
 
 CONTENT = {
     "site": {"name": SITE, "tenant": "connect"},
-    "runner_flags": [{"flag": "zdr", "meaning": "zero data retention"}],
+    "runner_flags": [{"flag": "sensitive_data", "meaning": "handles sensitive data"}],
     "agents": [{
         "slug": "labsdata", "name": "labsdata", "description": "data questions",
         "workspace": "connect", "owner": "Jo", "url": "https://canopy.example/w/connect/agents/labsdata",
         "capabilities": [{"name": "data", "description": "ask", "callers": ["contact", "member"],
-                          "phi_safe": True, "phi_set_by": "Jo", "phi_set_at": "2026-10-22T22:00:09Z"}],
-        "runners": {"flags_available": ["zdr"], "ready_with": {"zdr": True}},
+                          "handles_sensitive": True, "sensitive_set_by": "Jo", "sensitive_set_at": "2026-10-22T22:00:09Z"}],
+        "runners": {"flags_available": ["sensitive_data"], "ready_with": {"sensitive_data": True}},
         "ready": True, "problems": [],
     }, {
         "slug": "ace", "name": "ACE", "description": "", "workspace": "connect", "owner": "Jo",
-        "url": "", "capabilities": [], "runners": {"flags_available": [], "ready_with": {"zdr": False}},
+        "url": "", "capabilities": [], "runners": {"flags_available": [], "ready_with": {"sensitive_data": False}},
         "ready": False, "problems": ["ACE has no capability naming connect-labs"],
     }],
 }
@@ -110,12 +110,12 @@ def test_response_round_trips(world):
     assert got.site_name == SITE and got.tenant == "connect"
     assert got.slugs == ("labsdata", "ace")
     data = got.agent("labsdata")
-    assert data.phi_safe and data.ready and data.ready_with_flag("zdr")
-    assert data.capability("data").phi_set_by == "Jo"
-    assert data.flags_available == ("zdr",)
+    assert data.handles_sensitive and data.ready and data.ready_with_flag("sensitive_data")
+    assert data.capability("data").sensitive_set_by == "Jo"
+    assert data.flags_available == ("sensitive_data",)
     ace = got.agent("ace")
-    assert not ace.ready and not ace.phi_safe and ace.problems
-    assert got.flag("zdr").meaning == "zero data retention"
+    assert not ace.ready and not ace.handles_sensitive and ace.problems
+    assert got.flag("sensitive_data").meaning == "handles sensitive data"
     assert got.agent("nobody") is None
     assert got.version == wire.content_version(CONTENT)
     assert not got.stale
@@ -213,7 +213,7 @@ def test_fetch_site_agents_refuses_a_forged_answer(world):
 
 PAGES = [{"key": "labs:workflow:run", "title": "A workflow run",
           "scopes": ["workflow:read", "workflow:act", "data:read"]}]
-NEEDS = {"real_data": {"requires": {"phi_safe": True, "runner_flag": "zdr"}},
+NEEDS = {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
          "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"], "version": "abc"}}
 
 
@@ -222,7 +222,7 @@ def test_site_document_round_trips(world):
     token = site_mod.sign_site_document(world.host_key, doc)
     needs = site_mod.verify_site_document(token, [world.host_key.public_key()], site_name=SITE)
     assert needs.pages[0].scopes == ("workflow:read", "workflow:act", "data:read")
-    assert needs.real_data_requires == {"phi_safe": True, "runner_flag": "zdr"}
+    assert needs.real_data_requires == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
     assert needs.uses_real_data_agents == ("labsdata",) and needs.uses_version == "abc"
 
 

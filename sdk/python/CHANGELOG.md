@@ -2,6 +2,27 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.15.0 — 2026-10-22
+
+**Breaking.** The sensitive-data vocabulary replaces ZDR / PHI (spec
+`2026-10-22-sensitive-data-agents-design`). "ZDR" now names only the zero-data-retention
+API key a sensitive-data runner uses; the runner is a sensitive-data runner, and the
+capability handles sensitive data. No aliases: the old names and tokens are gone, and a
+host must move with a canopy-web that speaks the new ones.
+
+- The runner flag / runner requirement token `zdr` → `sensitive_data`
+  (`contract.RUNNER_FLAGS == {"sensitive_data"}`); `runner_posture.data_mode` `zdr` →
+  `sensitive_data`.
+- `canopy_sdk.host.execution`: `ZDR` → `SENSITIVE_DATA`, `PHI` → `SENSITIVE`;
+  `Execution.phi_clearance` → `Execution.sensitive_clearance(agents=, require=("sensitive_data",))`;
+  the `declaration`'s `data` `phi` → `sensitive` (the interface setting `data: sensitive`).
+- `canopy_sdk.site_agents`: `SiteAgent.phi_safe` → `handles_sensitive`; `AgentCapability.phi_safe`,
+  `phi_set_by`, `phi_set_at` → `handles_sensitive`, `sensitive_set_by`, `sensitive_set_at`, and
+  the same keys on the wire.
+- `canopy_sdk.site`: `real_data.requires` keys `{"phi_safe", "runner_flag"}` →
+  `{"handles_sensitive", "runner_flag"}`; `runner_flag` is `sensitive_data`.
+- Hosts: `RUNNER_REQUIREMENTS` / `runner_requirements=["zdr"]` → `["sensitive_data"]`.
+
 ## 0.14.0 — 2026-10-22
 
 The site agents API: canopy tells a connected site, signed, which agents it may show

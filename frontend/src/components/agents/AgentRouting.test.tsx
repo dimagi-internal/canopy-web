@@ -19,7 +19,7 @@ vi.mock('@/components/agents/TurnModeToggle', () => ({ TurnModeToggle: () => <di
 const { AgentRouting } = await import('./AgentRouting')
 
 const fleet = [
-  { id: 'r-cloud', name: 'cloud-1', kind: 'cloud', status: 'online', ready: true, flags: ['zdr'] },
+  { id: 'r-cloud', name: 'cloud-1', kind: 'cloud', status: 'online', ready: true, flags: ['sensitive_data'] },
   { id: 'r-mbp', name: 'jj-mbp', kind: 'emdash', status: 'online', ready: true, flags: [] },
 ] as unknown as RunnerOut[]
 
@@ -45,13 +45,13 @@ async function mount(rules: AgentRunnerRuleOut[]) {
 }
 
 describe('AgentRouting', () => {
-  it('badges a runner that declares ZDR, and only that one', async () => {
+  it('badges a runner that declares sensitive data, and only that one', async () => {
     await mount([
       rule({ actor: '' }),
       rule({ actor: 'beth@dimagi.com', runner_id: 'r-mbp', runner_name: 'jj-mbp' }),
     ])
-    expect(screen.getByTestId('zdr-badge-cloud-1')).toBeTruthy()
-    expect(screen.queryByTestId('zdr-badge-jj-mbp')).toBeNull()
+    expect(screen.getByTestId('sensitive-data-badge-cloud-1')).toBeTruthy()
+    expect(screen.queryByTestId('sensitive-data-badge-jj-mbp')).toBeNull()
   })
 
   it('lists the rules above the agent\'s own defaults, in evaluation order', async () => {

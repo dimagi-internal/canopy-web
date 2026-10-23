@@ -10,8 +10,8 @@
 * ``GrantHandler`` — the token endpoint's jwt-bearer grant (§2).
 * ``ResourceVerifier`` + ``DPoPGate`` — the MCP side (§3).
 * ``verify_execution`` → ``Execution`` — canopy's signed ``Canopy-Execution``
-  statement about the call (agent, commit, PHI-safe declaration, runner, its flags
-  in force, requirements), and ``Execution.phi_clearance`` — whether to release
+  statement about the call (agent, commit, sensitive-data declaration, runner, its flags
+  in force, requirements), and ``Execution.sensitive_clearance`` — whether to release
   real data.
 * ``ProbeIdentity`` + ``ProbeHandler`` — canopy's live probe: a real ID-JAG for
   one fixed, low-privilege principal, so the whole chain is exercised on a

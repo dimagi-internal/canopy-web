@@ -812,15 +812,15 @@ export async function saveAgentInterface(slug: string, source: string): Promise<
   return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
 }
 
-// The PHI-safe switch for one capability: canopy writes (or removes) its
-// `data: phi` in the saved YAML and saves it the way saveAgentInterface does, so
+// The sensitive-data switch for one capability: canopy writes (or removes) its
+// `data: sensitive` in the saved YAML and saves it the way saveAgentInterface does, so
 // the editor and the switch always agree.
-export async function setCapabilityPhi(slug: string, name: string, phiSafe: boolean): Promise<AgentInterfaceOut> {
-  const res = await apiV2.PUT('/api/agents/{slug}/interface/capabilities/{name}/phi', {
+export async function setCapabilitySensitive(slug: string, name: string, handlesSensitive: boolean): Promise<AgentInterfaceOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/interface/capabilities/{name}/sensitive', {
     params: { path: { slug, name } },
-    body: { phi_safe: phiSafe },
+    body: { handles_sensitive: handlesSensitive },
   })
-  return unwrap(res, 'setCapabilityPhi') as unknown as AgentInterfaceOut
+  return unwrap(res, 'setCapabilitySensitive') as unknown as AgentInterfaceOut
 }
 
 export type SettingChangeOut = Schemas['SettingChangeOut']
@@ -836,7 +836,7 @@ export async function getAgentInterfaceHistory(slug: string): Promise<SettingCha
     (c) =>
       ((c.operation === 'publish_interface' || c.operation === 'unpublish_interface') && c.target === slug) ||
       // The switch's row names the capability too: "<slug> / <capability>".
-      (c.operation === 'set_capability_phi' && c.target.startsWith(`${slug} / `)),
+      (c.operation === 'set_capability_sensitive' && c.target.startsWith(`${slug} / `)),
   )
 }
 

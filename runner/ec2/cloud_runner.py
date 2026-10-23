@@ -616,10 +616,10 @@ def _heartbeat_body(active_turn_ids: list[str], **extra) -> dict:
     # Omitted while any credential might work, so the server default (ready)
     # stands; a box whose every credential was just proven not to answer says so.
     ready, ready_note = _credential_readiness()
-    zdr_ok, zdr_note = zdr_readiness()
-    if not zdr_ok:
-        ready, ready_note = False, zdr_note
-    body.update(zdr_posture())
+    mode_ok, mode_note = sensitive_data_readiness()
+    if not mode_ok:
+        ready, ready_note = False, mode_note
+    body.update(sensitive_data_posture())
     if not ready:
         body["ready"] = False
         body["ready_note"] = ready_note[:200]   # Runner.ready_note is 200 chars
@@ -1054,6 +1054,7 @@ def health_report() -> dict:
         _credential_check()
         _disk_check()
         _egress_check()
+        _data_mode_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -1202,9 +1203,10 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
         CLAUDE_BIN, "-p", prompt,
         "--output-format", "stream-json", "--verbose",
     ]
-    # ZDR mode (see ZDR_MODE): never bypass. dontAsk refuses an unlisted tool rather
-    # than asking a person who is not there, and the settings disable bypass anyway.
-    cmd += ["--permission-mode", "dontAsk"] if ZDR_MODE else ["--dangerously-skip-permissions"]
+    # Sensitive-data mode (see SENSITIVE_DATA_MODE): never bypass. dontAsk refuses an
+    # unlisted tool rather than asking a person who is not there, and the settings
+    # disable bypass anyway.
+    cmd += ["--permission-mode", "dontAsk"] if SENSITIVE_DATA_MODE else ["--dangerously-skip-permissions"]
     if resume_session_id:
         cmd += ["--resume", resume_session_id]
     else:
@@ -1884,7 +1886,7 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int, locked: bool
         "RUNNER_AGENTS": agents, "AGENT_SLUGS": slugs, "RUNNER_PROJECTS": projects,
         "RUNNER_SESSIONS": box.get("RUNNER_SESSIONS", "1"),
         "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
-        # A box in ZDR mode runs every unit in it (one key, the locked profile).
+        # A box in sensitive-data mode runs every unit in it (one key, the locked profile).
         "RUNNER_DATA_MODE": box.get("RUNNER_DATA_MODE", ""),
         "RUNNER_EGRESS": "locked" if locked else "",
         "HOME": home, "USER": unit["user"], "LOGNAME": unit["user"],
@@ -1971,7 +1973,7 @@ def imds_rules(run=subprocess.run) -> list[str]:
     return changed
 
 
-# ── Egress lock (spec 2026-10-22-phi-agents-on-zdr-runners §1, "Egress locked") ──
+# ── Egress lock (spec 2026-10-22-sensitive-data-agents §1, "Egress locked") ──
 #
 # A locked isolation unit's processes — its runner, Claude, every tool — reach the
 # network only through the box's CONNECT proxy, on that unit's own loopback port,
@@ -1983,7 +1985,7 @@ def imds_rules(run=subprocess.run) -> list[str]:
 # Who decides a unit is locked, and what it admits — it only ever ratchets up:
 #
 # * the box's floor, `RUNNER_EGRESS` in box.env (the stack parameter): locks every unit;
-# * ZDR mode (`RUNNER_DATA_MODE`): locks every unit, whatever else says;
+# * Sensitive-data mode (`RUNNER_DATA_MODE`): locks every unit, whatever else says;
 # * canopy-web: a person sets each runner's lock and extra hosts on its runner page
 #   or by MCP (`PUT /api/harness/runners/{id}/egress`). Root reads it every minute by
 #   the box's instance role (`--egress-sync`, `POST …/box-egress`) — never relayed by
@@ -1993,7 +1995,7 @@ def imds_rules(run=subprocess.run) -> list[str]:
 # A lock turning on or off rewrites the unit's env (the proxy variables) and restarts
 # its runner, so it waits until the unit carries no turn. Allowlist changes apply at
 # once (the proxy re-reads per connection). The proxy narrows HOSTS, not paths:
-# GitHub stays reachable for the runner's own code and clones; a ZDR turn cannot use
+# GitHub stays reachable for the runner's own code and clones; a sensitive-data turn cannot use
 # it (no shell, no GitHub token).
 
 EGRESS_CHAIN = "CANOPY-EGRESS"
@@ -2066,7 +2068,7 @@ def egress_host_allowed(host: str, allow) -> bool:
 
 
 def egress_plan(box: dict, units: list[dict], server: dict) -> dict:
-    """{unit id: {"locked", "allow"}} — the box's floor and ZDR mode lock every unit;
+    """{unit id: {"locked", "allow"}} — the box's floor and sensitive-data mode lock every unit;
     canopy-web's answer (`server`, by runner name) can lock more and add hosts, never
     unlock what the box locks."""
     floor = egress_locked(box) or bool(str(box.get("RUNNER_DATA_MODE", "")).strip())
@@ -3464,8 +3466,8 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
     dedup treats a repeated batch_id as a lost-ack retry and silently no-ops
     it, which would drop the fresh attempt's transcript rather than the
     intended duplicate."""
-    if ZDR_MODE:
-        # A ZDR box keeps its transcripts to itself (spec 2026-10-22 §4): canopy-web
+    if SENSITIVE_DATA_MODE:
+        # A sensitive-data box keeps its transcripts to itself (spec 2026-10-22 §4): canopy-web
         # drops a sensitive turn's anyway, and the bytes are better never sent.
         return False
     if not lines:
@@ -3510,49 +3512,60 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
 # has run real turns on a real box; flip with RUNNER_EXECUTOR=acp.
 RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
 
-# ── ZDR mode (docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md §1) ──
-# `RUNNER_DATA_MODE=zdr`: every model call this box makes goes to ONE credential,
-# the bundle's API-key slot, which holds a key from an Anthropic organisation with
-# zero data retention. Box logins and subscriptions are never used (a subscription
-# is never ZDR), and there is no fallback: a capped key waits. Every turn runs under
-# a locked permission profile (no shell, no file writes, no web, no subagents, only
-# canopy-web's MCP), with telemetry, error reporting and non-essential model calls
-# off; the turn's caller envelope, profile and, for a confined turn, its transcript
-# are deleted when it ends.
+# ── Sensitive-data mode (docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §1) ──
+# `RUNNER_DATA_MODE=sensitive_data`: every model call this box makes goes to ONE
+# credential, the bundle's API-key slot, which holds the ZDR API key (an Anthropic
+# organisation with zero data retention). Box logins and subscriptions are never
+# used (a subscription is never ZDR), and there is no fallback: a capped key waits.
+# Every turn runs under a locked permission profile (no shell, no file writes, no
+# web, no subagents, only canopy-web's MCP), with telemetry, error reporting and
+# non-essential model calls off; the turn's caller envelope, profile and, for a
+# confined turn, its transcript are deleted when it ends.
 #
 # canopy cannot see which key this box uses. The box REPORTS its mode on every
 # heartbeat (`data_mode`, plus a hash of the config it produced), and canopy-web
-# counts a person's `zdr` declaration only while that report says `zdr` — a box
-# declared ZDR but not running in ZDR mode takes no ZDR work.
+# counts a person's `sensitive_data` declaration only while that report says
+# `sensitive_data` — a box declared for sensitive data but not running in
+# sensitive-data mode takes no sensitive work.
 #
-# Any non-empty value other than `zdr` locks the box down just the same and reports
-# itself as what it is, which no flag accepts: a typo fails closed, never open.
+# Any other non-empty value (a typo, the retired `zdr`) fails closed, never open: it
+# locks the box down just the same, reports itself as what it is, which no flag
+# accepts, fails health (`claude.sensitive_data`) and claims no turn at all
+# (`_data_mode_refused`).
 RUNNER_DATA_MODE = os.environ.get("RUNNER_DATA_MODE", "").strip().lower()
-ZDR_MODE = bool(RUNNER_DATA_MODE)
-#: The kind of credential a ZDR box uses: an API key (`_is_api_key` labels) —
-#: a zero-data-retention organisation's. In an older bundle, its one API-key slot.
-ZDR_CREDENTIAL_LABEL = "api-key"
-#: What every ZDR turn's environment carries.
-ZDR_ENV = {
+SENSITIVE_DATA = "sensitive_data"
+SENSITIVE_DATA_MODE = bool(RUNNER_DATA_MODE)
+#: The kind of credential a sensitive-data box uses: the ZDR API key (`_is_api_key`
+#: labels), a zero-data-retention organisation's. In an older bundle, its one API-key slot.
+ZDR_KEY_LABEL = "api-key"
+#: What every sensitive-data turn's environment carries.
+SENSITIVE_DATA_ENV = {
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
     "CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1",
     "DISABLE_AUTOUPDATER": "1",
 }
-#: The only tools a ZDR turn may call (dontAsk: anything unlisted is refused, never
-#: asked). canopy-web's MCP is the only MCP server, and it reaches a host's data
+#: The only tools a sensitive-data turn may call (dontAsk: anything unlisted is
+#: refused, never asked). canopy-web's MCP is the only MCP server, and it reaches a host's data
 #: through canopy's gateway, as the visitor.
-ZDR_ALLOW = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite",
-             "mcp__plugin_canopy_canopy-web__*")
+SENSITIVE_DATA_ALLOW = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite",
+                        "mcp__plugin_canopy_canopy-web__*")
 #: Denied outright, whatever a confined capability allows: each is a way for what a
 #: turn read to leave the box (a shell, a file, the web, a subagent, a later session).
-ZDR_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task",
-            "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger")
-if ZDR_MODE and RUNNER_EXECUTOR != "cli":
+SENSITIVE_DATA_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Agent",
+                       "Task", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup",
+                       "RemoteTrigger")
+if SENSITIVE_DATA_MODE and RUNNER_EXECUTOR != "cli":
     # The ACP adapter runs in bypassPermissions and takes no settings document, so
-    # it cannot carry the locked profile. ZDR turns run `claude -p`.
+    # it cannot carry the locked profile. Sensitive-data turns run `claude -p`.
     RUNNER_EXECUTOR = "cli"
+
+
+def _data_mode_refused() -> bool:
+    """A `RUNNER_DATA_MODE` canopy does not know: the box claims nothing, rather
+    than run as an ordinary box or as a sensitive-data box nobody meant."""
+    return RUNNER_DATA_MODE not in ("", SENSITIVE_DATA)
 
 
 def _rule_tool(rule: str) -> str:
@@ -3560,39 +3573,42 @@ def _rule_tool(rule: str) -> str:
     return str(rule).split("(", 1)[0].strip()
 
 
-def zdr_settings(confined: dict | None = None) -> dict:
-    """The `--settings` document for a ZDR turn: the locked profile, narrowed further
-    by a confined turn's own rules when it has them (`native_permissions.cli_settings`).
+def sensitive_data_settings(confined: dict | None = None) -> dict:
+    """The `--settings` document for a sensitive-data turn: the locked profile, narrowed
+    further by a confined turn's own rules when it has them
+    (`native_permissions.cli_settings`).
 
     Deny is the union. Allow is the confined turn's own list when it has one (its
-    capability decides), minus anything ZDR denies; otherwise `ZDR_ALLOW`. Either
-    way bypass and auto mode are disabled and unlisted tools are refused.
+    capability decides), minus anything `SENSITIVE_DATA_DENY` holds; otherwise
+    `SENSITIVE_DATA_ALLOW`. Either way bypass and auto mode are disabled and unlisted
+    tools are refused.
     """
     doc = dict(confined or {})
     perms = dict(doc.get("permissions") or {})
     allow = perms.get("allow") if confined else None
-    allow = list(ZDR_ALLOW) if allow is None else [a for a in allow if _rule_tool(a) not in ZDR_DENY]
+    allow = (list(SENSITIVE_DATA_ALLOW) if allow is None
+             else [a for a in allow if _rule_tool(a) not in SENSITIVE_DATA_DENY])
     perms.update({
         "defaultMode": "dontAsk",
         "disableAutoMode": "disable",
         "disableBypassPermissionsMode": "disable",
         "allow": allow,
-        "deny": sorted({*ZDR_DENY, *(perms.get("deny") or [])}),
+        "deny": sorted({*SENSITIVE_DATA_DENY, *(perms.get("deny") or [])}),
     })
     doc["permissions"] = perms
-    doc["env"] = {**(doc.get("env") or {}), **ZDR_ENV}
+    doc["env"] = {**(doc.get("env") or {}), **SENSITIVE_DATA_ENV}
     return doc
 
 
-def zdr_posture() -> dict:
+def sensitive_data_posture() -> dict:
     """What this box reports about its data mode on every heartbeat: the mode, and a
     hash of what it produces (the settings document, the executor, the credential
     labels in its cascade -- never a value), so a change shows as a change."""
-    if not ZDR_MODE:
+    if not SENSITIVE_DATA_MODE:
         return {"data_mode": ""}
     material = json.dumps({
         "mode": RUNNER_DATA_MODE,
-        "settings": zdr_settings(),
+        "settings": sensitive_data_settings(),
         "executor": RUNNER_EXECUTOR,
         "credentials": [c[0] for c in _CLAUDE_CREDS],
         "egress": RUNNER_EGRESS,
@@ -3601,24 +3617,26 @@ def zdr_posture() -> dict:
             "data_mode_hash": hashlib.sha256(material.encode()).hexdigest()[:16]}
 
 
-def zdr_readiness() -> tuple[bool, str]:
-    """(ready, note) for ZDR mode: the mode is one canopy knows, and the one
-    credential is staged. A box that cannot run ZDR turns says so instead of
-    claiming them."""
-    if not ZDR_MODE:
+def sensitive_data_readiness() -> tuple[bool, str]:
+    """(ready, note) for sensitive-data mode: the mode is one canopy knows, and the one
+    credential is staged. A box that cannot run sensitive-data turns says so instead
+    of claiming them."""
+    if not SENSITIVE_DATA_MODE:
         return True, ""
-    if RUNNER_DATA_MODE != "zdr":
-        return False, f"RUNNER_DATA_MODE={RUNNER_DATA_MODE!r} is not a mode canopy knows (only 'zdr')"
+    if _data_mode_refused():
+        return False, (f"RUNNER_DATA_MODE={RUNNER_DATA_MODE!r} is not a mode canopy knows: the "
+                       f"mode is {SENSITIVE_DATA!r}. This box takes no turn until it is set right")
     labels = [c[0] for c in _CLAUDE_CREDS]
     if not labels or not all(_is_api_key(lb) for lb in labels):
-        return False, ("ZDR mode runs only on API keys (a zero-data-retention "
+        return False, ("Sensitive-data mode runs only on API keys (a zero-data-retention "
                        "organisation's), and none is staged")
     if not EGRESS_LOCKED:
-        return False, ("ZDR mode needs egress locked, and this unit was started open "
-                       "(root locks a ZDR box's units at its next start: systemctl restart canopy-units)")
+        return False, ("Sensitive-data mode needs egress locked, and this unit was started open "
+                       "(root locks a sensitive-data box's units at its next start: "
+                       "systemctl restart canopy-units)")
     status, detail = egress_probe()
     if status != "ok":
-        return False, f"ZDR mode needs egress locked, and the lock is not holding: {detail}"
+        return False, f"Sensitive-data mode needs egress locked, and the lock is not holding: {detail}"
     return True, ""
 
 
@@ -3659,51 +3677,63 @@ def egress_probe(connect=socket.create_connection, now=time.time) -> tuple[str, 
 
 
 def _egress_check() -> None:
-    if not EGRESS_LOCKED and not ZDR_MODE:
+    if not EGRESS_LOCKED and not SENSITIVE_DATA_MODE:
         with _HEALTH_LOCK:
             _HEALTH.pop("egress", None)
         return
     status, detail = egress_probe()
     if not EGRESS_LOCKED:
-        status, detail = "fail", "egress open, and ZDR mode needs it locked (RunnerEgress=locked)"
+        status, detail = "fail", "egress open, and sensitive-data mode needs it locked (RunnerEgress=locked)"
     _set_check("egress", status, detail)
 
 
-def _zdr_settings_file(turn: dict, confined_path: str | None) -> str:
-    """Write this ZDR turn's settings (merging a confined turn's own) and return the
-    path. Raises ConfineError: a ZDR turn without its profile is not run."""
+def _data_mode_check() -> None:
+    """`claude.sensitive_data`: whether this box can run in the mode it was given.
+    Absent on an ordinary box."""
+    if not RUNNER_DATA_MODE:
+        with _HEALTH_LOCK:
+            _HEALTH.pop("claude.sensitive_data", None)
+        return
+    ok, note = sensitive_data_readiness()
+    _set_check("claude.sensitive_data", "ok" if ok else "fail", note or "sensitive-data mode")
+
+
+def _sensitive_data_settings_file(turn: dict, confined_path: str | None) -> str:
+    """Write this sensitive-data turn's settings (merging a confined turn's own) and
+    return the path. Raises ConfineError: a sensitive-data turn without its profile is
+    not run."""
     confined = None
     if confined_path:
         try:
             confined = json.loads(pathlib.Path(confined_path).read_text())
         except (OSError, ValueError) as exc:
             raise ConfineError(f"could not read the turn's permission layer: {exc}") from exc
-    path = PROFILE_ROOT / f"cloud-{turn['id']}.zdr-settings.json"
+    path = PROFILE_ROOT / f"cloud-{turn['id']}.sensitive-data-settings.json"
     try:
-        _write_private(path, zdr_settings(confined))
+        _write_private(path, sensitive_data_settings(confined))
     except OSError as exc:
-        raise ConfineError(f"could not write the ZDR permission profile: {exc}") from exc
+        raise ConfineError(f"could not write the sensitive-data permission profile: {exc}") from exc
     return str(path)
 
 
-def _zdr_forget_turn(turn_id: str, cwd: pathlib.Path | None, cli_session_id: str,
+def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, cli_session_id: str,
                      confined: bool) -> None:
-    """After a ZDR turn: delete what it left on disk that can hold what it read --
+    """After a sensitive-data turn: delete what it left on disk that can hold what it read --
     the caller envelope, its profiles and, for a confined turn (never resumed), its
     transcript. A conversation's own transcript stays only while the conversation
     can resume it, and is swept with the session's work directory."""
-    if not ZDR_MODE:
+    if not SENSITIVE_DATA_MODE:
         return
     paths = [CALLER_ROOT / f"{turn_id}.json"]
     paths += [PROFILE_ROOT / f"cloud-{turn_id}{suffix}"
-              for suffix in (".json", ".settings.json", ".zdr-settings.json")]
+              for suffix in (".json", ".settings.json", ".sensitive-data-settings.json")]
     if confined and cli_session_id and cwd is not None:
         paths.append(CLAUDE_PROJECTS_HOME / _encode_project_dir(cwd) / f"{cli_session_id}.jsonl")
     for path in paths:
         try:
             path.unlink(missing_ok=True)
         except OSError as exc:
-            _log(f"warn: ZDR: could not delete {path}: {exc}")
+            _log(f"warn: sensitive-data mode: could not delete {path}: {exc}")
 
 # No time limit on an ACP turn, like `claude -p`. A wall-clock deadline (5400s)
 # killed ACE's full `/ace:run bednet-check-2-visit` on cloud-ec2-2 while it was
@@ -6125,11 +6155,11 @@ def _is_login(label: str) -> bool:
 #: under its label, which is how the credentials page finds each entry's.
 TOKEN_LABEL = "token"
 _LIST_KINDS = {"token": (TOKEN_LABEL, "CLAUDE_CODE_OAUTH_TOKEN"),
-               "api_key": (ZDR_CREDENTIAL_LABEL, "ANTHROPIC_API_KEY")}
+               "api_key": (ZDR_KEY_LABEL, "ANTHROPIC_API_KEY")}
 
 
 def _is_api_key(label: str) -> bool:
-    return label == ZDR_CREDENTIAL_LABEL or label.startswith(ZDR_CREDENTIAL_LABEL + ":")
+    return label == ZDR_KEY_LABEL or label.startswith(ZDR_KEY_LABEL + ":")
 
 
 def _login_key_of(label: str) -> str:
@@ -6247,12 +6277,12 @@ def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
     An older canopy-web sends fixed slots instead: the box's logins first, then
     its two tokens, then its API key.
 
-    In ZDR mode, only API keys: no box login, no subscription."""
+    In sensitive-data mode, only API keys: no box login, no subscription."""
     if isinstance(cred, dict) and isinstance(cred.get("cascade"), list):
         return _cascade_from_list(cred)
-    if ZDR_MODE:
-        key = dict((label, k) for label, _v, k in _BUNDLE_SLOTS)[ZDR_CREDENTIAL_LABEL]
-        return [(ZDR_CREDENTIAL_LABEL, "ANTHROPIC_API_KEY", cred[key])] if (cred or {}).get(key) else []
+    if SENSITIVE_DATA_MODE:
+        key = dict((label, k) for label, _v, k in _BUNDLE_SLOTS)[ZDR_KEY_LABEL]
+        return [(ZDR_KEY_LABEL, "ANTHROPIC_API_KEY", cred[key])] if (cred or {}).get(key) else []
     out: list[tuple[str, str, str]] = [
         (_login_label(k), "CLAUDE_CONFIG_DIR", _login_config_env(k))
         for k in _login_keys(cred) if box_login_ready(key=k)]
@@ -6267,17 +6297,17 @@ def _cascade_from_list(cred: dict) -> list[tuple[str, str, str]]:
     listed = [e for e in cred["cascade"] if isinstance(e, dict)]
     # The CLI's own login, signed in before there was a list: first, where it
     # always sat, until the list adopts it (`_login_keys`).
-    if (not ZDR_MODE and not _default_adopted()
+    if (not SENSITIVE_DATA_MODE and not _default_adopted()
             and not any(e.get("kind") == "login" and e.get("key") == DEFAULT_LOGIN for e in listed)
             and box_login_ready()):
         out.append((_login_label(DEFAULT_LOGIN), "CLAUDE_CONFIG_DIR", _login_config_env()))
     for e in listed:
         kind, key, value = e.get("kind"), str(e.get("key") or ""), str(e.get("value") or "")
         if kind == "login":
-            if (not ZDR_MODE and (key == DEFAULT_LOGIN or _LOGIN_KEY_RE.match(key))
+            if (not SENSITIVE_DATA_MODE and (key == DEFAULT_LOGIN or _LOGIN_KEY_RE.match(key))
                     and box_login_ready(key=key)):
                 out.append((_login_label(key), "CLAUDE_CONFIG_DIR", _login_config_env(key)))
-        elif kind in _LIST_KINDS and value and (kind == "api_key" or not ZDR_MODE):
+        elif kind in _LIST_KINDS and value and (kind == "api_key" or not SENSITIVE_DATA_MODE):
             prefix, var = _LIST_KINDS[kind]
             out.append((f"{prefix}:{key}", var, value))
     return out
@@ -6285,8 +6315,8 @@ def _cascade_from_list(cred: dict) -> list[tuple[str, str, str]]:
 
 def _adopt_box_login() -> bool:
     """Put a freshly signed-in DEFAULT login at the head of the live cascade
-    (an older canopy-web, which has no list to re-read it from). Never in ZDR mode."""
-    if ZDR_MODE or not box_login_ready():
+    (an older canopy-web, which has no list to re-read it from). Never in sensitive-data mode."""
+    if SENSITIVE_DATA_MODE or not box_login_ready():
         return False
     if not any(c[0] == BOX_LOGIN_LABEL for c in _CLAUDE_CREDS):
         _CLAUDE_CREDS.insert(0, (BOX_LOGIN_LABEL, "CLAUDE_CONFIG_DIR", _login_config_env()))
@@ -6513,7 +6543,7 @@ def _apply_claude_credential(index: int, *, turn_id: str = "") -> None:
     Landing on an API key tells a human, because it bills per token — wherever
     it sits in the list. A key a person put first, or one that is first because
     the logins above it are not signed in, bills from the first turn. Not on a
-    ZDR box, which runs on keys by design."""
+    sensitive-data box, which runs on keys by design."""
     global _CLAUDE_CRED_I
     _CLAUDE_CRED_I = index
     label, var, value = _CLAUDE_CREDS[index]
@@ -6530,7 +6560,7 @@ def _apply_claude_credential(index: int, *, turn_id: str = "") -> None:
     _log(f"claude credential: using {label} ({var or 'the stored login on this box'})")
     if var != "ANTHROPIC_API_KEY":
         _API_KEY_NOTICE["label"] = ""
-    elif not ZDR_MODE and _API_KEY_NOTICE["label"] != label:
+    elif not SENSITIVE_DATA_MODE and _API_KEY_NOTICE["label"] != label:
         _API_KEY_NOTICE["label"] = label
         _notify_api_key_fallback(label, turn_id)
 
@@ -8632,8 +8662,8 @@ def _maybe_report_usage(runner_id: str) -> None:
         return
 
     def post(chunk, last):
-        if ZDR_MODE:
-            # A session's title is its first prompt: in ZDR mode the report carries
+        if SENSITIVE_DATA_MODE:
+            # A session's title is its first prompt: in sensitive-data mode the report carries
             # what was spent, never words (canopy-web blanks it too).
             chunk = [{**row, "title": ""} for row in chunk]
         code, _ = _api("POST", f"/runners/{runner_id}/usage", {"sessions": chunk, "full": last})
@@ -8973,12 +9003,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # turn's env is an allowlist (`_confined_env`), so nothing below — the
         # cwd's own git pull included — can hand it a credential.
         _TURN_ENV.confined = _capability(turn) if confined else None
-        if ZDR_MODE and not confined:
-            # A ZDR box runs only confined turns (spec 2026-10-22-phi-agents-on-zdr-
-            # runners §5: a phi capability is confined for everyone). canopy-web
-            # decides that; this is the box refusing to trust it blindly.
-            note = ("zdr_unconfined: a ZDR runner runs only turns confined to a capability "
-                    "declared PHI-safe; this turn's envelope is not confined")
+        if SENSITIVE_DATA_MODE and not confined:
+            # A sensitive-data box runs only confined turns (spec 2026-10-22-sensitive-
+            # data-agents §5: a capability that handles sensitive data is confined for
+            # everyone). canopy-web decides that; this is the box refusing to trust it
+            # blindly.
+            note = ("sensitive_data_unconfined: a sensitive-data runner runs only turns confined "
+                    "to a capability that handles sensitive data; this turn's envelope is not confined")
             _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
             _log(f"turn {turn_id[:8]} NOT run — {note}")
             return
@@ -8986,7 +9017,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
-                        **(ZDR_ENV if ZDR_MODE else {})}
+                        **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
             # own git pull needs it), its caller envelope and, for a chat, that
@@ -9001,7 +9032,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
                         **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV,
-                        **(ZDR_ENV if ZDR_MODE else {})}
+                        **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)
         _TURN_ENV.settings = None
@@ -9071,14 +9102,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _log(f"turn {turn_id[:8]} NOT run — cannot confine: {exc}")
                 return
 
-        if ZDR_MODE:
-            # Every ZDR turn runs under the locked profile, a confined one with its
+        if SENSITIVE_DATA_MODE:
+            # Every sensitive-data turn runs under the locked profile, a confined one with its
             # own rules folded in. Without it, the turn is not run.
             try:
-                _TURN_ENV.settings = _zdr_settings_file(turn, _TURN_ENV.settings)
+                _TURN_ENV.settings = _sensitive_data_settings_file(turn, _TURN_ENV.settings)
             except ConfineError as exc:
                 _api("POST", f"/turns/{turn_id}/finish",
-                     {"status": "failed", "result_note": f"a ZDR turn was not run: {exc}"})
+                     {"status": "failed", "result_note": f"a sensitive-data turn was not run: {exc}"})
                 _log(f"turn {turn_id[:8]} NOT run — {exc}")
                 return
 
@@ -9147,10 +9178,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                         fn(runner_id, turn, cli_session_id)
                 except Exception as exc:  # noqa: BLE001
                     _log(f"warn: could not {step} for {turn_id[:8]}: {exc}")
-        # AFTER the rows above shipped: a confined ZDR turn's transcript is deleted
+        # AFTER the rows above shipped: a confined sensitive-data turn's transcript is deleted
         # here, and it is how its reply reaches the asker. canopy-web keeps the words
         # sealed for the conversation's own people (`sensitivity.seal`).
-        _zdr_forget_turn(str(turn_id), cwd, cli_session_id, confined)
+        _sensitive_data_forget_turn(str(turn_id), cwd, cli_session_id, confined)
         # ALWAYS over REST. #448 fixed turns being orphaned when the WebSocket
         # died mid-turn and the finish frame raised; the worker never touches the
         # socket at all, so that failure class is now structurally impossible
@@ -9296,7 +9327,7 @@ def run_over_rest(runner_id: str) -> None:
         _credential_tick()
         _drain_inbox(runner_id)
         if (len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok()
-                or _token_refused()):
+                or _token_refused() or _data_mode_refused()):
             time.sleep(POLL_SECONDS)
             continue
         paused = backed_off_slugs()
@@ -9416,6 +9447,8 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
         return False  # the poll tick retries; the queued turn waits, nothing is lost
     if _token_refused():
         return False  # it could never report back; leave it for a box that can
+    if _data_mode_refused():
+        return False  # health says why (`claude.sensitive_data`); nothing runs until it is fixed
     paused = backed_off_slugs()
     res = _ws_request(ws, {"action": "claim", **({"paused": paused} if paused else {})}, "claim.result")
     turn = res.get("turn") if res else None

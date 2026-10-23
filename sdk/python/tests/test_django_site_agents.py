@@ -116,7 +116,7 @@ def test_unconfigured_host_shows_nothing():
 
 def test_site_json_is_signed_and_carries_the_needs(world):
     def needs():
-        return {"real_data": {"requires": {"phi_safe": True, "runner_flag": "zdr"}},
+        return {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
                 "uses": {"agents": ["labsdata"], "real_data_agents": ["labsdata"], "version": "v1"},
                 "titles": {"labs:workflow:run:data": "A workflow run, read-only"}}
 
@@ -129,7 +129,7 @@ def test_site_json_is_signed_and_carries_the_needs(world):
                                         site_name="connect-labs")
     assert got.pages[0].title == "A workflow run, read-only"
     assert got.pages[0].scopes == ("workflow:read", "data:read")
-    assert got.real_data_requires == {"phi_safe": True, "runner_flag": "zdr"}
+    assert got.real_data_requires == {"handles_sensitive": True, "runner_flag": "sensitive_data"}
     assert got.uses_version == "v1"
 
 

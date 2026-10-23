@@ -181,8 +181,8 @@ def upload_session(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    # A sensitive conversation is never shared (spec 2026-10-22-phi-agents-on-zdr-
-    # runners §4): its transcript is the host's data.
+    # A sensitive conversation is never shared (spec 2026-10-22-sensitive-data-agents
+    # §4): its transcript is the host's data.
     from apps.harness import sensitivity
 
     if sensitivity.claude_session_is_sensitive(parsed.cli_session_id):

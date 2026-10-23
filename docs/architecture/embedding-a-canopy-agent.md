@@ -694,7 +694,7 @@ its title would be inventing where it happened.
 
 A site may offer more than one agent and want a different one on some pages —
 connect-labs keeps ACE on the marketplace and puts `labsdata`, a read-only data
-agent that runs only on ZDR runners, on the pages over real visit data. The
+agent that runs only on sensitive-data runners, on the pages over real visit data. The
 page chooses; the rest of the site keeps its default.
 
 With the Python SDK (`dimagi-canopy` ≥ 0.11):
@@ -702,7 +702,7 @@ With the Python SDK (`dimagi-canopy` ≥ 0.11):
 ```python
 # CANOPY_HOST: AGENT_SLUG="ace", and no site-wide RUNNER_REQUIREMENTS
 ctx = panel_context(request, resource="labs-data://visits",
-                    agent="labsdata", runner_requirements=["zdr"])
+                    agent="labsdata", runner_requirements=["sensitive_data"])
 ```
 
 What canopy does with it:
@@ -740,7 +740,7 @@ current = site_agents.current()     # None = show no agent
 `GET /api/sites/agents`, signed with your own key, answers with a JWS signed by
 canopy's client key (the `Canopy-Execution` key): exactly the agents this
 workspace allows on your site, each with its capabilities for your site
-(`phi_safe` and who set it), which runner flags its runners carry and whether one
+(`handles_sensitive` and who set it), which runner flags its runners carry and whether one
 is ready now, `ready`, and `problems` — plain sentences naming where in canopy to
 fix each. `runner_flags` lists every flag canopy knows; `version` changes exactly
 when any of that does, so record it with each settings save. Cached for 5 minutes;
@@ -938,16 +938,17 @@ In three steps — every claim, lifetime, header and refusal is in
    a fresh proof and an informational `Canopy-Actor` header; run the tool as `sub`, within the
    token's scopes.
 4. **Real data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
-   canopy's signed statement about the call: the agent, the commit it is running, its author's
-   PHI-safe declaration (`data: phi`, made by its owner or an admin), the runner and its
-   flags in force (`zdr`, declared by a person and matched by the box's own report), and the
+   canopy's signed statement about the call: the agent, its author's declaration that the
+   capability handles sensitive data (`data: sensitive`, made by its owner or an admin), the
+   runner and its flags in force (`sensitive_data`, declared by a person and matched by the
+   box's own report), and the
    conversation's requirements. `canopy_sdk.django.execution.verify_execution(request)` checks
    it (canopy's client key, your resource, 60s, single-use, bound to the DPoP key and token);
-   `execution.phi_clearance(agents={...})` says whether to release real data or keep the
+   `execution.sensitive_clearance(agents={...})` says whether to release real data or keep the
    agent on synthetic data, and why. Claims and refusal codes:
    [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
-   canopy's gateway itself never calls you for a ZDR conversation whose capability has no
-   declaration covering the executing commit.
+   canopy's gateway itself never calls you for a sensitive conversation whose capability does
+   not handle sensitive data.
 
 **What canopy adds on its side.** In your site's Connected-site row
 (`/w/<workspace>/settings/connected-apps`), set your **sign-in issuer** and **MCP

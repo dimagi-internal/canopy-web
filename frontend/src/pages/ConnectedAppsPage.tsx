@@ -6,6 +6,7 @@ import { WorkbenchSubHeader } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { listAgents, type AgentOut } from '@/api/agents'
 import { relativeAge } from '@/lib/relativeAge'
+import { runnerFlagLabel } from '@/components/chat/runnerEligibility'
 import {
   connectApp,
   disconnectApp,
@@ -152,7 +153,7 @@ export function RunnerRequirements({ app }: { app: Pick<ConnectedApp, 'runner_re
   if (reqs.length === 0) return null
   return (
     <p className="text-xs text-info" data-testid="runner-requirements">
-      Requires {reqs.map((r) => r.toUpperCase()).join(', ')} runners (declared by the host)
+      Requires {reqs.map(runnerFlagLabel).join(', ')} runners (declared by the host)
     </p>
   )
 }
@@ -369,7 +370,7 @@ export function SiteNeedsTable({ needs }: { needs: SiteNeeds }): JSX.Element {
     )
   }
   const req = needs.requires
-  const asks = [req.phi_safe && 'PHI-safe', req.runner_flag && `a ready ${req.runner_flag} runner`]
+  const asks = [req.handles_sensitive && 'handles sensitive data', req.runner_flag && `a ready ${runnerFlagLabel(req.runner_flag)} runner`]
     .filter(Boolean)
     .join(' and ')
   return (

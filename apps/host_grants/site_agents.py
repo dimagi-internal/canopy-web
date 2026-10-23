@@ -2,7 +2,7 @@
 agents it may show there (spec connect-labs `2026-10-22-canopy-site-agents-api-design` §1).
 
 A site used to keep hand-typed copies of canopy's facts — which agents, which
-are PHI-safe, which runner flags exist — and a wrong copy showed only as an
+handle sensitive data, which runner flags exist — and a wrong copy showed only as an
 agent that silently did not appear. `GET /api/sites/agents` replaces the copies:
 the site asks with a JWT signed by its own key (the one canopy already verifies
 its visitor assertions with), and canopy answers with a JWS signed by its
@@ -20,9 +20,9 @@ What each agent entry says, and where it comes from:
 * listed: the site's tenant allows it (`AppCredentialAgent`) — allowed but
   with no capability naming the site in `sites:` is listed `ready: false`,
   with a problem saying so;
-* `capabilities`: those that name the site; `phi_safe` is `data: phi`, and
-  who/when is who last published the interface holding it — exactly what
-  `Canopy-Execution`'s `declaration` states (`phi.as_claim`), so this API and
+* `capabilities`: those that name the site; `handles_sensitive` is `data:
+  sensitive`, and who/when is who last published the interface holding it — exactly
+  what `Canopy-Execution`'s `declaration` states (`sensitive_data.as_claim`), so this API and
   the per-call statement cannot disagree;
 * `runners`: the boxes that would take its turns (`setup.runner_takers`, the
   checklist's own definition); `flags_available` is what any of them carries in
@@ -39,14 +39,14 @@ from canopy_sdk.jose import unverified_claims
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.agents import phi
+from apps.agents import sensitive_data
 from apps.agents.models import Agent, AgentBootstrapReport
 from apps.agents.setup import runner_takers
 from apps.embedding import assertions
 from apps.embedding.embed_apps import AmbiguousSite, resolve_site
 from apps.harness.models import Runner
 from apps.harness.routing import unit_refusal
-from apps.harness.runner_requirements import MEANINGS, in_force
+from apps.harness.runner_requirements import MEANINGS, SENSITIVE_DATA, in_force
 from apps.workspaces.links import scoped_url
 
 from . import client_identity
@@ -141,14 +141,14 @@ def site_capabilities(agent: Agent, site: str) -> list[dict]:
         cap = caps[name] or {}
         if site not in (cap.get("sites") or []):
             continue
-        claim = phi.as_claim(agent, name)
+        claim = sensitive_data.as_claim(agent, name)
         out.append({
             "name": name,
             "description": cap.get("description") or "",
             "callers": list(cap.get("callers") or []),
-            "phi_safe": claim is not None,
-            "phi_set_by": _person(agent.interface_published_by) if claim else "",
-            "phi_set_at": (agent.interface_published_at.isoformat()
+            "handles_sensitive": claim is not None,
+            "sensitive_set_by": _person(agent.interface_published_by) if claim else "",
+            "sensitive_set_at": (agent.interface_published_at.isoformat()
                            if claim and agent.interface_published_at else ""),
         })
     return out
@@ -184,8 +184,9 @@ def agent_entry(app, agent: Agent) -> dict:
         names = ", ".join(sorted(r.name for r in takers))
         problems.append(f"no runner that takes {agent.name}'s turns is ready now ({names}): "
                         f"canopy › {settings_url}#running")
-    if any(c["phi_safe"] for c in capabilities) and not ready_with.get("zdr"):
-        problems.append(f"no ready runner with zdr for {agent.name}: canopy › {settings_url}#running")
+    if any(c["handles_sensitive"] for c in capabilities) and not ready_with.get(SENSITIVE_DATA):
+        problems.append(f"no ready runner with {SENSITIVE_DATA} for {agent.name}: "
+                        f"canopy › {settings_url}#running")
     return {
         "slug": agent.slug,
         "name": agent.name,

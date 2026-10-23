@@ -1,7 +1,7 @@
 # The HCP service
 
 canopy holds each person's **Human Context Protocol** instance (HCP v1, draft 4:
-`apps/contacts/hcp/` — `core`, `consent`, `zdr`, `entries`, `grants`,
+`apps/contacts/hcp/` — `core`, `consent`, `sensitive`, `entries`, `grants`,
 `relevance`, `conformance` — and `hcp_api.py`). canopy's own agents reach it under grants
 the person gives each agent in a session — see "canopy's own agents" below. The
 **HCP service** lets an application canopy does not operate ask a person, through

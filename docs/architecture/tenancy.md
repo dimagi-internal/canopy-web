@@ -291,7 +291,7 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
 - Per-workspace rules: `/w/:ws/settings/retention`, `GET|POST|PUT|DELETE
   /api/workspaces/{slug}/retention…`. Any member reads; `retention.manage` (admin+) changes;
   every change goes to the event log; a preview counts what the rules would delete.
-- **A sensitive conversation is held to its own clock.** One that requires ZDR runners
+- **A sensitive conversation is held to its own clock.** One that requires sensitive-data runners
   (`apps.harness.sensitivity.is_sensitive`) is purged after `CANOPY_SENSITIVE_KEEP_DAYS`
   (30) by the same heartbeat sweep **whatever `CANOPY_RETENTION_ENFORCE` says**
   (`retention.services._sweep_sensitive`, a forced rule tallied as `#0`); a shorter
@@ -301,9 +301,9 @@ Built and **off** unless `CANOPY_RETENTION_ENFORCE=true`.
 ## Sensitive conversations (`apps/harness/sensitivity.py`)
 
 `is_sensitive(session | turn)` — the requirements (`runner_requirements.requirements_of`,
-so a child, dispatched or forked turn inherits it) include `zdr`, or cannot be read. It is
+so a child, dispatched or forked turn inherits it) include `sensitive_data`, or cannot be read. It is
 THE predicate; every surface below asks it, one test each in
-`tests/test_sensitive_storage.py` (spec `2026-10-22-phi-agents-on-zdr-runners` §4):
+`tests/test_sensitive_storage.py` (spec `2026-10-22-sensitive-data-agents` §4):
 
 - **Stored less:** no `TurnTranscript` (`ledger.append_transcript` answers the runner with
   an empty success); a `tool_end`/`tool_result` event, a `TOOL_RESULT` `Message` and its
@@ -326,7 +326,7 @@ THE predicate; every surface below asks it, one test each in
   snapshot and an MCP Apps View's `tool_input`, through `sensitivity.readable`. Every other
   reader — search, human inputs, a session review, an agent's or the fleet's reads, an
   admin who is not in it — reads the columns, so a new reader is closed until it asks.
-  The reply reaches the asker the one way every turn's does: its transcript rows (a ZDR box
+  The reply reaches the asker the one way every turn's does: its transcript rows (a sensitive-data box
   ships a confined turn's before deleting it).
 - **Live and log doors ask the same gate:** the chat socket (`SessionConsumer`), whose live
   frames carry the words, admits only `reads_content`; the turn socket's tail gets the stored

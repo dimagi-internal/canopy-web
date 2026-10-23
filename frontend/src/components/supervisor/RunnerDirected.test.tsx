@@ -12,7 +12,7 @@ vi.mock('@/api/harness', () => ({
 
 const { RunnerDirected } = await import('./RunnerDirected')
 
-const box = { id: 'r1', name: 'cloud-zdr-1', private: false, directed: true } as unknown as RunnerOut
+const box = { id: 'r1', name: 'cloud-sensitive-1', private: false, directed: true } as unknown as RunnerOut
 const onChange = vi.fn()
 
 afterEach(() => {

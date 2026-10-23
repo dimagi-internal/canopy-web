@@ -242,7 +242,7 @@ echo ">> workspace: ${WORKSPACE:-<the stack default>}"
 # RunnerUnits empty it is ONE unit, tree:<RunnerWorkspace>, named the box, and it pairs
 # with `pair-by-role` listing that unit. The invitation must list it too, or canopy
 # refuses every pairing call (401) however the invitation is approved -- found standing
-# up cloud-zdr-1, 2026-10-22. So a new stack names its one unit explicitly. An existing
+# up the first sensitive-data box, 2026-10-22. So a new stack names its one unit explicitly. An existing
 # stack keeps what it has (above).
 if [[ -z "$UNITS" && "$STACK_STATUS" == "NONE" && -n "$WORKSPACE" ]]; then
   UNITS="tree:${WORKSPACE}"

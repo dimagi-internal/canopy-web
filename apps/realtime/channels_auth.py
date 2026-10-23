@@ -207,7 +207,7 @@ def _delegated_app(scope):
 
 @database_sync_to_async
 def _delegated_runner_requirements(scope) -> tuple[str, ...]:
-    """The runner requirements (ZDR) the site signed into this socket's
+    """The runner requirements (`sensitive_data`) the site signed into this socket's
     delegated token, or (). The same value REST reads as
     `request.runner_requirements`; the chat consumer stamps it onto the
     session before every send, exactly as the REST send does."""

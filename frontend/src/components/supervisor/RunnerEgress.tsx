@@ -5,7 +5,7 @@ import { SettingRow } from '@/components/supervisor/SettingRow'
 // A cloud runner's egress lock (`Runner.egress_locked` / `egress_allow`). Locked,
 // its units reach the network only through the box's proxy: canopy-web, the model,
 // GitHub, plus the hosts listed here. Root on the box applies it within a minute,
-// on top of what the box itself is set to, never below. A ZDR box is always locked
+// on top of what the box itself is set to, never below. A sensitive-data box is always locked
 // (`egress_forced`); adding a host to one asks for a passkey. Owner or a runner
 // administrator.
 export function RunnerEgress({
@@ -43,7 +43,7 @@ export function RunnerEgress({
   const help = !currentLocked
     ? 'Open — its agents reach any host.'
     : `Locked — only canopy-web, the model, GitHub${currentAllow.length ? `, ${currentAllow.join(', ')}` : ''}.` +
-      (forced ? ' Always locked on a ZDR box.' : '')
+      (forced ? ' Always locked on a sensitive-data box.' : '')
 
   return (
     <SettingRow

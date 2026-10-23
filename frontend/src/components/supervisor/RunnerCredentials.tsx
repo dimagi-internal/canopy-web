@@ -119,7 +119,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
   signedIn?: boolean | null
   /** Which account that sign-in is (see boxLoginAccount); '' when unknown. */
   signedInAs?: string
-  /** A ZDR box uses API keys and nothing else, so only those can be added. */
+  /** A sensitive-data box uses its ZDR API key and nothing else, so only API keys can be added. */
   apiKeysOnly?: boolean
 }): JSX.Element {
   const [status, setStatus] = useState<CredentialStatus | null>(null)
@@ -208,7 +208,7 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
 
       <p className="text-[11px] text-foreground-subtle">
         The runner uses the first credential that works, top to bottom.
-        {apiKeysOnly && ' This is a ZDR runner: it uses API keys only.'}
+        {apiKeysOnly && ' This is a sensitive-data runner: it uses only its ZDR API key.'}
       </p>
 
       {/* A box signed in before there was a list: the runner adds it here on

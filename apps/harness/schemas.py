@@ -12,7 +12,7 @@ from pydantic import Field, WithJsonSchema, field_validator, model_validator
 
 from .models import Runner, Turn
 
-from .runner_requirements import is_zdr_box
+from .runner_requirements import is_sensitive_data_box
 
 # Kept in lockstep with Turn.ORIGIN_CHOICES / Turn.ROUTING_CHOICES (models.py).
 # These are the values the DB columns accept (origin max_length=32, routing
@@ -150,7 +150,7 @@ class RunnerOnlyAgentsOut(Schema):
     choices: list[RunnerAgentChoiceOut]
 class RunnerEgressIn(Schema):
     # Locked: the box's units reach the network only through its proxy, to the base
-    # set (canopy-web, the model, GitHub) plus `allow`. A ZDR box cannot be unlocked.
+    # set (canopy-web, the model, GitHub) plus `allow`. A sensitive-data box cannot be unlocked.
     locked: bool
     # Extra hostnames; `.example.com` admits every subdomain. Replaces the list.
     allow: list[str] = []
@@ -281,7 +281,7 @@ class RunnerOut(Schema):
     mailboxes_readable: list[str] | None = None
     mailboxes_checked_at: dt.datetime | None = None
 
-    # What this box's owner has declared about it (RunnerFlag) — e.g. `zdr`.
+    # What this box's owner has declared about it (RunnerFlag) — e.g. `sensitive_data`.
     flags: list[str] = []
     # Its owner's own machine: no fleet work, only what its owner puts on it.
     private: bool = False
@@ -294,7 +294,7 @@ class RunnerOut(Schema):
     # Whether it takes only what is put on it (`Runner.directed_only`): a person's
     # setting, and always for a private runner.
     directed: bool = False
-    # The egress lock a person set (`PUT …/egress`); `egress_forced`: a ZDR box,
+    # The egress lock a person set (`PUT …/egress`); `egress_forced`: a sensitive-data box,
     # locked whatever is set. Root on the box applies it within a minute.
     egress_locked: bool = False
     egress_allow: list[str] = []
@@ -338,7 +338,7 @@ class RunnerOut(Schema):
 
     @staticmethod
     def resolve_egress_forced(obj) -> bool:
-        return is_zdr_box(obj)
+        return is_sensitive_data_box(obj)
 
     @staticmethod
     def resolve_key_waiting(obj) -> str:
@@ -524,9 +524,9 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
-    # The box's data mode (`RUNNER_DATA_MODE`; "zdr" = one zero-data-retention key, a
-    # locked profile on every turn). A person's `zdr` declaration counts only while
-    # this says "zdr" (`runner_requirements.in_force`). Absent (older code) = "".
+    # The box's data mode (`RUNNER_DATA_MODE`; "sensitive_data" = one ZDR API key, a
+    # locked profile on every turn). A person's `sensitive_data` declaration counts
+    # only while this says "sensitive_data" (`runner_requirements.in_force`). Absent = "".
     data_mode: str = ""
     # A hash of the config that mode produced, so a change on the box is visible.
     data_mode_hash: str = ""

@@ -21,7 +21,7 @@ from .models import Message, RunnerBinding, Session
 
 
 def _placeable_runner(session: Session, runner_id):
-    """`_eligible_runner`, then the conversation's runner requirements (ZDR)."""
+    """`_eligible_runner`, then the conversation's runner requirements (`sensitive_data`)."""
     from apps.harness import runner_requirements as rr
 
     runner = _eligible_runner(session, runner_id)
@@ -387,7 +387,7 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
                 # Its history is a cut of a transcript, whatever the executor.
                 services.TRANSCRIPT_SOURCED: True,
                 # The fork holds the same conversation, so the same runners: a fork
-                # never sheds a requirement (spec 2026-10-22-phi-agents-on-zdr-runners).
+                # never sheds a requirement (spec 2026-10-22-sensitive-data-agents).
                 **({rr.METADATA_KEY: (session.metadata or {})[rr.METADATA_KEY]}
                    if (session.metadata or {}).get(rr.METADATA_KEY) else {}),
             },

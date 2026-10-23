@@ -184,7 +184,7 @@ export function RunnerDetail({
       {/* Settings: every plain choice about this box, one row each, in one list.
           Who may flip each row is the server's rule for its route — Pause, Private
           and sessions are the owner's (they speak AS the box); the runtime and the
-          ZDR declaration are also a runner admin's. Anything that needs more than
+          sensitive-data declaration are also a runner admin's. Anything that needs more than
           a click gets its own panel below. */}
       <div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-card p-3" data-testid="runner-settings">
         <span className="pb-2 text-[11px] uppercase tracking-wide text-muted-foreground">Settings</span>
@@ -248,7 +248,7 @@ export function RunnerDetail({
       {!runner.can_manage && (
         <p className="text-[12px] text-muted-foreground" data-testid="runner-detail-readonly">
           {runner.can_administer
-            ? `You can sign this box in, set its credentials, declare what it runs with (ZDR)
+            ? `You can sign this box in, set its credentials, declare what it runs with (sensitive data)
                and check its readiness for the agents you administer. Pausing or retiring it
                belongs to its owner, ${runner.owner_email ?? 'someone else'}.`
             : `Read-only — this runner is owned by ${runner.owner_email ?? 'someone else'},

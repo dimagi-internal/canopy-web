@@ -276,7 +276,7 @@ def test_the_sdk_host_refuses_a_canopy_whose_keys_it_cannot_match(site, host, mo
     assert not host.tokens._tokens
 
 
-def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host, settings):
+def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site, host, settings):
     """The whole path: the SDK's real signer, canopy's real arrival, a real session
     start and send over the contact API, then the claim on two real runners."""
     import dataclasses
@@ -288,11 +288,11 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
     from apps.harness.claim import claim_next_turn
 
     settings.CHAT_STUB_EXECUTOR = False   # leave the turn queued for a real runner
-    host.config = dataclasses.replace(host.config, runner_requirements=("zdr",))
-    # A ZDR conversation runs only in a capability declared PHI-safe (spec
-    # 2026-10-22-phi-agents-on-zdr-runners §5).
+    host.config = dataclasses.replace(host.config, runner_requirements=("sensitive_data",))
+    # A sensitive conversation runs only in a capability that handles sensitive data (spec
+    # 2026-10-22-sensitive-data-agents §5).
     site["agent"].interface = parse({"capabilities": {"connect": {
-        **IFACE["capabilities"]["connect"], "data": "phi"}}})
+        **IFACE["capabilities"]["connect"], "data": "sensitive"}}})
     site["agent"].save(update_fields=["interface"])
     r = _arrive(host, scopes=())
     assert r.status_code == 200, r.content
@@ -302,7 +302,7 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
                      content_type="application/json", **auth)
     assert started.status_code == 200, started.content
     sid = started.json()["id"]
-    assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["zdr"]
+    assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["sensitive_data"]
     sent = c.post(f"/api/contact/sessions/{sid}/send", data={"text": "hello"},
                   content_type="application/json", **auth)
     assert sent.status_code == 200, sent.content
@@ -319,20 +319,20 @@ def test_a_host_requiring_zdr_keeps_its_visitor_off_a_non_zdr_runner(site, host,
 
     laptop = runner("laptop", 0)
     cloud = runner("cloud", 1)
-    RunnerFlag.objects.create(runner=cloud, flag="zdr", declared_by=site["owner"])
-    _reports_zdr(cloud)
+    RunnerFlag.objects.create(runner=cloud, flag="sensitive_data", declared_by=site["owner"])
+    _reports_sensitive(cloud)
 
-    assert claim_next_turn(laptop) is None, "a non-ZDR runner must not get the visitor's turn"
+    assert claim_next_turn(laptop) is None, "a non-sensitive-data runner must not get the visitor's turn"
     claimed = claim_next_turn(cloud)
     assert claimed is not None and claimed.id == turn.id
     assert claimed.capability == "connect"
 
 
-def _reports_zdr(runner):
-    """The box reports ZDR mode on its heartbeat: without it a person's `zdr`
+def _reports_sensitive(runner):
+    """The box reports sensitive-data mode on its heartbeat: without it a person's `sensitive_data`
     declaration is not in force (runner_requirements.in_force)."""
     from apps.harness.models import Runner as _Runner
 
-    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "zdr"}
+    runner.capabilities = {**(runner.capabilities or {}), "data_mode": "sensitive_data"}
     _Runner.objects.filter(pk=runner.pk).update(capabilities=runner.capabilities)
     return runner

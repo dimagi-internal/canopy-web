@@ -173,18 +173,19 @@ def test_an_oversized_or_unsigned_token_is_refused_before_any_check():
         unverified_header(unsigned)
 
 
-def test_the_only_flag_today_is_zdr():
-    assert contract.RUNNER_FLAGS == frozenset({"zdr"})
+def test_the_only_flag_today_is_sensitive_data():
+    assert contract.RUNNER_FLAGS == frozenset({"sensitive_data"})
 
 
 @pytest.mark.parametrize("value,expected", [
-    (None, ()), ([], ()), (["zdr"], ("zdr",)), (["zdr", "zdr"], ("zdr",)),
+    (None, ()), ([], ()), (["sensitive_data"], ("sensitive_data",)),
+    (["sensitive_data", "sensitive_data"], ("sensitive_data",)),
 ])
 def test_parse_runner_requirements_normalises(value, expected):
     assert contract.parse_runner_requirements(value) == expected
 
 
-@pytest.mark.parametrize("value", ["zdr", ["ZDR"], ["nope"], [1], {"zdr": True}])
+@pytest.mark.parametrize("value", ["sensitive_data", ["SENSITIVE_DATA"], ["nope"], [1], {"sensitive_data": True}])
 def test_parse_runner_requirements_refuses_anything_else(value):
     with pytest.raises(ValueError):
         contract.parse_runner_requirements(value)

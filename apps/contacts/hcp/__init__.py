@@ -184,14 +184,13 @@ from .relevance import (
     score_rows,
     search,
 )
-from .zdr import (
+from .sensitive import (
     _ANCESTRY_MAX,
-    ZDR,
-    ZdrRefused,
+    SensitiveRefused,
     _context_turn,
-    _turn_is_zdr,
-    is_zdr_turn,
-    refuse_if_zdr,
+    _turn_is_sensitive,
+    is_sensitive_turn,
+    refuse_if_sensitive,
 )
 
 __all__ = [
@@ -259,11 +258,10 @@ __all__ = [
     'USE_OFF',
     '_ANCESTRY_MAX',
     '_context_turn',
-    '_turn_is_zdr',
-    'is_zdr_turn',
-    'refuse_if_zdr',
-    'ZDR',
-    'ZdrRefused',
+    '_turn_is_sensitive',
+    'is_sensitive_turn',
+    'refuse_if_sensitive',
+    'SensitiveRefused',
     '_candidates',
     '_check_confidence',
     '_iso',

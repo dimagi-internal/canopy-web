@@ -133,7 +133,7 @@ class TurnStatus:
     #: moved past — work typed straight into the session makes no Turn, so the
     #: latest Turn can be a day-old failure under a thread that is plainly fine.
     finished_at: datetime | None = None
-    #: What the conversation's host requires of the box (e.g. `zdr`). Only set
+    #: What the conversation's host requires of the box (e.g. `sensitive_data`). Only set
     #: while QUEUED, and only when the requirement is what blocks it — some
     #: runner would take the turn without it (`Reach.blocked_by_requirements`).
     requires: tuple[str, ...] = ()
@@ -312,7 +312,7 @@ def derive(turn: Turn, *, reach=None, cloud=None, menu_pending: bool = False,
                 else rejection(turn) if state == CANCELLED else None),
         finished_at=turn.finished_at if state in TERMINAL else None,
         # Named only when the requirement is what blocks it (`Reach`), so a turn
-        # stuck on routing or confinement is not blamed on ZDR.
+        # stuck on routing or confinement is not blamed on the requirement.
         requires=(tuple(sorted(rr.requirements_of(turn)))
                   if turn.status == Turn.QUEUED
                   and getattr(reach, "blocked_by_requirements", False) else ()),

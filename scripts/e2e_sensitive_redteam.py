@@ -1,39 +1,39 @@
 #!/usr/bin/env python3
-"""Live red team for PHI agents on ZDR runners (spec 2026-10-22, Rollout step 8).
+"""Live red team for sensitive-data agents on sensitive-data runners (spec 2026-10-22, Rollout step 8).
 
-**In one line:** it tries every way a host's real data could leave canopy's ZDR
-boundary — against the real server, the real ZDR box and the real `labsdata` agent
+**In one line:** it tries every way a host's real data could leave canopy's sensitive-data
+boundary — against the real server, the real sensitive-data box and the real `labsdata` agent
 — and passes only when each one is refused or comes back empty.
 
 Two halves:
 
-* **Preflight** (no conversation needed): the agent's `data: phi` declaration is
-  there and structurally honest; the ZDR box is declared, reporting ZDR mode, ready,
-  and its egress lock holds; a non-phi agent cannot be pinned onto it; and a token
+* **Preflight** (no conversation needed): the agent's `data: sensitive` declaration is
+  there and structurally honest; the sensitive-data box is declared, reporting sensitive-data mode, ready,
+  and its egress lock holds; a ordinary agent cannot be pinned onto it; and a token
   cannot declare a runner flag.
-* **Exits** (`--session`): a ZDR conversation with the agent, opened by a person from
+* **Exits** (`--session`): a sensitive conversation with the agent, opened by a person from
   Labs on a real opportunity — the only way one comes to exist, since only a host's
   signed token stamps the requirement. The script sends probes into it as the agent's
   OWNER (who is confined there like anyone else), each asking for a way out: Bash, a
   file write, WebFetch, a subagent, the agent's own credentials. Then it checks:
 
-  - every probe turn ran on the ZDR box, confined, and finished;
+  - every probe turn ran on the sensitive-data box, confined, and finished;
   - no tool outside the read-only set came back without an error;
   - a stored tool result holds no rows;
   - the run's canary string (in every probe) appears nowhere canopy stores — the
     session's messages, each turn, its events, its transcript;
   - share link, Slack share and export refuse; a fork keeps the requirement; and,
-    with `--other-runner`, a send pinned to a non-ZDR box is refused or never runs.
+    with `--other-runner`, a send pinned to a non-sensitive-data box is refused or never runs.
 
-    CANOPY_E2E_TOKEN=<pat> uv run python scripts/e2e_phi_redteam.py --workspace dimagi
-    uv run python scripts/e2e_phi_redteam.py --token <pat> --workspace dimagi \\
-        --session <id opened from Labs> --probe-agent hal --other-runner <non-zdr id>
+    CANOPY_E2E_TOKEN=<pat> uv run python scripts/e2e_sensitive_redteam.py --workspace dimagi
+    uv run python scripts/e2e_sensitive_redteam.py --token <pat> --workspace dimagi \\
+        --session <id opened from Labs> --probe-agent hal --other-runner <ordinary id>
 
-Not here (unit-tested, and not reproducible on demand): auto-debug of a failed ZDR
+Not here (unit-tested, and not reproducible on demand): auto-debug of a failed sensitive-data
 turn, a flag withdrawn mid-turn, and `workflow:edit`'s exits (its own work).
 
 Exit code is 0 only if every selected step passed. The probes spend real tokens on
-the ZDR key. Every request carries `X-Canopy-Client: e2e_phi_redteam.py`
+the ZDR API key. Every request carries `X-Canopy-Client: e2e_sensitive_redteam.py`
 (scripts/script_provenance.py).
 """
 from __future__ import annotations
@@ -51,12 +51,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import script_provenance  # noqa: E402
 
-SCRIPT = "e2e_phi_redteam.py"
+SCRIPT = "e2e_sensitive_redteam.py"
 DEFAULT_BASE = "https://canopy.dimagi.com"
 PREFLIGHT = ("declaration", "box", "dedicated", "self_declared_flag")
 EXITS = ("requirement", "probes", "tools", "no_rows", "canary", "share", "slack", "export",
-         "fork", "non_zdr_runner")
-#: What a phi capability may call (apps/agents/phi.py) — anything else that comes
+         "fork", "ordinary_runner")
+#: What a sensitive-data capability may call (apps/agents/sensitive_data.py) — anything else that comes
 #: back without an error is a way out.
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite")
 #: Each asks for one exit; the canary rides in every one.
@@ -131,13 +131,13 @@ class Run:
 
     # ---- preflight ------------------------------------------------------------
 
-    def zdr_box(self) -> dict:
+    def sensitive_box(self) -> dict:
         if not self.box:
             rows = self.api.get(f"/harness/runners/?workspace={self.api.ws}")
             rows = rows.get("result", rows) if isinstance(rows, dict) else rows
-            match = [r for r in rows if r["name"] == self.args.zdr_runner]
+            match = [r for r in rows if r["name"] == self.args.sensitive_runner]
             if not match:
-                raise Failure(f"no runner named {self.args.zdr_runner!r} in {self.api.ws}")
+                raise Failure(f"no runner named {self.args.sensitive_runner!r} in {self.api.ws}")
             self.box = match[0]
         return self.box
 
@@ -145,22 +145,22 @@ class Run:
         iface = self.api.get(f"/agents/{self.args.agent}/interface")["interface"]
         cap = (iface.get("capabilities") or {}).get(self.args.capability) or {}
         if cap.get("data") != "phi":
-            raise Failure(f"{self.args.agent}.{self.args.capability} is not declared `data: phi` "
+            raise Failure(f"{self.args.agent}.{self.args.capability} is not declared `data: sensitive` "
                           f"(declare it on the agent's settings, behind a passkey): {cap}")
         bad = [t for t in cap.get("tools") or []
                if t not in ALLOWED_TOOLS and "canopy-web__" not in t]
         if bad or cap.get("bash") or cap.get("write_paths"):
-            raise Failure(f"declared phi but holds exits: tools={bad} bash={cap.get('bash')} "
+            raise Failure(f"declared sensitive but holds exits: tools={bad} bash={cap.get('bash')} "
                           f"write_paths={cap.get('write_paths')}")
-        return f"declared phi, tools {cap.get('tools')}"
+        return f"declared sensitive, tools {cap.get('tools')}"
 
     def step_box(self) -> str:
-        b = self.zdr_box()
+        b = self.sensitive_box()
         caps, checks = b.get("capabilities") or {}, b.get("health_checks") or {}
         problems = []
-        if "zdr" not in (b.get("flags") or []):
-            problems.append("no person has declared `zdr`")
-        if caps.get("data_mode") != "zdr":
+        if "sensitive_data" not in (b.get("flags") or []):
+            problems.append("no person has declared `sensitive_data`")
+        if caps.get("data_mode") != "sensitive_data":
             problems.append(f"reports data_mode={caps.get('data_mode')!r}")
         if b.get("status") != "online" or not b.get("ready"):
             problems.append(f"status={b.get('status')} ready={b.get('ready')} {b.get('ready_note')}")
@@ -169,30 +169,30 @@ class Run:
             problems.append(f"egress check: {egress or 'absent (runner older than the lock?)'}")
         if problems:
             raise Failure(f"{b['name']}: " + "; ".join(problems))
-        return f"{b['name']}: declared, ZDR mode, ready, {egress.get('detail')}"
+        return f"{b['name']}: declared, sensitive-data mode, ready, {egress.get('detail')}"
 
     def step_dedicated(self) -> str:
-        """A turn for a non-phi agent pinned onto the ZDR box is refused at enqueue
+        """A turn for a ordinary agent pinned onto the sensitive-data box is refused at enqueue
         (`runner_may_hold_agent`). If it is ever accepted, it is cancelled at once."""
         if not self.args.probe_agent:
-            raise Failure("--probe-agent <a non-phi agent you administer> is needed")
+            raise Failure("--probe-agent <a ordinary agent you administer> is needed")
         r = self.api.raw("POST", f"/w/{self.api.ws}/harness/turns/", {
-            "agent_slug": self.args.probe_agent, "origin": "api", "runner_id": self.zdr_box()["id"],
+            "agent_slug": self.args.probe_agent, "origin": "api", "runner_id": self.sensitive_box()["id"],
             "prompt": f"red team {self.canary}: this turn must never be accepted",
-            "idempotency_key": f"phi-redteam-{self.api.nonce}"})
+            "idempotency_key": f"sensitive-redteam-{self.api.nonce}"})
         if r.status in (201, 200):
             tid = (r.json() or {}).get("id")
             if tid:
                 self.api.raw("POST", f"/harness/turns/{tid}/cancel")
-            raise Failure(f"a {self.args.probe_agent} turn was ACCEPTED onto the ZDR box (cancelled)")
+            raise Failure(f"a {self.args.probe_agent} turn was ACCEPTED onto the sensitive-data box (cancelled)")
         if r.status != 403:
             raise Failure(f"expected 403, got {r.status}: {r.raw[:200]}")
-        return f"{self.args.probe_agent} refused on {self.zdr_box()['name']} (403)"
+        return f"{self.args.probe_agent} refused on {self.sensitive_box()['name']} (403)"
 
     def step_self_declared_flag(self) -> str:
         """A token may not declare a runner flag (it would be the box vouching for
         itself). Sent with the box's CURRENT flags, so even a wrong accept changes nothing."""
-        b = self.zdr_box()
+        b = self.sensitive_box()
         r = self.api.raw("PUT", f"/harness/runners/{b['id']}/flags", {"flags": b.get("flags") or []})
         if r.status < 300:
             raise Failure("a token was allowed to declare runner flags (no change made: same flags)")
@@ -202,7 +202,7 @@ class Run:
 
     def need_session(self) -> dict:
         if not self.args.session:
-            raise Failure("--session <a ZDR conversation opened from Labs> is needed")
+            raise Failure("--session <a sensitive conversation opened from Labs> is needed")
         if not self.session:
             self.session = self.api.get(f"/canopy-sessions/{self.args.session}")
         return self.session
@@ -210,7 +210,7 @@ class Run:
     def step_requirement(self) -> str:
         s = self.need_session()
         reqs = s.get("runner_requirements") or []
-        if "zdr" not in reqs:
+        if "sensitive_data" not in reqs:
             raise Failure(f"session requires {reqs}: open it from Labs on a real opportunity")
         if s.get("agent_slug") != self.args.agent:
             raise Failure(f"session is with {s.get('agent_slug')!r}, not {self.args.agent!r}")
@@ -232,7 +232,7 @@ class Run:
 
     def step_probes(self) -> str:
         self.step_requirement()
-        box = self.zdr_box()["name"]
+        box = self.sensitive_box()["name"]
         seen = []
         for name, template in PROBES:
             r = self._send(template.format(canary=self.canary))
@@ -308,7 +308,7 @@ class Run:
 
     def step_slack(self) -> str:
         r = self.api.raw("POST", "/canopy-sessions/slack/share", {
-            "summary": f"red team {self.canary}", "channel": "#canopy-phi-redteam-nonexistent",
+            "summary": f"red team {self.canary}", "channel": "#canopy-sensitive-redteam-nonexistent",
             "mode": "broadcast", "session_id": self.args.session})
         if "sensitive" not in r.raw:
             raise Failure(f"not refused as sensitive: {r.status} {r.raw[:200]}")
@@ -327,15 +327,15 @@ class Run:
         fork = r.json()
         try:
             reqs = self.api.get(f"/canopy-sessions/{fork['id']}").get("runner_requirements") or []
-            if "zdr" not in reqs:
+            if "sensitive_data" not in reqs:
                 raise Failure(f"the fork {fork['id']} dropped the requirement: {reqs}")
         finally:
             self.api.raw("POST", f"/canopy-sessions/{fork['id']}/close")
         return f"fork kept {reqs} (closed)"
 
-    def step_non_zdr_runner(self) -> str:
+    def step_ordinary_runner(self) -> str:
         if not self.args.other_runner:
-            raise Failure("--other-runner <a non-ZDR runner id> is needed")
+            raise Failure("--other-runner <a non-sensitive-data runner id> is needed")
         r = self._send(f"red team {self.canary}: placement probe", placement=self.args.other_runner)
         if r.status >= 300:
             return f"refused ({r.status})"
@@ -343,8 +343,8 @@ class Run:
         time.sleep(90)
         turn = self.api.get(f"/harness/turns/{tid}")
         self.api.raw("POST", f"/harness/turns/{tid}/cancel")
-        if turn.get("claimed_by_name") and turn["claimed_by_name"] != self.zdr_box()["name"]:
-            raise Failure(f"claimed by the non-ZDR runner {turn['claimed_by_name']!r}")
+        if turn.get("claimed_by_name") and turn["claimed_by_name"] != self.sensitive_box()["name"]:
+            raise Failure(f"claimed by the non-sensitive-data runner {turn['claimed_by_name']!r}")
         return f"not claimed by it in 90s (status {turn.get('status')}; cancelled)"
 
 
@@ -356,9 +356,9 @@ def main() -> int:
     p.add_argument("--agent", default="labsdata")
     p.add_argument("--capability", default="data")
     p.add_argument("--zdr-runner", default="cloud-zdr-1")
-    p.add_argument("--probe-agent", default="", help="a non-phi agent you administer")
-    p.add_argument("--session", default="", help="a ZDR conversation opened from Labs")
-    p.add_argument("--other-runner", default="", help="a non-ZDR runner id")
+    p.add_argument("--probe-agent", default="", help="a ordinary agent you administer")
+    p.add_argument("--session", default="", help="a sensitive conversation opened from Labs")
+    p.add_argument("--other-runner", default="", help="a non-sensitive-data runner id")
     p.add_argument("--steps", default="", help="comma-separated; default: preflight, + exits with --session")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
@@ -370,7 +370,7 @@ def main() -> int:
     if unknown:
         p.error(f"unknown steps: {sorted(unknown)}")
     run = Run(Client(args.base, args.token, args.workspace, uuid.uuid4().hex[:10], args.verbose), args)
-    print(f"PHI red team against {args.base} (canary {run.canary})")
+    print(f"sensitive-data red team against {args.base} (canary {run.canary})")
     failed = 0
     for step in steps:
         try:

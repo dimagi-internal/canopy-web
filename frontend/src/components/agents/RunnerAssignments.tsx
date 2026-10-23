@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { getAgentRunners, putAgentRunners, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
-import { ZdrBadge, hasZdr } from '@/components/agents/ZdrBadge'
+import { SensitiveDataBadge, hasSensitiveData } from '@/components/agents/SensitiveDataBadge'
 import { RepoSetupDialog } from '@/components/agents/RepoSetupDialog'
 
 // The DEFAULT order — the "Everything else" row of the routing table
@@ -249,8 +249,8 @@ export function RunnerAssignments({
           >
             {r.runner_name}
           </span>
-          {hasZdr(fleet.find((f) => f.id === r.runner_id)) && (
-            <ZdrBadge testId={`zdr-badge-chip-${r.runner_id}`} />
+          {hasSensitiveData(fleet.find((f) => f.id === r.runner_id)) && (
+            <SensitiveDataBadge testId={`sensitive-data-badge-chip-${r.runner_id}`} />
           )}
           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
             {KIND_GLYPH[r.kind] ?? r.kind}

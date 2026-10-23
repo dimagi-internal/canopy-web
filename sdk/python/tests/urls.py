@@ -20,7 +20,7 @@ def elsewhere(request):
 
 def data(request):
     return render(request, "data_page.html", {
-        "reqs": ["zdr"],
+        "reqs": ["sensitive_data"],
         "panel": {"mode": "docked", "width": 560, "expandable": True, "initial_display": "expanded"},
     })
 

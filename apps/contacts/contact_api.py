@@ -193,7 +193,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(_STATUS.get(exc.code, 401), f"{exc.code}: {exc.message}")
 
     # What the site requires of the runner its visitor's conversations run on
-    # (ZDR). Read only from a VERIFIED assertion, carried on the token minted
+    # (`sensitive_data`). Read only from a VERIFIED assertion, carried on the token minted
     # below, and stamped from there onto every session that token touches.
     try:
         runner_reqs = contract.parse_runner_requirements(

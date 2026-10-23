@@ -1251,8 +1251,8 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
 
     from . import sensitivity
 
-    # The live frame carries what the row stores (spec 2026-10-22-phi-agents-on-
-    # zdr-runners §4): a watcher and a reload see the same withheld result.
+    # The live frame carries what the row stores (spec 2026-10-22-sensitive-data-agents
+    # §4): a watcher and a reload see the same withheld result.
     withhold = sensitivity.is_sensitive(binding.session)
 
     for e in events:

@@ -1,4 +1,4 @@
-"""Declaring what a runner's owner vouches for (`zdr`).
+"""Declaring what a runner's owner vouches for (`sensitive_data`).
 
 canopy cannot check a declaration, so the whole value is in WHO may make one:
 a person, in the browser, with a fresh passkey confirmation — never a token: not a
@@ -92,25 +92,25 @@ def _put(c, runner, flags):
                  content_type="application/json")
 
 
-def test_the_runner_owner_declares_zdr(owner_client, runner):
-    r = _put(owner_client, runner, ["zdr"])
-    assert r.status_code == 200 and r.json()["flags"] == ["zdr"]
+def test_the_runner_owner_declares_sensitive(owner_client, runner):
+    r = _put(owner_client, runner, ["sensitive_data"])
+    assert r.status_code == 200 and r.json()["flags"] == ["sensitive_data"]
     assert RunnerFlag.objects.get(runner=runner).declared_by.email == "jj@dimagi.com"
 
 
 def test_a_runner_admin_may_declare_it(admin_client, runner):
-    assert _put(admin_client, runner, ["zdr"]).status_code == 200
+    assert _put(admin_client, runner, ["sensitive_data"]).status_code == 200
 
 
 def test_someone_who_cannot_administer_gets_404(stranger_client, runner):
-    assert _put(stranger_client, runner, ["zdr"]).status_code == 404
+    assert _put(stranger_client, runner, ["sensitive_data"]).status_code == 404
     assert not RunnerFlag.objects.exists()
 
 
 def test_a_token_cannot_declare_it(pat_client, runner):
     # A PAT (and so MCP) acts as a runner admin here, and is still refused: a flag is
     # a person vouching for a box.
-    assert _put(pat_client, runner, ["zdr"]).status_code == 403
+    assert _put(pat_client, runner, ["sensitive_data"]).status_code == 403
     assert not RunnerFlag.objects.exists()
 
 
@@ -121,12 +121,12 @@ def test_the_box_cannot_declare_itself(owner, runner):
                                          status=RunnerDeviceKey.ACTIVE, created_by=owner)
     raw, _ = RunnerAccessToken.mint(key)
     box = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert _put(box, runner, ["zdr"]).status_code == 403
+    assert _put(box, runner, ["sensitive_data"]).status_code == 403
     assert not RunnerFlag.objects.exists()
 
 
 def test_a_browser_without_a_fresh_passkey_is_asked_for_one(owner, runner):
-    r = _put(_client(owner, stepped_up=False), runner, ["zdr"])
+    r = _put(_client(owner, stepped_up=False), runner, ["sensitive_data"])
     assert r.status_code == 403 and r.json()["error"] == "step_up_required"
     assert not RunnerFlag.objects.exists()
 
@@ -142,19 +142,19 @@ def test_the_malformed_sentinel_is_not_declarable(owner_client, runner):
 
 
 def test_the_set_is_replaced_and_withdrawal_deletes(owner_client, runner):
-    _put(owner_client, runner, ["zdr"])
+    _put(owner_client, runner, ["sensitive_data"])
     assert _put(owner_client, runner, []).json()["flags"] == []
     assert not RunnerFlag.objects.filter(runner=runner).exists()
 
 
 def test_redeclaring_keeps_the_original_declarer(owner_client, admin_client, runner):
-    _put(owner_client, runner, ["zdr"])
-    _put(admin_client, runner, ["zdr"])
+    _put(owner_client, runner, ["sensitive_data"])
+    _put(admin_client, runner, ["sensitive_data"])
     assert RunnerFlag.objects.get(runner=runner).declared_by.email == "jj@dimagi.com"
 
 
 def test_declaring_and_withdrawing_record_events(owner_client, runner):
-    _put(owner_client, runner, ["zdr"])
+    _put(owner_client, runner, ["sensitive_data"])
     assert Event.objects.filter(kind="runner.flag_declared").count() == 1
     _put(owner_client, runner, [])
     assert Event.objects.filter(kind="runner.flag_withdrawn").count() == 1
@@ -162,24 +162,24 @@ def test_declaring_and_withdrawing_record_events(owner_client, runner):
 
 def test_heartbeat_cannot_set_flags(pat_client, runner):
     r = pat_client.post(f"/api/harness/runners/{runner.id}/heartbeat",
-                        json.dumps({"flags": ["zdr"]}), content_type="application/json")
+                        json.dumps({"flags": ["sensitive_data"]}), content_type="application/json")
     assert r.status_code == 200, r.content
     assert not RunnerFlag.objects.exists()
     assert r.json()["flags"] == []
 
 
 def test_list_runners_includes_flags(owner_client, runner):
-    RunnerFlag.objects.create(runner=runner, flag="zdr")
+    RunnerFlag.objects.create(runner=runner, flag="sensitive_data")
     rows = owner_client.get("/api/harness/runners/").json()
     row = next(x for x in rows if x["id"] == str(runner.id))
-    assert row["flags"] == ["zdr"]
+    assert row["flags"] == ["sensitive_data"]
     assert row["known_flags"] == sorted(contract.RUNNER_FLAGS)
 
 
 def test_the_reply_says_what_the_caller_may_do_with_the_runner(owner_client, admin_client, runner):
     """RunnerOut's defaults are True, so an unstamped reply showed an admin who
     is not the owner the drill/pause controls that then 404."""
-    body = _put(admin_client, runner, ["zdr"]).json()
+    body = _put(admin_client, runner, ["sensitive_data"]).json()
     assert body["can_manage"] is False and body["can_administer"] is True
-    body = _put(owner_client, runner, ["zdr"]).json()
+    body = _put(owner_client, runner, ["sensitive_data"]).json()
     assert body["can_manage"] is True and body["can_administer"] is True

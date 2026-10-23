@@ -1,4 +1,4 @@
-"""scripts/e2e_phi_redteam.py stays runnable: every step it advertises exists, a
+"""scripts/e2e_sensitive_redteam.py stays runnable: every step it advertises exists, a
 refusal is read rather than raised (a 403 is usually the pass), and the canary never
 leaves the run. The live run itself is the script's job, against production."""
 from __future__ import annotations
@@ -11,12 +11,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-_PATH = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "e2e_phi_redteam.py"
+_PATH = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "e2e_sensitive_redteam.py"
 
 
 @pytest.fixture(scope="module")
 def rt():
-    spec = importlib.util.spec_from_file_location("e2e_phi_redteam", _PATH)
+    spec = importlib.util.spec_from_file_location("e2e_sensitive_redteam", _PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

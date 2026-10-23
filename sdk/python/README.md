@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.14.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.15.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.14.0/dimagi_canopy-0.14.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.15.0/dimagi_canopy-0.15.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -42,7 +42,7 @@ library, address-pinned.
 | Module | For | Key names |
 |---|---|---|
 | `canopy_sdk.contract` | both sides | `CONTRACT_VERSION`, `ID_JAG_TYP`, `JWT_BEARER_GRANT`, `CLIENT_ASSERTION_TYPE`, lifetime caps, `ASSERTION_ALGORITHMS`, `GRANT_ALGORITHMS`, `jwk_thumbprint`, `ath`, `metadata_url`, `normalize_htu` |
-| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`phi_clearance`), `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
+| `canopy_sdk.host` | a host site | `HostConfig`, `sign_visitor_assertion`, `issue_id_jag`, `arrival_payload`, `mint_contact_token`, `PageRegistry`, `PageTokens`, `GrantHandler`, `ResourceVerifier`, `DPoPGate`, `verify_execution` → `Execution` (`sensitive_clearance`), `ProbeIdentity`, `ProbeHandler`, `authorization_server_metadata`, `protected_resource_metadata` |
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `SiteAgent`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError`, `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
 | `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds`, `site_document_url` |
@@ -182,16 +182,16 @@ CANOPY_HOST = {..., "PAGE_MODE": "key",
 ### A page that chooses its own agent (and runner requirements)
 
 One site, several agents: connect-labs offers ACE on the marketplace and
-`labsdata` — under ZDR — on its data pages. `AGENT_SLUG` and `RUNNER_REQUIREMENTS`
+`labsdata` — on sensitive-data runners only — on its data pages. `AGENT_SLUG` and `RUNNER_REQUIREMENTS`
 stay the site-wide defaults; a page overrides them for itself:
 
 ```python
 # a view (signed mode)
 ctx = panel_context(request, resource="labs-data://visits", agent="labsdata",
-                    runner_requirements=["zdr"], panel={"mode": "docked", "width": 560})
+                    runner_requirements=["sensitive_data"], panel={"mode": "docked", "width": 560})
 ```
 ```django
-{% canopy_panel resource="labs-data://visits" agent="labsdata" runner_requirements=zdr panel=wide %}
+{% canopy_panel resource="labs-data://visits" agent="labsdata" runner_requirements=sensitive_data panel=wide %}
 ```
 
 - The choice is **signed into the page token** beside the route, so the browser
@@ -202,14 +202,14 @@ ctx = panel_context(request, resource="labs-data://visits", agent="labsdata",
   conversation can be started, listed, opened or sent into with that token, and
   the host grant it redeems is usable by that agent's turns and Views only.
 - `runner_requirements` **add to** `RUNNER_REQUIREMENTS` — a page raises the floor,
-  never lowers it. To keep ZDR off the rest of the site, take it out of
+  never lowers it. To keep `sensitive_data` off the rest of the site, take it out of
   `RUNNER_REQUIREMENTS` and name it on the pages that need it.
 - The agent must be on the Connected site's allow-list in canopy; an arrival
   bound to any other agent is refused.
 - A page that grants no scopes may still choose its agent; it gets a page token
   for that alone.
 - **Key mode** cannot sign a browser-named page, so the choice lives in config:
-  `"PAGE_AGENTS": {"opp-data": {"agent": "labsdata", "runner_requirements": ["zdr"]}}`
+  `"PAGE_AGENTS": {"opp-data": {"agent": "labsdata", "runner_requirements": ["sensitive_data"]}}`
   (keys must be in `PAGE_SCOPES`). `panel_context(agent=...)` raises in key mode.
 - `panel=` overrides `PANEL` key by key for one render: `mode`, `launcher_label`,
   `theme`, `width`, `open`, `target` (a CSS selector, for `mode: "inline"`),
@@ -217,7 +217,7 @@ ctx = panel_context(request, resource="labs-data://visits", agent="labsdata",
   unset keep the widget's defaults.
 
 Without Django: `arrival_payload(config, sub, scopes=..., agent_slug="labsdata",
-bind_agent=True, runner_requirements=["zdr"])`, and `PageTokens.issue(route, uid,
+bind_agent=True, runner_requirements=["sensitive_data"])`, and `PageTokens.issue(route, uid,
 agent=..., runner_requirements=...)` / `registry.page(value, uid)` (a `Page`:
 `scopes`, `agent`, `runner_requirements`).
 
@@ -443,7 +443,7 @@ current = site_agents.current()    # cached 5 min; stale up to 24 h; then None
 if current is None:
     ...                             # show no agent (fail closed)
 agent = current.agent("labsdata") if current else None
-if agent and agent.ready and agent.phi_safe and agent.ready_with_flag("zdr"):
+if agent and agent.ready and agent.handles_sensitive and agent.ready_with_flag("sensitive_data"):
     ...                             # may be shown over real data
 reasons = agent.problems if agent else ()   # plain sentences, each naming where to fix it in canopy
 flags = current.runner_flags        # every flag canopy knows, with its meaning — not a constant
@@ -464,7 +464,7 @@ Connected sites page reads it and shows, per agent, whether it meets your
 
 ```python
 def site_needs():
-    return {"real_data": {"requires": {"phi_safe": True, "runner_flag": "zdr"}},
+    return {"real_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
             "uses": {"agents": ["ace", "labsdata"], "real_data_agents": ["labsdata"],
                      "version": current_site_agents_version()},
             "titles": {"labs:workflow:run": "A workflow run"}}
@@ -570,7 +570,7 @@ base URL, `iat`, `exp` ≤ 120s after `iat`, a single-use `jti`; optional `name`
 
 | claim | meaning |
 |---|---|
-| `canopy_runner_requirements` | optional list of flags (today only `zdr`). `CANOPY_HOST["RUNNER_REQUIREMENTS"]`, plus the page's own. canopy runs the visitor's conversations only on runners whose owner declared every listed flag; unknown values are refused. |
+| `canopy_runner_requirements` | optional list of flags (today only `sensitive_data`). `CANOPY_HOST["RUNNER_REQUIREMENTS"]`, plus the page's own. canopy runs the visitor's conversations only on runners whose owner declared every listed flag; unknown values are refused. |
 | `canopy_agent` | optional agent slug: the page BOUND this arrival to one agent. Must equal the body's `agent_slug` (else 400 `agent_mismatch`) and be on the site's allow-list (else 403). canopy holds the minted token and the host grant redeemed with it to that agent. Absent = the site's whole allow-list. |
 
 ### 1. Host issues an ID-JAG at arrival
@@ -640,7 +640,7 @@ on this request, `ath` = the access token's hash, and the facts:
 | --- | --- |
 | `agent` | the agent's slug |
 | `capability` | the capability the turn runs in |
-| `declaration` | `{data: "phi", capability, declared_by, declared_at}` — the capability's `data: phi` interface setting and who last published it — or `null` |
+| `declaration` | `{data: "sensitive", capability, declared_by, declared_at}` — the capability's `data: sensitive` interface setting and who last published it — or `null` |
 | `runner` | `{id, name, flags: [{flag, declared_by, declared_at}]}`, flags **in force** (declared by a person and matched by the box's own report) |
 | `runner_posture` | `{data_mode, config_hash}` from the box's latest heartbeat |
 | `requirements` | the conversation's runner requirements |
@@ -656,16 +656,16 @@ try:
     execution = verify_execution(request)        # jkt: the key DPoPGate proved; ath: Authorization
 except ExecutionRefused as exc:                  # no_statement, bad_signature, bad_audience,
     ...                                          # bad_issuer, too_long, unbound, replayed, ...
-refusal = execution.phi_clearance(agents={"labsdata"})   # None, or the reason
+refusal = execution.sensitive_clearance(agents={"labsdata"})   # None, or the reason
 ```
 
-`phi_clearance(agents=, require=("zdr",))` is the whole rule: the agent is on your
-allowlist, its capability is marked `data: phi`, the runner's flags in force
-and its reported `data_mode` include `zdr`, and the conversation requires `zdr`. Record
+`sensitive_clearance(agents=, require=("sensitive_data",))` is the whole rule: the agent is on your
+allowlist, its capability is marked `data: sensitive`, the runner's flags in force
+and its reported `data_mode` include `sensitive_data`, and the conversation requires `sensitive_data`. Record
 `agent`, `runner` and the declarer on your audit log. A view call (a person
 clicking in an MCP Apps View) carries no statement: no agent is executing. canopy's
-gateway itself refuses to call you at all for a `zdr` conversation whose capability is
-not marked `data: phi`. The two attestations — that the box's
+gateway itself refuses to call you at all for a `sensitive_data` conversation whose capability is
+not marked `data: sensitive`. The two attestations — that the box's
 model key is zero-data-retention, and that the agent behaves as declared — are a
 person's word, recorded; the statement says whose.
 

@@ -3,7 +3,7 @@ import {
   getAgentInterface,
   getAgentInterfaceHistory,
   saveAgentInterface,
-  setCapabilityPhi,
+  setCapabilitySensitive,
   unpublishAgentInterface,
   type AgentInterfaceOut,
   type SettingChangeOut,
@@ -32,46 +32,47 @@ capabilities:
 callers_default: none
 `
 
-// A `data: phi` line, the block form an author writes; JSON (`"data": "phi"`)
-// is caught by PHI_ANYWHERE but never edited.
-const PHI_LINE = /^\s*data\s*:\s*["']?phi["']?\s*(#.*)?$/
-const PHI_ANYWHERE = /(^|[\s{,])["']?data["']?\s*:\s*["']?phi\b/m
+// A `data: sensitive` line, the block form an author writes; JSON (`"data": "sensitive"`)
+// is caught by SENSITIVE_ANYWHERE but never edited.
+const SENSITIVE_LINE = /^\s*data\s*:\s*["']?sensitive["']?\s*(#.*)?$/
+const SENSITIVE_ANYWHERE = /(^|[\s{,])["']?data["']?\s*:\s*["']?sensitive\b/m
 
-// Does this YAML mark any capability PHI-safe? Comments do not count. The
-// server parses it for real; this only decides what the editor says.
-export function declaresPhi(source: string): boolean {
-  return PHI_ANYWHERE.test(source.split('\n').map((l) => l.replace(/(^|\s)#.*$/, '')).join('\n'))
+// Does this YAML mark any capability as handling sensitive data? Comments do not
+// count. The server parses it for real; this only decides what the editor says.
+export function declaresSensitive(source: string): boolean {
+  return SENSITIVE_ANYWHERE.test(source.split('\n').map((l) => l.replace(/(^|\s)#.*$/, '')).join('\n'))
 }
 
-// The same YAML with every `data: phi` line taken out: saving it turns PHI-safe off.
-function withoutPhi(source: string): string {
-  return source.split('\n').filter((l) => !PHI_LINE.test(l)).join('\n')
+// The same YAML with every `data: sensitive` line taken out: saving it turns
+// sensitive data off.
+function withoutSensitive(source: string): string {
+  return source.split('\n').filter((l) => !SENSITIVE_LINE.test(l)).join('\n')
 }
 
-// The capabilities an interface marks PHI-safe.
-function phiCapabilities(iface: unknown): string[] {
+// The capabilities an interface marks as handling sensitive data.
+function sensitiveCapabilities(iface: unknown): string[] {
   const caps = ((iface ?? {}) as { capabilities?: Record<string, Capability> }).capabilities ?? {}
-  return Object.keys(caps).filter((n) => caps[n]?.data === 'phi')
+  return Object.keys(caps).filter((n) => caps[n]?.data === 'sensitive')
 }
 
-// What one audited change did to PHI-safe: on when the YAML it saved says
-// `data: phi`, off when it did not or it unpublished.
-function phiAfter(c: SettingChangeOut): boolean {
+// What one audited change did to sensitive data: on when the YAML it saved says
+// `data: sensitive`, off when it did not or it unpublished.
+function sensitiveAfter(c: SettingChangeOut): boolean {
   if (c.operation === 'unpublish_interface') return false
-  if (c.operation === 'set_capability_phi') {
-    const after = (c.changes?.[0]?.after ?? {}) as { phi_capabilities?: string[] }
-    return (after.phi_capabilities ?? []).length > 0
+  if (c.operation === 'set_capability_sensitive') {
+    const after = (c.changes?.[0]?.after ?? {}) as { sensitive_capabilities?: string[] }
+    return (after.sensitive_capabilities ?? []).length > 0
   }
   const body = (c.request?.body ?? {}) as { source?: string; interface?: unknown }
-  return body.source != null ? declaresPhi(body.source) : phiCapabilities(body.interface).length > 0
+  return body.source != null ? declaresSensitive(body.source) : sensitiveCapabilities(body.interface).length > 0
 }
 
 // What one audited change was, in a word or three.
 function changeLabel(c: SettingChangeOut): string {
   if (c.operation === 'unpublish_interface') return 'Unpublished'
-  if (c.operation === 'set_capability_phi') {
-    const on = Boolean((c.request?.body as { phi_safe?: boolean } | undefined)?.phi_safe)
-    return `PHI-safe ${on ? 'on' : 'off'} for ${c.target.split(' / ')[1] ?? 'a capability'}`
+  if (c.operation === 'set_capability_sensitive') {
+    const on = Boolean((c.request?.body as { handles_sensitive?: boolean } | undefined)?.handles_sensitive)
+    return `Sensitive data ${on ? 'on' : 'off'} for ${c.target.split(' / ')[1] ?? 'a capability'}`
   }
   return 'Saved'
 }
@@ -94,8 +95,8 @@ export function AgentInterfaceView({
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState<SettingChangeOut[] | null>(null)
 
-  const phiNow = phiCapabilities(data?.interface)
-  const draftPhi = draft !== null && declaresPhi(draft)
+  const sensitiveNow = sensitiveCapabilities(data?.interface)
+  const draftSensitive = draft !== null && declaresSensitive(draft)
 
   useEffect(() => {
     let cancelled = false
@@ -132,11 +133,11 @@ export function AgentInterfaceView({
     }
   }
 
-  const startEdit = (opts: { phiOff?: boolean } = {}) => {
+  const startEdit = (opts: { sensitiveOff?: boolean } = {}) => {
     const iface = data?.interface ?? {}
     // JSON is valid YAML, so an interface saved as a mapping still round-trips.
     const source = data?.source || (Object.keys(iface).length ? JSON.stringify(iface, null, 2) : STARTER)
-    setDraft(opts.phiOff ? withoutPhi(source) : source)
+    setDraft(opts.sensitiveOff ? withoutSensitive(source) : source)
   }
 
   if (data === null) {
@@ -159,16 +160,17 @@ export function AgentInterfaceView({
           spellCheck={false}
           className="w-full rounded-md border border-input bg-input p-2 font-mono text-[12px] text-foreground"
         />
-        {draftPhi && (
-          <p data-testid="phi-on" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-foreground">
-            Every capability with <code>data: phi</code> is PHI-safe: you vouch that it reads a host&apos;s data only
-            through canopy&apos;s gateway and keeps none of it. Saving is logged with the agent&apos;s other setting
+        {draftSensitive && (
+          <p data-testid="sensitive-on" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-foreground">
+            Every capability with <code>data: sensitive</code> handles sensitive data: you vouch that it reads a
+            host&apos;s data only through canopy&apos;s gateway and keeps none of it. Saving is logged with the agent&apos;s other setting
             changes.
           </p>
         )}
-        {!draftPhi && phiNow.length > 0 && (
-          <p data-testid="phi-off" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-warning">
-            No capability says <code>data: phi</code> any more: saving turns PHI-safe off for {phiNow.join(', ')},
+        {!draftSensitive && sensitiveNow.length > 0 && (
+          <p data-testid="sensitive-off" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-warning">
+            No capability says <code>data: sensitive</code> any more: saving turns sensitive data off for{' '}
+            {sensitiveNow.join(', ')},
             and hosts stop giving it their data.
           </p>
         )}
@@ -181,10 +183,10 @@ export function AgentInterfaceView({
           >
             {busy
               ? 'Saving…'
-              : draftPhi && phiNow.length === 0
-                ? 'Save and turn on PHI-safe'
-                : !draftPhi && phiNow.length > 0
-                  ? 'Save and turn off PHI-safe'
+              : draftSensitive && sensitiveNow.length === 0
+                ? 'Save and turn on sensitive data'
+                : !draftSensitive && sensitiveNow.length > 0
+                  ? 'Save and turn off sensitive data'
                   : 'Save'}
           </button>
           <button type="button" onClick={() => setDraft(null)} className="text-[12px] text-muted-foreground underline">
@@ -222,7 +224,7 @@ export function AgentInterfaceView({
               <th className="py-1 font-medium">Capability</th>
               <th className="py-1 font-medium">Who</th>
               <th className="py-1 font-medium">Allows</th>
-              <th className="py-1 font-medium">PHI</th>
+              <th className="py-1 font-medium">Sensitive data</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -249,9 +251,9 @@ export function AgentInterfaceView({
                   </td>
                   <td className="py-1.5 align-top text-[12px]">
                     <div className="flex flex-wrap items-center gap-2">
-                      {c.data === 'phi' ? (
-                        <span data-testid="phi-safe" className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
-                          PHI-safe
+                      {c.data === 'sensitive' ? (
+                        <span data-testid="handles-sensitive" className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">
+                          Handles sensitive data
                         </span>
                       ) : (
                         <span className="text-muted-foreground">—</span>
@@ -260,14 +262,14 @@ export function AgentInterfaceView({
                         <button
                           type="button"
                           role="switch"
-                          aria-checked={c.data === 'phi'}
-                          aria-label={`PHI-safe for ${n}`}
-                          data-testid="phi-switch"
+                          aria-checked={c.data === 'sensitive'}
+                          aria-label={`Handles sensitive data for ${n}`}
+                          data-testid="sensitive-switch"
                           disabled={busy}
-                          onClick={() => void run(() => setCapabilityPhi(agentSlug, n, c.data !== 'phi'))}
+                          onClick={() => void run(() => setCapabilitySensitive(agentSlug, n, c.data !== 'sensitive'))}
                           className="text-[11px] text-muted-foreground underline hover:text-foreground disabled:opacity-50"
                         >
-                          {c.data === 'phi' ? 'Turn off' : 'Turn on'}
+                          {c.data === 'sensitive' ? 'Turn off' : 'Turn on'}
                         </button>
                       )}
                     </div>
@@ -302,13 +304,13 @@ export function AgentInterfaceView({
           >
             {published ? 'Edit' : 'Set up'}
           </button>
-          {phiNow.length > 0 && (
+          {sensitiveNow.length > 0 && (
             <button
               type="button"
-              onClick={() => startEdit({ phiOff: true })}
+              onClick={() => startEdit({ sensitiveOff: true })}
               className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-destructive"
             >
-              Turn off PHI-safe
+              Turn off sensitive data
             </button>
           )}
           {published && (
@@ -334,7 +336,7 @@ export function AgentInterfaceView({
                 <th className="py-1 font-medium">Who</th>
                 <th className="py-1 font-medium">Through</th>
                 <th className="py-1 font-medium">Change</th>
-                <th className="py-1 font-medium">PHI-safe after</th>
+                <th className="py-1 font-medium">Sensitive data after</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -344,7 +346,7 @@ export function AgentInterfaceView({
                   <td className="py-1 text-foreground-secondary">{c.actor_email || 'someone'}</td>
                   <td className="py-1 text-foreground-secondary">{c.via}</td>
                   <td className="py-1 text-foreground-secondary">{changeLabel(c)}</td>
-                  <td className="py-1">{phiAfter(c) ? 'on' : 'off'}</td>
+                  <td className="py-1">{sensitiveAfter(c) ? 'on' : 'off'}</td>
                 </tr>
               ))}
             </tbody>

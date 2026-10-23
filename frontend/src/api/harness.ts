@@ -108,7 +108,7 @@ export async function setRunnerDirected(runnerId: string, directed: boolean): Pr
 }
 
 // Lock a runner's egress: its units reach only canopy-web, the model, GitHub and
-// `allow` (`.example.com` = every subdomain). A ZDR box is always locked; adding a
+// `allow` (`.example.com` = every subdomain). A sensitive-data box is always locked; adding a
 // host to one asks for a passkey (the API client answers `step_up_required`).
 export async function setRunnerEgress(
   runnerId: string,
@@ -391,7 +391,7 @@ export async function setRunnerSessions(runner: RunnerOut, sessions: boolean): P
   return toRunner(unwrap(res, 'setRunnerSessions'))
 }
 
-// Declare what a box's owner vouches for (`zdr`). Human-only, and only its owner or a runner admin;
+// Declare what a box's owner vouches for (`sensitive_data`). Human-only, and only its owner or a runner admin;
 // an unknown flag is a 422 that names it.
 export async function setRunnerFlags(runnerId: string, flags: string[]): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/flags', {

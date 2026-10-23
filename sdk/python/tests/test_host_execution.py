@@ -18,12 +18,12 @@ from .helpers import CLIENT_ID, RESOURCE, World
 TOKEN = "host-access-token"
 FACTS = {
     "agent": "labsdata", "capability": "data",
-    "declaration": {"data": "phi", "capability": "data",
+    "declaration": {"data": "sensitive", "capability": "data",
                     "declared_by": "jj@dimagi.com", "declared_at": "2026-10-22T00:00:00+00:00"},
-    "runner": {"id": "r-1", "name": "cloud-zdr-1",
-               "flags": [{"flag": "zdr", "declared_by": "jj@dimagi.com", "declared_at": "x"}]},
-    "runner_posture": {"data_mode": "zdr", "config_hash": "abc"},
-    "requirements": ["zdr"], "turn": "t-1", "session": "s-1",
+    "runner": {"id": "r-1", "name": "cloud-sensitive-1",
+               "flags": [{"flag": "sensitive_data", "declared_by": "jj@dimagi.com", "declared_at": "x"}]},
+    "runner_posture": {"data_mode": "sensitive_data", "config_hash": "abc"},
+    "requirements": ["sensitive_data"], "turn": "t-1", "session": "s-1",
 }
 
 
@@ -66,8 +66,8 @@ def test_a_statement_verifies_and_clears_phi(world):
     ex = _verify(world, _headers(_statement(world)))
     assert isinstance(ex, Execution)
     assert (ex.agent, ex.agent_sha, ex.turn, ex.session) == ("labsdata", "", "t-1", "s-1")
-    assert ex.runner_flags == {"zdr"} and ex.requirements == ("zdr",)
-    assert ex.phi_clearance(agents={"labsdata"}) is None
+    assert ex.runner_flags == {"sensitive_data"} and ex.requirements == ("sensitive_data",)
+    assert ex.sensitive_clearance(agents={"labsdata"}) is None
 
 
 def test_the_presented_dpop_key_is_the_default_binding(world):
@@ -140,6 +140,6 @@ def test_another_token_type_is_not_a_statement(world):
     ({"runner_posture": {"data_mode": ""}}, "runner_posture"),
     ({"requirements": []}, "requirements"),
 ])
-def test_phi_clearance_needs_every_fact(world, change, code):
+def test_sensitive_clearance_needs_every_fact(world, change, code):
     ex = _verify(world, _headers(_statement(world, {**FACTS, **change})))
-    assert ex.phi_clearance(agents={"labsdata"}) == code
+    assert ex.sensitive_clearance(agents={"labsdata"}) == code

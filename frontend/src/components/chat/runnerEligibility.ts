@@ -27,6 +27,11 @@ export function isDirectedOnly(runner: { private?: boolean; directed?: boolean }
   return runner.private === true || runner.directed === true;
 }
 
+/** A runner flag as a person reads it: `sensitive_data` → "sensitive-data". */
+export function runnerFlagLabel(flag: string): string {
+  return flag.replace(/_/g, "-");
+}
+
 /** A runner's name as a picker offers it, marked when it is directed-only. */
 export function runnerOptionLabel(
   runner: Pick<RunnerOut, "name"> & { private?: boolean; directed?: boolean },
@@ -35,7 +40,7 @@ export function runnerOptionLabel(
 }
 
 /**
- * Whether a runner declares every flag a conversation requires (e.g. `zdr`,
+ * Whether a runner declares every flag a conversation requires (e.g. `sensitive_data`,
  * from `SessionOut.runner_requirements`). The server refuses a placement that
  * fails this, so offering one would only produce an error.
  */

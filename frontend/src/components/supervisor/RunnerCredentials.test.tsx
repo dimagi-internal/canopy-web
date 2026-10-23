@@ -196,7 +196,7 @@ describe('RunnerCredentials', () => {
     await waitFor(() => expect(api.updateRunnerCredential).toHaveBeenCalledWith('r1', 'kk', { value: 'sk-ant-new' }))
   })
 
-  it('offers only API keys on a ZDR runner', async () => {
+  it('offers only API keys on a sensitive-data runner', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(status([KEY]))
     render(<RunnerCredentials runnerId="r1" apiKeysOnly />)
     await screen.findByTestId('cred-add-api_key')

@@ -662,32 +662,36 @@ Either, when convenient:
   The stack's template stays the old one; the next `up.sh` will still show (and
   refuse) the instance change until you take the blue/green path.
 
-## ZDR mode (`RunnerDataMode=zdr`): a box that may hold a host's PHI
+## Sensitive-data mode (`RunnerDataMode=sensitive_data`): a box that may hold a host's sensitive data
 
-A box in ZDR mode is the only kind canopy routes a ZDR-requiring conversation to
-(spec `docs/superpowers/specs/2026-10-22-phi-agents-on-zdr-runners-design.md`). In it:
+A box in sensitive-data mode is the only kind canopy routes a sensitive conversation to
+(spec `docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md`). In it:
 
 - **One credential.** Claude runs only on the bundle's **API-key slot**, which must hold
-  a key from an Anthropic organisation with zero data retention. Box logins and
-  subscriptions are never used, and there is no fallback (`claude.*` health shows only
-  `api-key`). Without the key the box reports `ready: false`.
+  the ZDR API key: a key from an Anthropic organisation with zero data retention. Box
+  logins and subscriptions are never used, and there is no fallback (`claude.*` health
+  shows only `api-key`). Without the key the box reports `ready: false` and
+  `claude.sensitive_data` fails.
 - **A locked profile on every turn**: `claude -p --permission-mode dontAsk` with a
   settings document that denies Bash, file writes, the web, subagents and scheduling,
   allows only read tools and canopy-web's MCP, and disables bypass and auto mode. ACP
   is not used. Telemetry, error reporting and non-essential model calls are off.
 - **Nothing kept**: a turn's caller envelope and profiles are deleted when it ends,
   and a confined turn's transcript too.
-- **Egress locked** (below): ZDR mode locks every unit. A unit whose lock is not
+- **Egress locked** (below): sensitive-data mode locks every unit. A unit whose lock is not
   holding reports `ready: false`.
 - **It says so.** Every heartbeat carries `data_mode` and a config hash (which covers
-  the egress setting); canopy counts a person's `zdr` declaration only while the box
-  reports `zdr`.
-- **Dedicated.** canopy-web lets a ZDR box hold only agents with a `data: phi`
-  capability (`runner_requirements.is_zdr_box`).
+  the egress setting); canopy counts a person's `sensitive_data` declaration only while
+  the box reports `sensitive_data`.
+- **Dedicated.** canopy-web lets a sensitive-data box hold only agents with a
+  `data: sensitive` capability (`runner_requirements.is_sensitive_data_box`).
+- **Fails closed.** Any other non-empty `RUNNER_DATA_MODE` (a typo, the retired `zdr`)
+  locks the box down the same way, fails health (`claude.sensitive_data`, naming the
+  value), reports `ready: false` and claims no turn.
 
-Standing one up: deploy with `EXTRA_PARAMS="RunnerDataMode=zdr"`,
-put the ZDR key in the API-key slot with `canopy runner credential`, then a person
-declares `zdr` on the runner page (passkey).
+Standing one up: deploy with `EXTRA_PARAMS="RunnerDataMode=sensitive_data"`,
+put the ZDR API key in the API-key slot with `canopy runner credential`, then a person
+declares `sensitive_data` on the runner page (passkey).
 
 ## Egress lock: a box that reaches only what it must
 
@@ -717,8 +721,9 @@ not paths.
   (`canopy-egress-sync.timer` → `--egress-sync` → `POST /api/harness/runners/box-egress`)
   — never relayed by a unit, which could otherwise loosen its own lock. If canopy-web
   cannot be read, root keeps the last answer it had.
-- **ZDR mode** (`RunnerDataMode=zdr`): every unit is locked, whatever canopy-web says,
-  and canopy-web refuses to unlock a ZDR box.
+- **Sensitive-data mode** (`RunnerDataMode=sensitive_data`, or any non-empty value):
+  every unit is locked, whatever canopy-web says, and canopy-web refuses to unlock a
+  sensitive-data box.
 - **The box's floor**, `RunnerEgress=locked` / `RunnerEgressAllow` in box.env: every
   unit locked, with those hosts. Only a NEW box gets it from the stack: cloud-init
   writes box.env's script on an instance's first boot only, so a parameter change does

@@ -177,7 +177,7 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
     elif st.state == ts.UNROUTED and st.requires:
         need = rr.describe(st.requires)
         line = (f":warning: Queued — this conversation needs a {need} runner, "
-                f"and none of {agent}'s runners is declared {need}.")
+                f"and none of {agent}'s runners is declared one.")
     elif st.state == ts.UNROUTED and (no_chat := _routed_but_not_session_capable(turn)):
         # The commonest UNROUTED on a fresh laptop is not routing at all: the box IS
         # routed, it just never declared `sessions`, so no chat turn can reach it.

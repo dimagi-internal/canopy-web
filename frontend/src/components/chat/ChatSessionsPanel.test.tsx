@@ -75,7 +75,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     can_administer: true,
     open_sessions: 0,
     flags: [],
-    known_flags: ['zdr'],
+    known_flags: ['sensitive_data'],
     private: false,
     private_runner_id: null,
     only_agents: [],
