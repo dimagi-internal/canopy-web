@@ -290,7 +290,7 @@ on any rung is for the agent's admins.
 ## Local use of an agent
 
 A person may run an agent in their **own** Claude Code, with the agent's plugin and
-skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
+skills, and canopy keeps the record (`apps/harness/local.py`):
 
 * A **private runner** (`PrivateRunner`) is a person's machine: plain Claude Code with
   the canopy plugin, no runner app. It is registered once with the person's own
@@ -374,8 +374,8 @@ skills, and canopy keeps the record (`apps/harness/local.py`, canopy-web#1704):
   credentials, or the agent's 1Password service-account key (`op_sa_token`), which
   reads the whole vault, canopy login included (`LICENSE_WITHHELD_EXTRAS`) — so a
   non-admin using a 1Password-backed agent locally gets no secrets from it. Each read is logged with `via=license`,
-  the turn and the license. Brokering every call through canopy-web so secrets
-  never leave the server is future work (canopy-web#1704).
+  the turn and the license. Secrets read this way reach the person's machine;
+  nothing brokers each call through canopy-web.
 * **Reporting.** Only its initiator may renew, finish or append its transcript —
   there is no box. The lease is 8 hours, renewed by the session's prompts; a
   session that dies is swept `lost` like any turn.

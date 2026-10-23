@@ -66,7 +66,7 @@ Per-source notes:
   cause — not the turn ids, so a turn cancelled or another stuck for the same
   reason leaves a dismissed alert dismissed). `agent_cant_run`: the computed
   reason. `runner_credential`: the slot and its probe detail.
-- **Actions are the fixes, nothing else** (Jonathan, 2026-10-22). Each alert
+- **Actions are the fixes, nothing else.** Each alert
   offers only the buttons that fix it, and a fix is marked "closes" even when
   it is a link (the alert closes when the next reconcile sees it fixed):
   `turn_failure` See failed turns · Mark resolved; `unclaimable_turns` Fix
