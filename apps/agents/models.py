@@ -870,15 +870,19 @@ class VaultAttachment(models.Model):
 
 
 class VaultMember(models.Model):
-    """A person added to a vault by name — a direct membership, kept until a
-    manager removes it, whatever happens to any agent the vault is linked to."""
+    """A person added to a vault by name — a direct membership, kept until an
+    admin removes it, whatever happens to any agent the vault is linked to.
 
-    MANAGE, USE = "manage", "use"
-    ROLE_CHOICES = [(MANAGE, "Manage"), (USE, "Use")]
+    A vault's roles are the agent's: `owner`, `admin`, `member` (no contacts). Owner
+    is never stored: it comes only from owning the linked agent (or the workspace,
+    for a workspace vault). A row or a link gives `admin` or `member`."""
+
+    OWNER, ADMIN, MEMBER = "owner", "admin", "member"
+    ROLE_CHOICES = [(ADMIN, "Admin"), (MEMBER, "Member")]
 
     vault = models.ForeignKey(Vault, on_delete=models.CASCADE, related_name="members")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="vault_memberships")
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default=USE)
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default=MEMBER)
     added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                  related_name="+")
     added_at = models.DateTimeField(auto_now_add=True)
@@ -895,10 +899,10 @@ class VaultLink(models.Model):
     """A rule that makes a set of people members of a vault, re-read on every
     question so it follows the set as it changes:
 
-    * `agent` — everyone with FULL access to `agent` (`access.roster`): its owner
-      and admins as `manage`, everyone else as `role`;
-    * `workspace_owners` / `workspace_admins` — the owners (or the admins and
-      owners) of `workspace`, inherited down the tree as those roles are."""
+    * `agent` — everyone with FULL access to `agent` (`access.roster`): its owner as
+      `owner`, its admins as `admin`, everyone else as `role`;
+    * `workspace_owners` / `workspace_admins` — the owners (as `owner`) or the admins
+      (as `role`) of `workspace`, inherited down the tree as those roles are."""
 
     AGENT, WORKSPACE_OWNERS, WORKSPACE_ADMINS = "agent", "workspace_owners", "workspace_admins"
     #: Everyone with full access to any agent this (workspace) vault is attached to.
@@ -911,7 +915,7 @@ class VaultLink(models.Model):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, null=True, blank=True, related_name="vault_links")
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, null=True, blank=True,
                                   related_name="vault_links")
-    role = models.CharField(max_length=10, choices=VaultMember.ROLE_CHOICES, default=VaultMember.USE)
+    role = models.CharField(max_length=10, choices=VaultMember.ROLE_CHOICES, default=VaultMember.MEMBER)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

@@ -13,7 +13,8 @@ import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
 // a link that makes everyone with full access to the agent a member. Each row
 // says WHY the person is a member, so the page always answers "why can they?".
 
-const ROLE_LABEL: Record<string, string> = { manage: 'Manages', use: 'Can use' }
+// The agent's roles, without contacts: owners and admins change who is in the vault.
+export const VAULT_ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' }
 
 function sourceLabel(source: string, slug: string): string {
   if (source === 'direct') return 'Added by name'
@@ -30,7 +31,7 @@ export function AgentVaultMembersSection({ slug }: { slug: string }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'use' | 'manage'>('use')
+  const [role, setRole] = useState<'member' | 'admin'>('member')
 
   useEffect(() => {
     let cancelled = false
@@ -43,7 +44,7 @@ export function AgentVaultMembersSection({ slug }: { slug: string }) {
   }, [slug])
 
   if (state === null) return null
-  const manages = state.you === 'manage'
+  const manages = state.you === 'owner' || state.you === 'admin'
 
   const run = async (fn: () => Promise<VaultMembersOut>) => {
     setBusy(true)
@@ -74,7 +75,7 @@ export function AgentVaultMembersSection({ slug }: { slug: string }) {
           {state.members.map((m) => (
             <tr key={m.user_id} data-testid={`vault-member-${m.user_id}`}>
               <td className="py-1.5 text-foreground">{m.email}</td>
-              <td className="py-1.5 text-muted-foreground">{ROLE_LABEL[m.role] ?? m.role}</td>
+              <td className="py-1.5 text-muted-foreground">{VAULT_ROLE_LABEL[m.role] ?? m.role}</td>
               <td className="py-1.5 text-muted-foreground">
                 {m.sources.map((s) => sourceLabel(s, slug)).join(' · ')}
                 {memberWaiting(m, state.holders) && (
@@ -105,10 +106,10 @@ export function AgentVaultMembersSection({ slug }: { slug: string }) {
             <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="name@dimagi.com"
                    aria-label="Add a person by email"
                    className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0 sm:w-64" />
-            <select value={role} onChange={(e) => setRole(e.target.value as 'use' | 'manage')} aria-label="Role"
+            <select value={role} onChange={(e) => setRole(e.target.value as 'member' | 'admin')} aria-label="Role"
                     className="min-h-11 rounded-md border border-input bg-input px-2 py-1 text-[12px] text-foreground sm:min-h-0">
-              <option value="use">Can use</option>
-              <option value="manage">Manages</option>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
             </select>
             <button type="submit" disabled={busy || !email.trim()}
                     className="min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">

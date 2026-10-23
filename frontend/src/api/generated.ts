@@ -4482,7 +4482,7 @@ export interface paths {
         };
         /**
          * Who may open the agent's vault, and why
-         * @description Every member of the agent's vault with their role (`manage` or `use`) and
+         * @description Every member of the agent's vault with their role (`owner`, `admin` or `member`, the agent's roles) and
          *     every source of their membership: `direct` (added by name) or a link
          *     (`agent:<slug>` — full access to the agent). `you` is the caller's role.
          */
@@ -4534,9 +4534,9 @@ export interface paths {
         /**
          * Link the agent's vault to the agent's access list, or unlink it
          * @description `{linked, role}`. Linked, everyone with full access to the agent is a
-         *     member: its owner and admins as `manage`, everyone else as `role`. Unlinked,
-         *     only direct members remain. Refused (409 `vault_needs_a_manager`) when it
-         *     would leave nobody who can manage the vault.
+         *     member: its owner as `owner`, its admins as `admin`, everyone else as `role`.
+         *     Unlinked, only direct members remain. Refused (409 `vault_needs_an_admin`) when
+         *     it would leave the vault with no owner or admin.
          */
         readonly put: operations["set_agent_vault_link"];
         readonly post?: never;
@@ -8249,7 +8249,7 @@ export interface paths {
         /**
          * Make a workspace vault
          * @description `{name}`. Starts with no key (kv 0) and two links: the workspace's owners
-         *     manage it, and everyone with full access to an agent it is attached to uses it.
+         *     own it, and everyone with full access to an agent it is attached to is a member.
          */
         readonly post: operations["create_workspace_vault"];
         readonly delete?: never;
@@ -22198,7 +22198,7 @@ export interface components {
             readonly email: string;
             /**
              * Role
-             * @default use
+             * @default member
              */
             readonly role: string;
         };
@@ -22208,7 +22208,7 @@ export interface components {
             readonly linked: boolean;
             /**
              * Role
-             * @default use
+             * @default member
              */
             readonly role: string;
         };

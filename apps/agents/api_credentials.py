@@ -389,12 +389,12 @@ def _vault_out(vault, user) -> VaultMembersOut:
     ms = vault_members.members(vault)
     keyed = set(UserVaultKeyset.objects.filter(user_id__in=list(ms)).values_list("user_id", flat=True))
     link = vault.links.filter(kind="agent", agent=vault.agent).first() if vault.agent_id else None
-    rank = {"manage": 0, "use": 1}
+    rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
     held, keepers = zk.copies(vault.agent)
     return VaultMembersOut(
         vault_id=str(vault.pk), kind=vault.kind, name=vault.name,
-        agent_link={"linked": link is not None, "role": link.role if link else "use"},
+        agent_link={"linked": link is not None, "role": link.role if link else "member"},
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
         you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
@@ -409,7 +409,7 @@ def _agent_vault(request: HttpRequest, slug: str, *, manage: bool):
         raise ProblemError(404, "No vault", detail="This agent is in no workspace, so it has no vault.",
                            type_=TYPE_NOT_FOUND)
     if manage:
-        if vault_members.role_of(vault, request.user) != vault_members.MANAGE:
+        if not vault_members.is_admin(vault_members.role_of(vault, request.user)):
             raise HttpError(403, "this action requires someone who manages this vault")
         if stepup.is_browser(request):
             stepup.require_recent_step_up(request)
@@ -425,7 +425,7 @@ def _membership_problem(exc: vault_members.VaultMembershipError) -> ProblemError
             summary="Who may open the agent's vault, and why")
 @gate("member")
 def get_agent_vault_members(request: HttpRequest, slug: str) -> VaultMembersOut:
-    """Every member of the agent's vault with their role (`manage` or `use`) and
+    """Every member of the agent's vault with their role (`owner`, `admin` or `member`, the agent's roles) and
     every source of their membership: `direct` (added by name) or a link
     (`agent:<slug>` — full access to the agent). `you` is the caller's role."""
 
@@ -435,7 +435,7 @@ def get_agent_vault_members(request: HttpRequest, slug: str) -> VaultMembersOut:
 
 @router.post("/{slug}/vault/members", response=VaultMembersOut,
              summary="Add a person to the agent's vault by name")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMemberIn) -> VaultMembersOut:
     """`{email, role}` — a direct membership, kept whatever happens to the
     agent's access list. The person must be a member of the agent's workspace."""
@@ -454,7 +454,7 @@ def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMember
 
 @router.delete("/{slug}/vault/members/{user_id}", response=VaultMembersOut,
                summary="Remove a person's direct membership of the agent's vault")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> VaultMembersOut:
     """Removes only the DIRECT membership. Membership through a link stays until
     the person leaves the linked set (e.g. loses full access to the agent). A
@@ -471,12 +471,12 @@ def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> 
 
 @router.put("/{slug}/vault/agent-link", response=VaultMembersOut,
             summary="Link the agent's vault to the agent's access list, or unlink it")
-@gate("vault-manage", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
 def set_agent_vault_link(request: HttpRequest, slug: str, payload: VaultAgentLinkIn) -> VaultMembersOut:
     """`{linked, role}`. Linked, everyone with full access to the agent is a
-    member: its owner and admins as `manage`, everyone else as `role`. Unlinked,
-    only direct members remain. Refused (409 `vault_needs_a_manager`) when it
-    would leave nobody who can manage the vault."""
+    member: its owner as `owner`, its admins as `admin`, everyone else as `role`.
+    Unlinked, only direct members remain. Refused (409 `vault_needs_an_admin`) when
+    it would leave the vault with no owner or admin."""
 
     agent, vault = _agent_vault(request, slug, manage=True)
     try:

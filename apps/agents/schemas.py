@@ -2158,7 +2158,8 @@ class ZkTargetOut(StrictModel):
 class VaultMemberOut(StrictModel):
     user_id: int
     email: str
-    #: "manage" | "use" — the highest any source gives them.
+    #: "owner" | "admin" | "member" — the highest any source gives them (the agent's roles;
+    #: owner only from owning the linked agent or workspace).
     role: str
     #: Why they are a member: "direct", "agent:<slug>", "workspace_owners:<slug>", …
     sources: list[str]
@@ -2230,12 +2231,14 @@ class VaultMembersOut(StrictModel):
 
 class VaultMemberIn(StrictModel):
     email: str
-    role: str = "use"
+    #: "admin" or "member" ("manage" / "use", the earlier words, still accepted).
+    role: str = "member"
 
 
 class VaultAgentLinkIn(StrictModel):
     linked: bool
-    role: str = "use"
+    #: What the link gives everyone with full access who is not the agent's owner or an admin.
+    role: str = "member"
 
 
 class VaultKeeperPinsOut(StrictModel):

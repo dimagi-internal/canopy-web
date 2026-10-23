@@ -8,7 +8,7 @@ agent's id takes in every AAD and HKDF info — so the browser and the canopy CL
 for either with the same code, and a copy made for one can never open the other.
 
 * **Who may open it** is its membership (`vault_members`): by default the workspace's
-  owners (`manage`) and everyone with full access to an agent it is attached to (`use`).
+  owners (`owner`) and everyone with full access to an agent it is attached to (`member`).
 * **Which agents it serves** are its attachments: one agent, or every agent in a
   workspace and below it. A turn reads every vault attached to its agent, layered under
   the agent's own vault (`layers_for`).
@@ -48,8 +48,8 @@ def create(workspace, name: str, *, by) -> Vault:
     with transaction.atomic():
         v = Vault.objects.create(workspace=workspace, kind=Vault.WORKSPACE, name=name, created_by=by)
         VaultLink.objects.create(vault=v, kind=VaultLink.WORKSPACE_OWNERS, workspace=workspace,
-                                 role=vault_members.MANAGE, created_by=by)
-        VaultLink.objects.create(vault=v, kind=VaultLink.ATTACHED, role=vault_members.USE, created_by=by)
+                                 role=vault_members.ADMIN, created_by=by)
+        VaultLink.objects.create(vault=v, kind=VaultLink.ATTACHED, role=vault_members.MEMBER, created_by=by)
     return v
 
 

@@ -1211,7 +1211,7 @@ def _leave_the_vault(fleet):
     other = get_user_model().objects.create_user(username="mgr", email="mgr@dimagi.com")
     WorkspaceMembership.objects.create(workspace=fleet.ws, user=other, role=WorkspaceMembership.VIEWER)
     vault = vault_members.vault_for_agent(fleet.agent)
-    vault_members.add_member(vault, other, role="manage", by=fleet.user)
+    vault_members.add_member(vault, other, role="admin", by=fleet.user)
     vault_members.set_agent_link(vault, fleet.agent, linked=False)
     return vault
 
@@ -1296,9 +1296,9 @@ def _ws_enabled(fleet, plain, *, attach=True):
 def test_a_workspace_vault_starts_with_its_owners_and_attached_users(fleet):
     vid = _ws_vault(fleet)
     body = fleet.client.get(f"/api/vaults/{vid}").json()
-    assert body["kv"] == 0 and body["you"] == "manage"
+    assert body["kv"] == 0 and body["you"] == "owner"
     assert [(m["email"], m["role"], m["sources"]) for m in body["members"]] == [
-        ("jj@dimagi.com", "manage", ["workspace_owners:connect"])]
+        ("jj@dimagi.com", "owner", ["workspace_owners:connect"])]
     state = fleet.client.get(f"/api/vaults/{vid}/zk").json()
     assert state["agent_id"] == f"vault:{vid}" and not state["enabled"]
     # Attached to no agent yet: no machine serves it, so only the person is pending.
