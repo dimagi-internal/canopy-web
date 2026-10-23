@@ -25,10 +25,11 @@
  * choice is remembered per site through the same injected storage a dragged
  * position uses.
  *
- * An overlay panel can also be RESIZED by dragging its top-left corner — the
- * one away from the bubble, so the panel grows up and to the left and stays
- * attached to it. The size is remembered per site like a position; expanding
- * overrides it without forgetting it.
+ * Overlay and docked panels can also be RESIZED. An overlay panel by its
+ * top-left corner — the one away from the bubble, so it grows up and to the
+ * left and stays attached to it; a docked rail by its left edge, in width only
+ * (it is always full height). The size is remembered per site like a position;
+ * expanding overrides it without forgetting it.
  */
 
 import {
@@ -73,6 +74,9 @@ export interface ChromeOptions {
   initialExpanded: boolean
   /** Called whenever the panel expands or collapses. */
   onDisplay: (expanded: boolean) => void
+  /** Called when the visitor resizes the panel (and when a remembered size is
+   *  restored), so a host that laid out around a docked rail can follow it. */
+  onResize: (size: { width: number; height: number }) => void
   /** Panel width for overlay/docked, in px. */
   width: number
   zIndex: number
@@ -156,24 +160,32 @@ const STYLES = `
   @media (max-width: 640px) {
     .panel[data-expanded="true"] { inset: 0 !important; border-radius: 0; border-width: 0; }
   }
-  /* The resize grip: the panel's top-left corner, the one away from the
-     bubble. Overlay only — a docked rail's width is the host's layout, and an
-     expanded panel already fills the window. */
+  /* The resize grip. Overlay: the panel's top-left corner, the one away from
+     the bubble. Docked: the whole left edge, with a handle mid-height — the
+     rail is full height, so only its width moves. An expanded panel already
+     fills the window. */
   .resize {
     position: absolute; top: 0; left: 0; z-index: 1;
-    width: 16px; height: 16px;
+    width: 18px; height: 18px;
     cursor: nwse-resize; touch-action: none;
-    color: rgba(255,255,255,.45);
+    color: rgba(255,255,255,.55);
   }
   .resize::before {
     content: ''; position: absolute; top: 4px; left: 4px;
-    width: 7px; height: 7px;
+    width: 8px; height: 8px;
     border-top: 2px solid currentColor; border-left: 2px solid currentColor;
     border-top-left-radius: 3px;
-    opacity: .6; transition: opacity .12s ease;
+    opacity: .7; transition: opacity .12s ease;
+  }
+  .panel[data-mode="docked"] .resize {
+    bottom: 0; width: 8px; height: auto; cursor: ew-resize;
+  }
+  .panel[data-mode="docked"] .resize::before {
+    top: 50%; left: 2px; width: 4px; height: 40px; margin-top: -20px;
+    border: 0; border-radius: 2px; background: currentColor;
   }
   .resize:hover::before, .panel[data-resizing="true"] .resize::before { opacity: 1; }
-  .panel[data-theme="light"] .resize { color: rgba(0,0,0,.4); }
+  .panel[data-theme="light"] .resize { color: rgba(0,0,0,.45); }
   .panel[data-expanded="true"] .resize { display: none; }
   /* Mid-drag the pointer crosses the iframe, which would swallow the moves. */
   .panel[data-resizing="true"] iframe { pointer-events: none; }
@@ -373,20 +385,23 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
   // Once the visitor has sized the panel by hand, their size wins over the
   // height the frame asks for: the frame is guessing what fits, they know.
   const sizeKey = sizeKeyFor(options.app)
+  const docked = options.mode === 'docked'
   let sizedByVisitor = false
+  /** A docked rail takes only the width: its height is the window's. */
   function applySize(size: Size): void {
     panel.style.width = `${size.width}px`
-    panel.style.height = `${size.height}px`
+    if (!docked) panel.style.height = `${size.height}px`
+    options.onResize({ width: size.width, height: docked ? window.innerHeight : size.height })
   }
   /** The most an overlay panel may take, given where its bottom-right sits.
    *  Falls back to the window when there is no layout to measure (a closed
    *  panel, or jsdom). */
   function roomFor(rect: DOMRect | null): Size {
-    const right = rect?.right || window.innerWidth - 16
-    const bottom = rect?.bottom || window.innerHeight - 84
+    const right = rect?.right || window.innerWidth - (docked ? 0 : 16)
+    const bottom = rect?.bottom || window.innerHeight - (docked ? 0 : 84)
     return { width: right - EDGE_MARGIN_PX, height: bottom - EDGE_MARGIN_PX }
   }
-  if (options.mode === 'overlay') {
+  if (!inline) {
     const saved = readSavedSize(options.storage, sizeKey)
     if (saved) {
       // Clamped, because the window it was saved in is not this one.
@@ -397,7 +412,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
     const grip = document.createElement('div')
     grip.className = 'resize'
     grip.setAttribute('part', 'resize')
-    grip.title = 'Drag to resize'
+    grip.title = docked ? 'Drag to change the width' : 'Drag to resize'
     panel.appendChild(grip)
 
     let from: Point | null = null
@@ -418,7 +433,7 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       if (!from) return
       const size = resizePanel(
         start,
-        { x: event.clientX - from.x, y: event.clientY - from.y },
+        { x: event.clientX - from.x, y: docked ? 0 : event.clientY - from.y },
         roomFor(anchor),
       )
       applySize(size)
@@ -435,10 +450,11 @@ export function createChrome(src: string, options: ChromeOptions): Chrome {
       grip.releasePointerCapture?.(event.pointerId)
       from = null
       panel.dataset.resizing = 'false'
-      if (panel.style.width && panel.style.height) {
+      if (panel.style.width) {
         writeSavedSize(options.storage, sizeKey, {
           width: parseFloat(panel.style.width),
-          height: parseFloat(panel.style.height),
+          // A rail's height is the window's; the number only satisfies the shape.
+          height: parseFloat(panel.style.height) || start.height,
         })
       }
     }

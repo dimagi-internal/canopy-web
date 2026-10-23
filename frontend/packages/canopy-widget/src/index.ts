@@ -152,6 +152,11 @@ export interface CanopyWidgetOptions {
   /** How the panel starts: `'normal'` (default) or `'expanded'`. A visitor's
    *  own remembered choice on this site wins over it. */
   initialDisplay?: 'normal' | 'expanded'
+  /** Called when the visitor resizes the panel by its corner (overlay) or its
+   *  left edge (docked), and once at load when a remembered size is restored.
+   *  A docked rail is drawn OVER the page, so a host that set aside a column
+   *  for it can follow its width here, e.g. `main.style.marginRight = width + 'px'`. */
+  onResize?: (size: { width: number; height: number }) => void
   /** How the launcher and the panel are dressed. Every field is optional and
    *  the default is the widget as it always looked; see `WidgetTheme`, and the
    *  embedding guide for the CSS-variable and `::part()` alternatives that need
@@ -267,6 +272,7 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
       if (frameReady) post({ source: SOURCE, type: 'display', expanded })
     },
     onToggle: (open) => post({ source: SOURCE, type: 'visibility', open }),
+    onResize: (size) => options.onResize?.(size),
   })
 
   /** Sorted so a host that registers in a different order across renders does
