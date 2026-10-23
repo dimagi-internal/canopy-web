@@ -318,6 +318,10 @@ class RunnerOut(Schema):
     # heartbeat reply only (`api_device_keys.waiting_approval_url`), so the box's
     # menu bar can say so; the email and push about it are easy to miss.
     key_waiting: str = ""
+    # The repos whose sessions the box should report (`session_sync.report_projects`):
+    # null = every repo. Stamped on the heartbeat reply only; a box filters its
+    # session report by it before reading any transcript tail.
+    report_projects: list[str] | None = None
 
     @staticmethod
     def resolve_private_runner_id(obj) -> uuid.UUID | None:
@@ -342,6 +346,10 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_key_waiting(obj) -> str:
         return getattr(obj, "key_waiting_url", "") or ""
+
+    @staticmethod
+    def resolve_report_projects(obj) -> list[str] | None:
+        return getattr(obj, "report_projects_wanted", None)
 
     @staticmethod
     def resolve_roots(obj) -> list[str]:

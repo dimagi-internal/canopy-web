@@ -24,7 +24,7 @@ from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.canopy_sessions.staleness import stale_cutoff
 from apps.workspaces import services as wsvc
 
-from .models import Runner, Turn
+from .models import ProjectOptIn, Runner, Turn
 from .routing import EXECUTING, runner_tenant_slugs
 
 logger = logging.getLogger(__name__)
@@ -552,6 +552,23 @@ def session_home(runner, project: str, fallback=None):
                                            tenant=_session_tenant(runner))
 
 
+def report_projects(runner) -> list[str] | None:
+    """The repos whose sessions this box should report at all — sent on its
+    heartbeat reply, so the box filters BEFORE reading any tail and nothing from a
+    plain-Claude-Code repo leaves it. None = every repo (the owner opted into
+    everything). Else the opted-in repos plus every repo the box holds that is an
+    agent's own in its tenant: exactly what `session_home` would file."""
+    opt_in = ProjectOptIn.for_user_id(runner.owner_id) if runner.owner_id else None
+    if opt_in is not None and opt_in.everything:
+        return None
+    wanted = set(opt_in.projects or []) if opt_in is not None else set()
+    for project in runner.observed_projects():
+        owner = _agent_for_project(project, runner)
+        if owner is not None and owner is not FOREIGN_AGENT:
+            wanted.add(project)
+    return sorted(wanted)
+
+
 def fire_sessions_closed(session_ids: list) -> None:
     from apps.harness.signals import sessions_closed
 
@@ -1057,7 +1074,7 @@ class SessionView:
     id: str
     emdash_task: str
     project: str
-    agent: "str | None"
+    agent: str | None
     status: str
     last_interacted_at: object
     recent_messages: list

@@ -42,6 +42,7 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | `turn_failure` | `apps/harness/alerts_turn_failure.py` (investigations `escalated`/`debugger_failed`/`held` only; lives in the investigation's — the debugger's — workspace, see below) | action | Failed turns |
 | `unclaimable_turns` | `apps/harness/alerts_unclaimable.py` | blocking | Stuck turns |
 | `device_key_pending` | `apps/harness/alerts_device_key.py` | blocking | Device key |
+| `canopy_projects_off` | `apps/harness/alerts_project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
 | `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), or every routed runner is directed-only) | setup | Agent routing |
 
 Actions: a source returns `Action(id, label, closes, href)`. An `href` action is
@@ -71,7 +72,9 @@ Per-source notes:
   `turn_failure` See failed turns · Mark resolved; `unclaimable_turns` Fix
   routing · Cancel turns; `device_key_pending` Approve key · Reject key;
   `agent_cant_run` Fix routing (· Dismiss, the one kind that keeps it — an
-  agent nobody means to run yet). No other kind offers Dismiss.
+  agent nobody means to run yet); `canopy_projects_off` Choose repos (·
+  Dismiss, for a person who runs only agents and means canopy to be off in
+  their repos). No other kind offers Dismiss.
 - **`runner_credential` actions** are the only two that fix a broken
   credential: **Replace token** (a link to the runner's credentials; "Sign in
   again" for a login) and **Remove token**, offered only when removing is

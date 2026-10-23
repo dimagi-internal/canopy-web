@@ -290,6 +290,14 @@ def maybe_report_sessions(cfg: Config, client: Client, now_fn=time.monotonic) ->
         sessions = sessions + desktop.open_sessions(cfg)
     except Exception:  # noqa: BLE001
         logger.warning("desktop session read failed; reporting emdash sessions only", exc_info=True)
+    # Only the repos canopy works in for this box's owner (`report_projects` on the
+    # heartbeat reply; canopy-web `ProjectOptIn`). Filtered BEFORE any tail or
+    # dialog is read, so nothing from a plain-Claude-Code repo leaves the box.
+    from . import server_status
+
+    wanted = server_status.report_projects()
+    if wanted is not None:
+        sessions = [s for s in sessions if (s.get("project") or "") in wanted]
     global _REPORT_NOW
     grew = session_changed(cfg, sessions)
     if grew:

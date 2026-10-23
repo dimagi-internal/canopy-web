@@ -226,6 +226,12 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
   (`Runner.opts_in`). Every repo-turn route (`runner_target_q`, the workspace
   order, project chats, a pinned repo turn) and the usage scan's `scope` read it.
   A runner with no owner opts into nothing.
+- **The box reports only what canopy wants.** The heartbeat reply's
+  `report_projects` (`session_sync.report_projects`: null = every repo, else the
+  opted-in repos plus the box's agent repos) is what the runner filters its
+  session report by, BEFORE reading any tail or dialog
+  (`canopy_runner/sessions.py`, held in `server_status`). An older server sends
+  none, and the box reports everything as before.
 - **Mirroring.** `session_sync.session_home` files no new session from a repo
   outside the opt-in, both in the ~10s report sweep and when missing sessions are
   sent up. `/streams` and `/backfills` stop listing such a session's transcript.
@@ -237,7 +243,13 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
 - **`everything`** also covers a task emdash could not place in a repo (blank
   project). A chosen list covers only the repos it names.
 - Migration `harness.0104` gave every existing runner owner `everything`. A
-  person who pairs a box after it starts at nothing until they choose.
+  person who pairs a box after it starts at nothing until they choose, and the
+  `canopy_projects_off` alert (`apps/harness/alerts_project_opt_in.py`, setup,
+  owner only) tells them so on Home and on the runner's page.
+- **The canopy plugin needs no gate.** Its Claude Code hooks act only inside a
+  canopy turn, an agent session or a local turn (an envelope, `$CANOPY_AGENT`, a
+  `cx-` profile, a local-turn file). In any other session they write local files
+  only and send nothing to canopy-web.
 
 ## Which agents a box may hold
 

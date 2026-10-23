@@ -62,9 +62,10 @@ from .schemas import (
     RunnerCapabilitiesIn,
     RunnerCredentialAddIn,
     RunnerCredentialIn,
-    RunnerCredentialPatchIn,
     RunnerCredentialOut,
+    RunnerCredentialPatchIn,
     RunnerCredentialStatusOut,
+    RunnerDirectedIn,
     RunnerEgressIn,
     RunnerEngineIn,
     RunnerEnrollmentIn,
@@ -74,17 +75,15 @@ from .schemas import (
     RunnerIn,
     RunnerLoginOrderIn,
     RunnerLoginReportIn,
-    SlashCommandsIn,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
     RunnerMintOut,
     RunnerMintResultIn,
     RunnerMintStartIn,
     RunnerMintUrlIn,
-    RunnerOut,
-    RunnerDirectedIn,
     RunnerOnlyAgentsIn,
     RunnerOnlyAgentsOut,
+    RunnerOut,
     RunnerPrivateIn,
     SendUpIn,
     SendUpOut,
@@ -92,11 +91,13 @@ from .schemas import (
     SignInRequestOut,
     SignInResultIn,
     SignInResultOut,
+    SlashCommandsIn,
     TurnGitHubTokenOut,
     UsageReportIn,
     UsageReportOut,
     UsageScopeOut,
 )
+from .session_sync import report_projects
 
 logger = logging.getLogger(__name__)
 
@@ -1411,6 +1412,7 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
     runner = runner_or_404(request, runner_id)
     beat = runner_protocol.heartbeat(runner, payload)
     beat.key_waiting_url = waiting_approval_url(runner)
+    beat.report_projects_wanted = report_projects(beat)
     return beat
 
 
