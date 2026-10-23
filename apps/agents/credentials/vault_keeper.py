@@ -84,7 +84,7 @@ def grant_workspace(runner, vault_id, *, kv: int, wraps: list) -> int:
             raise zk.ZkError(409, "zk_not_pending",
                              f"wraps[{i}]: {item.kind} {item.target} is not waiting for a copy — a "
                              "keeper only adds copies, never replaces one")
-    return workspace_vaults.add_wraps(v, kv=kv, wraps=wraps, user=runner.owner)
+    return workspace_vaults.add_wraps(v, kv=kv, wraps=wraps, user=runner.owner, only_new=True)
 
 
 def grant(runner, slug: str, *, kv: int, wraps: list) -> int:
@@ -100,4 +100,4 @@ def grant(runner, slug: str, *, kv: int, wraps: list) -> int:
             raise zk.ZkError(409, "zk_not_pending",
                              f"wraps[{i}]: {item.kind} {item.target} is not waiting for a copy — a "
                              "keeper only adds copies, never replaces one")
-    return zk.add_wraps(agent, kv=kv, wraps=wraps, user=runner.owner)
+    return zk.add_wraps(agent, kv=kv, wraps=wraps, user=runner.owner, only_new=True)

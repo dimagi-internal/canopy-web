@@ -17,6 +17,7 @@ for either with the same code, and a copy made for one can never open the other.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from django.db import transaction
@@ -30,6 +31,8 @@ from apps.workspaces import services as wsvc
 from ..models import Agent, Vault, VaultAttachment, VaultKeyWrap, VaultLink, VaultSecret
 from . import vault_members, zk
 from .zk import ZkError, _shape, check_ecdh_wrap, check_recovery_wrap, check_value_zk
+
+logger = logging.getLogger(__name__)
 
 
 def binding_id(vault: Vault) -> str:
@@ -289,7 +292,8 @@ def set_values(vault: Vault, *, kv: int, values: list, user) -> list[str]:
     return sorted(vals)
 
 
-def add_wraps(vault: Vault, *, kv: int, wraps: list, user) -> int:
+def add_wraps(vault: Vault, *, kv: int, wraps: list, user, only_new: bool = False) -> int:
+    """`zk.add_wraps` for a workspace vault, `only_new` included."""
     with transaction.atomic():
         vault = _locked(vault)
         if not vault.kv:
@@ -298,8 +302,13 @@ def add_wraps(vault: Vault, *, kv: int, wraps: list, user) -> int:
             raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {vault.kv}, not {kv}")
         rows = _parse_wraps(vault, kv, wraps, allow_recovery=False)
         for w in rows:
-            VaultKeyWrap.objects.filter(vault=vault, kv=kv, kind=w.kind, device_key=w.device_key,
-                                        user=w.user).delete()
+            held = VaultKeyWrap.objects.filter(vault=vault, kv=kv, kind=w.kind, device_key=w.device_key,
+                                               user=w.user)
+            if only_new and held.exists():
+                raise ZkError(409, "zk_not_pending",
+                              f"{w.kind} {w.device_key_id or w.user_id} already holds a copy — a keeper "
+                              "only adds copies, never replaces one")
+            held.delete()
         _save(rows, user)
     return len(rows)
 
@@ -345,4 +354,11 @@ def reconcile(vault: Vault) -> int:
 
 
 def reconcile_all() -> int:
-    return sum(reconcile(v) for v in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gt=0))
+    n = 0
+    for v in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gt=0):
+        try:
+            with transaction.atomic():
+                n += reconcile(v)
+        except Exception:  # noqa: BLE001 — one bad vault must not stop the others
+            logger.exception("workspace vault reconcile failed for %s", v.pk)
+    return n

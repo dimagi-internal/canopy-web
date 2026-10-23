@@ -147,8 +147,13 @@ def members(vault: Vault | None) -> dict[int, Membership]:
     out: dict[int, Membership] = {}
     if vault is None:
         return out
-    for row in VaultMember.objects.filter(vault=vault).select_related("user"):
-        _add(out, row.user, row.role, "direct")
+    direct = list(VaultMember.objects.filter(vault=vault).select_related("user"))
+    # A direct member counts only while they are still in the vault's workspace
+    # (directly or inherited): leaving it, or the vault moving, ends it.
+    roles = wsvc.member_roles_of(row.user for row in direct) if direct else {}
+    for row in direct:
+        if vault.workspace.slug in roles.get(row.user_id, {}):
+            _add(out, row.user, row.role, "direct")
     for link in VaultLink.objects.filter(vault=vault).select_related("agent__workspace", "workspace", "vault"):
         _linked(link, out)
     for uid in not_a_person(out):
@@ -198,6 +203,12 @@ def _check_role(role: str) -> None:
         raise VaultMembershipError(422, "vault_bad_role", "role must be manage or use")
 
 
+def _lock(vault: Vault) -> Vault:
+    """Hold the vault's row for this transaction, so two membership writes
+    cannot each see the other's manager and together leave none."""
+    return Vault.objects.select_for_update().get(pk=vault.pk)
+
+
 def _require_a_manager(vault: Vault) -> None:
     """Every change keeps someone who can manage the vault, or nobody could ever
     change it again — checked inside the change's transaction, after it."""
@@ -218,6 +229,7 @@ def add_member(vault: Vault, user, *, role: str, by) -> VaultMember:
         raise VaultMembershipError(422, "vault_not_in_workspace",
                                    f"{user.email} is not a member of {vault.workspace.slug}")
     with transaction.atomic():
+        _lock(vault)
         row, _ = VaultMember.objects.update_or_create(vault=vault, user=user,
                                                       defaults={"role": role, "added_by": by})
         _require_a_manager(vault)
@@ -229,6 +241,7 @@ def remove_member(vault: Vault, user_id: int) -> bool:
     goes when the person leaves the linked set, or the link is removed."""
 
     with transaction.atomic():
+        _lock(vault)
         deleted, _ = VaultMember.objects.filter(vault=vault, user_id=user_id).delete()
         _require_a_manager(vault)
     return bool(deleted)
@@ -240,6 +253,7 @@ def set_agent_link(vault: Vault, agent: Agent, *, linked: bool, role: str = USE,
 
     _check_role(role)
     with transaction.atomic():
+        _lock(vault)
         if not linked:
             VaultLink.objects.filter(vault=vault, kind=VaultLink.AGENT, agent=agent).delete()
             _require_a_manager(vault)

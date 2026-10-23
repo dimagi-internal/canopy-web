@@ -231,3 +231,19 @@ def test_an_agents_login_or_a_system_account_is_never_a_member(world):
     with pytest.raises(vault_members.VaultMembershipError) as e:
         vault_members.add_member(world.vault, login, role="manage", by=world.owner)
     assert e.value.code == "vault_not_a_person"
+
+
+def test_a_direct_member_who_leaves_the_workspace_leaves_the_vault(world):
+    sam = _user("sam")
+    m = _member(world.ws, sam, WorkspaceMembership.EDITOR)
+    vault_members.add_member(world.vault, sam, role="manage", by=world.owner)
+    assert "direct" in vault_members.members(world.vault)[sam.pk].sources
+    m.delete()
+    assert sam.pk not in vault_members.members(world.vault)
+
+
+def test_a_direct_member_of_a_parent_workspace_stays_a_member(world):
+    pat = _user("pat")
+    _member(world.org, pat, WorkspaceMembership.OWNER)   # inherited down into connect
+    vault_members.add_member(world.vault, pat, role="use", by=world.owner)
+    assert "direct" in vault_members.members(world.vault)[pat.pk].sources

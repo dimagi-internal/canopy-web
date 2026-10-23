@@ -29,8 +29,11 @@ from apps.agents.models import (
     AgentCredentialRead,
     AgentPatRotation,
     AgentVaultWrap,
+    Vault,
+    VaultKeyWrap,
     ZeroKnowledgeValue,
 )
+from apps.agents.schemas import ZkWrapIn
 from apps.events.models import SettingChange
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
@@ -1355,3 +1358,26 @@ def test_a_keeper_grants_a_workspace_vault_too(fleet):
     res = fleet.client.post(row["grant_path"], data={"kv": 1, "wraps": [
         {"kind": "member", "target": str(ed.pk), "wrap": wrap}]}, content_type="application/json")
     assert res.status_code == 200 and res.json() == {"granted": 1}
+
+
+def test_replacing_your_vault_key_puts_you_back_in_line_for_workspace_vaults_too(fleet):
+    from apps.agents.credentials import workspace_vaults
+
+    assert _enable(fleet).status_code == 200
+    vid, _, _ = _ws_enabled(fleet, {"x": "y"})
+    v = Vault.objects.get(pk=vid)
+    assert VaultKeyWrap.objects.filter(vault=v, kind="member", user=fleet.user).exists()
+    zk.forget_member_wraps(fleet.user)   # what PUT /api/vault/keyset {replace: true} runs
+    assert not VaultKeyWrap.objects.filter(vault=v, kind="member", user=fleet.user).exists()
+    assert ("member", str(fleet.user.pk)) in {(t["kind"], t["target"]) for t in workspace_vaults.pending_targets(v)}
+
+
+def test_a_keeper_that_lost_the_race_adds_nothing(fleet):
+    # Both keepers saw the target pending; the second's write finds a copy under
+    # the lock and is refused, so exactly one grant stands.
+    assert _enable(fleet).status_code == 200
+    before = AgentVaultWrap.objects.get(agent=fleet.agent, kind="member", user=fleet.user).wrap
+    with pytest.raises(zk.ZkError) as exc:
+        zk.add_wraps(fleet.agent, kv=1, wraps=[ZkWrapIn(**member_wrap(fleet))], user=fleet.user, only_new=True)
+    assert exc.value.code == "zk_not_pending"
+    assert AgentVaultWrap.objects.get(agent=fleet.agent, kind="member", user=fleet.user).wrap == before

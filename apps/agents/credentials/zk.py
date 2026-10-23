@@ -429,8 +429,10 @@ def set_values(agent, *, kv: int, values: list, user) -> list[str]:
     return sorted(vals)
 
 
-def add_wraps(agent, *, kv: int, wraps: list, user) -> int:
-    """Grant: add (or replace) device/member wraps at the current kv."""
+def add_wraps(agent, *, kv: int, wraps: list, user, only_new: bool = False) -> int:
+    """Grant: add (or replace) device/member wraps at the current kv. `only_new`
+    (a keeper) refuses a target that already holds a copy, checked under the
+    agent's row lock so two keepers racing make exactly one grant."""
 
     with transaction.atomic():
         agent = _locked(agent)
@@ -441,8 +443,13 @@ def add_wraps(agent, *, kv: int, wraps: list, user) -> int:
             raise ZkError(409, "zk_no_vault_key", f"{agent.slug} has no vault key yet to grant")
         rows = _parse_wraps(agent, kv, wraps, allow_recovery=False)
         for w in rows:
-            AgentVaultWrap.objects.filter(agent=agent, kv=kv, kind=w.kind, device_key=w.device_key,
-                                          user=w.user).delete()
+            held = AgentVaultWrap.objects.filter(agent=agent, kv=kv, kind=w.kind, device_key=w.device_key,
+                                                 user=w.user)
+            if only_new and held.exists():
+                raise ZkError(409, "zk_not_pending",
+                              f"{w.kind} {w.device_key_id or w.user_id} already holds a copy — a keeper "
+                              "only adds copies, never replaces one")
+            held.delete()
         _save_wraps(rows, user)
     return len(rows)
 
@@ -483,15 +490,21 @@ def forget_device_wraps(device_key) -> int:
     """A device's ECDH key changed: its wraps were to the old key (and bound to
     the old thumbprint), so they are useless — drop them; it shows as pending."""
 
+    from apps.agents.models import VaultKeyWrap
+
     deleted, _ = AgentVaultWrap.objects.filter(device_key=device_key).delete()
-    return deleted
+    more, _ = VaultKeyWrap.objects.filter(device_key=device_key).delete()
+    return deleted + more
 
 
 def forget_member_wraps(user) -> int:
-    """A person replaced their vault key: wraps to the old one are useless."""
+    """A person replaced their vault key: wraps to the old one are useless — in
+    agent vaults and workspace vaults alike, so each shows them as pending again."""
+    from apps.agents.models import VaultKeyWrap
 
     deleted, _ = AgentVaultWrap.objects.filter(kind="member", user=user).delete()
-    return deleted
+    more, _ = VaultKeyWrap.objects.filter(kind="member", user=user).delete()
+    return deleted + more
 
 
 # ---- reads ----------------------------------------------------------------------------
