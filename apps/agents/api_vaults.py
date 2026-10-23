@@ -27,13 +27,15 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from .credentials import vault_members, workspace_vaults
+from .credentials import vault_keeper, vault_members, workspace_vaults
 from .credentials.zk import ZkError
 from .models import Agent, Vault, VaultAttachment, VaultSecret
 from .route_refusals import zk_problem
 from .schemas import (
     VaultAttachIn,
     VaultCreateIn,
+    VaultKeeperPinsIn,
+    VaultKeeperPinsOut,
     VaultMemberIn,
     WorkspaceVaultOut,
     ZkEnableIn,
@@ -214,7 +216,21 @@ def get_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, values: bo
     v = _vault(request, vault_id)
     if not vault_members.is_admin(vault_members.role_of(v, request.user)):
         raise HttpError(403, "this action requires someone who manages this vault")
-    return ZkStateOut(**workspace_vaults.state(v, include_values=values))
+    return ZkStateOut(**workspace_vaults.state(v, include_values=values), pins=vault_keeper.pins_of(v))
+
+
+@router.put("/vaults/{vault_id}/zk/pins", response=VaultKeeperPinsOut,
+            summary="Record the keys a vault owner or admin just granted to, for the keepers")
+@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+def put_workspace_vault_pins(request: HttpRequest, vault_id: uuid.UUID,
+                             payload: VaultKeeperPinsIn) -> VaultKeeperPinsOut:
+    """As `PUT /api/agents/{slug}/vault/zk/pins`, for a workspace vault."""
+    v = _vault(request, vault_id, manage=True)
+    try:
+        return VaultKeeperPinsOut(**vault_keeper.store_pins(
+            v, kv=payload.kv, expected_version=payload.expected_version, value=payload.value))
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
 
 
 @router.post("/vaults/{vault_id}/zk/enable", response=ZkStateOut, summary="Make a workspace vault's first key")

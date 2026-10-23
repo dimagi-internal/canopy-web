@@ -4452,6 +4452,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/vault/zk/pins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Record the keys a vault owner or admin just granted to, for the keepers
+         * @description `{kv, expected_version, value}`: the keepers' record, re-encrypted under the
+         *     vault key with the people the caller just granted to. Granting someone is how an
+         *     owner or admin confirms their key — a first one, or one they started over with —
+         *     so keepers trust it from then on. 409 `keeper_pins_stale`: read again, merge.
+         */
+        readonly put: operations["put_agent_zk_pins"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/vault/zk/rotate": {
         readonly parameters: {
             readonly query?: never;
@@ -8419,6 +8442,26 @@ export interface paths {
          */
         readonly get: operations["get_workspace_vault_zk"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/vaults/{vault_id}/zk/pins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Record the keys a vault owner or admin just granted to, for the keepers
+         * @description As `PUT /api/agents/{slug}/vault/zk/pins`, for a workspace vault.
+         */
+        readonly put: operations["put_workspace_vault_pins"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -22067,6 +22110,29 @@ export interface components {
             /** Service Key */
             readonly service_key?: string | null;
         };
+        /**
+         * VaultKeeperPinsOut
+         * @description The keepers' shared record of whose key they trusted: a `zk1` value under the
+         *     vault key at `kv`, bound to the name `~keeper-pins`. Empty `value` until a keeper
+         *     first writes one. Write back over `version`.
+         */
+        readonly VaultKeeperPinsOut: {
+            /**
+             * Value
+             * @default
+             */
+            readonly value: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /**
+             * Version
+             * @default 0
+             */
+            readonly version: number;
+        };
         /** ZkStateOut */
         readonly ZkStateOut: {
             /** Agent */
@@ -22095,6 +22161,14 @@ export interface components {
              * @default []
              */
             readonly sealed: readonly string[];
+            /**
+             * @default {
+             *       "value": "",
+             *       "kv": 0,
+             *       "version": 0
+             *     }
+             */
+            readonly pins: components["schemas"]["VaultKeeperPinsOut"];
         };
         /**
          * ZkTargetOut
@@ -22257,6 +22331,15 @@ export interface components {
             readonly kv: number;
             /** Wraps */
             readonly wraps: readonly components["schemas"]["ZkWrapIn"][];
+        };
+        /** VaultKeeperPinsIn */
+        readonly VaultKeeperPinsIn: {
+            /** Kv */
+            readonly kv: number;
+            /** Expected Version */
+            readonly expected_version: number;
+            /** Value */
+            readonly value: string;
         };
         /** ZkRotateIn */
         readonly ZkRotateIn: {
@@ -28652,42 +28735,10 @@ export interface components {
             /** Agents */
             readonly agents: readonly components["schemas"]["VaultKeeperAgentOut"][];
         };
-        /**
-         * VaultKeeperPinsOut
-         * @description The keepers' shared record of whose key they trusted: a `zk1` value under the
-         *     vault key at `kv`, bound to the name `~keeper-pins`. Empty `value` until a keeper
-         *     first writes one. Write back over `version`.
-         */
-        readonly VaultKeeperPinsOut: {
-            /**
-             * Value
-             * @default
-             */
-            readonly value: string;
-            /**
-             * Kv
-             * @default 0
-             */
-            readonly kv: number;
-            /**
-             * Version
-             * @default 0
-             */
-            readonly version: number;
-        };
         /** VaultKeeperGrantOut */
         readonly VaultKeeperGrantOut: {
             /** Granted */
             readonly granted: number;
-        };
-        /** VaultKeeperPinsIn */
-        readonly VaultKeeperPinsIn: {
-            /** Kv */
-            readonly kv: number;
-            /** Expected Version */
-            readonly expected_version: number;
-            /** Value */
-            readonly value: string;
         };
         /**
          * HealthCheck
@@ -40996,6 +41047,32 @@ export interface operations {
             };
         };
     };
+    readonly put_agent_zk_pins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultKeeperPinsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperPinsOut"];
+                };
+            };
+        };
+    };
     readonly rotate_agent_zk: {
         readonly parameters: {
             readonly query?: never;
@@ -46179,6 +46256,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly put_workspace_vault_pins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultKeeperPinsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperPinsOut"];
                 };
             };
         };

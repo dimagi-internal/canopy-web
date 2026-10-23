@@ -67,6 +67,10 @@ class UserVaultKeyset(models.Model):
     public_jwk = models.JSONField()
     #: [{"alg": "prf", "cred", "s", "n", "ct"}, ...] — one per passkey.
     seals = models.JSONField(default=list)
+    #: When the person last started over with a NEW key pair (`replace`): every vault
+    #: must let them in again, and keepers will not, since a changed key is what a
+    #: swapped one looks like — so the people holding each key are told at once.
+    replaced_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

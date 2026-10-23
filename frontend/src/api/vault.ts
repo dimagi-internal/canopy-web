@@ -192,3 +192,23 @@ export type VaultSetupOut = Schemas['VaultSetupOut']
 export async function getVaultSetup(): Promise<VaultSetupOut> {
   return need<VaultSetupOut>(await apiV2.GET('/api/vault/setup'), 'Could not check your vault key')
 }
+
+export type VaultKeeperPinsIn = Schemas['VaultKeeperPinsIn']
+export type VaultKeeperPinsOut = Schemas['VaultKeeperPinsOut']
+
+/** Store the keepers' record of an agent's vault (owner/admin, after a grant). */
+export async function putAgentZkPins(slug: string, body: VaultKeeperPinsIn): Promise<VaultKeeperPinsOut> {
+  return need<VaultKeeperPinsOut>(await apiV2.PUT('/api/agents/{slug}/vault/zk/pins', {
+    params: { path: { slug } }, body }), 'Could not record the granted keys')
+}
+
+/** Store the keepers' record of a workspace vault (owner/admin, after a grant). */
+export async function putWorkspaceVaultPins(vaultId: string, body: VaultKeeperPinsIn): Promise<VaultKeeperPinsOut> {
+  return need<VaultKeeperPinsOut>(await apiV2.PUT('/api/vaults/{vault_id}/zk/pins', {
+    params: { path: { vault_id: vaultId } }, body }), 'Could not record the granted keys')
+}
+
+export async function getWorkspaceVault(vaultId: string): Promise<WorkspaceVaultOut> {
+  return need<WorkspaceVaultOut>(await apiV2.GET('/api/vaults/{vault_id}', {
+    params: { path: { vault_id: vaultId } } }), 'Could not load the vault')
+}

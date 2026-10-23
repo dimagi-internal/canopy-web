@@ -2307,6 +2307,9 @@ class ZkStateOut(StrictModel):
     #: waiting for a vault-key holder to settle them into `zk1`. kv 0 = the
     #: agent is zero-knowledge from birth and has no vault key yet.
     sealed: list[str] = []
+    #: The keepers' record (`~keeper-pins` under the vault key): a browser that grants
+    #: someone records the key it granted to, so keepers trust it from then on.
+    pins: VaultKeeperPinsOut = VaultKeeperPinsOut()
 
 
 class ZkValuesOut(StrictModel):

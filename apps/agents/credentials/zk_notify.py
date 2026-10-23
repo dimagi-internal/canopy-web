@@ -36,6 +36,7 @@ from html import escape
 from django.core.cache import cache
 from django.utils import timezone
 
+from apps.passkeys.models import UserVaultKeyset
 from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
@@ -96,14 +97,20 @@ def sweep(now=None) -> int:
             if notice.kv != w.kv or (notice.kind, notice.target) not in pending:
                 notice.cleared_at = now
                 notice.save(update_fields=["cleared_at"])
+        # A person who started over with a new key waits for a PERSON: no keeper grants
+        # a changed key (it is what a swapped one looks like), so tell the holders now.
+        restarted = dict(UserVaultKeyset.objects.filter(
+            user_id__in=[int(tg) for (k, tg) in pending if k == "member" and tg.isdigit()],
+            replaced_at__isnull=False).values_list("user_id", "replaced_at"))
         for (kind, target), t in pending.items():
             notice, _ = ZkGrantNotice.objects.get_or_create(
                 **w.where, kind=kind, target=target, kv=w.kv,
                 defaults={"first_seen_at": now, "label": _label(t)[:300]},
             )
-            if notice.notified_at or notice.cleared_at or now - notice.first_seen_at < GRACE:
+            new_key = restarted.get(int(target)) if kind == "member" and target.isdigit() else None
+            if notice.notified_at or notice.cleared_at or (new_key is None and now - notice.first_seen_at < GRACE):
                 continue
-            notice.notified = _notify(w, notice)
+            notice.notified = _notify(w, notice, new_key=new_key)
             notice.notified_at = now
             notice.save(update_fields=["notified", "notified_at"])
             told += 1
@@ -139,17 +146,26 @@ def _link(agent) -> str:
     return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings/security#cred-zk")
 
 
-def _notify(w: _Waiting, notice) -> dict:
-    """Email + Web Push to each person who holds the vault key. Never raises."""
+def _notify(w: _Waiting, notice, *, new_key=None) -> dict:
+    """Email + Web Push to each person who holds the vault key. Never raises.
+    `new_key`: when the person started over with a new vault key — the grant is then
+    also the confirmation that the new key is theirs."""
     from django.core.mail import EmailMultiAlternatives
 
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
     try:
         what = (f"The machine {notice.label}" if notice.kind == "device"
                 else f"{notice.label}, a member of {w.what}'s vault,")
-        subject = f"Canopy vault · {notice.label} is waiting for {w.what}'s key"
-        detail = (f"{what} can't open {w.what}'s secrets yet, and no machine holding the key has passed it "
-                  f"on. Only someone who holds the key can: grant it with one passkey touch.")
+        if new_key is not None:
+            when = timezone.localtime(new_key).strftime("%b %-d")
+            subject = f"Canopy vault · {notice.label} has a new vault key and is waiting for {w.what}'s key"
+            detail = (f"{notice.label} started over with a new vault key on {when}, so they need {w.what}'s key "
+                      f"again. Runners won't pass it on to a changed key by themselves. Check with them that "
+                      f"it was them, then grant it with one passkey touch; that also confirms the new key.")
+        else:
+            subject = f"Canopy vault · {notice.label} is waiting for {w.what}'s key"
+            detail = (f"{what} can't open {w.what}'s secrets yet, and no machine holding the key has passed "
+                      f"it on. Only someone who holds the key can: grant it with one passkey touch.")
         text = (f"{detail}\n\n{w.link}\n\nYou are getting this because you hold {w.what}'s key. "
                 f"One notice per machine or person.\n")
         html = (f"<p>{escape(detail)}</p><p><a href=\"{escape(w.link)}\">Grant it</a></p>"

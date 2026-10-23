@@ -4,10 +4,14 @@ import {
   attachWorkspaceVault,
   createWorkspaceVault,
   detachWorkspaceVault,
+  getWorkspaceVault,
   listWorkspaceVaults,
   removeWorkspaceVaultMember,
   type WorkspaceVaultOut,
 } from '@/api/vault'
+import { useAuth } from '@/auth/AuthProvider'
+import { grantPendingWorkspace, unlockVaultKey } from '@/vault/operations'
+import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
 import { VAULT_ROLE_LABEL } from './agents/AgentVaultMembersSection'
 
@@ -35,6 +39,12 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
   const [email, setEmail] = useState('')
   const [target, setTarget] = useState('')
   const manages = v.you === 'owner' || v.you === 'admin'
+  const { user } = useAuth()
+  const unlocker = useUnlockPrompt()
+  // An owner or admin who holds the key lets in whoever is waiting — a new member, or
+  // one who started over with a new key (this grant is what confirms it).
+  const waiting = v.holders?.has_key ? v.members.filter((m) => m.has_vault_key && !m.has_copy) : []
+  const iHold = Boolean(user?.email && (v.holders?.people ?? []).some((p) => p.toLowerCase() === user.email.toLowerCase()))
 
   const run = async (fn: () => Promise<WorkspaceVaultOut>) => {
     setBusy(true)
@@ -101,6 +111,17 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
         </tbody>
       </table>
       <VaultWaitingNote members={v.members} holders={v.holders} testId={`ws-vault-waiting-${v.vault_id}`} />
+      {manages && iHold && waiting.length > 0 && (
+        <button type="button" disabled={busy} data-testid={`ws-vault-give-access-${v.vault_id}`}
+                onClick={() => void run(async () => {
+                  await grantPendingWorkspace(v.vault_id, () => unlockVaultKey(unlocker.prompt))
+                  return getWorkspaceVault(v.vault_id)
+                })}
+                className="mt-2 min-h-11 rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40 sm:min-h-0">
+          Give access ({waiting.length})
+        </button>
+      )}
+      {unlocker.element}
       {manages && (
         <div className="mt-2 flex flex-wrap gap-2">
           <form className="flex flex-wrap items-center gap-2" data-testid="ws-vault-add-member"

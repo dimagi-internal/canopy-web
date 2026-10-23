@@ -8,8 +8,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 const api = vi.hoisted(() => ({
   listWorkspaceVaults: vi.fn(), createWorkspaceVault: vi.fn(), attachWorkspaceVault: vi.fn(),
   detachWorkspaceVault: vi.fn(), addWorkspaceVaultMember: vi.fn(), removeWorkspaceVaultMember: vi.fn(),
+  getWorkspaceVault: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
+const ops = vi.hoisted(() => ({ grantPendingWorkspace: vi.fn(async () => ({})), unlockVaultKey: vi.fn() }))
+vi.mock('@/vault/operations', () => ops)
+vi.mock('@/auth/AuthProvider', () => ({ useAuth: () => ({ status: 'authenticated', user: { email: 'jj@dimagi.com' } }) }))
 
 const { WorkspaceVaultsSection } = await import('./WorkspaceVaultsSection')
 
@@ -60,5 +64,22 @@ describe('WorkspaceVaultsSection', () => {
     expect(screen.queryByTestId('ws-vault-attach')).toBeNull()
     expect(screen.queryByTestId('ws-vault-add-member')).toBeNull()
     expect(screen.queryByTestId('ws-vault-detach-3')).toBeNull()
+  })
+
+  it('lets an owner who holds the key give it to whoever is waiting', async () => {
+    const waiting = {
+      ...SHARED,
+      holders: { has_key: true, people: ['jj@dimagi.com'], keepers: [] },
+      members: [
+        { ...SHARED.members[0], has_copy: true },
+        { ...SHARED.members[1], has_vault_key: true, has_copy: false },
+      ],
+    }
+    api.listWorkspaceVaults.mockResolvedValue([waiting])
+    api.getWorkspaceVault.mockResolvedValue({ ...waiting, members: waiting.members.map((m) => ({ ...m, has_copy: true })) })
+    render(<WorkspaceVaultsSection slug="dimagi" />)
+    fireEvent.click(await screen.findByTestId('ws-vault-give-access-v1'))
+    await waitFor(() => expect(ops.grantPendingWorkspace).toHaveBeenCalledWith('v1', expect.any(Function)))
+    await waitFor(() => expect(screen.queryByTestId('ws-vault-give-access-v1')).toBeNull())
   })
 })

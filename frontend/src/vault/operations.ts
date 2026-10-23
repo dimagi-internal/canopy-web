@@ -21,7 +21,9 @@ import {
   getKeyset,
   getWorkspaceVaultZk,
   getZkState,
+  putAgentZkPins,
   putKeyset,
+  putWorkspaceVaultPins,
   putWorkspaceVaultValues,
   putZkValues,
   rotateZk,
@@ -31,6 +33,7 @@ import {
   type ZkWrapIn,
   type ZkWrapOut,
 } from '@/api/vault'
+import { ApiError } from '@/api/problem'
 import { assertWithPrf, PrfUnsupportedError } from './prf'
 import type { Assessment } from './trust'
 import {
@@ -45,6 +48,7 @@ import {
   valueDigest,
   type Recipient,
   importPrivateScalar,
+  jkt,
   memberInfo,
   openUserKey,
   openUserKey2skd,
@@ -620,10 +624,71 @@ export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStat
     const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
     out = await addZkWraps(slug, { kv: state.kv, wraps })
     await endorseQuietly(slug, state.agent_id, me, [selfReader(me.userId, me.publicJwk), ...targets.map(endorsableOf)])
+    await recordGranted(state, vk, state.pending, (b) => putAgentZkPins(slug, b), () => getZkState(slug))
   }
   // The same unlock settles what canopy-web sealed, so the newly granted can read it.
   if (sealed.length && (await settleSealed(slug, vk, me))) out = await getZkState(slug)
   return out
+}
+
+/** A workspace vault's `grantPending`: wrap its key to everyone waiting, then record
+ *  the people granted to in the keepers' record. */
+export async function grantPendingWorkspace(vaultId: string, unlock: Unlock): Promise<ZkStateOut> {
+  const state = await getWorkspaceVaultZk(vaultId)
+  const targets = state.pending.map(targetOf).filter((t): t is Target => t !== null)
+  if (state.kv === 0 || !targets.length) return state
+  const vk = await openVk(state, await unlock())
+  const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
+  const out = await addWorkspaceVaultWraps(vaultId, { kv: state.kv, wraps })
+  await recordGranted(state, vk, state.pending, (b) => putWorkspaceVaultPins(vaultId, b),
+    () => getWorkspaceVaultZk(vaultId))
+  return out
+}
+
+// ---- the keepers' record (canopy-web Vault.keeper_pins_zk) -------------------------------
+//
+// Which key each person was given a vault's key on, kept in the vault under its own key
+// (name `~keeper-pins`), so every keeper refuses a key that changed. An owner or admin
+// granting someone here is what confirms their key — a first one, or one they started
+// over with — so the grant records it, and keepers trust it from then on.
+
+const PINS_NAME = '~keeper-pins'
+
+type PinsBody = { kv: number; expected_version: number; value: string }
+
+/** Record each PERSON just granted to, with their key's thumbprint. Best effort: the
+ *  grant stands either way; a record that does not open is left alone. */
+export async function recordGranted(state: ZkStateOut, vk: Uint8Array, granted: readonly ZkTargetOut[],
+                                    put: (body: PinsBody) => Promise<unknown>,
+                                    reread: () => Promise<ZkStateOut>): Promise<boolean> {
+  const people = granted.filter((t) => t.kind === 'member' && t.target && t.public_jwk)
+  if (!people.length) return false
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const s = attempt ? await reread() : state
+      const rec = s.pins
+      let current: Record<string, unknown> = {}
+      if (rec?.value && rec.kv === s.kv) {
+        const parsed = JSON.parse(await decryptValue(vk, s.agent_id, PINS_NAME, s.kv, rec.value)) as
+          { people?: Record<string, unknown> }
+        current = { ...(parsed.people ?? {}) }
+      }
+      const now = new Date().toISOString()
+      for (const t of people) {
+        current[t.target!] = { jkt: await jkt(t.public_jwk as Jwk), email: t.email ?? '', pinned_at: now }
+      }
+      const value = await encryptValue(vk, s.agent_id, PINS_NAME, s.kv, JSON.stringify({ v: 1, people: current }))
+      try {
+        await put({ kv: s.kv, expected_version: rec?.version ?? 0, value })
+        return true
+      } catch (e) {
+        if (!(e instanceof ApiError && e.code === 'keeper_pins_stale')) return false
+      }
+    }
+  } catch {
+    // The record did not open (or the write failed): keepers report it; the grant stands.
+  }
+  return false
 }
 
 /**
