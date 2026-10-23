@@ -631,6 +631,15 @@ tool; and beside every delivered prompt — the runner leaves
   `canopy-web-mcp-headers.js` sends it and never falls back to a PAT once it has
   one; a write failure refuses the turn. A scoped token does not serve a
   confined turn's conversation, and a confined token does not serve a full turn's.
+  **REST takes a scoped token too, but only where MCP would** (canopy-web#1782,
+  `tokens.middleware._authenticate_caller_token`): re-resolved on every request
+  as above, it signs in as the asker on a route the MCP server serves as a tool
+  (`api_tools.is_tool_route`) and is refused (403) on every other one. The routes
+  MCP leaves out (minting a PAT, the person's own memory switches and grants, the
+  runner protocol) stay out of reach of a session acting for someone. A confined
+  token is refused on REST (401): its capability's tool list is an MCP filter, and
+  REST has no equivalent to apply. This is what lets the canopy CLI in a scoped
+  session act as the asker instead of failing for want of a PAT.
 * **Projects run as the person who asked.** Agents and projects are both first
   class, and both act FOR the person who asked; they differ only in WHO the
   session is. An agent's turn acts as the agent, bounded by the asker (the rule

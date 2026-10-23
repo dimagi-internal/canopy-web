@@ -11,6 +11,10 @@ A `ContactToken` names somebody with no canopy account — it sets
 `request.contact` and deliberately leaves the request anonymous, so nothing
 written for users can be handed one by accident. See `ContactToken`'s docstring.
 
+A conversation's caller token (`cct_…`) signs in as the person who asked, on the
+routes canopy's MCP server serves as tools and no others — see
+`_authenticate_caller_token`.
+
 CSRF: Bearer-authenticated requests are stateless and not vulnerable to
 cross-site forgery, but Django's `CsrfViewMiddleware` doesn't know that
 — it only short-circuits on session cookies. We set
@@ -65,6 +69,12 @@ class BearerTokenAuthMiddleware:
 
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
+
+        from apps.harness import caller_tokens  # noqa: PLC0415 — the bearer door's per-kind imports stay inside it, like the file's others
+
+        if raw.startswith(caller_tokens.PREFIX):
+            # A session that already signed this request in keeps its identity.
+            return None if already_signed_in else _authenticate_caller_token(request, raw)
 
         # One resolver for every door (apps/tokens/principal.py). A session that
         # already signed this request in keeps its identity, so a PAT is not
@@ -262,6 +272,58 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
         except Exception:  # noqa: BLE001 — a cap only narrows; never deny on a hiccup
             logger.exception("acting cap lookup failed")
     return True
+
+
+#: Whether `METHOD path` is a route a caller token may reach over REST. The MCP app
+#: registers it at startup (`apps.mcp.apps.McpConfig.ready` → `api_tools.is_tool_route`)
+#: so this layer never imports the one above it; unset, no route qualifies and the
+#: door fails closed.
+caller_token_routes: Callable[[str, str], bool] | None = None
+
+
+def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse | None:
+    """A conversation's caller token (`apps/harness/caller_tokens.py`) on REST.
+
+    canopy-web#1782: a project turn's session acts as the person who asked, and
+    its canopy CLI needs REST for that, not only MCP. Accepted only as the MCP
+    door accepts it, so nothing new is granted:
+
+    * the SCOPED (full-profile) kind only, naming a canopy user, not sensitive —
+      a confined token is held to its capability's tools, which REST has no way
+      to apply, so it is refused here;
+    * re-resolved on every request, so it follows the conversation's current
+      asker and voids exactly when `resolve` says it does;
+    * only on a route the MCP server serves as a tool (`caller_token_routes`)
+      — what MCP leaves out (minting a PAT, the person's own memory switches and
+      grants, the runner protocol) is refused, never quietly reachable over REST;
+    * with the caller's acting cap, as `_authenticate_mcp_call` applies it."""
+    from apps.api.errors import problem_response  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+    from apps.harness import caller_tokens  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+
+    grant = caller_tokens.resolve(raw)
+    if grant is None or not grant.all_tools or grant.sensitive or grant.user is None:
+        return problem_response(401, detail=(
+            "this caller token does not reach REST: it has expired, its conversation no "
+            "longer has a verified asker, or it is confined to a capability (use MCP)"))
+    routes = caller_token_routes
+    if routes is None or not routes(request.method, request.path_info):
+        return problem_response(403, detail=(
+            "a caller token reaches only the routes canopy's MCP server serves as tools, "
+            "and this is not one"))
+    turn_id = str(grant.turn.pk)
+    request.user = grant.user
+    request.auth_method = "caller_token"
+    request.auth_credential = {"type": "caller_token", "id": grant.token_id,
+                               "label": f"turn:{turn_id}", "turn_id": turn_id}
+    request._dont_enforce_csrf_checks = True
+    _apply_acting_cap(request)
+    try:
+        from apps.workspaces import role_cap  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
+
+        role_cap.apply(request.user, role_cap.turn_cap(turn_id, request.user))
+    except Exception:  # noqa: BLE001 — a cap only narrows; never deny on a hiccup
+        logger.exception("acting cap lookup failed")
+    return None
 
 
 #: Credentials that may NOT mint another credential (a PAT, a session). Each is
