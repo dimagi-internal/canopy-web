@@ -7,7 +7,8 @@ from canopy_kb.curate import Budget, Curation, MemoryStore, OverBudget, StaleSte
 
 
 def _doc(i, text, **kw):
-    item = {"id": i, "type": "page", "title": i, "url": f"https://x/{i}", "text": text, "sha256": i + text[:3], **kw}
+    item = {"id": i, "type": "page", "title": i, "url": f"https://x/{i}", "text": text,
+            "sha256": __import__("hashlib").sha256(text.encode()).hexdigest(), **kw}
     return records.record(item), text
 
 
@@ -108,6 +109,11 @@ def test_publishing_sends_what_changed_a_card_change_sends_no_text_and_the_state
         out = _publish(cur, {**docs, "a": (rec, text)})
     assert out["published"] and out["changed"] == 1 and out["version"] == 2
     assert store.item("a")["card"]["summary"] == "new" and store.item("b")["text"] == "Beta " * 500
+    assert store.versions[-1]["changes"]["changed"] == []  # a new card on the same text: no news for readers
+
+    with Curation(store) as cur:  # a new text is news
+        out = _publish(cur, {**docs, "a": _doc("a", "Alpha, revised " * 500)})
+    assert store.versions[-1]["changes"]["changed"] == ["a"] and store.versions[-1]["changes"]["rows"]["a"]["url"]
 
 
 def test_a_refresh_that_would_remove_much_stops_and_a_second_refresh_waits():
