@@ -69,7 +69,7 @@ The plaintext `GET /runners/{id}/credential` keeps serving the non-secret parts 
 ## Migration
 
 1. Ship the attachment, eligibility, resolve and box read path, with the box reading the vault first and the old plaintext bundle as a fallback.
-2. For each cloud runner with `token`/`api_key` rows: create its vault (or attach it to the boundary's vault Jonathan names), and seal each `value_enc` into it as `zks1` to the eligible recipients (`manage.py runner_credentials_to_vault`, dry-run by default). Clear `value_enc` in the same transaction. The box settles the values on its next pass.
+2. For each cloud runner with `token`/`api_key` rows: create **its own** vault (`<runner> Claude credentials`; Jonathan, 2026-10-23: per-box first, attach to a shared vault later), and seal each `value_enc` into it as `zks1` to the eligible recipients (`manage.py runner_credentials_to_vault`, dry-run by default). Clear `value_enc` in the same transaction. The box settles the values on its next pass.
 3. Once no row holds a `value_enc`, delete the column and the plaintext values from `GET …/credential`, and the box's fallback with them.
 
 ## Not in scope
