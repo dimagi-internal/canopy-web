@@ -1172,6 +1172,22 @@ def list_runners(request: HttpRequest):
     Each row carries `can_manage` for the ownership half. Retired runners are
     excluded at lookup, as everywhere else.
     """
+    return _runner_rows(request, _visible_runners(request)[:50])
+
+
+@router.get("/runners/{runner_id}/", response=RunnerOut, summary="One runner I can see")
+@gate("member")  # runner_read_q: the tenant's fleet, as the list
+def get_runner(request: HttpRequest, runner_id: uuid.UUID) -> RunnerOut:
+    """One row of `GET /runners/` — the same visibility and the same per-caller flags —
+    for a page about this runner (`/w/:workspace/runners/:id`). 404 for one the list
+    would not show."""
+    rows = _runner_rows(request, _visible_runners(request).filter(pk=runner_id))
+    if not rows:
+        raise HttpError(404, "runner not found")
+    return rows[0]
+
+
+def _visible_runners(request: HttpRequest):
     qs = (
         Runner.objects.exclude(status=Runner.RETIRED)
         .filter(runner_read_q(request))
@@ -1189,7 +1205,11 @@ def list_runners(request: HttpRequest):
         # "continue on…" picker, and nothing about the rest of the fleet.
         following = {r.pk for r in qs if routing.agents_following_runner(r) & set(offered)}
         qs = qs.filter(Q(agent_assignments__agent_id__in=offered) | Q(pk__in=following)).distinct()
-    rows = list(qs[:50])
+    return qs
+
+
+def _runner_rows(request: HttpRequest, qs) -> list:
+    rows = list(qs)
     routing.prime_dedicated_agents(rows)
     open_by_runner = _open_sessions_by_runner([r.pk for r in rows])
     administered = harness_runners.administered_runner_ids(request.user, rows)

@@ -12,7 +12,7 @@
 * ``verify_execution`` → ``Execution`` — canopy's signed ``Canopy-Execution``
   statement about the call (agent, commit, sensitive-data declaration, runner, its flags
   in force, requirements), and ``Execution.sensitive_clearance`` — whether to release
-  real data.
+  sensitive data.
 * ``ProbeIdentity`` + ``ProbeHandler`` — canopy's live probe: a real ID-JAG for
   one fixed, low-privilege principal, so the whole chain is exercised on a
   schedule without a visitor.

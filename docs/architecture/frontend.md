@@ -6,6 +6,11 @@ How the React SPA (`frontend/`) is styled and how it is served so a deploy is ne
 
 App UI is **dense and readable: tables, not cards.**
 
+A core object's page (agent settings, workspace settings, a runner, a vault) is
+built from `components/objectPage/` — `ObjectPage`, `ObjectTabs`, `Section` /
+`Setting` — so they share one frame and one tab row, and improving the style is
+one change (`pages.md` § One editor per object).
+
 ## API clients and errors
 
 - Every `src/api/*` module calls the server through `apiV2` (`src/api/client.v2.ts`), so it gets the `/api/w/{ws}` rewrite, the 401 login bounce and the passkey step-up retry. Response types alias `components['schemas'][...]` from `generated.ts`; only free-form JSON fields (a review's `request_json`, a narrative's `narration`) are written out by hand. `chat.ts` still uses raw `fetch` because some of its routes (session secrets, MCP Apps View plumbing) are not in the schema.

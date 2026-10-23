@@ -7653,10 +7653,12 @@ export interface paths {
         };
         /**
          * What a connected site asks of agents, and who meets it
-         * @description The site's signed `site.json` — its pages and the scopes each grants, what
-         *     an agent must be to read real data there, and which agents it offers — beside
-         *     canopy's own site agents response for the site: per allowed agent, whether it meets the
-         *     site's `real_data.requires` and, if not, why. Fetched like the site's keys
+         * @description The site's signed `site.json` — which agents it offers, which of them it
+         *     lets work with its sensitive data and what such an agent must be, and its
+         *     pages with the scopes each grants (the site's own description; canopy never
+         *     enforces it) — beside canopy's own site agents response for the site: per
+         *     allowed agent the site lets near its sensitive data, whether it can handle it
+         *     now and, if not, why. Fetched like the site's keys
          *     (https only, bounded, cached) and fail-closed: an unreadable document is
          *     `available: false` with its reason.
          */
@@ -9565,6 +9567,28 @@ export interface paths {
          *     running stay where they are.
          */
         readonly put: operations["set_runner_engine"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One runner I can see
+         * @description One row of `GET /runners/` — the same visibility and the same per-caller flags —
+         *     for a page about this runner (`/w/:workspace/runners/:id`). 404 for one the list
+         *     would not show.
+         */
+        readonly get: operations["get_runner"];
+        readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -27677,19 +27701,28 @@ export interface components {
             readonly slug: string;
             /** Name */
             readonly name: string;
+            /** Url */
+            readonly url: string;
             /** Offered */
             readonly offered: boolean;
-            /** Real Data */
-            readonly real_data: boolean;
+            /** Sensitive Data */
+            readonly sensitive_data: boolean;
             /** Ready */
             readonly ready: boolean;
-            /** Meets Real Data */
-            readonly meets_real_data: boolean;
+            /** Can Handle Sensitive Data */
+            readonly can_handle_sensitive_data: boolean | null;
             /** Why Not */
-            readonly why_not: readonly string[];
+            readonly why_not: readonly components["schemas"]["FitReasonOut"][];
         };
-        /** RealDataRequiresOut */
-        readonly RealDataRequiresOut: {
+        /** FitReasonOut */
+        readonly FitReasonOut: {
+            /** Text */
+            readonly text: string;
+            /** Url */
+            readonly url: string;
+        };
+        /** SensitiveDataRequiresOut */
+        readonly SensitiveDataRequiresOut: {
             /**
              * Handles Sensitive
              * @default false
@@ -27718,7 +27751,7 @@ export interface components {
             readonly stale: boolean;
             /** Pages */
             readonly pages: readonly components["schemas"]["SitePageOut"][];
-            readonly requires: components["schemas"]["RealDataRequiresOut"];
+            readonly requires: components["schemas"]["SensitiveDataRequiresOut"];
             /** Uses Version */
             readonly uses_version: string;
             /** Site Agents Version */
@@ -47586,6 +47619,28 @@ export interface operations {
                 readonly "application/json": components["schemas"]["RunnerEngineIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

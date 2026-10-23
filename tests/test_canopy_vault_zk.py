@@ -1453,7 +1453,7 @@ def test_a_member_waiting_for_a_workspace_vault_is_emailed_to_its_holders(fleet,
     assert zk_notify.sweep(t0 + zk_notify.GRACE) >= 1
     [msg] = [m for m in mailoutbox if "Shared" in m.subject]
     assert msg.to == ["jj@dimagi.com"] and "ed5@dimagi.com" in msg.subject
-    assert f"/settings/secrets#ws-vault-{vid}" in msg.body and "a new admin" not in msg.body
+    assert f"/vaults/{vid}" in msg.body and "a new admin" not in msg.body
     assert notice.agent_id is None
 
 

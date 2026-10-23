@@ -15,8 +15,8 @@ where granting is one passkey touch.
   key, `canopy vault zk keep`) grants every endorsed target within a minute or
   two — neither may mail anyone. The email is the fallback for what no machine
   could pass on.
-* Agent vaults and workspace vaults alike (a workspace vault's link goes to its
-  workspace's Secrets page).
+* Agent vaults and workspace vaults alike (a workspace vault's link goes to its own
+  page, `/w/<ws>/vaults/<id>`).
 * Once per target (`ZkGrantNotice`, unique per vault/kind/target/kv); the row
   is closed when the target is wrapped or stops qualifying.
 * Swept on the off-request clock (apps/common/ticks.py), at most once a minute.
@@ -77,7 +77,7 @@ def _vaults():
                        partial(zk.pending_targets, agent), partial(holders, agent))
     for v in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gte=1).select_related("workspace"):
         yield _Waiting(f"the {v.name} vault", v.kv,
-                       wslinks.scoped_url(v.workspace, f"/settings/secrets#ws-vault-{v.pk}"), {"vault": v},
+                       wslinks.scoped_url(v.workspace, f"/vaults/{v.pk}"), {"vault": v},
                        partial(workspace_vaults.pending_targets, v), partial(workspace_holders, v))
 
 

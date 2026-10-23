@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 
-// The two block shapes an agent page is built from, shared by Overview and
-// Settings so the two cannot drift into looking like different products.
+// The two block shapes every core object's page is built from — an agent's, a
+// workspace's, a runner's, a vault's — so they cannot drift into looking like
+// different products. See ObjectPage for the frame around them.
 
 /** One titled block. The title is a real heading — several of these used to be
  *  their own rail entries, so each still has to read as a destination — and

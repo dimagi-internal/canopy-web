@@ -33,7 +33,7 @@ is safe without a signature — and why it refuses write scopes by default.
 
 **Which agent, under which runner requirements.** A page may also choose its
 agent and add runner requirements (``"labsdata"`` under ``["sensitive_data"]`` on a page
-over real data, while the rest of the site keeps its default agent and no
+over sensitive data, while the rest of the site keeps its default agent and no
 requirement). That choice travels with the page exactly as its scopes do, and
 for the same reason: the scopes were granted with that agent in mind, so a
 browser must not be able to keep one and swap the other. In signed mode it is

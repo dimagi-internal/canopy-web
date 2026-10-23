@@ -2,7 +2,7 @@
 
     {% canopy_panel resource="labs-marketplace://orgs" backing_tool="marketplace_orgs_get" visible_ids=slugs %}
 
-at the end of the page. A page over real data picks its own agent and requirements::
+at the end of the page. A page over sensitive data picks its own agent and requirements::
 
     {% canopy_panel resource=... agent="labsdata" runner_requirements=sensitive_data panel=wide %}
 

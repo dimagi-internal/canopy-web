@@ -40,3 +40,18 @@ export function useScopedPath(): (path: string) => string {
   const { workspace = '' } = useParams()
   return (path: string) => scopedPath(workspace, path)
 }
+
+/** A runner's one page: `/w/<its workspace>/runners/<id>` — the address every link
+ *  to a box uses (alerts build the same one server-side). A runner with no
+ *  workspace has no page and opens on /supervisor. */
+export function runnerHref(runner: { id: string; workspace?: string | null }): string {
+  return runner.workspace
+    ? scopedPath(runner.workspace, `/runners/${runner.id}`)
+    : `/supervisor?tab=runners&runner=${runner.id}`
+}
+
+/** A workspace vault's one page. */
+export function vaultHref(workspace: string, vaultId: string): string {
+  return scopedPath(workspace, `/vaults/${vaultId}`)
+}
+

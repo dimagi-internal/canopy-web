@@ -631,20 +631,6 @@ export async function grantPending(slug: string, unlock: Unlock): Promise<ZkStat
   return out
 }
 
-/** A workspace vault's `grantPending`: wrap its key to everyone waiting, then record
- *  the people granted to in the keepers' record. */
-export async function grantPendingWorkspace(vaultId: string, unlock: Unlock): Promise<ZkStateOut> {
-  const state = await getWorkspaceVaultZk(vaultId)
-  const targets = state.pending.map(targetOf).filter((t): t is Target => t !== null)
-  if (state.kv === 0 || !targets.length) return state
-  const vk = await openVk(state, await unlock())
-  const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
-  const out = await addWorkspaceVaultWraps(vaultId, { kv: state.kv, wraps })
-  await recordGranted(state, vk, state.pending, (b) => putWorkspaceVaultPins(vaultId, b),
-    () => getWorkspaceVaultZk(vaultId))
-  return out
-}
-
 // ---- the keepers' record (canopy-web Vault.keeper_pins_zk) -------------------------------
 //
 // Which key each person was given a vault's key on, kept in the vault under its own key
@@ -921,7 +907,11 @@ export async function grantWorkspaceVaultPending(vaultId: string, me: Unlocked):
   if (state.kv === 0 || !targets.length) return state
   const vk = await openVk(state, me)
   const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
-  return addWorkspaceVaultWraps(vaultId, { kv: state.kv, wraps })
+  const out = await addWorkspaceVaultWraps(vaultId, { kv: state.kv, wraps })
+  // This grant is what confirms each person's key (a first one, or a new one): record it.
+  await recordGranted(state, vk, state.pending, (b) => putWorkspaceVaultPins(vaultId, b),
+    () => getWorkspaceVaultZk(vaultId))
+  return out
 }
 
 /** Seal one value into a workspace vault, in this browser: canopy-web stores ciphertext only. */

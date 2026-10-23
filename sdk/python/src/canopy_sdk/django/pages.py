@@ -90,7 +90,7 @@ def panel_context(request=None, *, resource: str = "", backing_tool: str = "", v
 
     ``agent`` chooses this page's agent in place of ``AGENT_SLUG``, and
     ``runner_requirements`` adds to the site's ``RUNNER_REQUIREMENTS`` (e.g.
-    ``agent="labsdata", runner_requirements=["sensitive_data"]`` on a page over real data).
+    ``agent="labsdata", runner_requirements=["sensitive_data"]`` on a page over sensitive data).
     Both are signed into the page token, so the mint binds the visitor's token —
     and the grant this page's scopes buy — to that agent alone. Signed mode
     only: in key mode the browser names the page, so the choice lives in

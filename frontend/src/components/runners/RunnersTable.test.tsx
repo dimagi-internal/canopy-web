@@ -63,10 +63,10 @@ describe('RunnersTable checks and detail', () => {
     render(<MemoryRouter><RunnersTable workspace="dimagi" runners={[box]} open="cloud-ec2-2" /></MemoryRouter>)
     const manage = screen.getByTestId('runner-manage')
     expect(manage.textContent).toContain('Manage runner')
-    expect(manage.getAttribute('href')).toBe('/supervisor?tab=runners&runner=cloud-ec2-2')
+    expect(manage.getAttribute('href')).toBe('/w/dimagi/runners/cloud-ec2-2')
     const fixes = screen.getAllByText('Fix →').map((a) => a.getAttribute('href'))
     // The sign-in is fixed on the runner, the agent's token on the agent; an
     // agent outside this tree (ace) has nowhere to link.
-    expect(fixes).toEqual(['/supervisor?tab=runners&runner=cloud-ec2-2', '/w/dimagi/agents/jarvis/settings#credentials'])
+    expect(fixes).toEqual(['/w/dimagi/runners/cloud-ec2-2', '/w/dimagi/agents/jarvis/settings#credentials'])
   })
 })

@@ -800,8 +800,26 @@ to show your operator, and canopy's HTTP `status` when it answered.
 
 Tell canopy what you need back by setting `CANOPY_HOST["SITE_NEEDS"]`: the SDK
 serves it, signed, at `canopy/site.json` beside `canopy/jwks.json`, and canopy's
-**Connected sites** page shows your pages and scopes and, per agent, whether it
-meets your `real_data.requires` and why not.
+**Connected sites** page shows, per agent, whether you offer it, whether you let it
+work with your sensitive data and — only for those — whether it meets your
+`sensitive_data.requires` and why not.
+
+```python
+def site_needs():
+    return {"sensitive_data": {"requires": {"handles_sensitive": True, "runner_flag": "sensitive_data"}},
+            "uses": {"agents": ["ace", "labsdata"], "sensitive_data_agents": ["labsdata"],
+                     "version": current_site_agents_version()},
+            "titles": {"labs:workflow:run": "A workflow run"}}
+```
+
+`sensitive_data.requires` is what an agent must be to work with your sensitive data
+(`handles_sensitive`: a capability for your site says `data: sensitive`;
+`runner_flag`: its turns run on a runner with that flag), and
+`uses.sensitive_data_agents` names the agents you let near it. **The pages and
+scopes in `site.json` are informational for canopy:** it shows them to the site's
+owner for reference, but never enforces them or tells an agent. Agents never need to
+know your pages — they declare only `sites:` and `data: sensitive`; you enforce your
+own page scopes.
 
 The same document carries a **`site` block** — your own facts, filled by the SDK
 from settings you already have: `origins` (`CANOPY_HOST["ORIGINS"]`, else the
@@ -997,14 +1015,14 @@ In three steps — every claim, lifetime, header and refusal is in
 3. **Use.** canopy's `site_tools` / `site_call` call your MCP with `Authorization: DPoP <token>`,
    a fresh proof and an informational `Canopy-Actor` header; run the tool as `sub`, within the
    token's scopes.
-4. **Real data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
+4. **Sensitive data? Verify `Canopy-Execution`.** On an agent's turn every request also carries
    canopy's signed statement about the call: the agent, its author's declaration that the
    capability handles sensitive data (`data: sensitive`, made by its owner or an admin), the
    runner and its flags in force (`sensitive_data`, declared by a person and matched by the
    box's own report), and the
    conversation's requirements. `canopy_sdk.django.execution.verify_execution(request)` checks
    it (canopy's client key, your resource, 60s, single-use, bound to the DPoP key and token);
-   `execution.sensitive_clearance(agents={...})` says whether to release real data or keep the
+   `execution.sensitive_clearance(agents={...})` says whether to release sensitive data or keep the
    agent on synthetic data, and why. Claims and refusal codes:
    [SDK README § `Canopy-Execution`](../../sdk/python/README.md#canopy-execution--what-canopy-vouches-for-per-request).
    canopy's gateway itself never calls you for a sensitive conversation whose capability does

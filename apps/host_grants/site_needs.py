@@ -110,37 +110,57 @@ def needs_for(app, *, now: float | None = None) -> Needs:
     return Needs(url, document, t)
 
 
+def _short(text: str) -> str:
+    """A site agents problem sentence without its trailing `canopy › <url>` (the
+    url travels beside it)."""
+    return text.split(": canopy › ")[0].strip()
+
+
 def fit(document: wire.SiteNeeds, content: dict) -> tuple[list[dict], list[str]]:
-    """Per allowed agent: does the site offer it, let it read real data, and does
-    it meet `real_data.requires` — and if not, why. Plus the agents the site
-    names that canopy does not allow there (they can never appear)."""
-    requires = dict(document.real_data_requires or {})
+    """Per allowed agent: does the site offer it, does it let it work with its
+    sensitive data, and — only then — can the agent handle that data now, and if
+    not, why (each reason with the page in canopy that fixes it). An agent the
+    site does not allow near its sensitive data has nothing to meet:
+    `can_handle_sensitive_data` is None and `why_not` empty. Plus the agents the
+    site names that canopy does not allow there (they can never appear).
+
+    The site's pages and scopes are not part of the fit: they are the site's own
+    description, enforced by the site, and canopy never tells an agent about them."""
+    requires = dict(document.sensitive_data_requires or {})
     flag = requires.get("runner_flag") or ""
+    # The site agents API's sentence for the missing runner, said once below.
+    runner_problem = f"no ready runner with {flag}" if flag else None
     rows = []
     for agent in content["agents"]:
-        why: list[str] = []
-        if requires.get("handles_sensitive") and not any(
-                c["handles_sensitive"] for c in agent["capabilities"]):
-            why.append(f"does not handle sensitive data in canopy: no capability of "
-                       f"{agent['name']} for this site says `data: sensitive`")
-        if flag and not agent["runners"]["ready_with"].get(flag):
-            # The site agents API's own sentence when it has one: it names where to fix it.
-            why.append(next((p for p in agent["problems"]
-                             if p.startswith(f"no ready runner with {flag}")),
-                            f"no ready runner with {flag}"))
-        why += [p for p in agent["problems"] if p not in why]
+        allowed = agent["slug"] in document.uses_sensitive_data_agents
+        settings_url = f"{agent['url']}/settings"
+        why: list[dict] = []
+        if allowed:
+            links = agent.get("problem_links") or [{"text": p, "url": ""} for p in agent["problems"]]
+            if requires.get("handles_sensitive") and not any(
+                    c["handles_sensitive"] for c in agent["capabilities"]):
+                why.append({"text": f"no capability of {agent['name']} for this site says "
+                                    f"`data: sensitive`", "url": f"{settings_url}#reach"})
+            if flag and not agent["runners"]["ready_with"].get(flag):
+                # The site agents API's own link when it has one: it names where to fix it.
+                found = next((p for p in links if p["text"].startswith(runner_problem)), None)
+                why.append({"text": f"no ready {flag.replace('_', '-')} runner takes its turns",
+                            "url": (found or {}).get("url") or f"{settings_url}#running"})
+            why += [{"text": _short(p["text"]), "url": p["url"]} for p in links
+                    if not (runner_problem and p["text"].startswith(runner_problem))]
         rows.append({
             "slug": agent["slug"],
             "name": agent["name"],
+            "url": agent["url"],
             "offered": agent["slug"] in document.uses_agents,
-            "real_data": agent["slug"] in document.uses_real_data_agents,
+            "sensitive_data": allowed,
             "ready": agent["ready"],
-            "meets_real_data": agent["ready"] and not why,
+            "can_handle_sensitive_data": (agent["ready"] and not why) if allowed else None,
             "why_not": why,
         })
-    allowed = {a["slug"] for a in content["agents"]}
-    named = list(dict.fromkeys([*document.uses_agents, *document.uses_real_data_agents]))
-    return rows, [s for s in named if s not in allowed]
+    allowed_slugs = {a["slug"] for a in content["agents"]}
+    named = list(dict.fromkeys([*document.uses_agents, *document.uses_sensitive_data_agents]))
+    return rows, [s for s in named if s not in allowed_slugs]
 
 
 # --- the site's own facts: filling a Connected site from its document ----------------

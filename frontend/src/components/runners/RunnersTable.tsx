@@ -8,7 +8,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { statusTone } from '@/pages/runnerTopology'
 import { fixHref } from '@/components/supervisor/RunnerHealth'
 import { MissingSessions } from './MissingSessions'
-import { scopedPath } from '../../lib/scopedLinks'
+import { runnerHref, scopedPath } from '../../lib/scopedLinks'
 
 // THE RUNNER TABLE — one table for Health and Topology → Runners, over the
 // topology's own runner rows (`harness.topology.build`). Facts and states only:
@@ -132,7 +132,7 @@ function CheckCounts({ problems }: { problems: TopologyRunnerOut['problems'] }):
 function RunnerDetail({ runner: r, workspace }: { runner: TopologyRunnerOut; workspace: string }): JSX.Element {
   const now = new Date()
   const short = (sha: string) => sha ? sha.slice(0, 8) : 'unknown'
-  const manage = `/supervisor?tab=runners&runner=${r.id}`
+  const manage = runnerHref({ id: r.id, workspace: r.workspace ?? workspace })
   // A `github.<agent>` check is fixed on that agent; every other check (its
   // Claude sign-in, a refresh) on the runner itself.
   const agentWs = (slug: string) => r.agents.find((a) => a.slug === slug)?.workspace

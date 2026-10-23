@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { listMyAgents, type AgentOut, type TaskOut } from '@/api/agents'
 import {
   getFleetHold,
@@ -24,7 +24,6 @@ import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { usePolled } from '@/hooks/usePolled'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
-import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
 import { QueuedTurns } from '@/components/supervisor/QueuedTurns'
 import { AlertList } from '@/components/alerts/AlertList'
 import { loadAlerts } from '@/api/alerts'
@@ -37,7 +36,7 @@ import { setBadge } from '@/pwa/usePush'
 import { Skeleton } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { roleAllows } from '@/lib/workspaceRoles'
-import { scopedPath } from '../lib/scopedLinks'
+import { runnerHref } from '../lib/scopedLinks'
 
 function BandError({ message }: { message: string }): JSX.Element {
   return (
@@ -68,7 +67,6 @@ export default function SupervisorPage(): JSX.Element {
   const [agents, setAgents] = useState<AgentOut[] | null>(null)
   const [runners, setRunners] = useState<RunnerOut[] | null>(null)
   const [waiting, setWaiting] = useState<TaskOut[] | null>(null)
-  const [selectedRunner, setSelectedRunner] = useState<RunnerOut | null>(null)
   // Per-band errors, not one page-level error: on cellular a single flaky call
   // is the common case, and Promise.all would blank all three bands for it.
   const [errs, setErrs] = useState<{ agents?: string; runners?: string; waiting?: string }>({})
@@ -125,14 +123,6 @@ export default function SupervisorPage(): JSX.Element {
   // one line. The Runners screen lists them with <AlertList>, which polls itself.
   const { data: openAlerts } = usePolled(() => loadAlerts(undefined, 'open'), { ms: 30_000 })
 
-  // A pause/resume from the detail view. Patch both the list and the open detail
-  // from the SERVER's row: the 30s re-poll would otherwise leave the button
-  // showing the state you just left, which reads as "the tap didn't take".
-  const handleRunnerChanged = useCallback((fresh: RunnerOut) => {
-    setRunners((prev) => prev?.map((r) => (r.id === fresh.id ? fresh : r)) ?? prev)
-    setSelectedRunner((prev) => (prev && prev.id === fresh.id ? fresh : prev))
-  }, [])
-
   // Re-poll runners so the table's facts (code, branch, readiness) follow without
   // a reload — they ride the REST runner, not the live socket overlay.
   // A failed re-poll keeps last-good; the mount fetch owns first-error surfacing.
@@ -184,26 +174,15 @@ export default function SupervisorPage(): JSX.Element {
   const fleetHeld = fleetHold?.held ?? false
   const alertCount = (openAlerts?.length ?? 0) + (fleetHeld ? 1 : 0)
 
-  // One runner, by link: `?tab=runners&runner=<id>` opens its detail — what
-  // Settings → Runners points at, so "where is this box's Claude login" has an
-  // address. The selection writes the param back, so Back and a copied URL both
-  // mean what is on screen.
+  // One runner, by link: `?tab=runners&runner=<id>` (held in mail and old alerts)
+  // opens that runner's own page, where every control for it lives.
+  const navigate = useNavigate()
   const runnerParam = searchParams.get('runner')
   useEffect(() => {
-    if (!runnerParam || !runners || selectedRunner?.id === runnerParam) return
-    const hit = runners.find((r) => r.id === runnerParam)
-    if (hit) setSelectedRunner(hit)
-  }, [runnerParam, runners, selectedRunner])
-  // This tab is the live status view; configuring a box happens on the fleet map
-  // (Settings → Topology), which needs logs.read in the runner's workspace — so
-  // the link is offered only where it would open.
+    const hit = runnerParam ? runners?.find((r) => r.id === runnerParam) : undefined
+    if (hit?.workspace) navigate(runnerHref(hit), { replace: true })
+  }, [runnerParam, runners, navigate])
   const { workspaces } = useWorkspace()
-  const mapHrefFor = (r: RunnerOut): string | undefined => {
-    const role = workspaces.find((w) => w.slug === r.workspace)?.role
-    return r.workspace && roleAllows(role, 'logs.read')
-      ? scopedPath(r.workspace, `/settings/topology?runner=${r.id}`)
-      : undefined
-  }
   // Dispatch / done need the agent's editor role (`agent.work` in its workspace);
   // approve, decline and reply are open to every viewer.
   const workspaceOf = useMemo(
@@ -212,10 +191,6 @@ export default function SupervisorPage(): JSX.Element {
   )
   const canEditTask = (t: TaskOut): boolean =>
     roleAllows(workspaces.find((w) => w.slug === workspaceOf[t.agent_slug])?.role, 'agent.work')
-  const selectRunner = (r: RunnerOut | null) => {
-    setSelectedRunner(r)
-    setSearchParams(r ? { tab: 'runners', runner: r.id } : { tab: 'runners' })
-  }
 
   const screen = SCREENS.find((s) => s.id === tab)
   const badgeFor = (id: Screen): number => (id === 'waiting' ? totalWaiting : id === 'runners' ? alertCount : 0)
@@ -369,24 +344,12 @@ export default function SupervisorPage(): JSX.Element {
             onCancelled={(ids) => setStuck((prev) => (prev ?? []).filter((t) => !ids.includes(t.turn_id)))}
           />
 
-          {selectedRunner ? (
-            <RunnerDetail
-              runner={selectedRunner}
-              agents={agents ?? []}
-              onBack={() => selectRunner(null)}
-              onChanged={handleRunnerChanged}
-              onRetired={(r) => {
-                setRunners((prev) => prev?.filter((x) => x.id !== r.id) ?? prev)
-                selectRunner(null)
-              }}
-              mapHref={mapHrefFor(selectedRunner)}
-            />
-          ) : errs.runners ? (
+          {errs.runners ? (
             <BandError message={errs.runners} />
           ) : renderRunners === null ? (
             <Skeleton className="h-12 w-full" />
           ) : (
-            <RunnerStatus runners={renderRunners} onSelect={selectRunner} />
+            <RunnerStatus runners={renderRunners} onSelect={(r) => navigate(runnerHref(r))} />
           )}
         </div>
       )}

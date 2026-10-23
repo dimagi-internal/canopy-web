@@ -2,7 +2,7 @@
 and re-exposure rule asks (spec 2026-10-22-sensitive-data-agents §4).
 
 A session or turn is SENSITIVE when what it requires of its runner includes
-`sensitive_data` (`runner_requirements`): a host that serves real data requires
+`sensitive_data` (`runner_requirements`): a host that serves sensitive data requires
 sensitive-data runners for it, and the requirement is never dropped down a chain (§3). A requirement canopy cannot
 read counts as sensitive, as it counts as unsatisfiable for routing.
 
