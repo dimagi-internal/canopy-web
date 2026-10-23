@@ -161,7 +161,7 @@
 "apps/harness/initiator.py" = ["PLC0415"]  # 2
 "apps/harness/ledger.py" = ["PLC0415"]  # 4
 "apps/harness/local.py" = ["PLC0415"]  # 4
-"apps/harness/models.py" = ["PLC0415"]  # 3
+"apps/harness/models.py" = ["PLC0415"]  # 2
 "apps/harness/owner_ask.py" = ["PLC0415"]  # 1
 "apps/harness/provenance.py" = ["PLC0415"]  # 1
 "apps/harness/routing.py" = ["PLC0415"]  # 6
@@ -170,7 +170,7 @@
 "apps/harness/runners.py" = ["PLC0415"]  # 6
 "apps/harness/schedule_clock.py" = ["PLC0415"]  # 2
 "apps/harness/schedule_turns.py" = ["PLC0415"]  # 10
-"apps/harness/schemas.py" = ["PLC0415"]  # 7
+"apps/harness/schemas.py" = ["PLC0415"]  # 6
 "apps/harness/sensitivity.py" = ["PLC0415"]  # 3
 "apps/harness/services.py" = ["PLC0415"]  # 18
 "apps/harness/session_sync.py" = ["PLC0415"]  # 23

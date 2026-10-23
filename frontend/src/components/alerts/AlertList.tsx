@@ -21,6 +21,7 @@ import { relativeAge } from '@/lib/relativeAge'
 /** Source chip text per alert kind; an unknown kind shows its raw name. */
 export const KIND_LABEL: Record<string, string> = {
   runner_credential: 'Runner credential',
+  runner_code: 'Runner code',
   turn_failure: 'Failed turns',
   unclaimable_turns: 'Stuck turns',
   device_key_pending: 'Device key',

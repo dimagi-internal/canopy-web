@@ -10,7 +10,7 @@ from canopy_sdk import contract
 from ninja import Schema
 from pydantic import Field, WithJsonSchema, field_validator, model_validator
 
-from .models import Runner, Turn
+from .models import Turn
 
 from .runner_requirements import is_sensitive_data_box
 
@@ -431,18 +431,7 @@ class RunnerOut(Schema):
 
     @staticmethod
     def resolve_expected_code_committed_at(obj) -> int:
-        from django.conf import settings
-
-        setting = (
-            "RUNNER_CLOUD_CODE_COMMITTED_AT" if obj.kind == Runner.CLOUD
-            else "RUNNER_CODE_COMMITTED_AT"
-        )
-        try:
-            return int(getattr(settings, setting, 0) or 0)
-        except (TypeError, ValueError):
-            # A malformed build arg must not 500 the whole runners list — unknown
-            # (0) simply means the alert keeps today's direction-less behaviour.
-            return 0
+        return obj.expected_code_committed_at()
 
     @staticmethod
     def resolve_workspace(obj) -> str | None:

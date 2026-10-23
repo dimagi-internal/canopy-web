@@ -5,7 +5,6 @@ import {
   getFleetHold,
   listRunners,
   listUnclaimableTurns,
-  retireRunner,
   type FleetHoldOut,
   type RunnerOut,
   type UnclaimableTurn,
@@ -20,15 +19,15 @@ import {
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { FleetHoldCard } from '@/components/supervisor/FleetHoldCard'
-import { RunnerAlerts } from '@/components/supervisor/RunnerAlerts'
-import { runnerAlerts } from '@/components/supervisor/runnerAlertRules'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
 import { SignInRequests } from '@/components/supervisor/SignInRequests'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { usePolled } from '@/hooks/usePolled'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
 import { RunnerDetail } from '@/components/supervisor/RunnerDetail'
-import { StuckTurnsAlert } from '@/components/supervisor/StuckTurnsAlert'
+import { QueuedTurns } from '@/components/supervisor/QueuedTurns'
+import { AlertList } from '@/components/alerts/AlertList'
+import { loadAlerts } from '@/api/alerts'
 import { AgentKpiCard } from '@/components/supervisor/AgentKpiCard'
 import { WaitingOnYou, loadWaitingOnYou } from '@/components/supervisor/WaitingOnYou'
 import { ChatSessionsPanel } from '@/components/chat/ChatSessionsPanel'
@@ -109,8 +108,9 @@ export default function SupervisorPage(): JSX.Element {
   }, [])
 
   // Queued turns nothing online can claim — polled with the runners, since
-  // declaring a repo on a runner is what clears them.
-  // A failed poll keeps the last list: the banner is a warning, not a gate.
+  // declaring a repo on a runner is what clears them. A fact list, not an alert:
+  // the agent turns that need a routing fix are the `unclaimable_turns` alert.
+  // A failed poll keeps the last list.
   const stuckPoll = usePolled(() => listUnclaimableTurns(), { ms: 30_000 })
   const stuck: UnclaimableTurn[] = stuckPoll.data ?? []
   const setStuck = stuckPoll.setData
@@ -121,23 +121,9 @@ export default function SupervisorPage(): JSX.Element {
   const { data: fleetHoldData, setData: setFleetHold } = usePolled(() => getFleetHold(), { ms: 30_000 })
   const fleetHold: FleetHoldOut | null = fleetHoldData ?? null
 
-  // The wrong-branch banner's one-click resolve for a dead runner. Confirmed,
-  // because retiring is permanent for the row (re-pairing mints a fresh one).
-  const [retiring, setRetiring] = useState<string | null>(null)
-  const handleRetire = useCallback(async (r: RunnerOut) => {
-    if (!window.confirm(`Retire ${r.name}? This is permanent for this runner row — re-pairing later creates a new one.`)) return
-    setRetiring(r.id)
-    try {
-      await retireRunner(r.id)
-      // Drop it locally so the banner clears immediately; the 30s re-poll would
-      // otherwise leave a confusing beat where the retired runner lingers.
-      setRunners((prev) => prev?.filter((x) => x.id !== r.id) ?? prev)
-    } catch (err) {
-      setErrs((e) => ({ ...e, runners: err instanceof Error ? err.message : 'Retire failed' }))
-    } finally {
-      setRetiring(null)
-    }
-  }, [])
+  // Open alerts you can act on (apps/attention), for the badge and the feed's
+  // one line. The Runners screen lists them with <AlertList>, which polls itself.
+  const { data: openAlerts } = usePolled(() => loadAlerts(undefined, 'open'), { ms: 30_000 })
 
   // A pause/resume from the detail view. Patch both the list and the open detail
   // from the SERVER's row: the 30s re-poll would otherwise leave the button
@@ -147,8 +133,8 @@ export default function SupervisorPage(): JSX.Element {
     setSelectedRunner((prev) => (prev && prev.id === fresh.id ? fresh : prev))
   }, [])
 
-  // Re-poll runners so the code-provenance alerts (below) appear/clear without a
-  // reload — code_branch/code_sha ride the REST runner, not the live socket overlay.
+  // Re-poll runners so the table's facts (code, branch, readiness) follow without
+  // a reload — they ride the REST runner, not the live socket overlay.
   // A failed re-poll keeps last-good; the mount fetch owns first-error surfacing.
   usePolled(() => listRunners().then(setRunners).catch(() => {}), { ms: 30_000, immediate: false })
 
@@ -196,7 +182,7 @@ export default function SupervisorPage(): JSX.Element {
   // "stuck": they run the moment it is released.
   const stuckShown = stuck.filter((t) => t.kind !== 'hold')
   const fleetHeld = fleetHold?.held ?? false
-  const alertCount = runnerAlerts(renderRunners).length + stuckShown.length + (fleetHeld ? 1 : 0)
+  const alertCount = (openAlerts?.length ?? 0) + (fleetHeld ? 1 : 0)
 
   // One runner, by link: `?tab=runners&runner=<id>` opens its detail — what
   // Settings → Runners points at, so "where is this box's Claude login" has an
@@ -293,9 +279,9 @@ export default function SupervisorPage(): JSX.Element {
         </DropdownMenu>
       </header>
 
-      {/* Feed — finished sessions waiting for the next prompt. Fleet problems
-          get ONE line here pointing at Runners, not the full banners: the feed
-          is for moving work forward, but a stalled queue must not go unseen. */}
+      {/* Feed — finished sessions waiting for the next prompt. Open alerts
+          get ONE line here pointing at Runners, where they are listed: the feed
+          is for moving work forward, but a problem to fix must not go unseen. */}
       {tab === 'feed' && (
         <>
           {/* A box waiting on you to approve a sign-in — the push's twin. */}
@@ -310,7 +296,7 @@ export default function SupervisorPage(): JSX.Element {
             >
               {fleetHeld
                 ? '⏸ Fleet on hold — no runner starts anything. View runners →'
-                : `⚠ ${alertCount} fleet alert${alertCount === 1 ? '' : 's'} — stuck turns or runner problems. View runners →`}
+                : `⚠ ${alertCount} fleet alert${alertCount === 1 ? '' : 's'} to fix. View runners →`}
             </button>
           )}
           {totalWaiting > 0 && (
@@ -370,18 +356,18 @@ export default function SupervisorPage(): JSX.Element {
         </div>
       )}
 
-      {/* Runners — fleet runner health, the LOUD alerts, and per-runner detail. */}
+      {/* Runners — the alerts you can act on, queued turns, fleet runner health, and per-runner detail. */}
       {tab === 'runners' && (
         <div className="flex flex-col gap-4">
           {/* The fleet hold: a superuser's control, and everyone's banner while on. */}
           <FleetHoldCard hold={fleetHold} onChange={setFleetHold} />
 
-          <StuckTurnsAlert
+          <AlertList title="Alerts" hideEmpty />
+
+          <QueuedTurns
             turns={stuckShown}
             onCancelled={(ids) => setStuck((prev) => (prev ?? []).filter((t) => !ids.includes(t.turn_id)))}
           />
-
-          <RunnerAlerts runners={renderRunners} retiringId={retiring} onRetire={handleRetire} />
 
           {selectedRunner ? (
             <RunnerDetail
