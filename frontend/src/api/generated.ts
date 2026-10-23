@@ -9007,7 +9007,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/harness/runners/{runner_id}/only-agents": {
+    readonly "/api/harness/runners/{runner_id}/directed": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -9015,6 +9015,34 @@ export interface paths {
             readonly cookie?: never;
         };
         readonly get?: never;
+        /**
+         * Decide whether this runner takes only work put on it
+         * @description `true`: the box takes only turns pinned to it and chats bound to it, no routed
+         *     work. `false`: it takes routed work, whatever the box itself declares. `null`:
+         *     follow the box's own declaration. Owner or a runner administrator; a private
+         *     runner stays directed either way.
+         */
+        readonly put: operations["set_runner_directed"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/only-agents": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The agents this runner is dedicated to, and the ones it could be
+         * @description The current list, and every agent it could hold: in the workspaces the box
+         *     serves and visible to you. Owner or a runner administrator.
+         */
+        readonly get: operations["get_runner_only_agents"];
         /**
          * Dedicate this runner to a list of agents
          * @description Replace the agents this runner is dedicated to. Listed: it runs only their
@@ -27971,6 +27999,13 @@ export interface components {
              */
             readonly only_agents: readonly string[];
             /**
+             * Directed
+             * @default false
+             */
+            readonly directed: boolean;
+            /** Directed Setting */
+            readonly directed_setting?: boolean | null;
+            /**
              * Roots
              * @default []
              */
@@ -28587,6 +28622,27 @@ export interface components {
         readonly RunnerPrivateIn: {
             /** Private */
             readonly private: boolean;
+        };
+        /** RunnerDirectedIn */
+        readonly RunnerDirectedIn: {
+            /** Directed */
+            readonly directed: boolean | null;
+        };
+        /** RunnerAgentChoiceOut */
+        readonly RunnerAgentChoiceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+        };
+        /** RunnerOnlyAgentsOut */
+        readonly RunnerOnlyAgentsOut: {
+            /** Agents */
+            readonly agents: readonly string[];
+            /** Choices */
+            readonly choices: readonly components["schemas"]["RunnerAgentChoiceOut"][];
         };
         /** RunnerOnlyAgentsIn */
         readonly RunnerOnlyAgentsIn: {
@@ -45731,6 +45787,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_directed: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerDirectedIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_only_agents: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOnlyAgentsOut"];
                 };
             };
         };

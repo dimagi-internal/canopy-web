@@ -79,6 +79,8 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     private: false,
     private_runner_id: null,
     only_agents: [],
+    directed: false,
+    directed_setting: null,
     roots: ['dimagi'], spans_trees: false,
     ...overrides,
   }
@@ -274,7 +276,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
       // Choosing a box for a project chat needs you to administer it (the server
       // 403s otherwise), and a directed-only box is offered, labelled.
       fleetRunner('e', { name: 'Epsilon', status: 'online', can_administer: false, capabilities: { sessions: true, projects: ['acme'] } }),
-      fleetRunner('f', { name: 'Test', status: 'online', capabilities: { sessions: true, projects: ['acme'], directed: true } }),
+      fleetRunner('f', { name: 'Test', status: 'online', directed: true, capabilities: { sessions: true, projects: ['acme'], directed: true } }),
     ])
 
     renderPanel([])

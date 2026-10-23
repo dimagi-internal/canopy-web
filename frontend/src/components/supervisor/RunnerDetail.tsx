@@ -8,6 +8,7 @@ import { boxLoginAccount, RunnerCredentials } from '@/components/supervisor/Runn
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
 import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
+import { RunnerDirected } from '@/components/supervisor/RunnerDirected'
 import { RunnerOnlyAgents } from '@/components/supervisor/RunnerOnlyAgents'
 import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
@@ -191,6 +192,7 @@ export function RunnerDetail({
         {runner.can_manage && onChanged && <RunnerPrivate runner={runner} onChange={onChanged} />}
         {runner.can_administer && onChanged && <RunnerFlags runner={runner} onChange={onChanged} />}
         {runner.can_administer && onChanged && <RunnerOnlyAgents runner={runner} onChange={onChanged} />}
+        {runner.can_administer && onChanged && <RunnerDirected runner={runner} onChange={onChanged} />}
         {(runner.can_administer || runner.can_manage) && runner.kind !== 'cloud' && onChanged && (
           <RunnerEngine runner={runner} onChange={onChanged} />
         )}

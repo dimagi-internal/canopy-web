@@ -87,6 +87,27 @@ export async function setRunnerOnlyAgents(runnerId: string, agents: string[]): P
   return toRunner(unwrap(res, 'setRunnerOnlyAgents'))
 }
 
+export type RunnerOnlyAgents = components['schemas']['RunnerOnlyAgentsOut']
+
+// The agents a runner is allowlisted to now, and every agent it could be.
+export async function getRunnerOnlyAgents(runnerId: string): Promise<RunnerOnlyAgents> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/only-agents', {
+    params: { path: { runner_id: runnerId } },
+  })
+  const out = unwrap(res, 'getRunnerOnlyAgents')
+  return { agents: Array.from(out.agents), choices: Array.from(out.choices) }
+}
+
+// Whether a runner takes only what is put on it: true/false decide, null follows
+// what the box itself declares.
+export async function setRunnerDirected(runnerId: string, directed: boolean | null): Promise<RunnerOut> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/directed', {
+    params: { path: { runner_id: runnerId } },
+    body: { directed },
+  })
+  return toRunner(unwrap(res, 'setRunnerDirected'))
+}
+
 // Ask a box to refresh itself (re-run its bootstrap: plugins, the canopy CLI,
 // Claude Code, agent provisioning) at its next idle moment. Durable: the box
 // reads `refresh_pending` off its own heartbeat, so this survives a dropped

@@ -305,6 +305,11 @@ class Runner(models.Model):
     #: box's own agent unit (`unit()`); both apply when both are set
     #: (`routing.dedicated_agent_slugs`).
     only_agents = models.ManyToManyField("agents.Agent", blank=True, related_name="dedicated_runners")
+    #: A person's word on `directed_only`, over the box's own declaration
+    #: (`capabilities.directed`): None follows the box, True/False decide. So a box
+    #: stood up directed (`up.sh --test`) can take routed work again from the runner
+    #: page, with no shell on it. Set by a runner administrator, never by the box.
+    directed_setting = models.BooleanField(null=True, blank=True, default=None)
 
     class Meta:
         indexes = [models.Index(fields=["kind", "status"])]
@@ -390,8 +395,13 @@ class Runner(models.Model):
         workspace order. Box-declared (`capabilities.directed`, a cloud box's
         `RUNNER_DIRECTED=1`) and safe to trust for the same reason `cannot_serve`
         is: it can only make a box take less. It stays session-capable, so a chat
-        can still be started on it, and that chat binds to it."""
-        return self.private or bool((self.capabilities or {}).get("directed", False))
+        can still be started on it, and that chat binds to it. A runner
+        administrator's `directed_setting` overrides the box's declaration."""
+        if self.private:
+            return True
+        if self.directed_setting is not None:
+            return self.directed_setting
+        return bool((self.capabilities or {}).get("directed", False))
 
     @property
     def live_status(self) -> str:

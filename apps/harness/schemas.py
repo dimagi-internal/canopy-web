@@ -116,6 +116,24 @@ class RunnerOnlyAgentsIn(Schema):
     agents: list[str]
 
 
+class RunnerDirectedIn(Schema):
+    # True/False decide; null follows what the box itself declares.
+    directed: bool | None
+
+
+class RunnerAgentChoiceOut(Schema):
+    slug: str
+    name: str
+    workspace: str
+
+
+class RunnerOnlyAgentsOut(Schema):
+    # The agents the box is dedicated to now; [] = no restriction.
+    agents: list[str]
+    # Every agent it could be dedicated to: in the workspaces it serves and visible to you.
+    choices: list[RunnerAgentChoiceOut]
+
+
 class RunnerEngineIn(Schema):
     # emdash | claude-desktop | claude-cli (Runner.ENGINE_CHOICES). Validated in the view so the
     # error names the choices rather than a pydantic literal mismatch.
@@ -234,6 +252,11 @@ class RunnerOut(Schema):
     # The agents a person dedicated this box to (`Runner.only_agents`): it runs only
     # their turns and chats. [] = no restriction.
     only_agents: list[str] = []
+    # Whether it takes only what is put on it (`Runner.directed_only`), and where
+    # that comes from: `directed_setting` is a person's override (null: follows the
+    # box's own `capabilities.directed`).
+    directed: bool = False
+    directed_setting: bool | None = None
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -258,6 +281,10 @@ class RunnerOut(Schema):
         except Exception:  # noqa: BLE001 - the reverse one-to-one is absent
             return None
         return pr.pk if pr is not None and pr.retired_at is None else None
+
+    @staticmethod
+    def resolve_directed(obj) -> bool:
+        return obj.directed_only()
 
     @staticmethod
     def resolve_only_agents(obj) -> list[str]:

@@ -74,6 +74,8 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
     private: false,
     private_runner_id: null,
     only_agents: [],
+    directed: false,
+    directed_setting: null,
     roots: ['dimagi'], spans_trees: false,
     ...overrides,
   }
