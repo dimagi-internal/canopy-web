@@ -54,15 +54,15 @@ prep = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", marker = "extra == 'prep'", specifier = ">=4.12" },
+    { name = "beautifulsoup4", marker = "extra == 'prep'", specifier = "==4.15.0" },
     { name = "httpx", marker = "extra == 'prep'", specifier = ">=0.27" },
-    { name = "lxml", marker = "extra == 'prep'", specifier = ">=5" },
-    { name = "markdownify", marker = "extra == 'prep'", specifier = ">=0.13" },
-    { name = "openpyxl", marker = "extra == 'prep'", specifier = ">=3.1" },
-    { name = "pymupdf", marker = "extra == 'prep'", specifier = ">=1.24" },
-    { name = "python-docx", marker = "extra == 'prep'", specifier = ">=1.1" },
+    { name = "lxml", marker = "extra == 'prep'", specifier = "==6.1.3" },
+    { name = "markdownify", marker = "extra == 'prep'", specifier = "==1.2.3" },
+    { name = "openpyxl", marker = "extra == 'prep'", specifier = "==3.1.5" },
+    { name = "pymupdf", marker = "extra == 'prep'", specifier = "==2.0" },
+    { name = "python-docx", marker = "extra == 'prep'", specifier = "==1.2.0" },
     { name = "requests", marker = "extra == 'prep'", specifier = ">=2.31" },
-    { name = "xlrd", marker = "extra == 'prep'", specifier = ">=2.0" },
+    { name = "xlrd", marker = "extra == 'prep'", specifier = "==2.0.2" },
 ]
 provides-extras = ["prep"]
 

@@ -20,6 +20,7 @@ from canopy_kb.prep import gemini
 from canopy_kb.prep.raw import log, read_json, read_jsonl, write_json
 
 HEAD, TAIL = 7000, 1500
+MAX_TOKENS = 2048
 HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.M)
 KINDS = ("charity review, grant writeup, intervention report, cost-effectiveness model, model inputs/data, "
          "conversation notes, site visit, board/meeting record, financial/administrative, blog post, podcast "
@@ -75,6 +76,32 @@ def headings(text: str) -> str:
     return " | ".join(out[:60]) + (f" | ... ({len(out) - 60} more)" if len(out) > 60 else "")
 
 
+def prompt(it: dict, linked: list[str], publisher: str, kinds: str = KINDS) -> str:
+    """The card prompt for an item (its text in place); `linked`: the titles of what links to it."""
+    return PROMPT.format(publisher=publisher, title=it["title"], type=it["type"], url=it["url"],
+                         date=it.get("date", ""), linked="; ".join(linked) or "(none)", headings=headings(it["text"]),
+                         n=len(it["text"]), body=excerpt(it["text"]), kinds=kinds)
+
+
+def linked_titles(it: dict, titles: dict[str, str], by_url: dict[str, str]) -> list[str]:
+    """The first five referrers of an item, by title where known (what the prompt shows)."""
+    return [titles.get(x) or by_url.get(x) or x for x in (it["meta"].get("linked_from") or [])][:5]
+
+
+def write(it: dict, linked: list[str], publisher: str, kinds: str = KINDS) -> dict:
+    """One card from the model."""
+    card, _ = gemini.generate_json(gemini.FLASH, [{"text": prompt(it, linked, publisher, kinds)}], max_tokens=MAX_TOKENS)
+    return card[0] if isinstance(card, list) else card
+
+
+def dataset_card(parent: dict) -> dict:
+    """A dataset item's card: its workbook's, said of its data tabs."""
+    card = dict(parent)
+    card["summary"] = "Data tabs of: " + card.get("summary", "")
+    card["kind"] = "model inputs/data"
+    return card
+
+
 def run(data: Path, publisher: str, structured: Structured | None = None, kinds: str = KINDS,
         workers: int = 32, limit: int | None = None) -> dict:
     items = read_jsonl(data / "items.jsonl")
@@ -98,14 +125,8 @@ def run(data: Path, publisher: str, structured: Structured | None = None, kinds:
     failed = []
 
     def job(it):
-        lf = [titles.get(x) or by_url.get(x) or x for x in (it["meta"].get("linked_from") or [])][:5]
-        prompt = PROMPT.format(publisher=publisher, title=it["title"], type=it["type"], url=it["url"],
-                               date=it.get("date", ""), linked="; ".join(lf) or "(none)", headings=headings(it["text"]),
-                               n=len(it["text"]), body=excerpt(it["text"]), kinds=kinds)
         try:
-            card, _ = gemini.generate_json(gemini.FLASH, [{"text": prompt}], max_tokens=2048)
-            if isinstance(card, list):
-                card = card[0]
+            card = write(it, linked_titles(it, titles, by_url), publisher, kinds)
         except Exception as e:  # noqa: BLE001
             failed.append(it["id"])
             log("  card failed:", it["id"], str(e)[:100])
@@ -130,10 +151,7 @@ def attach(items: list[dict], data: Path, enrich: Enrich | None = None) -> int:
         c = (cache.get(src) or {}).get("card")
         if not c:
             continue
-        card = dict(c)
-        if it["type"] == "dataset":
-            card["summary"] = "Data tabs of: " + card.get("summary", "")
-            card["kind"] = "model inputs/data"
+        card = dataset_card(c) if it["type"] == "dataset" else dict(c)
         it["card"] = enrich(it, card) if enrich else card
         n += 1
     return n
