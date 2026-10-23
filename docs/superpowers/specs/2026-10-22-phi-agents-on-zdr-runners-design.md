@@ -153,17 +153,22 @@ requirements include `zdr` — read everywhere below, with one test per surface:
   ends (`closing.close_turn`); its result note is withheld (`[zdr] note withheld (N
   bytes)`); no owner-ask line, no live tail, no title (a title is the first sentence
   verbatim, and a person may type a name in it). No `TurnTranscript` either (a ZDR box
-  does not even send it).
+  ships a turn's transcript ROWS, which are sealed below, and no raw transcript).
 - **The conversation is kept sealed, for its own people** (Jonathan, 2026-10-23: a
   conversation that cannot be recovered is a problem, and the SDK needs multiplayer).
   The words of each `Message` — not a tool's result — are kept in `Message.sealed`,
-  beside the metadata columns above, and ONE gate reads them,
+  encrypted, beside the metadata columns above, and ONE gate reads them,
   `sensitivity.reads_content`: the conversation's own people (its creator, the
   participants added to it, its contact) on its own chat surfaces (the chat page, the
   widget, the SDK). An MCP call, a PAT, a session review, the fleet's readers, another
   AI and an admin who is not in the conversation read the metadata columns. A reload, a
   second tab and a participant joining all read it back. There is one delivery path: the
   transcript rows every turn ships (a ZDR box ships a confined turn's, then deletes it).
+  The live chat socket, adding a participant and a fork ask the same gate; turn reads
+  and the turn socket never carry a sensitive turn's words. The one other reader is the
+  conversation's own next turn: its confined, never-resumed session gets the
+  conversation so far in its caller envelope (`conversation.history`), on the box that
+  runs it.
   What metadata there is stays under a retention rule enforced for sensitive sessions
   whatever `CANOPY_RETENTION_ENFORCE` says (default 30 days).
 - **A tool result keeps no rows.** A `TOOL_RESULT` `Message` in a sensitive session is

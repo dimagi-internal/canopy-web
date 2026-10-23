@@ -297,6 +297,9 @@ class SessionOut(Schema):
     close_error_at: dt.datetime | None = None
     # Push on every finished turn, rather than once the chat has gone quiet.
     notify_every_completion: bool = False
+    #: It holds a host's sensitive data (`harness.sensitivity`): read back only by
+    #: its own people, never shared, exported, mirrored or reviewed.
+    sensitive: bool = False
     # The supervisor feed's two fields, filled only when the list is asked for
     # them (`?reply=true`) — every other list caller would pay for text it never
     # shows. The agent's most recent reply, WHOLE — sent only when it is the

@@ -224,6 +224,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # absence.
         "backfill_pending": bool(binding and binding.backfill_requested),
         "notify_every_completion": session.notify_every_completion,
+        "sensitive": sensitivity.is_sensitive(session),
         "runner_requirements": sorted(rr.requirements_of_session(session)),
         "last_reply": last_reply,
         "agent_spoke_last": agent_spoke_last,
@@ -838,6 +839,16 @@ def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
     return _session_or_404(request, matches[0])
 
 
+def _in_it_or_403(request: HttpRequest, session) -> None:
+    # Bringing someone into a sensitive conversation, or copying it whole (a fork),
+    # hands its words on: only its own people may, on its own chat surfaces. Without
+    # this an agent's admin — an owner of a visitor's thread who is not IN it — could
+    # add themselves, or fork it, and read it back.
+    if not sensitivity.reads_content(session, user=request.user,
+                                     chat_surface=sensitivity.request_is_chat_surface(request)):
+        raise HttpError(403, sensitivity.NOT_IN_IT)
+
+
 def _readable(request: HttpRequest, session, rows) -> list:
     # A sensitive conversation reads back only for its own people, on its chat
     # surfaces (`sensitivity.reads_content`): an MCP call, a PAT or a co-tenant
@@ -1182,6 +1193,7 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
     session = _session_or_404(request, session_id)
     if not access.can_share(request.user, session):
         raise HttpError(403, "only the chat's owner can share it")
+    _in_it_or_403(request, session)
     target = get_user_model().objects.filter(email__iexact=payload.email.strip()).first()
     if target is None or not wsvc.is_member(target, session.workspace_id):
         raise HttpError(404, "nobody with that email is in this workspace")
@@ -1260,6 +1272,7 @@ def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
     Needs a runner on the Claude CLI runtime (422 otherwise). 404 for an unknown
     message; 409 when the cut would fall inside a turn that is still running."""
     session = _session_or_404(request, session_id, write=True)
+    _in_it_or_403(request, session)
     try:
         fork = placement.fork_session(session=session, turn_index=payload.turn_index,
                                      user=request.user)

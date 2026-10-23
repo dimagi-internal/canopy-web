@@ -33,6 +33,7 @@ from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.models import Contact
 
 from . import initiator as who
+from . import sensitivity
 from .models import Turn
 
 #: Bump when a field's MEANING changes; adding a field does not need it.
@@ -360,6 +361,10 @@ def build(turn, *, reader_user=None) -> dict:
             # (2026-10-16). Read from the session's cache — building the envelope
             # never calls Slack (apps/slack/location.py). Additive: no VERSION bump.
             "slack": _slack_location(cs),
+            # A SENSITIVE conversation's earlier lines (`sensitivity.history`):
+            # its turns are confined and never resumed, so this is how the agent
+            # remembers what was said. null for every other conversation.
+            "history": sensitivity.history(turn),
         },
         # What the caller invoked and the scope it grants (§4). null means the
         # agent's FULL profile: its owner, an admin, canopy itself, or a

@@ -48,6 +48,9 @@ import { useTranscriptPaging } from './chat/useTranscriptPaging'
  * `sessionPath` is where another session opens (a fork made here); /ide keeps
  * it in /ide.
  */
+// Why Share to Slack is off in a sensitive conversation (the server refuses it too).
+const SENSITIVE_NO_SHARE = 'A sensitive conversation is never shared to Slack.'
+
 export function ChatPage({
   onLeave,
   compact = false,
@@ -339,7 +342,7 @@ export function ChatPage({
               myRole={meta?.my_role ?? null}
               notifyEveryCompletion={meta ? meta.notify_every_completion : undefined}
               onToggleNotify={() => void actions.toggleNotify()}
-              shareDisabledReason={disabledReason}
+              shareDisabledReason={meta?.sensitive ? SENSITIVE_NO_SHARE : disabledReason}
               onShare={async (command) => {
                 // Sent over REST like any message; `noteLocalSend` is what shows
                 // the line and the working state until the transcript echoes it.
@@ -379,6 +382,15 @@ export function ChatPage({
           )}
         </div>
       </div>
+      {meta?.sensitive && (
+        <p
+          data-testid="sensitive-banner"
+          className="m-0 border-b border-warning/30 bg-warning/10 px-4 py-1 text-[12px] text-foreground"
+        >
+          <span className="font-medium text-warning">Sensitive conversation.</span> Only the people in it
+          can read it back. Canopy does not share, export or mirror it, and no review or other AI reads it.
+        </p>
+      )}
       <div className="min-h-0 flex-1" onContextMenu={fork.onMessageContextMenu}>
         {fork.messageMenu && (
           <MessageContextMenu

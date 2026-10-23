@@ -17,12 +17,18 @@ Content is readable by:
 * for a chat turn, anyone who may read that chat (`canopy_sessions.access`) —
   and ONLY them: a chat is private to its people, which no role overrides.
 
+A SENSITIVE turn's content is nobody's through these doors (`harness.sensitivity`):
+its words belong to its conversation, which its own people read on the chat page,
+and every door here is a log a review or another AI could read.
+
 Every door asks `can_read_turn_content`: the REST detail routes, the list
 redaction, the unclaimable report, and the live turn socket.
 """
 from __future__ import annotations
 
 from apps.workspaces import permissions as perms
+
+from . import sensitivity
 
 #: Fields blanked on a turn whose content the caller may not read. `provenance`
 #: too: which token (by its label), user agent and request id made a turn is a
@@ -36,6 +42,8 @@ def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
     """`_memo` caches the per-workspace and per-agent answers across a list, so
     redacting a page of turns costs a query per agent, not several per row."""
     if not getattr(user, "is_authenticated", False):
+        return False
+    if sensitivity.is_sensitive(turn):
         return False
     memo = _memo if _memo is not None else {}
     if turn.chat_session_id:

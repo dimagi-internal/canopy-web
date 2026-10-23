@@ -67,7 +67,7 @@ def append_events(turn: Turn, events: list[dict]) -> int:
     def _fire_appended():
         from apps.harness.signals import turn_events_appended
 
-        turn_events_appended.send(sender=Turn, turn=turn, rows=rows)
+        turn_events_appended.send(sender=Turn, turn=turn, rows=rows, sensitive=sensitive)
 
     transaction.on_commit(_fire_appended)
     return len(rows)

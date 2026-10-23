@@ -202,6 +202,7 @@ export function ChatSessionMenu({
           <DropdownMenuItem
             inset
             disabled={Boolean(shareDisabledReason)}
+            title={shareDisabledReason || undefined}
             onClick={() => setPanel("slack")}
           >
             Share to Slack…

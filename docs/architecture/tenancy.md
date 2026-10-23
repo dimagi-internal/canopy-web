@@ -316,8 +316,9 @@ THE predicate; every surface below asks it, one test each in
   prompt is wiped at the turn's end (`closing.close_turn`), the result note withheld, and
   there is no owner-ask line, live tail (`RunnerBinding.tail`) or autotitle.
 - **The conversation, sealed for its own people:** the words of a `Message` (not a tool's
-  result) are kept in `Message.sealed` (`sensitivity.seal`, from `send.py` and
-  `transcript_ingest`), so a person can come back to it and a participant can join it. ONE
+  result) are kept in `Message.sealed`, encrypted (`sensitivity.seal`, from `send.py` and
+  `transcript_ingest`; `apps/common/encryption.py`, so a database read, a backup or a shell
+  sees ciphertext), so a person can come back to it and a participant can join it. ONE
   gate reads them, `sensitivity.reads_content`: the conversation's own people (its creator,
   its participants, its contact) on its own chat surfaces (a browser session, the widget or
   SDK's contact or site token; never MCP, a PAT, OAuth or a minted session). It is asked by
@@ -327,6 +328,22 @@ THE predicate; every surface below asks it, one test each in
   admin who is not in it — reads the columns, so a new reader is closed until it asks.
   The reply reaches the asker the one way every turn's does: its transcript rows (a ZDR box
   ships a confined turn's before deleting it).
+- **Live and log doors ask the same gate:** the chat socket (`SessionConsumer`), whose live
+  frames carry the words, admits only `reads_content`; the turn socket's tail gets the stored
+  metadata; and `turn_access.can_read_turn_content` is False for a sensitive turn, so no turn
+  read (REST, MCP, the board, the unclaimable report, the caller envelope) returns its
+  prompt, note or report while it runs. The `TURN_CREATED` log line keeps no prompt head.
+- **Only its people hand it on:** adding a participant and forking (which copies the
+  sealed words) need `reads_content` too, so an agent's admin who may open a thread they
+  are not in cannot add themselves or copy it.
+- **The agent's memory:** every turn of a sensitive conversation runs confined, is never
+  resumed and is deleted on the box, so the caller envelope carries the conversation so far
+  (`conversation.history`, `sensitivity.history`: the person's lines and the agent's
+  replies, never a tool's) to the box that runs the next turn; the canopy plugin's
+  `UserPromptSubmit` hook puts it in context. It is the one reader of the sealed words
+  besides the conversation's people.
+- **The chat page says so:** `SessionOut.sensitive` draws a banner and turns off Share to
+  Slack.
 - **MCP Apps:** a View gets `tool_result: null` and fetches its data as the viewer from
   `tool_input`, which it reads back from the sealed call; a receipt keeps no excerpt;
   `ui/update-model-context` is accepted and not kept (`apps/mcp_apps_host/mcp_apps_views.py`).
