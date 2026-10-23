@@ -97,11 +97,15 @@ def _no_real_mailbox_probe():
 def _fresh_typed_turns():
     """execute._TYPED_TURNS remembers, per process, every turn whose message was
     typed — so a re-claimed turn is never typed twice. Tests reuse turn ids ("t1"),
-    so each starts with an empty memory."""
+    so each starts with an empty memory. The same goes for the sessions it created
+    (`_CREATED_TURNS`) and the links it still owes canopy (`_UNRECORDED`)."""
     from canopy_runner import execute
-    execute._TYPED_TURNS.clear()
+    registries = (execute._TYPED_TURNS, execute._CREATED_TURNS, execute._UNRECORDED)
+    for reg in registries:
+        reg.clear()
     yield
-    execute._TYPED_TURNS.clear()
+    for reg in registries:
+        reg.clear()
 
 
 @pytest.fixture(autouse=True)

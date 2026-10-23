@@ -641,6 +641,41 @@ def _ask_identity(menu):
                   if isinstance(o, dict)))
 
 
+def _unlinked_chat_binding(runner: Runner, s, project: str):
+    """A binding for a reported task that a CHAT turn of this runner created but
+    never linked, or None.
+
+    The runner creates the emdash task and then links it with record-session; when
+    that call fails (a 500 mid-deploy) the task is first seen here, unbound, and
+    used to be filed as a session of its own beside the chat it belongs to (Slack
+    turn f7cb8694, 2026-10-23). The turn names its task (`Turn.session_key`, from
+    its finish), so the task is bound to that turn's chat instead. Only a chat this
+    runner's turn ran in, whose worktree project is the task's, and that is not
+    already bound to a task — never a second conversation's."""
+    turn = (Turn.objects.select_related("chat_session")
+            .filter(claimed_by=runner, session_key=s.emdash_task, chat_session__isnull=False)
+            .order_by("-created_at").first())
+    if turn is None:
+        return None
+    session = turn.chat_session
+    if session.emdash_project != project:
+        return None
+    binding = (RunnerBinding.objects.select_for_update(of=("self",))
+               .filter(session=session).first())
+    if binding is not None and binding.session_key:
+        return None
+    if binding is None:
+        binding = RunnerBinding(session=session)
+    binding.session_key = s.emdash_task
+    binding.emdash_project = project
+    binding.thread_key = str(session.pk)
+    binding.host = runner.host
+    binding.task_uid = str(getattr(s, "task_uid", "") or "")[:100]
+    logger.info("runner %s reported unlinked task %r; bound to chat session %s (turn %s)",
+                runner.name, s.emdash_task, session.pk, turn.pk)
+    return binding
+
+
 def replace_reported_sessions(
     runner: Runner, workspace, sessions: list, archived: list[str] | None = None,
     complete: bool = False, skipped: list | None = None,
@@ -772,6 +807,8 @@ def replace_reported_sessions(
             binding = candidates.get((s.emdash_task, project))
             if binding is None and project:
                 binding = candidates.pop((s.emdash_task, ""), None)
+            if binding is None:
+                binding = _unlinked_chat_binding(runner, s, project)
             if binding is None:
                 # Tenant AND agent follow the project when it names an agent —
                 # not the runner. A runner is a machine serving several agents

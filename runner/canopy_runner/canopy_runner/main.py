@@ -558,8 +558,15 @@ def _claim_and_execute(cfg: Config, client: Client, paused: set) -> str:
         logger.exception("execute_turn crashed for %s", turn.get("id"))
         note = f"runner execute crashed: {exc}"
         readiness.mark_failed(cfg, note)
+        # A crash AFTER the session was created names it: the prompt is in there, and
+        # a failure with no session key is requeued as a non-attempt — a second
+        # session doing the same work (execute._CREATED_TURNS).
+        task = execute.created_task(turn["id"])
         try:
-            client.fail_turn(turn["id"], note)
+            if task:
+                client.finish(turn["id"], note=note, status="failed", emdash_task_id=task)
+            else:
+                client.fail_turn(turn["id"], note)
         except ClientError:
             pass
         return f"failed:{turn.get('id')}"
@@ -707,6 +714,11 @@ def _step(name: str, fn, *args, **kwargs) -> None:
 
 def _report_sweep(cfg: Config, client: Client) -> None:
     """Status reporting that no claim depends on — see the note in `run_once`."""
+    from . import execute
+
+    # Before the report: a created session whose link has not landed yet would be
+    # filed as a session of its own.
+    _step("deferred records", execute.retry_unrecorded, cfg, client)
     _step("session report", sessions.maybe_report_sessions, cfg, client)
     _step("stream sync", streams.sync_session_streams, cfg, client)
     _step("menu answers", streams.drain_menu_answers, cfg, client)
