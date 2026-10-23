@@ -2221,6 +2221,23 @@ class VaultAgentLinkIn(StrictModel):
     role: str = "use"
 
 
+class VaultKeeperPinsOut(StrictModel):
+    """The keepers' shared record of whose key they trusted: a `zk1` value under the
+    vault key at `kv`, bound to the name `~keeper-pins`. Empty `value` until a keeper
+    first writes one. Write back over `version`."""
+
+    value: str = ""
+    kv: int = 0
+    version: int = 0
+
+
+class VaultKeeperPinsIn(StrictModel):
+    kv: int
+    #: The `version` the keeper read; 409 `keeper_pins_stale` if it moved since.
+    expected_version: int
+    value: str
+
+
 class VaultKeeperAgentOut(StrictModel):
     #: The agent's slug, or a workspace vault's name.
     agent: str
@@ -2236,6 +2253,9 @@ class VaultKeeperAgentOut(StrictModel):
     grant_path: str = ""
     #: Set for a workspace vault.
     vault_id: str = ""
+    #: The keepers' shared record, and where to write it back.
+    pins: VaultKeeperPinsOut = VaultKeeperPinsOut()
+    pins_path: str = ""
 
 
 class VaultKeeperOut(StrictModel):

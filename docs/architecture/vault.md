@@ -47,6 +47,8 @@ The vault key is **not** changed on removal: as in 1Password, the server stops s
 
 Approving a machine signs its ECDH key with the approver's own vault key (an endorsement, `approveAndGrant`), even when the approver holds no copy of the agent's vault key, so a **keeper** (a canopy runner that holds it, `canopy vault zk keep`) can pass the key on. `zk_notify` emails the key holders only after `GRACE` (15 minutes), for what no machine could pass on.
 
+
+**The keepers' record.** Which key each keeper trusted for each person is kept once, in the vault itself: `Vault.keeper_pins_zk`, a `zk1` value under the vault key (name `~keeper-pins`, at `keeper_pins_kv`). canopy-web stores it and can neither read nor forge it. A keeper reads it with its work (`pins`) and writes it back over the version it read (`PUT …/vault-keeper/{slug}/pins` or `…/vaults/{id}/pins`; 409 `keeper_pins_stale`). So every keeper, including a brand-new cloud box, refuses a person whose key changed, and leaves them waiting (a manager confirming the new key is not built yet). A rotation leaves the record unreadable, and keepers start a new one. Every keeper grant to a person is emailed to the vault's managers (`vault_keeper._announce`).
 ## Workspace vaults
 
 A workspace may keep any number of vaults (`Vault`, `kind=workspace`), always zero-knowledge, in the agent vault's formats with the vault's **binding id** (`vault:<uuid>`) where an agent's id goes in every AAD and HKDF info (`credentials/workspace_vaults.py`). Its secrets are `VaultSecret`, its key copies `VaultKeyWrap`.

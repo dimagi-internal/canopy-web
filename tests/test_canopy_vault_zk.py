@@ -1387,3 +1387,51 @@ def test_a_keeper_that_lost_the_race_adds_nothing(fleet):
         zk.add_wraps(fleet.agent, kv=1, wraps=[ZkWrapIn(**member_wrap(fleet))], user=fleet.user, only_new=True)
     assert exc.value.code == "zk_not_pending"
     assert AgentVaultWrap.objects.get(agent=fleet.agent, kind="member", user=fleet.user).wrap == before
+
+
+# ---- the keepers' shared record, and announcing a keeper's grant -------------------------
+
+def _pins_value(fleet, kv=1, people=None) -> str:
+    import json as _json
+
+    return ref.encrypt_value(fleet.vk, _aid(fleet), "~keeper-pins", kv,
+                             _json.dumps({"v": 1, "people": people or {}}), os.urandom(12))
+
+
+def test_a_keeper_reads_and_writes_the_shared_record_over_the_version_it_read(fleet):
+    assert _enable(fleet).status_code == 200
+    _editor_with_a_key(fleet)
+    [work] = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    assert work["pins"] == {"value": "", "kv": 0, "version": 0}
+    assert work["pins_path"] == _keeper_url(fleet, "/eva/pins")
+    value = _pins_value(fleet)
+    res = fleet.client.put(work["pins_path"], data={"kv": 1, "expected_version": 0, "value": value},
+                           content_type="application/json")
+    assert res.status_code == 200 and res.json() == {"value": value, "kv": 1, "version": 1}, res.content
+    # A second keeper that read version 0 must read again and merge.
+    res = fleet.client.put(work["pins_path"], data={"kv": 1, "expected_version": 0, "value": value},
+                           content_type="application/json")
+    assert res.status_code == 409 and res.json()["error"] == "keeper_pins_stale"
+    [work] = fleet.client.get(_keeper_url(fleet)).json()["agents"]
+    assert work["pins"]["version"] == 1
+
+
+def test_only_a_holder_of_the_current_key_writes_the_record(fleet):
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    res = fleet.client.put(_keeper_url(fleet, "/eva/pins"), content_type="application/json",
+                           data={"kv": 1, "expected_version": 0, "value": _pins_value(fleet)})
+    assert res.status_code == 403 and res.json()["error"] == "zk_not_a_holder"
+
+
+def test_a_keepers_grant_to_a_person_is_emailed_to_the_vaults_managers(fleet, settings):
+    from django.core import mail
+
+    settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    assert _enable(fleet).status_code == 200
+    user, priv = _editor_with_a_key(fleet)
+    mail.outbox.clear()
+    res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
+    assert res.status_code == 200, res.content
+    [msg] = [m for m in mail.outbox if "now has" in m.subject]
+    assert msg.to == [fleet.user.email] and user.email in msg.subject

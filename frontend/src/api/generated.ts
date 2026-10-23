@@ -8521,6 +8521,48 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/{slug}/pins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * A keeper's shared record of whose key it trusted, for an agent's vault
+         * @description `{kv, expected_version, value}`: the record, encrypted under the vault key
+         *     (canopy-web cannot read it). Only a box holding the current key may write it,
+         *     over the version it read (409 `keeper_pins_stale`: read again and merge).
+         */
+        readonly put: operations["put_vault_keeper_pins"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/vaults/{vault_id}/pins": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * A keeper's shared record of whose key it trusted, for a workspace vault
+         * @description As for an agent's vault.
+         */
+        readonly put: operations["put_vault_keeper_workspace_pins"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/": {
         readonly parameters: {
             readonly query?: never;
@@ -28364,16 +28406,61 @@ export interface components {
              * @default
              */
             readonly vault_id: string;
+            /**
+             * @default {
+             *       "value": "",
+             *       "kv": 0,
+             *       "version": 0
+             *     }
+             */
+            readonly pins: components["schemas"]["VaultKeeperPinsOut"];
+            /**
+             * Pins Path
+             * @default
+             */
+            readonly pins_path: string;
         };
         /** VaultKeeperOut */
         readonly VaultKeeperOut: {
             /** Agents */
             readonly agents: readonly components["schemas"]["VaultKeeperAgentOut"][];
         };
+        /**
+         * VaultKeeperPinsOut
+         * @description The keepers' shared record of whose key they trusted: a `zk1` value under the
+         *     vault key at `kv`, bound to the name `~keeper-pins`. Empty `value` until a keeper
+         *     first writes one. Write back over `version`.
+         */
+        readonly VaultKeeperPinsOut: {
+            /**
+             * Value
+             * @default
+             */
+            readonly value: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /**
+             * Version
+             * @default 0
+             */
+            readonly version: number;
+        };
         /** VaultKeeperGrantOut */
         readonly VaultKeeperGrantOut: {
             /** Granted */
             readonly granted: number;
+        };
+        /** VaultKeeperPinsIn */
+        readonly VaultKeeperPinsIn: {
+            /** Kv */
+            readonly kv: number;
+            /** Expected Version */
+            readonly expected_version: number;
+            /** Value */
+            readonly value: string;
         };
         /**
          * HealthCheck
@@ -45874,6 +45961,60 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultKeeperGrantOut"];
+                };
+            };
+        };
+    };
+    readonly put_vault_keeper_pins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultKeeperPinsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperPinsOut"];
+                };
+            };
+        };
+    };
+    readonly put_vault_keeper_workspace_pins: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["VaultKeeperPinsIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultKeeperPinsOut"];
                 };
             };
         };
