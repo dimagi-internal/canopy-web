@@ -280,3 +280,46 @@ def test_the_refresh_builds_the_index_and_it_is_the_full_build_of_the_same_conte
         assert a.text(iid) == f.text(iid) and dict(a.item_row(iid))["sha256"] == dict(f.item_row(iid))["sha256"]
     assert a.item_row("8") is None and "chlorination" in a.find("chlorination")
     assert store.item("7")["text"].startswith("A new text")
+
+
+def _xlsx(strings, styles, value="0.25", fmt="0%", note="GiveWell estimate"):
+    """A workbook written as Google writes one: cells pointing into a shared-string table
+    and a style table, each in the order given."""
+    import io
+    import zipfile
+    m = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    pr = "http://schemas.openxmlformats.org/package/2006/relationships"
+    sst = "".join(f"<si><t>{t}</t></si>" for t in strings)
+    xfs = "".join(f'<xf numFmtId="{164 if f == fmt else 0}"/>' for f in styles)
+    pct, txt = styles.index(fmt), styles.index("General")
+    cells = (f'<row r="1"><c r="A1" t="s" s="{txt}"><v>{strings.index("Coverage")}</v></c>'
+             f'<c r="B1" s="{pct}"><v>{value}</v></c></row>'
+             f'<row r="2"><c r="A2" t="s" s="{txt}"><v>{strings.index("Cost per child")}</v></c>'
+             f'<c r="B2"><f>B1*3</f><v>0.75</v></c></row>')
+    files = {
+        "xl/workbook.xml": f'<workbook xmlns="{m}" xmlns:r="{r}"><sheets><sheet name="Inputs" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        "xl/_rels/workbook.xml.rels": f'<Relationships xmlns="{pr}"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+        "xl/worksheets/sheet1.xml": f'<worksheet xmlns="{m}"><sheetData>{cells}</sheetData></worksheet>',
+        "xl/sharedStrings.xml": f'<sst xmlns="{m}">{sst}</sst>',
+        "xl/styles.xml": f'<styleSheet xmlns="{m}"><numFmts><numFmt numFmtId="164" formatCode="{fmt}"/></numFmts><cellXfs>{xfs}</cellXfs></styleSheet>',
+        "xl/comments1.xml": f'<comments xmlns="{m}"><commentList><comment ref="B1"><text><t>{note}</t></text></comment></commentList></comments>',
+    }
+    b = io.BytesIO()
+    with zipfile.ZipFile(b, "w") as z:
+        for name, body in files.items():
+            z.writestr(name, body)
+    return b.getvalue()
+
+
+def test_a_workbook_is_the_same_when_its_cells_are_whatever_its_tables_order():
+    """Google re-exports an unchanged Sheet with its string and style tables renumbered;
+    a value, number format or note that changes is a change."""
+    from canopy_kb.prep.fetch import cells_hash
+    a = _xlsx(["Coverage", "Cost per child"], ["General", "0%"])
+    b = _xlsx(["Cost per child", "Coverage"], ["0%", "General"])  # the same cells, tables reordered
+    assert a != b and cells_hash(a) == cells_hash(b) != ""
+    assert cells_hash(_xlsx(["Coverage", "Cost per child"], ["General", "0%"], value="0.3")) != cells_hash(a)
+    assert cells_hash(_xlsx(["Coverage", "Cost per child"], ["General", "0.0%"], fmt="0.0%")) != cells_hash(a)
+    assert cells_hash(_xlsx(["Coverage", "Cost per child"], ["General", "0%"], note="revised")) != cells_hash(a)
+    assert cells_hash(b"PK not a workbook") == ""

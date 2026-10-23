@@ -20,8 +20,11 @@ the originals store, and only when a step that has no result for them yet needs 
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import threading
 import time
+import zipfile
 
 from canopy_kb.prep.raw import UA, _stable, now, sha
 
@@ -32,9 +35,90 @@ HOLD_BYTES = 512 * 1024**2
 
 
 def stable(url: str, ctype: str, body: bytes) -> str:
-    """The hash of what an export says (its volatile parts left out), else ""."""
+    """The hash of what an export says (its volatile parts left out), else "". A
+    workbook's is of its cells (`cells_hash`); a Google Doc's of its HTML less what the
+    exporter regenerates (`raw._stable`)."""
+    if body[:2] == b"PK" and "spreadsheetml" in ctype:
+        h = cells_hash(body)
+        if h:
+            return h
     s = _stable(url, ctype, body)
     return s.hex() if s is not None else ""
+
+
+def _legacy(url: str, ctype: str, body: bytes) -> str:
+    s = _stable(url, ctype, body)
+    return s.hex() if s is not None else ""
+
+
+_NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+       "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+       "pr": "http://schemas.openxmlformats.org/package/2006/relationships"}
+
+
+def cells_hash(body: bytes) -> str:
+    """A workbook's content: per sheet (in workbook order), every cell's reference, type,
+    value (shared strings resolved), formula and number format, its hyperlinks, and every
+    note. Google re-exports an unchanged Sheet with its shared-string and style tables
+    renumbered (measured 2026-10-23: 21 of 40 GiveWell sheets on one day), which changes
+    every byte and nothing a reader shows. "x2:" + sha256, or "" when unreadable."""
+    import xml.etree.ElementTree as ET
+    try:
+        z = zipfile.ZipFile(io.BytesIO(body))
+        names = set(z.namelist())
+
+        def xml(name):
+            return ET.fromstring(z.read(name)) if name in names else None
+
+        def text(el) -> str:
+            return "".join(t.text or "" for t in el.iter(f"{{{_NS['m']}}}t"))
+
+        sst = [text(si) for si in (xml("xl/sharedStrings.xml") or ET.Element("x")).findall("m:si", _NS)]
+        styles = xml("xl/styles.xml")
+        fmts: dict[str, str] = {}
+        xf_fmt: list[str] = []
+        if styles is not None:
+            for nf in styles.findall("m:numFmts/m:numFmt", _NS):
+                fmts[nf.get("numFmtId")] = nf.get("formatCode") or ""
+            for xf in styles.findall("m:cellXfs/m:xf", _NS):
+                fid = xf.get("numFmtId") or "0"
+                xf_fmt.append(fmts.get(fid, f"builtin:{fid}"))
+        rels = {r.get("Id"): r.get("Target") for r in (xml("xl/_rels/workbook.xml.rels") or ET.Element("x"))
+                .findall("pr:Relationship", _NS)}
+        h = hashlib.sha256()
+        for sh in xml("xl/workbook.xml").findall("m:sheets/m:sheet", _NS):
+            target = rels.get(sh.get(f"{{{_NS['r']}}}id")) or ""
+            path = target.lstrip("/") if target.startswith("/") else "xl/" + target
+            h.update(b"\x01" + (sh.get("name") or "").encode())
+            ws = xml(path)
+            if ws is None:
+                continue
+            for c in ws.iter(f"{{{_NS['m']}}}c"):
+                t, v, f = c.get("t") or "", c.find("m:v", _NS), c.find("m:f", _NS)
+                val = v.text if v is not None else ""
+                if t == "s" and val:
+                    val = sst[int(val)]
+                elif t == "inlineStr":
+                    val = text(c)
+                s_ = c.get("s")
+                fmt = xf_fmt[int(s_)] if s_ and s_.isdigit() and int(s_) < len(xf_fmt) else ""
+                form = (f.text or "") + "|" + "|".join(f"{k}={f.get(k)}" for k in sorted(f.attrib)) if f is not None else ""
+                h.update("\x02".join((c.get("r") or "", t, val or "", form, fmt)).encode() + b"\x03")
+            srels_name = path.rsplit("/", 1)[0] + "/_rels/" + path.rsplit("/", 1)[1] + ".rels"
+            srels = {r.get("Id"): r.get("Target") for r in (xml(srels_name) or ET.Element("x"))
+                     .findall("pr:Relationship", _NS)}
+            rid = f"{{{_NS['r']}}}id"
+            for hl in ws.findall("m:hyperlinks/m:hyperlink", _NS):
+                h.update(f"link:{hl.get('ref')}:{srels.get(hl.get(rid), hl.get('location') or '')}".encode())
+        notes = []
+        for name in sorted(n for n in names if n.startswith("xl/comments") and n.endswith(".xml")):
+            for cm in xml(name).findall("m:commentList/m:comment", _NS):
+                notes.append(f"{cm.get('ref')}:{text(cm)}")
+        for n in sorted(notes):
+            h.update(b"note:" + n.encode())
+        return "x2:" + h.hexdigest()
+    except Exception:  # noqa: BLE001 - not a workbook we can read: compare its bytes instead
+        return ""
 
 
 class Fetch:
@@ -92,11 +176,12 @@ class Fetch:
                 ctype = r.headers.get("content-type", "")
                 digest = sha(body)
                 st = stable(url, ctype, body)
+                said = {st, _legacy(url, ctype, body)} - {""}  # a row from before cells_hash
                 if old.get("status") == 200 and r.status_code == 200 and (
-                        old.get("sha256") == digest or (st and old.get("stable") == st)):
+                        old.get("sha256") == digest or (old.get("stable") in said)):
                     # Same bytes, or an export that says the same: keep the row (and its
                     # original), so nothing downstream is re-read or re-published.
-                    row = {**old, "checked_at": now()}
+                    row = {**old, "checked_at": now(), **({"stable": st} if st else {})}
                     self._count("same_content")
                     break
                 row = {"url": url, "final_url": str(r.url), "status": r.status_code, "ctype": ctype,
