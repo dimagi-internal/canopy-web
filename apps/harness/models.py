@@ -230,13 +230,7 @@ class Runner(models.Model):
     # Server clock, stamped when a report arrives — tells a current answer from
     # an old one, since a box that stops reporting keeps its last list.
     mailboxes_checked_at = models.DateTimeField(null=True, blank=True)
-    # The slash commands a Claude session on this box can run (its account's
-    # skills and commands, its enabled plugins', and what ACP announced), as
-    # [{name, description, args_hint, source}] — REPORTED by the box when the list
-    # changes (`canopy_runner.slash_commands`), never typed. Feeds the chat
-    # composer's `/` autocomplete; kept off RunnerOut, since it runs to hundreds
-    # of rows. NULL = never reported (an older runner).
-    slash_commands = models.JSONField(null=True, blank=True, default=None)
+    # The box's slash commands are NOT a column here — see RunnerSlashCommands.
     # An operator asked this box to refresh itself (re-run bootstrap: plugins,
     # the canopy CLI, Claude Code, agent provisioning). DURABLE, not a frame: a
     # control frame is a doorbell, and one sent while the socket is down is
@@ -1190,6 +1184,28 @@ class AgentSchedule(models.Model):
     @property
     def agent_slug(self) -> str:
         return self.agent.slug
+
+
+class RunnerSlashCommands(models.Model):
+    """The slash commands a Claude session on this box can run (its account's
+    skills and commands, its enabled plugins', and what ACP announced), as
+    [{name, description, args_hint, source}] — REPORTED by the box when the list
+    changes (`canopy_runner.slash_commands`), never typed. Feeds the chat
+    composer's `/` autocomplete. No row = never reported (an older runner).
+
+    A table of its own, never a column on Runner: one list runs to ~460 rows and
+    ~120 KB, and a Runner row is loaded on every poll a box makes and by every
+    `select_related` that reaches one, so a column there is parsed into Python
+    on nearly every request. Only the report endpoint and the composer read this.
+    """
+
+    runner = models.OneToOneField(Runner, on_delete=models.CASCADE, primary_key=True,
+                                  related_name="+")
+    commands = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"slash-commands:{self.runner_id}"
 
 
 class RunnerCredential(models.Model):

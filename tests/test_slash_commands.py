@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent, AgentSkill
 from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
-from apps.harness.models import Runner
+from apps.harness.models import Runner, RunnerSlashCommands
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -56,8 +56,18 @@ def _commands(user, session):
 def test_a_report_replaces_the_runner_list(setup):
     assert _report(setup, [{"name": "a", "source": "user"}]).status_code == 204
     assert _report(setup, [{"name": "b:c", "description": "d", "source": "plugin"}]).status_code == 204
-    setup["runner"].refresh_from_db()
-    assert [c["name"] for c in setup["runner"].slash_commands] == ["b:c"]
+    held = RunnerSlashCommands.objects.get(runner=setup["runner"]).commands
+    assert [c["name"] for c in held] == ["b:c"]
+
+
+def test_a_runner_row_never_carries_the_list(setup):
+    # The list runs to ~120 KB per box, and a Runner row is loaded on every poll
+    # and by every select_related that reaches one. Keep it off that row.
+    _report(setup, [{"name": f"cmd{i}", "description": "x" * 200, "source": "plugin"}
+                    for i in range(500)])
+    columns = {f.column for f in Runner._meta.concrete_fields}
+    assert not any("slash" in c or c == "commands" for c in columns)
+    assert "commands" not in str(Runner.objects.all().query)
 
 
 def test_a_report_refuses_a_name_that_is_not_a_command(setup):

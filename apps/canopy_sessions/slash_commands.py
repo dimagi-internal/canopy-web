@@ -2,7 +2,7 @@
 
 Two sources, merged by name:
 
-* what the session's RUNNER reported it can run (`Runner.slash_commands`, sent by
+* what the session's RUNNER reported it can run (`RunnerSlashCommands`, sent by
   `canopy_runner.slash_commands` when its list changes) — the account's skills
   and commands, its enabled plugins', and what ACP announced;
 * the agent's own LAUNCHABLE skills (`AgentSkill.launchable`), named as Claude
@@ -15,6 +15,8 @@ everything else by name.
 """
 from __future__ import annotations
 
+from apps.harness.models import RunnerSlashCommands
+
 from .models import Session
 
 AGENT, RUNNER = "agent", "runner"
@@ -22,8 +24,11 @@ AGENT, RUNNER = "agent", "runner"
 
 def for_session(session: Session) -> list[dict]:
     binding = getattr(session, "runner_binding", None)
-    runner = binding.runner if binding is not None and binding.runner_id else None
-    reported = (runner.slash_commands or []) if runner is not None else []
+    runner_id = binding.runner_id if binding is not None else None
+    reported = []
+    if runner_id:
+        reported = (RunnerSlashCommands.objects.filter(runner_id=runner_id)
+                    .values_list("commands", flat=True).first()) or []
     by_name: dict[str, dict] = {}
     for c in reported:
         if isinstance(c, dict) and c.get("name"):
