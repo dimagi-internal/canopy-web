@@ -8,6 +8,7 @@ import {
   removeWorkspaceVaultMember,
   type WorkspaceVaultOut,
 } from '@/api/vault'
+import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
 
 // A workspace's own vaults (spec 2026-10-22-vault-access-follows-canopy-access-design.md
 // §4): shared secrets its agents read, layered under each agent's own. Each vault has its
@@ -49,7 +50,7 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
   }
 
   return (
-    <li className="rounded-md border border-border p-3" data-testid={`ws-vault-${v.vault_id}`}>
+    <li id={`ws-vault-${v.vault_id}`} className="rounded-md border border-border p-3" data-testid={`ws-vault-${v.vault_id}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="text-[13px] font-medium text-foreground">{v.name}</span>
         <span className="text-[11px] text-muted-foreground">
@@ -83,7 +84,7 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
               <td className="py-1 text-muted-foreground">{m.role === 'manage' ? 'Manages' : 'Can use'}</td>
               <td className="py-1 text-muted-foreground">
                 {m.sources.map(sourceLabel).join(' · ')}
-                {!m.has_vault_key && <span className="text-warning"> · no vault key yet</span>}
+                {memberWaiting(m, v.holders) && <span className="text-warning"> · {memberWaiting(m, v.holders)}</span>}
               </td>
               <td className="py-1 text-right">
                 {manages && m.sources.includes('direct') && (
@@ -98,6 +99,7 @@ function VaultCard({ v, onChange }: { v: WorkspaceVaultOut; onChange: (next: Wor
           ))}
         </tbody>
       </table>
+      <VaultWaitingNote members={v.members} holders={v.holders} testId={`ws-vault-waiting-${v.vault_id}`} />
       {manages && (
         <div className="mt-2 flex flex-wrap gap-2">
           <form className="flex flex-wrap items-center gap-2" data-testid="ws-vault-add-member"

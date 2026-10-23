@@ -35,7 +35,7 @@ describe('WorkspaceVaultsSection', () => {
     expect(screen.getByTestId('ws-vault-serves').textContent).toContain('every agent in dimagi and below')
     expect(screen.getByTestId('ws-vault-member-1').textContent).toContain('Owner of dimagi')
     expect(screen.getByTestId('ws-vault-member-2').textContent).toContain('Full access to ace')
-    expect(screen.getByTestId('ws-vault-member-2').textContent).toContain('no vault key yet')
+    expect(screen.getByTestId('ws-vault-member-2').textContent).toContain('hasn’t set up their vault key')
     expect(screen.getByTestId('ws-vault-cli').textContent).toContain('canopy vault zk set --vault v1')
   })
 

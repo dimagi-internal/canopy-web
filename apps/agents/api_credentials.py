@@ -391,12 +391,15 @@ def _vault_out(vault, user) -> VaultMembersOut:
     link = vault.links.filter(kind="agent", agent=vault.agent).first() if vault.agent_id else None
     rank = {"manage": 0, "use": 1}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
+    held, keepers = zk.copies(vault.agent)
     return VaultMembersOut(
         vault_id=str(vault.pk), kind=vault.kind, name=vault.name,
         agent_link={"linked": link is not None, "role": link.role if link else "use"},
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
-                  "has_vault_key": m.user.pk in keyed} for m in rows],
-        you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None))
+                  "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
+        you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
+        holders={"has_key": bool(vault.agent.zk_enabled and vault.agent.zk_kv),
+                 "people": sorted(ms[u].user.email or "" for u in held), "keepers": keepers})
 
 
 def _agent_vault(request: HttpRequest, slug: str, *, manage: bool):

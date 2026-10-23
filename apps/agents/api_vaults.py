@@ -70,14 +70,17 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     keyed = set(UserVaultKeyset.objects.filter(user_id__in=list(ms)).values_list("user_id", flat=True))
     rank = {"manage": 0, "use": 1}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
+    held, keepers = workspace_vaults.copies(v)
     return WorkspaceVaultOut(
         vault_id=str(v.pk), workspace=v.workspace_id, name=v.name, kv=v.kv,
         secrets=sorted(VaultSecret.objects.filter(vault=v).values_list("name", flat=True)),
         attachments=[{"id": a.pk, "agent": a.agent.slug if a.agent_id else None, "workspace": a.workspace_id}
                      for a in VaultAttachment.objects.filter(vault=v).select_related("agent")],
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
-                  "has_vault_key": m.user.pk in keyed} for m in rows],
-        you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None))
+                  "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
+        you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
+        holders={"has_key": bool(v.kv), "people": sorted(ms[u].user.email or "" for u in held),
+                 "keepers": keepers})
 
 
 def _problem(exc) -> ProblemError:

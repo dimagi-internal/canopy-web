@@ -15,7 +15,9 @@ where granting is one passkey touch.
   key, `canopy vault zk keep`) grants every endorsed target within a minute or
   two — neither may mail anyone. The email is the fallback for what no machine
   could pass on.
-* Once per target (`ZkGrantNotice`, unique per agent/kind/target/kv); the row
+* Agent vaults and workspace vaults alike (a workspace vault's link goes to its
+  workspace's Secrets page).
+* Once per target (`ZkGrantNotice`, unique per vault/kind/target/kv); the row
   is closed when the target is wrapped or stops qualifying.
 * Swept on the off-request clock (apps/common/ticks.py), at most once a minute.
 
@@ -26,6 +28,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from html import escape
 
 from django.core.cache import cache
@@ -34,8 +39,8 @@ from django.utils import timezone
 from apps.push.services import send_to_user
 from apps.workspaces import links as wslinks
 
-from . import vault_members, zk
-from ..models import Agent, AgentVaultWrap, ZkGrantNotice
+from ..models import Agent, AgentVaultWrap, Vault, VaultKeyWrap, ZkGrantNotice
+from . import vault_members, workspace_vaults, zk
 
 logger = logging.getLogger(__name__)
 
@@ -53,30 +58,52 @@ def maybe_sweep(now=None) -> None:
         logger.exception("zk grant notify: sweep failed")
 
 
+@dataclass
+class _Waiting:
+    """One vault the sweep looks at: an agent's own, or a workspace vault."""
+
+    what: str                      # "ace" / "the Shared vault"
+    kv: int
+    link: str
+    where: dict                    # how its ZkGrantNotice rows are keyed: {"agent": a} | {"vault": v}
+    pending: Callable[[], list]
+    holders: Callable[[], list]
+
+
+def _vaults():
+    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gte=1).select_related("workspace"):
+        yield _Waiting(agent.slug, agent.zk_kv, _link(agent), {"agent": agent},
+                       partial(zk.pending_targets, agent), partial(holders, agent))
+    for v in Vault.objects.filter(kind=Vault.WORKSPACE, kv__gte=1).select_related("workspace"):
+        yield _Waiting(f"the {v.name} vault", v.kv,
+                       wslinks.scoped_url(v.workspace, f"/settings/secrets#ws-vault-{v.pk}"), {"vault": v},
+                       partial(workspace_vaults.pending_targets, v), partial(workspace_holders, v))
+
+
 def sweep(now=None) -> int:
-    """Record, notify and clear pending-grant notices. Returns how many were
-    notified this pass."""
+    """Record, notify and clear pending-grant notices, for agent vaults and workspace
+    vaults alike. Returns how many were notified this pass."""
 
     now = now or timezone.now()
     told = 0
-    for agent in Agent.objects.filter(zk_enabled=True, zk_kv__gte=1):
+    for w in _vaults():
         try:
-            pending = {(t["kind"], t["target"]): t for t in zk.pending_targets(agent)}
+            pending = {(t["kind"], t["target"]): t for t in w.pending()}
         except Exception:  # noqa: BLE001
-            logger.exception("zk grant notify: pending targets failed for %s", agent.slug)
+            logger.exception("zk grant notify: pending targets failed for %s", w.what)
             continue
-        for notice in ZkGrantNotice.objects.filter(agent=agent, cleared_at__isnull=True):
-            if notice.kv != agent.zk_kv or (notice.kind, notice.target) not in pending:
+        for notice in ZkGrantNotice.objects.filter(**w.where, cleared_at__isnull=True):
+            if notice.kv != w.kv or (notice.kind, notice.target) not in pending:
                 notice.cleared_at = now
                 notice.save(update_fields=["cleared_at"])
         for (kind, target), t in pending.items():
             notice, _ = ZkGrantNotice.objects.get_or_create(
-                agent=agent, kind=kind, target=target, kv=agent.zk_kv,
+                **w.where, kind=kind, target=target, kv=w.kv,
                 defaults={"first_seen_at": now, "label": _label(t)[:300]},
             )
             if notice.notified_at or notice.cleared_at or now - notice.first_seen_at < GRACE:
                 continue
-            notice.notified = _notify(agent, notice)
+            notice.notified = _notify(w, notice)
             notice.notified_at = now
             notice.save(update_fields=["notified", "notified_at"])
             told += 1
@@ -86,7 +113,15 @@ def sweep(now=None) -> int:
 def _label(t: dict) -> str:
     if t["kind"] == "device":
         return f"{t.get('runner_name') or 'a runner'} · {t.get('label') or t.get('device_kind') or 'device'}"
-    return t.get("email") or "a new admin"
+    return t.get("email") or "a new member"
+
+
+def workspace_holders(vault) -> list:
+    """`holders`, for a workspace vault."""
+
+    ids = vault_members.member_ids(vault)
+    return [w.user for w in VaultKeyWrap.objects.filter(vault=vault, kv=vault.kv, kind="member", user_id__in=ids)
+            .select_related("user") if w.user.is_active]
 
 
 def holders(agent) -> list:
@@ -104,27 +139,25 @@ def _link(agent) -> str:
     return wslinks.scoped_url(agent.workspace, f"/agents/{agent.slug}/settings/security#cred-zk")
 
 
-def _notify(agent, notice) -> dict:
-    """Email + Web Push to each holder. Never raises."""
+def _notify(w: _Waiting, notice) -> dict:
+    """Email + Web Push to each person who holds the vault key. Never raises."""
     from django.core.mail import EmailMultiAlternatives
 
     result: dict = {"emailed": [], "failed": [], "not_configured": False, "pushed": 0}
     try:
-        name = agent.name or agent.slug
-        link = _link(agent)
-        what = (f"The device {notice.label}" if notice.kind == "device"
-                else f"{notice.label}, a new admin of {agent.slug},")
-        subject = f"Canopy vault · {name}: {notice.label} is waiting for the vault key"
-        detail = (f"{what} is approved but can't read {name}'s secrets yet: zero-knowledge means only "
-                  f"someone who holds the vault key can pass it on. Grant it with one passkey touch.")
-        text = (f"{detail}\n\n{link}\n\nYou are getting this because you hold {agent.slug}'s vault key. "
-                f"One notice per device or person.\n")
-        html = (f"<p>{escape(detail)}</p><p><a href=\"{escape(link)}\">Grant it on {escape(agent.slug)}&rsquo;s "
-                f"settings</a></p><p style=\"color:#78716c;font-size:13px\">You are getting this because you hold "
-                f"{escape(agent.slug)}&rsquo;s vault key. One notice per device or person.</p>")
-        rel = link.split("://", 1)[-1]
+        what = (f"The machine {notice.label}" if notice.kind == "device"
+                else f"{notice.label}, a member of {w.what}'s vault,")
+        subject = f"Canopy vault · {notice.label} is waiting for {w.what}'s key"
+        detail = (f"{what} can't open {w.what}'s secrets yet, and no machine holding the key has passed it "
+                  f"on. Only someone who holds the key can: grant it with one passkey touch.")
+        text = (f"{detail}\n\n{w.link}\n\nYou are getting this because you hold {w.what}'s key. "
+                f"One notice per machine or person.\n")
+        html = (f"<p>{escape(detail)}</p><p><a href=\"{escape(w.link)}\">Grant it</a></p>"
+                f"<p style=\"color:#78716c;font-size:13px\">You are getting this because you hold "
+                f"{escape(w.what)}&rsquo;s key. One notice per machine or person.</p>")
+        rel = w.link.split("://", 1)[-1]
         rel = rel[rel.find("/"):] if "/" in rel else "/"
-        for person in holders(agent):
+        for person in w.holders():
             if person.email:
                 message = EmailMultiAlternatives(subject=subject, body=text, to=[person.email])
                 message.attach_alternative(html, "text/html")
@@ -137,11 +170,10 @@ def _notify(agent, notice) -> dict:
                     logger.exception("zk grant notice email failed: to=%s", person.email)
                     result["failed"].append(person.email)
             try:
-
-                result["pushed"] += send_to_user(person, f"Vault key wanted · {agent.slug}", detail[:180], rel)
+                result["pushed"] += send_to_user(person, f"Vault key wanted · {w.what}", detail[:180], rel)
             except Exception:  # noqa: BLE001
                 logger.exception("zk grant notice push failed: user=%s", person.pk)
     except Exception:  # noqa: BLE001
-        logger.exception("zk grant notice failed for %s", agent.slug)
+        logger.exception("zk grant notice failed for %s", w.what)
         result["error"] = True
     return result

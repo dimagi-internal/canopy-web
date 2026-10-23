@@ -36,7 +36,7 @@ describe('AgentVaultMembersSection', () => {
     expect(await screen.findByText('jj@dimagi.com')).toBeTruthy()
     expect(screen.getByTestId('vault-member-1').textContent).toContain('Full access to this agent')
     expect(screen.getByTestId('vault-member-2').textContent).toContain('Added by name')
-    expect(screen.getByTestId('vault-member-2').textContent).toContain('no vault key yet')
+    expect(screen.getByTestId('vault-member-2').textContent).toContain('hasn’t set up their vault key')
   })
 
   it('lets a manager remove only a direct membership', async () => {

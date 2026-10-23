@@ -141,6 +141,20 @@ def device_may_hold(vault: Vault, device_key) -> bool:
     return any(device_keys.runner_serves_agent(device_key.runner, a) for a in attached_agents(vault))
 
 
+def copies(vault: Vault) -> tuple[set[int], list[str]]:
+    """`zk.copies`, for a workspace vault."""
+    if not vault.kv:
+        return set(), []
+    members = vault_members.member_ids(vault)
+    rows = list(VaultKeyWrap.objects.filter(vault=vault, kv=vault.kv, kind__in=["member", "device"])
+                .select_related("device_key__runner"))
+    people = {w.user_id for w in rows if w.kind == "member" and w.user_id in members}
+    machines = sorted({w.device_key.runner.name for w in rows
+                       if w.kind == "device" and w.device_key.status == RunnerDeviceKey.ACTIVE
+                       and device_may_hold(vault, w.device_key)})
+    return people, machines
+
+
 def _key(w) -> tuple:
     if w.kind == "device":
         return ("device", w.device_key_id)
