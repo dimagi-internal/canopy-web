@@ -20,7 +20,7 @@ from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.events import usage
 from apps.events.models import SessionUsage
 from apps.harness import ledger, sensitivity
-from apps.harness.models import Turn, TurnEvent, TurnTranscript
+from apps.harness.models import Runner, Turn, TurnEvent, TurnTranscript
 from apps.retention import services as retention
 from apps.retention.models import RetentionSweep
 from apps.workspaces.models import WorkspaceMembership
@@ -407,3 +407,78 @@ def test_the_chat_page_is_told(w):
     assert w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["sensitive"] is True
     assert w["c"].get(f"/api/canopy-sessions/{w['cold'].pk}").json()["sensitive"] is False
 
+
+
+# --- a confined turn's reply reaches its conversation -----------------------------------
+
+
+def _ship(w, runner, transcript_id, rows):
+    return w["c"].post(f"/api/harness/runners/{runner.id}/session-stream", data={
+        "session_id": str(w["hot"].id), "transcript_id": transcript_id,
+        "events": [{"kind": k, "seq": i, "index": i, "payload": {"text": t}}
+                   for i, (k, t) in enumerate(rows)]}, content_type="application/json")
+
+
+def test_a_confined_turns_reply_arrives_with_no_binding_and_each_turn_lands_after_the_last(w):
+    """A confined turn is never the session's binding; its runner ships the turn's rows
+    at its end, and they are the only way the reply reaches the asker (seen live
+    2026-10-23: `session not bound to this runner`, and the visitor got nothing)."""
+    from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
+
+    w["hot"].metadata = {**w["hot"].metadata, TRANSCRIPT_SOURCED: True}
+    w["hot"].save(update_fields=["metadata"])
+    first = _turn(w["hot"], prompt=ASKED, capability="data", claimed_by=w["runner"],
+                  status=Turn.RUNNING)
+    assert _ship(w, w["runner"], "cli-1", [("user", ASKED), ("assistant", REPLY)]).status_code == 200
+    first.status, first.finished_at = Turn.DONE, timezone.now()
+    first.save(update_fields=["status", "finished_at"])
+    _turn(w["hot"], prompt="and last month?", capability="data", claimed_by=w["runner"],
+          status=Turn.RUNNING)
+    # The next turn is a fresh Claude session: its rows start at ordinal 0 again.
+    assert _ship(w, w["runner"], "cli-2", [("user", "and last month?"),
+                                           ("assistant", "9 visits")]).status_code == 200
+    said = _said(w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["messages"])
+    assert REPLY in said and "9 visits" in said
+    # Still sealed: nothing readable in the columns.
+    assert REPLY not in str(list(Message.objects.filter(session=w["hot"]).values("plaintext", "content")))
+
+
+def test_only_the_runner_that_ran_a_confined_turn_may_ship_its_rows_and_only_for_a_while(w):
+    other = Runner.objects.create(name="other", workspace=w["ws"], location=Runner.LOCAL,
+                                  status=Runner.ONLINE, owner=w["user"])
+    # No turn on this runner at all.
+    assert _ship(w, w["runner"], "cli-1", [("assistant", REPLY)]).status_code == 404
+    # An unconfined turn is the binding's business, not this door's.
+    t = _turn(w["hot"], claimed_by=w["runner"], status=Turn.RUNNING)
+    assert _ship(w, w["runner"], "cli-1", [("assistant", REPLY)]).status_code == 404
+    t.delete()
+    # A confined turn another runner ran.
+    t = _turn(w["hot"], capability="data", claimed_by=other, status=Turn.RUNNING)
+    assert _ship(w, w["runner"], "cli-1", [("assistant", REPLY)]).status_code == 404
+    t.delete()
+    # This runner's confined turn, ended long ago.
+    _turn(w["hot"], capability="data", claimed_by=w["runner"], status=Turn.DONE,
+          finished_at=timezone.now() - dt.timedelta(hours=1))
+    assert _ship(w, w["runner"], "cli-1", [("assistant", REPLY)]).status_code == 404
+
+
+def test_a_sensitive_turns_ledger_reads_as_a_log_of_metadata(w):
+    """What troubleshooting needs is readable; the words are not (2026-10-23: a
+    sensitive turn's events 404'd, and its reply could not be debugged)."""
+    t = _turn(w["hot"], prompt=ASKED)
+    ledger.append_events(t, [{"kind": "assistant_text", "payload": {"text": REPLY}},
+                             {"kind": "tool_start", "payload": {"name": "site_call",
+                                                                "input": {"tool": "data_query"}}}])
+    r = w["c"].get(f"/api/harness/turns/{t.pk}/events")
+    assert r.status_code == 200, r.content
+    events = r.json()["events"]
+    assert [e["kind"] for e in events] == ["assistant_text", "tool_start"]
+    assert events[1]["payload"]["name"] == "site_call" and events[1]["payload"]["input_tool"] == "data_query"
+    assert REPLY not in str(events) and ASKED not in str(events)
+    # The turn's words stay withheld everywhere else.
+    assert w["c"].get(f"/api/harness/turns/{t.pk}").json()["content_hidden"] is True
+    # And a person who could not read the turn at all still cannot.
+    outsider = User.objects.create_user("out", "out@x.org", "pw")
+    c = Client()
+    c.force_login(outsider)
+    assert c.get(f"/api/harness/turns/{t.pk}/events").status_code == 404

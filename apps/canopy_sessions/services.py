@@ -43,6 +43,9 @@ SERVER_OWNED_METADATA = frozenset({
     # MCP Apps receipts + model context (apps/mcp_apps_host/mcp_apps_views.py): canopy's
     # own record of what a View did — a host must never be able to write it.
     "mcp_apps",
+    # Where each confined turn's transcript sits in the session
+    # (apps/harness/session_sync.py::TURN_END_EPOCHS).
+    "turn_end_epochs",
 })
 MAX_HOST_METADATA_KEYS = 20
 MAX_HOST_METADATA_BYTES = 4096

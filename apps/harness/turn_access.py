@@ -41,9 +41,17 @@ REDACTED_FIELDS = {"prompt": "", "origin_ref": {}, "result_note": "", "share_tok
 def can_read_turn_content(user, turn, _memo: dict | None = None) -> bool:
     """`_memo` caches the per-workspace and per-agent answers across a list, so
     redacting a page of turns costs a query per agent, not several per row."""
-    if not getattr(user, "is_authenticated", False):
-        return False
     if sensitivity.is_sensitive(turn):
+        return False
+    return can_read_turn_log(user, turn, _memo)
+
+
+def can_read_turn_log(user, turn, _memo: dict | None = None) -> bool:
+    """Who may read a turn's LOG — the people listed above — whether or not the turn
+    is sensitive. Ask it only where what is served holds no words: a sensitive
+    turn's stored ledger is metadata (`sensitivity.redact_payload`), so its people
+    can still see what the turn did, when, with which tools, and how it ended."""
+    if not getattr(user, "is_authenticated", False):
         return False
     memo = _memo if _memo is not None else {}
     if turn.chat_session_id:
