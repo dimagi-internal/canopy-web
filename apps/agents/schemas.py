@@ -1027,6 +1027,61 @@ class KbFileOut(StrictModel):
     published_at: datetime | None = None
 
 
+class KbWorkdirHaveIn(StrictModel):
+    #: Each file's content sha256.
+    shas: list[str] = Field(max_length=1000)
+
+
+class KbWorkdirHaveOut(StrictModel):
+    """Which files are stored already: among the originals, or in the working cache."""
+
+    originals: list[str]
+    workdir: list[str]
+
+
+class KbWorkdirLinkIn(StrictModel):
+    sha256: str = Field(min_length=64, max_length=64)
+    store: Literal["workdir", "originals"] = "workdir"
+
+
+class KbWorkdirLinksIn(StrictModel):
+    files: list[KbWorkdirLinkIn] = Field(max_length=1000)
+
+
+class KbWorkdirLinkOut(StrictModel):
+    sha256: str
+    store: str
+    url: str
+
+
+class KbWorkdirLinksOut(StrictModel):
+    """GET each `url`: a `workdir` file comes gzipped, an `originals` one as itself."""
+
+    links: list[KbWorkdirLinkOut]
+    expires_in: int
+
+
+class KbWorkdirIn(StrictModel):
+    #: sha256 of the manifest, uploaded first as a working-cache file.
+    manifest: str = Field(min_length=64, max_length=64)
+    #: The manifest this machine restored from; null for the first save.
+    base: str | None = None
+    files: int = Field(ge=0)
+    bytes: int = Field(ge=0)
+
+
+class KbWorkdirOut(StrictModel):
+    """The working cache saved last (empty before the first save)."""
+
+    manifest: str | None = None
+    files: int = 0
+    bytes: int = 0
+    saved_at: datetime | None = None
+    saved_by: str = ""
+    #: The knowledge-base version published when it was saved.
+    version: int | None = None
+
+
 class KbSettingsIn(StrictModel):
     #: Write each new version's kb.sqlite.gz into the project's Drive folder.
     drive_replica: bool

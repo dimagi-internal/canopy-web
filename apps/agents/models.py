@@ -1290,6 +1290,10 @@ class AgentProject(models.Model):
     #: the project's Drive folder (`kb_index`); no reader needs it — readers call the MCP.
     kb_drive_replica = models.BooleanField(default=False)
     kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
+    #: The curator's working cache, saved after a refresh so the next one can run on any
+    #: machine (`kb_store.workdir_save`): {manifest, files, bytes, saved_at, saved_by,
+    #: version}. Empty until a curator saves one.
+    kb_workdir = models.JSONField(default=dict, blank=True)
     #: Who may query a KB with a Drive source, beside its owner and its steward
     #: (`kb_drive.may_read`). A KB of public sources ignores it.
     kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")

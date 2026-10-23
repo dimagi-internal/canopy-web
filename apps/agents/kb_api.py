@@ -7,6 +7,8 @@ sources and — for a Drive source — the owner's review of what may be read.
     GET  …/kb/versions                  the log
     GET  …/kb/file                      a download of the file it serves now
     POST …/kb/versions/{n}/rollback     serve version n's file again
+    GET/PUT …/kb/workdir                the curator's saved working cache (the steward)
+    POST …/kb/workdir/have|blobs|links  which of its files are stored; uploads; downloads
     PUT  …/kb/settings                  the Drive replica option (off by default)
     GET/POST …/kb/sources               where its documents come from
     POST …/kb/sources/{id}/inventory    a Drive source's metadata listing (the steward)
@@ -54,6 +56,12 @@ from .schemas import (
     KbSourceIn,
     KbSourceOut,
     KbVersionOut,
+    KbWorkdirHaveIn,
+    KbWorkdirHaveOut,
+    KbWorkdirIn,
+    KbWorkdirLinksIn,
+    KbWorkdirLinksOut,
+    KbWorkdirOut,
 )
 
 router = Router(auth=session_auth, tags=["knowledge bases"])
@@ -86,7 +94,7 @@ def _owner(request: HttpRequest, workspace: str, handle: str):
 def _conflict(fn):
     try:
         return _kb_call(fn)
-    except kb_versions.KbConflict as exc:
+    except (kb_versions.KbConflict, kb_store.KbWorkdirConflict) as exc:
         raise HttpError(409, str(exc)) from exc
     except kb_drive.DriveSourceError as exc:
         raise HttpError(422, str(exc)) from exc
@@ -194,6 +202,59 @@ def kb_rollback(request: HttpRequest, workspace: str, handle: str, number: int) 
     version = _conflict(lambda: kb_versions.rollback(project, number, published_by=kb_versions.publisher(request.user)))
     project.refresh_from_db()
     return _version_out(project, version)
+
+
+# ---- the curator's working cache ----
+# Steward only, reads included: the cache holds what the curator fetched, which for a
+# Drive source is its owner's files.
+
+@router.get(f"{_BASE}/workdir", response=KbWorkdirOut,
+            summary="The curator's working cache saved last, for a refresh on another machine")
+@gate("agent.work")
+def kb_workdir(request: HttpRequest, workspace: str, handle: str) -> KbWorkdirOut:
+    project = _steward(request, workspace, handle)
+    return KbWorkdirOut(**(project.kb_workdir or {}))
+
+
+@router.post(f"{_BASE}/workdir/have", response=KbWorkdirHaveOut,
+             summary="Which working-cache files are stored already (among the originals, or in the cache)")
+@gate("agent.work", kind="action")  # changes nothing
+def kb_workdir_have(request: HttpRequest, workspace: str, handle: str, payload: KbWorkdirHaveIn) -> KbWorkdirHaveOut:
+    project = _steward(request, workspace, handle)
+    return KbWorkdirHaveOut(**_conflict(lambda: kb_store.workdir_have(project, payload.shas)))
+
+
+@router.post(f"{_BASE}/workdir/blobs", response=KbOriginalsOut,
+             summary="Presigned uploads for the working-cache files the store lacks")
+@gate("agent.work", kind="content")
+def kb_workdir_blobs(request: HttpRequest, workspace: str, handle: str, payload: KbBlobsIn) -> KbOriginalsOut:
+    """Each file gzipped, under the sha256 of the file itself; the PUT carries the
+    gzip's sha256, which storage checks."""
+    project = _steward(request, workspace, handle)
+    blobs = [b.model_dump() for b in payload.blobs]
+    return KbOriginalsOut(**_conflict(lambda: kb_store.workdir_upload(project, blobs)))
+
+
+@router.post(f"{_BASE}/workdir/links", response=KbWorkdirLinksOut,
+             summary="Presigned downloads of working-cache files")
+@gate("agent.work", kind="action")  # changes nothing
+def kb_workdir_links(request: HttpRequest, workspace: str, handle: str,
+                     payload: KbWorkdirLinksIn) -> KbWorkdirLinksOut:
+    project = _steward(request, workspace, handle)
+    files = [f.model_dump() for f in payload.files]
+    return KbWorkdirLinksOut(**_conflict(lambda: kb_store.workdir_links(project, files)))
+
+
+@router.put(f"{_BASE}/workdir", response=KbWorkdirOut,
+            summary="Point the knowledge base at a saved working cache")
+@gate("agent.work", kind="content")
+def kb_workdir_save(request: HttpRequest, workspace: str, handle: str, payload: KbWorkdirIn) -> KbWorkdirOut:
+    """409 when another machine saved since `base`: restore, then save again."""
+    project = _steward(request, workspace, handle)
+    saved = _conflict(lambda: kb_store.workdir_save(
+        project, payload.manifest, payload.base, payload.files, payload.bytes,
+        saved_by=kb_versions.publisher(request.user)))
+    return KbWorkdirOut(**saved)
 
 
 @router.put(f"{_BASE}/settings", response=AgentProjectOut,

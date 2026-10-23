@@ -23,6 +23,11 @@ publishes it here; canopy-web then answers the project's MCP tools from it
   PUTs that S3 checks against the sha256; the `original` tool hands a reader a
   15-minute download link. Never deleted: a file the publisher changed or removed is
   the version a KB's `originals` table still lists, and the reason to keep originals.
+* **Working cache** (`workdir_*`, `canopy kb workdir save|restore`): what a curator's
+  refresh keeps between runs (fetched bytes with their ETags, extracted text, OCR,
+  catalog cards), saved here after a publish so the next refresh can run on any
+  machine. Files are stored by sha256 under `workdir/` (gzipped), except those the
+  originals already hold; a manifest lists them and `project.kb_workdir` points at it.
 
 The bucket is `CANOPY_KB_BUCKET`, else the attachments bucket (same access: a
 bucket policy naming the task role). No bucket → `KbNotConfigured`, a clear 503,
@@ -292,6 +297,109 @@ def original_link(project):
             ExpiresIn=ORIGINAL_LINK_SECONDS)
 
     return link
+
+
+# ---- the curator's working cache ----
+
+#: Files a steward may ask about in one request (the CLI sends batches).
+WORKDIR_PER_REQUEST = 1000
+#: How long a working-cache download link works (a restore fetches as it goes).
+WORKDIR_LINK_SECONDS = UPLOAD_TTL_SECONDS
+WORKDIR = "workdir"
+ORIGINALS = "originals"
+
+
+def _workdir_prefix(project) -> str:
+    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/workdir/"
+
+
+def _shas(values, limit: int = WORKDIR_PER_REQUEST) -> list[str]:
+    if len(values) > limit:
+        raise KbPublishError(f"at most {limit} files per request")
+    out = [(v or "").strip().lower() for v in values]
+    for v in out:
+        if not _is_sha256(v):
+            raise KbPublishError(f"not a sha256: {v[:80]!r}")
+    return out
+
+
+def workdir_have(project, shas: list[str]) -> dict:
+    """Where each of `shas` (a file's content sha256) is stored already: among the
+    originals (a fetched PDF, page or workbook is the same bytes `push --originals`
+    stored), or in the working cache. A file in neither is the steward's to upload."""
+    wanted = set(_shas(shas))
+    originals = _stored_originals(project, wanted)
+    workdir = _stored(_workdir_prefix(project), wanted - originals)
+    return {ORIGINALS: sorted(originals), WORKDIR: sorted(workdir)}
+
+
+def workdir_upload(project, blobs: list[dict]) -> dict:
+    """Presigned PUTs for working-cache files ({sha256: of the file, gz_sha256 and
+    bytes: of the gzip uploaded}) that the cache lacks. Stored gzipped under the file's
+    own sha256, like a record (S3 checks the gzip's; a restore checks the file's)."""
+    _shas([b.get("sha256") for b in blobs])
+    for b in blobs:
+        for f in ("sha256", "gz_sha256"):
+            b[f] = (b.get(f) or "").strip().lower()
+            if not _is_sha256(b[f]):
+                raise KbPublishError(f"{f} is not a sha256: {b[f][:80]!r}")
+        if not 0 < int(b.get("bytes") or 0) <= ORIGINAL_MAX_BYTES:
+            raise KbPublishError(f"{b['sha256']}: a working-cache file is at most {ORIGINAL_MAX_BYTES} bytes")
+    bucket, prefix, s3 = _bucket(), _workdir_prefix(project), _client()
+    have = _stored(prefix, {b["sha256"] for b in blobs})
+    uploads, asked = [], set()
+    for b in blobs:
+        if b["sha256"] in have or b["sha256"] in asked:
+            continue
+        asked.add(b["sha256"])
+        checksum = base64.b64encode(bytes.fromhex(b["gz_sha256"])).decode()
+        url = s3.generate_presigned_url(
+            "put_object", Params={"Bucket": bucket, "Key": prefix + b["sha256"], "ContentType": CONTENT_TYPE,
+                                  "ChecksumSHA256": checksum}, ExpiresIn=UPLOAD_TTL_SECONDS)
+        uploads.append({"sha256": b["sha256"], "url": url,
+                        "headers": {"Content-Type": CONTENT_TYPE, "x-amz-checksum-sha256": checksum}})
+    return {"have": len({b["sha256"] for b in blobs} - asked), "uploads": uploads,
+            "expires_in": UPLOAD_TTL_SECONDS}
+
+
+def workdir_links(project, files: list[dict]) -> dict:
+    """Presigned GETs for working-cache files ({sha256, store}): a `workdir` one is the
+    gzip `workdir_upload` stored, an `originals` one the file itself."""
+    _shas([f.get("sha256") for f in files])
+    bucket, s3 = _bucket(), _client()
+    prefixes = {WORKDIR: _workdir_prefix(project), ORIGINALS: _originals_prefix(project)}
+    links = []
+    for f in files:
+        store = f.get("store") or WORKDIR
+        if store not in prefixes:
+            raise KbPublishError(f"store is {WORKDIR!r} or {ORIGINALS!r}, not {store!r}")
+        sha = f["sha256"].strip().lower()
+        url = s3.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": prefixes[store] + sha},
+                                        ExpiresIn=WORKDIR_LINK_SECONDS)
+        links.append({"sha256": sha, "store": store, "url": url})
+    return {"links": links, "expires_in": WORKDIR_LINK_SECONDS}
+
+
+def workdir_save(project, manifest: str, base: str | None, files: int, size: int, saved_by: str) -> dict:
+    """Point the project at a saved working cache: `manifest` is the sha256 of its
+    manifest, uploaded first as a working-cache file. `base` is the manifest the saver
+    restored from (None for the first save): another machine saving since is a
+    conflict (`KbWorkdirConflict`), so a cache is never silently replaced by an older one."""
+    (manifest,) = _shas([manifest])
+    current = (project.kb_workdir or {}).get("manifest")
+    if current and current != manifest and (base or "").strip().lower() != current:
+        raise KbWorkdirConflict(f"the working cache was saved since ({current[:12]}); restore it, then save again")
+    if not _stored(_workdir_prefix(project), {manifest}):
+        raise KbPublishError(f"no working-cache manifest {manifest[:12]} uploaded")
+    project.kb_workdir = {"manifest": manifest, "files": int(files), "bytes": int(size),
+                          "saved_at": timezone.now().isoformat(), "saved_by": saved_by,
+                          "version": project.kb_version_number}
+    project.save(update_fields=["kb_workdir", "updated_at"])
+    return project.kb_workdir
+
+
+class KbWorkdirConflict(ValueError):
+    """Another machine saved the working cache since this one restored it."""
 
 
 # ---- the serving copy ----
