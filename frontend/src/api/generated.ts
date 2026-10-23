@@ -6043,6 +6043,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/vault/setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Must I set up my passkey and vault key?
+         * @description `required` is true for a person at a browser who has no vault key yet:
+         *     the SPA then asks for a passkey and a vault key before anything else, so
+         *     being added to a vault later never waits on them.
+         */
+        readonly get: operations["get_vault_setup"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/vault/keyset": {
         readonly parameters: {
             readonly query?: never;
@@ -24760,6 +24782,15 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** VaultSetupOut */
+        readonly VaultSetupOut: {
+            /** Required */
+            readonly required: boolean;
+            /** Has Passkey */
+            readonly has_passkey: boolean;
+            /** Has Vault Key */
+            readonly has_vault_key: boolean;
+        };
         /** VaultKeysetOut */
         readonly VaultKeysetOut: {
             /** User Id */
@@ -42593,6 +42624,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["StepUpStatusOut"];
+                };
+            };
+        };
+    };
+    readonly get_vault_setup: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["VaultSetupOut"];
                 };
             };
         };

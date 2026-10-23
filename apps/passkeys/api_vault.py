@@ -19,7 +19,7 @@ from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, Prob
 from apps.api.route_gates import gate
 from apps.passkeys import stepup
 from apps.passkeys.models import Passkey, UserVaultKeyset
-from apps.passkeys.schemas import VaultKeysetIn, VaultKeysetOut, VaultKeysetPasskeyOut
+from apps.passkeys.schemas import VaultKeysetIn, VaultKeysetOut, VaultKeysetPasskeyOut, VaultSetupOut
 
 router = Router(auth=session_auth, tags=["passkeys"])
 
@@ -40,6 +40,22 @@ def _out(user) -> VaultKeysetOut:
         passkeys=[VaultKeysetPasskeyOut(credential_id=p.credential_id, label=p.label,
                                         prf_enabled=p.prf_enabled, sealed=p.credential_id in sealed)
                   for p in Passkey.objects.filter(user=user)],
+    )
+
+
+@router.get("/setup", response=VaultSetupOut, summary="Must I set up my passkey and vault key?")
+@gate("self")
+def get_vault_setup(request: HttpRequest) -> VaultSetupOut:
+    """`required` is true for a person at a browser who has no vault key yet:
+    the SPA then asks for a passkey and a vault key before anything else, so
+    being added to a vault later never waits on them."""
+    # Everyone sets it up at sign-in, not when a vault first needs them: a
+    # member with no vault key is one no keeper can pass a key to.
+    has_key = UserVaultKeyset.objects.filter(user=request.user).exists()
+    return VaultSetupOut(
+        required=stepup.is_browser(request) and not has_key,
+        has_passkey=Passkey.objects.filter(user=request.user).exists(),
+        has_vault_key=has_key,
     )
 
 

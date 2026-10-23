@@ -5,6 +5,7 @@ import { getMe, type MeOut as MeResponse } from '@/api/me'
 import { currentNext, loginHref } from './loginHref'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { isScopedViewerPath } from '@/lib/scopedLinks'
+import { VaultSetupGate } from '@/vault/VaultSetupGate'
 
 type AuthState =
   | { status: 'loading'; user: null }
@@ -99,6 +100,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Authenticated, OR anonymous on a public link route (e.g. /walkthrough/<id> or /review/<id>).
   // Public resources are tokenless; the API self-enforces (private → 404), so these
   // pages must render without a Dimagi session.
+  // A signed-in person sets up their passkey and vault key once, first — except
+  // on a public link route, where an invitee accepts before anything else.
+  if (state.status === 'authenticated' && !isPublicLinkRoute()) {
+    return (
+      <AuthContext.Provider value={state}>
+        <VaultSetupGate>{children}</VaultSetupGate>
+      </AuthContext.Provider>
+    )
+  }
   return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>
 }
 

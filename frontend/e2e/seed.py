@@ -271,6 +271,14 @@ def _mint(u):
 session_key = _mint(user)
 mp_session_key = _mint(mp_user)
 
+# Both people already set up their vault key, so the one-time sign-in step
+# (VaultSetupGate) does not stand in front of every page under test.
+from apps.passkeys.models import UserVaultKeyset
+
+for _person in (user, mp_user):
+    UserVaultKeyset.objects.get_or_create(
+        user=_person, defaults={"public_jwk": {"kty": "EC", "crv": "P-256", "x": "e2e", "y": "e2e"}})
+
 os.makedirs("frontend/e2e/.auth", exist_ok=True)
 with open("frontend/e2e/.auth/session.txt", "w") as f:
     f.write(session_key)
