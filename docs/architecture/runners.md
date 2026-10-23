@@ -802,8 +802,7 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
   updates the same state for free (a turn that ran marks its credential `ok`; a
   classified cap or dead marks it so).
 - **Health:** one check per credential, `claude.probe.<label>` (`box-login`,
-  `box-login:<key>`, `token:<key>`, `api-key:<key>`; from an older bundle
-  `subscription-1`, `subscription-2`, `api-key`): ok / warn "at its
+  `box-login:<key>`, `token:<key>`, `api-key:<key>`): ok / warn "at its
   usage cap — resets <ISO>" / fail "not signed in — someone has to sign it in
   again" / warn "could not check: …". The runner page colours each token and login
   dot by it (`RunnerCredentials.tsx` `probeLabel`, pinned to

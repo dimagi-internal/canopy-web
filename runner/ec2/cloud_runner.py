@@ -6221,11 +6221,6 @@ _CLAUDE_AUTH_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
 #: never travels to canopy-web — a copied rotating token breaks both copies.
 BOX_LOGIN_LABEL = "box-login"
 _BOX_LOGIN_SCOPE = "user:mcp_servers"
-_BUNDLE_SLOTS = (
-    ("subscription-1", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token"),
-    ("subscription-2", "CLAUDE_CODE_OAUTH_TOKEN", "claude_token_secondary"),
-    ("api-key", "ANTHROPIC_API_KEY", "claude_api_key"),
-)
 
 
 #: A box holds as many full logins as a person adds on its credentials page,
@@ -6373,23 +6368,6 @@ def _default_adopted() -> bool:
     return (_LOGINS_ROOT / _DEFAULT_ADOPTED_MARKER).exists()
 
 
-def _login_keys(cred: dict | None) -> list[str]:
-    """The logins this box should use, in order.
-
-    From canopy-web's list. A bundle with no list at all is an older canopy-web:
-    the default login, as before. The default login missing from a list that
-    has never held it is one signed in before there was a list — kept first,
-    where it always sat, and reported so the list adopts it.
-    """
-    if not isinstance(cred, dict) or "logins" not in cred:
-        return [DEFAULT_LOGIN]
-    keys = [str(lg.get("key", "")) for lg in cred.get("logins") or [] if isinstance(lg, dict)]
-    keys = [k for k in keys if k == DEFAULT_LOGIN or _LOGIN_KEY_RE.match(k)]
-    if DEFAULT_LOGIN not in keys and not _default_adopted():
-        keys.insert(0, DEFAULT_LOGIN)
-    return keys
-
-
 #: A token or API key whose value lives in a vault serving this runner (canopy-web spec
 #: 2026-10-23-runner-claude-credentials-in-the-vault-design.md) is read from there, with
 #: this box's own device key: `canopy vault runner-credentials` asks canopy-web for the
@@ -6522,31 +6500,19 @@ def _with_vault_values(runner_id: str, cred):
 def _cascade_from(cred: dict | None) -> list[tuple[str, str, str]]:
     """The ordered credential list, as a person set it on canopy-web (`cascade`):
     logins, tokens and API keys in any order. A login counts only once it is
-    signed in on this box.
-
-    An older canopy-web sends fixed slots instead: the box's logins first, then
-    its two tokens, then its API key.
+    signed in on this box; a token or key only once its value came out of the vault.
 
     In sensitive-data mode, only API keys: no box login, no subscription."""
     if isinstance(cred, dict) and isinstance(cred.get("cascade"), list):
         return _cascade_from_list(cred)
-    if SENSITIVE_DATA_MODE:
-        key = dict((label, k) for label, _v, k in _BUNDLE_SLOTS)[ZDR_KEY_LABEL]
-        return [(ZDR_KEY_LABEL, "ANTHROPIC_API_KEY", cred[key])] if (cred or {}).get(key) else []
-    out: list[tuple[str, str, str]] = [
-        (_login_label(k), "CLAUDE_CONFIG_DIR", _login_config_env(k))
-        for k in _login_keys(cred) if box_login_ready(key=k)]
-    for label, var, key in _BUNDLE_SLOTS:
-        if (cred or {}).get(key):
-            out.append((label, var, cred[key]))
-    return out
+    return []
 
 
 def _cascade_from_list(cred: dict) -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     listed = [e for e in cred["cascade"] if isinstance(e, dict)]
     # The CLI's own login, signed in before there was a list: first, where it
-    # always sat, until the list adopts it (`_login_keys`).
+    # always sat, until the list adopts it.
     if (not SENSITIVE_DATA_MODE and not _default_adopted()
             and not any(e.get("kind") == "login" and e.get("key") == DEFAULT_LOGIN for e in listed)
             and box_login_ready()):

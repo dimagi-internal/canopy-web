@@ -18,6 +18,8 @@ import threading
 
 import pytest
 
+from _bundles import bundle
+
 TOKENS = {
     "echo-turn": {"token": "tok-olive", "github_login": "olive", "git_name": "Olive Owner",
                   "git_email": "1+olive@users.noreply.github.com", "requested_by": "Andrea <a@x.org>"},
@@ -156,7 +158,7 @@ def test_the_shared_pat_eras_files_are_removed_at_start(cr, monkeypatch, tmp_pat
 
 def test_the_credential_bundle_no_longer_stages_github(cr, monkeypatch):
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {"claude_token": "c", "github_token": "old"}))
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, bundle("c", github_token="old")))
     monkeypatch.setattr(cr, "_apply_claude_credential", lambda i: None)
     assert cr.fetch_and_stage_credential("r1") is True
     assert "GH_TOKEN" not in cr.os.environ

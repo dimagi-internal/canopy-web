@@ -14,6 +14,8 @@ import subprocess
 
 import pytest
 
+from _bundles import bundle
+
 BOX = {"RUNNER_NAME": "cloud-sensitive-1", "RUNNER_WORKSPACE": "dimagi",
        "CANOPY_BASE_URL": "https://canopy.dimagi.com", "RUNNER_UNITS": "tree:dimagi"}
 UNITS = [{"id": "dimagi", "uid": 1001, "gid": 1001, "name": "cloud-sensitive-1", "kind": "tree", "slug": "",
@@ -396,7 +398,7 @@ def sensitive_box(load_cloud_runner, monkeypatch):
         monkeypatch.setenv("RUNNER_EGRESS", egress)
         cr = load_cloud_runner()
         cr._CLAUDE_CREDS.clear()
-        cr._CLAUDE_CREDS.extend(cr._cascade_from({"claude_api_key": "sk-ant-zdr"}))
+        cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle(api_key="sk-ant-zdr")))
         return cr
     return make
 

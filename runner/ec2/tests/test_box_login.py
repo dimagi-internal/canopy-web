@@ -19,6 +19,8 @@ import pathlib
 
 import pytest
 
+from _bundles import bundle
+
 _HERE = pathlib.Path(__file__).parent
 _FIXTURE = _HERE / "fixtures" / "auth_login_pty.bin"
 
@@ -72,20 +74,20 @@ def test_a_corrupt_credentials_file_is_not_a_box_login(cr, tmp_path):
 
 def test_the_box_login_goes_first_and_the_bundle_follows(cr, tmp_path):
     _store_login(tmp_path)
-    cascade = cr._cascade_from({"claude_token": "tok-1", "claude_api_key": "sk-ant-x"})
-    assert [c[0] for c in cascade] == ["box-login", "subscription-1", "api-key"]
+    cascade = cr._cascade_from(bundle("tok-1", api_key="sk-ant-x"))
+    assert [c[0] for c in cascade] == ["box-login", "token:1", "api-key:k"]
 
 
 def test_without_a_box_login_the_cascade_is_unchanged(cr):
-    cascade = cr._cascade_from({"claude_token": "tok-1", "claude_token_secondary": "tok-2"})
-    assert [c[0] for c in cascade] == ["subscription-1", "subscription-2"]
+    cascade = cr._cascade_from(bundle("tok-1", "tok-2"))
+    assert [c[0] for c in cascade] == ["token:1", "token:2"]
 
 
 def test_selecting_the_box_login_clears_both_auth_vars(cr, tmp_path, monkeypatch):
     """The CLI prefers an env credential over its stored login, so the box login
     only takes effect if BOTH vars are gone."""
     _store_login(tmp_path)
-    cr._CLAUDE_CREDS.extend(cr._cascade_from({"claude_token": "tok-1"}))
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle("tok-1")))
     cr._apply_claude_credential(1)
     assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "tok-1"
     cr._apply_claude_credential(0)
@@ -96,17 +98,17 @@ def test_selecting_the_box_login_clears_both_auth_vars(cr, tmp_path, monkeypatch
 def test_a_capped_box_login_falls_through_to_the_subscriptions(cr, tmp_path, monkeypatch):
     monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
     _store_login(tmp_path)
-    cr._CLAUDE_CREDS.extend(cr._cascade_from({"claude_token": "tok-1"}))
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle("tok-1")))
     cr._apply_claude_credential(0)
     assert cr._advance_claude_credential() is True
-    assert cr._claude_cred_label() == "subscription-1"
+    assert cr._claude_cred_label() == "token:1"
 
 
 def test_a_box_alone_with_no_bundle_still_stages(cr, tmp_path, monkeypatch):
     """A box signed in only with its own login must not sit waiting forever
     for a bundle token it does not need."""
     _store_login(tmp_path)
-    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {}))
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, bundle()))
     assert cr.fetch_and_stage_credential("rid") is True
     assert cr._claude_cred_label() == "box-login"
 
@@ -207,7 +209,7 @@ def test_the_relay_reports_a_box_login_without_a_token(cr, tmp_path, monkeypatch
 
 def test_the_health_check_says_signed_in_when_the_box_login_is_first(cr, tmp_path):
     _store_login(tmp_path)
-    cr._CLAUDE_CREDS.extend(cr._cascade_from({"claude_token": "tok-1"}))
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle("tok-1")))
     cr._credential_check()
     assert cr._HEALTH["claude.login"]["status"] == "ok"
 
@@ -216,8 +218,7 @@ def test_tokens_alone_are_not_a_warning(cr):
     """A box with no login of its own runs on what it has: no `claude.login`
     check at all, and one left from an earlier list is cleared."""
     cr._set_check("claude.login", "ok", "signed in on this box")
-    cr._CLAUDE_CREDS.extend(cr._cascade_from(
-        {"claude_token": "tok-1", "claude_token_secondary": "tok-2"}))
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle("tok-1", "tok-2")))
     cr._credential_check()
     assert cr._HEALTH["claude.credentials"]["status"] == "ok"
     assert "claude.login" not in cr._HEALTH
@@ -278,21 +279,19 @@ def test_the_cascade_follows_the_lists_order(cr, tmp_path):
     _store_login_in(cr, "bb")
     _store_login_in(cr, "cc")
     (cr._LOGINS_ROOT / ".default-adopted").touch()
-    cascade = cr._cascade_from({"logins": [{"key": "cc"}, {"key": "default"}, {"key": "bb"}],
-                                "claude_token": "tok-1"})
+    cascade = cr._cascade_from(bundle("tok-1", logins=["cc", "default", "bb"]))
     assert [c[0] for c in cascade] == [
-        "box-login:cc", "box-login", "box-login:bb", "subscription-1"]
+        "box-login:cc", "box-login", "box-login:bb", "token:1"]
 
 
 def test_a_listed_login_not_yet_signed_in_is_skipped(cr):
-    cascade = cr._cascade_from({"logins": [{"key": "bb"}], "claude_token": "tok-1"})
-    assert [c[0] for c in cascade] == ["subscription-1"]
+    cascade = cr._cascade_from(bundle("tok-1", logins=["bb"]))
+    assert [c[0] for c in cascade] == ["token:1"]
 
 
 def test_selecting_a_login_points_the_cli_at_its_directory(cr, tmp_path):
     d = _store_login_in(cr, "bb")
-    cr._CLAUDE_CREDS.extend(cr._cascade_from(
-        {"logins": [{"key": "bb"}], "claude_token": "tok-1"}))
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle("tok-1", logins=["bb"])))
     cr._apply_claude_credential(0)
     assert os.environ["CLAUDE_CONFIG_DIR"] == str(d)
     cr._apply_claude_credential(1)
@@ -303,7 +302,7 @@ def test_selecting_a_login_points_the_cli_at_its_directory(cr, tmp_path):
 def test_a_capped_login_falls_through_to_the_next_login(cr):
     _store_login_in(cr, "bb")
     _store_login_in(cr, "cc")
-    cr._CLAUDE_CREDS.extend(cr._cascade_from({"logins": [{"key": "bb"}, {"key": "cc"}]}))
+    cr._CLAUDE_CREDS.extend(cr._cascade_from(bundle(logins=["bb", "cc"])))
     cr._apply_claude_credential(0)
     assert cr._advance_claude_credential() is True
     assert cr._claude_cred_label() == "box-login:cc"
@@ -346,8 +345,8 @@ def test_a_login_from_before_the_list_is_reported_for_adoption_not_removed(cr, t
     assert body["logins"] == [{"key": "default", "signed_in": True, "account": "a@x.com"}]
     assert (cr._LOGINS_ROOT / ".default-adopted").exists()
     # Until the list holds it, it stays first in the cascade.
-    assert [c[0] for c in cr._cascade_from({"logins": []})] == []
-    assert [c[0] for c in cr._cascade_from({"logins": [{"key": "default"}]})] == ["box-login"]
+    assert [c[0] for c in cr._cascade_from(bundle(logins=[]))] == []
+    assert [c[0] for c in cr._cascade_from(bundle(logins=["default"]))] == ["box-login"]
 
 
 def test_an_unchanged_state_is_reported_once(cr, monkeypatch):
@@ -355,14 +354,6 @@ def test_an_unchanged_state_is_reported_once(cr, monkeypatch):
     cred = {"logins": [{"key": "bb"}]}
     assert len(_reconcile(cr, monkeypatch, cred)) == 1
     assert _reconcile(cr, monkeypatch, cred) == []
-
-
-def test_an_older_canopy_web_with_no_list_changes_nothing(cr, tmp_path, monkeypatch):
-    _store_login(tmp_path)
-    (cr._LOGINS_ROOT / ".default-adopted").touch()
-    assert _reconcile(cr, monkeypatch, {"claude_token": "tok-1"}) == []
-    assert (tmp_path / ".credentials.json").exists()
-    assert [c[0] for c in cr._cascade_from({"claude_token": "tok-1"})][0] == "box-login"
 
 
 def test_a_box_waiting_for_a_credential_still_serves_the_browser_sign_in(cr, tmp_path, monkeypatch):
@@ -377,7 +368,7 @@ def test_a_box_waiting_for_a_credential_still_serves_the_browser_sign_in(cr, tmp
         drained.append(runner_id)
         _store_login(tmp_path)           # the person finished signing in
 
-    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {}))
+    monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, bundle()))
     monkeypatch.setattr(cr, "_drain_mint", drain)
     monkeypatch.setattr(cr, "POLL_SECONDS", 0)
     assert cr.fetch_and_stage_credential("rid") is True
@@ -394,7 +385,7 @@ def test_a_box_waiting_for_a_credential_heartbeats_as_not_ready(cr, tmp_path, mo
     def api(method, path, body=None):
         if path.endswith("/heartbeat"):
             beats.append(body)
-        return 200, {}
+        return 200, bundle()
 
     monkeypatch.setattr(cr, "_api", api)
     monkeypatch.setattr(cr, "_drain_mint", lambda rid: _store_login(tmp_path))
