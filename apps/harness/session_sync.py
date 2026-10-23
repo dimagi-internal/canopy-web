@@ -1094,6 +1094,50 @@ def end_turns_ask(turn: Turn) -> None:
         report_session_menu(binding.runner, binding.session_id, None)
 
 
+#: The keys a subagent summary may carry (`canopy_transcript.summarize_subagents`),
+#: and the ones a sensitive conversation keeps: that work is happening and how
+#: much, never what it is pointed at.
+SUBAGENT_KEYS = ("agent_id", "tool_use_id", "parent_agent_id", "description", "agent_type",
+                 "background", "state", "steps", "last", "started_at", "updated_at")
+_SUBAGENT_WORDS = ("description", "last")
+SUBAGENTS_MAX = 50
+
+
+def report_session_subagents(runner: Runner, session_id, subagents: list[dict]) -> bool:
+    """What the subagents of ONE session on this runner are doing, wholesale.
+
+    Both runners send it from the loop that already tails every session they
+    back, whenever a summary changes. Stored on the binding and pushed to the
+    chat as `session.subagents` only when it differs. False when this runner
+    does not hold the session: one box never writes onto another's.
+    """
+    binding = RunnerBinding.objects.filter(session_id=session_id, runner=runner).first()
+    if binding is None:
+        return False
+    from . import sensitivity  # noqa: PLC0415 — as report_session_menu below
+
+    hidden = sensitivity.is_sensitive(binding.session)
+    clean = []
+    for s in (subagents or [])[-SUBAGENTS_MAX:]:
+        if not isinstance(s, dict) or not s.get("agent_id"):
+            continue
+        row = {k: s.get(k) for k in SUBAGENT_KEYS}
+        if hidden:
+            row.update({k: "" for k in _SUBAGENT_WORDS})
+        clean.append(row)
+    if clean == (binding.subagents or []):
+        return True
+    binding.subagents = clean
+    binding.save(update_fields=["subagents"])
+
+    from apps.realtime import groups  # noqa: PLC0415 — as _publish_menu_changes: realtime imports harness
+
+    transaction.on_commit(lambda: groups.publish(
+        groups.session_group(binding.session_id),
+        {"type": "session.subagents", "subagents": clean}))
+    return True
+
+
 def report_session_menu(runner: Runner, session_id, menu: dict | None) -> bool:
     """A cloud box's dialog for ONE session it holds: set it, or clear it (None).
 

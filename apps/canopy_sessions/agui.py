@@ -429,6 +429,11 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
         # takes (it passes no run id) a cancelled reply was never shown as one.
         return [_custom(event, data)]
 
+    if event == "session.subagents":
+        # What a session's subagents are doing has no AG-UI spelling (its
+        # activity events describe the one agent of a run), so it rides CUSTOM.
+        return [_custom(event, {"subagents": data.get("subagents") or []})]
+
     if event == "page.invalidate":
         # AG-UI has no native "a resource you are showing changed" event — its
         # state channel is intra-run, and this fires from outside any run (the

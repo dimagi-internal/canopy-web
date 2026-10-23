@@ -79,6 +79,11 @@ ROUND_TRIP_FRAMES = [
                           "state": "queued"}]}},
     {"event": "session.stop", "data": {"state": "failed"}},
     {"event": "session.activity", "data": {"state": "working"}},
+    {"event": "session.subagents", "data": {"subagents": [{
+        "agent_id": "a1", "tool_use_id": "toolu_1", "parent_agent_id": "",
+        "description": "fix the tests", "agent_type": "general-purpose", "background": True,
+        "state": "running", "steps": 3, "last": "Bash · make test",
+        "started_at": "2026-10-20T10:00:00Z", "updated_at": "2026-10-20T10:04:00Z"}]}},
     {"event": "session.menu",
      "data": {"menu": {"source": "hook", "question": "Proceed?", "observed_at": 1758196800,
                        "options": [{"label": "Yes"}, {"label": "No"}]}}},

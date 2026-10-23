@@ -568,6 +568,12 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json({"event": "session.menu",
                               "data": {"menu": message.get("menu")}})
 
+    async def session_subagents(self, message):
+        """The session's subagents changed (`report_session_subagents`): the whole
+        set, so a client replaces what it holds rather than merging."""
+        await self.send_json({"event": "session.subagents",
+                              "data": {"subagents": message.get("subagents") or []}})
+
     def _is_author(self, message) -> bool:
         user = getattr(self, "user", None)
         return user is not None and message.get("author_id") == user.id

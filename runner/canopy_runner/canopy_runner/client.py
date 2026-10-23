@@ -362,6 +362,14 @@ class Client:
                    {"session_id": session_id, "events": events,
                     "transcript_id": transcript_id})
 
+    def post_session_subagents(self, runner_id: str, session_id: str,
+                               subagents: list[dict]) -> bool:
+        """What a session's subagents are doing (`canopy_transcript.summarize_subagents`),
+        the whole set. False when the server says this runner does not hold it."""
+        _, payload = self._call("POST", f"/runners/{runner_id}/session-subagents",
+                                {"session_id": session_id, "subagents": subagents})
+        return bool((payload or {}).get("ok"))
+
     def sync_closes(self, runner_id: str) -> list[dict]:
         """Sessions we have been asked to close and have not closed yet."""
         _, payload = self._call("GET", f"/runners/{runner_id}/closes")

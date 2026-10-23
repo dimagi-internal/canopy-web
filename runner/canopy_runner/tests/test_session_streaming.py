@@ -261,3 +261,48 @@ def test_a_swapped_session_restarts_on_the_new_transcript(tmp_path, monkeypatch)
     assert [e["payload"]["text"] for e in _events(c)][-2:] == ["new q", "new a"]
     assert c.transcript_ids[-1] == "successor"
     assert streams._stream_readers["s1"]["transcript_id"] == "successor"
+
+
+# --- subagents ---------------------------------------------------------------
+# A subagent writes only to <stem>/subagents/agent-*.jsonl, so its progress has
+# to be sent on its own: the session's rows can sit still for its whole run.
+
+class _SubClient:
+    def __init__(self):
+        self.sent = []
+        self.fail = False
+
+    def post_session_subagents(self, runner_id, session_id, subagents):
+        if self.fail:
+            raise RuntimeError("network")
+        self.sent.append((session_id, [s["steps"] for s in subagents]))
+        return True
+
+
+def _subagent(tmp_path, steps):
+    d = tmp_path / "sess" / "subagents"
+    d.mkdir(parents=True, exist_ok=True)
+    call = {"type": "assistant", "timestamp": "t", "message": {
+        "stop_reason": "tool_use", "content": [{"type": "tool_use", "name": "Bash", "input": {}}]}}
+    (d / "agent-a1.jsonl").write_text("".join(json.dumps(call) + "\n" for _ in range(steps)))
+    return tmp_path / "sess.jsonl"
+
+
+def test_subagents_are_sent_when_they_change_and_retried_when_a_post_fails(tmp_path):
+    client, st = _SubClient(), {}
+    path = _subagent(tmp_path, 1)
+    streams.sync_subagents(_Cfg(), client, "s1", st, path)
+    streams.sync_subagents(_Cfg(), client, "s1", st, path)  # unchanged: nothing sent
+    assert client.sent == [("s1", [1])]
+    _subagent(tmp_path, 2)
+    client.fail = True
+    streams.sync_subagents(_Cfg(), client, "s1", st, path)
+    client.fail = False
+    streams.sync_subagents(_Cfg(), client, "s1", st, path)
+    assert client.sent == [("s1", [1]), ("s1", [2])]
+
+
+def test_a_session_with_no_subagents_sends_nothing(tmp_path):
+    client = _SubClient()
+    streams.sync_subagents(_Cfg(), client, "s1", {}, tmp_path / "sess.jsonl")
+    assert client.sent == []

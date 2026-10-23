@@ -34,6 +34,13 @@ def pending_menu(session) -> dict | None:
     return binding.pending_question or None
 
 
+def session_subagents(session) -> list[dict]:
+    """The session's subagent summaries (`RunnerBinding.subagents`); [] with no
+    binding."""
+    binding = getattr(session, "runner_binding", None)
+    return list(binding.subagents or []) if binding is not None else []
+
+
 def message_dto(msg: Message) -> dict:
     return {
         "id": str(msg.pk),
@@ -158,6 +165,10 @@ def session_state_dto(*, session, current_user_id, participants, present_ids, dr
         # blocked — which is exactly the case that fails: you go to the phone
         # BECAUSE the session stopped, so you were never watching.
         "menu": pending_menu(session),
+        # What the session's subagents are doing, for the `Agent` rows. In the
+        # snapshot for the same reason as `menu`: a background agent's work
+        # happens while nobody is watching.
+        "subagents": session_subagents(session),
         # Where the ask this session is waiting on currently stands. In the
         # snapshot for the same reason `menu` is: you open the page BECAUSE it
         # went quiet, so the one client that most needs the status is the one

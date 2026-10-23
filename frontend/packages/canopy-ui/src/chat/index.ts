@@ -18,6 +18,7 @@ export type {
   Participant,
   SessionMenu,
   SessionState,
+  SubagentSummary,
   TurnStatus,
   TypingVisibility,
   WsAction,

@@ -555,6 +555,13 @@ class RunnerBinding(models.Model):
     # session on a particular box. A session with no binding has no screen to be
     # blocked on, and one whose binding moved is answered on the new runner.
     pending_question = models.JSONField(null=True, blank=True, default=None)
+    # What this session's subagents are doing — one small dict each
+    # (`canopy_transcript.summarize_subagents`): which `Agent` call started it,
+    # running or done, how many steps, the latest one. A cache of the side files
+    # Claude Code writes beside the transcript, re-sent by the runner whenever
+    # one changes, like `tail` and `pending_question`. Without it a background
+    # agent's row reads finished the moment it is launched.
+    subagents = models.JSONField(default=list, blank=True)
 
     # A human's answer, waiting for the runner to press it.
     #

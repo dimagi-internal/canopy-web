@@ -428,6 +428,9 @@ class SessionDetailOut(SessionOut):
     # half found it (transcript or screen read), so a client never grows two
     # readers — see canopy_transcript.questions.
     menu: dict | None = None
+    # What the session's subagents are doing, one per `Agent` call
+    # (`RunnerBinding.subagents`), from the same reader as the socket snapshot.
+    subagents: list[dict] = []
     # Where the ask this session is waiting on currently stands — the same
     # projection Slack renders as a thread line and the chat kit as a status
     # (apps/harness/turn_status.py). Carried here as well as on the socket for

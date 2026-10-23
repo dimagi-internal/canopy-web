@@ -62,6 +62,7 @@ from .signed_out import (
     signed_out_at_transcript_end,
     signed_out_in_record,
 )
+from .subagents import summarize_subagents
 from .tail import TailReader
 
 __all__ = [
@@ -74,7 +75,7 @@ __all__ = [
     "turn_ended_in_api_error", "read_tail_records",
     "SYSTEM_NOISE_PREFIXES", "is_system_noise",
     "TOOL_INPUT_JSON_MAX", "TOOL_INPUT_STR_MAX", "TOOL_TEXT_MAX",
-    "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "assistant_text", "chunk_raw_lines",
+    "TRANSCRIPT_BATCH_MAX_BYTES", "TailReader", "summarize_subagents", "assistant_text", "chunk_raw_lines",
     "chunk_rows", "compose_index", "conversational_messages", "encode_project_dir",
     "end_index", "record_context", "record_flags", "rows_to_ship", "stream_event",
     "activity_for_hook", "emdash_task_candidates", "events_for_hook", "parse_emdash_worktree",
