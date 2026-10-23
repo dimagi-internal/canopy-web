@@ -340,7 +340,8 @@ def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPub
     try:
         project, _ = _kb_call(lambda: kb_versions.publish_full(project, payload.key, payload.sha256, state,
                                                                published_by=kb_versions.publisher(request.user),
-                                                               changes=payload.changes))
+                                                               changes=payload.changes,
+                                                               check_ids=kb_drive.check_ids(project)))
     except kb_versions.KbConflict as exc:
         raise HttpError(409, str(exc)) from exc
     # Dormant: a no-op while KB_VECTORS is off (kb_vectors.py). When on, it brings

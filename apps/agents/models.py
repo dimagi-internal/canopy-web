@@ -1316,7 +1316,7 @@ class AgentProject(models.Model):
     kb_version = models.ForeignKey("agents.KbVersion", null=True, blank=True, on_delete=models.SET_NULL,
                                    related_name="+")
     #: Off by default. On: after each version, canopy-web writes its kb.sqlite.gz into
-    #: the project's Drive folder (`kb_index`); no reader needs it — readers call the MCP.
+    #: the project's Drive folder (`kb_versions`); no reader needs it — readers call the MCP.
     kb_drive_replica = models.BooleanField(default=False)
     kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
     #: The curation state its last refresh saved ({sha, saved_at, saved_by, version}),
@@ -2135,12 +2135,12 @@ class KbVersion(models.Model):
     """One published state of a workspace project's knowledge base: the version log.
 
     A publish is a STATE — every document record's and corpus part's sha256
-    (`canopy_kb.records`) — kept as a content-addressed blob (`state_sha`). A DELTA
-    names its base version and uploads only the records it lacks; the index job
-    (`kb_index`) applies them to the base's kb.sqlite and points the project at the
-    result. A FULL publish is a whole kb.sqlite (the first build, or a fallback). A
-    ROLLBACK points the project back at an earlier version's file. `KbChange` rows
-    are what each version added, changed and removed: `whats_new` reads them.
+    (`canopy_kb.records`) — kept as a content-addressed blob (`state_sha`). A FULL
+    publish is a whole kb.sqlite its steward built; canopy-web never builds one (#1971:
+    the DELTA kind, which canopy-web built in its web process, is kept only in the log
+    of versions made before). A ROLLBACK points the project back at an earlier version's
+    file. `KbChange` rows are what each version added, changed and removed: `whats_new`
+    reads them.
     """
 
     FULL, DELTA, ROLLBACK = "full", "delta", "rollback"

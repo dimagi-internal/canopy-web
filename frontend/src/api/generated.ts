@@ -6428,59 +6428,13 @@ export interface paths {
         readonly put?: never;
         /**
          * What publishing a knowledge-base state would change, and what to upload for it
-         * @description Step one of a delta publish. Send the state (`canopy_kb.records.state`: each
-         *     record's and part's sha256). `unchanged` means stop: nothing to send, no version.
-         *     `full_required` means publish the whole file once (`…/kb/upload`, `…/kb/publish`
-         *     with this state). Else upload `upload_docs`' records and `upload_parts`' parts
-         *     (`…/kb/blobs`), then `POST …/kb/versions` with `base`.
+         * @description What publishing a state would change. Send the state (`canopy_kb.records.state`:
+         *     each record's and part's sha256). `unchanged` means stop: nothing to build or send.
+         *     Else `upload_docs` are the documents added or changed since the head: the steward
+         *     applies them to the served file, builds, and publishes the whole file with this
+         *     state (`…/kb/upload`, `…/kb/publish`).
          */
         readonly post: operations["kb_plan"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspace-projects/{workspace}/{handle}/kb/blobs": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Presigned uploads for the document records and parts a delta needs
-         * @description Each record is gzipped canonical JSON, stored under the sha256 of that JSON
-         *     (`canopy_kb.records`); the PUT carries the gzip's sha256, which storage checks.
-         *     `have` were stored already (the same content is never sent twice).
-         */
-        readonly post: operations["kb_upload_blobs"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspace-projects/{workspace}/{handle}/kb/versions": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** A knowledge base's version log, newest first */
-        readonly get: operations["kb_list_versions"];
-        readonly put?: never;
-        /**
-         * Commit a delta publish: a new version the index job applies
-         * @description 409 when the log moved since the plan (plan again); 422 when a record is missing
-         *     or a Drive document is not approved for indexing. The version is `pending` until
-         *     the index job has built it and the project serves it (`GET …/kb/versions`); the
-         *     published version is untouched until then, and if the build fails.
-         */
-        readonly post: operations["kb_commit"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6580,6 +6534,23 @@ export interface paths {
         readonly put?: never;
         /** Presigned downloads of stored step results, records or originals */
         readonly post: operations["kb_objects_links"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/kb/versions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A knowledge base's version log, newest first */
+        readonly get: operations["kb_list_versions"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -25680,9 +25651,9 @@ export interface components {
         /**
          * KbPlanOut
          * @description What publishing a state would change. `unchanged`: send nothing, no version is
-         *     made. `full_required`: publish the whole file once (`…/kb/upload`). Otherwise
-         *     upload the records of `upload_docs` and the parts named in `upload_parts`
-         *     (`…/kb/blobs`), then commit with `base`.
+         *     made. Otherwise `upload_docs` and `upload_parts` are what changed since the head:
+         *     the steward applies them to the served file, builds, and publishes the whole file
+         *     (`…/kb/upload`, `…/kb/publish`). canopy-web never builds one (#1971).
          */
         readonly KbPlanOut: {
             /** Base */
@@ -25711,6 +25682,51 @@ export interface components {
         readonly KbPlanIn: {
             readonly state: components["schemas"]["KbStateIn"];
         };
+        /**
+         * KbCurationOut
+         * @description The curation state the last refresh saved (empty before the first).
+         */
+        readonly KbCurationOut: {
+            /** Sha */
+            readonly sha?: string | null;
+            /** Saved At */
+            readonly saved_at?: string | null;
+            /**
+             * Saved By
+             * @default
+             */
+            readonly saved_by: string;
+            /** Version */
+            readonly version?: number | null;
+            readonly lease?: components["schemas"]["KbLeaseOut"] | null;
+        };
+        /** KbLeaseOut */
+        readonly KbLeaseOut: {
+            /** Holder */
+            readonly holder: string;
+            /**
+             * Until
+             * Format: date-time
+             */
+            readonly until: string;
+        };
+        /** KbCurationIn */
+        readonly KbCurationIn: {
+            /** Sha */
+            readonly sha: string;
+            /** Base */
+            readonly base?: string | null;
+        };
+        /** KbLeaseIn */
+        readonly KbLeaseIn: {
+            /** Holder */
+            readonly holder: string;
+            /**
+             * Seconds
+             * @default 3600
+             */
+            readonly seconds: number;
+        };
         /** KbBlobIn */
         readonly KbBlobIn: {
             /** Sha256 */
@@ -25725,11 +25741,37 @@ export interface components {
             /** Blobs */
             readonly blobs: readonly components["schemas"]["KbBlobIn"][];
         };
-        /** KbCommitOut */
-        readonly KbCommitOut: {
-            /** Created */
-            readonly created: boolean;
-            readonly version?: components["schemas"]["KbVersionOut"] | null;
+        /** KbObjectsHaveOut */
+        readonly KbObjectsHaveOut: {
+            /** Have */
+            readonly have: readonly string[];
+        };
+        /** KbObjectsIn */
+        readonly KbObjectsIn: {
+            /**
+             * Store
+             * @enum {string}
+             */
+            readonly store: "results" | "records" | "originals";
+            /** Keys */
+            readonly keys: readonly string[];
+        };
+        /** KbObjectLinkOut */
+        readonly KbObjectLinkOut: {
+            /** Key */
+            readonly key: string;
+            /** Url */
+            readonly url: string;
+        };
+        /**
+         * KbObjectLinksOut
+         * @description GET each `url`: results and records come gzipped, originals as themselves.
+         */
+        readonly KbObjectLinksOut: {
+            /** Links */
+            readonly links: readonly components["schemas"]["KbObjectLinkOut"][];
+            /** Expires In */
+            readonly expires_in: number;
         };
         /** KbVersionOut */
         readonly KbVersionOut: {
@@ -25795,95 +25837,6 @@ export interface components {
              * @default false
              */
             readonly can_roll_back: boolean;
-        };
-        /** KbCommitIn */
-        readonly KbCommitIn: {
-            readonly state: components["schemas"]["KbStateIn"];
-            /** Base */
-            readonly base?: number | null;
-            /**
-             * Uploaded Bytes
-             * @default 0
-             */
-            readonly uploaded_bytes: number;
-            readonly curation?: components["schemas"]["KbCurationIn"] | null;
-        };
-        /** KbCurationIn */
-        readonly KbCurationIn: {
-            /** Sha */
-            readonly sha: string;
-            /** Base */
-            readonly base?: string | null;
-        };
-        /**
-         * KbCurationOut
-         * @description The curation state the last refresh saved (empty before the first).
-         */
-        readonly KbCurationOut: {
-            /** Sha */
-            readonly sha?: string | null;
-            /** Saved At */
-            readonly saved_at?: string | null;
-            /**
-             * Saved By
-             * @default
-             */
-            readonly saved_by: string;
-            /** Version */
-            readonly version?: number | null;
-            readonly lease?: components["schemas"]["KbLeaseOut"] | null;
-        };
-        /** KbLeaseOut */
-        readonly KbLeaseOut: {
-            /** Holder */
-            readonly holder: string;
-            /**
-             * Until
-             * Format: date-time
-             */
-            readonly until: string;
-        };
-        /** KbLeaseIn */
-        readonly KbLeaseIn: {
-            /** Holder */
-            readonly holder: string;
-            /**
-             * Seconds
-             * @default 3600
-             */
-            readonly seconds: number;
-        };
-        /** KbObjectsHaveOut */
-        readonly KbObjectsHaveOut: {
-            /** Have */
-            readonly have: readonly string[];
-        };
-        /** KbObjectsIn */
-        readonly KbObjectsIn: {
-            /**
-             * Store
-             * @enum {string}
-             */
-            readonly store: "results" | "records" | "originals";
-            /** Keys */
-            readonly keys: readonly string[];
-        };
-        /** KbObjectLinkOut */
-        readonly KbObjectLinkOut: {
-            /** Key */
-            readonly key: string;
-            /** Url */
-            readonly url: string;
-        };
-        /**
-         * KbObjectLinksOut
-         * @description GET each `url`: results and records come gzipped, originals as themselves.
-         */
-        readonly KbObjectLinksOut: {
-            /** Links */
-            readonly links: readonly components["schemas"]["KbObjectLinkOut"][];
-            /** Expires In */
-            readonly expires_in: number;
         };
         /**
          * KbFileOut
@@ -44106,85 +44059,6 @@ export interface operations {
             };
         };
     };
-    readonly kb_upload_blobs: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly workspace: string;
-                readonly handle: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["KbBlobsIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["KbOriginalsOut"];
-                };
-            };
-        };
-    };
-    readonly kb_list_versions: {
-        readonly parameters: {
-            readonly query?: {
-                readonly limit?: number;
-            };
-            readonly header?: never;
-            readonly path: {
-                readonly workspace: string;
-                readonly handle: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["KbVersionOut"][];
-                };
-            };
-        };
-    };
-    readonly kb_commit: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly workspace: string;
-                readonly handle: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["KbCommitIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["KbCommitOut"];
-                };
-            };
-        };
-    };
     readonly kb_curation: {
         readonly parameters: {
             readonly query?: never;
@@ -44364,6 +44238,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["KbObjectLinksOut"];
+                };
+            };
+        };
+    };
+    readonly kb_list_versions: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["KbVersionOut"][];
                 };
             };
         };

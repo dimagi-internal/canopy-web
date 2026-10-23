@@ -962,9 +962,9 @@ class KbPlanIn(StrictModel):
 
 class KbPlanOut(StrictModel):
     """What publishing a state would change. `unchanged`: send nothing, no version is
-    made. `full_required`: publish the whole file once (`…/kb/upload`). Otherwise
-    upload the records of `upload_docs` and the parts named in `upload_parts`
-    (`…/kb/blobs`), then commit with `base`."""
+    made. Otherwise `upload_docs` and `upload_parts` are what changed since the head:
+    the steward applies them to the served file, builds, and publishes the whole file
+    (`…/kb/upload`, `…/kb/publish`). canopy-web never builds one (#1971)."""
 
     base: int | None = None
     full_required: bool
@@ -1041,16 +1041,6 @@ class KbObjectLinksOut(StrictModel):
     expires_in: int
 
 
-class KbCommitIn(StrictModel):
-    state: KbStateIn
-    #: The version the plan was made against (null before the first).
-    base: int | None = None
-    #: What the steward uploaded for it, in bytes (recorded on the version).
-    uploaded_bytes: int = Field(default=0, ge=0)
-    #: The refresh's curation state, saved with the version (or refused with it).
-    curation: KbCurationIn | None = None
-
-
 class KbVersionOut(StrictModel):
     number: int
     kind: Literal["full", "delta", "rollback"]
@@ -1073,12 +1063,6 @@ class KbVersionOut(StrictModel):
     current: bool = False
     #: Its file is kept, so the project can be pointed back at it.
     can_roll_back: bool = False
-
-
-class KbCommitOut(StrictModel):
-    #: False: the state equals the published one — nothing was sent, no version made.
-    created: bool
-    version: KbVersionOut | None = None
 
 
 class KbFileOut(StrictModel):
