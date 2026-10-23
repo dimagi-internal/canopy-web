@@ -19,6 +19,7 @@ from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from apps.harness import sensitivity
 from apps.harness.models import Runner, Turn
 from apps.harness.signals import sessions_reported, turn_events_appended
 from apps.push.models import AgentWaitingSnapshot
@@ -75,7 +76,11 @@ def _session_chat_events(turn, events):
 def _on_turn_events(sender, turn, rows, **kwargs):
     events = [groups.serialize_turn_event(row) for row in rows]
     group = groups.turn_group(turn.id)
-    for event in events:
+    # A sensitive turn's log tail gets what the ledger stored, never the live words
+    # (`TurnConsumer` refuses it as well): only its chat's own people hear those.
+    tail = ([{**e, "payload": sensitivity.redact_payload(e.get("payload"))} for e in events]
+            if kwargs.get("sensitive") else events)
+    for event in tail:
         groups.publish(group, {"type": "turn.event", "event": event})
     # A session turn also fans out to the per-session multiplayer group (SP3), so
     # every participant on the session socket sees the streamed response.

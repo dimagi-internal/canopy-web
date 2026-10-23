@@ -181,6 +181,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if role is None or not await self._site_may_open(session):
             await self.close(code=4003)
             return
+        # A sensitive conversation's live frames carry its words, so the socket is
+        # its own people's alone, on a chat surface (`sensitivity.reads_content`):
+        # a token, or a co-tenant who is not in it, reads the metadata over REST.
+        if not await database_sync_to_async(sensitivity.reads_content)(
+                session, chat_surface=sensitivity.scope_is_chat_surface(self.scope), user=user):
+            await self.close(code=4003)
+            return
         self.session = session
         self.user = user
         self.contact = None

@@ -19,6 +19,7 @@ from apps.canopy_sessions.models import RunnerBinding
 from apps.session_sharing.models import ShareToken
 from apps.workspaces import links as wslinks
 
+from . import sensitivity
 from .models import Turn, TurnTranscript
 
 
@@ -89,6 +90,10 @@ def upsert_turn(agent: Agent, data, initiator=None) -> Turn:
     extra_ref = dict(getattr(data, "origin_ref", None) or {})
     turn = _claim_dispatch_row(agent, data)
     if turn is not None:
+        if sensitivity.is_sensitive(turn):
+            # A report is the agent's words about what it read: a sensitive turn
+            # keeps that there was one, never what it says.
+            fields.update(report_title="", report_summary="", share_token="", session_slug="")
         for key, value in fields.items():
             setattr(turn, key, value)
         if extra_ref:

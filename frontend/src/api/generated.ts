@@ -31618,6 +31618,11 @@ export interface components {
              */
             readonly notify_every_completion: boolean;
             /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
+            /**
              * Last Reply
              * @default
              */
@@ -32017,6 +32022,11 @@ export interface components {
              * @default false
              */
             readonly notify_every_completion: boolean;
+            /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
             /**
              * Last Reply
              * @default

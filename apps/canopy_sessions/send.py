@@ -217,13 +217,13 @@ def _send_message(
         # keeps the words sealed, for the conversation's own people
         # (`sensitivity.seal`); the turn's prompt is wiped when it ends.
         sensitive = sensitivity.is_sensitive(session)
-        content = sensitivity.redact_text(text) if sensitive else {"text": text}
+        plaintext, content, sealed = (sensitivity.seal(Message.USER, text, {"text": text})
+                                      if sensitive else (text, {"text": text}, None))
         if client_id:
             content["client_id"] = client_id
         message = Message.objects.create(
             session=session, turn_index=index, role=Message.USER,
-            plaintext="" if sensitive else text, content=content,
-            sealed={"plaintext": text, "content": {"text": text}} if sensitive else None,
+            plaintext=plaintext, content=content, sealed=sealed,
         )
         turn = _enqueue_chat_turn(
             session=session, message=message, text=text, user=user, client_id=client_id,

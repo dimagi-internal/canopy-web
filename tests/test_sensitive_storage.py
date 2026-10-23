@@ -51,8 +51,8 @@ def w():
 
 
 def _turn(session, **kw):
-    return Turn.objects.create(chat_session=session, prompt="q", origin=Turn.ORIGIN_API,
-                               idempotency_key=uuid.uuid4().hex, **kw)
+    return Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
+                               idempotency_key=uuid.uuid4().hex, **{"prompt": "q", **kw})
 
 
 # --- the predicate ----------------------------------------------------------------------
@@ -184,13 +184,14 @@ def _said(page) -> str:
 
 def test_the_words_are_sealed_beside_metadata_columns_and_a_result_is_never_kept(w):
     _converse(w["hot"])
-    rows = {m.role: m for m in Message.objects.filter(session=w["hot"])}
-    assert rows[Message.USER].sealed["plaintext"] == ASKED
-    assert rows[Message.ASSISTANT].sealed["plaintext"] == REPLY
-    assert rows[Message.TOOL_USE].sealed["content"]["input"]["arguments"] == {"q": "Amina"}
+    rows = {m.role: sensitivity.unseal(m) for m in Message.objects.filter(session=w["hot"])}
+    assert rows[Message.USER].plaintext == ASKED
+    assert rows[Message.ASSISTANT].plaintext == REPLY
+    assert rows[Message.TOOL_USE].content["input"]["arguments"] == {"q": "Amina"}
     assert rows[Message.TOOL_RESULT].sealed is None and ROW not in str(rows[Message.TOOL_RESULT].__dict__)
-    # Every column any other reader sees is metadata.
-    columns = str(list(Message.objects.filter(session=w["hot"]).values("plaintext", "content")))
+    # Every column — `sealed` included, which is ciphertext — is unreadable to a
+    # database read, a backup or a shell.
+    columns = str(list(Message.objects.filter(session=w["hot"]).values("plaintext", "content", "sealed")))
     assert ASKED not in columns and REPLY not in columns and "Amina" not in columns
     # An ordinary conversation seals nothing.
     _converse(w["cold"])
@@ -372,3 +373,91 @@ def test_the_fleets_transcript_readers_find_nothing(w):
     t = _turn(w["hot"])
     ledger.append_transcript(t, ['{"x":"' + ROW + '"}'])
     assert ledger.read_transcript(t) == b""
+
+
+# --- every live and log door -------------------------------------------------------------
+
+
+def _socket(session, user, *, auth_method="session"):
+    from asgiref.sync import async_to_sync
+    from channels.testing import WebsocketCommunicator
+
+    from apps.canopy_sessions.consumers import SessionConsumer
+
+    async def go():
+        comm = WebsocketCommunicator(SessionConsumer.as_asgi(), f"/ws/canopy-sessions/{session.id}/")
+        comm.scope.update(user=user, auth_method=auth_method, session={},
+                          url_route={"kwargs": {"session_id": str(session.id)}})
+        connected, _ = await comm.connect()
+        await comm.disconnect()
+        return connected
+    return async_to_sync(go)()
+
+
+def _unowned_thread(w):
+    """A runner-discovered conversation nobody started: the agent's admins stand in
+    as its owner (`access.role_for`) — they read and share it, but are not IN it."""
+    s = Session.objects.create(workspace=w["ws"], agent=w["agent"], origin=Session.ORIGIN_RUNNER,
+                               metadata=dict(ZDR))
+    RunnerBinding.objects.create(session=s, runner=w["runner"], session_key="unowned")
+    return s
+
+
+def test_the_live_socket_is_its_own_peoples_alone(w):
+    """The live frames carry the words, so the socket gate is `reads_content`."""
+    assert _socket(w["hot"], w["user"])
+    assert not _socket(w["hot"], w["user"], auth_method="pat")
+    assert _socket(w["cold"], w["user"], auth_method="pat")
+    # The agent's owner may read a thread nobody started, but is not in it.
+    assert not _socket(_unowned_thread(w), w["user"])
+
+
+def test_someone_not_in_it_can_neither_join_nor_copy_it(w):
+    s = _unowned_thread(w)
+    _converse(s)
+    r = w["c"].post(f"/api/canopy-sessions/{s.pk}/participants",
+                    data={"email": "jj@dimagi.com", "role": "viewer"}, content_type="application/json")
+    assert r.status_code == 403, r.content
+    r = w["c"].post(f"/api/canopy-sessions/{s.pk}/fork", data={"turn_index": 128},
+                    content_type="application/json")
+    assert r.status_code == 403, r.content
+
+
+def test_the_turn_log_tail_and_reads_never_carry_the_words(w, monkeypatch):
+    from apps.harness import turn_access
+
+    t = _turn(w["hot"], prompt=ASKED)
+    assert not turn_access.can_read_turn_content(w["user"], t)
+    body = w["c"].get(f"/api/harness/turns/{t.pk}").json()
+    assert body["content_hidden"] and ASKED not in str(body)
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append((g, m)))
+    with mock.patch("django.db.transaction.on_commit", lambda fn: fn()):
+        ledger.append_events(t, [{"kind": "assistant_text", "payload": {"text": REPLY}}])
+    tail = [m for g, m in published if g.startswith("turn.")]
+    assert tail and REPLY not in str(tail)
+
+
+def test_the_creation_log_line_keeps_no_prompt(w):
+    from apps.harness import provenance
+
+    assert provenance.turn_record(_turn(w["hot"], prompt=ASKED))["prompt_head"] == ""
+    assert provenance.turn_record(_turn(w["cold"], prompt=ASKED))["prompt_head"] == ASKED
+
+
+def test_the_next_turn_remembers_the_conversation(w):
+    """Confined, never resumed, deleted on the box: the envelope is its memory."""
+    from apps.harness import caller_context
+
+    _converse(w["hot"])
+    t = _turn(w["hot"], prompt="and last month?")
+    said = caller_context.build(t)["conversation"]["history"]
+    assert [h["role"] for h in said] == ["person", "agent"]
+    assert said[0]["text"] == ASKED and said[1]["text"] == REPLY and ROW not in str(said)
+    assert caller_context.build(_turn(w["cold"]))["conversation"]["history"] is None
+
+
+def test_the_chat_page_is_told(w):
+    assert w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()["sensitive"] is True
+    assert w["c"].get(f"/api/canopy-sessions/{w['cold'].pk}").json()["sensitive"] is False
+

@@ -141,11 +141,10 @@ def host_tool_of(use: dict) -> tuple[str, str, dict]:
 
 def _use_of(content, sealed) -> dict:
     """A tool call's content: in a sensitive conversation its columns are metadata and
-    the call itself is sealed (`sensitivity.seal`). What a View is (which host tool,
-    which resource) is derived from it here, server-side; the call's arguments reach
-    a viewer only through `resource`, behind `sensitivity.reads_content`."""
-    inner = sealed.get("content") if isinstance(sealed, dict) else None
-    return inner if isinstance(inner, dict) else (content if isinstance(content, dict) else {})
+    the call itself is sealed (`sensitivity.sealed_call`). What a View is (which host
+    tool, which resource) is derived from it here, server-side; the call's arguments
+    reach a viewer only through `resource`, behind `sensitivity.reads_content`."""
+    return sensitivity.sealed_call(content, sealed)
 
 
 def app_ref(app, use: dict) -> dict | None:

@@ -28,6 +28,9 @@ ZDR = "zdr"
 #: The refusal every re-exposure door gives, so a person reads one sentence.
 REFUSAL = ("this conversation holds a host's sensitive data (it requires zero-data-retention "
            "runners), so canopy does not share, export or copy it")
+#: Why a door that would hand the words on refuses someone not in the conversation.
+NOT_IN_IT = ("this conversation holds a host's sensitive data: only the people in it can "
+             "bring someone in or copy it")
 #: Result-bearing keys a tool result may carry, from every runner and the gateway.
 _RESULT_KEYS = ("content", "text", "output", "result", "structured", "structuredContent")
 #: Event kinds whose payload is a tool's answer.
@@ -156,20 +159,50 @@ def withheld_note(note: str) -> str:
 # ── sealed: the conversation, for its own people only ────────────────────────
 # A sensitive conversation must still be recoverable — a reload, a second tab, a
 # participant joining — so its Messages keep the words in `Message.sealed`, beside
-# metadata-only columns. Nothing reads `sealed` but `unseal`, and nothing calls
-# that without `reads_content`: the primary interaction, never a review of it.
+# metadata-only columns. `sealed` is ciphertext (`apps/common/encryption.py`), so a
+# database read, a backup or a shell — the doors a debugging agent would use —
+# see nothing. Nothing opens it but `_open`, and nothing calls that without
+# `reads_content`: the primary interaction, never a review of it.
 
 
-def seal(role: str, text: str, content: dict | None) -> tuple[str, dict, dict | None]:
+def seal(role: str, text: str, content: dict | None) -> tuple[str, dict, str | None]:
     """(plaintext, content, sealed) as a sensitive conversation stores a Message.
 
-    The columns are metadata. `sealed` holds the words, except for a tool's result,
-    which is never kept (`strip_result`): what a tool showed the person as a table or
-    a chart is drawn again from the call's input, as the viewer, never from a copy."""
+    The columns are metadata. `sealed` holds the words, encrypted, except for a
+    tool's result, which is never kept (`strip_result`): what a tool showed the
+    person as a table or a chart is drawn again from the call's input, as the
+    viewer, never from a copy."""
+    from apps.common.encryption import encrypt_secret  # noqa: PLC0415 — reads settings
+
     content = content if isinstance(content, dict) else {}
     if role == "tool_result":
         return "", strip_result(content), None
-    return "", redact_payload(content), {"plaintext": text or "", "content": content}
+    words = {"plaintext": text or "", "content": content}
+    return "", redact_payload(content), encrypt_secret(_json.dumps(words, sort_keys=True))
+
+
+def _open(sealed) -> dict | None:
+    """The words a `seal` kept, or None. Private: callers go through `unseal`
+    (behind `reads_content`) or `sealed_call` (no words leave it)."""
+    if not sealed or not isinstance(sealed, str):
+        return None
+    from apps.common.encryption import decrypt_secret  # noqa: PLC0415 — reads settings
+
+    try:
+        words = _json.loads(decrypt_secret(sealed))
+    except Exception:  # noqa: BLE001 — a row no key opens reads as metadata
+        return None
+    return words if isinstance(words, dict) else None
+
+
+def sealed_call(content, sealed) -> dict:
+    """A TOOL_USE row's call, for deciding server-side which View it has (its id,
+    name and host tool). In a sensitive conversation the columns are metadata, so
+    the call is opened here; its arguments reach a person only through
+    `mcp_apps_views.resource`, behind `reads_content`."""
+    words = _open(sealed)
+    inner = words.get("content") if words else None
+    return inner if isinstance(inner, dict) else (content if isinstance(content, dict) else {})
 
 
 def is_conversation_person(session, *, user=None, contact=None) -> bool:
@@ -224,8 +257,8 @@ def reads_content(session, *, chat_surface: bool, user=None, contact=None) -> bo
 def unseal(message):
     """A copy of `message` carrying its sealed words, for a reader `reads_content`
     admitted. A copy, so the instance a caller might save keeps its columns."""
-    sealed = getattr(message, "sealed", None)
-    if not isinstance(sealed, dict):
+    sealed = _open(getattr(message, "sealed", None))
+    if sealed is None:
         return message
     out = _copy.copy(message)
     out.plaintext = str(sealed.get("plaintext") or "")
@@ -241,3 +274,43 @@ def readable(messages, session, *, chat_surface: bool, user=None, contact=None) 
     if not reads_content(session, chat_surface=chat_surface, user=user, contact=contact):
         return rows
     return [unseal(m) for m in rows]
+
+
+#: How much of a sensitive conversation its next turn is handed (`history`).
+HISTORY_MESSAGES = 40
+HISTORY_BYTES = 24_000
+
+
+def history(turn) -> list[dict] | None:
+    """The conversation so far, for the next turn of a SENSITIVE conversation: the
+    one reader of the sealed words besides its people. Every turn of it runs
+    confined and is never resumed, and the box deletes what it ran (spec §1), so
+    without this the agent would meet each message with no memory of the last.
+    It goes in the caller envelope, to the sensitive-data runner that runs the
+    turn through its ZDR key, and is deleted with the envelope when the turn ends.
+
+    What was said, by whom, oldest first: the person's lines and the agent's
+    replies, never a tool's call or result. None for an ordinary conversation."""
+    session = getattr(turn, "chat_session", None)
+    if session is None or not is_sensitive(session):
+        return None
+    from apps.canopy_sessions.models import Message  # noqa: PLC0415 — harness ↛ chat at import
+
+    rows = (Message.objects.filter(session=session, role__in=(Message.USER, Message.ASSISTANT),
+                                   sealed__isnull=False)
+            .exclude(source_turn_id=turn.pk)
+            .order_by("-turn_index")[:HISTORY_MESSAGES])
+    out: list[dict] = []
+    size = 0
+    for m in rows:
+        words = _open(m.sealed)
+        text = str((words or {}).get("plaintext") or "").strip()
+        if not text:
+            continue
+        size += len(text.encode())
+        if size > HISTORY_BYTES:
+            break
+        out.append({"role": "person" if m.role == Message.USER else "agent",
+                    "author": str((m.author or {}).get("name") or "") or None, "text": text})
+    return out[::-1]
+

@@ -37,6 +37,7 @@ import uuid
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.common import request_context
 
+from . import sensitivity
 from .models import Turn
 
 logger = logging.getLogger("canopy.provenance")
@@ -300,7 +301,10 @@ def turn_record(turn) -> dict:
     }
     if (turn.provenance or {}).get("clicked_by"):
         out["clicked_by"] = turn.provenance["clicked_by"]
-    out["prompt_head"] = (turn.prompt or "")[:PROMPT_HEAD]
+    # A sensitive turn's prompt is the person's words: the log line says only that
+    # there was one (`harness.sensitivity`).
+    out["prompt_head"] = ("" if sensitivity.is_sensitive(turn)
+                          else (turn.prompt or "")[:PROMPT_HEAD])
     return out
 
 
