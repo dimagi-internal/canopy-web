@@ -240,8 +240,6 @@ def close_session(*, session: Session) -> str:
     than a client error. `unavailable` deliberately does NOT queue — a close that
     sits until a box returns is indistinguishable from one that worked.
     """
-    from apps.harness.models import Runner  # framework->framework; lazy, import cycle
-
     if session.status == Session.ARCHIVED:
         return "already_closed"
 
