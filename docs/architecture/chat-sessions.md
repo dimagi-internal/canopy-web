@@ -289,7 +289,9 @@ an emdash task name alone is not an identity.
   rewrites a leading slash.
 - The list is `GET /api/canopy-sessions/{id}/slash-commands`
   (`apps/canopy_sessions/slash_commands.py`): the agent's `launchable` skills as
-  `<slug>:<name>`, then what the session's bound runner reported (`Runner.slash_commands`).
+  `<slug>:<name>`, then what the session's bound runner reported (`RunnerSlashCommands`, a
+  table of its own: the list is ~120 KB per box and must never ride on the `Runner` row,
+  which every poll and every `select_related` loads).
   A session not yet on a runner offers only the agent's skills.
 - Each runner reports what its sessions can run (`canopy_runner/slash_commands.py`, shared by
   the cloud runner), and sends it only when the list changes: `~/.claude/skills`,

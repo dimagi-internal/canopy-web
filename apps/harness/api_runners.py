@@ -48,6 +48,7 @@ from .models import (
     PrivateRunner,
     Runner,
     RunnerAssignment,
+    RunnerSlashCommands,
     Turn,
     WorkspaceRunnerOrder,
 )
@@ -281,8 +282,8 @@ def report_slash_commands(request: HttpRequest, runner_id: uuid.UUID, payload: S
     """The chat composer's `/` autocomplete for sessions on this box. The whole
     list, replacing what was held."""
     runner = runner_or_404(request, runner_id)
-    Runner.objects.filter(pk=runner.pk).update(
-        slash_commands=[c.model_dump() for c in payload.commands])
+    RunnerSlashCommands.objects.update_or_create(
+        runner_id=runner.pk, defaults={"commands": [c.model_dump() for c in payload.commands]})
     return Status(204, None)
 
 
