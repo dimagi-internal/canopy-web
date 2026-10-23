@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from apps.contacts.models import Contact
 from apps.harness import actors, routing
 from apps.harness import caller_context as cc
+from apps.harness import turn_asker
 from apps.harness import initiator as initiator_mod
 from apps.harness.caller_context import is_verified
 from apps.harness.runners import can_administer_runner
@@ -325,7 +326,17 @@ def may_pin_runner(user, agent, runner) -> bool:
     already route it to (`_routed_to`); anyone else only a box they administer
     (its owner, or a `RunnerAdmin`). Either way the box must be able to hold the
     agent (`services.runner_may_hold_agent`) — that is checked separately, and
-    first."""
+    first.
+
+    A request an agent made ON BEHALF OF the person in its turn
+    (`harness.turn_asker`) is judged as that person: "run it on my box" in the
+    owner's own session is theirs to decide, not the agent's."""
+    ob = turn_asker.of(user)
+    if ob is not None:
+        if agent.is_admin(ob.user) or can_administer_runner(ob.user, runner):
+            turn_asker.note(ob, f"pin {agent.slug}'s turn to {runner.name}")
+            return True
+        return False
     if agent.is_admin(user):
         return True
     if agent.is_own_login(user) and _routed_to(agent, runner):

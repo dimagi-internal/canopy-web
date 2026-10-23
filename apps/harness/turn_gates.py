@@ -18,6 +18,7 @@ from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 
 from . import initiator as who
+from . import turn_asker
 from . import turn_mode as turn_modes
 from .models import Runner, Turn
 from .schemas import TurnIn
@@ -39,7 +40,9 @@ def capped_origin_ref(request: HttpRequest, payload: TurnIn) -> dict:
     # Started as a lower role: every gate below judges the capped caller, and the turn
     # carries the cap for the claim, its envelope and its credential reads. The cap is
     # the server's to stamp, never a client's origin_ref to assert.
-    origin_ref = {k: v for k, v in (payload.origin_ref or {}).items() if k != "acts_as"}
+    # `on_behalf_of` is the server's too (`turn_asker`): only a checked claim stamps it.
+    origin_ref = {k: v for k, v in (payload.origin_ref or {}).items()
+                  if k not in ("acts_as", "on_behalf_of")}
     if payload.acts_as:
         role_cap.apply(request.user, payload.acts_as)
         origin_ref["acts_as"] = role_cap.cap_of(request.user)
@@ -212,14 +215,20 @@ def check_requested_turn_mode(request, payload: TurnIn, agent, initiator) -> Non
     if not verified:
         raise HttpError(
             403, "turn_mode=auto needs a signed-in session or your own personal access token")
-    if not access.decide(agent, request.user, verified=verified,
-                         origin=payload.origin).may_request_auto:
-        raise HttpError(
-            403,
-            f"turn_mode=auto is for {agent.slug}'s owner or admins; you may request "
-            "turn_mode=manual (or none — a workspace editor's turns run manual anyway), "
-            "or ask its owner to make you an admin",
-        )
+    # An agent acting on behalf of the person in its turn (turn_asker) asks as THEM — and
+    # the claim re-checks the requester, so they are recorded as it.
+    requester = turn_asker.subject(request.user)
+    if access.decide(agent, requester, verified=verified, origin=payload.origin).may_request_auto:
+        ob = turn_asker.of(request.user)
+        if ob is not None:
+            turn_asker.note(ob, f"run {agent.slug}'s turn auto")
+        return
+    raise HttpError(
+        403,
+        f"turn_mode=auto is for {agent.slug}'s owner or admins; you may request "
+        "turn_mode=manual (or none — a workspace editor's turns run manual anyway), "
+        "or ask its owner to make you an admin",
+    )
 
 
 def check_access(request, payload: TurnIn, agent, initiator) -> None:

@@ -651,6 +651,39 @@ tool; and beside every delivered prompt — the runner leaves
 
 Spec: `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-and-access-design.md`.
 
+## Acting on behalf of the person who asked
+
+An agent's turn acts as the agent, and canopy-web judges its requests on the agent's
+access. When the person in the turn asks for something that is theirs to decide, the
+agent says so on the request, and canopy-web judges it on THEIR access instead
+(`apps/harness/turn_asker.py`):
+
+    X-Canopy-On-Behalf-Of: <the person's email>
+
+Nothing is inferred: a request without the header is the agent acting for itself. With
+it, the claim is checked in the bearer middleware and refused (403, saying why) unless
+the request authenticated with the login canopy-web issued for a turn
+(`TurnAgentToken`, never a stored PAT); the turn that login serves now (its own, or a
+session login's newest turn) is executing, unconfined and runs for this agent; it was
+started by that person, verified, active and not an agent; and the request did not lower
+itself (`acts_as`). The person's own turn cap applies to them. A browser session or any
+other credential sending the header is refused too, never quietly judged as itself.
+
+On someone's behalf, these are judged as that person:
+
+| Decision | Where | Their access needed |
+|---|---|---|
+| Pin a turn, or place a chat, on a runner | `access.may_pin_runner` (dispatch pins, chat placement, moving queued turns) | the target agent's admin, or the runner's administrator |
+| Ask for `turn_mode: auto` | `turn_gates.check_requested_turn_mode`; the claim re-checks `requested_turn_mode_by`, which is them | the target agent's admin |
+
+Reads are unchanged: a turn already reads as its asker where that matters (scoped caller
+tokens, above). Each decision made on someone's behalf is recorded as an
+`agent.on_behalf.decided` event, and a dispatched turn carries
+`origin_ref.on_behalf_of` (`{email, turn, agent, decided}`), which the server alone
+stamps. Its initiator stays the agent: the agent made the call, for that person. The
+canopy CLI sends the header with `--on-behalf-of <email>` (or `caller`, the current
+turn's verified asker).
+
 ## Slack threads
 
 Who may write into a Slack thread's conversation is an access decision, so two

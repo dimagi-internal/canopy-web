@@ -41,6 +41,17 @@ class BearerTokenAuthMiddleware:
         refused = self._authenticate(request)
         if refused is not None:
             return refused
+        if request.META.get("HTTP_X_CANOPY_ON_BEHALF_OF"):
+            from apps.harness import turn_asker  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+
+            if turn_asker.of(getattr(request, "user", None)) is None:
+                # Only a turn's own login may act on someone's behalf (checked above);
+                # anything else asking to must hear no, not be quietly judged as itself.
+                from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+
+                return problem_response(403, detail=(
+                    "X-Canopy-On-Behalf-Of refused: acting on someone's behalf needs the "
+                    "login canopy-web issued for their turn"))
         return self.get_response(request)
 
     @staticmethod
@@ -130,6 +141,17 @@ class BearerTokenAuthMiddleware:
             request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
             _apply_acting_cap(request)
+            # "I am this agent, acting on behalf of <person>": checked against the turn
+            # this login serves, else refused here (apps/harness/turn_asker.py).
+            if request.META.get("HTTP_X_CANOPY_ON_BEHALF_OF"):
+                from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+                from apps.harness import turn_asker  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
+
+                try:
+                    turn_asker.declare(request.user, found.credential,
+                                       request.META["HTTP_X_CANOPY_ON_BEHALF_OF"])
+                except turn_asker.Refused as exc:
+                    return problem_response(403, detail=f"X-Canopy-On-Behalf-Of refused: {exc}")
             return
 
         # A CONTACT token must never be mistaken for a user. It resolves to no
