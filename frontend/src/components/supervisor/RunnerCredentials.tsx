@@ -12,16 +12,16 @@ import {
   type CredentialStatus,
   type RunnerCredentialEntry,
 } from '@/api/harness'
-import { getKeyset, getWorkspaceVaultZk } from '@/api/vault'
+import { getWorkspaceVaultZk } from '@/api/vault'
 import {
   grantWorkspaceVaultPending,
   makeWorkspaceVaultKey,
   sealWorkspaceVaultValue,
-  stepUpAndUnlock,
-  unlockVaultKey,
   type Unlocked,
 } from '@/vault/operations'
-import { useUnlockPrompt } from '@/vault/UnlockPrompt'
+import { useVaultUnlock } from '@/vault/useVaultUnlock'
+import { Link } from 'react-router-dom'
+import { vaultHref } from '@/lib/scopedLinks'
 import { RunnerReauth } from './RunnerReauth'
 
 export type { CredentialStatus }
@@ -122,8 +122,10 @@ export function moved(keys: string[], key: string, to: number): string[] {
 const smallButton =
   'rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30'
 
-export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', healthChecks = null, apiKeysOnly = false }: {
+export function RunnerCredentials({ runnerId, workspace = null, signedIn = null, signedInAs = '', healthChecks = null, apiKeysOnly = false }: {
   runnerId: string
+  /** The runner's workspace, where its vault's page lives. */
+  workspace?: string | null
   /** The runner's health checks, for each credential's `claude.probe.<label>`. */
   healthChecks?: Record<string, ProbeCheck> | null
   /** Whether the box reports a full Claude sign-in (its `claude.login` health
@@ -141,12 +143,8 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
   const [dragging, setDragging] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const alive = useRef(true)
-  const unlocker = useUnlockPrompt()
-  // One passkey touch both steps up and opens my vault key; a passphrase otherwise.
-  const unlock = async (): Promise<Unlocked> => {
-    const ks = await getKeyset()
-    return (await stepUpAndUnlock(ks).catch(() => null)) ?? unlockVaultKey(unlocker.prompt, ks)
-  }
+  const unlocker = useVaultUnlock()
+  const { unlock } = unlocker
 
   const load = useCallback(async () => {
     try {
@@ -240,9 +238,10 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
         </p>
       )}
 
-      {!apiKeysOnly && status && (
+      {status && (
         <RunnerVaultRow
           runnerId={runnerId}
+          workspace={workspace}
           vaults={status.vaults ?? []}
           busy={busy}
           run={inVault}
@@ -432,8 +431,9 @@ export function RunnerCredentials({ runnerId, signedIn = null, signedInAs = '', 
 /** Where the runner's tokens and keys are kept. In its own vault, a token is sealed with
  *  a key only this box and the vault's people hold; canopy-web keeps ciphertext. Its
  *  owner makes the key here, once, with a passkey touch, and lets new boxes in. */
-function RunnerVaultRow({ runnerId, vaults, busy, run, create, unlock }: {
+function RunnerVaultRow({ runnerId, workspace, vaults, busy, run, create, unlock }: {
   runnerId: string
+  workspace: string | null
   vaults: NonNullable<CredentialStatus['vaults']>
   busy: boolean
   run: (fn: () => Promise<unknown>, fallback: string) => Promise<boolean>
@@ -479,7 +479,9 @@ function RunnerVaultRow({ runnerId, vaults, busy, run, create, unlock }: {
   return (
     <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="runner-vault">
       <span className="text-success">●</span>
-      <span className="text-foreground">{vault.name}</span>
+      {workspace
+        ? <Link to={vaultHref(workspace, vault.vault_id)} className="text-primary hover:underline" data-testid="runner-vault-link">{vault.name}</Link>
+        : <span className="text-foreground">{vault.name}</span>}
       <span className="text-[11px] text-foreground-subtle">opened only by this runner&rsquo;s own key</span>
       {waiting > 0 && (
         <button type="button" disabled={busy} className={smallButton} data-testid="runner-vault-grant"

@@ -200,7 +200,7 @@ describe('SessionFeed', () => {
       <MemoryRouter>
         <SessionFeed
           agents={[{ slug: 'hal', name: 'Hal' } as never]}
-          runners={[{ id: 'r-1', name: 'haldimagi-mbp-cdp', status_note: '', ready_note: 'emdash CDP unreachable on :9224 — not claiming', paused_note: '' }]}
+          runners={[{ id: 'r-1', name: 'haldimagi-mbp-cdp', workspace: 'dimagi', status_note: '', ready_note: 'emdash CDP unreachable on :9224 — not claiming', paused_note: '' }]}
         />
       </MemoryRouter>,
     )
@@ -209,7 +209,7 @@ describe('SessionFeed', () => {
     expect(line.textContent).toContain("1 session needs you and 1 has a turn queued, but haldimagi-mbp-cdp can't take turns")
     expect(line.textContent).not.toContain('waiting')
     expect(line.textContent).toContain('emdash CDP unreachable on :9224')
-    expect(line.querySelector('a')?.getAttribute('href')).toBe('/supervisor?tab=runners&runner=r-1')
+    expect(line.querySelector('a')?.getAttribute('href')).toBe('/w/dimagi/runners/r-1')
     // Still held back from the cards themselves: a reply would only queue.
     expect(screen.queryByTestId('feed-card-d1')).toBeNull()
   })

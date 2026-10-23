@@ -121,8 +121,8 @@ describe('RunnerInvitationApprovePage', () => {
       await waitFor(() =>
         expect(screen.getByRole('status').textContent).toContain('Paired: cloud-ec2-fork is your runner now.'),
       )
-      expect(screen.getByRole('link', { name: 'Open it in the supervisor' }).getAttribute('href')).toBe(
-        '/supervisor?tab=runners&runner=r-9',
+      expect(screen.getByRole('link', { name: 'Open its page' }).getAttribute('href')).toBe(
+        '/w/connect/runners/r-9',
       )
     } finally {
       vi.useRealTimers()

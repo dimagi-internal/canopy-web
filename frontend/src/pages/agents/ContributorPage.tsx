@@ -5,7 +5,7 @@ import { AgentApiError, getContributorPage, type ContributorPageOut, type IdeaOu
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { IdeaRow } from '@/pages/agents/ideaParts'
 import { saidOn, tally, unwritten, type Stage } from '@/pages/agents/ideaStage'
-import { Section } from '@/pages/agents/sectionLayout'
+import { Section } from '@/components/objectPage/settingsLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 import { scopedPath } from '../../lib/scopedLinks'

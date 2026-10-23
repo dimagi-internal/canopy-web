@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState, type FormEvent, type JSX, type ReactN
 import { actOnTask, addIdea, AgentApiError, getProjectTeam, type IdeaOut, type ProjectTeamOut } from '@/api/agents'
 import { IdeaRow, PeopleList, StagePill } from '@/pages/agents/ideaParts'
 import { STAGE_LABEL, tally, type Stage } from '@/pages/agents/ideaStage'
-import { Section } from '@/pages/agents/sectionLayout'
+import { Section } from '@/components/objectPage/settingsLayout'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 import { WorkbenchSkeleton } from 'canopy-ui'
 

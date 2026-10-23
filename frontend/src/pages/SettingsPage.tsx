@@ -13,6 +13,7 @@ import { useMemoryVisible } from '@/auth/memoryRollout'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
 import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
+import { runnerHref } from '@/lib/scopedLinks'
 
 export function SettingsPage() {
   const memoryVisible = useMemoryVisible()
@@ -193,7 +194,7 @@ function RunnersPanel() {
                 <td className="py-1.5 text-muted-foreground">{r.status}</td>
                 <td className="py-1.5 text-right">
                   <Link
-                    to={`/supervisor?tab=runners&runner=${r.id}`}
+                    to={runnerHref(r)}
                     className="text-primary hover:underline"
                   >
                     {r.kind === 'cloud' ? 'Claude login & admins →' : 'Details →'}

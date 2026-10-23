@@ -3,7 +3,7 @@ import { useLocation, useOutletContext } from 'react-router-dom'
 import { listAgentSyncs, listAgentTurns, type AgentSyncOut, type AgentTurnOut } from '@/api/agents'
 import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
 import { SyncCard, TurnCard } from '@/components/agents/cards'
-import { Section } from '@/pages/agents/sectionLayout'
+import { Section } from '@/components/objectPage/settingsLayout'
 import { WorkbenchSubHeader, WorkbenchSkeleton } from 'canopy-ui'
 
 // Turns, and the periodic report on them.

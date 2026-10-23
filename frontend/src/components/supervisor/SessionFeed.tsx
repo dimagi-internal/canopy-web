@@ -15,7 +15,7 @@ import {
   CHIPS_AT, COMPACT_ABOVE, feedSessions, feedSources, parkedByRunner, sourceKey,
   type ParkedGroup, type ParkedRunnerInfo,
 } from './feedRules'
-import { scopedPath } from '../../lib/scopedLinks'
+import { runnerHref, scopedPath } from '../../lib/scopedLinks'
 
 const POLL_MS = 20_000
 // Per-viewer and best-effort: storage can be missing or throw (private window).
@@ -264,7 +264,7 @@ function ParkedBanner({ groups }: { groups: ParkedGroup[] }): JSX.Element {
           .join(' and ')
         const name = g.runnerName || 'a runner'
         const state = g.reason === 'paused' ? 'is paused' : "can't take turns"
-        const href = g.runner ? `/supervisor?tab=runners&runner=${g.runner.id}` : '/supervisor?tab=runners'
+        const href = g.runner ? runnerHref(g.runner) : '/supervisor?tab=runners'
         return (
           <p key={g.runnerName} data-testid={`feed-parked-${g.runnerName || 'unknown'}`}>
             {what}, but <strong className="text-foreground">{name}</strong> {state}

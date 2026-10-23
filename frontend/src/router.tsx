@@ -52,6 +52,8 @@ import { McpServersPage } from './pages/projects/McpServersPage'
 import { ProjectsPage } from './pages/projects/ProjectsPage'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
+import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
+import { VaultPage, VaultTabRoute } from './pages/vault/VaultPage'
 import SessionSharePage from './pages/SessionSharePage'
 import DddReleasePage from './pages/DddReleasePage'
 import StoryboardPage from './pages/StoryboardPage'
@@ -392,6 +394,25 @@ export const routeTable: RouteObject[] = [
       // A work group's old page: work groups became project check-ins, so it
       // forwards to the project the group became (apps/huddles/checkins.py).
       { path: '/w/:workspace/huddles/groups/:slug', element: <LazySection><LegacyGroupRedirect /></LazySection> },
+      // A runner's one page: every control for one box, behind tabs. Alerts, mail,
+      // the supervisor, the runner tables and the fleet map link here.
+      {
+        path: '/w/:workspace/runners/:runnerId',
+        element: <RunnerPage />,
+        children: [
+          { index: true, element: <Navigate to="overview" replace /> },
+          { path: ':tab', element: <RunnerTabRoute /> },
+        ],
+      },
+      // A workspace vault's one page: its key, what it serves, members, secrets.
+      {
+        path: '/w/:workspace/vaults/:vaultId',
+        element: <VaultPage />,
+        children: [
+          { index: true, element: <Navigate to="overview" replace /> },
+          { path: ':tab', element: <VaultTabRoute /> },
+        ],
+      },
       { path: '/w/:workspace/threads/:id', element: <LazySection><ThreadPage /></LazySection> },
       {
         path: '/w/:workspace/agents/:slug',

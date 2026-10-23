@@ -97,7 +97,7 @@ def test_a_credential_event_mails_the_approvers(box):
     assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
     msg = mail.outbox[0]
     assert "cloud-ec2-fork" in msg.subject and "cloud-ec2-fork" in msg.body
-    assert f"/supervisor?tab=runners&runner={box['runner'].pk}" in msg.body
+    assert f"/w/{box['runner'].workspace_id}/runners/{box['runner'].pk}" in msg.body
     assert sorted(u for u, _ in box["pushed"]) == ["ad", "jj"]
 
 

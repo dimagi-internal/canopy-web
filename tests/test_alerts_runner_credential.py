@@ -89,7 +89,7 @@ def test_signed_out_probe_raises_with_label(fleet):
     assert "subscription-1" not in r.title
     assert r.subject_key == f"runner:{runner.pk}:cred:subscription-1"
     assert r.workspace == "dimagi"
-    assert r.url == f"/supervisor?tab=runners&runner={runner.pk}"
+    assert r.url == f"/w/{runner.workspace_id}/runners/{runner.pk}"
     assert r.scopes == (f"runner:{runner.pk}", "workspace:dimagi", "agent:eva")
     # "hal" is cloud-ec2-2's only token: it can be replaced, not removed.
     assert r.body == "Claude rejects it. It is this runner's only token, so it can't be removed. Replace it with a new token."
@@ -206,7 +206,7 @@ def test_the_only_token_can_be_replaced_not_removed(fleet):
     for who in ("jj", "admin"):
         acts = src.actions(a, fleet[who])
         assert [(x.id, x.label) for x in acts] == [("replace", "Replace token")]
-        assert acts[0].closes and acts[0].href == f"/supervisor?tab=runners&runner={fleet['runner'].pk}"
+        assert acts[0].closes and acts[0].href == f"/w/{fleet['runner'].workspace_id}/runners/{fleet['runner'].pk}"
 
 
 def test_a_token_with_a_backup_can_be_replaced_or_removed(fleet):

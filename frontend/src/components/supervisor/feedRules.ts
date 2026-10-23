@@ -74,6 +74,8 @@ export function feedSources(feed: readonly ChatSession[]): { key: string; count:
 export type ParkedRunnerInfo = {
   id: string
   name: string
+  /** Where its page lives (`runnerHref`). */
+  workspace?: string | null
   status_note?: string | null
   ready_note?: string | null
   paused_note?: string | null

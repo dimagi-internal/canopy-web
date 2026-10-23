@@ -48,6 +48,17 @@ Every browser-facing address canopy-web serves. The SPA route table is
   links it). Every route gets an error boundary
   automatically (`guarded()` in `router.tsx`); a route needing a different one
   sets its own `errorElement`.
+- **One editor per object.** A core object people configure — an agent, a
+  workspace's settings, a runner, a vault — has ONE page at ONE address, built
+  from the shared kit in `frontend/src/components/objectPage/`: `ObjectPage`
+  (name, status, one line, actions), `ObjectTabs` (the one routed tab row; a tab
+  that needs attention carries a dot) and `Section`/`Setting`
+  (`settingsLayout.tsx`). Each tab is a route (`…/:tab`), so a deep link names a
+  place and a tab loads only its own data. Every other surface LINKS to that page
+  (`runnerHref`, `vaultHref` in `lib/scopedLinks.ts`; `alerts_runner_credential.runner_path`
+  server-side) or embeds one of its read-only pieces (the fleet map shows
+  `RunnerFacts`) — it never rebuilds the object's controls. An object page in
+  the agent rail (Agent settings) renders `ObjectTabs` inside the rail's section.
 - **Retired pages redirect, keeping query and hash** where a link may carry
   one (`SettingsRedirect`, `KeepQueryRedirect`, `CredentialsRedirect`). Retired
   ARTIFACT addresses do not — see above.
@@ -56,6 +67,20 @@ Every browser-facing address canopy-web serves. The SPA route table is
   redirect.
 
 ## Tenant-scoped (`/w/:workspace/…`)
+
+- **`runners/:runnerId/:tab`** — a runner's one page (`pages/runner/`): Overview
+  (status, facts, alerts, health, readiness checks), Credentials (a cloud box's
+  Claude logins, tokens and API keys and its vault — only for its administrators),
+  Routing (workspaces it serves, agents it takes, each agent's routing), Access
+  (administrators, private), Settings (pause, sessions, flags, egress, runtime,
+  retire). Reads `GET /api/harness/runners/{id}/`; a link naming another workspace
+  forwards to the runner's own. `/supervisor?tab=runners&runner=<id>` (old mail and
+  alerts) forwards here.
+- **`vaults/:vaultId/:tab`** — a workspace vault's one page (`pages/vault/`):
+  Overview (its key, made in the browser with a passkey touch, copies for whoever
+  waits, and what it serves — agents, a workspace and below, or a runner),
+  Members, Secrets (names only; a value is sealed in the browser). Settings →
+  Secrets lists the workspace's vaults and links here.
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
   **Chats** are links; **Agents** (All agents, New agent, Huddles, Schedules,
