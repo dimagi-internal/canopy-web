@@ -9011,6 +9011,106 @@ def _ship_transcript_rows(runner_id: str, turn: dict, cwd, cli_session_id: str) 
     _log(f"turn {turn['id'][:8]}: shipped {len(events)} transcript rows -> {status}")
 
 
+#: How often a running confined turn's transcript is read for new rows.
+TURN_TAIL_SECONDS = 2.0
+
+
+class _TurnTail:
+    """Ship a running CONFINED chat turn's transcript rows as Claude writes them.
+
+    A confined turn is never its session's binding, so `/streams` never names it
+    and `_sync_session_streams` never tails it: without this its reply reached the
+    conversation only at the turn-end ship. This reads the turn's own transcript,
+    which it knows while it runs (its cwd, and the Claude session id
+    `_announce_session` hands `follow`), and posts the new rows through the same
+    `session-stream` call and transcript id as the turn-end ship — so canopy-web
+    files them in the same epoch, seals them the same way, fans them out to the
+    chat as ordinary rows, and the turn-end ship is a no-op for every row it
+    already holds. Also on a sensitive-data box: these are exactly the rows the
+    turn-end ship sends (no backfill, no other session), and the transcript is
+    still deleted when the turn ends.
+
+    Granularity is Claude's transcript: one record per message or tool call as
+    it completes, never token by token.
+
+    A conversation the box kept and this turn resumed (`resumed`) already holds
+    its earlier turns' rows, so the records in it before the turn began are not
+    shipped again. Best-effort throughout: a failed post re-reads the file on the
+    next tick (canopy-web keeps each row once), and the turn-end ship still runs."""
+
+    def __init__(self, runner_id: str, session_id: str, cwd, *, resumed: str = "",
+                 interval: float | None = None):
+        self.runner_id, self.session_id, self.cwd = runner_id, session_id, cwd
+        self.interval = TURN_TAIL_SECONDS if interval is None else interval
+        self._lock = threading.Lock()
+        self._sid = ""
+        self._reader = None
+        self._reader_sid = ""
+        self._count = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        # {Claude session id: records it held before this turn wrote to it}
+        self._before: dict[str, int] = {}
+        if resumed:
+            self._before[resumed] = self._records_in(resumed)
+
+    def _records_in(self, sid: str) -> int:
+        ct = _transcript_core()
+        if ct is None:
+            return 0
+        path = ct.resolve_cli_transcript(self.cwd, sid, claude_home=CLAUDE_PROJECTS_HOME)
+        try:
+            return len(ct.read_records(path)) if path is not None else 0
+        except Exception:  # noqa: BLE001 — unreadable: ship it all, canopy-web dedupes
+            return 0
+
+    def follow(self, cli_session_id: str) -> None:
+        with self._lock:
+            self._sid = cli_session_id or self._sid
+
+    def tick(self) -> int:
+        """Ship whatever the transcript gained since the last tick. Rows shipped."""
+        ct = _transcript_core()
+        with self._lock:
+            sid = self._sid
+        if ct is None or not sid:
+            return 0
+        if self._reader is None or self._reader_sid != sid:
+            path = ct.resolve_cli_transcript(self.cwd, sid, claude_home=CLAUDE_PROJECTS_HOME)
+            if path is None:
+                return 0  # Claude has not written it yet
+            self._reader, self._reader_sid, self._count = ct.TailReader(str(path)), sid, 0
+        records = self._reader.read_new()
+        if not records:
+            return 0
+        base = self._count
+        start = min(max(self._before.get(sid, 0) - base, 0), len(records))
+        rows = ct.conversational_messages(records[start:], -1, record_offset=base + start)
+        if rows and not _post_stream_rows(self.runner_id, self.session_id, rows, sid):
+            self._reader = None  # re-read from the top next tick; nothing is lost
+            return 0
+        self._count = base + len(records)
+        return len(rows)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                self.tick()
+            except Exception as exc:  # noqa: BLE001 — the turn-end ship still carries it
+                _log(f"warn: live tail of {self.session_id[:8]}: {exc}")
+                self._reader = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"turn-tail-{self.session_id[:8]}")
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=30)
+
+
 # ── live streaming: /streams + /backfills ────────────────────────────────────
 # The observable half of attach/detach. `_ship_transcript_rows` above makes a
 # session's record DURABLE at turn end, which is enough for a conversation
@@ -9812,12 +9912,21 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _record_session_resume(runner_id, _turn, sid)
                 recorded["sid"] = sid
 
-        if not confined:
-            with _SESSION_HOOKS_LOCK:
+        # A confined chat turn is never a binding, so `/streams` never lists it: it
+        # tails its own transcript while it runs (`_TurnTail`), through the same
+        # `session-stream` route its turn-end ship takes.
+        tail = (_TurnTail(runner_id, _chat_session_id(turn), cwd, resumed=resume_id or "")
+                if confined and _chat_session_id(turn) and cwd is not None else None)
+        with _SESSION_HOOKS_LOCK:
+            if not confined:
                 _SESSION_HOOKS[turn_id] = _on_session
+            elif tail is not None:
+                _SESSION_HOOKS[turn_id] = tail.follow
         lease_stop = _start_lease_renewal(runner_id, turn_id)
         try:
             try:
+                if tail is not None:
+                    tail.start()
                 ok, text, cli_session_id = execute_prompt(
                     prompt, turn_id, emit, cwd=cwd,
                     agent_slug=_turn_agent_slug(turn), resume_session_id=resume_id,
@@ -9826,6 +9935,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 ok, text, cli_session_id = False, f"runner error: {exc}", ""
         finally:
             lease_stop.set()
+            if tail is not None:
+                # Before the turn-end ship below, which is the final flush: two
+                # posts of one transcript must never race.
+                tail.stop()
             with _SESSION_HOOKS_LOCK:
                 _SESSION_HOOKS.pop(turn_id, None)
         forget["cli_session_id"] = cli_session_id

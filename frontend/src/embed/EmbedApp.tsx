@@ -23,6 +23,7 @@ import type { HostInit, HostLink } from './hostLink'
 import { resolvePrincipal, type Principal } from './principal'
 import { ContactMemory } from './ContactMemory'
 import { contactHcp, embedMemorySource } from './sessionMemory'
+import { PRIVATE_LABEL, PrivateMark } from '@/components/chat/privateConversation'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -612,7 +613,14 @@ function EmbedStart({
                   {/* What you first asked — the name you would recognise. The
                       session's title is canopy's, and means nothing here. */}
                   <span className="block truncate text-sm text-foreground">
-                    {s.opening || 'Conversation'}
+                    {s.private ? (
+                      <span className="inline-flex items-center gap-1" data-testid="private-title">
+                        <PrivateMark />
+                        {PRIVATE_LABEL}
+                      </span>
+                    ) : (
+                      s.opening || 'Conversation'
+                    )}
                   </span>
                 </button>
                 {/* Archives it, so it is not offered here again. Nothing is
@@ -669,6 +677,8 @@ interface EarlierChat {
   id: string
   /** The start of the first message (`SessionOut.opening`), trimmed by canopy. */
   opening: string
+  /** A private (sensitive) conversation: listed by what it is, never by its words. */
+  private?: boolean
   at: string
 }
 
@@ -706,12 +716,14 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
             (r) =>
               r.agent_slug === agent.slug &&
               typeof r.id === 'string' &&
-              typeof r.opening === 'string' &&
-              r.opening.trim() !== '',
+              // A private conversation keeps no words to be named by; it is
+              // listed as what it is.
+              (r.sensitive === true || (typeof r.opening === 'string' && r.opening.trim() !== '')),
           )
           .map((r) => ({
             id: r.id as string,
             opening: typeof r.opening === 'string' ? r.opening : '',
+            private: r.sensitive === true,
             at: String(r.last_activity_at ?? r.created_at ?? ''),
           }))
           .filter((r) => Date.parse(r.at) >= since)

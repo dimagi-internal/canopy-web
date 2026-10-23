@@ -857,6 +857,43 @@ class TransferRequest(models.Model):
         return f"transfer-request:{str(self.session_id)[:8]}->{self.to_runner_id}:{self.status}"
 
 
+class JoinRequest(models.Model):
+    """Someone who can see a PRIVATE (sensitive) conversation exists, but is not in
+    it, asking its owner to add them (`join_requests.py`).
+
+    It carries nothing of the conversation: who asked, which conversation, and how
+    it was decided. Approval is the existing add-participant flow, made in the
+    owner's browser (it wraps the conversation's key to the requester's vault key,
+    which canopy-web cannot do); the participant row it writes is what approves
+    the request (`join_requests.settle_on_add`)."""
+
+    PENDING, APPROVED, DECLINED, CANCELLED = "pending", "approved", "declined", "cancelled"
+    STATUS_CHOICES = [(s, s) for s in (PENDING, APPROVED, DECLINED, CANCELLED)]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name="join_requests")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                                     related_name="+")
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=PENDING)
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["session", "requested_by"], condition=models.Q(status="pending"),
+                name="one_pending_join_request_per_session_user",
+            ),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"join-request:{str(self.session_id)[:8]}:{self.requested_by_id}:{self.status}"
+
+
 class SessionWorkspacePreference(models.Model):
     """Where a person's own emdash sessions are FILED when nothing else decides.
 

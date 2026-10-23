@@ -8,6 +8,7 @@ import type { RunnerOut } from '@/api/harness'
 import { NewChatMenu, type NewChatTarget } from '@/components/chat/NewChatMenu'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
+import { listTitle, PrivateMark } from '@/components/chat/privateConversation'
 import { StateDot as SharedStateDot } from '@/components/sessions/StateDot'
 import {
   linkKind,
@@ -22,7 +23,8 @@ import {
 export const STATE_LABEL: Record<IdeState, string> = { running: 'running', input: 'input', idle: 'idle' }
 export const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'auto', none: 'no turn' }
 
-export const sessionLabel = (s: ChatSession) => sessionDisplayTitle(s.title) || '(untitled)'
+export const sessionLabel = (s: ChatSession) =>
+  listTitle(s, sessionDisplayTitle(s.title) || '(untitled)')
 
 export function StateDot({ state }: { state: IdeState }) {
   return <SharedStateDot tone={state === 'input' ? 'asking' : state} />
@@ -196,7 +198,7 @@ export function IdeTree({
                       onRename(s.id)
                     }}
                     title={[
-                      s.title,
+                      s.sensitive ? title : s.title,
                       parent ? `${linkKind(s) === 'fork' ? 'forked' : 'started'} from ${label(parent)}` : '',
                       `${STATE_LABEL[st]} · ${MODE_LABEL[sessionMode(s)]}`,
                       s.runner_name ? `runner ${s.runner_name}${s.runner_host ? ` (${s.runner_host})` : ''}` : 'no runner',
@@ -228,7 +230,10 @@ export function IdeTree({
                         className="h-5 text-[13px]"
                       />
                     ) : (
-                      <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                      <span className="flex min-w-0 items-center gap-1">
+                        {s.sensitive && <PrivateMark />}
+                        <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                      </span>
                     )}
                     <span
                       className={clsx(

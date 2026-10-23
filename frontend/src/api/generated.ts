@@ -11838,6 +11838,45 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/join-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline someone's request to join your private conversation
+         * @description They stay out. To let them in, add them (`POST /{id}/participants`, from your
+         *     browser, which gives them their copy of the conversation's key): that answers
+         *     the request.
+         */
+        readonly post: operations["decline_join_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/join-requests/{request_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Withdraw your request to join a private conversation */
+        readonly post: operations["cancel_join_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -12179,6 +12218,34 @@ export interface paths {
          * @description The owner can remove anyone but themselves; anyone can remove themselves.
          */
         readonly delete: operations["remove_participant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/join-requests": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Open requests to join your private conversation
+         * @description The people asking to be added, oldest first, for its owner (who adds them from
+         *     the browser, `POST /{id}/participants`, or declines). Empty for anyone else.
+         */
+        readonly get: operations["list_join_requests"];
+        readonly put?: never;
+        /**
+         * Ask to be added to a private conversation
+         * @description A private (sensitive) conversation you can see listed but are not in: ask its
+         *     owner to add you. The request names you and the conversation, nothing it said.
+         *     Asking again returns the request already open. 409 for an ordinary
+         *     conversation, or one you are already in.
+         */
+        readonly post: operations["ask_to_join"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -31750,6 +31817,11 @@ export interface components {
             readonly target?: {
                 readonly [key: string]: string;
             };
+            /**
+             * Private
+             * @default false
+             */
+            readonly private: boolean;
         };
         /** HideOut */
         readonly HideOut: {
@@ -32506,6 +32578,13 @@ export interface components {
              * @default false
              */
             readonly sensitive: boolean;
+            /** You Are In It */
+            readonly you_are_in_it?: boolean | null;
+            /**
+             * Started By Name
+             * @default
+             */
+            readonly started_by_name: string;
             /**
              * Last Reply
              * @default
@@ -32808,6 +32887,41 @@ export interface components {
             readonly note: string;
         };
         /**
+         * JoinRequestOut
+         * @description A request to be added to a private conversation. Who asked and how it was
+         *     decided; never anything the conversation said.
+         */
+        readonly JoinRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            /** Requested By */
+            readonly requested_by: string;
+            /** Requested By Name */
+            readonly requested_by_name: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Decided By
+             * @default
+             */
+            readonly decided_by: string;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /**
          * SealedKeyOut
          * @description What the reader's browser needs to read a sensitive conversation
          *     (`conversation_keys.reader_key`): unlock your vault key, unwrap `wrap`
@@ -32985,6 +33099,13 @@ export interface components {
              * @default false
              */
             readonly sensitive: boolean;
+            /** You Are In It */
+            readonly you_are_in_it?: boolean | null;
+            /**
+             * Started By Name
+             * @default
+             */
+            readonly started_by_name: string;
             /**
              * Last Reply
              * @default
@@ -33058,6 +33179,11 @@ export interface components {
             } | null;
             /** My Role */
             readonly my_role?: string | null;
+            /**
+             * Your Join Request
+             * @default
+             */
+            readonly your_join_request: string;
             /**
              * Can Move
              * @default false
@@ -50319,6 +50445,50 @@ export interface operations {
             };
         };
     };
+    readonly decline_join_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JoinRequestOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_join_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JoinRequestOut"];
+                };
+            };
+        };
+    };
     readonly canopy_sessions_get_session: {
         readonly parameters: {
             readonly query?: {
@@ -50674,6 +50844,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
+                };
+            };
+        };
+    };
+    readonly list_join_requests: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["JoinRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly ask_to_join: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JoinRequestOut"];
                 };
             };
         };

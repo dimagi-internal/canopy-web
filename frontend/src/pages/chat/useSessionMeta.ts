@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { getAgent } from '@/api/agents'
 import { getSession, type ChatSessionDetail } from '@/api/chat'
+import { takeGateFetch } from '@/components/chat/PrivateConversationGate'
 
 /** The session's REST detail, fetched once per id, plus the agent's display
  *  name for the header's "with <agent>" tag. `onLoaded` sees the first detail
@@ -21,7 +22,8 @@ export function useSessionMeta(sessionId: string, onLoaded?: (m: ChatSessionDeta
     setMeta(null)
     setMetaError(null)
     setAgentName(null)
-    getSession(sessionId)
+    // The private-conversation gate already read it to decide (PrivateConversationGate).
+    ;(takeGateFetch(sessionId) ?? getSession(sessionId))
       .then((m) => {
         setMeta(m)
         onLoadedRef.current?.(m)

@@ -57,12 +57,6 @@ class Job:
 
 
 _JOBS: dict[str, Job] = {}
-#: The event loop the clock runs on (set by `running`), for a job that reports on it.
-_LOOP: asyncio.AbstractEventLoop | None = None
-
-
-def loop() -> asyncio.AbstractEventLoop | None:
-    return _LOOP
 
 
 def register(name: str, fn: Callable[[], object], every_s: float | Callable[[], float], *,
@@ -154,8 +148,6 @@ async def running():
     if base <= 0:
         yield
         return
-    global _LOOP
-    _LOOP = asyncio.get_running_loop()
     task = asyncio.create_task(run_forever(base), name="ticks")
     logger.info("ticks started (every %ss): %s", base, ", ".join(_JOBS))
     try:

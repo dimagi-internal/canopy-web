@@ -7,6 +7,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { usePolled } from '@/hooks/usePolled'
 import { sessionTargetLabel } from './sessionTargetLabel'
 import { sessionDisplayTitle } from './sessionDisplayTitle'
+import { ListTitle, listTitle } from './privateConversation'
 import { projectHeader, sortSessions, type SessionSort } from './sessionSort'
 import { closeFailure, closeIntent, closeResultMessage, settleClosing } from './closeAction'
 import { CloseFailedNote } from './CloseFailedNote'
@@ -140,7 +141,7 @@ export function ChatSessionsPanel({
       if (intent.kind === 'blocked') return
       if (
         intent.confirm &&
-        !window.confirm(`${s.title?.trim() || 'This chat'} is still working. Close it anyway?`)
+        !window.confirm(`${listTitle(s, s.title?.trim() || 'This chat')} is still working. Close it anyway?`)
       ) {
         return
       }
@@ -351,9 +352,9 @@ export function ChatSessionsPanel({
                     <div className="min-w-0">
                       <div
                         className="truncate text-sm font-medium text-foreground"
-                        title={s.title?.trim() || undefined}
+                        title={s.sensitive ? undefined : s.title?.trim() || undefined}
                       >
-                        {sessionDisplayTitle(s.title) || 'Untitled chat'}
+                        <ListTitle s={s} fallback={sessionDisplayTitle(s.title) || 'Untitled chat'} />
                       </div>
                       <div className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
                         <WorkspaceBadge workspace={s.workspace} />
@@ -411,7 +412,7 @@ export function ChatSessionsPanel({
                   <button
                     type="button"
                     data-testid={`close-session-${s.id}`}
-                    aria-label={`Close ${s.title?.trim() || 'Untitled chat'}`}
+                    aria-label={`Close ${listTitle(s, s.title?.trim() || 'Untitled chat')}`}
                     title={
                       intent.kind === 'blocked'
                         ? intent.why

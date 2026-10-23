@@ -54,6 +54,7 @@ from . import (
     transcript_read,
 )
 from . import activity as session_activity
+from . import join_requests
 from . import send as cs_send
 from .models import Attachment, Session
 from .schemas import (
@@ -102,6 +103,7 @@ from .schemas import (
     TransferIn,
     TransferOut,
     TransferRequestOut,
+    JoinRequestOut,
     TurnOutMinimal,
 )
 
@@ -172,6 +174,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         and session.title == binding.thread_key
     )
     prefer_own = bool(session.title) and not is_fallback
+    sensitive = sensitivity.is_sensitive(session)
     return {
         "id": session.id,
         "agent_slug": session.agent.slug if session.agent_id else None,
@@ -229,7 +232,10 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # absence.
         "backfill_pending": bool(binding and binding.backfill_requested),
         "notify_every_completion": session.notify_every_completion,
-        "sensitive": sensitivity.is_sensitive(session),
+        "sensitive": sensitive,
+        "you_are_in_it": (sensitivity.is_conversation_person(session, user=viewer)
+                          if sensitive else None),
+        "started_by_name": _started_by_name(session),
         "runner_requirements": sorted(rr.requirements_of_session(session)),
         "last_reply": last_reply,
         "agent_spoke_last": agent_spoke_last,
@@ -246,7 +252,19 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # Where else the conversation is had (a Slack thread), from each channel's
         # own reader — canopy_sessions knows no channel (channel_bindings.py).
         **channel_bindings.of(session),
+        # A private conversation is listed by what it is, never by what it says:
+        # none of these is ever written with its words (`sensitivity.seal`), and a
+        # list must not start reading them if that ever changes.
+        **({"title": "", "opening": "", "last_reply": ""} if sensitive else {}),
     }
+
+
+def _started_by_name(session: Session) -> str:
+    """Who started it: a member's name, "a visitor" for a contact's; "" for a
+    runner's or an agent's own. A name, never what they said."""
+    if session.created_by_id:
+        return control.person_name(session.created_by)
+    return "a visitor" if session.contact_id else ""
 
 
 def _visible_slugs(request: HttpRequest, *, listing: bool = False, bulk_write: bool = False) -> set[str]:
@@ -822,6 +840,57 @@ def cancel_transfer_request(request: HttpRequest, request_id: uuid.UUID):
     return _transfer_request_out(req)
 
 
+# ---- join requests: asking to be added to a private conversation ----
+# Declared above the `/{session_id}` routes, like the transfer requests.
+
+def _join_request_out(req) -> dict:
+    return {
+        "id": req.id, "session_id": req.session_id,
+        "requested_by": req.requested_by.email, "requested_by_name": control.person_name(req.requested_by),
+        "status": req.status, "decided_by": getattr(req.decided_by, "email", "") or "",
+        "decided_at": req.decided_at, "created_at": req.created_at,
+    }
+
+
+def _join_request_or_404(request: HttpRequest, request_id: uuid.UUID):
+    req = (join_requests.visible_to(request.user).select_related("session", "requested_by", "decided_by")
+           .filter(pk=request_id).first())
+    if req is None:
+        raise HttpError(404, "join request not found")
+    return req
+
+
+@router.post("/join-requests/{request_id}/decline", response=JoinRequestOut,
+             summary="Decline someone's request to join your private conversation")
+@gate("session-acl", kind="conversation")  # its owner, in it (`join_requests.may_decide`)
+def decline_join_request(request: HttpRequest, request_id: uuid.UUID):
+    """They stay out. To let them in, add them (`POST /{id}/participants`, from your
+    browser, which gives them their copy of the conversation's key): that answers
+    the request."""
+    req = _join_request_or_404(request, request_id)
+    try:
+        join_requests.decline(req, request.user)
+    except PermissionError as exc:
+        raise HttpError(403, str(exc))
+    except ValueError as exc:
+        raise HttpError(409, str(exc))
+    return _join_request_out(req)
+
+
+@router.post("/join-requests/{request_id}/cancel", response=JoinRequestOut,
+             summary="Withdraw your request to join a private conversation")
+@gate("self", kind="conversation")  # only whoever asked
+def cancel_join_request(request: HttpRequest, request_id: uuid.UUID):
+    req = _join_request_or_404(request, request_id)
+    try:
+        join_requests.cancel(req, request.user)
+    except PermissionError as exc:
+        raise HttpError(403, str(exc))
+    except ValueError as exc:
+        raise HttpError(409, str(exc))
+    return _join_request_out(req)
+
+
 def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
     """The fallback for a UUID that is not a session id: the runner's
     `session_key` (a cloud session's key is a Claude session UUID, and it is
@@ -892,7 +961,10 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
         session = _session_or_404(request, session_id)
     except Http404:
         session = _session_by_key_or_404(request, session_id)
-    data = _out(session)
+    data = _out(session, viewer=request.user)
+    if data["you_are_in_it"] is False:
+        asked = join_requests.latest_of(session, request.user)
+        data["your_join_request"] = asked.status if asked is not None else ""
     rows, has_more, oldest = transcript_read.visible_transcript(session, full=full)
     rows = _readable(request, session, rows)
     from apps.agents.credentials import secret_requests
@@ -1228,6 +1300,8 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
             _store_wrap(request, session, target, payload.wrap)
         SessionParticipant.objects.update_or_create(
             session=session, user=target, defaults={"role": payload.role})
+        # Their request to be added, if they asked, is answered by this.
+        join_requests.settle_on_add(session, target, by=request.user)
     return _participants(session)
 
 
@@ -1293,6 +1367,34 @@ def remove_participant(request: HttpRequest, session_id: uuid.UUID, user_id: int
     # conversation, someone no longer in it must stop hearing it now.
     transaction.on_commit(lambda: services.recheck_sockets(session.pk, user_ids=[user_id]))
     return _participants(session)
+
+
+@router.post("/{session_id}/join-requests", response=JoinRequestOut,
+             summary="Ask to be added to a private conversation")
+@gate("session-acl", kind="conversation")  # you can see it exists, and are not in it
+def ask_to_join(request: HttpRequest, session_id: uuid.UUID):
+    """A private (sensitive) conversation you can see listed but are not in: ask its
+    owner to add you. The request names you and the conversation, nothing it said.
+    Asking again returns the request already open. 409 for an ordinary
+    conversation, or one you are already in."""
+    session = _session_or_404(request, session_id)
+    try:
+        req = join_requests.ask(session, request.user)
+    except ValueError as exc:
+        raise HttpError(409, str(exc))
+    return _join_request_out(req)
+
+
+@router.get("/{session_id}/join-requests", response=list[JoinRequestOut],
+            summary="Open requests to join your private conversation")
+@gate("session-acl")  # its owner, in it; anyone else reads none
+def list_join_requests(request: HttpRequest, session_id: uuid.UUID):
+    """The people asking to be added, oldest first, for its owner (who adds them from
+    the browser, `POST /{id}/participants`, or declines). Empty for anyone else."""
+    session = _session_or_404(request, session_id)
+    if not join_requests.may_decide(request.user, session):
+        return []
+    return [_join_request_out(r) for r in join_requests.pending_for(session)]
 
 
 @router.post("/{session_id}/send", response=SendOut, summary="Send a message")

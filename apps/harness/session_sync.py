@@ -1237,9 +1237,13 @@ def ingest_session_stream(binding, *, transcript_id, events) -> int:
 
 
 def ingest_turn_end_rows(session, *, transcript_id, events) -> int:
-    """A CONFINED turn's transcript rows, shipped once when it ends by the runner
-    that ran it. A confined turn is never recorded as the session's binding, so this
-    is the one way its reply reaches the conversation. A confined turn that starts a
+    """A CONFINED turn's transcript rows, shipped by the runner that ran it: live
+    while it runs (the runner tails the turn's own transcript, `_TurnTail` in
+    runner/ec2/cloud_runner.py) and once more, whole, when it ends. A confined turn
+    is never recorded as the session's binding, so this is the one way its reply
+    reaches the conversation. Every ship of one transcript lands in the same epoch,
+    so a row is kept once and fanned out once — the first time it arrives — and the
+    turn-end ship is a no-op for every row the live tail already shipped. A confined turn that starts a
     fresh Claude session begins again at ordinal 0, so each `transcript_id` gets its
     own epoch above the rows already held (`_turn_end_epoch`). A turn of a sensitive
     conversation that resumed the session its box kept ships the same transcript
@@ -1250,7 +1254,7 @@ def ingest_turn_end_rows(session, *, transcript_id, events) -> int:
     shifted = [e.model_copy(update={"index": e.index + offset}) if e.index >= 0 else e
                for e in events]
     return _ingest(session, transcript_id="", events=shifted, index_offset=0, live=True,
-                   binding=None)
+                   binding=None, fan_out_held=False)
 
 
 #: Session metadata: the epoch (`turn_index` offset) of each confined turn's
@@ -1277,10 +1281,22 @@ def _turn_end_epoch(session, transcript_id: str) -> int:
     return offset
 
 
-def _ingest(session, *, transcript_id, events, index_offset, live, binding) -> int:
+def _ingest(session, *, transcript_id, events, index_offset, live, binding,
+            fan_out_held=True) -> int:
+    """`fan_out_held=False`: a row the session already held before this batch is
+    not sent to watchers again — they have it (the turn-end ship of rows a live
+    tail already shipped, or a resumed conversation's earlier turns)."""
     from apps.canopy_sessions import services as chat_services
     from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
     from apps.realtime import groups
+
+    already: set[int] = set()
+    if not fan_out_held:
+        shift = chat_transcript_ingest._index_offset(session)
+        already = {i - shift for i in Message.objects.filter(
+            session=session,
+            turn_index__in=[e.index + shift for e in events if e.index >= 0],
+        ).values_list("turn_index", flat=True)}
 
     # transcript ordinal (e.index) -> the author persist_transcript_rows found
     # for it, if any — carried into the live frame below so a watcher sees who
@@ -1381,6 +1397,8 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding) -> i
         if e.kind == "user" and is_system_noise((e.payload or {}).get("text", "")):
             n += 1
             continue
+        if e.index >= 0 and e.index in already:
+            continue  # on screen since it first arrived
         # User events ARE fanned out. They used to be withheld on the grounds
         # that "the sender's client already echoed them optimistically" — true
         # for text typed in the web, false for text typed directly into emdash,

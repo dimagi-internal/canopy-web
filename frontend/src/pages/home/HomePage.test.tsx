@@ -40,7 +40,7 @@ const item = (over: Partial<AttentionRow>): AttentionRow => ({
   key: 'task:eva:T1', kind: 'task', state: 'asking', reason: 'Approve or decline', title: 'Send EOI?', body: '',
   workspace: 'connect', organisation: 'connect', agent_slug: 'eva', project: '', url: '/w/connect/agents/eva/tasks?waiting=me',
   last_activity_at: new Date().toISOString(), actions: ['approve', 'decline', 'reply'],
-  target: { agent: 'eva', task: 'T1' }, ...over,
+  target: { agent: 'eva', task: 'T1' }, private: false, ...over,
 })
 
 afterEach(() => {

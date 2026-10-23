@@ -34,7 +34,8 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
             kind="session",
             state=state,
             reason=reason,
-            title=row["title"] or row["opening"] or "Chat",
+            title=_title(row),
+            private=row["sensitive"],
             body=(row["last_reply"] or "")[:400],
             workspace=row["workspace"],
             agent_slug=row["agent_slug"] or "",
@@ -47,6 +48,18 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
             target={"session": str(row["id"])},
         ))
     return out
+
+
+def private_title(row) -> str:
+    """How a list names a private conversation: what it is and who started it."""
+    who = row.get("started_by_name") or ""
+    return f"Private conversation · {who}" if who else "Private conversation"
+
+
+def _title(row) -> str:
+    if row["sensitive"]:
+        return private_title(row)
+    return row["title"] or row["opening"] or "Chat"
 
 
 def _state(viewer, session, row) -> tuple[str, str] | None:

@@ -53,6 +53,8 @@ class AttentionRow:
     actions: tuple[str, ...] = ()
     #: Where those actions go: the existing routes' own identifiers.
     target: dict[str, str] = field(default_factory=dict)
+    #: A private (sensitive) conversation, listed by who started it, not what it says.
+    private: bool = False
 
     @property
     def in_flight(self) -> bool:

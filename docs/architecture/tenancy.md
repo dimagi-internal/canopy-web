@@ -352,7 +352,13 @@ THE predicate; every surface below asks it, one test each in
     transit; only what is stored is unreadable to canopy-web. Every other reader — search,
     human inputs, a session review, an agent's or the fleet's reads, an admin who is not in
     it — reads the metadata columns. The reply reaches the asker the one way every turn's
-    does: its transcript rows (a sensitive-data box ships a confined turn's before deleting it).
+    does: its transcript rows. A confined turn has no binding, so its box tails the turn's
+    own transcript while it runs (`_TurnTail`, every ~2 s, one row per message or tool call as
+    Claude writes it — never token by token) and ships through the unbound door
+    (`session_sync.ingest_turn_end_rows`), then ships the whole transcript once more at the
+    end, before deleting it. Every ship of one transcript lands in the same epoch, and a row
+    already held is neither stored nor fanned out again, so the final ship adds nothing the
+    live tail sent. A sensitive-data box still runs no `/streams` tail or backfill.
   - *Who may hold one.* A canopy user with a vault key. A contact, or a starter with none,
     is refused in a sentence ("a sensitive conversation needs a canopy account with a vault
     key; set yours up at …") at create (422) and at every send door (`CannotHold`: 422 on

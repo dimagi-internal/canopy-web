@@ -5,6 +5,7 @@ import type { RunnerOut } from '@/api/harness'
 import { closeIntent } from '@/components/chat/closeAction'
 import { onlineSessionCapableRunners, runnerOptionLabel } from '@/components/chat/runnerEligibility'
 import { deleteConsequence } from './ideTree'
+import { listTitle } from '@/components/chat/privateConversation'
 
 /**
  * The /ide row's right-click menu. Every action is an existing session route
@@ -172,7 +173,7 @@ export function SessionContextMenu({
       onContextMenu={(e) => e.preventDefault()}
     >
       <div className="truncate px-2 pb-1 pt-0.5 text-[11px] text-muted-foreground" title={session.title}>
-        {session.title?.trim() || '(untitled)'}
+        {listTitle(session, session.title?.trim() || '(untitled)')}
       </div>
       <Item onClick={() => onAction({ kind: 'open-tab' })}>Open in new tab</Item>
       <Item onClick={() => onAction({ kind: 'copy-link' })}>Copy link</Item>

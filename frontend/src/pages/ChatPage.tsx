@@ -30,6 +30,9 @@ import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatP
 import { useAttachments } from './chat/useAttachments'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
+import { PrivateConversationGate } from '@/components/chat/PrivateConversationGate'
+import { JoinRequestsBanner } from '@/components/chat/JoinRequestsBanner'
+import { privateTitle } from '@/components/chat/privateConversation'
 import { useVaultUnlock } from '@/vault/useVaultUnlock'
 import { useSealedConversation } from '@/vault/useSealedConversation'
 import type { ConversationKey, SealedKey } from '@/vault/sealedChat'
@@ -58,7 +61,18 @@ import { useTranscriptPaging } from './chat/useTranscriptPaging'
 // Why Share to Slack is off in a sensitive conversation (the server refuses it too).
 const SENSITIVE_NO_SHARE = 'A sensitive conversation is never shared to Slack.'
 
-export function ChatPage({
+/** The chat, behind the private-conversation interstitial: a sensitive conversation
+ *  is opened on purpose, and someone not in it may only ask to be added. */
+export function ChatPage(props: Parameters<typeof ChatPageInner>[0] = {}) {
+  const { id = '' } = useParams()
+  return (
+    <PrivateConversationGate key={id} sessionId={id}>
+      <ChatPageInner {...props} />
+    </PrivateConversationGate>
+  )
+}
+
+function ChatPageInner({
   onLeave,
   compact = false,
   sessionPath,
@@ -275,7 +289,7 @@ export function ChatPage({
   // last resort — consulted only while nothing live has spoken, and dropped for
   // good once anything has.
   const staleRunning = liveWorking === undefined && Boolean(meta?.running);
-  const title = meta?.title?.trim() || 'Chat'
+  const title = meta?.sensitive ? privateTitle(meta) : meta?.title?.trim() || 'Chat'
 
   // "with <agent>" / the project name / "no agent" — the same tag the Feed and
   // the Sessions list show per row, missing from the one place you most want
@@ -413,6 +427,7 @@ export function ChatPage({
         </div>
       </div>
       {meta?.sensitive && <PrivateConversationNote />}
+      {meta?.sensitive && meta.my_role === 'owner' && <JoinRequestsBanner sessionId={id} />}
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}

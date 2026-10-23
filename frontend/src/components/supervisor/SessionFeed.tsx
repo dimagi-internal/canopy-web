@@ -9,6 +9,7 @@ import { relativeAge } from '@/lib/relativeAge'
 import { CLOSE_POLL_MS, closeFailure, closeIntent, closeResultMessage, settleClosing } from '@/components/chat/closeAction'
 import { CloseFailedNote } from '@/components/chat/CloseFailedNote'
 import { sessionDisplayTitle } from '@/components/chat/sessionDisplayTitle'
+import { ListTitle } from '@/components/chat/privateConversation'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { TurnModeBadge } from '@/components/chat/TurnModeBadge'
 import {
@@ -421,9 +422,9 @@ function FeedCard({
         <Link
           to={chatHref}
           className="mt-1 block truncate text-sm font-semibold text-foreground hover:underline"
-          title={s.title?.trim() || undefined}
+          title={s.sensitive ? undefined : s.title?.trim() || undefined}
         >
-          {sessionDisplayTitle(s.title) || 'Untitled chat'}
+          <ListTitle s={s} fallback={sessionDisplayTitle(s.title) || 'Untitled chat'} />
         </Link>
       </header>
 

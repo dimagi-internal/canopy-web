@@ -505,6 +505,35 @@ def test_a_resumed_session_reships_its_transcript_and_only_the_new_turn_lands(w)
     assert Message.objects.filter(session=w["hot"]).count() == len(rows)
 
 
+def test_live_ships_during_a_confined_turn_then_the_turn_end_ship_adds_and_shows_nothing_twice(
+        w, monkeypatch):
+    """The runner tails a running confined turn and ships its rows as Claude writes
+    them, through the same door and transcript id as the turn-end ship. Each row is
+    kept once and shown once, the moment it first arrives; the turn-end ship then
+    lands on rows already held and fans nothing out again."""
+    from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
+
+    w["hot"].metadata = {**w["hot"].metadata, TRANSCRIPT_SOURCED: True}
+    w["hot"].save(update_fields=["metadata"])
+    published = []
+    monkeypatch.setattr("apps.realtime.groups.publish", lambda g, m: published.append(m))
+    _turn(w["hot"], prompt=ASKED, capability="data", claimed_by=w["runner"],
+          status=Turn.RUNNING)
+    live_one = [("user", ASKED), ("assistant", "Looking now.")]
+    assert _ship(w, w["runner"], "cli-1", live_one).status_code == 200
+    assert [m["event"]["payload"]["text"] for m in published] == [ASKED, "Looking now."]
+    assert _ship(w, w["runner"], "cli-1", live_one + [("assistant", REPLY)]).status_code == 200
+    assert [m["event"]["payload"]["text"] for m in published][2:] == [REPLY]
+    held = Message.objects.filter(session=w["hot"]).count()
+    published.clear()
+    # The turn ends: the whole transcript again, as the final flush.
+    assert _ship(w, w["runner"], "cli-1", live_one + [("assistant", REPLY)]).status_code == 200
+    assert published == [] and Message.objects.filter(session=w["hot"]).count() == held == 3
+    detail = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()
+    said = browser_said(detail["messages"], detail["sealed_key"], w["key"], w["user"].pk)
+    assert said.count(REPLY) == 1 and said.count("Looking now.") == 1
+
+
 def _kept(w, runner, ids):
     return w["c"].post(f"/api/harness/runners/{runner.id}/kept-conversations",
                        data={"session_ids": [str(i) for i in ids]}, content_type="application/json")

@@ -466,6 +466,26 @@ export function removeParticipant(id: string, userId: number): Promise<Participa
   );
 }
 
+export type JoinRequest = components["schemas"]["JoinRequestOut"];
+
+/** A private conversation you can see but are not in: ask its owner to add you.
+ *  Carries nothing the conversation said; asking again returns the open request. */
+export function askToJoin(id: string): Promise<JoinRequest> {
+  return request<JoinRequest>(`/api/canopy-sessions/${encodeURIComponent(id)}/join-requests`,
+    { method: "POST" });
+}
+
+/** Its owner: the people asking to be added (empty for anyone else). */
+export function listJoinRequests(id: string): Promise<JoinRequest[]> {
+  return request<JoinRequest[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/join-requests`);
+}
+
+/** Its owner keeps them out. (Letting them in is `addParticipant`, which answers it.) */
+export function declineJoinRequest(requestId: string): Promise<JoinRequest> {
+  return request<JoinRequest>(
+    `/api/canopy-sessions/join-requests/${encodeURIComponent(requestId)}/decline`, { method: "POST" });
+}
+
 export interface SharedSecret {
   name: string;
   created_by: string | null;
