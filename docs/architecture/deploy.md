@@ -9,6 +9,14 @@ Where canopy-web runs, how a change gets from a PR to production, and the AWS/IA
 - Runtime settings: `config/settings/connectlabs.py` (extends `production.py`; no `FORCE_SCRIPT_NAME` — setting it would serve canopy under a prefix everywhere).
 - Infra: `deploy/aws/canopy-web.cfn.yaml` (CloudFormation).
 
+### What the process is doing: the PROCESS_STATS line
+
+Everything runs in one process, including work no request owns: the knowledge-base index build (`apps/agents/kb_index.py`, thread `kb-index`), vector syncs, every off-request tick. So when the task pins a CPU or nears its memory limit, request logs cannot say why, and a process killed for memory never logs the request it was serving. Each web process therefore logs one `PROCESS_STATS` line a minute (`apps/common/process_stats.py`, logger `canopy.process_stats`, `PROCESS_STATS_S`, 0 = off) with container memory, CPU over the interval, live threads by name, the event loop's task count, and, for any thread using 20% of a core or more, its current Python stack. Read it first when canopy-web is slow or was OOM-killed:
+
+```
+fields @timestamp, @message | filter @message like /PROCESS_STATS/ | sort @timestamp desc
+```
+
 ### The vector extension
 
 KB vectors (`apps/agents/kb_vectors.py`, dormant: `KB_VECTORS` is off, so nothing uses them) need pgvector ≥ 0.8 (iterative index scans) in the `canopy_web` database. `vector` is not a trusted extension, so canopy-web's own role (`canopy_web`, not `rds_superuser`) cannot create it, and migration `agents/0064` only runs `CREATE EXTENSION IF NOT EXISTS vector` — a no-op once it exists. On `labs-jj-postgres` (PostgreSQL 16.13, pgvector 0.8.1) it was created once by the RDS master user `connectadmin` (password: Secrets Manager `labs-jj-db-password`), from inside the canopy-web task over ECS Exec since the RDS is not public. To redo it on a new database: connect as the master user to `canopy_web` and run `CREATE EXTENSION IF NOT EXISTS vector;`, then check with `SELECT extversion FROM pg_extension WHERE extname = 'vector'`. CI's PostgreSQL job and `docker compose` use the `pgvector/pgvector:pg16` image, where the superuser creates it in the migration. On a PostgreSQL without pgvector installed, migration 0064 fails at the `halfvec` column.
