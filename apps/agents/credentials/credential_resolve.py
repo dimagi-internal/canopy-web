@@ -257,7 +257,11 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
             # misused token, so the owner is not emailed (fizzy, canopy-web#1563).
             vault_alerts.unrouted_box_refused(agent, request, runner=unrouted)
             return Refusal(DEVICE_PROOF_REQUIRED, refused, reason="not_routed")
-        vault_alerts.device_proof_refused(agent, request, reason=refused or "no device proof")
+        # Name the box when the request does (its runner token, or an owned
+        # X-Canopy-Runner), so the owner is not left asking which machine.
+        box = rtok.runner if rtok is not None else caller_runner(request)
+        vault_alerts.device_proof_refused(agent, request, reason=refused or "no device proof",
+                                          runner=box)
         return Refusal(DEVICE_PROOF_REQUIRED, refused or "no device proof", reason="no_valid_proof")
 
     wanted = parse_refs(refs)
