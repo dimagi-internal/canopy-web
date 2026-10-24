@@ -139,11 +139,17 @@ export function TriagePage(): JSX.Element {
     [navigate, openPeek],
   )
 
+  // The key handler is registered once and reads what is on screen now, so a key
+  // pressed right after the list loads is never handled against the empty list of
+  // a render whose effect has not run yet.
+  const live = useRef({ list, focusedRef, decide, openEntry })
+  live.current = { list, focusedRef, decide, openEntry }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!isPlainKey(e) || isTypingTarget(e.target) || e.defaultPrevented) return
       // A dialog (the palette, the help) owns the keyboard while it is open.
       if (document.querySelector('[aria-modal="true"]')) return
+      const { list, focusedRef, decide, openEntry } = live.current
       const i = list.findIndex((r) => r.ref === focusedRef)
       const entry = list[i]
       const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
@@ -165,7 +171,7 @@ export function TriagePage(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [list, focusedRef, decide, openEntry])
+  }, [])
 
   const setProject = (address: string) =>
     setParams(
