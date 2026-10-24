@@ -4,7 +4,7 @@
 // filter. "New project" makes a workspace project and opens its page. Each row
 // opens the project's one page, `/w/<ws>/projects/<handle>`.
 import { useEffect, useMemo, useState, type FormEvent, type JSX } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Button, Dialog, DialogContent, DialogTitle } from 'canopy-ui/ui'
 
 import { createWorkspaceProject, listProjects, type Project } from '@/api/work'
@@ -27,7 +27,12 @@ export function ProjectsPage(): JSX.Element {
   const [status, setStatus] = useState<ProjectStatusFilter>('open')
   const [q, setQ] = useState('')
   const [sort, setSort] = useState<ProjectSort>('updated')
-  const [creating, setCreating] = useState(false)
+  const [params, setParams] = useSearchParams()
+  const [creating, setCreating] = useState(params.get('new') === '1')
+  // `?new=1` (the command palette's "New project") opened the dialog; drop it from the URL.
+  useEffect(() => {
+    if (params.get('new') === '1') setParams((p) => { const n = new URLSearchParams(p); n.delete('new'); return n }, { replace: true })
+  }, [params, setParams])
   // Stamped with the query it answers, so a filter change never shows the last list's rows as this one's.
   const [data, setData] = useState<{ key: string; rows: Project[] | null; error: string | null } | null>(null)
   const key = `${workspace}|${status}`

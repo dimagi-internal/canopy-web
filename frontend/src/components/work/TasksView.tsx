@@ -300,6 +300,19 @@ export function TasksView({ workspace, fixed, tabs = false, storageKey, onChange
     setCreateSeq((n) => n + 1)
     setCreating(true)
   }, [])
+  // `?new=1` (the command palette's "New task") opens the dialog once, then leaves the URL.
+  useEffect(() => {
+    if (params.get('new') !== '1') return
+    startCreate()
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('new')
+        return next
+      },
+      { replace: true },
+    )
+  }, [params, setParams, startCreate])
   const defaults = useMemo(
     () => ({
       project: pinned.project && pinned.project.includes('/') ? pinned.project : state.project.includes('/') ? state.project : undefined,
