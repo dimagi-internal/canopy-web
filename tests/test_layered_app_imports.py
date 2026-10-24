@@ -41,7 +41,7 @@ def _product_tier() -> set[str]:
 
 # The composition root (`apps/api/api.py`, which wires every router) is its own unit
 # above everything; the rest of `apps/api` is the API kit (auth, errors, pagination,
-# etag, renderers, route_gates, tenancy) and sits in the bottom layer.
+# renderers, route_gates, tenancy) and sits in the bottom layer.
 API_ROOT = "api.api"
 
 LAYERS: list[tuple[str, set[str]]] = [
