@@ -814,7 +814,8 @@ def _turn_or_404(request: HttpRequest, turn_id: str):
 def stop(request: HttpRequest, session_id: str) -> dict:
     from apps.canopy_sessions import control as session_control
 
-    return {"cancelled": session_control.cancel_session_turns(_session_or_404(request, session_id))}
+    # The ONE stop, as REST and the chat socket use (canopy-web#1226): turns, else the session.
+    return {"cancelled": bool(session_control.stop_session(_session_or_404(request, session_id)))}
 
 
 @contact_router.get("/turns/unclaimable", response=list[dict],
