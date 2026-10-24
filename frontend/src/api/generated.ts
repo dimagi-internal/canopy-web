@@ -32949,6 +32949,11 @@ export interface components {
              */
             readonly session_key: string;
             /**
+             * Transferring
+             * @default false
+             */
+            readonly transferring: boolean;
+            /**
              * Waiting On You
              * @default false
              */
@@ -33753,6 +33758,11 @@ export interface components {
              * @default
              */
             readonly session_key: string;
+            /**
+             * Transferring
+             * @default false
+             */
+            readonly transferring: boolean;
             /**
              * Waiting On You
              * @default false

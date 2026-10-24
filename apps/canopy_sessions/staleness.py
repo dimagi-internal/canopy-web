@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 
 from django.apps import apps
-from django.db.models import Exists, OuterRef, Q, Subquery, Value
+from django.db.models import Exists, F, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
 from django.utils import timezone
@@ -58,6 +58,38 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 # turns, burying the six that needed a person (#1396). Manual and chat-started
 # sessions keep the open-until-closed rule above, and a session with a dialog up
 # (`pending_question`) is never retired whatever its mode.
+
+
+# How long a transferred session stays listed while its NEW box has not reported it
+# yet. A transfer clears the source's identity off the binding, waits up to
+# `handoff.CAPTURE_WAIT` (3 min) for the source to pack the worktree, and only then
+# enqueues the turn the target has to claim — so the last sighting is the SOURCE's
+# and goes stale before the target's first report, and the session vanished from
+# every list mid-move and came back minutes later. Bounded, so a transfer whose
+# target never picks it up still retires like any other quiet session.
+TRANSFER_WINDOW = dt.timedelta(minutes=30)
+
+
+def transferring_q(now=None) -> Q:
+    """Moved onto another box recently, and not yet seen there."""
+    since = (now or timezone.now()) - TRANSFER_WINDOW
+    return (
+        Q(runner_binding__transferred_at__isnull=False)
+        & Q(runner_binding__transferred_at__gte=since)
+        & (
+            Q(runner_binding__live_seen_at__isnull=True)
+            | Q(runner_binding__live_seen_at__lt=F("runner_binding__transferred_at"))
+        )
+    )
+
+
+def is_transferring(binding, now=None) -> bool:
+    """`transferring_q` for one binding — the list's "Transferring…" flag."""
+    if binding is None or binding.transferred_at is None:
+        return False
+    if binding.transferred_at < (now or timezone.now()) - TRANSFER_WINDOW:
+        return False
+    return binding.live_seen_at is None or binding.live_seen_at < binding.transferred_at
 
 
 def driving_turns():
@@ -173,7 +205,8 @@ def unseen_q() -> Q:
         )
     )
 
-    return runner_unseen | web_unseen
+    # A session mid-transfer is unseen by design (see TRANSFER_WINDOW), not gone.
+    return (runner_unseen | web_unseen) & ~transferring_q()
 
 
 def active(sessions):

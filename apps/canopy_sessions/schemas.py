@@ -443,6 +443,9 @@ class SessionOut(Schema):
     # it as fine.
     runner_signed_out: bool = False
     session_key: str = ""
+    #: Moved onto `runner_name` and not reported there yet (`staleness.TRANSFER_WINDOW`):
+    #: listed, but nothing to drive until the new box picks it up.
+    transferring: bool = False
     # This session is blocked on a dialog somebody has to answer. A bool here
     # and the dialog itself on the detail read: the list needs to RANK and badge
     # a waiting session, not render its options. Without it a blocked agent and
