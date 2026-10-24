@@ -42,7 +42,10 @@ function host(res: AppViewResource): AppHost {
   } as unknown as AppHost;
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.sessionStorage.clear();
+});
 
 describe("AppView", () => {
   it("renders the View above its tool row, sandboxed with an opaque origin and labelled", async () => {
@@ -226,5 +229,77 @@ describe("AppView inputRevision", () => {
       </AppHostContext.Provider>,
     );
     expect(load).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("AppView collapse", () => {
+  const APP2 = { ...APP, tool_call_id: "toolu_2", tool: "data_query" };
+  const use2 = msg({ id: "u2", turn_index: 3, role: "tool_use",
+                     content: { id: "toolu_2", name: "mcp__connect_labs__data_query", input: {} } });
+  const result2 = msg({ id: "r2", turn_index: 4, role: "tool_result",
+                        content: { tool_use_id: "toolu_2", content: "rows" }, app: APP2 });
+
+  function twoViews() {
+    const h = host(resource());
+    (h.load as ReturnType<typeof vi.fn>).mockImplementation(async (id: string) =>
+      id === "toolu_1"
+        ? resource({ tool_result: { content: [], structuredContent: { row_count: 27 } } })
+        : resource({ tool_call_id: "toolu_2", tool: "data_query" }));
+    return (
+      <AppHostContext.Provider value={h}>
+        <MessageList messages={[use, result, use2, result2]} />
+      </AppHostContext.Provider>
+    );
+  }
+  const toggles = () => screen.getAllByRole("button", { expanded: undefined })
+    .filter((b) => b.hasAttribute("aria-expanded"));
+
+  it("opens the newest View expanded and earlier ones collapsed, to one line with the row count", async () => {
+    render(twoViews());
+    await waitFor(() => expect(screen.getByTitle("Labs: data_query")).toBeTruthy());
+    const [older, newest] = toggles();
+    expect(older.getAttribute("aria-expanded")).toBe("false");
+    expect(newest.getAttribute("aria-expanded")).toBe("true");
+    // The collapsed View has no frame yet, and says what it holds.
+    expect(screen.queryByTitle("Labs: workflow_run_action")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("app-view-summary").textContent).toBe("· 27 rows"));
+    expect(older.textContent).toContain("workflow_run_action");
+    expect(older.textContent).toContain("from Labs");
+  });
+
+  it("toggles from the header, keeps the frame when collapsed, and remembers the choice in the tab", async () => {
+    const first = render(twoViews());
+    await waitFor(() => expect(screen.getByTitle("Labs: data_query")).toBeTruthy());
+    const [older, newest] = toggles();
+
+    fireEvent.click(older);
+    expect(older.getAttribute("aria-expanded")).toBe("true");
+    await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
+
+    const frame = screen.getByTitle("Labs: data_query");
+    fireEvent.click(newest);
+    expect(newest.getAttribute("aria-expanded")).toBe("false");
+    // Hidden, not unmounted: the View keeps whatever its person had done in it.
+    expect(screen.getByTitle("Labs: data_query")).toBe(frame);
+    const body = document.getElementById(newest.getAttribute("aria-controls") ?? "");
+    expect(body?.hidden).toBe(true);
+
+    first.unmount();
+    render(twoViews());
+    await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
+    const [olderAgain, newestAgain] = toggles();
+    expect(olderAgain.getAttribute("aria-expanded")).toBe("true");
+    expect(newestAgain.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByTitle("Labs: data_query")).toBeNull();
+  });
+
+  it("the toggle is a real button: keyboard reachable, labelled by its header", async () => {
+    render(twoViews());
+    await waitFor(() => expect(screen.getByTitle("Labs: data_query")).toBeTruthy());
+    const [older] = toggles();
+    expect(older.tagName).toBe("BUTTON");
+    expect(older.getAttribute("type")).toBe("button");
+    older.focus();
+    expect(document.activeElement).toBe(older);
   });
 });

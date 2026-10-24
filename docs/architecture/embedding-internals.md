@@ -156,6 +156,13 @@ routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api
   tells the View). Without the flag the answer is always `inline`. ChatPage and
   the embed panel set it; the embed lifts `maxWidth: 420` and raises `maxHeight`
   while the panel is expanded.
+- **A View's header collapses and expands it** (a button with `aria-expanded`).
+  `MessageList` names the newest View in the conversation (`LatestAppViewContext`):
+  it opens expanded, every earlier one collapsed to one line (`from <site> · tool`,
+  plus `N rows` or a `title` from the tool result's `structuredContent`; MCP Apps
+  has no title notification). A person's toggle is kept per `tool_call_id` in
+  `sessionStorage`. A collapsed View gets no frame until first expanded; collapsing
+  hides the frame and never unmounts it.
 
 Tests: `tests/test_mcp_apps_{gateway,sandbox,views}.py`; frontend
 `mcpApps/{bridge,AppView}.test.ts(x)`.

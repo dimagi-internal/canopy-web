@@ -103,9 +103,10 @@ export {
 } from "./PlacementBanner";
 // MCP Apps (SEP-1865): render a Connected site's View for a tool result, and
 // the host side of its postMessage wire (spec 2026-10-08).
-export { AppView } from "./mcpApps/AppView";
+export { AppView, appSummary } from "./mcpApps/AppView";
 export {
   AppHostContext,
+  LatestAppViewContext,
   appResourceUpdate,
   createAppResourceUpdates,
   useAppHost,

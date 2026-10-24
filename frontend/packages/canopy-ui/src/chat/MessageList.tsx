@@ -7,6 +7,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { MessageItem, ThinkingIndicator } from "./MessageItem";
 import { ToolCallPair } from "./ToolCallPair";
 import { AppView } from "./mcpApps/AppView";
+import { LatestAppViewContext } from "./mcpApps/context";
 import { useSecretRequestHost } from "./secretRequest";
 import { pairToolMessages } from "./pairToolMessages";
 import { groupToolRuns, lastTurnIndex, runHasError, runIsActive, summariseRun } from "./groupToolRuns";
@@ -73,6 +74,14 @@ export function MessageList({
   // every row open or closed at once. Reverting to "default" hands
   // control back to per-row state.
   const [bulkState, setBulkState] = useState<BulkState>("default");
+  // The newest View opens expanded and every earlier one collapsed.
+  const latestApp = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const app = messages[i].role === "tool_result" ? messages[i].app : null;
+      if (app) return app.tool_call_id;
+    }
+    return null;
+  }, [messages]);
 
   if (messages.length === 0 && !pendingReply) {
     return <>{emptyState ?? null}</>;
@@ -81,6 +90,7 @@ export function MessageList({
     bulkState === "all" ? true : bulkState === "none" ? false : undefined;
 
   return (
+    <LatestAppViewContext.Provider value={latestApp}>
     <div className="flex flex-col">
       {toolPairCount > TOOLBAR_THRESHOLD && (
         <div className="sticky top-0 z-10 flex items-center justify-end gap-2 border-b border-border bg-background/80 px-4 py-1.5 backdrop-blur">
@@ -221,5 +231,6 @@ export function MessageList({
         )}
       </div>
     </div>
+    </LatestAppViewContext.Provider>
   );
 }
