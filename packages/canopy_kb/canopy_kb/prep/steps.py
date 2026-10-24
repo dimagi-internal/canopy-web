@@ -19,6 +19,8 @@ After changing one: bump its REVISION here if its output can change, then
 from __future__ import annotations
 
 import concurrent.futures as cf
+import concurrent.futures.process  # noqa: F401 - BrokenProcessPool
+import os
 import sys
 from pathlib import Path
 
@@ -94,10 +96,44 @@ def extract_key(step: Step, row: dict) -> str:
     return step.key(sha256=row["sha256"])
 
 
-def extract(cur: Curation, fetch, jobs: list[tuple[dict, Step]], workers: int = 8) -> dict[str, dict]:
+#: Memory one reader process may take (a large workbook in openpyxl, a long PDF), for
+#: sizing the pool to the machine: 8 readers on a 4 GB runner were killed for memory.
+READER_BYTES = 1024**3
+
+
+def reader_workers(cap: int = 8) -> int:
+    """Readers to run at once: no more than the CPUs, nor than the memory available holds."""
+    try:
+        with open("/proc/meminfo") as fh:
+            avail = next(int(line.split()[1]) * 1024 for line in fh if line.startswith("MemAvailable:"))
+    except (OSError, StopIteration, ValueError):
+        avail = cap * READER_BYTES
+    return max(1, min(cap, os.cpu_count() or 1, avail // READER_BYTES))
+
+
+def _read_all(todo, body, read, workers: int, keep) -> list:
+    """Read `todo` in a pool; `keep(key, result)` each as it finishes. Returns what a dead
+    reader process left unread (a pool loses every pending job when one of its processes dies)."""
+    left = {k: (r, s) for k, r, s in todo}
+    try:
+        with cf.ProcessPoolExecutor(workers) as ex:
+            futs = {ex.submit(read, s.settings["kind"], body(r), s.settings.get("page_selector"),
+                              s.settings.get("title_suffix") or ""): k for k, r, s in todo}
+            for f in cf.as_completed(futs):
+                k = futs[f]
+                keep(k, f.result())
+                left.pop(k)
+    except cf.process.BrokenProcessPool:
+        pass
+    return [(k, r, s) for k, (r, s) in left.items()]
+
+
+def extract(cur: Curation, fetch, jobs: list[tuple[dict, Step]], workers: int | None = None) -> dict[str, dict]:
     """{key: result} for each (fetch row, reader step): stored results as they are, the
     rest read from the bytes (fetched this run, else the originals store) and stored. A
-    format this machine cannot read gives no result."""
+    format this machine cannot read gives no result, and so does a file whose reader
+    dies on it even alone (out of memory): it is named, the run goes on, and the next
+    refresh tries it again."""
     from canopy_kb.prep.extract import extract_bytes
 
     keys = {extract_key(s, r): (r, s) for r, s in jobs}
@@ -105,20 +141,26 @@ def extract(cur: Curation, fetch, jobs: list[tuple[dict, Step]], workers: int = 
     todo = [(k, r, s) for k, (r, s) in keys.items() if k not in out]
     if not todo:
         return out
-    log(f"extract: {len(todo)} files to read ({len(out)} already read)")
+    workers = workers or reader_workers()
+    log(f"extract: {len(todo)} files to read ({len(out)} already read), {workers} at a time")
     fetch.prefetch([r for _, r, _ in todo])
-    with cf.ProcessPoolExecutor(workers) as ex:
-        futs = {ex.submit(extract_bytes, s.settings["kind"], fetch.body(r), s.settings.get("page_selector"),
-                          s.settings.get("title_suffix") or ""): k for k, r, s in todo}
-        for n, f in enumerate(cf.as_completed(futs), 1):
-            k = futs[f]
-            res = f.result()
-            if res.get("unavailable"):
-                continue
-            out[k] = res
-            cur.put(k, res)
-            if n % 500 == 0:
-                log(f"  read {n}/{len(todo)}")
+    done = [0]
+
+    def keep(k, res):
+        done[0] += 1
+        if done[0] % 500 == 0:
+            log(f"  read {done[0]}/{len(todo)}")
+        if res.get("unavailable"):
+            return
+        out[k] = res
+        cur.put(k, res)
+
+    left = _read_all(todo, fetch.body, extract_bytes, workers, keep)
+    if left:
+        log(f"extract: a reader died with {len(left)} files unread; reading those one at a time")
+    for job in left:  # alone, in a process of its own: only a file that kills its reader is lost
+        if _read_all([job], fetch.body, extract_bytes, 1, keep):
+            log(f"  could not read {job[1].get('url', job[0][:12])}: its reader died (out of memory?); skipped")
     fetch.forget_bodies()
     return out
 
