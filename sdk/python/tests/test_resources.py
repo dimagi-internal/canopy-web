@@ -21,10 +21,36 @@ def test_in_a_sensitive_conversation_the_name_is_the_scheme():
     assert kept["name"] == "labs-result" and "Visits" not in str(kept)
 
 
-def test_a_long_uri_is_not_kept():
-    assert resources.validate_link({**LINK, "uri": "labs-result://" + "x" * 242}, None) is not None  # 256
-    assert resources.validate_link({**LINK, "uri": "labs-result://" + "x" * 243}, None) is None
+def test_a_kept_uri_is_its_scheme_and_a_url_safe_id_and_nothing_more():
+    def kept(uri, schemes=None):
+        return resources.validate_link({**LINK, "uri": uri}, schemes) is not None
+
+    assert kept("labs-result://" + "x" * 64) and not kept("labs-result://" + "x" * 65)
+    for smuggled in ("labs-result://abc/rows/Amina", "labs-result://abc?who=Amina", "labs-result://a.b",
+                     "labs-result://abc#Amina", "labs-result://", "labs-result:abc", "labs-result://a%20b"):
+        assert not kept(smuggled), smuggled
     assert resources.MAX_URI_LENGTH == 256
+
+
+def test_a_declared_id_length_is_exact():
+    rid = "A" * 23 + "_"
+    assert resources.validate_link({**LINK, "uri": f"labs-result://{rid}"}, {"labs-result": 24})
+    for wrong in (rid[:-1], rid + "x"):
+        assert resources.validate_link({**LINK, "uri": f"labs-result://{wrong}"}, {"labs-result": 24}) is None
+    # A scheme declared with no length keeps the default bound.
+    assert resources.validate_link({**LINK, "uri": "labs-result://abc"}, {"labs-result": None})
+    assert resources.validate_link({**LINK, "uri": "labs-draft://abc"}, {"labs-result": 24}) is None
+    for bad in (15, 65, "24", True, None):
+        with pytest.raises(resources.ResourceError):
+            resources.check_id_length(bad)
+
+
+def test_a_mime_type_is_one_of_a_short_list():
+    for mime in sorted(resources.MIME_TYPES):
+        assert resources.validate_link({**LINK, "mimeType": mime}, None)["mimeType"] == mime
+    assert resources.validate_link({**LINK, "mimeType": "Application/JSON"}, None)["mimeType"] == "application/json"
+    for smuggled in ("text/amina-12-bisi-3", "application/json; rows=Amina", "x/" + "a" * 90):
+        assert resources.validate_link({**LINK, "mimeType": smuggled}, None) is None, smuggled
 
 
 def test_at_most_ten_links_are_kept():

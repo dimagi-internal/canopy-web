@@ -25,6 +25,8 @@ What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Mapping
 
 from canopy_sdk import resources as resource_links
 
@@ -55,6 +57,14 @@ _RESULT_KEYS = ("content", "text", "output", "result", "structured", "structured
 #: named here (a new field a runner starts sending) is dropped until someone decides it
 #: is safe. Scalars only; `resource_links` is added after its own check.
 _STRIPPED_KEYS = ("tool_use_id", "id", "name", "is_error", "status", "withheld")
+#: The shape each kept string must have: an id the model's API or a runner minted, a
+#: tool's name, a status from a short list — never free text a tool could fill.
+_CALL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_STRIPPED_SHAPES = {"tool_use_id": _CALL_ID, "id": _CALL_ID, "name": re.compile(r"^[A-Za-z0-9_.:-]{1,200}$")}
+#: Every `status` a runner reports for a finished tool (ACP's `ToolCallStatus`, Claude
+#: Code's, the gateway's); anything else is dropped.
+TOOL_STATUSES = frozenset({"pending", "in_progress", "running", "completed", "complete", "failed",
+                           "error", "cancelled", "canceled", "success", "ok"})
 #: Event kinds whose payload is a tool's answer.
 RESULT_KINDS = frozenset({"tool_end", "tool_result"})
 
@@ -104,27 +114,32 @@ def seals(session, turn=None) -> bool:
     return is_sensitive(session)
 
 
-def strip_result(payload: dict | None, *, session=None, text: str = "") -> dict:
+def strip_result(payload: dict | None, *, session=None, text: str = "", tool: str = "",
+                 calls: Mapping | None = None) -> dict:
     """A tool result as a sensitive conversation stores it: which call, whether it
     failed, and the host's resource links — never what came back.
 
     A link (`resource_links`) is an address, not data (spec
     2026-10-23-host-held-results §6): the host keeps the artifact and a View or the
-    agent reads it back from the host as the person. Kept only when it is a valid
-    MCP `resource_link` under a URI scheme the conversation's site declared
-    (`resource_schemes`), bounded (`canopy_sdk.resources.validate_links`); anything
-    else in the result is dropped, and only `_STRIPPED_KEYS` survive of the rest.
-    Each kept link is `{type, uri, name, mimeType}` with the URI's scheme as its
-    name, so the host's words never rest here in plaintext. `text` is the row's
-    plaintext, where a runner puts a tool's answer."""
+    agent reads it back from the host as the person. Kept only when the result is the
+    SITE's own (`tool`, the producing call's name — `producing_tool` finds it from
+    `calls`, the batch's `{call id: name}`, or the stored call — must be the site's
+    `site_call` or one of its tools: `register_site_tools`), and the link is a valid MCP
+    `resource_link` of the shape the site declared (`resource_schemes`: `<scheme>://` and
+    a url-safe id, of the declared length), bounded
+    (`canopy_sdk.resources.validate_links`). Anything else in the result is dropped, and
+    of the rest only `_STRIPPED_KEYS` survive, each in its own shape (`_STRIPPED_SHAPES`,
+    `TOOL_STATUSES`). Each kept link is `{type, uri, name, mimeType}` with the URI's
+    scheme as its name, so the host's words never rest here in plaintext. `text` is the
+    row's plaintext, where a runner puts a tool's answer."""
     payload = payload if isinstance(payload, dict) else {}
     out = {}
     for key in _STRIPPED_KEYS:
         value = payload.get(key)
         if isinstance(value, (bool, int, float)):
             out[key] = value
-        elif isinstance(value, str):
-            out[key] = value[:MAX_META_STRING]
+        elif isinstance(value, str) and _kept_string(key, value):
+            out[key] = value
     out["withheld"] = True
     # The runner's row carries the links it pulled out of the raw result before cutting
     # its text (`canopy_transcript.tool_result_links`): read first, as they are whole.
@@ -132,11 +147,21 @@ def strip_result(payload: dict | None, *, session=None, text: str = "") -> dict:
     kept = payload.get(RESOURCE_LINKS)
     candidates = [b for b in kept if isinstance(b, dict)] if isinstance(kept, list) else []
     candidates += _link_candidates([payload.get(k) for k in _RESULT_KEYS] + [text])
-    if candidates and session is not None:
+    if candidates and session is not None and is_site_tool(
+            session, tool or producing_tool(session, payload, calls)):
         links = resource_links.validate_links(candidates, resource_schemes(session), keep_name=False)
         if links:
             out[RESOURCE_LINKS] = links
     return out
+
+
+def _kept_string(key: str, value: str) -> bool:
+    if key == "status":
+        return value in TOOL_STATUSES
+    if key == "withheld":
+        return False
+    shape = _STRIPPED_SHAPES.get(key)
+    return bool(shape and shape.match(value))
 
 
 # ── resource links: the host's addresses, kept where its data is not ─────────────
@@ -158,16 +183,83 @@ def register_resource_schemes(source) -> None:
         _scheme_sources.append(source)
 
 
-def resource_schemes(session) -> frozenset[str]:
-    """The URI schemes the session's Connected site declared for its artifacts.
-    Empty — so every link is dropped — when it declared none, or it cannot be read."""
-    out: set[str] = set()
+def resource_schemes(session) -> dict[str, int | None]:
+    """The URI schemes the session's Connected site declared for its artifacts, each
+    with the exact length of its result ids where it declared one (else None) — as
+    `canopy_sdk.resources.validate_links` takes them. Empty — so every link is dropped —
+    when it declared none, or it cannot be read."""
+    out: dict[str, int | None] = {}
     for source in _scheme_sources:
         try:
-            out.update(str(s).lower() for s in (source(session) or ()))
+            got = source(session) or {}
+            items = got.items() if isinstance(got, Mapping) else ((s, None) for s in got)
+            for scheme, length in items:
+                out[str(scheme).lower()] = length
         except Exception:  # noqa: BLE001 — a site whose schemes cannot be read keeps no links
             _log.warning("resource schemes unreadable", exc_info=True)
-    return frozenset(out)
+    return out
+
+
+#: Who says whether a tool is the session's site's own (`apps.host_grants`).
+_site_tool_sources: list = []
+
+
+def register_site_tools(source) -> None:
+    """`source(session, tool_name) -> bool`: the tool is the session's site's own."""
+    if source not in _site_tool_sources:
+        _site_tool_sources.append(source)
+
+
+def is_site_tool(session, tool: str) -> bool:
+    """Whether `tool` is the session's Connected site's own tool (canopy's `site_call`,
+    or the site's MCP tool reached directly): the only results whose links are kept.
+    False when no source says so, or the tool is unknown."""
+    if not tool:
+        return False
+    for source in _site_tool_sources:
+        try:
+            if source(session, tool):
+                return True
+        except Exception:  # noqa: BLE001 — a tool canopy cannot place keeps no links
+            _log.warning("site tool unreadable", exc_info=True)
+    return False
+
+
+def calls_in(rows, *, kind_key: str = "role", use: str = "tool_use", payload_key: str = "content") -> dict:
+    """`{call id: tool name}` for the tool calls in a batch of rows, so a result in the
+    same batch as its call can be placed (`strip_result(calls=)`) before the call is
+    stored."""
+    out: dict[str, str] = {}
+    for row in rows or ():
+        if not isinstance(row, Mapping) or row.get(kind_key) != use:
+            continue
+        body = row.get(payload_key)
+        if isinstance(body, Mapping) and isinstance(body.get("id"), str) and isinstance(body.get("name"), str):
+            out[body["id"]] = body["name"]
+    return out
+
+
+def producing_tool(session, payload: Mapping, calls: Mapping | None = None) -> str:
+    """The name of the tool call a result answers: from `calls` (this batch), else the
+    stored call — a `tool_use` Message or a `tool_start` event in `session` — else ""."""
+    call_id = payload.get("tool_use_id") or payload.get("id")
+    if not isinstance(call_id, str) or not call_id:
+        return ""
+    if calls and isinstance(calls.get(call_id), str):
+        return calls[call_id]
+    if session is None or getattr(session, "pk", None) is None:
+        return ""
+    from apps.canopy_sessions.models import Message  # noqa: PLC0415 — harness ↛ chat at import
+
+    from .models import TurnEvent  # noqa: PLC0415 — as above
+
+    name = (Message.objects.filter(session_id=session.pk, role=Message.TOOL_USE, content__id=call_id)
+            .values_list("content__name", flat=True).first())
+    if not name:
+        name = (TurnEvent.objects.filter(turn__chat_session_id=session.pk, kind="tool_start",
+                                         payload__id=call_id)
+                .values_list("payload__name", flat=True).first())
+    return name if isinstance(name, str) else ""
 
 
 def _link_candidates(values) -> list[dict]:
@@ -346,7 +438,8 @@ def withheld_note(note: str) -> str:
 # own people, whose browsers hold the key.
 
 
-def seal(session, index: int, role: str, text: str, content: dict | None) -> tuple[str, dict, str | None]:
+def seal(session, index: int, role: str, text: str, content: dict | None, *,
+         calls: Mapping | None = None) -> tuple[str, dict, str | None]:
     """(plaintext, content, sealed) as a sensitive conversation stores a Message at
     `index` of `session`.
 
@@ -355,12 +448,13 @@ def seal(session, index: int, role: str, text: str, content: dict | None) -> tup
     showed the person as a table or a chart is read again from the host — through the
     result's resource links, which are kept, or from the call's input — as the
     viewer, never from a copy. None when the conversation has no key (a starter
-    with no vault key): then the words are not kept at all."""
+    with no vault key): then the words are not kept at all. `calls` places a result whose
+    call is in the same batch and not yet stored (`calls_in`)."""
     from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
 
     content = content if isinstance(content, dict) else {}
     if role == "tool_result":
-        return "", strip_result(content, session=session, text=text or ""), None
+        return "", strip_result(content, session=session, text=text or "", calls=calls), None
     words = {"plaintext": text or "", "content": content}
     return "", redact_payload(content), conversation_keys.seal_words(session, index, words, role=role)
 

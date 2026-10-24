@@ -23,7 +23,7 @@ import hmac
 import json
 import time
 from collections.abc import Iterable, Mapping
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # --- version -------------------------------------------------------------------
 
@@ -271,12 +271,42 @@ def ath(access_token: str) -> str:
     return b64url(hashlib.sha256(access_token.encode("ascii")).digest())
 
 
-def _resource_key(uri) -> str:
-    """A resource URI as a statement names it: scheme lower-cased, query pairs sorted, so
-    a host that rebuilds the URI from its template computes the same digest."""
+def _has_surrogate(value: str) -> bool:
+    return any(0xD800 <= ord(c) <= 0xDFFF for c in value)
+
+
+def _resource_key(uri) -> dict:
+    """A resource URI as a statement names it: scheme lower-cased, query pairs decoded,
+    sorted and RE-ENCODED (``urlencode``), so a host that rebuilds the URI from its
+    template computes the same digest — and ``%26`` (a value holding ``&``) never hashes
+    like ``&`` (a second pair). A percent-escape that is not UTF-8 decodes to its own
+    escape character (``surrogateescape``) and re-encodes to the same byte, so no two
+    queries meet. A URI that itself holds a surrogate code point is not a URI: it is named
+    raw, under a key no well-formed URI is named under, and never raises."""
+    raw = str(uri or "")
+    if _has_surrogate(raw):
+        return {"uri!": json.dumps(raw)}  # ASCII-escaped: encodable, and distinct by key
+    parts = urlsplit(raw)
+    pairs = parse_qsl(parts.query, keep_blank_values=True, errors="surrogateescape")
+    query = urlencode(sorted(pairs), errors="surrogateescape")
+    return {"uri": urlunsplit((parts.scheme.lower(), parts.netloc, parts.path, query, ""))}
+
+
+def _legacy_resource_key(uri) -> str:
+    """The URI as dimagi-canopy before 0.22 named it: pairs decoded and joined unquoted.
+    Accepted by ``rpc_matches`` for one deploy window only (see the CHANGELOG)."""
     parts = urlsplit(str(uri or ""))
     query = "&".join(f"{k}={v}" for k, v in sorted(parse_qsl(parts.query, keep_blank_values=True)))
     return urlunsplit((parts.scheme.lower(), parts.netloc, parts.path, query, ""))
+
+
+def _digest(method: str, subject: dict) -> str:
+    canonical = json.dumps({"method": method, **subject}, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, default=str)
+    # `surrogatepass`: a lone surrogate in the arguments encodes (to bytes valid UTF-8 never
+    # holds, so it meets no other string) instead of raising; every other string's bytes
+    # are what they always were.
+    return b64url(hashlib.sha256(canonical.encode("utf-8", "surrogatepass")).digest())
 
 
 def rpc_digest(method: str, params=None) -> str:
@@ -284,18 +314,44 @@ def rpc_digest(method: str, params=None) -> str:
     the request it was made for. base64url(SHA-256(canonical JSON of the method and its
     subject)): for ``tools/call`` the tool ``name`` and ``arguments``; for ``resources/read``
     the ``uri`` (``_resource_key``); for any other method the method alone. ``_meta`` and
-    the JSON-RPC ``id`` are not part of it — a host's framework seldom shows them."""
+    the JSON-RPC ``id`` are not part of it — a host's framework seldom shows them. Never
+    raises on a string, however malformed."""
     method = str(method or "")
     p = params if isinstance(params, Mapping) else {}
     if method == "tools/call":
         subject = {"name": str(p.get("name") or ""), "arguments": p.get("arguments") or {}}
     elif method == "resources/read":
-        subject = {"uri": _resource_key(p.get("uri"))}
+        subject = _resource_key(p.get("uri"))
     else:
         subject = {}
-    canonical = json.dumps({"method": method, **subject}, sort_keys=True, separators=(",", ":"),
-                           ensure_ascii=False, default=str)
-    return b64url(hashlib.sha256(canonical.encode("utf-8")).digest())
+    return _digest(method, subject)
+
+
+def _legacy_rpc_digest(method: str, params=None) -> str | None:
+    method = str(method or "")
+    if method != "resources/read":
+        return None  # every other method's digest is unchanged
+    p = params if isinstance(params, Mapping) else {}
+    try:
+        return _digest(method, {"uri": _legacy_resource_key(p.get("uri"))})
+    except (UnicodeError, ValueError):
+        return None
+
+
+def rpc_matches(claimed, method: str, params=None) -> bool:
+    """Whether a statement's ``rpc`` claim is the digest of this request.
+
+    Accepts the digest as dimagi-canopy before 0.22 computed a ``resources/read`` too, so
+    a host on this version keeps verifying a canopy that has not yet moved, and the other
+    way round (the two agree on every URI whose query needs no escaping — Labs' own).
+    The old form goes in 0.23."""
+    claimed = str(claimed or "")
+    if not claimed:
+        return False
+    if constant_time_equal(claimed, rpc_digest(method, params)):
+        return True
+    legacy = _legacy_rpc_digest(method, params)
+    return legacy is not None and constant_time_equal(claimed, legacy)
 
 
 def rpc_digest_of_body(body) -> str | None:

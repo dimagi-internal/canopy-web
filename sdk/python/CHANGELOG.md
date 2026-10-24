@@ -2,6 +2,32 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.22.0 — 2026-10-23
+
+**A kept link is `<scheme>://<id>` and nothing more; the request digest is unambiguous.**
+
+- `validate_link` keeps a link only when its URI is `<scheme>://` and a url-safe id
+  (`resources.id_of`: `A–Z a–z 0–9 _ -`, no path, query or fragment; at most
+  `MAX_ID_LENGTH`, 64) and its `mimeType` is one of `resources.MIME_TYPES`
+  (`application/json`, `application/pdf`, `image/jpeg`, `image/png`, `text/csv`,
+  `text/markdown`, `text/plain`). `resource_link(...)` raises on anything else. **Breaking**
+  for a host whose result URIs have a path or query: give each result an opaque id.
+- `schemes` may be `{scheme: id length}`: the id must then be exactly that long.
+- `site.json`: new optional `site.resource_id_lengths` (`{"labs-result": 24}`), from
+  `CANOPY_HOST["RESOURCE_ID_LENGTHS"]`; `SiteFacts.resource_id_lengths` and
+  `SiteFacts.resource_policy()`. Each length is 16–64 (`resources.check_id_length`) and
+  names a declared scheme; a bad entry fails `canopy_host.E011`. A canopy on 0.21 or older
+  reads a document carrying the new key as malformed, so canopy upgrades first.
+- `contract.rpc_digest`: a `resources/read` URI's query is decoded, sorted and re-encoded
+  (`urlencode`) instead of joined decoded, so `%26` and `&` no longer hash the same; a
+  non-UTF-8 escape stays distinct, and a lone surrogate (in a URI or a tool's arguments)
+  is hashed instead of raising. `tools/call` digests are unchanged.
+- `contract.rpc_matches(claimed, method, params)`: what `host.verify_execution` and
+  `host.verify_view` now check. **For one deploy window** it also accepts the pre-0.22
+  `resources/read` form, so a 0.22 host verifies a canopy that has not upgraded, and a
+  0.21 host verifies an upgraded canopy for every URI whose query needs no escaping (every
+  Labs read). The old form is dropped in 0.23.
+
 ## 0.21.0 — 2026-10-23
 
 **What canopy keeps of a `resource_link` is an address, and only that.** In a sensitive

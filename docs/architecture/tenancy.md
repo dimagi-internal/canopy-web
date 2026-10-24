@@ -307,15 +307,22 @@ THE predicate; every surface below asks it, one test each in
 
 - **Stored less:** no `TurnTranscript` (`ledger.append_transcript` answers the runner with
   an empty success); a `tool_end`/`tool_result` event, a `TOOL_RESULT` `Message` and its
-  live frame keep `{tool_use_id, is_error, withheld}`, never the result
+  live frame keep `{tool_use_id, is_error, status, withheld}`, never the result
   (`sensitivity.strip_result`, in `ledger.append_events`, `persist_transcript_rows` and
-  `post_session_stream`; an allowlist, so a new field stays withheld) — plus the host's
-  **resource links** (`resource_links`: URI ≤ 256 characters, mimeType, and the scheme
-  as the name — addresses, not data; spec `2026-10-23-host-held-results`). A runner pulls
-  links out of the raw result before cutting its text (`canopy_transcript.tool_result_links`).
-  A link is kept only when it is a valid MCP `resource_link` (at most 10, never a
-  reserved scheme such as `http(s)`/`data`/`ui`) under a URI scheme the conversation's site
-  declares in its signed `site.json` (`site.resource_schemes`, read live through
+  `post_session_stream`; an allowlist, so a new field stays withheld, and each kept
+  string in its shape: ids and names as identifiers, `status` from `TOOL_STATUSES`) —
+  plus the host's **resource links** (`resource_links`: `<scheme>://<url-safe id>`, a
+  mimeType from `canopy_sdk.resources.MIME_TYPES`, and the scheme as the name — addresses,
+  not data; spec `2026-10-23-host-held-results`). A runner pulls links out of the raw
+  result before cutting its text (`canopy_transcript.tool_result_links`). A link is kept
+  only when the result is the **site's own tool's** — `site_call`, or a site tool canopy
+  indexed reached directly (`site_needs.is_site_tool`, registered as
+  `sensitivity.register_site_tools`; the call is placed from its batch, `calls_in`, or the
+  stored call, `producing_tool`) — so link-shaped output of any other tool is dropped,
+  and when it is a valid MCP `resource_link` (at most 10, never a reserved scheme such as
+  `http(s)`/`data`/`ui`) under a URI scheme the conversation's site declares in its
+  signed `site.json` (`site.resource_schemes`, with the exact id length from
+  `site.resource_id_lengths` where declared; read live through
   `site_needs.resource_schemes_for`, registered as `sensitivity.register_resource_schemes`;
   unreadable → none kept). The host keeps the artifact; a View
   (`mcp_apps_views.withheld_result`) and the agent (`site_read`) read it back from the host

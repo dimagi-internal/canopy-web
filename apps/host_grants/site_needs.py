@@ -313,10 +313,12 @@ def discover(address: str = "", *, app=None) -> Discovery:
 # --- the schemes of the site's own resource links (spec 2026-10-23-host-held-results) ----
 
 
-def resource_schemes_for(session) -> tuple[str, ...]:
+def resource_schemes_for(session) -> dict[str, int | None]:
     """The URI schemes the session's Connected site declares for its artifacts
-    (`site.json`'s `site.resource_schemes`): a sensitive conversation keeps a host's
-    resource link only under one of these (`harness.sensitivity.strip_result`).
+    (`site.json`'s `site.resource_schemes`), each with the exact length of its result ids
+    where the site declares one (`site.resource_id_lengths`), else None: a sensitive
+    conversation keeps a host's resource link only under one of these, as
+    `<scheme>://<id>` (`harness.sensitivity.strip_result`, `canopy_sdk.resources.id_of`).
 
     Read LIVE from the verified, cached document, with no owner adopting it, unlike
     the rest of the `site` block: it widens nothing — it lists the addresses canopy
@@ -324,7 +326,30 @@ def resource_schemes_for(session) -> tuple[str, ...]:
     verifiable document, or no block → no schemes, so every link is dropped."""
     app = site_app(session) if session is not None else None
     if app is None:
-        return ()
+        return {}
     document = needs_for(app).document
     facts = document.site if document is not None else None
-    return tuple(facts.resource_schemes) if facts is not None else ()
+    return facts.resource_policy() if facts is not None else {}
+
+
+def is_site_tool(session, tool: str) -> bool:
+    """Whether `tool` (a tool call's name as the transcript writes it) is the session's
+    Connected site's own: canopy's `site_call`, or one of the site's tools the runner
+    reached directly (`mcp__<server>__<tool>`) that canopy has indexed for it. Only these
+    tools' resource links are kept in a sensitive conversation: a link-shaped answer from
+    anything else (a shell, a file read) is the agent's own words, not the site's
+    address. Fails closed: no session site → False."""
+    from apps.mcp_apps_host import mcp_apps  # noqa: PLC0415 — as the gateway: loads with a call
+
+    from .host_gateway import host_tool_name  # noqa: PLC0415 — as above
+
+    name = host_tool_name(str(tool or ""))
+    if not name:
+        return False
+    if name == "site_call":
+        # canopy's own MCP server (`mcp__plugin_canopy_canopy-web__site_call`), not another
+        # server's tool of the same name.
+        server = str(tool).split("__")[1] if str(tool).startswith("mcp__") else ""
+        return "canopy" in server.lower()
+    app = site_app(session) if session is not None else None
+    return app is not None and mcp_apps.indexed_tool(app, name) is not None

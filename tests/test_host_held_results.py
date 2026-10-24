@@ -298,7 +298,7 @@ def test_strip_result_keeps_declared_links_and_drops_the_rest(w):
     for payload, text in (({"tool_use_id": CALL, "content": json.dumps(answer)}, ""),   # a gateway answer
                           ({"tool_use_id": CALL, "is_error": False}, json.dumps(answer)),  # in plaintext
                           ({"tool_use_id": CALL, "content": answer["content"]}, "")):     # path D blocks
-        out = sensitivity.strip_result(payload, session=w["mine"], text=text)
+        out = sensitivity.strip_result(payload, session=w["mine"], text=text, tool=SITE_TOOL)
         assert out["resource_links"] == [{"type": "resource_link", "uri": "labs-result://abc",
                                           "name": "labs-result", "mimeType": "application/json"}]
         assert out["withheld"] is True and out["tool_use_id"] == CALL
@@ -318,9 +318,66 @@ def test_a_link_canopy_keeps_carries_no_description_and_fits_its_bounds(w):
             "mimeType": "application/json", "description": f"rows: {SENTINEL}"}
     many = [{**good, "uri": f"labs-result://{i}"} for i in range(25)]
     out = sensitivity.strip_result({"tool_use_id": CALL, "resource_links": [long_uri, good, *many]},
-                                   session=w["mine"])
+                                   session=w["mine"], tool=SITE_TOOL)
     assert len(out["resource_links"]) == 10 and out["resource_links"][0]["uri"] == "labs-result://abc"
     assert SENTINEL not in json.dumps(out) and "Amina" not in json.dumps(out)
+
+
+#: What a prompt-injected agent could print from any tool to smuggle a sealed result out
+#: in plaintext: link-shaped JSON, ten links of a 256-character URI and a long mimeType.
+SMUGGLED = json.dumps({"content": [
+    {"type": "resource_link", "uri": "labs-result://" + (SENTINEL + "-") * 13, "name": "r",
+     "mimeType": "text/" + SENTINEL.lower() + "-x" * 40} for _ in range(10)] + [
+    {"type": "resource_link", "uri": f"labs-result://{SENTINEL}-{i}", "name": "r",
+     "mimeType": "application/json"} for i in range(10)]})
+
+
+def test_only_the_sites_own_tools_keep_links_in_a_sensitive_conversation(w, host):
+    """A link is the site's address only when the site's tool returned it. The same JSON
+    printed by a shell, a file read or any other tool is the agent's words, and goes."""
+    from apps.canopy_sessions import services as chat_services
+
+    vault_key(w["owner"])
+    chat_services.add_runner_requirements(w["mine"], ["sensitive_data"])
+    rows = []
+    for i, tool in enumerate(("Bash", "Read", "mcp__other__not_the_sites", "mcp__evil__site_call", "Grep")):
+        call = f"toolu_smuggle_{i}"
+        rows += [{"index": 10 * i + 1, "role": "tool_use", "text": "",
+                  "content": {"type": "tool_use", "id": call, "name": tool, "input": {}}},
+                 {"index": 10 * i + 2, "role": "tool_result", "text": SMUGGLED,
+                  "content": {"tool_use_id": call, "is_error": False}}]
+    chat_transcript_ingest.persist_transcript_rows(w["mine"], rows)
+    stored = list(Message.objects.filter(session=w["mine"], role=Message.TOOL_RESULT))
+    assert len(stored) == 5
+    for m in stored:
+        assert "resource_links" not in m.content and SENTINEL not in json.dumps(m.content), m.content
+        assert SENTINEL not in m.plaintext and m.sealed is None
+    # ...and a result whose call was stored by an earlier batch is placed from the store.
+    payload = {"tool_use_id": "toolu_smuggle_0", "content": SMUGGLED}
+    assert "resource_links" not in sensitivity.strip_result(payload, session=w["mine"])
+
+
+def test_the_sites_own_links_are_kept_only_in_their_declared_shape(w, monkeypatch):
+    doc = site_doc.SiteNeeds(site_name="connect-labs", issued_at=0, site=site_doc.SiteFacts(
+        resource_schemes=("labs-result",), resource_id_lengths=(("labs-result", 24),)))
+    monkeypatch.setattr(site_needs, "needs_for", lambda app, **kw: site_needs.Needs("x", doc))
+    rid = "A1b2C3d4E5f6G7h8I9j0K_-z"
+    payload = {"tool_use_id": CALL, "content": SMUGGLED + json.dumps([
+        {"type": "resource_link", "uri": f"labs-result://{rid}", "name": "r", "mimeType": "application/json"},
+        {"type": "resource_link", "uri": f"labs-result://{rid}x", "name": "r", "mimeType": "application/json"},
+        {"type": "resource_link", "uri": f"labs-result://{rid}", "name": "r", "mimeType": "text/amina"}])}
+    out = sensitivity.strip_result({**payload, "content": json.loads(SMUGGLED)["content"] + json.loads(
+        payload["content"][len(SMUGGLED):])}, session=w["mine"], tool=SITE_TOOL)
+    assert out["resource_links"] == [{"type": "resource_link", "uri": f"labs-result://{rid}",
+                                      "name": "labs-result", "mimeType": "application/json"}]
+    assert SENTINEL not in json.dumps(out)
+
+
+def test_a_stripped_results_status_and_ids_are_not_free_text(w):
+    out = sensitivity.strip_result({"tool_use_id": CALL, "status": f"completed: {SENTINEL}",
+                                    "id": f"{SENTINEL} visits 12", "name": "x" * 300}, session=w["mine"])
+    assert out == {"tool_use_id": CALL, "withheld": True}
+    assert sensitivity.strip_result({"tool_use_id": CALL, "status": "failed"})["status"] == "failed"
 
 
 def test_without_a_declared_scheme_or_a_site_no_link_is_kept(w, monkeypatch):
@@ -351,6 +408,22 @@ def test_the_stored_row_and_the_ledger_list_the_links_not_the_data(w, host):
     assert event.payload["resource_links"] == [_sealed_kept(link)]
     assert event.payload["redacted"] == "sensitive"
     assert SENTINEL not in json.dumps(event.payload)
+
+
+def test_a_runners_events_keep_the_link_only_when_the_call_in_the_batch_is_the_sites(w, host):
+    answer = _converse(w, host, sensitive=True)
+    link = _link(answer)
+    turn = Turn.objects.create(chat_session=w["mine"], prompt="q", initiator_user=w["owner"],
+                               initiator_kind="user", idempotency_key=uuid.uuid4().hex)
+    for tool, kept in ((SITE_TOOL, [_sealed_kept(link)]), ("Bash", None)):
+        call = f"toolu_ev_{tool[-4:]}"
+        ledger.append_events(turn, [
+            {"kind": "tool_start", "payload": {"id": call, "name": tool, "input": {}}},
+            {"kind": "tool_end", "payload": {"tool_use_id": call, "is_error": False,
+                                             "content": json.dumps(answer)}}])
+        end = TurnEvent.objects.get(turn=turn, kind="tool_end", payload__tool_use_id=call)
+        assert end.payload.get("resource_links") == kept, tool
+        assert SENTINEL not in json.dumps(end.payload)
 
 
 # --- the View gets the links, and reads the rows as its viewer ---------------------------
@@ -506,6 +579,62 @@ def test_the_gateway_refuses_an_answer_over_its_byte_cap(w, host, settings):
         assert refused.code == "too_large" and "smaller page_size" in refused.message
     settings.HOST_GATEWAY_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
     assert outcome(lambda: host_gateway.view_read(ctx, uri))
+
+
+def _gzipping(app, seen: list):
+    """A host that gzips every answer, whatever canopy asked for: the bomb's delivery."""
+    import gzip
+
+    async def wrapped(scope, receive, send):
+        if scope["type"] != "http":
+            return await app(scope, receive, send)
+        seen.append(dict((k.decode().lower(), v.decode()) for k, v in scope["headers"]))
+        start, body = {}, bytearray()
+
+        async def capture(message):
+            if message["type"] == "http.response.start":
+                start.update(message)
+                return
+            body.extend(message.get("body", b""))
+            if message.get("more_body"):
+                return
+            packed = gzip.compress(bytes(body))
+            headers = [(k, v) for k, v in start.get("headers", [])
+                       if k.lower() not in (b"content-length", b"content-encoding")]
+            headers += [(b"content-encoding", b"gzip"), (b"content-length", str(len(packed)).encode())]
+            await send({**start, "headers": headers})
+            await send({"type": "http.response.body", "body": packed})
+
+        await app(scope, receive, capture)
+    return wrapped
+
+
+def test_the_byte_cap_counts_what_canopy_would_hold_not_what_was_compressed(w, host, monkeypatch):
+    """40 KB of gzip can be 40 MB decoded. canopy asks for no coding and refuses one it
+    is sent anyway, so a bomb is never decoded, however small it arrives."""
+    import gzip
+
+    seen: list = []
+    monkeypatch.setattr(host_gateway, "_transport_override",
+                        httpx2.ASGITransport(app=_gzipping(host.app, seen)))
+    ctx = host_gateway.context_for_grant(w["app"], w["grants"]["owner"], turn_id="", agent_slug="ace",
+                                         ceiling=[])
+    bomb = "0" * (5 * 1024 * 1024)                     # over the 4 MB cap decoded...
+    assert len(gzip.compress(bomb.encode())) < 40_000   # ...and tiny on the wire
+    uri = host.store.save("query", {"rows": [[bomb]]}, owner="sub-owner", name="r")["uri"]
+
+    async def main(call):
+        async with host.lifespan():
+            try:
+                return await call()
+            except host_gateway.GatewayRefusal as exc:
+                return exc
+    for call in (lambda: host_gateway.view_read(ctx, uri),
+                 lambda: host_gateway.call_tool(ctx, "data_query", {"sql": "x"})):
+        refused = async_to_sync(main)(call)
+        assert isinstance(refused, host_gateway.GatewayRefusal), refused
+        assert refused.code == "bad_encoding" and "compressed" in refused.message
+    assert seen and all(h.get("accept-encoding") == "identity" for h in seen)
 
 
 def test_lapsed_subscriptions_are_swept_everywhere(w):

@@ -285,17 +285,29 @@ def max_response_bytes() -> int:
                or DEFAULT_MAX_RESPONSE_BYTES)
 
 
+#: What canopy asks a host for and accepts back: no content coding. The cap counts the
+#: bytes canopy will hold, so a compressed body (40 KB of gzip is 40 MB in memory) is
+#: refused rather than counted small and decoded big.
+IDENTITY = "identity"
+ENCODED = "answered in a compressed encoding canopy does not accept"
+
+
 class _ByteCap:
     """One MCP session's byte budget for what the host sends back: counted as the body
     STREAMS in (`_CappedTransport`), so an answer over the cap is abandoned mid-stream,
-    never buffered whole. `tripped` survives the MCP client's own error handling, which
-    turns any stream failure into a generic one."""
+    never buffered whole. The request asks for `Accept-Encoding: identity` and an answer
+    with any other `Content-Encoding` is refused, so the bytes counted are the bytes
+    decoded. `tripped` survives the MCP client's own error handling, which turns any
+    stream failure into a generic one."""
 
     def __init__(self, limit: int | None = None):
         self.limit = int(limit or max_response_bytes())
         self.tripped = False
+        self.encoded = False
 
     def refusal(self, ctx: SiteContext) -> GatewayRefusal:
+        if self.encoded:
+            return GatewayRefusal("bad_encoding", f"{ctx.site} {ENCODED}")
         return GatewayRefusal("too_large", f"{ctx.site}'s {TOO_LARGE}")
 
 
@@ -323,7 +335,13 @@ def _capped_transport(inner, cap: _ByteCap):
 
     class _Transport(httpx2.AsyncBaseTransport):
         async def handle_async_request(self, request):
+            request.headers["Accept-Encoding"] = IDENTITY
             response = await inner.handle_async_request(request)
+            coding = response.headers.get("content-encoding", "").strip().lower()
+            if coding not in ("", IDENTITY):
+                cap.tripped = cap.encoded = True
+                await response.aclose()
+                raise _TooLarge(ENCODED)
             declared = response.headers.get("content-length", "")
             if declared.isdigit() and int(declared) > cap.limit:
                 cap.tripped = True

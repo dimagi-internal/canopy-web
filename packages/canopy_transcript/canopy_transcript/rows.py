@@ -182,7 +182,9 @@ def _tool_result_text(content) -> str:
 RESOURCE_LINK = "resource_link"
 #: The most links kept off one result, and the members kept of each.
 TOOL_LINKS_MAX = 10
-_LINK_FIELDS = (("uri", 2_048), ("name", 200), ("mimeType", 100))
+#: The URI bound is the SDK's (`canopy_sdk.resources.MAX_URI_LENGTH`): this package is
+#: dependency-free, so it is restated, not imported. The server checks the rest.
+_LINK_FIELDS = (("uri", 256), ("name", 200), ("mimeType", 100))
 #: The most text parsed looking for links (a gateway answer is one JSON text block).
 _LINK_PARSE_MAX = 4 * 1024 * 1024
 _LINK_DEPTH_MAX = 8
