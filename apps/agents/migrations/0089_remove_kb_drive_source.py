@@ -6,7 +6,15 @@ from django.db import migrations, models
 def delete_drive_sources(apps, schema_editor):
     """A knowledge base's sources are a curator's crawler only; drop every Drive one
     (its files go with it)."""
+    # PostgreSQL: the cascade queues deferred FK trigger events, and the ALTER TABLEs
+    # below in the same transaction refuse to run while any are pending ("cannot ALTER
+    # TABLE ... because it has pending trigger events"). Check them now instead.
+    postgres = schema_editor.connection.vendor == "postgresql"
+    if postgres:
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
     apps.get_model("agents", "KbSource").objects.filter(kind="drive_folders").delete()
+    if postgres:
+        schema_editor.execute("SET CONSTRAINTS ALL DEFERRED")
 
 
 class Migration(migrations.Migration):
