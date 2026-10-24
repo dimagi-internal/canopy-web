@@ -12,7 +12,7 @@ def delete_drive_sources(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('agents', '0087_project_skill_instructions'),
+        ('agents', '0088_agent_test_vault_key'),
     ]
 
     operations = [
