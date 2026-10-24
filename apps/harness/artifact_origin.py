@@ -95,7 +95,7 @@ def resolve(request, *, session: str = "", turn: str = "", agent_project: str = 
         if project is None and the_turn is not None and the_turn.raised_from_task_id:
             task = the_turn.raised_from_task
             project = task.project if task.project_id else None
-        if project is not None and project.agent.workspace_id in scope:
+        if project is not None and project.workspace_id in scope:
             out["agent_project"] = project
     except Exception:  # noqa: BLE001 — a record must never fail the creation
         log.exception("could not resolve an artifact's origin")

@@ -86,7 +86,7 @@ def board_for(review: ReviewRequest, *, create: bool = True) -> tuple[Storyboard
     if board is not None or not create:
         return board, False
     project = review.agent_project
-    if project is not None and project.agent.workspace_id != review.workspace_id:
+    if project is not None and project.workspace_id != review.workspace_id:
         project = None
     title = _title(review, slug)
     try:

@@ -60,7 +60,7 @@ def _check_project(board, *, verb: str) -> None:
     if board.agent_project_id is None:
         raise RoundError(422, f"Link this storyboard to a board project before {verb}: "
                               "closing the round hands it to that project's agent.")
-    if board.agent_project.agent.workspace_id != board.workspace_id:
+    if board.agent_project.workspace_id != board.workspace_id:
         raise RoundError(422, f"Link this storyboard to a board project in its own workspace "
                               f"before {verb}: closing the round hands it to that project's agent.")
 

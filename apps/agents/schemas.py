@@ -1503,7 +1503,9 @@ class AgentTaskPatch(StrictModel):
     #: Out of Triage until then; null wakes it.
     snoozed_until: dt.datetime | None = None
     rank: float | None = None
-    #: Place it between two tasks (their keys) — what a drag sends.
+    #: Place it between two tasks — what a drag sends: `before` is the key of the
+    #: task just ABOVE where it lands, `after` the one just below (either may be
+    #: omitted at the top or bottom of the list).
     before: str | None = Field(default=None, max_length=24)
     after: str | None = Field(default=None, max_length=24)
 

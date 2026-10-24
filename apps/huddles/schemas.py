@@ -5,6 +5,7 @@ resume/prompt` read them), so a field renamed here breaks a running huddle."""
 from __future__ import annotations
 
 import datetime as dt
+from typing import Literal
 
 from pydantic import Field
 
@@ -67,8 +68,11 @@ class HuddleCheckinReadOut(StrictModel):
 
 
 class CheckinProjectOut(StrictModel):
+    #: The project's lead agent ("" when none).
     agent: str
+    #: Its agent alias, else its handle.
     ref: str
+    handle: str = ""
     name: str
     status: str = ""
     #: The project's page (app-relative) — where a check-in's record lives.
@@ -234,9 +238,19 @@ class CheckinTimelineRunOut(CheckinRunOut):
     projects: list[SpawnedProjectOut] = []
 
 
+class CheckinRunUpdateIn(StrictModel):
+    """The project update a check-in drafts: the agent's reading of its health,
+    and a short note. A person publishes it."""
+
+    health: Literal["on_track", "at_risk", "off_track"]
+    body: str = Field(default="", max_length=10000)
+
+
 class CheckinRunFinishIn(StrictModel):
     huddle_id: str = ""
     result_url: str = ""
     summary: str = ""
+    #: Draft the project's status update from this run.
+    update: CheckinRunUpdateIn | None = None
     #: How many tasks it proposed in the project; counted from the tasks filed with `run` when absent.
     tasks_proposed: int | None = Field(default=None, ge=0)

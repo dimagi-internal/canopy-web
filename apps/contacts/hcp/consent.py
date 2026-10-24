@@ -106,7 +106,7 @@ def project_of(turn, workspace=None):
     if project is None:
         return None
     ws_id = getattr(workspace, "pk", workspace)
-    if workspace is not None and project.agent.workspace_id != ws_id:
+    if workspace is not None and project.workspace_id != ws_id:
         return None
     return project
 

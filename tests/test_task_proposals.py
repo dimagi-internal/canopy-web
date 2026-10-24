@@ -50,8 +50,8 @@ def board(world):  # noqa: F811
     type(world["ada"]).objects.filter(pk=world["ada"].pk).update(project_seq=1)
     project = AgentProject.objects.create(agent=world["ada"], ext_id="P1", name="Canopy support",
                                           outcome="People get unstuck fast.", status=AgentProject.ACTIVE)
-    checkin = ProjectCheckin.objects.create(project=project, name="Weekly check-in", lead=lead,
-                                            agents=["ada", "eva"])
+    checkin = ProjectCheckin.objects.create(project=project, name="Weekly check-in", lead=lead)
+    checkin.agent_members.set([world["ada"], world["eva"]])
     run = CheckinRun.objects.create(checkin=checkin, project=project, checkin_name=checkin.name,
                                     slot=timezone.now(), status=CheckinRun.RUNNING)
     return {**world, "lead": lead, "project": project, "checkin": checkin, "run": run}

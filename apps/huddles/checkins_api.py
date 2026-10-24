@@ -45,8 +45,8 @@ router = Router(tags=["huddles"])
 
 
 def _project_ref(p: AgentProject) -> dict:
-    return {"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
-            "url": checkins.project_path(p), "workspace": p.agent.workspace_id}
+    return {"agent": p.agent_slug or "", "ref": p.ext_id or p.handle, "handle": p.handle, "name": p.name,
+            "status": p.status, "url": checkins.project_path(p), "workspace": p.workspace_id}
 
 
 def checkin_out(c: ProjectCheckin, user) -> dict:
@@ -58,10 +58,10 @@ def checkin_out(c: ProjectCheckin, user) -> dict:
     p = c.project
     last = c.runs.order_by("-created_at").values_list("status", flat=True).first()
     return {
-        "id": c.pk, "name": c.name, "project": _project_ref(p), "workspace": p.agent.workspace_id,
+        "id": c.pk, "name": c.name, "project": _project_ref(p), "workspace": p.workspace_id,
         "topic": c.topic, "lead_email": getattr(c.lead, "email", "") or "", "lead_slack_id": c.lead_slack_id,
         "channel_id": c.channel_id, "channel_name": c.channel_name, "agents": list(c.agents or []),
-        "agent": p.agent.slug, "format": c.format,
+        "agent": p.agent_slug or "", "format": c.format,
         "cron": s.cron if s else "", "timezone": s.timezone if s else "UTC", "next_runs": nxt,
         "schedule_id": s.pk if s else None, "enabled": c.enabled, "added_allowance": c.added_allowance,
         "last_run_status": last or "", "legacy_slug": c.legacy_slug, "url": checkins.project_path(p),
@@ -74,7 +74,7 @@ def run_out(r: CheckinRun, *, material: bool = False) -> dict:
     parts = r.participants if isinstance(r.participants, dict) else {}
     return {
         "id": r.pk, "checkin": r.checkin_id, "checkin_name": r.checkin_name, "project": _project_ref(p),
-        "workspace": p.agent.workspace_id, "slot": r.slot, "manual": r.manual, "status": r.status,
+        "workspace": p.workspace_id, "slot": r.slot, "manual": r.manual, "status": r.status,
         "note": r.note,
         "participants": {"agents": list(parts.get("agents") or []), "lead_email": parts.get("lead_email") or ""},
         "channel_id": r.channel_id, "channel_name": r.channel_name, "announce_ts": r.announce_ts,
@@ -84,7 +84,8 @@ def run_out(r: CheckinRun, *, material: bool = False) -> dict:
         "read_messages": r.read_messages, "read_first_ts": r.read_first_ts, "read_last_ts": r.read_last_ts,
         "read_since": r.read_since, "material": r.material if material else "",
         "turn_id": str(r.turn_id or ""), "huddle_id": r.huddle_id,
-        "huddle_url": f"/w/{p.agent.workspace_id}/huddles/{r.huddle_id}" if r.huddle_id else "",
+        "huddle_url": (f"/w/{p.agent.workspace_id}/huddles/{r.huddle_id}" if r.huddle_id and p.agent_id
+                       else ""),
         "result_url": r.result_url, "summary": r.summary, "tasks_proposed": r.tasks_proposed,
         "finished_at": r.finished_at, "created_at": r.created_at,
     }
@@ -112,7 +113,7 @@ def _checkin_or_404(project: AgentProject, name: str) -> ProjectCheckin:
 
 def _require_writer(request: HttpRequest, project: AgentProject) -> None:
     if not checkins.may_write(request.user, project):
-        raise HttpError(403, f"only the project's owner, or an owner or admin of {project.agent.workspace_id}, "
+        raise HttpError(403, f"only the project's owner, or an owner or admin of {project.workspace_id}, "
                              "can change its check-ins")
 
 
@@ -270,7 +271,7 @@ def _huddle_projects(r: CheckinRun) -> list[dict]:
         return []
     tail = Q(source_url__endswith=f"/huddles/{r.huddle_id}") | Q(source_url__endswith=f"/huddles/{r.huddle_id}/")
     tree = checkins._tree(r.project.agent.workspace_id)
-    rows = (AgentProject.objects.select_related("agent").filter(tail, agent__workspace_id__in=tree)
+    rows = (AgentProject.objects.select_related("agent").filter(tail, workspace_id__in=tree)
             .order_by("agent__slug", "pk"))
     return [{"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
              "url": checkins.project_path(p)} for p in rows]
@@ -284,7 +285,7 @@ def _huddle_projects(r: CheckinRun) -> list[dict]:
 def list_checkins(request: HttpRequest) -> list[dict]:
     """Every check-in on a project in your workspaces — a navigation view; each
     one's record lives on its project's page."""
-    rows = (_qs().filter(project__agent__workspace_id__in=wsvc.request_workspace_slugs(request))
+    rows = (_qs().filter(project__workspace_id__in=wsvc.request_workspace_slugs(request))
             .order_by("project__name", "name"))
     return [checkin_out(c, request.user) for c in rows]
 
@@ -295,7 +296,7 @@ def _run_qs():
 
 def _run_or_404(request: HttpRequest, run_id: int) -> CheckinRun:
     r = (_run_qs().filter(pk=run_id)
-         .filter(project__agent__workspace_id__in=wsvc.request_workspace_slugs(request)).first())
+         .filter(project__workspace_id__in=wsvc.request_workspace_slugs(request)).first())
     if r is None:
         raise HttpError(404, f"check-in run {run_id} not found")
     return r
@@ -304,11 +305,12 @@ def _run_or_404(request: HttpRequest, run_id: int) -> CheckinRun:
 def _finish(request: HttpRequest, run_id: int, payload: CheckinRunFinishIn) -> CheckinRun:
     r = _run_or_404(request, run_id)
     agent = r.project.agent
-    if agent.user_id is None or agent.user_id != request.user.pk:
-        raise HttpError(403, f"only {agent.slug}'s own login can finish this run")
+    if agent is None or agent.user_id is None or agent.user_id != request.user.pk:
+        raise HttpError(403, "only the project's lead agent's own login can finish this run")
     try:
         r = checkins.finish(r, huddle_id=payload.huddle_id, result_url=payload.result_url,
-                            summary=payload.summary, tasks_proposed=payload.tasks_proposed)
+                            summary=payload.summary, tasks_proposed=payload.tasks_proposed,
+                            update=payload.update.model_dump() if payload.update else None)
     except checkins.CheckinError as e:
         raise HttpError(e.status, str(e)) from e
     return _run_qs().get(pk=r.pk)
@@ -329,5 +331,7 @@ def get_checkin_run(request: HttpRequest, run_id: int) -> dict:
 def finish_checkin_run(request: HttpRequest, run_id: int, payload: CheckinRunFinishIn) -> dict:
     """The project agent's own login only. Marks the run done, records how many
     tasks it proposed, and (with a channel) posts one line in the announcement's
-    thread pointing at the result — the content stays in canopy."""
+    thread pointing at the result — the content stays in canopy. `update` (its
+    health and a short note) drafts the project's status update, which the
+    project's lead publishes, choosing the health."""
     return run_out(_finish(request, run_id, payload), material=True)

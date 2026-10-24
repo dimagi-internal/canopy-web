@@ -241,7 +241,7 @@ def record_fact(*, person: Person, workspace, kind: str, statement: str,
     if len(statement) > PersonFact.STATEMENT_MAX:
         raise FactError(f"a statement is one sentence, at most {PersonFact.STATEMENT_MAX} characters")
     ws_id = workspace.pk if workspace is not None else None
-    if project is not None and (ws_id is None or project.agent.workspace_id != ws_id):
+    if project is not None and (ws_id is None or project.workspace_id != ws_id):
         raise FactError("that project belongs to another workspace")
     category = (category or "").strip() or (supersedes.category if supersedes is not None
                                              else hcp.KIND_CATEGORY[kind])
@@ -483,7 +483,7 @@ def envelope_projects(person: Person, workspace_slug: str | None) -> list[dict]:
     rows = participants.projects_of(person, workspace_slug, limit=participants.ENVELOPE_PROJECTS,
                                     include_archived=False)
     return [{"id": r.project_id, "ext_id": r.project.ext_id, "name": r.project.name,
-             "agent": r.project.agent.slug} for r in rows]
+             "agent": (r.project.agent_slug or "")} for r in rows]
 
 
 # --- Contact.notes, mirrored into a fact (v1.1) -----------------------------------

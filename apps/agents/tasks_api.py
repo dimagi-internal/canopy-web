@@ -22,11 +22,11 @@ from apps.harness import turn_status
 from apps.harness.models import Turn
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import Workspace
 
 from . import proposals, services, work
 from .api_board import act_and_record, apply_task_patch
 from .gates import (
-    agent_for_read,
     listed_agent_workspaces,
     may_edit_project,
     may_edit_task,
@@ -57,7 +57,6 @@ from .schemas import (
     SavedViewOut,
     SavedViewPatch,
     TaskBriefOut,
-    TaskCreateIn,
     TaskDetailOut,
     TaskEventOut,
     TaskRelationIn,
@@ -118,41 +117,6 @@ def task_detail(request: HttpRequest, task: AgentTask) -> TaskDetailOut:
 
 
 # ---- one task ----------------------------------------------------------------
-
-
-@router.post("/tasks/", response={201: AgentTaskOut}, summary="Create a task in a workspace")
-@gate("agent.work", kind="content")
-def create_task(request: HttpRequest, payload: TaskCreateIn) -> Status:
-    """Filed by you, in `workspace` (default: its project's, else the one you
-    are pinned to, else your only one), assigned as `assignee` says (nobody
-    when omitted). `project` is an address (`<ws>/<handle>`) or a handle there."""
-    data = payload.model_dump(exclude_unset=True)
-    ws = (data.pop("workspace", "") or "").strip() or getattr(request, "workspace_slug", None) or ""
-    ref = (data.get("project") or "").strip()
-    if ref and "/" in ref:
-        ws = ws or ref.split("/", 1)[0]
-    if not ws:
-        found = wsvc.creation_workspace(request)
-        if found is None:
-            raise HttpError(422, wsvc.creation_refusal(request))
-        ws = found.slug
-    if ws not in visible_agent_workspaces(request):
-        raise HttpError(404, f"workspace '{ws}' not found")
-    if not perms.can(request.user, ws, perms.AGENT_WORK):
-        raise HttpError(403, "creating a task requires the editor role")
-    if data.get("on_approve"):
-        raise HttpError(422, "on_approve is set by an agent filing its own work (its route), not here")
-    if ref and services._project_ref(None, ref, ws) is None:
-        raise HttpError(422, f"no project {ref!r} in {ws}")
-    if (data.get("assignee") or "").strip() and "@" not in data["assignee"]:
-        agent_for_read(request, data["assignee"].removeprefix("agent:"), honor_pin=False)
-    try:
-        [task] = services.create_tasks(None, [data], workspace=ws, by_user=request.user)
-    except services.UnknownPersonError as exc:
-        raise HttpError(422, str(exc)) from exc
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from exc
-    return Status(201, AgentTaskOut.model_validate(task))
 
 
 @router.get("/tasks/{key}/", response=TaskDetailOut,
@@ -270,7 +234,7 @@ def list_triage(request: HttpRequest, workspace: str = "", project: str = "",
     tasks = services.filter_tasks(
         work.task_rows(AgentTask.objects.filter(workspace_id__in=scope, status=AgentTask.SUGGESTED)),
         user=request.user, project=project, snoozed="hide",
-    ).exclude(origin_ref__kind=proposals.DECISION)
+    ).filter(Q(origin_ref__kind__isnull=True) | ~Q(origin_ref__kind=proposals.DECISION))
     stances = {r["task_id"]: r for r in ProjectBacking.objects.filter(task__in=tasks).values("task_id").annotate(
         b=Count("id", filter=~Q(stance=ProjectBacking.PASSES)), p=Count("id", filter=Q(stance=ProjectBacking.PASSES)))}
     items = [TriageOut(
@@ -451,7 +415,8 @@ def set_task_settings(request: HttpRequest, payload: TaskSettingsPatch, workspac
         out = _settings_out(work.set_settings(ws, payload.model_dump(exclude_unset=True)))
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
-    audit.note_change(scope="task_settings", before=before, after=out.model_dump(), workspace=ws)
+    audit.note_change(scope=f"workspace:{ws}/task_settings", before=before, after=out.model_dump(),
+                      workspace=Workspace.objects.get(slug=ws))
     return out
 
 

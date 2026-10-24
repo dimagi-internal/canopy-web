@@ -35,6 +35,7 @@ from .gates import (
     listed_agent_workspaces,
     project_ws_or_404,
     require_project_edit,
+    visible_agent_workspaces,
 )
 from .health import _counts
 from .models import Agent, AgentProject, AgentTask
@@ -46,6 +47,7 @@ from .schemas import (
     AgentRosterRowOut,
     AgentTaskOut,
     KbOriginalsIn,
+    TaskCreateIn,
     KbOriginalsOut,
     KbPublishIn,
     KbUploadOut,
@@ -124,6 +126,41 @@ def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", s
         raise HttpError(422, f"sort must be one of {', '.join(k for k in _SORTS if k)}")
     qs = qs.order_by(*order) if order else qs.order_by(_ASK_RANK, "created_at", "id")
     return [AgentTaskOut.model_validate(t) for t in qs[:clamp_limit(limit)]]
+
+
+@router.post("/tasks/", response={201: AgentTaskOut}, summary="Create a task in a workspace")
+@gate("agent.work", kind="content")
+def create_task(request: HttpRequest, payload: TaskCreateIn) -> Status:
+    """Filed by you, in `workspace` (default: its project's, else the one you
+    are pinned to, else your only one), assigned as `assignee` says (nobody
+    when omitted). `project` is an address (`<ws>/<handle>`) or a handle there."""
+    data = payload.model_dump(exclude_unset=True)
+    ws = (data.pop("workspace", "") or "").strip() or getattr(request, "workspace_slug", None) or ""
+    ref = (data.get("project") or "").strip()
+    if ref and "/" in ref:
+        ws = ws or ref.split("/", 1)[0]
+    if not ws:
+        found = wsvc.creation_workspace(request)
+        if found is None:
+            raise HttpError(422, wsvc.creation_refusal(request))
+        ws = found.slug
+    if ws not in visible_agent_workspaces(request):
+        raise HttpError(404, f"workspace '{ws}' not found")
+    if not perms.can(request.user, ws, perms.AGENT_WORK):
+        raise HttpError(403, "creating a task requires the editor role")
+    if data.get("on_approve"):
+        raise HttpError(422, "on_approve is set by an agent filing its own work (its route), not here")
+    if ref and services._project_ref(None, ref, ws) is None:
+        raise HttpError(422, f"no project {ref!r} in {ws}")
+    if (data.get("assignee") or "").strip() and "@" not in data["assignee"]:
+        agent_for_read(request, data["assignee"].removeprefix("agent:"), honor_pin=False)
+    try:
+        [task] = services.create_tasks(None, [data], workspace=ws, by_user=request.user)
+    except services.UnknownPersonError as exc:
+        raise HttpError(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, AgentTaskOut.model_validate(task))
 
 
 @router.get("/tasks/count/", response=TaskCountOut,

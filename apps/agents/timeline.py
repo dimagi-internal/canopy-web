@@ -40,16 +40,19 @@ def recent_events(
             )
         )
 
-    tasks = _scope(AgentTask.objects.select_related("agent")).order_by("-created_at")
+    tasks = AgentTask.objects.select_related("agent")
+    if workspace_slugs is not None:  # a task's tenant is its own workspace, not its agent's
+        tasks = tasks.filter(workspace_id__in=workspace_slugs)
+    tasks = tasks.order_by("-created_at")
     for t in cursor_page(tasks, "created_at", before=before, limit=limit):
         events.append(
             ActivityEvent(
                 subsystem="agents",
                 kind="task",
                 at=t.created_at,
-                title=f"{t.agent.name}: {t.title}",
+                title=f"{t.agent.name}: {t.title}" if t.agent_id else t.title,
                 summary=t.get_status_display(),
-                href=f"/agents/{t.agent.slug}/tasks",
+                href=f"/tasks/{t.key}",
                 id=f"task:{t.id}",
                 icon="task",
             )

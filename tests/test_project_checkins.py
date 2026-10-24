@@ -101,7 +101,7 @@ def test_saving_allow_lists_the_channel_and_makes_a_schedule(checkin, hal, lead,
     assert not SlackChannelIngest.objects.exists()
     got = _link_client(lead).get(URL).json()
     assert [c["name"] for c in got] == ["Weekly"] and got[0]["format"] == "solo" and got[0]["agent"] == "hal"
-    assert got[0]["url"] == "/w/dimagi/agents/hal/projects/P1"
+    assert got[0]["url"] == "/w/dimagi/projects/ai-champions"
 
 
 def test_a_lead_outside_the_channel_is_refused(channel, installation, hal_login, lead, owner, project):
@@ -515,8 +515,9 @@ def test_a_huddle_run_for_a_check_in_carries_the_check_in_header(checkin, owner,
     Turn.objects.create(agent=hal, idempotency_key="anchor-h2", origin_ref={"kind": "huddle", "huddle": "h2"})
     got = _link_client(owner).get("/api/huddles/h1").json()
     assert got["checkin"] == {"id": checkin.pk, "name": "Weekly",
-                              "project": {"agent": "hal", "ref": "P1", "name": "AI Champions", "status": "active",
-                                          "url": "/w/dimagi/agents/hal/projects/P1", "workspace": "dimagi"},
+                              "project": {"agent": "hal", "ref": "P1", "handle": "ai-champions",
+                                          "name": "AI Champions", "status": "active",
+                                          "url": "/w/dimagi/projects/ai-champions", "workspace": "dimagi"},
                               "channel_name": "canopy-support", "lead_email": "alice@dimagi.com", "run_id": run.pk,
                               "read": {"messages": 4, "first_ts": "1700000100.000000",
                                        "last_ts": "1700000500.000000", "since": EPOCH.isoformat()}}
