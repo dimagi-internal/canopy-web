@@ -26,6 +26,7 @@ import {
   putWorkspaceVaultPins,
   putWorkspaceVaultValues,
   putZkValues,
+  rotateWorkspaceVaultZk,
   rotateZk,
   type VaultKeysetOut,
   type ZkStateOut,
@@ -729,6 +730,17 @@ export async function rotateVaultKey(slug: string, confirm: (code: string) => Pr
                                      unlock: Unlock): Promise<ZkStateOut> {
   const state = await getZkState(slug, true)
   const me = await unlock()
+  const out = await rotateWith(state, me, confirm, (body) => rotateZk(slug, body))
+  const readers = [...state.wraps.filter((w) => w.kv === state.kv && w.current), ...state.pending]
+    .map(targetOf).filter((t): t is Target => t !== null).map(endorsableOf)
+  await endorseQuietly(slug, state.agent_id, me, [selfReader(me.userId, me.publicJwk), ...readers])
+  return out
+}
+
+/** The rotation itself, for an agent's vault or a workspace vault (the same shapes). */
+async function rotateWith(state: ZkStateOut, me: Unlocked, confirm: (code: string) => Promise<void>,
+                          send: (body: { new_kv: number; wraps: ZkWrapIn[]; values: { name: string; value_zk: string }[] })
+                            => Promise<ZkStateOut>): Promise<ZkStateOut> {
   const oldVk = await openVk(state, me)
   const kv = state.kv + 1
   const vk = randomBytes(32)
@@ -750,11 +762,7 @@ export async function rotateVaultKey(slug: string, confirm: (code: string) => Pr
     wraps.push(recovery.wrap)
     await confirm(recovery.code)
   }
-  const out = await rotateZk(slug, { new_kv: kv, wraps, values })
-  const readers = [...state.wraps.filter((w) => w.kv === state.kv && w.current), ...state.pending]
-    .map(targetOf).filter((t): t is Target => t !== null).map(endorsableOf)
-  await endorseQuietly(slug, state.agent_id, me, [selfReader(me.userId, me.publicJwk), ...readers])
-  return out
+  return send({ new_kv: kv, wraps, values })
 }
 
 // ---- endorsements (zk-v1 §7; spec 2026-10-19-give-an-agent-a-secret-design.md §4) ----
@@ -912,6 +920,22 @@ export async function grantWorkspaceVaultPending(vaultId: string, me: Unlocked):
   await recordGranted(state, vk, state.pending, (b) => putWorkspaceVaultPins(vaultId, b),
     () => getWorkspaceVaultZk(vaultId))
   return out
+}
+
+/**
+ * Rotate a workspace vault's key, as an agent's vault rotates: a fresh key, every value
+ * re-encrypted, a copy for every member and machine that still qualifies (one removed
+ * since is left out — that is the point) and everyone waiting. My own recovery code is
+ * the way back, as when the key was made, so I need one first.
+ */
+export async function rotateWorkspaceVaultKey(vaultId: string, me: Unlocked): Promise<ZkStateOut> {
+  if (!hasRecoveryCode(await getKeyset())) {
+    throw new Error('Add a recovery code to your vault key first (Settings → Vault key): it is how this vault comes back if you lose your passkey.')
+  }
+  const state = await getWorkspaceVaultZk(vaultId, true)
+  if (state.kv === 0) throw new Error('This vault has no key yet: make its key first.')
+  return rotateWith(state, me, async () => { throw new Error('A recovery code is needed first.') },
+    (body) => rotateWorkspaceVaultZk(vaultId, body))
 }
 
 /** Seal one value into a workspace vault, in this browser: canopy-web stores ciphertext only. */

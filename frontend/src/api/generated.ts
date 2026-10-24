@@ -8853,6 +8853,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/vaults/{vault_id}/zk/rotate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Rotate a workspace vault's key: replace every copy and value atomically
+         * @description As `POST /api/agents/{slug}/vault/zk/rotate`: `{new_kv: kv + 1, wraps, values}`.
+         *     Every member or machine holding a copy now that still qualifies must get one at
+         *     `new_kv` (422 `zk_rewrap_required` otherwise); one removed since is simply left
+         *     out. A way back and a copy the caller can open are required, and `values` must
+         *     cover every stored secret.
+         */
+        readonly post: operations["rotate_workspace_vault_zk"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/vaults/{vault_id}/zk/values": {
         readonly parameters: {
             readonly query?: never;
@@ -49664,6 +49688,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ZkEnableIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ZkStateOut"];
+                };
+            };
+        };
+    };
+    readonly rotate_workspace_vault_zk: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly vault_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ZkRotateIn"];
             };
         };
         readonly responses: {

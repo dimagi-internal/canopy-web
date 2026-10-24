@@ -181,6 +181,12 @@ export async function enableWorkspaceVaultZk(vaultId: string, body: { kv: number
     params: { path: { vault_id: vaultId } }, body: body as never }), 'Could not make the vault’s key')
 }
 
+export async function rotateWorkspaceVaultZk(vaultId: string,
+    body: { new_kv: number; wraps: ZkWrapIn[]; values: Value[] }): Promise<ZkStateOut> {
+  return need<ZkStateOut>(await apiV2.POST('/api/vaults/{vault_id}/zk/rotate', {
+    params: { path: { vault_id: vaultId } }, body: body as never }), 'Could not rotate the vault’s key')
+}
+
 export async function putWorkspaceVaultValues(vaultId: string, body: { kv: number; values: Value[] }) {
   return need<{ kv: number; names: string[] }>(await apiV2.PUT('/api/vaults/{vault_id}/zk/values', {
     params: { path: { vault_id: vaultId } }, body: body as never }), 'Could not save the value')

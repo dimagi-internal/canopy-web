@@ -13,7 +13,9 @@ import { Button } from 'canopy-ui/ui'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { runnerHref } from '@/lib/scopedLinks'
 import { VAULT_ROLE_LABEL } from '@/pages/agents/AgentVaultMembersSection'
-import { grantWorkspaceVaultPending, makeWorkspaceVaultKey, sealWorkspaceVaultValue } from '@/vault/operations'
+import {
+  grantWorkspaceVaultPending, makeWorkspaceVaultKey, rotateWorkspaceVaultKey, sealWorkspaceVaultValue,
+} from '@/vault/operations'
 import { memberWaiting, VaultWaitingNote } from '@/vault/VaultWaiting'
 import type { VaultOutletContext } from './VaultPage'
 
@@ -111,6 +113,13 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
                   reload()
                 })}>
                 Give {waiting === 1 ? 'the one waiting' : `the ${waiting} waiting`} a copy
+              </Button>
+            )}
+            {manages && (
+              <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-rotate"
+                title="A fresh key: everyone and every machine that still belongs gets a copy, and a copy kept by anyone removed opens nothing written after"
+                onClick={() => void run(async () => { await rotateWorkspaceVaultKey(v.vault_id, await unlock()); reload() })}>
+                Change the key
               </Button>
             )}
           </div>

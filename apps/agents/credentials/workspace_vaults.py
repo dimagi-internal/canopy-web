@@ -24,7 +24,6 @@ the same owner, the same isolation unit, the same sensitive-data standing.
 """
 from __future__ import annotations
 
-import uuid
 
 from django.db import transaction
 from django.db.models import Q
@@ -36,8 +35,9 @@ from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import services as wsvc
 
 from ..models import Agent, Vault, VaultAttachment, VaultKeyWrap, VaultLink, VaultSecret
-from . import vault_members, zk
-from .zk import ZkError, _shape, check_ecdh_wrap, check_recovery_wrap, check_value_zk
+from . import vault_engine as engine
+from . import vault_members
+from .zk import ZkError, check_value_zk
 
 
 def binding_id(vault: Vault) -> str:
@@ -261,196 +261,84 @@ def copies(vault: Vault) -> tuple[set[int], list[str]]:
     return people, machines
 
 
-def _key(w) -> tuple:
-    if w.kind == "device":
-        return ("device", w.device_key_id)
-    if w.kind == "member":
-        return ("member", w.user_id)
-    return ("recovery",)
-
-
 def pending_targets(vault: Vault) -> list[dict]:
-    have = {_key(w) for w in VaultKeyWrap.objects.filter(vault=vault, kv=vault.kv)} if vault.kv else set()
-    out = [{"kind": "device", "target": str(k.pk), "runner": str(k.runner_id), "runner_name": k.runner.name,
-            "label": k.label, "device_kind": k.kind, "ecdh_jkt": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
-            "ecdh_public_jwk": k.ecdh_public_jwk}
-           for k in eligible_device_keys(vault) if ("device", k.pk) not in have]
-    out += [{"kind": "member", "target": str(ks.user_id), "email": ks.user.email, "public_jwk": ks.public_jwk}
-            for ks in eligible_members(vault) if ("member", ks.user_id) not in have]
-    return out
+    return engine.pending_targets(_store(vault), has_key=bool(vault.kv))
 
 
 def state(vault: Vault, *, include_values: bool = False) -> dict:
     """The agent-vault `ZkStateOut` shape, so the browser and the CLI drive either:
     `agent` is the vault's name and `agent_id` its binding id."""
-    devices = {k.pk for k in eligible_device_keys(vault)}
-    members = {ks.user_id: ks for ks in eligible_members(vault)}
-    wraps = []
-    for w in (VaultKeyWrap.objects.filter(vault=vault)
-              .select_related("device_key__runner", "user", "created_by").order_by("kv", "kind", "id")):
-        row = {"kind": w.kind, "kv": w.kv, "wrap": w.wrap, "created_at": w.created_at,
-               "created_by_email": w.created_by.email if w.created_by_id else "",
-               "target": None, "label": "", "current": True}
-        if w.kind == "device":
-            k = w.device_key
-            row.update(target=str(k.pk), label=f"{k.runner.name} · {k.label or k.kind}", ecdh_jkt=k.ecdh_jkt,
-                       current=k.pk in devices, public_jwk=k.ecdh_public_jwk or None,
-                       ecdh_public_jwk=k.ecdh_public_jwk or None)
-        elif w.kind == "member":
-            ks = members.get(w.user_id)
-            row.update(target=str(w.user_id), label=w.user.email, current=ks is not None,
-                       public_jwk=ks.public_jwk if ks is not None else None)
-        wraps.append(row)
+    wraps = engine.wrap_rows(_store(vault))
     out = {"agent": vault.name, "agent_id": binding_id(vault), "enabled": vault.kv > 0, "kv": vault.kv,
            "wraps": wraps, "pending": pending_targets(vault),
-           "rotation_recommended": any(not w["current"] for w in wraps if w["kind"] != "recovery"),
+           "rotation_recommended": engine.rotation_recommended(wraps),
            "values": None, "sealed": []}
     if include_values:
         out["values"] = dict(VaultSecret.objects.filter(vault=vault).values_list("name", "value_zk"))
     return out
 
 
-# ---- the writes (the agent vault's rules, for a workspace vault) -----------------------------
+# ---- the writes (the agent vault's rules — `vault_engine` — for a workspace vault) ------
 
 def _locked(vault: Vault) -> Vault:
     return Vault.objects.select_for_update().get(pk=vault.pk)
 
 
-def _parse_wraps(vault: Vault, kv: int, wraps: list, *, allow_recovery: bool) -> list[VaultKeyWrap]:
-    devices = {str(k.pk): k for k in eligible_device_keys(vault)}
-    members = {str(k.user_id): k for k in eligible_members(vault)}
-    out, seen = [], set()
-    for i, item in enumerate(wraps):
-        what = f"wraps[{i}]"
-        if item.kind == "device":
-            try:
-                key = devices.get(str(uuid.UUID(str(item.target))))
-            except ValueError as exc:
-                raise _shape(f"{what}: a device target is a device key id") from exc
-            if key is None:
-                raise ZkError(422, "zk_invalid_target",
-                              f"{what}: device key {item.target} is not an active device key on a runner "
-                              f"serving an agent {vault.name} is attached to, working for a member")
-            row = VaultKeyWrap(vault=vault, kv=kv, kind="device", device_key=key,
-                               wrap=check_ecdh_wrap(item.wrap, what))
-        elif item.kind == "member":
-            ks = members.get(str(item.target))
-            if ks is None:
-                raise ZkError(422, "zk_invalid_target",
-                              f"{what}: user {item.target} is not a member of {vault.name} with a vault key")
-            row = VaultKeyWrap(vault=vault, kv=kv, kind="member", user=ks.user,
-                               wrap=check_ecdh_wrap(item.wrap, what))
-        elif item.kind == "recovery":
-            if not allow_recovery:
-                raise ZkError(422, "zk_invalid_target", f"{what}: the recovery wrap is set only by enable")
-            row = VaultKeyWrap(vault=vault, kv=kv, kind="recovery", wrap=check_recovery_wrap(item.wrap, what))
-        else:
-            raise _shape(f"{what}: kind must be device, member or recovery")
-        if _key(row) in seen:
-            raise _shape(f"{what}: a second wrap for the same target")
-        seen.add(_key(row))
-        out.append(row)
-    return out
+def _store(vault: Vault) -> "engine.Store":
+    """A workspace vault, for the rules in `vault_engine`: its rows live on the vault."""
 
+    def save_kv(kv: int) -> None:
+        vault.kv = kv
+        vault.save(update_fields=["kv"])
 
-def _caller_can_open(rows: list, user) -> bool:
-    return any((w.kind == "member" and w.user_id == user.pk)
-               or (w.kind == "device" and w.device_key.runner.owner_id == user.pk) for w in rows)
-
-
-def _values(values: list) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for i, v in enumerate(values):
-        name = (v.name or "").strip()
-        if not name or name in out:
-            raise _shape(f"values[{i}]: a name is required, once")
-        out[name] = check_value_zk(v.value_zk, name)
-    return out
-
-
-def _write(vault: Vault, values: dict[str, str], kv: int, user) -> None:
-    by = user if getattr(user, "is_authenticated", False) else None
-    for name, value_zk in values.items():
-        VaultSecret.objects.update_or_create(vault=vault, name=name,
-                                             defaults={"value_zk": value_zk, "kv": kv, "updated_by": by})
-
-
-def _save(rows: list, user) -> None:
-    by = user if getattr(user, "is_authenticated", False) else None
-    for w in rows:
-        w.created_by = by
-    VaultKeyWrap.objects.bulk_create(rows)
+    return engine.Store(
+        label=vault.name, kv=vault.kv,
+        wrap_model=VaultKeyWrap, secret_model=VaultSecret, owner_kw={"vault": vault},
+        eligible_devices=lambda: eligible_device_keys(vault),
+        eligible_members=lambda: eligible_members(vault),
+        lock=lambda: _store(_locked(vault)), save_kv=save_kv,
+        device_scope=f"on a runner serving an agent {vault.name} is attached to, working for a member",
+        member_scope=vault.name,
+    )
 
 
 def enable(vault: Vault, *, kv: int, wraps: list, values: list, user) -> None:
     """Make the vault's first key (kv 1): its copies and any first values. Needs a copy
     the caller can open, and a way back (a recovery wrap, or a member whose own key has
     a recovery code)."""
-    if kv != 1:
-        raise ZkError(422, "zk_kv_mismatch", "enable starts the vault key at kv 1")
     with transaction.atomic():
-        vault = _locked(vault)
-        if vault.kv:
-            raise ZkError(409, "zk_already_enabled", f"{vault.name} already has a vault key")
-        rows = _parse_wraps(vault, kv, wraps, allow_recovery=True)
-        if not (any(w.kind == "recovery" for w in rows)
-                or any(w.kind == "member" and zk.has_recovery_seal(w.user_id) for w in rows)):
-            raise ZkError(422, "zk_recovery_required",
-                          "include a recovery wrap, or a member wrap to someone whose vault key has a "
-                          "recovery code")
-        if not _caller_can_open(rows, user):
-            raise ZkError(422, "zk_caller_wrap_required", "include a wrap you can open")
-        _save(rows, user)
-        _write(vault, _values(values), kv, user)
-        vault.kv = kv
-        vault.save(update_fields=["kv"])
+        engine.enable(_store(vault), kv=kv, wraps=wraps, values=values, user=user,
+                      already=f"{vault.name} already has a vault key")
 
 
 def set_values(vault: Vault, *, kv: int, values: list, user) -> list[str]:
-    with transaction.atomic():
-        vault = _locked(vault)
-        if not vault.kv:
-            raise ZkError(409, "zk_no_vault_key", f"{vault.name} has no vault key yet")
-        if kv != vault.kv:
-            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {vault.kv}, not {kv}")
-        vals = _values(values)
-        _write(vault, vals, kv, user)
-    return sorted(vals)
+    return engine.set_values(_store(vault), kv=kv, values=values, user=user)
 
 
 def set_runner_values(vault: Vault, *, kv: int, values: dict[str, str], user) -> list[str]:
     """`set_values` for a box writing its own credentials (`runners.store_vault_values`
     decides which names it may): the same lock, key-version check and `zk1:` shape."""
     with transaction.atomic():
-        vault = _locked(vault)
-        if not vault.kv:
+        store = _store(vault).lock()
+        if not store.kv:
             raise ZkError(409, "zk_no_vault_key", f"{vault.name} has no vault key yet")
-        if kv != vault.kv:
-            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {vault.kv}, not {kv}")
+        if kv != store.kv:
+            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {store.kv}, not {kv}")
         vals = {name: check_value_zk(value, name) for name, value in values.items()}
-        _write(vault, vals, kv, user)
+        engine.write_values(store, vals, kv, user)
     return sorted(vals)
 
 
 def add_wraps(vault: Vault, *, kv: int, wraps: list, user, only_new: bool = False) -> int:
     """`zk.add_wraps` for a workspace vault, `only_new` included."""
-    with transaction.atomic():
-        vault = _locked(vault)
-        if not vault.kv:
-            raise ZkError(409, "zk_no_vault_key", f"{vault.name} has no vault key yet to grant")
-        if kv != vault.kv:
-            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {vault.kv}, not {kv}")
-        rows = _parse_wraps(vault, kv, wraps, allow_recovery=False)
-        for w in rows:
-            held = VaultKeyWrap.objects.filter(vault=vault, kv=kv, kind=w.kind, device_key=w.device_key,
-                                               user=w.user)
-            if only_new and held.exists():
-                raise ZkError(409, "zk_not_pending",
-                              f"{w.kind} {w.device_key_id or w.user_id} already holds a copy — a keeper "
-                              "only adds copies, never replaces one")
-            held.delete()
-        _save(rows, user)
-    return len(rows)
+    return engine.add_wraps(_store(vault), kv=kv, wraps=wraps, user=user, only_new=only_new)
+
+
+def rotate(vault: Vault, *, new_kv: int, wraps: list, values: list, user) -> None:
+    """A fresh key for the vault, as an agent's vault rotates: every copy and every value
+    replaced at once, and every current holder who still qualifies re-wrapped — so a
+    member or machine removed since keeps a copy that opens nothing written after."""
+    engine.rotate(_store(vault), new_kv=new_kv, wraps=wraps, values=values, user=user)
 
 
 def remove_secret(vault: Vault, name: str) -> bool:
