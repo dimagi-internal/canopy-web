@@ -166,3 +166,18 @@ def test_cannot_hold_raises_its_own_reason(fleet):
     WorkspaceRunnerOrder.objects.create(workspace=fleet["ws"], runner=box, rank=0)
     r = _raises()["agent:eva:routing"]
     assert r.title == "Eva can't use their-box: their owner can't hold its turns"
+
+
+def test_an_own_route_to_a_box_that_cannot_hold_the_agent_raises(fleet):
+    # The setup checklist's runner step asks `runner_takers` (tenant + may-hold); the
+    # alert now does too, so the two never disagree about an agent with a listed box.
+    from apps.agents import setup
+
+    stranger = _user("stranger")
+    box = Runner.objects.create(name="their-box", kind=Runner.CLOUD, host="their-box", owner=stranger,
+                                workspace=fleet["ws"], status=Runner.ONLINE,
+                                last_heartbeat_at=timezone.now(), capabilities={"agents": []})
+    RunnerAssignment.objects.create(agent=fleet["eva"], runner=box, rank=0)
+    assert setup.runner_takers(fleet["eva"])[0] == []
+    r = _raises()["agent:eva:routing"]
+    assert r.title.startswith("Eva can't use their-box: it can't take its turns")
