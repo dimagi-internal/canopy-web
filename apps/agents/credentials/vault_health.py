@@ -54,19 +54,22 @@ def classify(agent: Agent, stored: set[str] | None = None) -> dict[str, str]:
     return out
 
 
-def machines_waiting(agent: Agent) -> list[str]:
+def machines_waiting(agent: Agent, facts=None) -> list[str]:
     """Runners that would run this agent but cannot open its zero-knowledge
     values yet (`zk.device_waits`), or whose new ECDH key awaits approval: a
-    member's passkey touch lets them in."""
+    member's passkey touch lets them in. `facts`: `device_keys.serving_facts`."""
     if not agent.zk_enabled:
         return []
 
-    waiting = {k.runner.name for k in zk.eligible_device_keys(agent) if zk.device_waits(agent, k)}
-    waiting |= {k.runner.name for k in device_keys.keys_for_agent(agent) if k.ecdh_waiting}
+    facts = facts or device_keys.serving_facts([agent])
+    eligible = zk.eligible_device_keys(agent, facts)
+    blocked = zk.devices_waiting(agent, eligible)
+    waiting = {k.runner.name for k in eligible if k.pk in blocked}
+    waiting |= {k.runner.name for k in device_keys.keys_for_agent(agent, facts) if k.ecdh_waiting}
     return sorted(waiting)
 
 
-def vault_health(agent: Agent) -> dict:
+def vault_health(agent: Agent, facts=None) -> dict:
     refs = classify(agent)
     by_class: dict[str, list[str]] = {}
     for name, cls in refs.items():
@@ -90,5 +93,5 @@ def vault_health(agent: Agent) -> dict:
         "op_vault": agent.op_vault,
         "op_key_set": bool(agent.op_sa_token_enc),
         "zero_knowledge": agent.zk_enabled,
-        "machines_waiting": machines_waiting(agent) if on_canopy else [],
+        "machines_waiting": machines_waiting(agent, facts) if on_canopy else [],
     }

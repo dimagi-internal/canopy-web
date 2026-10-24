@@ -93,3 +93,11 @@ agent's steps are `setup.setup_steps`, its vault state is
 `vault_health.vault_health` (also what the checklist's vault step reads), each
 workspace's shared vault is `Workspace.shared_vault_source`. Tree walk:
 `wsvc.subtree` + `agents.tree.agents_in_tree` (shared with both topology views).
+
+It asks every (runner, agent) pair which machines may open each vault, so it reads
+the fleet once: `device_keys.serving_facts(agents)` (a `routing.ServingFacts`) is
+passed down through `vault_health`, `setup_steps` and `keys_for_agent`, and the
+same rule (`runner_serves_agent`, `runner_routes_agent`) answers each pair from
+it; the viewer's admin standing is one `access.Standings`. More runners cost no
+more queries (`test_health_reads_the_fleet_once_…`); each agent still costs a
+fixed few dozen for its own checklist steps.

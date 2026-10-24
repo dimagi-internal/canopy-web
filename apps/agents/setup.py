@@ -19,7 +19,7 @@ rights), so the step carries the one command that does it.
 from __future__ import annotations
 
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
-from apps.harness.routing import inherited_orders, runner_tenant_slugs_of
+from apps.harness.routing import ServingFacts, inherited_orders
 from apps.harness.runners import request_refresh
 
 from . import mailbox
@@ -28,7 +28,7 @@ from .credentials.oauth_api import GOG_TOKEN_REF
 from .credentials.pat_rotation import CANOPY_PAT_REF
 from .credentials.vault_health import vault_health
 from .models import Agent, AgentBootstrapReport, AgentCredential
-from .services import bootstrap_reports, runner_may_hold_agent
+from .services import bootstrap_reports
 
 DONE, TODO, WAITING, OPTIONAL = "done", "todo", "waiting", "optional"
 
@@ -154,14 +154,15 @@ def _first_reason(detail: str, limit: int = 160) -> str:
     return first if len(first) <= limit else first[:limit - 1].rstrip() + "…"
 
 
-def _vault(agent: Agent, settings: str) -> dict:
+def _vault(agent: Agent, settings: str, vh: dict | None = None, facts=None) -> dict:
     """Where its secrets live — read from THE vault verdict (`vault_health`), so this
     step and the workspace health dashboard cannot disagree. An agent resolving from
     the canopy-web vault is judged by that vault (every declared secret stored, every
-    machine let in); one resolving from 1Password by its 1Password vault and key."""
+    machine let in); one resolving from 1Password by its 1Password vault and key.
+    `vh`: its `vault_health`, when the caller has read it already."""
 
     if agent.credential_source == Agent.CANOPY_WEB:
-        return _canopy_vault(agent, settings, vault_health(agent))
+        return _canopy_vault(agent, settings, vh or vault_health(agent, facts), facts)
     return _op_vault(agent, settings)
 
 
@@ -182,12 +183,12 @@ def _canopy_login(agent: Agent, settings: str) -> dict | None:
         href=f"{settings}#canopy-login", action="See its login" if has else "Give it its canopy login")
 
 
-def _canopy_vault(agent: Agent, settings: str, vh: dict) -> dict:
+def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
 
     title = "Give it a vault"
     if agent.zk_enabled:
 
-        if not zk_seal.has_recipients(agent):
+        if not zk_seal.has_recipients(agent, facts):
             # Every value is sealed to the vault's readers (its approved runners'
             # device keys, its admins' vault keys). With none, nothing can be stored —
             # connecting Google ends in `zk-no-recipients` — so this comes first.
@@ -262,20 +263,21 @@ def _op_vault(agent: Agent, settings: str) -> dict:
                  where="terminal", command=command)
 
 
-def runner_takers(agent: Agent):
+def runner_takers(agent: Agent, facts=None):
     """(takers, inherited): the live-or-not boxes that would take this agent's
     turns — its own default order, else the workspace order it follows, narrowed by
     the claim's own predicates (tenant, `runner_may_hold_agent`) — and the
     inherited order, for why a listed box was dropped. Shared by the checklist and
-    by registration, which asks these boxes to set a new agent up."""
+    by registration, which asks these boxes to set a new agent up. `facts`
+    (`device_keys.serving_facts`) answers from one read of the fleet."""
 
     own = [a.runner for a in RunnerAssignment.objects.filter(agent=agent, source="", enabled=True)
            .select_related("runner", "runner__owner")]
-    inherited = inherited_orders([agent.id]).get(agent.id)
+    inherited = facts.inherited(agent) if facts else inherited_orders([agent.id]).get(agent.id)
     listed = own or (inherited.runners if inherited else [])
-    tenants = runner_tenant_slugs_of(listed)
+    facts = facts or ServingFacts(listed, [agent])
     takers = [r for r in listed if r.status != Runner.RETIRED
-              and agent.workspace_id in tenants[r.pk] and runner_may_hold_agent(r, agent)]
+              and agent.workspace_id in facts.tenant_slugs(r) and facts.may_hold(r, agent)]
     return takers, inherited
 
 
@@ -296,9 +298,9 @@ def request_setup(agent: Agent) -> list[str]:
     return asked
 
 
-def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False) -> dict:
+def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False, facts=None) -> dict:
 
-    takers, inherited = runner_takers(agent)
+    takers, inherited = runner_takers(agent, facts)
     # A cloud box serves an agent only once its bootstrap has cloned it, and every
     # bootstrap reports per agent — so no report from that box means it has not yet.
     reported = set(AgentBootstrapReport.objects.filter(agent=agent).values_list("runner_name", flat=True))
@@ -387,15 +389,18 @@ def _first_turn(agent: Agent, base: str) -> dict:
                  action="See its turns" if done else "Ask it something")
 
 
-def setup_steps(agent: Agent, *, viewer_is_admin: bool = False) -> list[dict]:
+def setup_steps(agent: Agent, *, viewer_is_admin: bool = False, vault_state: dict | None = None,
+                facts=None) -> list[dict]:
     """The ordered checklist. Links are paths inside the agent's workspace.
     `viewer_is_admin` (`agent.is_admin(viewer)`, which the caller has usually asked
-    already) adds the choices only an admin can act on (pairing a runner)."""
+    already) adds the choices only an admin can act on (pairing a runner).
+    `vault_state` is its `vault_health` when the caller has read it, and `facts`
+    (`device_keys.serving_facts`) the fleet read once for many agents."""
     base = f"/w/{agent.workspace_id}/agents/{agent.slug}"
     settings = f"{base}/settings"
     repo = delegations.agent_repo(agent)
     mailbox = _mailbox(agent, settings)
-    vault = [_vault(agent, settings), *[s for s in [_canopy_login(agent, settings)] if s]]
+    vault = [_vault(agent, settings, vault_state, facts), *[s for s in [_canopy_login(agent, settings)] if s]]
     # A zero-knowledge agent on the canopy-web vault seals what Google hands back to
     # whoever can open its vault, so the vault comes first; otherwise the mint fails
     # with `zk-no-recipients`.
@@ -411,7 +416,7 @@ def setup_steps(agent: Agent, *, viewer_is_admin: bool = False) -> list[dict]:
               action="Open on GitHub" if agent.repo_url else "Set its repository"),
         _github(agent, settings),
         *([*vault, mailbox] if zk_first else [mailbox, *vault]),
-        _runner(agent, settings, viewer_is_admin),
+        _runner(agent, settings, viewer_is_admin, facts),
         _job(agent),
         _first_turn(agent, base),
     ]

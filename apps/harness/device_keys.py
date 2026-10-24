@@ -28,7 +28,7 @@ from django.utils import timezone
 
 from apps.events import audit
 
-from .models import Runner, RunnerDeviceKey, Turn
+from .models import Runner, RunnerDeviceKey
 
 ALG = "ES256"
 IAT_WINDOW_SECONDS = 120
@@ -144,7 +144,7 @@ def verify_proof(request, *, now: float | None = None) -> str:
     return jkt
 
 
-def runner_serves_agent(runner, agent) -> bool:
+def runner_serves_agent(runner, agent, facts=None) -> bool:
     """May this box read `agent`'s secrets? Four ways, and only four:
 
     - it RUNS the agent — `routing.runner_routes_agent`, the claim's own static
@@ -161,10 +161,11 @@ def runner_serves_agent(runner, agent) -> bool:
     last two, as its owner: they administer the agent, or hold its license.
 
     A cloud box the owner also owns is not a reason on its own: it reads only what
-    it runs (canopy-web#1563)."""
-    from django.db.models import Q
+    it runs (canopy-web#1563).
 
-    from .routing import runner_routes_agent
+    `facts` (`routing.ServingFacts`) answers from one read of many runners and
+    agents; without it, the facts of this one pair are read."""
+    from .routing import ServingFacts, runner_routes_agent
 
     if runner.status == Runner.RETIRED:
         return False
@@ -173,12 +174,12 @@ def runner_serves_agent(runner, agent) -> bool:
         # no claimed turn: its key serves exactly what its owner may use there —
         # an agent they administer, or one they hold an active license for.
         return runner.owner is not None and (
-            agent.is_admin(runner.owner) or private_runner_licensed(runner, agent))
-    if runner_routes_agent(runner, agent):
+            (facts.is_admin(runner.owner, agent) if facts else agent.is_admin(runner.owner))
+            or private_runner_licensed(runner, agent))
+    facts = facts or ServingFacts([runner], [agent])
+    if runner_routes_agent(runner, agent, facts):
         return True
-    if (Turn.objects.filter(claimed_by=runner,
-                            status__in=(Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN))
-            .filter(Q(agent=agent) | Q(chat_session__agent=agent)).exists()):
+    if facts.holds_live_turn(runner, agent):
         return True
     if (runner.kind != Runner.CLOUD and bool(agent.owner_id)
             and runner.owner_id == agent.owner_id):
@@ -224,11 +225,22 @@ def active_key_for_agent(agent, jkt: str):
     return key
 
 
-def keys_for_agent(agent):
-    """Every device key on a runner that serves this agent (for its Settings)."""
-    runners = [r for r in Runner.objects.exclude(status=Runner.RETIRED)
-               .filter(device_keys__isnull=False).distinct()
-               if runner_serves_agent(r, agent)]
+def serving_facts(agents):
+    """`routing.ServingFacts` over every runner not retired, for asking
+    `keys_for_agent` (or the setup checklist) of many agents with one read of
+    the fleet."""
+    from .routing import ServingFacts
+
+    runners = (Runner.objects.exclude(status=Runner.RETIRED)
+               .select_related("owner").prefetch_related("declared_flags", "enrollments"))
+    return ServingFacts(runners, agents)
+
+
+def keys_for_agent(agent, facts=None):
+    """Every device key on a runner that serves this agent (for its Settings).
+    Pass `facts` from `serving_facts` when asking for many agents."""
+    facts = facts or serving_facts([agent])
+    runners = [r for r in facts.runners if runner_serves_agent(r, agent, facts)]
     return (RunnerDeviceKey.objects.filter(runner__in=runners)
             .select_related("runner", "approved_by").order_by("-created_at"))
 

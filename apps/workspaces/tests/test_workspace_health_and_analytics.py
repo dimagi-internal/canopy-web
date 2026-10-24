@@ -106,6 +106,42 @@ def test_owner_sees_every_agent_in_the_tree_with_its_checklist(tree):
     assert body["totals"]["agents"] == 2 and body["totals"]["vault_moving"] == 1
 
 
+def test_health_reads_the_fleet_once_however_many_runners_hold_device_keys(tree):
+    """Each agent's vault asks every runner with a device key whether it serves the
+    agent. That is asked of one read of the fleet (`device_keys.serving_facts`), so
+    more runners cost no more queries — the page took ~25 s on labs with 12 agents
+    and 7 runners when each pair read its own facts."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+    from django.utils import timezone
+
+    from apps.harness.models import Runner, RunnerDeviceKey, WorkspaceRunnerOrder
+
+    Agent.objects.filter(pk__in=[tree["hal"].pk, tree["eva"].pk]).update(
+        zk_enabled=True, credential_source=Agent.CANOPY_WEB)
+
+    def add_runner(n):
+        r = Runner.objects.create(name=f"box-{n}", kind=Runner.CLOUD, host=f"box-{n}", owner=tree["ceo"],
+                                  workspace_id="dimagi", status=Runner.ONLINE,
+                                  last_heartbeat_at=timezone.now(), capabilities={})
+        WorkspaceRunnerOrder.objects.create(workspace_id="dimagi", runner=r, rank=n)
+        RunnerDeviceKey.objects.create(runner=r, jkt=f"jkt-{n}", status=RunnerDeviceKey.ACTIVE,
+                                       ecdh_jkt=f"ecdh-{n}", ecdh_approved_at=timezone.now())
+
+    def queries():
+        c = Client()
+        c.force_login(tree["ceo"])
+        with CaptureQueriesContext(connection) as ctx:
+            assert c.get("/api/workspaces/dimagi/health").status_code == 200
+        return len(ctx.captured_queries)
+
+    add_runner(0)
+    one = queries()
+    for n in range(1, 6):
+        add_runner(n)
+    assert queries() <= one + 5  # the topology half still reads a little per runner
+
+
 def test_health_is_the_admin_tier(tree):
     assert _get(tree["staff"], "/api/workspaces/dimagi/health").status_code in (403, 404)
 

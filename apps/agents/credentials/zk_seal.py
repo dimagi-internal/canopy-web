@@ -94,15 +94,17 @@ def recipients_for(agent) -> list[tuple[str, str, dict]]:
     return out
 
 
-def has_recipients(agent) -> bool:
+def has_recipients(agent, facts=None) -> bool:
     """Would `recipients_for(agent)` name anyone? Asked per agent by the setup checklist
     (and so by the workspace health page, for every agent in a tree), so it never loads
     every vault keyset in the system: one exists() for the devices, then one for the
     keysets of the members of the agent's vault (`vault_members.agent_member_ids`)."""
 
-    if zk.eligible_device_keys_qs(agent).exists():
+    if zk.eligible_device_keys_qs(agent, facts).exists():
         return True
-    return UserVaultKeyset.objects.filter(user_id__in=vault_members.agent_member_ids(agent)).exists()
+    ids = (facts.once(("vault-members", agent.pk), lambda: vault_members.agent_member_ids(agent)) if facts
+           else vault_members.agent_member_ids(agent))
+    return UserVaultKeyset.objects.filter(user_id__in=ids).exists()
 
 
 def sealed_targets(value: str) -> set[tuple[str, str]]:
