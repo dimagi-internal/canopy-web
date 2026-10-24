@@ -1,125 +1,83 @@
-import { useCallback, useEffect, useState, type JSX } from 'react'
-import { Link, useOutletContext } from 'react-router-dom'
-
-import { listProjects, type ProjectOut } from '@/api/agents'
-import { relativeAge } from '@/lib/relativeAge'
-import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
-import { NewProject, StatusChip } from '@/pages/agents/projectParts'
+// THE AGENT'S PROJECTS — its landing tab: the workspace's Projects table,
+// narrowed to the projects this agent leads or works on. Two reads joined by
+// id: the agent's own list (every project it leads, wherever it lives) and the
+// workspace's list (the projects it is a member agent of). "Add project"
+// creates through the agent, so the project carries its `P<n>` alias.
+import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
+import { useOutletContext, useParams } from 'react-router-dom'
 import { WorkbenchSkeleton, WorkbenchSubHeader } from 'canopy-ui'
 
-// THE AGENT'S PROJECTS — its landing page. A project is a piece of work with an
-// end: an outcome, an owner, a Drive folder, and the tasks that get it there.
-// One row per project, live ones first; finished ones fold into a group below
-// because they are history you ask for, not what this page opens on.
+import { listProjects as listAgentProjects } from '@/api/agents'
+import { listProjects, type Project } from '@/api/work'
+import {
+  ProjectFilters,
+  ProjectTable,
+  filterProjects,
+  type ProjectSort,
+  type ProjectStatusFilter,
+} from '@/components/work/ProjectTable'
+import type { AgentOutletContext } from '@/pages/AgentWorkspacePage'
+import { NewProject } from '@/pages/agents/projectParts'
+
 export function AgentProjectsSection(): JSX.Element {
   const { agent, canEdit } = useOutletContext<AgentOutletContext>()
-
+  const { workspace = '' } = useParams()
+  const [status, setStatus] = useState<ProjectStatusFilter>('open')
+  const [q, setQ] = useState('')
+  const [sort, setSort] = useState<ProjectSort>('updated')
   // Stamped with the slug it belongs to, so switching agents never shows the
   // previous agent's rows while the next list loads.
-  const [data, setData] = useState<{ slug: string; projects: ProjectOut[]; error: string | null } | null>(null)
+  const [data, setData] = useState<{ slug: string; projects: Project[]; error: string | null } | null>(null)
 
   const reload = useCallback(() => {
     let cancelled = false
     const slug = agent.slug
-    listProjects(slug)
-      .then((projects) => {
-        if (!cancelled) setData({ slug, projects, error: null })
+    Promise.all([
+      listAgentProjects(slug) as Promise<Project[]>,
+      listProjects('', workspace).catch(() => [] as Project[]),
+    ])
+      .then(([own, all]) => {
+        if (cancelled) return
+        const byId = new Map(own.map((p) => [p.id, p]))
+        for (const p of all) {
+          if (p.agent_slug === slug || (p.member_agents ?? []).includes(slug)) byId.set(p.id, p)
+        }
+        setData({ slug, projects: [...byId.values()], error: null })
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
-          setData({ slug, projects: [], error: err instanceof Error ? err.message : 'Could not load projects' })
-        }
+        if (!cancelled) setData({ slug, projects: [], error: err instanceof Error ? err.message : 'Could not load projects' })
       })
     return () => {
       cancelled = true
     }
-  }, [agent.slug])
+  }, [agent.slug, workspace])
 
   useEffect(() => reload(), [reload])
 
   const fresh = data?.slug === agent.slug ? data : null
-  const projects = fresh?.projects ?? []
-  // Proposed projects wait on a person's decision, so they get their own
-  // section above the work in flight rather than mixing into it.
-  const proposed = projects.filter((p) => p.status === 'proposed')
-  const active = projects.filter((p) => p.status === 'active')
-  const finished = projects.filter((p) => p.status !== 'active' && p.status !== 'proposed')
+  const rows = useMemo(() => filterProjects(fresh?.projects ?? [], { status, q, sort }), [fresh, status, q, sort])
 
   return (
-    <div className="max-w-4xl px-6 py-8">
-      <WorkbenchSubHeader title="Projects" count={fresh ? active.length : undefined} />
-
-      <div className="mb-6">
+    <div className="px-6 py-8">
+      <WorkbenchSubHeader title="Projects" count={fresh ? rows.length : undefined} />
+      <div className="mb-4">
         <NewProject slug={agent.slug} canEdit={canEdit} onCreated={() => void reload()} />
       </div>
-
+      <ProjectFilters status={status} onStatus={setStatus} q={q} onQ={setQ} sort={sort} onSort={setSort} />
       {!fresh ? (
         <WorkbenchSkeleton />
       ) : fresh.error ? (
         <p className="text-[13px] text-destructive">{fresh.error}</p>
-      ) : projects.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">
-          No projects yet. A project is a piece of work with an end — add one above.
-        </p>
       ) : (
-        <>
-          {proposed.length > 0 && (
-            <section className="mb-6" data-testid="projects-proposed">
-              <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Proposed ({proposed.length})
-              </h3>
-              <div className="space-y-2">
-                {proposed.map((p) => (
-                  <ProjectRow key={p.ext_id} project={p} />
-                ))}
-              </div>
-            </section>
-          )}
-          <div className="space-y-2">
-            {active.map((p) => (
-              <ProjectRow key={p.ext_id} project={p} />
-            ))}
-          </div>
-          {finished.length > 0 && (
-            <details className="mt-6" data-testid="projects-finished">
-              <summary className="cursor-pointer text-[12px] text-muted-foreground hover:text-foreground">
-                Done and archived ({finished.length})
-              </summary>
-              <div className="mt-2 space-y-2">
-                {finished.map((p) => (
-                  <ProjectRow key={p.ext_id} project={p} />
-                ))}
-              </div>
-            </details>
-          )}
-        </>
+        <ProjectTable
+          projects={rows}
+          empty={
+            fresh.projects.length === 0
+              ? `${agent.name || agent.slug} has no projects yet. A project is a piece of work with an end — add one above.`
+              : 'No project matches.'
+          }
+        />
       )}
     </div>
-  )
-}
-
-function ProjectRow({ project: p }: { project: ProjectOut }): JSX.Element {
-  // "N open · M waiting", as in the spec's example row. Waiting is shown even at
-  // zero so rows line up and "0 waiting" reads as the good news it is.
-  const meta = [
-    p.owner_email || p.owner_note,
-    `${p.open_task_count} open · ${p.waiting_task_count} waiting`,
-    relativeAge(p.updated_at, new Date(), { seconds: false }),
-  ].filter(Boolean)
-
-  return (
-    <Link
-      to={p.ext_id}
-      data-testid={`project-row-${p.ext_id}`}
-      className="block rounded-lg border border-border p-3 hover:bg-muted"
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] text-muted-foreground">{p.ext_id}</span>
-        <span className="text-sm font-medium text-foreground">{p.name}</span>
-        <StatusChip status={p.status} />
-        <span className="ml-auto text-[11px] text-muted-foreground">{meta.join(' · ')}</span>
-      </div>
-      {p.outcome && <p className="mt-1 line-clamp-1 text-[13px] text-foreground-secondary">{p.outcome}</p>}
-    </Link>
   )
 }

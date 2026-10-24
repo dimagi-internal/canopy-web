@@ -1,23 +1,24 @@
 // @vitest-environment jsdom
 //
-// Projects is a destination again: one row per project, active first, the
-// finished ones folded away, and "Add project" refuses a project with no outcome
-// — a project without "what done looks like" is a task.
+// An agent's Projects tab is the workspace's Projects table narrowed to the
+// projects it leads or works on; "Add project" still creates through the agent.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-const { listProjects, createProject, ctx } = vi.hoisted(() => ({
-  listProjects: vi.fn<(slug: string, status?: string) => Promise<unknown[]>>(async () => []),
+const { agentProjects, workProjects, createProject, ctx } = vi.hoisted(() => ({
+  agentProjects: vi.fn(async () => [] as unknown[]),
+  workProjects: vi.fn(async () => [] as unknown[]),
   createProject: vi.fn(async () => ({})),
   ctx: { canEdit: true, waiting: 0, refreshWaiting: () => {} },
 }))
 
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
-  listProjects,
+  listProjects: agentProjects,
   createProject,
 }))
+vi.mock('@/api/work', async (orig) => ({ ...(await orig<typeof import('@/api/work')>()), listProjects: workProjects }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useOutletContext: () => ({ agent: { slug: 'eva', name: 'Eva' }, ...ctx }),
@@ -27,11 +28,10 @@ const { AgentProjectsSection } = await import('./AgentProjectsSection')
 
 function project(over: Record<string, unknown> = {}) {
   return {
-    id: 1, agent_slug: 'eva', ext_id: 'P1', name: 'Connect Enterprise',
-    outcome: 'A clear "what" explanation of Connect Enterprise',
-    status: 'active', owner_note: '', owner_email: 'jonathan@dimagi.com',
-    drive_folder_id: '', drive_folder_url: '', repo_slug: '', notes: '', links: [],
-    task_count: 4, open_task_count: 3, waiting_task_count: 1,
+    id: 1, agent_slug: 'eva', member_agents: ['eva'], workspace: 'connect', handle: 'enterprise', ext_id: 'P1',
+    address: 'connect/enterprise', url: '/w/connect/projects/enterprise', name: 'Connect Enterprise',
+    outcome: 'A clear explanation', status: 'active', owner_email: 'jonathan@dimagi.com', health: 'on_track',
+    update_missing: false, task_count: 4, done_task_count: 1, open_task_count: 3, waiting_task_count: 1,
     created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-05T00:00:00Z', ...over,
   }
 }
@@ -49,65 +49,43 @@ function show() {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-  listProjects.mockResolvedValue([])
+  agentProjects.mockResolvedValue([])
+  workProjects.mockResolvedValue([])
   ctx.canEdit = true
 })
 
 describe('AgentProjectsSection', () => {
-  it('lists active projects as rows and folds done/archived into a collapsed group', async () => {
-    listProjects.mockResolvedValue([
+  it('lists the projects it leads and the ones it works on, open first', async () => {
+    agentProjects.mockResolvedValue([project(), project({ id: 2, name: 'Old launch', status: 'done' })])
+    workProjects.mockResolvedValue([
       project(),
-      project({ id: 2, ext_id: 'P2', name: 'Old launch', status: 'done' }),
-      project({ id: 3, ext_id: 'P3', name: 'Shelved idea', status: 'archived' }),
+      project({ id: 3, agent_slug: 'hal', member_agents: ['hal', 'eva'], name: 'Hal leads, Eva helps', url: '/w/connect/projects/hal-eva' }),
+      project({ id: 4, agent_slug: 'hal', member_agents: ['hal'], name: 'Not Eva' }),
     ])
     show()
-    const row = await screen.findByTestId('project-row-P1')
-    expect(row.getAttribute('href')).toBe('/w/connect/agents/eva/projects/P1')
-    expect(row.textContent).toContain('Connect Enterprise')
-    expect(row.textContent).toContain('jonathan@dimagi.com')
-    expect(row.textContent).toContain('3 open · 1 waiting')
-    expect(row.textContent).toContain('A clear "what" explanation')
+    const link = await screen.findByRole('link', { name: 'Connect Enterprise' })
+    expect(link.getAttribute('href')).toBe('/w/connect/projects/enterprise')
+    expect(screen.getAllByRole('link', { name: 'Connect Enterprise' })).toHaveLength(1)
+    expect(screen.getByText('Hal leads, Eva helps')).toBeTruthy()
+    expect(screen.queryByText('Not Eva')).toBeNull()
+    expect(screen.queryByText('Old launch')).toBeNull()
+    expect(workProjects).toHaveBeenCalledWith('', 'connect')
 
-    const group = screen.getByTestId('projects-finished') as HTMLDetailsElement
-    expect(group.open).toBe(false)
-    expect(group.textContent).toContain('Done and archived (2)')
-    expect(group.contains(screen.getByTestId('project-row-P2'))).toBe(true)
-    expect(group.contains(screen.getByTestId('project-row-P3'))).toBe(true)
-    expect(group.contains(row)).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    expect(screen.getByText('Old launch')).toBeTruthy()
   })
 
-  it('shows the empty state when the agent has no projects', async () => {
+  it('says when the agent has no projects', async () => {
     show()
-    expect(await screen.findByText(/No projects yet\. A project is a piece of work with an end/)).toBeTruthy()
+    expect(await screen.findByText(/Eva has no projects yet/)).toBeTruthy()
   })
 
-  it('Add project needs both a name and an outcome, then creates and reloads', async () => {
+  it('adds a project through the agent, so it carries its P-number', async () => {
     show()
-    await waitFor(() => expect(listProjects).toHaveBeenCalledTimes(1))
-    const add = screen.getByRole('button', { name: 'Add project' }) as HTMLButtonElement
-    expect(add.disabled).toBe(true)
-
-    fireEvent.change(screen.getByLabelText('New project name'), { target: { value: 'UNGA 2026' } })
-    expect(add.disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('New project outcome'), {
-      target: { value: 'Every meeting booked and briefed' },
-    })
-    expect(add.disabled).toBe(false)
-
-    fireEvent.click(add)
-    await waitFor(() => expect(createProject).toHaveBeenCalledWith('eva', {
-      name: 'UNGA 2026', outcome: 'Every meeting booked and briefed',
-    }))
-    await waitFor(() => expect(listProjects).toHaveBeenCalledTimes(2))
-  })
-
-  it('a viewer cannot add a project', async () => {
-    ctx.canEdit = false
-    show()
-    await waitFor(() => expect(listProjects).toHaveBeenCalledTimes(1))
-    fireEvent.change(screen.getByLabelText('New project name'), { target: { value: 'X' } })
-    fireEvent.change(screen.getByLabelText('New project outcome'), { target: { value: 'Y' } })
-    const add = screen.getByRole('button', { name: 'Add project' }) as HTMLButtonElement
-    expect(add.disabled).toBe(true)
+    await screen.findByText(/Eva has no projects yet/)
+    fireEvent.change(screen.getByLabelText('New project name'), { target: { value: 'Launch' } })
+    fireEvent.change(screen.getByLabelText('New project outcome'), { target: { value: 'It is live' } })
+    fireEvent.submit(screen.getByLabelText('New project name').closest('form')!)
+    await waitFor(() => expect(createProject).toHaveBeenCalledWith('eva', { name: 'Launch', outcome: 'It is live' }))
   })
 })

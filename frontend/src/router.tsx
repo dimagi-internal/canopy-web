@@ -53,6 +53,7 @@ import { TaskPage } from './pages/work/TaskPage'
 import { TasksPage } from './pages/work/TasksPage'
 import { TriagePage } from './pages/work/TriagePage'
 import { ProjectPage } from './pages/work/ProjectPage'
+import { ProjectRefRedirect } from './pages/work/ProjectRefRedirect'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
@@ -217,11 +218,13 @@ function WorkspaceIndex() {
   return <Navigate to={scopedPath(workspace, '/agents')} replace />
 }
 
-// /w/:workspace/projects/:agent/:ref[/people/:person] → the project's one page.
+// /w/:workspace/projects/:agent/:ref → the project's one page at its address;
+// with /people/:person, that contributor's page on the agent's board.
 export function ProjectPageRedirect() {
   const { workspace = '', agent = '', ref = '', person } = useParams()
+  if (!person) return <ProjectRefRedirect slug={agent} projectRef={ref} />
   const page = scopedPath(workspace, `/agents/${agent}/projects/${encodeURIComponent(ref)}`)
-  return <Navigate to={person ? `${page}/people/${person}` : page} replace />
+  return <Navigate to={`${page}/people/${person}`} replace />
 }
 
 /**

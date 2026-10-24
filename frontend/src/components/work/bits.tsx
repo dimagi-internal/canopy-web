@@ -120,7 +120,8 @@ export function LabelChips({ labels, max = 3 }: { labels: readonly { name: strin
 
 // ---- pickers ------------------------------------------------------------------
 
-function Picker({
+/** The one dropdown every picker is: a trigger, a menu, read-only when `disabled`. */
+export function Picker({
   trigger,
   label,
   children,
@@ -148,7 +149,7 @@ function Picker({
   )
 }
 
-function Tick({ on }: { on: boolean }): JSX.Element {
+export function Tick({ on }: { on: boolean }): JSX.Element {
   return <Check aria-hidden="true" className={cn('ml-auto size-3.5', on ? 'opacity-100' : 'opacity-0')} />
 }
 
