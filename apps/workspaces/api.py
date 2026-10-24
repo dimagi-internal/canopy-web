@@ -31,7 +31,7 @@ from apps.retention.schemas import (
 )
 from apps.workspaces import permissions as perms
 
-from . import access_requests, invites, login_gate, notifications, services, system_accounts, vault
+from . import access_requests, invites, login_gate, notifications, services, system_accounts
 from .models import (
     SystemAccount,
     SystemSender,
@@ -56,8 +56,6 @@ from .schemas import (
     RunnerOrderIn,
     RunnerOrderRowOut,
     RunnerTopologyOut,
-    SharedVaultIn,
-    SharedVaultOut,
     SystemAccountCreateIn,
     SystemAccountOut,
     SystemAccountUpdateIn,
@@ -792,38 +790,6 @@ def accept_invite(request: HttpRequest, token: str) -> WorkspaceOut:
         status = _INVITE_ERROR_STATUS[exc.code]
         raise HttpError(status, exc.code)
     return _out(ws, role)
-
-
-@router.get("/{slug}/shared-vault", response=SharedVaultOut,
-            summary="This tenant's shared 1Password vault (masked — never the key)")
-@gate("own")
-def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
-    """Owner-only, matching the rest of workspace administration.
-
-    Reading it is masked, so the restriction is not about the value — it is that
-    which vault a tenant reads is administrative, and an editor acts *within* a
-    tenant rather than over its credential configuration.
-    """
-    m = _require(request.user, slug, perms.OWN)
-    return vault.shared_vault_status(m.workspace)
-
-
-@router.put("/{slug}/shared-vault", response=SharedVaultOut,
-            summary="Set the shared vault + its service-account token (write-only)")
-@gate("own", setting=True)
-def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) -> SharedVaultOut:
-    """The key here must be scoped to the SHARED vault and nothing else.
-
-    A key that also reads the per-agent vaults would undo the reason those are
-    split (Agent.op_vault, 2026-09-06): what this one unlocks is shared by
-    definition, so its breadth costs nothing, and that is only true while it
-    stays narrow. Nothing here can enforce that — 1Password grants it — so it is
-    stated where whoever sets it will read it.
-    """
-    m = _require(request.user, slug, perms.OWN)
-    return vault.set_shared_vault(
-        m.workspace, vault=payload.vault, service_key=payload.service_key,
-    )
 
 
 @router.get("/{slug}/runner-topology", response=RunnerTopologyOut,

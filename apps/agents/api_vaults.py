@@ -25,7 +25,9 @@ from apps.passkeys import stepup
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces import vault as shared_vault
 from apps.workspaces.models import Workspace
+from apps.workspaces.schemas import SharedVaultIn, SharedVaultOut
 
 from .credentials import vault_keeper, vault_members, workspace_vaults
 from .credentials.zk import ZkError
@@ -98,6 +100,49 @@ def _problem(exc) -> ProblemError:
 
 
 # ---- the workspace's vaults ----------------------------------------------------------------
+
+def _owner_of(request: HttpRequest, slug: str) -> Workspace:
+    """A workspace the caller OWNS: 404 for a non-member (no probing roles), 403 below owner."""
+    ws = _member_of(request, slug)
+    if not perms.can(request.user, ws, perms.OWN):
+        raise HttpError(403, f"this requires the {perms.MINIMUM_ROLE[perms.OWN]} role or above")
+    return ws
+
+
+# The shared 1Password vault (`Workspace.op_vault`, `workspaces/vault.py`) sits with
+# the workspace vaults because setting its key needs a passkey step-up, and the
+# workspaces app is below passkeys (ARCHITECTURE.md § Layers inside the framework).
+@router.get("/workspaces/{slug}/shared-vault", response=SharedVaultOut,
+            summary="This tenant's shared 1Password vault (masked — never the key)")
+@gate("own")
+def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
+    """Owner-only, matching the rest of workspace administration.
+
+    Reading it is masked, so the restriction is not about the value — it is that
+    which vault a tenant reads is administrative, and an editor acts *within* a
+    tenant rather than over its credential configuration.
+    """
+    return shared_vault.shared_vault_status(_owner_of(request, slug))
+
+
+@router.put("/workspaces/{slug}/shared-vault", response=SharedVaultOut,
+            summary="Set the shared vault + its service-account token (write-only)")
+@gate("own", setting=True)
+def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) -> SharedVaultOut:
+    """The key here must be scoped to the SHARED vault and nothing else.
+
+    A key that also reads the per-agent vaults would undo the reason those are
+    split (Agent.op_vault, 2026-09-06): what this one unlocks is shared by
+    definition, so its breadth costs nothing, and that is only true while it
+    stays narrow. Nothing here can enforce that — 1Password grants it — so it is
+    stated where whoever sets it will read it. From a browser it needs a fresh
+    passkey step-up (403 `step_up_required` otherwise); a token write does not.
+    """
+    ws = _owner_of(request, slug)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
+    return shared_vault.set_shared_vault(ws, vault=payload.vault, service_key=payload.service_key)
+
 
 @router.get("/workspaces/{slug}/vaults", response=list[WorkspaceVaultOut],
             summary="This workspace's vaults, with their members and what they serve")

@@ -7137,40 +7137,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/shared-vault": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * This tenant's shared 1Password vault (masked — never the key)
-         * @description Owner-only, matching the rest of workspace administration.
-         *
-         *     Reading it is masked, so the restriction is not about the value — it is that
-         *     which vault a tenant reads is administrative, and an editor acts *within* a
-         *     tenant rather than over its credential configuration.
-         */
-        readonly get: operations["get_shared_vault"];
-        /**
-         * Set the shared vault + its service-account token (write-only)
-         * @description The key here must be scoped to the SHARED vault and nothing else.
-         *
-         *     A key that also reads the per-agent vaults would undo the reason those are
-         *     split (Agent.op_vault, 2026-09-06): what this one unlocks is shared by
-         *     definition, so its breadth costs nothing, and that is only true while it
-         *     stays narrow. Nothing here can enforce that — 1Password grants it — so it is
-         *     stated where whoever sets it will read it.
-         */
-        readonly put: operations["set_shared_vault"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/workspaces/{slug}/runner-topology": {
         readonly parameters: {
             readonly query?: never;
@@ -8265,6 +8231,41 @@ export interface paths {
          *     retires with it.
          */
         readonly post: operations["retire_private_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/shared-vault": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This tenant's shared 1Password vault (masked — never the key)
+         * @description Owner-only, matching the rest of workspace administration.
+         *
+         *     Reading it is masked, so the restriction is not about the value — it is that
+         *     which vault a tenant reads is administrative, and an editor acts *within* a
+         *     tenant rather than over its credential configuration.
+         */
+        readonly get: operations["get_shared_vault"];
+        /**
+         * Set the shared vault + its service-account token (write-only)
+         * @description The key here must be scoped to the SHARED vault and nothing else.
+         *
+         *     A key that also reads the per-agent vaults would undo the reason those are
+         *     split (Agent.op_vault, 2026-09-06): what this one unlocks is shared by
+         *     definition, so its breadth costs nothing, and that is only true while it
+         *     stays narrow. Nothing here can enforce that — 1Password grants it — so it is
+         *     stated where whoever sets it will read it. From a browser it needs a fresh
+         *     passkey step-up (403 `step_up_required` otherwise); a token write does not.
+         */
+        readonly put: operations["set_shared_vault"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -26663,41 +26664,6 @@ export interface components {
             /** Role */
             readonly role?: string | null;
         };
-        /**
-         * SharedVaultOut
-         * @description Masked. `key_set` is a boolean on purpose — this route never returns the
-         *     key, and the only reader of the value is a runner that could actually run an
-         *     agent in this workspace (GET /api/agents/{slug}/credentials/resolve).
-         */
-        readonly SharedVaultOut: {
-            /**
-             * Vault
-             * @default
-             */
-            readonly vault: string;
-            /**
-             * Key Set
-             * @default false
-             */
-            readonly key_set: boolean;
-            /**
-             * Inherited From
-             * @default
-             */
-            readonly inherited_from: string;
-        };
-        /**
-         * SharedVaultIn
-         * @description Non-clobbering on the KEY, exactly like AgentVaultIn: a blank or omitted
-         *     service_key leaves the stored one alone, so renaming the vault does not
-         *     silently wipe the credential that reads it.
-         */
-        readonly SharedVaultIn: {
-            /** Vault */
-            readonly vault?: string | null;
-            /** Service Key */
-            readonly service_key?: string | null;
-        };
         /** RunnerAgentOut */
         readonly RunnerAgentOut: {
             /** Slug */
@@ -29096,6 +29062,41 @@ export interface components {
              * @default false
              */
             readonly retired: boolean;
+        };
+        /**
+         * SharedVaultOut
+         * @description Masked. `key_set` is a boolean on purpose — this route never returns the
+         *     key, and the only reader of the value is a runner that could actually run an
+         *     agent in this workspace (GET /api/agents/{slug}/credentials/resolve).
+         */
+        readonly SharedVaultOut: {
+            /**
+             * Vault
+             * @default
+             */
+            readonly vault: string;
+            /**
+             * Key Set
+             * @default false
+             */
+            readonly key_set: boolean;
+            /**
+             * Inherited From
+             * @default
+             */
+            readonly inherited_from: string;
+        };
+        /**
+         * SharedVaultIn
+         * @description Non-clobbering on the KEY, exactly like AgentVaultIn: a blank or omitted
+         *     service_key leaves the stored one alone, so renaming the vault does not
+         *     silently wipe the credential that reads it.
+         */
+        readonly SharedVaultIn: {
+            /** Vault */
+            readonly vault?: string | null;
+            /** Service Key */
+            readonly service_key?: string | null;
         };
         /** VaultAttachmentOut */
         readonly VaultAttachmentOut: {
@@ -45820,54 +45821,6 @@ export interface operations {
             };
         };
     };
-    readonly get_shared_vault: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SharedVaultOut"];
-                };
-            };
-        };
-    };
-    readonly set_shared_vault: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SharedVaultIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SharedVaultOut"];
-                };
-            };
-        };
-    };
     readonly runner_topology: {
         readonly parameters: {
             readonly query?: never;
@@ -47097,6 +47050,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+        };
+    };
+    readonly get_shared_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SharedVaultOut"];
+                };
+            };
+        };
+    };
+    readonly set_shared_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SharedVaultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SharedVaultOut"];
                 };
             };
         };
