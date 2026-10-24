@@ -148,6 +148,14 @@ failure again.
   kind. Tokens minted before the `cpat_`/`cdt_`/`ccon_` prefixes are 43 bare characters and
   still resolve by trying each kind. The prefixes are what `.gitleaks.toml` (`canopy-token`)
   and the transcript scrubber (`apps/session_sharing/redact.py`) recognise.
+- **What each kind may do is one table**, `apps/tokens/kinds.py`: every credential type a
+  door records (`request.auth_credential["type"]`; none = `session`), what it reaches, whether
+  it may mint another credential (a session or a PAT only), whether it is a turn speaking for
+  its asker (a caller token: refused where only the person may act), and whether it may carry
+  `X-Canopy-On-Behalf-Of` (a PAT). Ask the table (`kinds.speaks_for_a_turn(request)`,
+  `kinds.kind_of(cred).may_mint`); `tests/test_token_kinds.py` fails a comparison against a
+  kind's name written out anywhere else. A type the table does not know is never the person
+  and never mints.
 - `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token

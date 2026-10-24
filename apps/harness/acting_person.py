@@ -23,6 +23,7 @@ Anything it cannot place is not a person (`refusal` names why).
 from __future__ import annotations
 
 from apps.agents.models import Agent
+from apps.tokens import kinds
 
 from . import turn_asker
 from .models import TurnAgentToken
@@ -45,13 +46,13 @@ def refusal(request) -> str | None:
     if user is None or not getattr(user, "is_authenticated", False):
         return "anonymous"
     cred = getattr(request, "auth_credential", None) or {}
-    if cred.get("type") == "caller_token" or cred.get("turn_id"):
+    if kinds.speaks_for_a_turn(request) or cred.get("turn_id"):
         return "turn"
     if turn_asker.of(user) is not None:
         return "on_behalf"
     if Agent.objects.filter(user_id=user.pk).exists():
         return "agent_login"
-    if cred.get("type") == "pat" and cred.get("id"):
+    if cred.get("type") == kinds.PAT and cred.get("id"):
         if TurnAgentToken.objects.filter(token_id=cred["id"]).exists():
             return "turn_login"
     return None

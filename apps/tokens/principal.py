@@ -30,8 +30,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-RUNNER_KEY, HCP_OAUTH, PAT, CONTACT, DELEGATED = (
-    "runner-key", "hcp-oauth", "pat", "contact", "delegated")
+from .kinds import CONTACT, DELEGATED, HCP_OAUTH, OAUTH, PAT, RUNNER_KEY
+
 ALL_KINDS = frozenset({RUNNER_KEY, HCP_OAUTH, PAT, CONTACT, DELEGATED})
 
 
@@ -97,7 +97,7 @@ def resolve_bearer(raw: str, *, accept=ALL_KINDS, client: str | None = None) -> 
             if client is not None:
                 note_used(pat, client)
             return Principal(PAT, pat, user=pat.user, auth_method=PAT,
-                             credential=credential("oauth" if pat.oauth_grant_id else "pat",
+                             credential=credential(OAUTH if pat.oauth_grant_id else PAT,
                                                    pat.pk, pat.label))
     if CONTACT in accept:
         ctok = ContactToken.lookup(raw)

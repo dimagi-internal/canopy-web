@@ -19,6 +19,7 @@ import datetime as dt
 from django.db import transaction
 from django.utils import timezone
 
+from apps.tokens import kinds
 from . import hcp, people
 from .models import MemoryViewer, Person, PersonAccess
 
@@ -56,7 +57,7 @@ def revoke(person: Person, agent, *, user) -> bool:
 def viewing_agent(request):
     """The agent whose own login made this request — never a caller token or
     an HCP OAuth client — else None."""
-    if (getattr(request, "auth_method", "") == "caller_token"
+    if (kinds.speaks_for_a_turn(request)
             or getattr(request, "hcp_access", None) is not None):
         return None
     return people.agent_of_login(request.user)
