@@ -262,6 +262,10 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     canopy-web worth attacking for every agent's secrets at once; this bounds a
     compromise to the one agent whose key was taken (Jonathan, 2026-09-06)."""
     agent = agent_for_admin(request, slug)
+    # A service-account key is a secret: a browser needs a fresh passkey step-up,
+    # as `set_agent_credentials` does; a token write has no browser to ask.
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     return services.set_agent_vault(
         agent, vault=payload.vault, service_key=payload.service_key,
     )

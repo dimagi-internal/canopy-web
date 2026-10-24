@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 
 from apps.common.encryption import encrypt_secret
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -33,6 +34,7 @@ def tenant(client):
     ws = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
     WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
     client.force_login(owner)
+    grant_step_up(client)
     return {"client": client, "ws": ws, "owner": owner}
 
 
@@ -71,6 +73,19 @@ def test_renaming_the_vault_does_not_wipe_the_key(tenant):
     res = tenant["client"].put(URL, data={"vault": "Acme-Shared-2"},
                                content_type="application/json")
     assert res.json() == {"vault": "Acme-Shared-2", "key_set": True, "inherited_from": ""}
+
+
+def test_a_browser_needs_a_passkey_step_up_to_set_it(tenant):
+    """The service-account key is a secret: a browser session sets it only after a
+    passkey step-up, as the agent vault's credential writes do."""
+    c = Client()
+    c.force_login(tenant["owner"])
+    res = c.put(URL, data={"vault": "Acme-Shared", "service_key": "shared_tok"},
+                content_type="application/json")
+    assert res.status_code == 403
+    assert res.json()["error"] == "step_up_required"
+    tenant["ws"].refresh_from_db()
+    assert tenant["ws"].shared_op_vault == ""
 
 
 def test_an_editor_may_not_set_it(tenant):
