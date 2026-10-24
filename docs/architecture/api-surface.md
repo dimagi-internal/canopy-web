@@ -443,7 +443,7 @@ Framework tier, generic over its producer (`source` + `kind` strings). Where an 
 - `GET /api/events/?source=&kind=&level=&since_minutes=&limit=` — Admin+ (`logs.read`). `source`/`kind` are prefix matches; newest-touched first.
 - `GET /api/events/setting-changes?operation=&target=&actor=&since_minutes=&limit=` — The settings audit trail (`SettingChange`, `docs/architecture/settings-audit.md`), newest first: changes in workspaces where you are admin+, plus your own. `operation` is a prefix, `target` a substring, `actor` an exact email; `limit` ≤ 500 (default 100).
 - `GET /api/events/mcp-calls?tool=&failed=&since_minutes=&limit=` — The MCP audit log (`MCPAuditLog`), newest first: every call in workspaces where you are admin+, plus your own calls anywhere. `tool` is a prefix; `failed` keeps errors.
-- No mutation route. Retention: `manage.py prune_events --older-than-days 30` (anchored on `last_seen_at`).
+- No mutation route. Retention: 30 days untouched (anchored on `last_seen_at`), pruned daily by the `events.prune` tick; `manage.py prune_events` by hand.
 
 ### Capabilities (`apps/capabilities`) — machines an agent leases
 Framework tier. Bodies, lease states, long-poll, exec, slot data and every refusal: [`capabilities.md`](capabilities.md) §1, §3, §4, §6. "Own login" = the agent's own login; lease routes take editor+ of the agent's workspace or its own login.

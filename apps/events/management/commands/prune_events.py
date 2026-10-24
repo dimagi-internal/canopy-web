@@ -1,9 +1,9 @@
 """Drop old event rows.
 
-A management command rather than a scheduler on purpose — the same reasoning
-that kept scheduled turns runner-fired: no celery, no beat, no new deploy
-surface. Coalescing already keeps the row count near-flat, so this is
-housekeeping, not a load-bearing part of the design.
+The off-request clock does this daily (`events.prune`, `apps/retention/apps.py`);
+this command runs it by hand, or with a different window. Coalescing already
+keeps the row count near-flat, so this is housekeeping, not a load-bearing part
+of the design.
 """
 from __future__ import annotations
 
