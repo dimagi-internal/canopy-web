@@ -17,6 +17,7 @@ from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from apps.agents.sensitive_data import SENSITIVE_CANOPY_TOOLS
+from apps.tokens import kinds
 
 
 def _turn_claims() -> dict | None:
@@ -25,7 +26,7 @@ def _turn_claims() -> dict | None:
     except Exception:  # noqa: BLE001 - no request context
         return None
     claims = (tok.claims or {}) if tok is not None else {}
-    return claims if claims.get("auth_method") == "caller_token" else None
+    return claims if claims.get("auth_method") == kinds.CALLER_TOKEN else None
 
 
 def caller_turn_ids() -> list[str] | None:

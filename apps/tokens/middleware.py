@@ -34,6 +34,8 @@ from collections.abc import Callable
 
 from django.http import HttpRequest, HttpResponse
 
+from apps.tokens import kinds
+
 logger = logging.getLogger(__name__)
 
 
@@ -312,8 +314,8 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
             "and this is not one"))
     turn_id = str(grant.turn.pk)
     request.user = grant.user
-    request.auth_method = "caller_token"
-    request.auth_credential = {"type": "caller_token", "id": grant.token_id,
+    request.auth_method = kinds.CALLER_TOKEN
+    request.auth_credential = {"type": kinds.CALLER_TOKEN, "id": grant.token_id,
                                "label": f"turn:{turn_id}", "turn_id": turn_id}
     request._dont_enforce_csrf_checks = True
     _apply_acting_cap(request)
@@ -326,15 +328,15 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
     return None
 
 
-#: The only credential that may mint another credential (a PAT, a session),
-#: besides a browser session, which records none. Everything else is
-#: deliberately narrower than a PAT — an OAuth access token lives an hour and
+#: The credentials that may mint another credential (a PAT, a session) — `may_mint`
+#: in `apps/tokens/kinds.py` — besides a browser session, which records none.
+#: Everything else is deliberately narrower than a PAT — an OAuth access token lives an hour and
 #: dies with its grant ("Disconnect"), a delegated token is a site's, bounded to
 #: `site ∩ user`, a caller token lives as long as its conversation's asker — so
 #: trading one for a never-expiring PAT or a week-long cookie would launder away
 #: exactly the limit that made it safe to hand out. An allowlist, so a kind
 #: added later is refused until someone decides otherwise.
-MINTING_CREDENTIALS = frozenset({"pat"})
+MINTING_CREDENTIALS = kinds.names(may_mint=True) - {kinds.SESSION}
 
 
 def minting_refusal(request: HttpRequest) -> str | None:

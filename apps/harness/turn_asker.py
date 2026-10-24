@@ -39,6 +39,7 @@ from django.db.models import Q
 from apps.agents.models import Agent
 from apps.events import services as events
 from apps.workspaces import role_cap
+from apps.tokens import kinds
 
 from . import initiator as who
 from .caller_context import acting_cap, is_verified
@@ -98,7 +99,8 @@ def resolve(user, credential: dict | None, email: str) -> OnBehalf:
     if not email:
         raise Refused("X-Canopy-On-Behalf-Of names no one")
     cred = credential or {}
-    if cred.get("type") != "pat" or not cred.get("id"):
+    kind = kinds.kind_of(cred)
+    if kind is None or not kind.may_act_on_behalf or not cred.get("id"):
         raise Refused("acting on someone's behalf needs the login canopy-web issued for their "
                       "turn; this request used another credential")
     if role_cap.cap_of(user):

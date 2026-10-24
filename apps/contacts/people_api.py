@@ -27,6 +27,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
 from apps.workspaces import services as wsvc
+from apps.tokens import kinds
 
 from . import hcp, people
 from . import services as contact_services
@@ -196,7 +197,7 @@ def _the_person_themself(request: HttpRequest) -> Person:
     token), or a system account."""
     user = request.user
     if (people.agent_of_login(user) is not None
-            or getattr(request, "auth_method", "") == "caller_token"
+            or kinds.speaks_for_a_turn(request)
             or not people.is_human_account(user)):
         raise ProblemError(403, "Only the person may change this", type_=TYPE_FORBIDDEN)
     person = contact_services.person_for(user=user)

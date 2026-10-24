@@ -23,6 +23,7 @@ from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.harness import acting_person, sensitivity
 from apps.mcp_apps_host import mcp_apps_views as views
+from apps.tokens import kinds
 
 router = Router(auth=session_auth, tags=["chat"])
 
@@ -51,7 +52,7 @@ def browser_only(request: HttpRequest) -> None:
     # A chat surface (`sensitivity.request_is_chat_surface`): a browser or a site's
     # widget token — never a session cookie minted from a token
     # (`/api/debug/mint-session/`), which reads as a browser to everything else.
-    if (getattr(request, "via_mcp", False) or getattr(request, "auth_method", "") == "pat"
+    if (getattr(request, "via_mcp", False) or getattr(request, "auth_method", "") == kinds.PAT
             or not sensitivity.request_is_chat_surface(request)):
         raise HttpError(403, "app view routes are for a person's browser, not a token")
 

@@ -31,6 +31,8 @@ from collections.abc import Mapping
 from canopy_sdk import resources as resource_links
 from django.db.models import Q
 
+from apps.tokens import kinds
+
 from . import runner_requirements as rr
 
 SENSITIVE_DATA = rr.SENSITIVE_DATA
@@ -561,7 +563,7 @@ def scope_is_chat_surface(scope) -> bool:
         return False
     if scope.get("via_widget") or scope.get("contact") is not None:
         return True
-    return scope.get("auth_method") == "session"
+    return scope.get("auth_method") == kinds.SESSION
 
 
 def reads_content(session, *, chat_surface: bool, user=None, contact=None) -> bool:

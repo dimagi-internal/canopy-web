@@ -48,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.tokens import kinds
 
 from . import hcp, people
 from . import services as contact_services
@@ -148,7 +149,7 @@ def _principal(request: HttpRequest, turn_id: str | None, need: str = hcp.ANY) -
     if not getattr(user, "is_authenticated", False):
         raise hcp.HcpError("invalid-token", "a bearer token is required")
     caller_turn = None
-    if getattr(request, "auth_method", "") == "caller_token":
+    if kinds.speaks_for_a_turn(request):
         cred = getattr(request, "auth_credential", None) or {}
         caller_turn = str(cred.get("turn_id") or "")
     agent = people.agent_of_login(user)
@@ -200,7 +201,7 @@ def _person_principal(request: HttpRequest) -> Principal:
     whatever turn it names."""
     if (getattr(request, "hcp_access", None) is not None
             or people.agent_of_login(request.user) is not None
-            or getattr(request, "auth_method", "") == "caller_token"):
+            or kinds.speaks_for_a_turn(request)):
         raise hcp.denied("only the person may do this")
     return _principal(request, None)
 
