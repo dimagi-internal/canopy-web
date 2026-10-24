@@ -212,6 +212,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         ),
         "status": session.status,
         "opening": transcript_read.opening_of(session),
+        "origin_resource": session.origin_resource,
         "created_at": session.created_at,
         # When it last DID something (binding > newest message > created).
         "last_activity_at": transcript_read.last_activity_at(session, binding),

@@ -151,6 +151,13 @@ class Session(models.Model):
     #: rows a page displays, because the contract is that a page sends its
     #: SELECTION and the agent re-reads the rows itself under the user's ACL.
     page_state = models.JSONField(default=dict, blank=True)
+    #: The page the conversation was STARTED on: the `resource` of the first page
+    #: state it declared (`page_state.set_page_state`), set once and never changed.
+    #: `page_state` follows the person's screen and a sensitive conversation's is
+    #: forgotten when its turn ends; this is provenance, so a host can ask "was this
+    #: conversation begun on my page?" (the widget's `session` report). Only the
+    #: resource URI, without query or fragment — never what the page showed.
+    origin_resource = models.CharField(max_length=500, blank=True, default="")
     #: Push on EVERY finished turn, immediately — instead of the default, which
     #: waits until the session has been quiet for the recipient's
     #: `NotificationPreference.session_idle_minutes`. Off by default: a buzz per

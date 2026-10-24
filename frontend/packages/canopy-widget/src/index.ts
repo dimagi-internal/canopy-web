@@ -45,14 +45,17 @@ import {
   MAX_ASK_CHARS,
   SOURCE,
   isFrameMessage,
+  isSessionId,
   originOf,
+  panelSessionOf,
   readCookie,
   type ActionSpec,
   type HostMessage,
+  type PanelSession,
 } from './protocol'
 
 export type { DisplayMode } from './chrome'
-export type { ActionSpec } from './protocol'
+export type { ActionSpec, PanelSession } from './protocol'
 export type { ThemeMode, WidgetTheme } from './theme'
 
 /** `window.localStorage`, or null where reaching for it throws. */
@@ -170,6 +173,12 @@ export interface CanopyWidgetOptions {
    *  embedding guide for the CSS-variable and `::part()` alternatives that need
    *  no JS. Invalid values are dropped with a console warning. */
   theme?: WidgetTheme
+  /** Called whenever the conversation open in the panel changes — started,
+   *  opened, or the panel back on its start screen (`null`). It carries the
+   *  conversation's id, the page it was started on, and whether it is private:
+   *  enough to keep a pointer to it and reopen it with `openSession`, and never
+   *  anything it said. */
+  onSession?: (session: PanelSession | null) => void
 }
 
 export type ContextProvider = () => unknown | Promise<unknown>
@@ -224,6 +233,15 @@ export interface CanopyWidget {
    *  loaded, the question waits and is sent once it has. Text is trimmed and
    *  capped at MAX_ASK_CHARS; an empty question does nothing. */
   ask(text: string): void
+  /** Open the panel on an existing conversation, by its canopy id — a pointer the
+   *  page kept from `onSession`. The panel reads it as the visitor: canopy's
+   *  session ACL decides, so a conversation they cannot read shows canopy's own
+   *  answer (for a private one, a way to ask its people to add them) and the page
+   *  learns nothing more. Before the panel has loaded, it waits. An id that is not
+   *  a canopy session id is ignored. */
+  openSession(id: string): void
+  /** The conversation open in the panel, as last reported (`onSession`), or null. */
+  currentSession(): PanelSession | null
   /** Remove the widget and stop listening. Idempotent. */
   destroy(): void
 }
@@ -261,6 +279,10 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
   let frameReady = false
   // A question asked before the frame could hear it; sent right after init.
   let pendingAsk: string | null = null
+  // Likewise a conversation the page asked to open.
+  let pendingOpen: string | null = null
+  // The conversation the frame last said is open.
+  let session: PanelSession | null = null
   const actions = new Map<string, { fn: HostAction; spec: ActionSpec }>()
   let destroyed = false
 
@@ -387,6 +409,10 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
           // a separate fact and rides its own frame.
           if (lastState) post({ source: SOURCE, type: 'state', state: lastState })
           // Last: the conversation it starts should already see the page.
+          if (pendingOpen) {
+            post({ source: SOURCE, type: 'open-session', id: pendingOpen })
+            pendingOpen = null
+          }
           if (pendingAsk) {
             post({ source: SOURCE, type: 'ask', text: pendingAsk })
             pendingAsk = null
@@ -473,6 +499,16 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
         chrome.setSnapped(message.snapped === true, true)
         return
       }
+      case 'session': {
+        // Re-checked here: the host hands this to its own code, which should be
+        // able to rely on the shape (a UUID, a short string, a bool) and on there
+        // being nothing else in it.
+        const next = panelSessionOf(message.session)
+        if (next === undefined) return
+        session = next
+        options.onSession?.(next)
+        return
+      }
     }
   }
 
@@ -502,6 +538,13 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
       if (frameReady) post({ source: SOURCE, type: 'ask', text: question })
       else pendingAsk = question
     },
+    openSession(id: string) {
+      if (destroyed || !isSessionId(id)) return
+      chrome.open()
+      if (frameReady) post({ source: SOURCE, type: 'open-session', id })
+      else pendingOpen = id
+    },
+    currentSession: () => session,
     setTheme(next: WidgetTheme) {
       theme = normalizeTheme(next)
       chrome.setTheme(theme)

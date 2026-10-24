@@ -431,6 +431,8 @@ class ContactSessionOut(Schema):
     #: The host's own descriptive keys, as it set them (e.g. ace-web's
     #: `origin_key`, `opp_slug`) — never canopy's (`host_metadata`).
     metadata: dict = {}
+    #: See `SessionOut.origin_resource`.
+    origin_resource: str = ""
 
 
 class ContactSessionCreateIn(Schema):
@@ -513,6 +515,7 @@ def _session_out(s) -> ContactSessionOut:
         status=s.status,
         created_at=s.created_at.isoformat(),
         metadata={k: v for k, v in (s.metadata or {}).items() if is_host_key(k)},
+        origin_resource=s.origin_resource,
     )
 
 
