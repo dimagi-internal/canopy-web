@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.models import Agent, AgentProject
+from apps.agents.models import Agent, AgentProject, ProjectService
 from apps.mcp.projects import readable_project
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -18,9 +18,11 @@ pytestmark = pytest.mark.django_db
 
 
 def _served(agent, workspace, handle, **kw):
-    return AgentProject.objects.create(agent=agent, ext_id=f"P{AgentProject.objects.count() + 1}", name=handle.title(),
-                                        workspace=workspace, handle=handle,
-                                       mcp_kind="kb", kb_key=f"workspace-projects/{workspace.slug}/{handle}/kb", **kw)
+    p = AgentProject.objects.create(agent=agent, ext_id=f"P{AgentProject.objects.count() + 1}", name=handle.title(),
+                                    workspace=workspace, handle=handle, **kw)
+    ProjectService.objects.create(project=p, kind="kb", name="kb",
+                                  kb_key=f"workspace-projects/{workspace.slug}/{handle}/kb")
+    return p
 
 
 @pytest.fixture()
@@ -37,8 +39,8 @@ def world():
     _served(eva, dimagi, "policies-kb")
     _served(ace, connect, "old-kb", status=AgentProject.ARCHIVED)
     _served(wile, other, "acme-kb")
-    AgentProject.objects.create(agent=ace, ext_id="P99", name="Not yet", 
-                                workspace=connect, handle="draft-kb", mcp_kind="kb")  # nothing published
+    draft = AgentProject.objects.create(agent=ace, ext_id="P99", name="Not yet", workspace=connect, handle="draft-kb")
+    ProjectService.objects.create(project=draft, kind="kb", name="kb")  # nothing published
     return {"owner": owner, "dimagi": dimagi, "connect": connect, "gw": gw}
 
 

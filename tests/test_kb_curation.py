@@ -70,11 +70,11 @@ def test_a_whole_file_publish_ends_a_delta_left_from_before(world, s3, tmp_path)
     kb_fixtures.full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
     project = AgentProject.objects.get(handle="givewell-kb")
     stuck = KbVersion.objects.create(project=project, number=2, kind=KbVersion.DELTA, status=KbVersion.BUILDING,
-                                     base=project.kb_version)
+                                     base=project.knowledge_base.kb_version)
     kb_fixtures.full(world, s3, tmp_path, _bundle(tmp_path, "v3", V2), base=1)
     stuck.refresh_from_db()
     assert stuck.status == KbVersion.FAILED and "superseded" in stuck.error
-    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 3
+    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_version.number == 3
 
 
 def test_a_version_counts_the_content_changes_its_builder_reports(world, s3, tmp_path):

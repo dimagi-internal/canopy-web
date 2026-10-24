@@ -11,7 +11,7 @@ import datetime as dt
 import re
 
 from django.db import IntegrityError, transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Q, prefetch_related_objects
 from django.utils import timezone
 
 from .models import (
@@ -19,6 +19,7 @@ from .models import (
     AgentTask,
     Label,
     ProjectMilestone,
+    ProjectService,
     ProjectUpdate,
     SavedView,
     TaskEvent,
@@ -170,6 +171,7 @@ def annotate_projects(projects: list[AgentProject]) -> list[AgentProject]:
 
     if not projects:
         return projects
+    prefetch_related_objects(projects, "served")
     ids = [p.pk for p in projects]
     counts = {r["project_id"]: r for r in AgentTask.objects.filter(project_id__in=ids).values("project_id")
               .annotate(n=Count("id"), live=Count("id", filter=Q(status__in=LIVE_STATUSES)),
@@ -589,3 +591,53 @@ def save_view(view: SavedView, data: dict) -> SavedView:
         view.rank = float(data["rank"])
     view.save()
     return view
+
+
+# ---- what a project serves ----------------------------------------------------
+
+#: A shared thing's name: what `claude mcp add` and a plugin list call it.
+SERVICE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,78}[a-z0-9]$|^[a-z0-9]$")
+
+
+def services_of(project: AgentProject, *, origin: str = "") -> list[dict]:
+    """Everything the project serves, as `ProjectServiceOut` rows. `origin` (the
+    site's base URL) completes a knowledge base's own MCP URL."""
+    out = []
+    for svc in project.served.all().order_by("kind", "name"):
+        url, add = svc.url, ""
+        if svc.kind == ProjectService.KB:
+            url = f"{origin}{project.mcp_path}".rstrip("/") if project.mcp_path else ""
+            add = f"claude mcp add --transport http {project.handle} {url}" if url else ""
+        elif svc.kind == ProjectService.MCP:
+            add = f"claude mcp add --transport http {svc.name} {svc.url}"
+        elif svc.kind == ProjectService.PLUGIN:
+            add = f"/plugin marketplace add {svc.url}"
+        out.append({"id": svc.pk, "kind": svc.kind, "name": svc.name if svc.kind != ProjectService.KB else project.handle,
+                    "description": svc.description, "url": url, "add_command": add, "updated_at": svc.updated_at})
+    return out
+
+
+def save_service(project: AgentProject, data: dict, service=None, *, by_user=None):
+    """Declare (or change) a shared MCP server, skill or plugin on the project."""
+    svc = service or ProjectService(project=project, kind=data["kind"],
+                                    created_by_user=by_user if getattr(by_user, "is_authenticated", False) else None)
+    if svc.kind == ProjectService.KB:
+        raise ValueError("a knowledge base is published through its …/kb/ routes")
+    if data.get("name") is not None:
+        name = data["name"].strip().lower()
+        if not SERVICE_NAME_RE.match(name):
+            raise ValueError("a name is 1-80 characters of a-z, 0-9, '.', '_' and '-'")
+        svc.name = name
+    if data.get("url") is not None:
+        url = data["url"].strip()
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("url must be an http(s) address")
+        svc.url = url
+    if data.get("description") is not None:
+        svc.description = data["description"].strip()
+    try:
+        with transaction.atomic():
+            svc.save()
+    except IntegrityError:
+        raise ValueError(f"{project.name} already serves a {svc.kind} named {svc.name!r}") from None
+    return svc

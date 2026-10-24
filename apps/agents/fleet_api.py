@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime as dt
 
 from django.db import transaction
-from django.db.models import Case, Count, IntegerField, Q, When
+from django.db.models import Case, Count, IntegerField, Q, When, prefetch_related_objects
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -38,7 +38,7 @@ from .gates import (
     visible_agent_workspaces,
 )
 from .health import _counts
-from .models import Agent, AgentProject, AgentTask
+from .models import Agent, AgentProject, AgentTask, ProjectService
 from .schemas import (
     AgentOut,
     AgentProjectDetailOut,
@@ -305,31 +305,43 @@ def list_workspace_projects(request: HttpRequest, status: str = "") -> list[Agen
 
 
 @router.get("/mcp-servers/", response=list[McpServerOut],
-            summary="The MCP servers you can add: workspace projects serving their own tools")
+            summary="The MCP servers you can add: what the workspace's projects serve and share")
 @gate("member")
 def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     """A directory to browse, not a subscription: nothing here is added to anyone's
-    sessions. Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
+    sessions. Two kinds of row: a project's own knowledge-base server (`kind: kb`,
+    served by canopy), and a remote MCP server a project shares with the workspace
+    (`kind: mcp`, its URL as the project declared it — canopy neither proxies nor
+    vets it). Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
     covers that workspace and the ones below it you belong to. Every row is one you
     can call: the readers a project's server admits (its workspace's members and
-    its steward's) are exactly the ones a list spanning those workspaces reaches."""
+    its lead agent's) are exactly the ones a list spanning those workspaces reaches."""
 
     listed = listed_agent_workspaces(request)
     projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
-                if p.mcp_path and p.status != AgentProject.ARCHIVED and kb_drive.may_read(request.user, p)]
+                if p.status != AgentProject.ARCHIVED]
+    prefetch_related_objects(projects, "served")
     names = dict(Workspace.objects.filter(slug__in={p.workspace_id for p in projects})
                  .values_list("slug", "display_name"))
     base = issuer(request)
     out = []
     for p in projects:
-        url = f"{base}{p.mcp_path}".rstrip("/")
-        out.append(McpServerOut(
-            name=p.handle, address=p.address, workspace=p.workspace_id,
-            workspace_name=names.get(p.workspace_id, p.workspace_id), title=p.name,
-            description=p.outcome, kind=p.mcp_kind, steward_slug=p.agent_slug or "", url=url,
-            add_command=f"claude mcp add --transport http {p.handle} {url}",
-            project_url=p.url,
-            published_at=p.kb_published_at, bytes=p.kb_bytes))
+        common = {"address": p.address, "workspace": p.workspace_id,
+                  "workspace_name": names.get(p.workspace_id, p.workspace_id),
+                  "steward_slug": p.agent_slug or "", "project_url": p.url}
+        if p.mcp_path and kb_drive.may_read(request.user, p):
+            url = f"{base}{p.mcp_path}".rstrip("/")
+            out.append(McpServerOut(
+                name=p.handle, title=p.name, description=p.outcome, kind=p.mcp_kind, url=url,
+                add_command=f"claude mcp add --transport http {p.handle} {url}",
+                published_at=p.kb_published_at, bytes=p.knowledge_base.kb_bytes, **common))
+        for svc in p.served.all():
+            if svc.kind != ProjectService.MCP:
+                continue
+            out.append(McpServerOut(
+                name=svc.name, title=f"{svc.name} · {p.name}", description=svc.description, kind=svc.kind,
+                url=svc.url, add_command=f"claude mcp add --transport http {svc.name} {svc.url}",
+                published_at=svc.updated_at, bytes=None, **common))
     return out
 
 

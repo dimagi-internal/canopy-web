@@ -77,7 +77,8 @@ def publish_full(project, key: str, sha256: str, *, base: int | None, curation: 
         check_ids(kb_store.item_ids(project, key))
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
-        head = project.kb_version
+        kb = kb_store.knowledge_base(project, lock=True)
+        head = kb.kb_version if kb else None
         if (head.number if head else None) != base:
             raise KbConflict(f"the knowledge base is at version {head.number if head else 'none'}, not {base}: "
                              "another publish or a rollback landed since this refresh started; refresh again")
@@ -85,14 +86,15 @@ def publish_full(project, key: str, sha256: str, *, base: int | None, curation: 
         KbVersion.objects.filter(project=project, status__in=_LIVE).update(
             status=KbVersion.FAILED, error="superseded by a whole-file publish", finished_at=timezone.now())
         project = kb_store.publish(project, key, sha256)
+        kb = project.knowledge_base
         version = KbVersion.objects.create(
             project=project, number=_next_number(project), kind=KbVersion.FULL, status=KbVersion.READY,
-            base=head, curation_sha=curation, kb_key=project.kb_key, kb_sha256=project.kb_sha256,
-            kb_bytes=project.kb_bytes, uploaded_bytes=project.kb_bytes or 0, published_by=published_by,
+            base=head, curation_sha=curation, kb_key=kb.kb_key, kb_sha256=kb.kb_sha256,
+            kb_bytes=kb.kb_bytes, uploaded_bytes=kb.kb_bytes or 0, published_by=published_by,
             started_at=timezone.now(), finished_at=timezone.now(), **_counts(changes))
-        project.kb_version = version
-        project.save(update_fields=["kb_version"])
-        if project.kb_drive_replica:
+        kb.kb_version = version
+        kb.save(update_fields=["kb_version"])
+        if kb.kb_drive_replica:
             transaction.on_commit(lambda: _replicate_later(project.pk, version.pk))
     prune(project)
     return project, version
@@ -103,13 +105,14 @@ def rollback(project, number: int, *, published_by: str = "") -> KbVersion:
     version of the log."""
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
+        kb = kb_store.knowledge_base(project, lock=True)
         target = KbVersion.objects.filter(project=project, number=number).first()
         if target is None:
             raise kb_store.KbPublishError(f"no version {number}")
         if target.status != KbVersion.READY or not target.kb_key:
             raise kb_store.KbPublishError(f"version {number} cannot be served again "
                                           f"({'its file was pruned' if target.status == KbVersion.READY else target.status})")
-        head = project.kb_version
+        head = kb.kb_version if kb else None
         if head is not None and head.kb_key == target.kb_key:
             raise kb_store.KbPublishError(f"version {number} is what the project serves already")
         version = KbVersion.objects.create(
@@ -127,8 +130,9 @@ def prune(project) -> list[str]:
     ready = list(KbVersion.objects.filter(project=project, status=KbVersion.READY).exclude(kb_key="")
                  .order_by("-number"))
     keep = {v.kb_key for v in ready[:KEEP_FILES]}
-    if project.kb_key:
-        keep.add(project.kb_key)
+    kb = kb_store.knowledge_base(project)
+    if kb is not None and kb.kb_key:
+        keep.add(kb.kb_key)
     gone = sorted({v.kb_key for v in ready[KEEP_FILES:]} - keep)
     for key in gone:
         kb_store.delete_object(key)

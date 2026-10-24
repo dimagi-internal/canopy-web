@@ -94,13 +94,15 @@ def _conflict(fn):
 
 
 def _version_out(project, v: KbVersion) -> KbVersionOut:
+    kb = project.knowledge_base
+    head_id, head_key = (kb.kb_version_id, kb.kb_key) if kb else (None, "")
     return KbVersionOut(
         number=v.number, kind=v.kind, status=v.status, base=v.base.number if v.base_id else None,
         rollback_of=v.rollback_of.number if v.rollback_of_id else None, added=v.added, changed=v.changed,
         removed=v.removed, uploaded_bytes=v.uploaded_bytes, kb_bytes=v.kb_bytes, summary=v.summary or {},
         error=v.error, published_by=v.published_by, created_at=v.created_at, finished_at=v.finished_at,
-        replica=v.replica, curation_sha=v.curation_sha, current=project.kb_version_id == v.pk,
-        can_roll_back=v.status == KbVersion.READY and bool(v.kb_key) and project.kb_key != v.kb_key)
+        replica=v.replica, curation_sha=v.curation_sha, current=head_id == v.pk,
+        can_roll_back=v.status == KbVersion.READY and bool(v.kb_key) and head_key != v.kb_key)
 
 
 def _source(project, source_id: int) -> KbSource:
@@ -193,8 +195,9 @@ def kb_settings(request: HttpRequest, workspace: str, handle: str, payload: KbSe
     project's Drive folder (shared with canopy-web's service account). Off by default:
     readers query the MCP and need no copy."""
     project = _steward(request, workspace, handle)
-    project.kb_drive_replica = payload.drive_replica
-    project.save(update_fields=["kb_drive_replica", "updated_at"])
+    kb = kb_store.knowledge_base(project, create=True)
+    kb.kb_drive_replica = payload.drive_replica
+    kb.save(update_fields=["kb_drive_replica", "updated_at"])
     return AgentProjectOut.model_validate(project)
 
 
@@ -277,7 +280,7 @@ def kb_review(request: HttpRequest, workspace: str, handle: str) -> KbReviewOut:
         address=project.address, name=project.name,
         owner_email=project.owner_user.email if project.owner_user_id else None,
         steward_slug=project.agent_slug or "", may_decide=kb_drive.may_decide(request.user, project), sources=sources,
-        readers=sorted(project.kb_readers.values_list("email", flat=True)),
+        readers=sorted(kb.kb_readers.values_list("email", flat=True)) if (kb := project.knowledge_base) else [],
         drive_replica=project.kb_drive_replica, version=project.kb_version_number)
 
 
@@ -304,11 +307,12 @@ def kb_approve(request: HttpRequest, workspace: str, handle: str, payload: KbApp
                    "their workspace role")
 def kb_readers(request: HttpRequest, workspace: str, handle: str, payload: KbReadersIn) -> KbReviewOut:
     project = _owner(request, workspace, handle)
+    kb = kb_store.knowledge_base(project, create=True)
     for email in payload.add:
         user = User.objects.filter(email__iexact=email.strip()).first()
         if user is None:
             raise HttpError(422, f"no canopy account for {email}")
-        project.kb_readers.add(user)
+        kb.kb_readers.add(user)
     for email in payload.remove:
-        project.kb_readers.remove(*User.objects.filter(email__iexact=email.strip()))
+        kb.kb_readers.remove(*User.objects.filter(email__iexact=email.strip()))
     return kb_review(request, workspace, handle)

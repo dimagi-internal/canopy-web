@@ -17,6 +17,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
+from apps.agents import kb_store
 from apps.agents.models import AgentProject, KbDriveFile, KbVersion
 from apps.mcp import projects as project_mcp
 from apps.workspaces.models import WorkspaceMembership
@@ -86,7 +87,7 @@ def test_a_publish_made_from_an_older_version_loses(world, s3, tmp_path):
     _full(world, s3, tmp_path, _bundle(tmp_path, "v2", V2), base=1)
     r = _full(world, s3, tmp_path, _bundle(tmp_path, "v2b", ITEMS), base=1, expect=409)
     assert "at version 2, not 1" in r.json()["detail"]
-    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 2
+    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_version.number == 2
 
 
 def test_a_publish_names_a_stored_curation_state(world, s3, tmp_path):
@@ -96,10 +97,10 @@ def test_a_publish_names_a_stored_curation_state(world, s3, tmp_path):
 
 def test_a_whole_file_publish_serves_it_keeps_the_last_and_whats_new_reads_the_file(world, s3, tmp_path):
     _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
-    first = AgentProject.objects.get(handle="givewell-kb").kb_key
+    first = AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_key
     _full(world, s3, tmp_path, _bundle(tmp_path, "v2", V2), previous=tmp_path / "v1.sqlite")
     project = AgentProject.objects.get(handle="givewell-kb")
-    assert project.kb_version.number == 2 and project.kb_key != first and first in s3.objects
+    assert project.knowledge_base.kb_version.number == 2 and project.knowledge_base.kb_key != first and first in s3.objects
     out = _call(world["owner"], "whats_new", {})
     assert {(c["item_id"], c["change"]) for c in out["changes"]} >= {("n:1", "new"), ("p:1", "changed"),
                                                                      ("r:1", "removed")}
@@ -109,14 +110,14 @@ def test_a_whole_file_publish_serves_it_keeps_the_last_and_whats_new_reads_the_f
 
 def test_rollback_serves_an_earlier_file(world, s3, tmp_path):
     _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
-    first_key = AgentProject.objects.get(handle="givewell-kb").kb_key
+    first_key = AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_key
     _full(world, s3, tmp_path, _bundle(tmp_path, "v2", ITEMS, grants={
         "Grant": "ORS", "Recipient": "Dimagi Inc", "Amount": 5, "Date": "2026-01-01"}))
     assert _call(world["owner"], "grants", {"Recipient": "Dimagi"})["rows"][0]["Grant"] == "ORS"
     r = world["client"].post(f"{KB_URL}/versions/1/rollback", content_type=J)
     assert r.status_code == 200, r.content
     assert (r.json()["kind"], r.json()["number"], r.json()["current"]) == ("rollback", 3, True)
-    assert AgentProject.objects.get(handle="givewell-kb").kb_key == first_key
+    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_key == first_key
     assert _call(world["owner"], "grants", {"Recipient": "Dimagi"})["rows"][0]["Grant"] == "Water pilot"
 
 
@@ -204,7 +205,7 @@ def test_only_the_owner_approves_and_a_folder_reaches_what_it_holds(world, drive
     ec = Client()
     ec.force_login(editor)
     assert ec.get(f"{KB_URL}/review").status_code == 404  # a Drive KB: not every member sees its files
-    drive["project"].kb_readers.add(editor)
+    kb_store.knowledge_base(drive["project"], create=True).kb_readers.add(editor)
     assert ec.get(f"{KB_URL}/review").json()["may_decide"] is False
     assert _decide(ec, drive, {"file_id": ROOT, "decision": "approved"}).status_code == 403
 
@@ -251,10 +252,10 @@ def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_published(world, dr
             "sha256": "q", "meta": {"source": "drive"}}
     r = _full(world, s3, tmp_path, _bundle(tmp_path, "d2", [doc, held]), expect=422)
     assert "1 Drive documents are not approved" in r.json()["detail"] and "drive:f-pl" in r.json()["detail"]
-    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 1
+    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_version.number == 1
     _decide(c, drive, {"file_id": "f-pl", "release_hold": True})
     _full(world, s3, tmp_path, _bundle(tmp_path, "d3", [doc, held]))
-    assert AgentProject.objects.get(handle="givewell-kb").kb_version.number == 2
+    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_version.number == 2
 
 
 def test_a_drive_kb_publish_that_is_not_a_knowledge_base_is_refused(world, drive, s3, tmp_path):

@@ -2,7 +2,7 @@
 
 canopy's main MCP server (`server.py`) is canopy the product: hundreds of tools.
 Someone who only wants the GiveWell knowledge base should not install that. So a
-workspace project that serves something (`AgentProject.mcp_kind`) gets a server of
+project that serves a knowledge base (its `kb` `ProjectService`) gets a server of
 its own, at its own URL, carrying only its tools:
 
     claude mcp add --transport http givewell-kb https://<canopy>/api/mcp/projects/connect/givewell-kb

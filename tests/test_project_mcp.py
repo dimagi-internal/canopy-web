@@ -67,7 +67,8 @@ def _publish(world, s3, tmp_path, client=None, original=None):
     assert up.status_code == 200, up.content
     body = _kb_gz(tmp_path, original)
     s3.objects[up.json()["key"]] = body  # what the curator's PUT to the signed url does
-    head = AgentProject.objects.get(handle="givewell-kb").kb_version
+    kb = AgentProject.objects.get(handle="givewell-kb").knowledge_base
+    head = kb.kb_version if kb else None
     return client.post("/api/workspace-projects/connect/givewell-kb/kb/publish",
                        {"key": up.json()["key"], "sha256": hashlib.sha256(body).hexdigest(),
                         "base": head.number if head else None}, content_type=J)
@@ -85,15 +86,15 @@ def test_publishing_makes_the_project_serve_its_own_mcp(world, s3, tmp_path):
 
 def test_a_republish_serves_the_new_file_and_keeps_the_old_one_as_a_version(world, s3, tmp_path):
     _publish(world, s3, tmp_path)
-    first = AgentProject.objects.get(handle="givewell-kb").kb_key
+    first = AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_key
     (tmp_path / "bundle").rename(tmp_path / "old-bundle")
     (tmp_path / "kb.sqlite").unlink()
     _publish(world, s3, tmp_path)
 
     project = AgentProject.objects.get(handle="givewell-kb")
-    assert project.kb_key != first and first in s3.objects
+    assert project.knowledge_base.kb_key != first and first in s3.objects
     assert [(v.number, v.kind, v.kb_key) for v in project.kb_versions.order_by("number")] == [
-        (1, "full", first), (2, "full", project.kb_key)]
+        (1, "full", first), (2, "full", project.knowledge_base.kb_key)]
 
 
 def test_publish_refuses_a_key_that_is_not_this_projects_upload(world, s3):

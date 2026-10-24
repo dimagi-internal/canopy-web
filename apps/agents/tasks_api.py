@@ -20,6 +20,7 @@ from apps.api.route_gates import gate
 from apps.events import audit
 from apps.harness import turn_status
 from apps.harness.models import Turn
+from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -50,6 +51,9 @@ from .schemas import (
     MilestoneIn,
     MilestoneOut,
     MilestonePatch,
+    ProjectServiceIn,
+    ProjectServiceOut,
+    ProjectServicePatch,
     ProjectUpdateIn,
     ProjectUpdateOut,
     ProjectUpdatePublishIn,
@@ -532,3 +536,69 @@ def publish_project_update(request: HttpRequest, workspace: str, handle: str, up
     except ValueError as exc:
         raise HttpError(409, str(exc)) from exc
     return ProjectUpdateOut.model_validate(update)
+
+
+# ---- what a project serves to the workspace ----------------------------------
+
+
+@router.get("/workspace-projects/{workspace}/{handle}/services/", response=list[ProjectServiceOut],
+            summary="What a project serves to its workspace: its knowledge base, shared MCP servers, skills, plugins")
+@gate("member")
+def list_project_services(request: HttpRequest, workspace: str, handle: str) -> list[ProjectServiceOut]:
+    project = project_ws_or_404(request, workspace, handle)
+    return [ProjectServiceOut(**row) for row in work.services_of(project, origin=base_url())]
+
+
+@router.post("/workspace-projects/{workspace}/{handle}/services/", response={201: ProjectServiceOut},
+             summary="Share an MCP server, a skill or a plugin with the workspace, from this project")
+# an editor of its workspace or its lead agent's, its lead, or a working agent's own login
+@gate("agent.work", "agent-login", "self", kind="content")
+def add_project_service(request: HttpRequest, workspace: str, handle: str, payload: ProjectServiceIn) -> Status:
+    """Listed on the project page and, for an MCP server, in the workspace's
+    directory (`GET /api/mcp-servers/`). canopy does not proxy or vet a remote
+    server: its URL is what members add to their own Claude Code."""
+    project = project_ws_or_404(request, workspace, handle)
+    require_project_edit(request, project)
+    try:
+        svc = work.save_service(project, payload.model_dump(), by_user=request.user)
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, next(ProjectServiceOut(**r) for r in work.services_of(project, origin=base_url())
+                            if r["id"] == svc.pk))
+
+
+def _service_or_404(project, service_id: int):
+    svc = project.served.filter(pk=service_id).first()
+    if svc is None:
+        raise HttpError(404, f"{project.address} serves nothing with id {service_id}")
+    return svc
+
+
+@router.patch("/workspace-projects/{workspace}/{handle}/services/{service_id}", response=ProjectServiceOut,
+              summary="Change a shared MCP server, skill or plugin")
+# an editor of its workspace or its lead agent's, its lead, or a working agent's own login
+@gate("agent.work", "agent-login", "self", kind="content")
+def update_project_service(request: HttpRequest, workspace: str, handle: str, service_id: int,
+                           payload: ProjectServicePatch) -> ProjectServiceOut:
+    project = project_ws_or_404(request, workspace, handle)
+    require_project_edit(request, project)
+    try:
+        svc = work.save_service(project, payload.model_dump(exclude_unset=True), _service_or_404(project, service_id))
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return next(ProjectServiceOut(**r) for r in work.services_of(project, origin=base_url()) if r["id"] == svc.pk)
+
+
+@router.delete("/workspace-projects/{workspace}/{handle}/services/{service_id}", response={204: None},
+               summary="Stop sharing an MCP server, skill or plugin")
+# an editor of its workspace or its lead agent's, its lead, or a working agent's own login
+@gate("agent.work", "agent-login", "self", kind="content")
+def remove_project_service(request: HttpRequest, workspace: str, handle: str, service_id: int):
+    """A knowledge base is not removed here: it has its own version log."""
+    project = project_ws_or_404(request, workspace, handle)
+    require_project_edit(request, project)
+    svc = _service_or_404(project, service_id)
+    if svc.kind == "kb":
+        raise HttpError(422, "a knowledge base is not removed here")
+    svc.delete()
+    return Status(204, None)

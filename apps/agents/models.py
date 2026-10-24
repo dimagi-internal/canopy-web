@@ -1306,29 +1306,6 @@ class AgentProject(models.Model):
                                          related_name="filed_projects")
     created_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                         on_delete=models.SET_NULL, related_name="filed_projects")
-    #: What a workspace project SERVES as its own MCP server at `mcp_path`
-    #: (`apps/mcp/projects.py`): "" nothing, "kb" a knowledge base its steward
-    #: publishes (`kb_*` below; tools from the KB's own manifest, `canopy_kb.tools`).
-    MCP_NONE, MCP_KB = "", "kb"
-    MCP_KIND_CHOICES = [(MCP_NONE, "None"), (MCP_KB, "Knowledge base")]
-    mcp_kind = models.CharField(max_length=16, choices=MCP_KIND_CHOICES, blank=True, default="")
-    #: The published kb.sqlite.gz: its object key in the KB bucket, content hash
-    #: (what a serving instance caches by) and size. Set by `kb_store.publish`.
-    kb_key = models.CharField(max_length=300, blank=True, default="")
-    kb_sha256 = models.CharField(max_length=64, blank=True, default="")
-    kb_bytes = models.BigIntegerField(null=True, blank=True)
-    kb_published_at = models.DateTimeField(null=True, blank=True)
-    #: The head of its version log (`KbVersion`): the version `kb_key` serves. Null for
-    #: a KB published before versions existed.
-    kb_version = models.ForeignKey("agents.KbVersion", null=True, blank=True, on_delete=models.SET_NULL,
-                                   related_name="+")
-    #: Off by default. On: after each version, canopy-web writes its kb.sqlite.gz into
-    #: the project's Drive folder (`kb_versions`); no reader needs it — readers call the MCP.
-    kb_drive_replica = models.BooleanField(default=False)
-    kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
-    #: Who may query a KB with a Drive source, beside its owner and its steward
-    #: (`kb_drive.may_read`). A KB of public sources ignores it.
-    kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")
     #: `created_by_agent`'s alias for it ("P5"), unique per that agent; blank for
     #: a project made outside an agent's route.
     ext_id = models.CharField(max_length=64, blank=True, default="",
@@ -1483,17 +1460,47 @@ class AgentProject(models.Model):
             return self.url
         return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id or self.handle}"
 
+    # ---- what it serves (`ProjectService`) --------------------------------
+    # A knowledge base is the one kind served from canopy itself; these read it
+    # for the project's list shape (`AgentProjectOut`), so a page needs no second
+    # fetch to show "serves a knowledge base".
+
+    @property
+    def knowledge_base(self) -> "ProjectService | None":
+        """Its knowledge base, when it serves one (read once per instance)."""
+        if not hasattr(self, "_knowledge_base"):
+            cached = getattr(self, "_prefetched_objects_cache", {}).get("served")
+            rows = cached if cached is not None else self.served.filter(kind=ProjectService.KB)
+            self._knowledge_base = next((r for r in rows if r.kind == ProjectService.KB), None)
+        return self._knowledge_base
+
+    @property
+    def mcp_kind(self) -> str:
+        kb = self.knowledge_base
+        return ProjectService.KB if kb is not None and kb.kb_key else ""
+
+    @property
+    def kb_published_at(self):
+        kb = self.knowledge_base
+        return kb.kb_published_at if kb else None
+
     @property
     def kb_version_number(self) -> int | None:
-        return self.kb_version.number if self.kb_version_id else None
+        kb = self.knowledge_base
+        return kb.kb_version.number if kb and kb.kb_version_id else None
+
+    @property
+    def kb_drive_replica(self) -> bool:
+        kb = self.knowledge_base
+        return bool(kb and kb.kb_drive_replica)
 
     @property
     def mcp_path(self) -> str:
-        """Where its own MCP server answers — a workspace project serving
-        something, else "". Under `/api/mcp/` so the same sign-in (a personal
+        """Where its own MCP server answers — a project serving a published
+        knowledge base, else "". Under `/api/mcp/` so the same sign-in (a personal
         token, or OAuth) reaches it: one server per project, so a reader adds just
         this one and not the whole canopy surface."""
-        if self.mcp_kind and self.kb_key:
+        if self.mcp_kind:
             return f"/api/mcp/projects/{self.workspace_id}/{self.handle}/"
         return ""
 
@@ -1538,6 +1545,76 @@ class AgentProject(models.Model):
         from apps.agents.services import waiting_q  # cycle: agents.services -> agents.models  # noqa: PLC0415
 
         return self.tasks.filter(waiting_q()).count()
+
+
+class ProjectService(models.Model):
+    """Something a project serves to its workspace (design 2026-10-24, "What a
+    project serves"). A project is the workspace's and spans its agents and
+    people, so it is where what they share hangs: its people may use it, its
+    lead agent (or an editor) keeps it current, and the workspace directory
+    (`GET /api/mcp-servers/`) lists it.
+
+    Kinds:
+      * `kb` — a knowledge base canopy serves as the project's own MCP server
+        (`/api/mcp/projects/<ws>/<handle>/`), published by its lead agent's
+        curator (`kb_store`, `kb_versions`). One per project; every `kb_*` field.
+      * `mcp` — a remote MCP server the workspace shares: `url`, and how to add it.
+      * `skill` — a Claude Code skill (`url`: its repo path) for the agents
+        working on the project.
+      * `plugin` — a Claude Code plugin (`url`: its repo) for the workspace.
+    Only `kb` is served by canopy; the others are declared and listed.
+    """
+
+    KB, MCP, SKILL, PLUGIN = "kb", "mcp", "skill", "plugin"
+    KINDS = (KB, MCP, SKILL, PLUGIN)
+    KIND_CHOICES = [(KB, "Knowledge base"), (MCP, "MCP server"), (SKILL, "Skill"), (PLUGIN, "Plugin")]
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="served")
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+    #: Its name in the project ("kb" for the knowledge base; a server's, skill's
+    #: or plugin's own name otherwise), unique per kind.
+    name = models.CharField(max_length=80)
+    description = models.TextField(blank=True, default="")
+    #: An MCP server's URL, a skill's or plugin's repository URL. Blank for a KB.
+    url = models.URLField(max_length=500, blank=True, default="")
+    created_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                        on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # ---- a knowledge base (kind `kb`) ------------------------------------------
+    #: The published kb.sqlite.gz: its object key in the KB bucket, content hash
+    #: (what a serving instance caches by) and size. Set by `kb_store.publish`.
+    kb_key = models.CharField(max_length=300, blank=True, default="")
+    kb_sha256 = models.CharField(max_length=64, blank=True, default="")
+    kb_bytes = models.BigIntegerField(null=True, blank=True)
+    kb_published_at = models.DateTimeField(null=True, blank=True)
+    #: The head of its version log (`KbVersion`): the version `kb_key` serves. Null for
+    #: a KB published before versions existed.
+    kb_version = models.ForeignKey("agents.KbVersion", null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    #: Off by default. On: after each version, canopy-web writes its kb.sqlite.gz into
+    #: the project's Drive folder (`kb_versions`); no reader needs it — readers call the MCP.
+    kb_drive_replica = models.BooleanField(default=False)
+    kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
+    #: Who may query a KB with a Drive source, beside its owner and its lead agent
+    #: (`kb_drive.may_read`). A KB of public sources ignores it.
+    kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")
+
+    class Meta:
+        ordering = ["kind", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "kind", "name"], name="uniq_project_service"),
+            models.CheckConstraint(condition=models.Q(kind__in=["kb", "mcp", "skill", "plugin"]),
+                                   name="project_service_kind_known"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}:{self.kind}:{self.name}"
+
+    @property
+    def kb_version_number(self) -> int | None:
+        return self.kb_version.number if self.kb_version_id else None
 
 
 class KbPassage(models.Model):
