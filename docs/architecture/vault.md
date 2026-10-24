@@ -40,6 +40,7 @@ Nothing deletes a copy of the vault key when someone stops being a member. Every
 
 - a machine's resolve refuses one whose person is not a member (403 `not_a_vault_member`), for the agent's own vault and each workspace layer (`workspace_vaults.layers_payload`);
 - the browser's `GET …/vault/zk?values=true` gives the ciphertext only to a vault member (403 `not_a_vault_member`), so an agent admin outside an unlinked vault cannot pair it with an old copy;
+- the agent vault's zero-knowledge writes (enable, values, wraps, rotate, endorsements) need an owner or admin of the vault as well as of the agent (`api_credentials._zk_admin`, as the workspace vault's `_vault(manage=True)`), so an agent admin outside an unlinked vault cannot rotate its key to a machine of their own;
 - a box is a keeper of a vault only while it may hold that key now (`vault_keeper._held`, `workspace_vaults.device_may_hold`);
 - `zk_notify.holders` and the endorsements a keeper checks (`zk_endorse.endorsements`) count current members only.
 

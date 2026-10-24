@@ -1248,6 +1248,21 @@ def test_a_box_whose_person_left_is_no_keeper_and_nobody_who_left_is_a_holder(fl
     assert zk_notify.holders(fleet.agent) == []
 
 
+def test_an_agent_admin_who_left_the_vault_cannot_rotate_its_key_to_their_own_box(fleet):
+    # The owner is still the AGENT's admin; without the vault-admin check they could
+    # rotate to a key wrapped for a runner they own, then read every value written after.
+    assert _enable(fleet).status_code == 200
+    _leave_the_vault(fleet)
+    vk2 = os.urandom(32)
+    res = _rotate(fleet, [device_wrap(fleet, kv=2, vk=vk2), recovery_wrap(fleet, kv=2, vk=vk2)],
+                  values=zk_values(fleet, PLAIN, kv=2, vk=vk2))
+    assert res.status_code == 403
+    fleet.agent.refresh_from_db()
+    assert fleet.agent.zk_kv == 1
+    res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": []}, content_type="application/json")
+    assert res.status_code == 403
+
+
 def test_coming_back_to_the_vault_opens_it_again_with_the_same_copy(fleet):
     from apps.agents.credentials import vault_members
 

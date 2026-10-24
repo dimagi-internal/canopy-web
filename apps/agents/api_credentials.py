@@ -281,6 +281,11 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
 
 def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
     agent = agent_for_admin(request, slug)
+    # The agent's admin AND an owner or admin of its vault, as the workspace vault's
+    # writes are: someone taken out of an unlinked vault must not be able to rotate
+    # its key to one of their own machines and read what is written after.
+    if not vault_members.is_admin(vault_members.role_of(vault_members.vault_for_agent(agent), request.user)):
+        raise HttpError(403, "this action requires someone who manages this agent's vault")
     if browser_only or stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     return agent
@@ -318,7 +323,7 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
 
 @router.post("/{slug}/vault/zk/enable", response=ZkStateOut,
              summary="Turn on zero-knowledge: wraps + every value as ciphertext, atomically")
-@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
 def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkStateOut:
     """`{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
     Needs exactly one `recovery` wrap and a wrap the caller can open (their
@@ -337,7 +342,7 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
 
 @router.put("/{slug}/vault/zk/values", response=ZkValuesOut,
             summary="Set zero-knowledge values (ciphertext) at the current kv")
-@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
 def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) -> ZkValuesOut:
     """Non-clobbering upsert of `{name, value_zk}`. A `kv` other than the
     current one is 409 `zk_kv_mismatch` (the vault key was rotated)."""
@@ -352,7 +357,7 @@ def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) ->
 
 @router.post("/{slug}/vault/zk/wraps", response=ZkStateOut,
              summary="Grant: wrap the vault key to pending devices or admins")
-@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
 def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> ZkStateOut:
     """`{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
     an ACTIVE key with an ECDH key on a runner this agent routes to, working for
@@ -387,7 +392,7 @@ def put_agent_zk_pins(request: HttpRequest, slug: str, payload: VaultKeeperPinsI
 
 @router.post("/{slug}/vault/zk/rotate", response=ZkStateOut,
              summary="Rotate the vault key: replace every wrap and value atomically")
-@gate("agent-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
 def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkStateOut:
     """`{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
     still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
@@ -629,7 +634,7 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
 
 @router.post("/{slug}/vault/zk/endorsements", response=ZkEndorsementsOut,
              summary="Vouch, with your own vault key, that keys may read this agent")
-@gate("agent-admin", setting=True)  # own vault key's signatures; browser: + step-up
+@gate("agent-admin", "vault-admin", setting=True)  # own vault key's signatures; browser: + step-up
 def add_agent_zk_endorsements(request: HttpRequest, slug: str, payload: ZkEndorsementsIn) -> ZkEndorsementsOut:
     """`{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
