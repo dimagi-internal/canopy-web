@@ -6,6 +6,7 @@ import { hide, loadAttention, unhide, type Attention, type AttentionRow, type At
 import { apiV2 } from '@/api/client.v2'
 import { actOn } from '@/api/work'
 import { AlertList } from '@/components/alerts/AlertList'
+import { NewChatMenu } from '@/components/chat/NewChatMenu'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
@@ -51,6 +52,7 @@ export function HomePage(): JSX.Element {
   const { workspaces, loading: wsLoading } = useWorkspace()
   const [data, setData] = useState<Attention | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [newChatError, setNewChatError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('')
   const [showAll, setShowAll] = useState(false)
   const [showTasks, setShowTasks] = useState(true)
@@ -196,6 +198,7 @@ export function HomePage(): JSX.Element {
         )}
 
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+        {newChatError && <p className="mb-3 text-sm text-destructive">{newChatError}</p>}
         {(data == null && !error) || wsLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
 
         <Section
@@ -203,9 +206,12 @@ export function HomePage(): JSX.Element {
           count={live.length}
           hint="Waiting on your next message, and running now."
           action={
-            <Link to="/ide" className="hidden text-[12px] text-muted-foreground hover:text-primary md:inline">
-              All sessions in the IDE →
-            </Link>
+            <div className="flex shrink-0 items-center gap-3">
+              <Link to="/ide" className="hidden text-[12px] text-muted-foreground hover:text-primary md:inline">
+                All sessions in the IDE →
+              </Link>
+              <NewChatMenu label="New session" className="h-6 px-1.5 text-[12px]" onError={setNewChatError} />
+            </div>
           }
         >
           {data && live.length === 0 && (
