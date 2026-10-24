@@ -296,7 +296,26 @@ def _describe_change_set_all_pages(cfn, stack_name: str, change_set: str) -> dic
 UNSCOPED_ACTIONS = frozenset({"elasticloadbalancing:DescribeTargetGroups"})
 
 
-def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> list[Finding]:
+def _kms_key(change: ResourceChange, principal_arn: str, kms) -> tuple[str | None, list[dict]]:
+    """A KMS key's ARN and its live tags as `aws:ResourceTag/*` context entries.
+
+    The deploy role's key grants are conditioned on the key's `canopy-app` tag
+    (deploy_roles.py), and the simulator knows no resource's tags unless told:
+    without these every key change reads implicitDeny although the real call is
+    allowed (the vault key's tag change, 2026-10-24). Its physical id is the bare
+    key id, so the ARN is built from the principal's account.
+    """
+    key_id = change.physical_id or ""
+    arn = key_id if key_id.startswith("arn:") else f"arn:aws:kms:us-east-1:{principal_arn.split(':')[4]}:key/{key_id}"
+    if kms is None:
+        return arn, []
+    tags = kms.list_resource_tags(KeyId=key_id).get("Tags", [])
+    return arn, [
+        {"ContextKeyName": f"aws:ResourceTag/{t['TagKey']}", "ContextKeyValues": [t["TagValue"]],
+         "ContextKeyType": "string"} for t in tags]
+
+
+def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str, kms=None) -> list[Finding]:
     """Findings for every resource this change set would touch."""
     described = _describe_change_set_all_pages(cfn, stack_name, change_set)
     findings: list[Finding] = []
@@ -309,6 +328,9 @@ def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> lis
         # Only pass a resource when it is genuinely an ARN. Some physical ids are
         # names (a log group is "/ecs/canopy-web"), and simulate rejects those.
         arn = change.physical_id if (change.physical_id or "").startswith("arn:") else None
+        tag_context: list[dict] = []
+        if change.resource_type == "AWS::KMS::Key" and change.physical_id:
+            arn, tag_context = _kms_key(change, principal_arn, kms)
         scoped = [a for a in actions if a not in UNSCOPED_ACTIONS]
         unscoped = [a for a in actions if a in UNSCOPED_ACTIONS]
 
@@ -325,7 +347,7 @@ def check(cfn, iam, stack_name: str, change_set: str, principal_arn: str) -> lis
                     "ContextKeyName": "aws:RequestedRegion",
                     "ContextKeyValues": ["us-east-1"],
                     "ContextKeyType": "string",
-                }],
+                }, *tag_context],
             }
             if resource:
                 kwargs["ResourceArns"] = [resource]
@@ -343,7 +365,7 @@ def _clients():
     """Real boto3 clients. Patched in tests; the only AWS coupling in the file."""
     import boto3
 
-    return boto3.client("cloudformation"), boto3.client("iam")
+    return boto3.client("cloudformation"), boto3.client("iam"), boto3.client("kms")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -360,9 +382,9 @@ def main(argv: list[str] | None = None) -> int:
     # touches AWS is behind _clients() and this call.
     from botocore.exceptions import ClientError
 
-    cfn, iam = _clients()
+    cfn, iam, kms = _clients()
     try:
-        findings = check(cfn, iam, args.stack, args.change_set, args.principal)
+        findings = check(cfn, iam, args.stack, args.change_set, args.principal, kms=kms)
     except (UnmappedResourceType, UnmappedChangeAction) as exc:
         print(str(exc))
         return 1
