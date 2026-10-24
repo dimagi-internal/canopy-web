@@ -65,13 +65,14 @@ export interface TaskTableProps {
   nest?: boolean
 }
 
-interface Group {
+export interface Group {
   key: string
   label: string
   tasks: Task[]
 }
 
-function groupTasks(tasks: readonly Task[], by: GroupBy, names?: Record<string, string> | null): Group[] {
+/** The groups a table shows, in order — also the order J/K walk. */
+export function groupTasks(tasks: readonly Task[], by: GroupBy, names?: Record<string, string> | null): Group[] {
   if (!by) return [{ key: '', label: '', tasks: [...tasks] }]
   const groups = new Map<string, Group>()
   const add = (key: string, label: string, t: Task) => {
