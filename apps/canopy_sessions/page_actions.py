@@ -27,6 +27,7 @@ import time
 
 from django.utils import timezone
 
+from apps.harness import sensitivity
 from apps.realtime.groups import publish, session_group
 
 from .models import PageAction, Session
@@ -168,8 +169,13 @@ def request_action(
         )
     _validate(spec, args or {})
 
+    # A sensitive conversation keeps what an action carried no longer than its caller
+    # waits for it: the arguments travel only on the doorbell (the conversation's own
+    # socket) and the page's answer is handed back and then forgotten (`_forget`) —
+    # the same "store less" rule as a tool's result (`sensitivity.strip_result`).
+    sensitive = sensitivity.is_sensitive(session)
     action = PageAction.objects.create(
-        session=session, name=name, args=args or {}, requested_for=user
+        session=session, name=name, args={} if sensitive else (args or {}), requested_for=user
     )
 
     # The frame, AFTER the row exists — so a page that receives the doorbell can
@@ -185,9 +191,14 @@ def request_action(
         time.sleep(POLL_INTERVAL_SECONDS)
         action.refresh_from_db()
         if action.status == PageAction.DONE:
+            if sensitive:
+                _forget(action)
             return action
         if action.status == PageAction.FAILED:
-            raise PageActionError("refused", action.error or "the page refused the action")
+            error = action.error
+            if sensitive:
+                _forget(action)
+            raise PageActionError("refused", error or "the page refused the action")
 
     PageAction.objects.filter(pk=action.pk, status=PageAction.PENDING).update(
         status=PageAction.EXPIRED, resolved_at=timezone.now()
@@ -197,6 +208,13 @@ def request_action(
         f"the page did not answer within {timeout:g}s. It is probably closed — "
         "an action only runs while the user has the page open.",
     )
+
+
+def _forget(action: PageAction) -> None:
+    """Drop a settled action's answer from its row; `action` keeps it in memory for
+    the caller that is about to return it. The name and outcome stay."""
+    PageAction.objects.filter(pk=action.pk).update(
+        args={}, result=None, error=sensitivity.withheld_note(action.error))
 
 
 def resolve(action: PageAction, *, result=None, error: str = "") -> PageAction:

@@ -1077,6 +1077,17 @@ def _in_it_or_403(request: HttpRequest, session) -> None:
         raise HttpError(403, sensitivity.NOT_IN_IT)
 
 
+def _page_in_it_or_403(request: HttpRequest, session) -> None:
+    # A sensitive conversation's page is its people's screen: what it shows, what it
+    # can do and what an action on it answers are read and driven behind the same
+    # gate as its words (`sensitivity.reads_content`) — its own people, on its chat
+    # surfaces. The agent running in it reaches the page through its chat key
+    # (`apps/mcp/page_tools.py`, `apps/mcp/tools/page.py`), never through these routes.
+    if not sensitivity.reads_content(session, user=request.user,
+                                     chat_surface=sensitivity.request_is_chat_surface(request)):
+        raise HttpError(403, sensitivity.NOT_IN_IT_PAGE)
+
+
 def _holder_or_422(*, user=None, contact=None) -> None:
     try:
         conversation_keys.check_holder(user=user, contact=contact)
@@ -1999,6 +2010,7 @@ def declare_page_actions(request: HttpRequest, session_id: uuid.UUID,
     merging would leave the agent able to call into a page the user has left.
     """
     session = _session_or_404(request, session_id, write=True)
+    _page_in_it_or_403(request, session)
     page_actions.set_declared_actions(
         session, [a.dict() for a in payload.actions]
     )
@@ -2012,6 +2024,7 @@ def list_page_actions(request: HttpRequest, session_id: uuid.UUID) -> list[PageA
     """How the agent discovers its options. An empty list means no page is
     attached — not that the page can do nothing."""
     session = _session_or_404(request, session_id)
+    _page_in_it_or_403(request, session)
     return [PageActionSpec(**a) for a in page_actions.declared_actions(session)]
 
 
@@ -2027,6 +2040,7 @@ def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
     that resolves it, not the rows themselves.
     """
     session = _session_or_404(request, session_id, write=True)
+    _page_in_it_or_403(request, session)
     try:
         stored = page_state.set_page_state(session, payload.state)
     except page_state.PageStateError as exc:
@@ -2052,6 +2066,7 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
     the selection (ids, filters) and the tool that resolves it, not the rows.
     """
     session = _session_or_404(request, session_id, write=True)
+    _page_in_it_or_403(request, session)
 
     # Actions first, then state — the same order the widget uses, and for the
     # same reason: whichever lands last, the agent must never see a page that
@@ -2076,9 +2091,7 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
 def read_page_state(request: HttpRequest, session_id: uuid.UUID) -> PageStateOut:
     """How a surface other than the agent's MCP tool reads the current view."""
     session = _session_or_404(request, session_id)
-    # A sensitive conversation's page is its people's screen: read back behind the
-    # same gate as its words (`sensitivity.reads_content`).
-    _in_it_or_403(request, session)
+    _page_in_it_or_403(request, session)
     stored = page_state.current_page_state(session)
     return PageStateOut(state=stored, version=int(stored.get("version") or 0))
 
@@ -2095,6 +2108,7 @@ def invoke_page_action(request: HttpRequest, session_id: uuid.UUID,
     caller must never be able to read "the tab was closed" as "done".
     """
     session = _session_or_404(request, session_id, write=True)
+    _page_in_it_or_403(request, session)
     try:
         action = page_actions.request_action(
             session=session, name=payload.name, args=payload.args, user=request.user
@@ -2118,6 +2132,7 @@ def resolve_page_action(request: HttpRequest, session_id: uuid.UUID, action_id: 
     one page cannot resolve another's action.
     """
     session = _session_or_404(request, session_id, write=True)
+    _page_in_it_or_403(request, session)
     action = session.page_actions.filter(pk=action_id).first()
     if action is None:
         raise HttpError(404, "no such page action on this session")

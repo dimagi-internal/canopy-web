@@ -300,10 +300,12 @@ def record_embed_visitor(
         # know what it is — an opaque uuid for one site, an email or a phone
         # number for the next. The database row holds it under an ACL; an
         # application log is read by more people, kept by different rules, and
-        # shipped somewhere else entirely. A pk correlates just as well.
+        # shipped somewhere else entirely. A pk correlates just as well. The
+        # grade is read back off the row — one of `Contact.AUTH_RANK`'s labels,
+        # coerced above — never the caller's argument.
         logger.info(
             "contact %s recorded from %s in %s (auth=%s) — no membership granted",
-            contact.pk, app.name, workspace.pk, grade,
+            contact.pk, app.name, workspace.pk, contact.auth_result,
         )
         return contact
 

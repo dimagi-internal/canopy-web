@@ -125,8 +125,10 @@ def send_to_user(user, title: str, body: str, url: str, count: int | None = None
             sent += 1
             # Logged on success too: without it "am I getting notifications?"
             # could not be answered from the logs — a working pipe and a
-            # silent one both left no trace (2026-09-24).
-            logger.info("push: sent sub=%s user=%s title=%r", sub.pk, user.pk, title)
+            # silent one both left no trace. Ids only, never the title or body:
+            # they name people, agents and conversations, and an application log
+            # is read by more people, kept longer and shipped elsewhere.
+            logger.info("push: sent sub=%s user=%s urgency=%s", sub.pk, user.pk, urgency)
         except WebPushException as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status in (404, 410):

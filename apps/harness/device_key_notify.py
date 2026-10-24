@@ -119,7 +119,7 @@ def _send(people, *, subject: str, detail: str, link: str, foot: str, link_text:
                 else:
                     result["not_configured"] = True
             except Exception:  # noqa: BLE001
-                logger.exception("runner notice email failed: to=%s", person.email)
+                logger.exception("runner notice email failed: user=%s", person.pk)
                 result["failed"].append(person.email)
         try:
             from apps.push.services import send_to_user

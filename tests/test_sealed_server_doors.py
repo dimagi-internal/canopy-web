@@ -295,6 +295,117 @@ def test_a_sensitive_conversations_page_is_forgotten_when_its_turn_ends(w):
     assert w["hot"].page_state == {}
 
 
+# --- 5b. its page's actions are behind the same gate -----------------------------
+
+ACTION = {"name": "flagVisit", "description": "Flag Amina Okafor's visit",
+          "parameters": {"type": "object", "properties": {"id": {"type": "string"}}}}
+
+
+def _pages(w):
+    from apps.canopy_sessions import page_actions
+
+    for s in (w["hot"], w["cold"]):
+        page_actions.set_declared_actions(s, [ACTION if s is w["hot"] else {"name": "closeTasks"}])
+
+
+def test_page_actions_rest_routes_serve_only_its_people_in_a_browser(w):
+    _pages(w)
+    base = f"/api/canopy-sessions/{w['hot'].pk}/page-actions"
+    assert w["c"].get(base).status_code == 200
+    token = minted(w["user"])
+    for r in (token.get(base),
+              token.put(base, {"actions": [ACTION]}, content_type="application/json"),
+              token.post(f"{base}/invoke", {"name": "flagVisit", "args": {"id": "c-1"}},
+                         content_type="application/json"),
+              token.put(f"/api/canopy-sessions/{w['hot'].pk}/page-state", {"state": PHI},
+                        content_type="application/json"),
+              token.put(f"/api/canopy-sessions/{w['hot'].pk}/run-input",
+                        {"state": PHI, "tools": [ACTION]}, content_type="application/json")):
+        assert r.status_code == 403 and b"Amina" not in r.content, r.content
+    # An admin of its agent who is not in it reads nothing of its page either.
+    unowned = _unowned_thread(w)
+    from apps.canopy_sessions import page_actions
+
+    page_actions.set_declared_actions(unowned, [ACTION])
+    r = _browser(_admin(w)).get(f"/api/canopy-sessions/{unowned.pk}/page-actions")
+    assert r.status_code == 403 and b"Amina" not in r.content
+    # An ordinary conversation's page is unchanged.
+    assert minted(w["user"]).get(f"/api/canopy-sessions/{w['cold'].pk}/page-actions").json()[0][
+        "name"] == "closeTasks"
+
+
+def test_a_page_actions_answer_cannot_be_resolved_through_a_token(w):
+    from apps.canopy_sessions.models import PageAction
+
+    action = PageAction.objects.create(session=w["hot"], name="flagVisit")
+    r = minted(w["user"]).post(f"/api/canopy-sessions/{w['hot'].pk}/page-actions/{action.pk}/result",
+                               {"result": {"forged": True}}, content_type="application/json")
+    assert r.status_code == 403
+    action.refresh_from_db()
+    assert action.status == PageAction.PENDING and action.result is None
+
+
+def test_page_action_tools_over_mcp_leave_out_a_sensitive_conversation(w):
+    from fastmcp.exceptions import ToolError
+
+    from apps.mcp.page_tools import PageActionProvider
+    from apps.mcp.server import mcp
+
+    _pages(w)
+    with mcp_as(w["user"]):
+        tools = async_to_sync(PageActionProvider()._list_tools)()
+        listed = async_to_sync(mcp.call_tool)("list_page_actions", {"session_id": str(w["cold"].pk)})
+        with pytest.raises(ToolError) as listing:
+            async_to_sync(mcp.call_tool)("list_page_actions", {"session_id": str(w["hot"].pk)})
+        with pytest.raises(ToolError) as invoking:
+            async_to_sync(mcp.call_tool)("invoke_page_action", {
+                "session_id": str(w["hot"].pk), "payload": {"name": "flagVisit", "args": {}}})
+    assert [t.name for t in tools] == ["page_closeTasks"]
+    assert "closeTasks" in str(listed)
+    for err in (listing, invoking):
+        assert "Amina" not in str(err.value) and "flagVisit" not in str(err.value)
+
+
+def test_the_turn_running_in_it_still_acts_on_its_page_through_its_chat_key(w, monkeypatch):
+    from unittest import mock
+
+    from fastmcp.exceptions import ToolError
+
+    from apps.canopy_sessions import chat_keys, page_actions
+    from apps.canopy_sessions.models import PageAction
+    from apps.mcp.page_tools import PageActionProvider, to_mcp_tool
+
+    _pages(w)
+    monkeypatch.setattr(page_actions, "DEFAULT_TIMEOUT_SECONDS", 2)
+    monkeypatch.setattr(page_actions, "POLL_INTERVAL_SECONDS", 0.01)
+    real_sleep = page_actions.time.sleep
+
+    def page_answers(seconds):
+        real_sleep(0)
+        pending = PageAction.objects.filter(status=PageAction.PENDING).first()
+        if pending is not None:
+            page_actions.resolve(pending, result={"flagged": "Amina Okafor"})
+    monkeypatch.setattr(page_actions.time, "sleep", page_answers)
+
+    key = chat_keys.mint(w["hot"])
+    keyed = mock.patch("apps.mcp.chat_scope.get_http_headers",
+                       return_value={chat_keys.HEADER.lower(): key})
+    with keyed:
+        tools = async_to_sync(PageActionProvider()._list_tools)()
+        assert [t.name for t in tools] == ["page_flagVisit"]
+        out = async_to_sync(tools[0].run)({"id": "c-1"})
+    assert out.structured_content == {"result": {"flagged": "Amina Okafor"}}
+    # The answer went back to the turn and was not kept: no args, no result at rest.
+    row = PageAction.objects.get(session=w["hot"])
+    assert (row.status, row.args, row.result) == (PageAction.DONE, {}, None)
+
+    # A tool listed for the conversation is refused at the call without its key.
+    tool = to_mcp_tool("page_flagVisit", w["hot"], ACTION)
+    with mcp_as(w["user"]), pytest.raises(ToolError) as err:
+        async_to_sync(tool.run)({"id": "c-1"})
+    assert "sensitive" in str(err.value)
+
+
 # --- 6. only its people send into it ---------------------------------------------
 
 

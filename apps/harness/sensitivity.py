@@ -44,6 +44,10 @@ NOT_OWNER_FORK = ("this conversation holds a host's sensitive data: only its own
 #: Why a send into one is refused: only its people, in canopy, may steer its agent.
 NOT_IN_IT_SEND = ("this conversation holds a host's sensitive data: only the people in it can "
                   "send into it, from canopy's chat or the site's panel")
+#: Why its page (what it shows, what it can do) is refused to someone not in it, or
+#: through a door that is not its chat surface (MCP, a PAT, a minted session).
+NOT_IN_IT_PAGE = ("this conversation holds a host's sensitive data: only the people in it can "
+                  "see or act on its page, from canopy's chat or the site's panel")
 #: Result-bearing keys a tool result may carry, from every runner and the gateway:
 #: where its links are looked for. Never kept.
 _RESULT_KEYS = ("content", "text", "output", "result", "structured", "structuredContent")
