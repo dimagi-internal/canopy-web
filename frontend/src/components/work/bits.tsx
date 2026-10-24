@@ -363,7 +363,11 @@ export function DueInput({
       aria-label="Due date"
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => onChange(e.target.value || null)}
-      className="w-[7.5rem] rounded border border-transparent bg-transparent px-1 text-[12px] text-foreground-secondary hover:border-input focus:border-input disabled:opacity-60"
+      className={cn(
+        'w-[7.5rem] rounded border border-transparent bg-transparent px-1 text-[12px] text-foreground-secondary hover:border-input focus:border-input disabled:opacity-60',
+        // An empty date reads as nothing until you reach for it, not as "mm/dd/yyyy" on every row.
+        !value && 'text-transparent hover:text-muted-foreground focus:text-foreground-secondary',
+      )}
     />
   )
 }
