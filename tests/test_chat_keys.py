@@ -24,6 +24,7 @@ from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.mcp import page_tools
 from apps.mcp.tools import page as page_tool
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.passkeys.testing import grant_step_up
 
 pytestmark = pytest.mark.django_db
 
@@ -54,6 +55,7 @@ def world():
 
     browser = Client()
     browser.force_login(owner)
+    grant_step_up(browser)
     return {"owner": owner, "ws": ws, "bot": bot, "agent": agent, "chat": chat,
             "browser": browser, "agent_client": Client(HTTP_AUTHORIZATION=f"Bearer {_pat(bot)}")}
 

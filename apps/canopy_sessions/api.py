@@ -28,6 +28,7 @@ from apps.api.route_gates import gate
 from apps.harness import initiator as who
 from apps.harness import provenance, sensitivity
 from apps.harness import runner_requirements as rr
+from apps.passkeys import stepup
 from apps.realtime import groups
 from apps.workspaces import services as wsvc
 
@@ -2327,11 +2328,14 @@ def _secret_out(row) -> dict:
 
 @router.post("/{session_id}/secrets", response={201: SessionSecretOut},
              summary="Share a secret with this chat (write-only)")
-@gate("session-acl", kind="conversation", step_up="a chat's own short-lived secret, from its composer")  # write
+@gate("session-acl", kind="conversation", step_up=True)  # write; browser: + step-up; token allowed
 def share_secret(request: HttpRequest, session_id: uuid.UUID, payload: SessionSecretIn):
     """Stores the value encrypted. Posts NOTHING into the chat: the person just
-    refers to it by name, and the session finds it with `canopy secret list`."""
+    refers to it by name, and the session finds it with `canopy secret list`.
+    A browser needs a passkey step-up."""
     session = _session_or_404(request, session_id, write=True)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     try:
         row = secrets.set_secret(session, payload.name, payload.value, user=request.user)
     except ValueError as exc:

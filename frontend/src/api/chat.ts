@@ -2,7 +2,7 @@
  * Client for the live chat surface (/api/canopy-sessions).
  *
  * Plain fetch rather than the generated openapi-fetch client (not yet ported:
- * the session-secrets and MCP Apps View routes are not in the schema) — the
+ * the MCP Apps View routes are not in the schema; the session's secrets are) — the
  * live transcript's steady-state arrives over the WebSocket
  * (apps/canopy_sessions consumer), not REST. REST covers session
  * meta/create/list, scroll-back paging (`listMessages`), the viewer liveness
@@ -14,7 +14,8 @@
 import { offerForNewChat, type ConversationKeyOffer, type MyVaultKey as VaultKeyNamed } from "@/vault/sealedChat";
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
-import { ApiError } from "./problem";
+import { apiV2 } from "./client.v2";
+import { ApiError, ensureOk, unwrap } from "./problem";
 import type { AppHost, AppResourceUpdates, AppViewResource, CallToolResult } from "canopy-ui/chat";
 
 export type ChatSession = components["schemas"]["SessionOut"];
@@ -52,9 +53,10 @@ export async function browserConversationKey(
   return offerForNewChat(me);
 }
 
-// Still raw fetch (not apiV2): several routes here (the session's secrets, the
-// MCP Apps View plumbing) are not in the generated schema. Errors go through the
-// shared ApiError all the same.
+// Still raw fetch (not apiV2) for most routes here (the MCP Apps View plumbing is
+// not in the generated schema). The session's secrets use apiV2, whose step-up
+// middleware answers a share's passkey prompt. Errors go through the shared
+// ApiError all the same.
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
@@ -606,23 +608,22 @@ export interface SharedSecret {
  * Hand this chat a secret. Nothing is posted into the chat: mention it by name,
  * and the session bound to this chat finds it with `canopy secret list`.
  */
-export function shareSecret(id: string, name: string, value: string): Promise<SharedSecret> {
-  return request(`/api/canopy-sessions/${encodeURIComponent(id)}/secrets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, value }),
-  });
+export async function shareSecret(id: string, name: string, value: string): Promise<SharedSecret> {
+  return unwrap(await apiV2.POST("/api/canopy-sessions/{session_id}/secrets", {
+    params: { path: { session_id: id } }, body: { name, value },
+  }), "Could not share the secret") as SharedSecret;
 }
 
-export function listSecrets(id: string): Promise<SharedSecret[]> {
-  return request(`/api/canopy-sessions/${encodeURIComponent(id)}/secrets`);
+export async function listSecrets(id: string): Promise<SharedSecret[]> {
+  return Array.from(unwrap(await apiV2.GET("/api/canopy-sessions/{session_id}/secrets", {
+    params: { path: { session_id: id } },
+  }), "Could not load the shared secrets")) as SharedSecret[];
 }
 
-export function deleteSecret(id: string, name: string): Promise<void> {
-  return request(
-    `/api/canopy-sessions/${encodeURIComponent(id)}/secrets/${encodeURIComponent(name)}`,
-    { method: "DELETE" },
-  );
+export async function deleteSecret(id: string, name: string): Promise<void> {
+  ensureOk(await apiV2.DELETE("/api/canopy-sessions/{session_id}/secrets/{name}", {
+    params: { path: { session_id: id, name } },
+  }), "Could not forget the secret");
 }
 
 // --- MCP Apps (spec 2026-10-08): the browser plumbing behind a rendered View ---

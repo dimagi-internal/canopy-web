@@ -13416,6 +13416,7 @@ export interface paths {
          * Share a secret with this chat (write-only)
          * @description Stores the value encrypted. Posts NOTHING into the chat: the person just
          *     refers to it by name, and the session finds it with `canopy secret list`.
+         *     A browser needs a passkey step-up.
          */
         readonly post: operations["share_secret"];
         readonly delete?: never;

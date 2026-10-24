@@ -21,6 +21,7 @@ from apps.canopy_sessions import secrets as session_secrets
 from apps.canopy_sessions.models import Message, RunnerBinding, Session, SessionSecret
 from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.passkeys.testing import grant_step_up
 
 pytestmark = pytest.mark.django_db
 
@@ -58,6 +59,7 @@ def world():
     other = chat(OTHER, "task-b")
     browser = Client()
     browser.force_login(owner)
+    grant_step_up(browser)
     from apps.canopy_sessions import chat_keys
 
     return {"owner": owner, "ws": ws, "bot": bot, "agent": agent, "runner": runner,
@@ -218,3 +220,20 @@ def test_the_off_request_clock_sweeps_expired_secrets(world):
     _age(31)
     ticks.jobs()["canopy_sessions.purge_expired_secrets"].fn()
     assert not SessionSecret.objects.exists()
+
+
+def test_a_browser_shares_only_after_a_passkey_step_up(world):
+    # The SPA's API client answers `step_up_required` with Touch ID and a retry.
+    fresh = Client()
+    fresh.force_login(world["owner"])
+    res = fresh.post(f"/api/canopy-sessions/{world['session'].id}/secrets",
+                     data=json.dumps({"name": "GH_TOKEN", "value": TOKEN}), content_type="application/json")
+    assert res.status_code == 403 and res.json()["error"] == "step_up_required"
+    assert not SessionSecret.objects.exists()
+
+
+def test_a_token_shares_without_a_step_up(world):
+    res = Client(HTTP_AUTHORIZATION=f"Bearer {_pat(world['owner'])}").post(
+        f"/api/canopy-sessions/{world['session'].id}/secrets",
+        data=json.dumps({"name": "GH_TOKEN", "value": TOKEN}), content_type="application/json")
+    assert res.status_code == 201
