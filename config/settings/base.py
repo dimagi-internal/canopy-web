@@ -95,6 +95,7 @@ INSTALLED_APPS = [
     "apps.reviews",
     "apps.runs",
     "apps.shareouts",
+    "apps.dynamic_views",
     "apps.mcp",
     "apps.session_sharing",
     "apps.push",
@@ -139,6 +140,9 @@ MIDDLEWARE = [
     # before sessions/auth/CSRF, so a page that frames untrusted HTML can never
     # carry a Set-Cookie (SESSION_SAVE_EVERY_REQUEST would re-issue one).
     "apps.mcp_apps_host.views_mcp_apps.McpAppsSandboxMiddleware",
+    # The dynamic-view frame (apps/dynamic_views/frame.py): same reason — it runs
+    # generated code, so it is answered before sessions and can never set a cookie.
+    "apps.dynamic_views.frame.DynamicViewFrameMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "config.static_middleware.CanopyWhiteNoiseMiddleware",  # WhiteNoise, minus `/` (see module)

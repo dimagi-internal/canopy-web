@@ -70,6 +70,8 @@ export const NAV: NavEntry[] = [
       { path: 'tasks', label: 'Tasks', tenant: true },
       { path: 'triage', label: 'Triage', tenant: true },
       { path: 'projects', label: 'Projects', tenant: true },
+      // Generated screens over the workspace's work, each drawn in a sandbox.
+      { path: 'views', label: 'Views', tenant: true },
       // What projects serve to the whole workspace, to add by hand.
       { path: 'mcp', label: 'Shared MCP servers', tenant: true },
     ],

@@ -2784,6 +2784,112 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/dynamic-views/guide/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How to write a dynamic view: the render contract, the data catalog, an example
+         * @description Read this before generating a view. `catalog` is every read a view may
+         *     ask for; `contract` is the props, the `canopy` API and the component kit the
+         *     sandbox gives the code; `example` is a complete view and `example_sources`
+         *     the sources it reads.
+         */
+        readonly get: operations["get_dynamic_view_guide"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/dynamic-views/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The dynamic views of a workspace, or of one project
+         * @description Every view in the workspaces this request reads (pin one with `/api/w/<ws>/`).
+         *     `project=<handle>` narrows to that project's views.
+         */
+        readonly get: operations["list_dynamic_views"];
+        readonly put?: never;
+        /**
+         * Create a dynamic view
+         * @description Validates the code (it must define `View`) and every source against the
+         *     catalog; a refusal names what is wrong. Returns the view with its `url`.
+         */
+        readonly post: operations["create_dynamic_view"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/dynamic-views/{view_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** One dynamic view, with its code and sources */
+        readonly get: operations["get_dynamic_view"];
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete a dynamic view and its history */
+        readonly delete: operations["delete_dynamic_view"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a dynamic view (a new version)
+         * @description Only the fields given change. Each change that alters something is a new
+         *     version; `GET /{id}/revisions/` lists them and `POST /{id}/rollback` restores one.
+         */
+        readonly patch: operations["update_dynamic_view"];
+        readonly trace?: never;
+    };
+    readonly "/api/dynamic-views/{view_id}/revisions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Every saved version of a dynamic view, newest first */
+        readonly get: operations["list_dynamic_view_revisions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/dynamic-views/{view_id}/rollback": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Restore an earlier version of a dynamic view (as a new version) */
+        readonly post: operations["rollback_dynamic_view"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sessions/upload": {
         readonly parameters: {
             readonly query?: never;
@@ -19051,6 +19157,218 @@ export interface components {
             readonly date_from?: string | null;
             /** Date To */
             readonly date_to?: string | null;
+        };
+        /** CatalogModelOut */
+        readonly CatalogModelOut: {
+            /** Name */
+            readonly name: string;
+            /** Path */
+            readonly path: string;
+            /** Description */
+            readonly description: string;
+            /** Params */
+            readonly params: readonly string[];
+            /** Path Params */
+            readonly path_params: readonly string[];
+        };
+        /** DynamicViewGuideOut */
+        readonly DynamicViewGuideOut: {
+            /**
+             * Contract
+             * @description How to write a view: props, the canopy API, the kit, the rules.
+             */
+            readonly contract: string;
+            /** Catalog */
+            readonly catalog: readonly components["schemas"]["CatalogModelOut"][];
+            /**
+             * Example
+             * @description A complete, working view to start from.
+             */
+            readonly example: string;
+            /**
+             * Example Sources
+             * @description The sources the example reads.
+             */
+            readonly example_sources: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
+        /** DynamicViewSummaryOut */
+        readonly DynamicViewSummaryOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Project
+             * @description The project's handle, or null for a workspace view.
+             */
+            readonly project?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Slug */
+            readonly slug: string;
+            /** Title */
+            readonly title: string;
+            /** Description */
+            readonly description: string;
+            /** Version */
+            readonly version: number;
+            /**
+             * Url
+             * @description The view's page in canopy.
+             */
+            readonly url?: string | null;
+            /** Updated By Email */
+            readonly updated_by_email?: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** DynamicViewOut */
+        readonly DynamicViewOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Project
+             * @description The project's handle, or null for a workspace view.
+             */
+            readonly project?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Slug */
+            readonly slug: string;
+            /** Title */
+            readonly title: string;
+            /** Description */
+            readonly description: string;
+            /** Version */
+            readonly version: number;
+            /**
+             * Url
+             * @description The view's page in canopy.
+             */
+            readonly url?: string | null;
+            /** Updated By Email */
+            readonly updated_by_email?: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Code */
+            readonly code: string;
+            /** Sources */
+            readonly sources: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Created By Email */
+            readonly created_by_email?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** DynamicViewIn */
+        readonly DynamicViewIn: {
+            /**
+             * Workspace
+             * @description Defaults to the pinned workspace.
+             * @default
+             */
+            readonly workspace: string;
+            /**
+             * Project
+             * @description A project handle in that workspace; omit for a workspace view.
+             */
+            readonly project?: string | null;
+            /** Title */
+            readonly title: string;
+            /**
+             * Slug
+             * @description Defaults to one made from the title.
+             * @default
+             */
+            readonly slug: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Code
+             * @description JSX defining `function View(props)`. See GET /api/dynamic-views/guide/.
+             */
+            readonly code: string;
+            /**
+             * Sources
+             * @description Catalog reads made for the view: [{alias, model, params?, path?}].
+             */
+            readonly sources?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /** DynamicViewPatch */
+        readonly DynamicViewPatch: {
+            /** Title */
+            readonly title?: string | null;
+            /** Slug */
+            readonly slug?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Code */
+            readonly code?: string | null;
+            /** Sources */
+            readonly sources?: readonly {
+                readonly [key: string]: unknown;
+            }[] | null;
+            /**
+             * Project
+             * @description A project handle; an empty string moves it to the workspace.
+             */
+            readonly project?: string | null;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+        };
+        /** DynamicViewRevisionOut */
+        readonly DynamicViewRevisionOut: {
+            /** Version */
+            readonly version: number;
+            /** Title */
+            readonly title: string;
+            /** Note */
+            readonly note: string;
+            /** Changed By Email */
+            readonly changed_by_email?: string | null;
+            /**
+             * Changed At
+             * Format: date-time
+             */
+            readonly changed_at: string;
+            /** Code */
+            readonly code: string;
+            /** Sources */
+            readonly sources: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
+        /** DynamicViewRollbackIn */
+        readonly DynamicViewRollbackIn: {
+            /** Version */
+            readonly version: number;
         };
         /**
          * SessionUploadOut
@@ -41133,6 +41451,188 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ShareoutsClearOut"];
+                };
+            };
+        };
+    };
+    readonly get_dynamic_view_guide: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DynamicViewGuideOut"];
+                };
+            };
+        };
+    };
+    readonly list_dynamic_views: {
+        readonly parameters: {
+            readonly query?: {
+                readonly project?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["DynamicViewSummaryOut"][];
+                };
+            };
+        };
+    };
+    readonly create_dynamic_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DynamicViewIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DynamicViewOut"];
+                };
+            };
+        };
+    };
+    readonly get_dynamic_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DynamicViewOut"];
+                };
+            };
+        };
+    };
+    readonly delete_dynamic_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_dynamic_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DynamicViewPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DynamicViewOut"];
+                };
+            };
+        };
+    };
+    readonly list_dynamic_view_revisions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["DynamicViewRevisionOut"][];
+                };
+            };
+        };
+    };
+    readonly rollback_dynamic_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DynamicViewRollbackIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DynamicViewOut"];
                 };
             };
         };

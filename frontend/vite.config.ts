@@ -247,6 +247,9 @@ export default defineConfig({
       input: {
         index: path.resolve(__dirname, 'index.html'),
         embed: path.resolve(__dirname, 'src/embed/main.tsx'),
+        // The sandboxed frame a dynamic view's code runs in. Its shell is
+        // rendered by Django from this manifest entry (apps/dynamic_views/frame.py).
+        dynamicView: path.resolve(__dirname, 'src/dynamicViews/frame/main.tsx'),
       },
     },
   },

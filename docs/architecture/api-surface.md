@@ -528,6 +528,14 @@ Product tier. `Storyboard → Act → Entry`; an entry names a narrative by slug
 - Act identity is `Act.key` (from the title, or declared `key:` in YAML), never the row id — both write paths recreate acts. One derivation: `apps/storyboards/act_keys.py`.
 - Authoring: `manage.py import_storyboard storyboard.yaml --workspace <slug>` — idempotent per `(workspace, slug)`, preserves the share token.
 
+### Dynamic views (`apps/dynamic_views`, mounted at `/api/dynamic-views`) — generated screens in a sandbox
+Product tier. A view is JSX (`function View(props)`) plus declared catalog reads, on a workspace or one of its projects, drawn in an opaque-origin frame that reads canopy only through the page, as the viewer. Design and safety model: `docs/architecture/dynamic-views.md`.
+- `GET /api/dynamic-views/guide/` — The render contract, the data catalog (every read a view may ask for) and a working example with its sources. Any signed-in caller. Read it before generating a view.
+- `GET|POST /api/dynamic-views/` — List (member; `?project=<handle>` narrows) / create (editor of the workspace, or edit rights on the named project). Code must define `View`; every source is checked against the catalog (422 names what is wrong). Slugs are unique per workspace (made from the title when omitted).
+- `GET|PATCH|DELETE /api/dynamic-views/{id}` — Read with code and sources (member) / change (a new version; a patch that alters nothing is not one; `project: ""` moves it to the workspace) / delete with its history.
+- `GET /api/dynamic-views/{id}/revisions/` · `POST /api/dynamic-views/{id}/rollback {version}` — Every version, newest first / restore one as a new version.
+- `GET /dynamic-views/frame/` — Not an API route: the bare frame document, answered by `DynamicViewFrameMiddleware` before sessions (never sets a cookie), with its own CSP (`sandbox allow-scripts`, `connect-src 'none'`, `frame-ancestors` canopy's origins).
+
 ### Huddles (`apps/huddles`, mounted at `/api/huddles`) — derived, no storage
 A huddle is agents syncing in rounds, led by one of them (canopy `huddle`; spec in canopy `docs/superpowers/specs/2026-10-06-huddle-design.md`). Derived from the leader's anchor turn (`origin_ref.kind == "huddle"`, `cli_session_id = huddle:<id>`), round turns (`origin_ref = {kind: huddle_round, huddle, round, member, attempt}`), each member's fenced ```` ```huddle ```` JSON reply (round turn close-out, else a filed close-out, else its transcript), and board tasks whose `source_url` ends `/huddles/<id>`.
 - `GET /api/huddles/?agent=&limit=50` — Huddles you can see, newest first; `agent` keeps those it led or joined. Each: type, team, leader, members, `rounds_dispatched`, `finished`, `outcome_count`.
