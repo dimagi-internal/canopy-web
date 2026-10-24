@@ -93,6 +93,25 @@ def test_one_click_stores_the_login_sealed_and_never_returns_it(owner, agent):
     assert body["rotation_enabled"] is True
 
 
+def test_an_agent_with_no_email_is_named_by_its_automatic_domain_address(
+        ws, owner, django_capture_on_commit_callbacks):
+    """A workspace whose domain gives every agent `<slug>@<domain>` needs no email typed in."""
+    from apps.mail.models import MailDomain
+
+    MailDomain.objects.create(workspace=ws, name="dimagi.ai", status="verified", receiving=True,
+                              agent_addresses=True)
+
+    class _In:
+        slug, name, description, persona, email, avatar_url = "scout", "", "", "", "", ""
+
+    with django_capture_on_commit_callbacks(execute=True):  # the address is made after commit
+        services.upsert_agent(_In(), workspace=ws, owner=owner)
+    _keyset(owner)
+    resp = _post(owner)
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["user_email"] == "scout@dimagi.ai"
+
+
 def test_it_refuses_before_minting_when_nobody_could_open_it(owner, agent):
     resp = _post(owner)
     assert resp.status_code == 409 and "set up your key" in resp.json()["detail"]
