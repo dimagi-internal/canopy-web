@@ -300,6 +300,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   them is the browser's re-wrap of the key, and the asker's interstitial turns
   into "Open it" when it lands. Every list names one "Private conversation ·
   <starter>" with a lock (`components/chat/privateConversation.tsx`).
+  Opening a chat paints before its socket's snapshot (the slow part): from the
+  tab's last copy of it (`pages/chat/sessionCache.ts`, kept for the life of the
+  tab), else from the REST detail's tail; the snapshot then replaces either. One
+  a list already named as ordinary (/ide's) skips the gate's read. A private
+  conversation is never cached or painted early. The chat reuses a fleet read
+  under a minute old (`recentRunners`) and shares one slash-command list per
+  agent, runner and role.
 - **`/huddles`** (+ `/:id`) — agents syncing in rounds, led by one of them.
   The detail page is a grid (column per member, row per round; leader's
   critique above the round it shaped; co-sign arcs tying joint proposals), then

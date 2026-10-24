@@ -483,15 +483,15 @@ def _stop_from_slack(body: dict) -> HttpResponse:
     if session is None:
         return JsonResponse({"ok": True})
     by = _stopper_name(installation, str(event.get("user") or event.get("user_id") or ""))
-    interrupted = ""
+    # The ONE stop (`control.stop_session`): the turns when a turn owns the work, else
+    # the session — never both, so a second interrupt cannot land after the agent moved on.
     try:
-        cancelled = session_control.cancel_session_turns(session, by=by)
-        interrupted = session_control.interrupt_session(session)
+        route = session_control.stop_session(session, by=by)
     except Exception:  # noqa: BLE001 — a stop that half-lands must still settle the indicator
         logger.exception("slack stop failed")
-        cancelled = False
+        route = ""
     dest = relay.session_destination(session)
-    if dest is not None and not cancelled and interrupted == "sent":
+    if dest is not None and route == "session":
         # An agent turn is already DONE once its prompt is delivered, so there is
         # no turn for the status line to turn into "Stopped" — say it in the thread.
         try:

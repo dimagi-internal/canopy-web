@@ -63,7 +63,27 @@ def test_every_moved_job_is_registered():
         "capabilities.sweep", "slack.channel_ingest", "agents.pat_rotation", "agents.zk_notify",
         "push.due_session_pushes", "canopy_sessions.purge_expired_secrets", "retention.sweep",
         "contacts.hcp_oauth_deliver", "admission.sweep_unrunnable", "admission.expire_runner_notices",
+        "events.prune", "canopy_sessions.orphaned_attachments",
     } <= names
+
+
+@pytest.mark.django_db
+def test_the_housekeeping_jobs_prune_old_events_and_unsent_attachments():
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from apps.events.models import Event
+
+    from apps.workspaces.testing import a_workspace
+
+    ws = a_workspace("connect")
+    stale = Event.objects.create(source="slack", kind="slack.blocked", workspace=ws)
+    Event.objects.filter(pk=stale.pk).update(last_seen_at=timezone.now() - dt.timedelta(days=31))
+    fresh = Event.objects.create(source="slack", kind="slack.blocked", workspace=ws)
+    ticks.jobs()["events.prune"].fn()
+    assert list(Event.objects.values_list("pk", flat=True)) == [fresh.pk]
+    ticks.jobs()["canopy_sessions.orphaned_attachments"].fn()  # runs, with nothing to sweep
 
 
 # ---- the harness's jobs -----------------------------------------------------------

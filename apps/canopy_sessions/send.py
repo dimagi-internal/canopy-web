@@ -16,7 +16,7 @@ from apps.harness import sensitivity
 from apps.harness import services as harness_services
 from apps.harness.models import Turn
 
-from . import authorship, conversation_keys, services, transcript_ingest, transcript_read
+from . import authorship, conversation_keys, private_attachments, services, transcript_ingest, transcript_read
 from . import placement as session_placement
 from .models import Message, RunnerBinding, Session
 
@@ -46,18 +46,24 @@ def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
 
     if user is None or getattr(user, "pk", None) is None:
         return []
-    # A private conversation takes no files (the box reading one holds no key to it):
-    # whatever is pending was attached before it became private and is not sent.
-    if sensitivity.is_sensitive(session):
-        return []
-    pending = list(Attachment.objects.filter(
-        session=session, uploaded_by=user, sent_at__isnull=True))
+    sensitive = sensitivity.is_sensitive(session)
+    pending = Attachment.objects.filter(session=session, uploaded_by=user, sent_at__isnull=True,
+                                        sensitive=sensitive)
+    if sensitive:
+        # A private conversation's file (`private_attachments`): only one whose sealed
+        # copy its people can open again is sent, and the turn names it by id alone —
+        # the box learns its name from the one download. Files attached before it became
+        # private were deleted at the switch (`services._drop_attachments`).
+        pending = pending.exclude(sealed_blob_key="").exclude(storage_key="")
+    pending = list(pending)
     if not pending:
         return []
     now = timezone.now()
     Attachment.objects.filter(pk__in=[a.pk for a in pending]).update(
         sent_at=now, **({"message": message} if message is not None else {})
     )
+    if sensitive:
+        return [{"id": str(a.id), "sealed": True} for a in pending]
     return [
         {"id": str(a.id), "filename": a.filename, "content_type": a.content_type}
         for a in pending
@@ -87,7 +93,9 @@ def sweep_orphaned_attachments(*, older_than: _dt.timedelta) -> int:
     for row in qs:
         if configured:
             try:
-                attachment_storage.delete(row.storage_key)
+                for key in (row.storage_key, row.sealed_blob_key):
+                    if key:
+                        attachment_storage.delete(key)
             except Exception:
                 transcript_read.logger.warning(
                     "sweep: could not delete bytes for attachment %s; deleting the row anyway",
@@ -316,6 +324,7 @@ def _enqueue_chat_turn(
     attachments = claim_pending_attachments(session, message, user)
     if attachments:
         ref["attachments"] = [*(ref.get("attachments") or []), *attachments]
+    sealed = [a["id"] for a in attachments if a.get("sealed")]
     turn, _created = harness_services.enqueue_turn(
         session=session,
         origin=origin,
@@ -334,6 +343,8 @@ def _enqueue_chat_turn(
         capability=capability,
         parent=parent,
     )
+    # The one turn whose box may fetch a private conversation's files.
+    private_attachments.bind_turn(sealed, turn)
     return turn
 
 

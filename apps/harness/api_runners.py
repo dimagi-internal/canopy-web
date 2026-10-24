@@ -483,7 +483,7 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
     # entitles the box to it — the same rule as turn_github_token above.
     from apps.agents.credentials import delegations
     from apps.agents.services import runner_may_hold_agent
-    from apps.canopy_sessions import attachment_storage
+    from apps.canopy_sessions import attachment_storage, private_attachments
 
     runner = runner_or_404(request, runner_id)
     turn = (
@@ -493,18 +493,27 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
     )
     if turn is None or turn.chat_session_id is None:
         raise HttpError(404, "attachment not found")
-    # A private conversation keeps no files (`services._drop_attachments`).
-    if sensitivity.is_sensitive(turn.chat_session):
-        raise HttpError(404, "attachment not found")
     # A claim already requires this; re-asked because an owner can be demoted
     # mid-turn.
     agent = delegations.turn_agent(turn)
     if agent is not None and not runner_may_hold_agent(runner, agent):
         raise HttpError(404, "attachment not found")
+    if sensitivity.is_sensitive(turn.chat_session):
+        # A private conversation's file is the agent's for ONE turn
+        # (`private_attachments`): only a file that turn claimed, only while this box
+        # holds it, and only once — the bytes are deleted as they are served. Every
+        # other ask, an earlier message's file or a second fetch, is the same 404.
+        attachment = Attachment.objects.filter(
+            pk=attachment_id, session_id=turn.chat_session_id, sensitive=True, turn=turn,
+            sent_at__isnull=False).first()
+        response = private_attachments.take_for_runner(attachment) if attachment is not None else None
+        if response is None:
+            raise HttpError(404, "attachment not found")
+        return response
     # Sent only: an unsent attachment is still someone's draft (sent_at, not
     # message, marks a send — a runner-origin session writes no Message row).
     attachment = Attachment.objects.filter(
-        pk=attachment_id, session_id=turn.chat_session_id, sent_at__isnull=False,
+        pk=attachment_id, session_id=turn.chat_session_id, sent_at__isnull=False, sensitive=False,
     ).first()
     if attachment is None:
         raise HttpError(404, "attachment not found")

@@ -1,8 +1,7 @@
 """Delete attachments that never got claimed by a send.
 
-A management command, not a scheduler — the same reasoning as `prune_events`:
-no celery, no beat, no new deploy surface for what is ops housekeeping. An
-unbound attachment is rare (the composer blocks sending while an upload is
+The off-request clock does this hourly (`canopy_sessions.orphaned_attachments`,
+`apps/canopy_sessions/apps.py`); this command runs it by hand. An unbound attachment is rare (the composer blocks sending while an upload is
 still in flight) and cheap to accumulate without ever mattering — but a row
 with no cleanup path is still a bug, so this gives ops one.
 """

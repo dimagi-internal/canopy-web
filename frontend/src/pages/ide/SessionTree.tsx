@@ -167,6 +167,9 @@ export function IdeTree({
                 const st = sessionState(s)
                 const title = label(s)
                 const deleting = s.id in closing
+                // Moved to another runner that has not picked it up yet: kept in its
+                // place, greyed, until the new box reports it (server-derived).
+                const moving = !deleting && s.transferring
                 const parent = s.parent_session_id ? sessions.find((p) => p.id === s.parent_session_id) : undefined
                 const kids = links.get(s.id) ?? []
                 const kidsOpen = !collapsedLinks.has(s.id)
@@ -206,13 +209,14 @@ export function IdeTree({
                       `workspace ${s.workspace}`,
                       `last activity ${new Date(s.last_activity_at).toLocaleString()}`,
                       s.status === 'archived' ? 'archived' : '',
+                      moving ? `transferring to ${s.runner_name ?? 'another runner'} — waiting for it to pick the session up` : '',
                     ]
                       .filter(Boolean)
                       .join('\n')}
                     className={clsx(
                       'grid grid-cols-[8px_minmax(0,1fr)_auto_auto_2.25rem] items-center gap-2 py-1 pr-2',
                       s.id === id ? 'bg-primary/10 text-foreground' : 'text-foreground-secondary hover:bg-muted',
-                      (s.status === 'archived' || deleting) && 'opacity-60',
+                      (s.status === 'archived' || deleting || moving) && 'opacity-60',
                       menuSessionId === s.id && 'ring-1 ring-inset ring-primary/50',
                     )}
                     style={{ paddingLeft: '1.75rem' }}
@@ -232,7 +236,7 @@ export function IdeTree({
                     ) : (
                       <span className="flex min-w-0 items-center gap-1">
                         {s.sensitive && <PrivateMark />}
-                        <span className="truncate">{deleting ? `Deleting… ${title}` : title}</span>
+                        <span className="truncate">{deleting ? `Deleting… ${title}` : moving ? `Transferring… ${title}` : title}</span>
                       </span>
                     )}
                     <span
@@ -253,7 +257,7 @@ export function IdeTree({
                         st === 'running' ? 'text-success' : 'text-muted-foreground',
                       )}
                     >
-                      {deleting ? '…' : st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
+                      {deleting || moving ? '…' : st === 'running' ? 'live' : shortAge(s.last_activity_at, now)}
                     </span>
                   </Link>
                   {kidsOpen &&

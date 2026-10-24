@@ -142,7 +142,8 @@ def test_the_refusal_reads_the_credential_that_authenticated():
 
     request = RequestFactory().get("/")
     assert minting_refusal(request) is None
-    for kind in ("oauth", "delegated", "contact"):
+    for kind in ("oauth", "delegated", "contact", "caller_token", "runner-key", "hcp-oauth",
+                 "a-kind-added-later", None):
         request.auth_credential = {"type": kind}
         assert minting_refusal(request)
     request.auth_credential = {"type": "pat"}

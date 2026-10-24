@@ -4,6 +4,7 @@ import { Lock } from 'lucide-react'
 import { getAgent } from '@/api/agents'
 import { askToJoin, getSession, type ChatSessionDetail } from '@/api/chat'
 import { Button } from 'canopy-ui/ui'
+import { knownNotPrivate } from '@/pages/chat/sessionCache'
 
 /**
  * A private (sensitive) conversation is opened on purpose. Whatever list it was
@@ -18,8 +19,11 @@ import { Button } from 'canopy-ui/ui'
  *   (`JoinRequests`). While it waits, this re-reads the conversation now and then,
  *   so an add turns into [Open it] (and a decline into "ask again") in place.
  *
- * An ordinary conversation passes straight through. The detail fetched to decide
- * is handed to the chat page (`takeGateFetch`), so a chat is still read once.
+ * An ordinary conversation passes straight through. One this tab already knows is
+ * not private (a list row said so, or it was opened before: `sessionCache`) opens
+ * at once, without waiting on a read, so the chat's own read and its socket start
+ * together. Otherwise the detail fetched to decide is handed to the chat page
+ * (`takeGateFetch`), so a chat is still read once.
  */
 
 const OPENED_KEY = (id: string) => `canopy.private-open.${id}`
@@ -52,10 +56,12 @@ export function takeGateFetch(id: string): Promise<ChatSessionDetail> | null {
 type Decision = { kind: 'loading' } | { kind: 'open' } | { kind: 'ask'; session: ChatSessionDetail }
 
 export function PrivateConversationGate({ sessionId, children }: { sessionId: string; children: ReactNode }) {
-  const [decision, setDecision] = useState<Decision>({ kind: 'loading' })
+  // Read once per mount (the gate is keyed by session).
+  const [skip] = useState(() => knownNotPrivate(sessionId))
+  const [decision, setDecision] = useState<Decision>(skip ? { kind: 'open' } : { kind: 'loading' })
 
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || skip) return
     let live = true
     setDecision({ kind: 'loading' })
     const p = getSession(sessionId)
@@ -71,7 +77,7 @@ export function PrivateConversationGate({ sessionId, children }: { sessionId: st
     return () => {
       live = false
     }
-  }, [sessionId])
+  }, [sessionId, skip])
 
   if (decision.kind === 'loading') return <p className="p-4 text-[13px] text-muted-foreground">Loading…</p>
   if (decision.kind === 'open') return <>{children}</>

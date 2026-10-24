@@ -1059,6 +1059,7 @@ def health_report() -> dict:
         _disk_check()
         _egress_check()
         _data_mode_check()
+        _claim_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -3687,7 +3688,7 @@ def _sensitive_data_turn_reads(cwd, caller_path, sessions=()) -> tuple[list[str]
 
 
 def sensitive_data_settings(confined: dict | None = None, *, cwd=None,
-                            caller_path=None, sessions=()) -> dict:
+                            caller_path=None, sessions=(), attachment_dir=None) -> dict:
     """The `--settings` document for a sensitive-data turn: the locked profile, narrowed
     further by a confined turn's own rules when it has them
     (`native_permissions.cli_settings`).
@@ -3701,6 +3702,10 @@ def sensitive_data_settings(confined: dict | None = None, *, cwd=None,
     other conversations, and every other turn's envelope and every other session are
     denied by pattern (`_sensitive_data_turn_reads`). Bypass and auto mode are
     disabled and unlisted tools are refused.
+
+    `attachment_dir` is where a private conversation's files for this turn were put
+    (inside `cwd`): Read is allowed there whatever the capability grants, as the
+    caller envelope is — they are the person's words, sent for this turn.
     """
     doc = dict(confined or {})
     perms = dict(doc.get("permissions") or {})
@@ -3716,6 +3721,8 @@ def sensitive_data_settings(confined: dict | None = None, *, cwd=None,
             deny |= set(others)
     elif cwd is not None:
         deny |= set(_sensitive_data_turn_reads(cwd, caller_path, sessions)[1])
+    if attachment_dir is not None:
+        allow.append(_abs_read_rule(attachment_dir, "/**"))
     perms.update({
         "defaultMode": "dontAsk",
         "disableAutoMode": "disable",
@@ -3827,7 +3834,7 @@ def _data_mode_check() -> None:
 
 
 def _sensitive_data_settings_file(turn: dict, confined_path: str | None, *, cwd=None,
-                                  caller_path=None, sessions=()) -> str:
+                                  caller_path=None, sessions=(), attachment_dir=None) -> str:
     """Write this sensitive-data turn's settings (merging a confined turn's own, and
     scoping its reads to `cwd`, its `caller_path` and its own `sessions`) and return
     the path. Written whole or not at all (a half-written file would be read as no
@@ -3842,7 +3849,8 @@ def _sensitive_data_settings_file(turn: dict, confined_path: str | None, *, cwd=
     path = PROFILE_ROOT / f"cloud-{turn['id']}.sensitive-data-settings.json"
     try:
         _write_private_atomic(path, sensitive_data_settings(
-            confined, cwd=cwd, caller_path=caller_path, sessions=sessions))
+            confined, cwd=cwd, caller_path=caller_path, sessions=sessions,
+            attachment_dir=attachment_dir))
     except OSError as exc:
         raise ConfineError(f"could not write the sensitive-data permission profile: {exc}") from exc
     return str(path)
@@ -3916,7 +3924,7 @@ def _session_paths(workdir: pathlib.Path, sid: str, *, keep_resumable: bool = Fa
 
 
 def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_ids,
-                                confined: bool, keep: str = "") -> None:
+                                confined: bool, keep: str = "", attachments: str = "") -> None:
     """After a sensitive-data turn, however it ended: delete what it left on disk that
     can hold what it read -- the caller envelope, its profiles and MCP config, the
     box-wide logs (`_sensitive_data_box_wide`) and, for a confined turn, every session
@@ -3928,10 +3936,19 @@ def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_
     (`keep_conversation`): of it, only the transcript and sidecar stay, until the
     conversation has been idle for SENSITIVE_KEEP_IDLE_SECONDS or is closed
     (`sweep_kept_conversations`). An ordinary conversation's own transcript stays
-    while the conversation can resume it, and is swept with its work directory."""
+    while the conversation can resume it, and is swept with its work directory.
+
+    `attachments` is the directory a private conversation's files were fetched into
+    for this turn (`_sensitive_attachment_dir`): it goes whole, and so does its parent
+    once empty. What the agent read of them stays only in the kept transcript, which
+    lives no longer than the conversation's own kept session."""
     if not SENSITIVE_DATA_MODE:
         return
     paths = [CALLER_ROOT / f"{turn_id}.json"]
+    if attachments:
+        paths.append(pathlib.Path(attachments))
+    if cwd is not None:
+        paths.append(_sensitive_attachment_dir(cwd, turn_id))
     paths += [PROFILE_ROOT / f"cloud-{turn_id}{suffix}" for suffix in _SENSITIVE_DATA_PROFILE_SUFFIXES]
     paths += _sensitive_data_box_wide()
     if confined:
@@ -3944,6 +3961,11 @@ def _sensitive_data_forget_turn(turn_id: str, cwd: pathlib.Path | None, session_
             paths.append(workdir)  # a scratch directory nothing else uses
     for path in paths:
         _unlink_or_rmtree(path)
+    for path in {pathlib.Path(attachments).parent if attachments else None,
+                 (pathlib.Path(cwd) / SENSITIVE_ATTACHMENT_DIRNAME) if cwd is not None else None}:
+        if path is not None:
+            with contextlib.suppress(OSError):
+                path.rmdir()  # only when no other turn's files are in it
 
 
 # ── a sensitive conversation keeps its own Claude session between turns ───────
@@ -5309,6 +5331,67 @@ def _attachment_name(name: str) -> str:
     name = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
     cleaned = "".join(c if (c.isalnum() or c in "._-") else "-" for c in name).strip(".-")
     return cleaned[:120] or "attachment"
+
+
+#: Where a PRIVATE conversation's files land for one turn: inside the turn's own working
+#: directory, under `.canopy-attachments/<turn id>/`, readable by that turn alone
+#: (`sensitive_data_settings(attachment_dir=…)`, the profile's `attachment_dirs`) and deleted
+#: when it ends with the rest of its per-turn state (`_sensitive_data_forget_turn`).
+SENSITIVE_ATTACHMENT_DIRNAME = ".canopy-attachments"
+
+
+def _sensitive_attachment_dir(cwd: pathlib.Path, turn_id: str) -> pathlib.Path:
+    return pathlib.Path(cwd) / SENSITIVE_ATTACHMENT_DIRNAME / str(turn_id)
+
+
+_DISPOSITION_NAME = re.compile(r'filename="([^"]*)"')
+
+
+def _download_attachment(runner_id: str, turn_id: str, aid: str) -> tuple[bytes, str]:
+    """One attachment's bytes, and the name canopy-web gave it (Content-Disposition),
+    fetched through the turn this box holds."""
+    url = (f"{BASE_URL}/api/harness/runners/{runner_id}/turns/{turn_id}"
+           f"/attachments/{aid}/content")
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {_bearer()}")
+    req.add_header("X-Canopy-Client", "canopy-cloud-runner")
+    req.add_header("User-Agent", f"canopy-cloud-runner host={socket.gethostname()}")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        body = resp.read()
+        m = _DISPOSITION_NAME.search(resp.headers.get("Content-Disposition") or "")
+    return body, (m.group(1) if m else "")
+
+
+def _fetch_sensitive_attachments(runner_id: str, turn: dict,
+                                 dest: pathlib.Path) -> tuple[list[pathlib.Path], list[str]]:
+    """A private conversation's files for this turn (`origin_ref.attachments`, ids
+    only), into `dest` — the turn's own directory, owner-only. canopy-web serves each
+    ONCE, to the box holding the turn, and deletes it as it does; the name comes with
+    the bytes and is never logged (a failure is logged by id). Returns (paths that
+    arrived, placeholders for those that did not)."""
+    refs = (turn.get("origin_ref") or {}).get("attachments") or []
+    turn_id = str(turn.get("id", ""))
+    paths: list[pathlib.Path] = []
+    missing: list[str] = []
+    for n, ref in enumerate(refs, start=1):
+        aid = ref.get("id")
+        if not aid:
+            continue
+        try:
+            body, served_name = _download_attachment(runner_id, turn_id, str(aid))
+            dest.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(dest, 0o700)
+            path = dest / f"{n}-{_attachment_name(served_name)}"
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(body)
+        except Exception as exc:  # noqa: BLE001 — one file must never crash the turn's worker
+            _log(f"turn {turn_id[:8]}: attachment {aid} could not be fetched "
+                 f"({type(exc).__name__}); continuing without it")
+            missing.append(f"attachment {n}")
+            continue
+        paths.append(path)
+    return paths, missing
 
 
 def _fetch_attachments(runner_id: str, turn: dict) -> tuple[list[pathlib.Path], list[str]]:
@@ -9085,6 +9168,62 @@ def _in_flight_ids() -> list[str]:
         return sorted(_IN_FLIGHT)
 
 
+# ── the claim gate ──────────────────────────────────────────────────────────
+# The box decides for itself whether to ask for a turn, and none of those
+# reasons is visible to canopy-web: on 2026-10-24 an Eva chat turn sat queued
+# 15 minutes behind cloud-ec2-2 while the server saw an online, ready, idle box,
+# and only journald knew why. So the ONE gate both claim loops ask is also
+# reported on every heartbeat, as the `claim` health check.
+
+#: When the current not-claiming streak began (None while claiming).
+_NOT_CLAIMING_SINCE: float | None = None
+
+_GIB_KB = 1024 * 1024
+
+
+def _span(seconds: float) -> str:
+    m = int(seconds // 60)
+    if m < 1:
+        return "<1m"
+    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m"
+
+
+def claim_gate(*, now: float | None = None) -> tuple[bool, str, str]:
+    """(claiming, reason, detail): may this box ask for a turn right now, and if
+    not, which of its own limits says no. `reason` is "" while claiming, else one
+    of turn_cap / memory / token_refused / data_mode. Also records when the
+    current not-claiming streak started, which the detail names."""
+    global _NOT_CLAIMING_SINCE
+    now = time.time() if now is None else now
+    in_flight = _in_flight_ids()
+    avail = _meminfo_kb(_read_meminfo(), "MemAvailable")
+    load = f"{len(in_flight)}/{MAX_CONCURRENT_TURNS} turns in flight"
+    free = f"{avail / _GIB_KB:.1f} GiB free" if avail is not None else "free memory unknown"
+    if len(in_flight) >= MAX_CONCURRENT_TURNS:
+        reason, why = "turn_cap", (f"at turn cap {len(in_flight)}/{MAX_CONCURRENT_TURNS} "
+                                   f"(in flight: {', '.join(t[:8] for t in in_flight)})")
+    elif not _memory_headroom_ok():
+        reason, why = "memory", (f"{(avail or 0) / _GIB_KB:.1f} GiB free < "
+                                 f"{CLAIM_MIN_AVAILABLE_KB / _GIB_KB:.1f} GiB floor ({load})")
+    elif _token_refused():
+        reason, why = "token_refused", ("canopy-web refused this box's token (401); replace "
+                                        "canopy/cloud-runner/canopy-pat and restart")
+    elif _data_mode_refused():
+        reason, why = "data_mode", (f"RUNNER_DATA_MODE {RUNNER_DATA_MODE!r} is not one canopy "
+                                    "knows (see `claude.sensitive_data`)")
+    else:
+        _NOT_CLAIMING_SINCE = None
+        return True, "", f"claiming · {load} · {free}"
+    if _NOT_CLAIMING_SINCE is None:
+        _NOT_CLAIMING_SINCE = now
+    return False, reason, f"not claiming for {_span(now - _NOT_CLAIMING_SINCE)}: {why}"
+
+
+def _claim_check() -> None:
+    claiming, _, detail = claim_gate()
+    _set_check("claim", "ok" if claiming else "warn", detail)
+
+
 def _transcript_core():
     """canopy_transcript, imported lazily and cached.
 
@@ -9938,11 +10077,19 @@ def _write_private_atomic(path: pathlib.Path, doc: dict) -> None:
     os.replace(tmp, path)
 
 
-def _confine(turn: dict) -> tuple[dict, str]:
+#: The profile_guard version that honours `attachment_dirs` (canopy 0.2.781): Read of a
+#: file inside the turn's own attachment directory, and nothing wider.
+ATTACHMENT_DIRS_GUARD_VERSION = 4
+
+
+def _confine(turn: dict, read_dirs=()) -> tuple[dict, str]:
     """Write the turn's caller envelope and profile. Returns (env, caller_path):
     the env points the session at its profile; the envelope is what the agent's
     `answer-caller` skill reads first (`--caller <path>`), and the profile names
-    it so the guard allows reading exactly that one file."""
+    it so the guard allows reading exactly that one file. `read_dirs` are where a
+    private conversation's files for this turn were put: named as the profile's
+    `attachment_dirs`, which the guard lets Read open and nothing else — the
+    capability's own tools and read_paths are unchanged."""
     turn_id = str(turn["id"])
     cap = _capability(turn)
     caller_path = CALLER_ROOT / f"{turn_id}.json"
@@ -9951,6 +10098,7 @@ def _confine(turn: dict) -> tuple[dict, str]:
            "thread_id": str(((turn.get("caller_context") or {}).get("conversation") or {})
                             .get("thread_id") or "") or None,
            "mcp_token": turn.get("mcp_token") or None,
+           **({"attachment_dirs": [os.path.realpath(str(d)) for d in read_dirs]} if read_dirs else {}),
            }
     path = PROFILE_ROOT / f"cloud-{turn_id}.json"
     try:
@@ -10126,8 +10274,10 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     turn_id = turn["id"]
     # What a sensitive-data turn's cleanup needs, filled in as the turn gets that
     # far; the cleanup itself runs in the `finally` below, however the turn ends.
-    forget = {"cwd": None, "confined": False, "cli_session_id": "", "resumed": "", "keep": ""}
+    forget = {"cwd": None, "confined": False, "cli_session_id": "", "resumed": "", "keep": "",
+              "attachments": ""}
     _TURN_ENV.session_ids = []
+    _TURN_ENV.attachment_dir = None
     _TURN_ENV.mcp_config = None
     _TURN_ENV.fresh_start = None
     # A sensitive conversation's kept session is never swept while a turn runs in it.
@@ -10238,12 +10388,31 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                     _note_fresh_start(turn)
             try:
                 prompt = _confined_prompt(turn)
-                # A confined session reads only its capability's paths, so the
-                # files are not fetched — but they are NAMED, never silently lost.
-                withheld = [_attachment_name(r.get("filename", "")) for r in
-                            (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]
-                prompt = _neutralise_mentions(_with_attachments(prompt, [], withheld))
-                confine_env, caller_path = _confine(turn)
+                attachment_paths: list[pathlib.Path] = []
+                if conversation and cwd is not None and profiles_supported() < ATTACHMENT_DIRS_GUARD_VERSION:
+                    # The installed guard cannot let the turn read them without widening
+                    # its capability, so they are not fetched: named as not available.
+                    refs = [r for r in (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]
+                    prompt = _neutralise_mentions(_with_attachments(
+                        prompt, [], [f"attachment {n}" for n in range(1, len(refs) + 1)]))
+                elif conversation and cwd is not None:
+                    # A private conversation's files are its people's words, sent for
+                    # this turn: fetched into its own directory, readable by it alone,
+                    # gone when it ends (`_sensitive_data_forget_turn`).
+                    att_dir = _sensitive_attachment_dir(cwd, str(turn_id))
+                    forget["attachments"] = str(att_dir)
+                    attachment_paths, missing = _fetch_sensitive_attachments(runner_id, turn, att_dir)
+                    prompt = _neutralise_mentions(_with_attachments(prompt, attachment_paths, missing))
+                    if attachment_paths:
+                        _TURN_ENV.attachment_dir = att_dir
+                else:
+                    # Any other confined session reads only its capability's paths, so
+                    # the files are not fetched — but they are NAMED, never silently lost.
+                    withheld = [_attachment_name(r.get("filename", "")) for r in
+                                (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]
+                    prompt = _neutralise_mentions(_with_attachments(prompt, [], withheld))
+                confine_env, caller_path = _confine(
+                    turn, read_dirs=[_sensitive_attachment_dir(cwd, str(turn_id))] if attachment_paths else ())
                 _TURN_ENV.extra = {**per_turn, **confine_env}
                 _TURN_ENV.settings = _native_settings(
                     turn, cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8],
@@ -10272,7 +10441,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _TURN_ENV.read_settings = functools.partial(
                     _sensitive_data_settings_file, turn, _TURN_ENV.settings,
                     cwd=cwd if cwd is not None else pathlib.Path(WORK_DIR) / turn_id[:8],
-                    caller_path=str(CALLER_ROOT / f"{turn_id}.json") if confined else None)
+                    caller_path=str(CALLER_ROOT / f"{turn_id}.json") if confined else None,
+                    attachment_dir=getattr(_TURN_ENV, "attachment_dir", None))
                 _TURN_ENV.read_sessions = []
                 _TURN_ENV.settings = _TURN_ENV.read_settings(sessions=())
                 _TURN_ENV.mcp_config = _sensitive_data_mcp_config(turn)
@@ -10442,10 +10612,11 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 str(turn_id), forget["cwd"],
                 [*(getattr(_TURN_ENV, "session_ids", None) or []), forget["resumed"],
                  forget["cli_session_id"]],
-                forget["confined"], keep=forget["keep"])
+                forget["confined"], keep=forget["keep"], attachments=forget["attachments"])
         except Exception as exc:  # noqa: BLE001 — the secrets below must still go
             _log(f"warn: sensitive-data cleanup for {str(turn_id)[:8]} failed: {exc}")
         _TURN_ENV.session_ids = None
+        _TURN_ENV.attachment_dir = None
         _TURN_ENV.mcp_config = None
         _TURN_ENV.fresh_start = None
         _TURN_ENV.read_settings = None
@@ -10543,8 +10714,7 @@ def run_over_rest(runner_id: str) -> None:
         _maybe_reread_credentials()
         _credential_tick()
         _drain_inbox(runner_id)
-        if (len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok()
-                or _token_refused() or _data_mode_refused()):
+        if not claim_gate()[0]:
             time.sleep(POLL_SECONDS)
             continue
         paused = backed_off_slugs()
@@ -10659,14 +10829,10 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     is not safe across threads, the same constraint `_start_lease_renewal`
     observes.
     """
-    if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
+    if not claim_gate()[0]:
+        # The poll tick retries; the queued turn waits, nothing is lost. The
+        # heartbeat's `claim` check says which limit held it.
         return False
-    if not _memory_headroom_ok():
-        return False  # the poll tick retries; the queued turn waits, nothing is lost
-    if _token_refused():
-        return False  # it could never report back; leave it for a box that can
-    if _data_mode_refused():
-        return False  # health says why (`claude.sensitive_data`); nothing runs until it is fixed
     paused = backed_off_slugs()
     res = _ws_request(ws, {"action": "claim", **({"paused": paused} if paused else {})}, "claim.result")
     turn = res.get("turn") if res else None

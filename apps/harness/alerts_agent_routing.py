@@ -6,7 +6,10 @@ Configuration only, never liveness. Two conditions, both read from
 - the agent has no usable runner on its DEFAULT list (own or inherited). Its
   reason is the most specific true one: no routes at all; the workspace order's
   runners lack its repo (`follows.missing_repo`); their owners may not hold it
-  (`follows.cannot_hold`); or the listed runners are directed-only.
+  (`follows.cannot_hold`); or the listed runners are directed-only;
+- or its OWN default list names runners none of which would take its turns —
+  another tenant's box, or one whose owner may not hold it — by the predicate the
+  setup checklist asks (`agents.setup.runner_takers`).
 
 A routed runner that is merely offline, stale or down is NOT a configuration
 problem and raises nothing; the runner's own alerts and the unclaimable-turns
@@ -83,6 +86,28 @@ def _reason(agent: dict, runners: dict) -> tuple[str, str] | None:
     return f"{name} has no runner to run on", "no-runner"
 
 
+def _own_list_unusable(agent: dict, runners: dict) -> tuple[str, str] | None:
+    """The agent's OWN default list names a runner, but none of them would take its
+    turns by the claim's own predicates — the tenant and `runner_may_hold_agent` —
+    which is what the setup checklist's runner step asks (`setup.runner_takers`).
+    Without this the checklist said "Give it a runner" while no alert was raised."""
+    own = [r for r in agent["routes"]
+           if r["enabled"] and r["source"] == "" and not r.get("inherited")]
+    if not own:
+        return None
+    from apps.agents.setup import runner_takers  # noqa: PLC0415 — cycle: agents.setup imports harness.routing
+
+    row = Agent.objects.filter(slug=agent["slug"]).first()
+    if row is None or runner_takers(row)[0]:
+        return None
+    ids = sorted({r["runner_id"] for r in own})
+    listed = sorted(runners[pk]["name"] for pk in ids if pk in runners)
+    subject = "it" if len(listed) == 1 else "they"
+    return (f"{agent['name']} can't use {_join(listed)}: {subject} can't take its turns "
+            "(another workspace's runner, or its owner can't hold the agent)",
+            "unusable:" + ",".join(str(pk) for pk in ids))
+
+
 def reconcile(now) -> list[Raise]:
     out: list[Raise] = []
     for root in Workspace.objects.filter(parent__isnull=True).order_by("slug"):
@@ -90,7 +115,7 @@ def reconcile(now) -> list[Raise]:
         runners = {r["id"]: r for r in topo["runners"]}
         for ws in topo["workspaces"]:
             for agent in ws["agents"]:
-                found = _reason(agent, runners)
+                found = _reason(agent, runners) or _own_list_unusable(agent, runners)
                 if found is None:
                     continue
                 title, reason = found

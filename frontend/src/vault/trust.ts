@@ -23,7 +23,17 @@ import { jkt, publicJwkOfScalar, verifyEndorsement, type Recipient } from './zk'
 
 type Jwk = { x?: string; y?: string }
 
-export interface Pin { jkt: string; email: string; pinned_at: string }
+export interface Pin {
+  jkt: string
+  email: string
+  pinned_at: string
+  /** Your OWN key, taken on the server's word when this browser started a chat before it
+   *  had ever opened your vault key (trust on first use, `trustSelfOnFirstUse`): not yet
+   *  checked against the key you hold. The first unlock here checks it (`rememberSelf`). */
+  unconfirmed?: boolean
+  /** The chats whose keys were wrapped to it meanwhile, named if that check fails. */
+  conversations?: string[]
+}
 export type Pins = Record<string, Pin>
 
 const PINS = 'canopy-vault/v1/pins'
@@ -191,14 +201,99 @@ export function pinPerson(userId: number | string, thumb: string, email: string)
  *  the server later names as yours is checked against it (`checkSelf`). The public half
  *  is recomputed from the private scalar when the flow opened it, so the pin is the key
  *  you hold, whatever the server said it was. */
-export async function rememberSelf(userId: string, publicJwk: Jwk, scalar?: Uint8Array): Promise<void> {
+export async function rememberSelf(userId: string, publicJwk: Jwk, scalar?: Uint8Array): Promise<SelfMismatch | null> {
   const thumb = await jkt(scalar ? await publicJwkOfScalar(scalar) : publicJwk)
   const was = loadPins()[userId]
-  if (!was || was.jkt !== thumb) savePins([{ by: userId, jkt: thumb, email: was?.email ?? '' }])
+  // A key taken on first use, now checked against the key actually held: the chats
+  // started meanwhile were wrapped to a key that is NOT yours — what a substituted key
+  // looks like. Recorded, to be shown with their names (`selfMismatch`); the pin becomes
+  // the key you hold, so the substituted one is refused from now on (`checkSelf`).
+  let mismatch: SelfMismatch | null = null
+  if (was?.unconfirmed && was.jkt !== thumb && scalar) {
+    mismatch = { userId, wrongJkt: was.jkt, conversations: was.conversations ?? [], found_at: new Date().toISOString() }
+    writeMismatch(mismatch)
+  }
+  if (!was || was.jkt !== thumb || (was.unconfirmed && scalar)) {
+    // Only a key opened from its private half confirms; a public half alone keeps the doubt.
+    writePin(userId, { jkt: thumb, email: was?.email ?? '', pinned_at: new Date().toISOString(),
+                       ...(scalar ? {} : { unconfirmed: true, conversations: was?.conversations ?? [] }) })
+  }
+  return mismatch
 }
 
-/** Whether `thumb` is the vault key this browser last opened as yours: `new` when it never
- *  has, `changed` when it opened a different one. */
+/** Starting a chat in a browser that has never opened your vault key: its key is wrapped
+ *  to the key canopy names as yours WITHOUT asking you to unlock (starting a chat never
+ *  does), and that key is pinned here as UNCONFIRMED, with the chat's id. Your first
+ *  unlock here checks it (`rememberSelf`). A pin already there (confirmed or not, the
+ *  same key) just gains the chat. Storage this browser cannot keep keeps nothing: each
+ *  start trusts anew, and nothing is checked later. */
+export function trustSelfOnFirstUse(userId: string, thumb: string, conversation: string): void {
+  const was = loadPins()[userId]
+  if (was && was.jkt !== thumb) return  // `checkSelf` said changed: the caller refused
+  if (was && !was.unconfirmed) return
+  writePin(userId, { jkt: thumb, email: was?.email ?? '', pinned_at: was?.pinned_at ?? new Date().toISOString(),
+                     unconfirmed: true, conversations: [...(was?.conversations ?? []), conversation].slice(-200) })
+}
+
+/** Your own key here was taken on first use and not checked yet. */
+export function isUnconfirmed(userId: string): boolean {
+  return loadPins()[userId]?.unconfirmed === true
+}
+
+function writePin(userId: string, pin: Pin): void {
+  try {
+    const pins = loadPins()
+    pins[userId] = pin
+    window.localStorage.setItem(PINS, JSON.stringify(pins))
+  } catch {
+    // storage blocked: nothing is remembered here
+  }
+}
+
+/** Your vault key, opened here, is not the one chats started in this browser before were
+ *  wrapped to (`rememberSelf`). Shown until dismissed. */
+export interface SelfMismatch { userId: string; wrongJkt: string; conversations: string[]; found_at: string }
+
+const MISMATCH = 'canopy-vault/v1/self-mismatch'
+
+function writeMismatch(m: SelfMismatch): void {
+  try {
+    window.localStorage.setItem(MISMATCH, JSON.stringify(m))
+  } catch {
+    // storage blocked: the caller still has it to show now
+  }
+}
+
+export function selfMismatch(userId: string): SelfMismatch | null {
+  try {
+    const raw = window.localStorage.getItem(MISMATCH)
+    const m = raw ? (JSON.parse(raw) as SelfMismatch) : null
+    return m && m.userId === userId ? m : null
+  } catch {
+    return null
+  }
+}
+
+export function dismissSelfMismatch(): void {
+  try {
+    window.localStorage.removeItem(MISMATCH)
+  } catch {
+    // nothing to clear
+  }
+}
+
+/** The sentence a mismatch is shown in, naming the chats it touches. */
+export function selfMismatchMessage(m: SelfMismatch): string {
+  const n = m.conversations.length
+  const which = n ? ` ${n === 1 ? 'This chat was' : `These ${n} chats were`}: ${m.conversations.join(', ')}.` : ''
+  return 'Warning: chats started in this browser before you first opened your vault key here were ' +
+    'locked to a key that is not yours, so whoever holds that key could read them if they turn private, ' +
+    `and you cannot.${which} This browser no longer uses that key. If you did not replace your vault key ` +
+    'around then, someone may be trying to read your chats: tell your canopy admin.'
+}
+
+/** Whether `thumb` is the vault key this browser last opened as yours (or took on first
+ *  use, not yet checked): `new` when it has none, `changed` when it holds a different one. */
 export function checkSelf(userId: string, thumb: string): 'pinned' | 'new' | 'changed' {
   const pin = loadPins()[userId]
   if (!pin) return 'new'

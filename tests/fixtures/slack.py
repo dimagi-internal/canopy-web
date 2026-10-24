@@ -154,7 +154,11 @@ def installation(ws):
 
 @pytest.fixture
 def alice(ws):
+    from allauth.account.models import EmailAddress
+
     user = a_user("alice@dimagi.com")
+    # Signed in with Google, as a real member has: the address is a verified one.
+    EmailAddress.objects.create(user=user, email=user.email, verified=True, primary=True)
     wsvc.ensure_member(ws, user, WorkspaceMembership.EDITOR)
     return user
 

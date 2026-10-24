@@ -23,10 +23,6 @@ A change that would leave the vault with no owner or admin is refused (409 `vaul
 
 A person can be given a vault's key only once they have a vault key of their own, so everyone sets one up at sign-in: after Google sign-in, a person at a browser with no vault key sees one screen (`VaultSetupGate`, from `GET /api/vault/setup`) that registers a passkey and makes the key with it, or with a passphrase where the passkey cannot hold one. A failed check or a browser that cannot make a passkey lets them continue for that tab, and they are asked again next time.
 
-## Everyone has a vault key
-
-A person can be given a vault's key only once they have a vault key of their own, so everyone sets one up at sign-in: after Google sign-in, a person at a browser with no vault key sees one screen (`VaultSetupGate`, from `GET /api/vault/setup`) that registers a passkey and makes the key with it, or with a passphrase where the passkey cannot hold one. A failed check or a browser that cannot make a passkey lets them continue for that tab, and they are asked again next time.
-
 ## Who may hold a copy of the vault's key (zero-knowledge)
 
 - **A person** (`zk.eligible_members`): a member of the vault who has a vault key of their own.
@@ -40,6 +36,7 @@ Nothing deletes a copy of the vault key when someone stops being a member. Every
 
 - a machine's resolve refuses one whose person is not a member (403 `not_a_vault_member`), for the agent's own vault and each workspace layer (`workspace_vaults.layers_payload`);
 - the browser's `GET …/vault/zk?values=true` gives the ciphertext only to a vault member (403 `not_a_vault_member`), so an agent admin outside an unlinked vault cannot pair it with an old copy;
+- the agent vault's zero-knowledge writes (enable, values, wraps, rotate, endorsements) need an owner or admin of the vault as well as of the agent (`api_credentials._zk_admin`, as the workspace vault's `_vault(manage=True)`), so an agent admin outside an unlinked vault cannot rotate its key to a machine of their own;
 - a box is a keeper of a vault only while it may hold that key now (`vault_keeper._held`, `workspace_vaults.device_may_hold`);
 - `zk_notify.holders` and the endorsements a keeper checks (`zk_endorse.endorsements`) count current members only.
 

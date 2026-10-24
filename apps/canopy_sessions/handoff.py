@@ -268,7 +268,7 @@ def settle(h: SessionHandoff) -> SessionHandoff:
                 origin_ref["handoff"]["cold_prompt"] = build_prompt(
                     h, source_name=source_name, target_name=target.name, resumed=False)
         turn, _ = harness_services.enqueue_turn(
-            session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+            session=session, origin=_origin(session),
             # The handoff's own id: transferring back and forth (the normal shape
             # of a failover) must never dedupe onto an earlier move's turn.
             idempotency_key=f"transfer:{session.id.hex}:{h.id.hex}",
@@ -452,7 +452,7 @@ def restore_late(h: SessionHandoff, *, user, initiator=None):
     h.restore_status, h.restore_report = SessionHandoff.PENDING, None
     h.save(update_fields=["restore_status", "restore_report"])
     turn, _ = harness_services.enqueue_turn(
-        session=session, origin=Turn.ORIGIN_CANOPY_WEB_CHAT,
+        session=session, origin=_origin(session),
         idempotency_key=f"handoff-restore:{h.id.hex}:{int(timezone.now().timestamp())}",
         prompt=prompt,
         origin_ref={"thread_key": binding.thread_key or str(session.id),
@@ -463,6 +463,14 @@ def restore_late(h: SessionHandoff, *, user, initiator=None):
         parent={"session": session},
     )
     return turn
+
+
+def _origin(session) -> str:
+    """The product the session's work belongs to (`send.default_origin`) — an ace-web
+    session moved to another box is still ace-web work, not canopy chat."""
+    from .send import default_origin  # noqa: PLC0415 — cycle: send imports placement, which imports this module
+
+    return default_origin(session)
 
 
 def summary(h: SessionHandoff) -> dict:

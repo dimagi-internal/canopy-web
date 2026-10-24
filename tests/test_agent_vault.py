@@ -222,6 +222,7 @@ def test_canopy_web_stores_nothing_it_was_not_given(fleet):
 
 
 def _set_vault(client, **body):
+    grant_step_up(client)  # the service key is a secret: a browser write needs a passkey step-up
     return client.put("/api/agents/ace/vault", data=body, content_type="application/json")
 
 

@@ -256,14 +256,16 @@ def _withhold_what_it_kept(session: Session) -> None:
 def _drop_attachments(session: Session) -> int:
     """Every file attached to `session`, sent or not, deleted: the rows in this
     transaction and the stored bytes after it commits (best-effort; a failed delete is
-    logged, the row is gone either way, so no route serves it). A private
-    conversation keeps no files (`api.upload_attachment` refuses one), because the box
-    that reads a file holds no key to seal it. Returns how many."""
-    rows = list(Attachment.objects.filter(session_id=session.pk).values_list("pk", "storage_key"))
+    logged, the row is gone either way, so no route serves it). Called as a
+    conversation becomes private: what was attached while it was ordinary is in clear
+    with its name, and only a file sealed in its people's browser belongs in a private
+    one (`private_attachments`), which the server cannot do for them. Returns how many."""
+    rows = list(Attachment.objects.filter(session_id=session.pk)
+                .values_list("pk", "storage_key", "sealed_blob_key"))
     if not rows:
         return 0
-    Attachment.objects.filter(pk__in=[pk for pk, _ in rows]).delete()
-    keys = [k for _, k in rows if k]
+    Attachment.objects.filter(pk__in=[r[0] for r in rows]).delete()
+    keys = [k for r in rows for k in r[1:] if k]
 
     def _delete_bytes():
         if not attachment_storage.is_configured():
@@ -349,7 +351,18 @@ def _inherit_participants(session: Session, created_by) -> None:
     reads it through the tenant leg and typing into it never writes a row
     (#926). The asker is the parent TURN's initiator — only a turn in that
     same parent, so naming some other turn is not a way in either
-    (2026-10-19: ACE's handover of a run from emdash task `fi` reached no one)."""
+    (2026-10-19: ACE's handover of a run from emdash task `fi` reached no one).
+
+    The parent is reachable two ways: the creator can read it, or the creator is
+    the agent's own login running a live turn IN it (`access.own_turn_session`
+    on the session's parent turn). An agent's login is not a leg of
+    `visible_session_q`, so a web chat a person opened with it is unreadable to
+    it — and without this second leg the person asking for the work was left
+    out of it. That leg copies the same people the readable leg does: the agent
+    is having that conversation with exactly them, so adding them to the work it
+    starts there tells it nothing it does not already know and shows them only
+    the agent's own new session. It is no wider than reading: named by a turn
+    that is in flight, run AS this login, in that same parent."""
     from apps.workspaces import services as wsvc
 
     from . import access
@@ -357,7 +370,10 @@ def _inherit_participants(session: Session, created_by) -> None:
     from .participants import ensure_participant
 
     parent = session.parent_session
-    if parent is None or not access.can_read(created_by, parent):
+    if parent is None:
+        return
+    if not (access.can_read(created_by, parent)
+            or access.own_turn_session(created_by, session.parent_turn_id) == parent):
         return
     # A private parent's people come along only for one of them: seeing it (an agent's
     # admin) is not being in it (`sensitivity.is_conversation_person`).

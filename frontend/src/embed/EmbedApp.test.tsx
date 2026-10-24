@@ -945,3 +945,135 @@ describe('agent memory in the conversation header', () => {
     expect(calls.some((c) => c.url.includes('/api/embed/sessions/'))).toBe(false)
   })
 })
+
+describe('starting a conversation, and the visitor\'s vault key', () => {
+  // The panel offers a key pair made in this frame with every new chat, wrapped to the
+  // visitor's vault key's PUBLIC half — so starting never asks for a passkey, private
+  // or not. A key pinned here is used; one never seen here is trusted on first use
+  // (pinned as unconfirmed, checked at the first unlock); a CHANGED one stops the
+  // start. Whatever stops a start, what was typed stays, and the reason shows.
+  let store: Map<string, string>
+  beforeEach(() => {
+    store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    })
+  })
+
+  type Pair = Awaited<ReturnType<typeof import('@/vault/zk').generateKeyPair>>
+
+  /** canopy's answers: `named` is the vault key it says is the visitor's. */
+  async function vaultServer(opts: { named: Pair | null; createFails?: boolean }) {
+    const { jkt } = await import('@/vault/zk')
+    const thumb = opts.named ? await jkt(opts.named.publicJwk) : ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        const u = String(url)
+        if (u.includes('/api/embed/agents')) return { ok: true, status: 200, json: async () => AGENTS } as Response
+        if (u.endsWith('/my-vault-key')) {
+          if (!opts.named) return { ok: false, status: 404, json: async () => ({ detail: 'you have no vault key' }) } as Response
+          return {
+            ok: true, status: 200,
+            json: async () => ({
+              user_id: '7', public_jwk: opts.named!.publicJwk, jkt: thumb,
+              keyset: { user_id: '7', prf_input: 'AAAA', public_jwk: opts.named!.publicJwk,
+                        seals: [{ alg: 'prf', cred: 'Y3JlZA' }] },
+            }),
+          } as Response
+        }
+        if (init?.method === 'POST' && /canopy-sessions\/$/.test(u) && opts.createFails) {
+          return { ok: false, status: 403, json: async () => ({ detail: 'refused by canopy' }) } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
+      }),
+    )
+    return thumb
+  }
+
+  const renderPanel = () =>
+    render(<EmbedApp link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'echo', actions: [] }) })} app="canopy-web" />)
+
+  const boxValue = () => (screen.getByPlaceholderText(/^Type a message/) as HTMLTextAreaElement).value
+  const offered = () => JSON.parse(String(created()!.init!.body)).conversation_key
+  const noPasskey = () => {
+    const get = vi.fn(async () => { throw new Error('a passkey was asked for') })
+    vi.stubGlobal('navigator', { ...navigator, credentials: { get } })
+    return get
+  }
+
+  it('keeps the text, and says why, when canopy refuses to start it', async () => {
+    const { generateKeyPair } = await import('@/vault/zk')
+    await vaultServer({ named: await generateKeyPair(), createFails: true })
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(screen.getByTestId('sendbox-banner').textContent).toMatch(/refused by canopy/), { timeout: 4000 })
+    // Put back by SendBox's effect, which runs just after the render that shows the reason.
+    await waitFor(() => expect(boxValue()).toBe('hello'))
+  })
+
+  it('with no key pinned in this frame, asks for no passkey and starts with a key made here, trusted on first use', async () => {
+    const { generateKeyPair } = await import('@/vault/zk')
+    const get = noPasskey()
+    const thumb = await vaultServer({ named: await generateKeyPair() })
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(offered()).toMatchObject({ recipient_jkt: thumb })
+    expect(get).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('vault-unlock')).toBeNull()
+    const pin = JSON.parse(store.get('canopy-vault/v1/pins')!)['7']
+    expect(pin).toMatchObject({ jkt: thumb, unconfirmed: true, conversations: [offered().conversation] })
+  })
+
+  it('starts when this frame cannot keep anything (storage blocked)', async () => {
+    const { generateKeyPair } = await import('@/vault/zk')
+    vi.stubGlobal('localStorage', {
+      getItem: () => { throw new Error('blocked') },
+      setItem: () => { throw new Error('blocked') },
+      removeItem: () => { throw new Error('blocked') },
+    })
+    await vaultServer({ named: await generateKeyPair() })
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(offered()).toBeTruthy()
+  })
+
+  it('offers a key made here, silently, when the visitor\'s key is pinned in this frame', async () => {
+    const { generateKeyPair } = await import('@/vault/zk')
+    const { pinPerson } = await import('@/vault/trust')
+    const get = noPasskey()
+    pinPerson('7', await vaultServer({ named: await generateKeyPair() }), '')
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(offered()).toMatchObject({ recipient_jkt: expect.any(String) })
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('a visitor with no vault key starts with none', async () => {
+    await vaultServer({ named: null })
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(offered()).toBeUndefined()
+  })
+
+  it('stops, keeps the text and says why, when the key named as the visitor\'s changed', async () => {
+    const { generateKeyPair, jkt } = await import('@/vault/zk')
+    const { pinPerson } = await import('@/vault/trust')
+    const mine = await generateKeyPair()
+    pinPerson('7', await jkt(mine.publicJwk), '')
+    await vaultServer({ named: await generateKeyPair() })
+    renderPanel()
+    await say('hello')
+    await waitFor(() => expect(screen.getByTestId('sendbox-banner').textContent).toMatch(/not the one this browser last opened/), { timeout: 4000 })
+    // Put back by SendBox's effect, which runs just after the render that shows the reason.
+    await waitFor(() => expect(boxValue()).toBe('hello'))
+    expect(created()).toBeUndefined()
+  })
+})

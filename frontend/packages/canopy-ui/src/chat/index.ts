@@ -103,9 +103,11 @@ export {
 } from "./PlacementBanner";
 // MCP Apps (SEP-1865): render a Connected site's View for a tool result, and
 // the host side of its postMessage wire (spec 2026-10-08).
-export { AppView } from "./mcpApps/AppView";
+export { AppView, appSummary, appTitle, humanTool } from "./mcpApps/AppView";
+export { hostStyleVariables } from "./mcpApps/hostStyles";
 export {
   AppHostContext,
+  LatestAppViewContext,
   appResourceUpdate,
   createAppResourceUpdates,
   useAppHost,
@@ -119,6 +121,7 @@ export {
 // An agent asking for one of its secrets: the host renders the seal card
 // (spec 2026-10-19-give-an-agent-a-secret-design.md).
 export { SecretRequestHostContext, useSecretRequestHost, type SecretRequestHost } from "./secretRequest";
+export { AttachmentHostContext, useAttachmentHost, type AttachmentHost } from "./attachmentHost";
 export { AppBridge, PROTOCOL_VERSION as MCP_APPS_PROTOCOL_VERSION, type AppBridgeHandlers,
          type AppBridgeOptions, type CallToolResult } from "./mcpApps/bridge";
 // The AG-UI projection's inverse. Exported so a consumer can translate a stream

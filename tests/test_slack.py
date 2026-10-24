@@ -198,6 +198,16 @@ def test_member_matched_by_email_is_linked_without_a_click(slack, installation, 
     assert turn.chat_session.created_by == alice and turn.chat_session.contact is None
 
 
+def test_an_unverified_account_email_is_not_linked(slack, installation, hal, ws):
+    """`User.email` is a free field: an account that merely says alice@ is not
+    alice (contacts.services.user_for_verified_email, as on every door)."""
+    claimant = a_user("alice@dimagi.com")
+    wsvc.ensure_member(ws, claimant, WorkspaceMembership.EDITOR)
+    mention("hal hello")
+    assert not SlackUserLink.objects.exists()
+    _is_contact_turn(Turn.objects.get())
+
+
 def _is_contact_turn(turn) -> Contact:
     session = turn.chat_session
     assert session.created_by is None and session.contact is not None
@@ -297,7 +307,10 @@ def test_a_slack_connect_visitor_is_never_linked_by_email(slack, installation, h
 
 
 def test_an_ambiguous_email_is_not_linked(slack, installation, hal, alice):
-    a_user("ALICE@dimagi.com")          # a second account, same address
+    from allauth.account.models import EmailAddress
+
+    other = a_user("ALICE@dimagi.com")  # a second account, same address, also verified
+    EmailAddress.objects.create(user=other, email=other.email, verified=True, primary=True)
     mention("hal hello")
     _is_contact_turn(Turn.objects.get())
     assert not SlackUserLink.objects.exists()
@@ -2145,6 +2158,21 @@ def test_a_slack_stop_press_cancels_the_turn(slack, linked, hal, alice,
     # The stop records WHO pressed it, so the line can say so.
     from apps.harness.services import stopped_by
     assert stopped_by(turn) == (alice.get_full_name() or alice.email)
+
+
+def test_a_slack_stop_of_a_live_turn_does_not_also_interrupt_the_session(
+        slack, linked, hal, alice, monkeypatch, django_capture_on_commit_callbacks):
+    """The ONE stop (`control.stop_session`): a turn that owns the work is cancelled
+    and its bridge interrupts; a second, session-shaped interrupt could land after
+    the agent moved on to the next message."""
+    from apps.canopy_sessions import control
+
+    interrupts = []
+    monkeypatch.setattr(control, "interrupt_session", lambda session: interrupts.append(session) or "sent")
+    _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    event({"type": "agent_session_stopped", "channel_id": "C1",
+           "thread_ts": "1700000000.000100", "user": ALICE})
+    assert interrupts == []
 
 
 def test_a_stopped_turn_reads_stopped_by_the_person(slack, linked, hal, alice):

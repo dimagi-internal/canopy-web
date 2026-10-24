@@ -185,3 +185,17 @@ def test_a_browser_session_keeps_its_own_identity(client, w):
     raw = caller_tokens.mint(_chat_turn(w, w["lili"]), scoped=True)
     client.force_login(w["jj"])
     assert _me(client, raw) == "jj@dimagi.com"
+
+
+# -- it never mints a credential ----------------------------------------------
+
+def test_a_caller_token_cannot_mint_an_agents_never_expiring_token(client, w):
+    """`mint_agent_canopy_token` is an MCP tool, so a caller token reaches it over
+    REST; the minting gate is an allowlist (browser session, PAT), so a token that
+    lives as long as its conversation cannot trade itself for one that never dies."""
+    Agent.objects.create(slug="echo", name="Echo", workspace=w["ws"], owner=w["jj"])
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    resp = client.post("/api/agents/echo/canopy-token", data={},
+                       content_type="application/json", **_bearer(raw))
+    assert resp.status_code == 403
+    assert "caller_token" in resp.json()["detail"]

@@ -88,21 +88,20 @@ def _admitted(session, user) -> bool:
     return connected and not any(f.get("type") == "websocket.close" for f in frames)
 
 
-# --- 1. a file is not taken into a private conversation ------------------------------
+# --- 1. a file in a private conversation is held for its turn, under no name --------------
+# (the whole lifecycle: tests/test_private_attachments.py)
 
 
-def test_a_file_is_refused_in_a_private_conversation_and_nothing_is_stored(w, settings):
+def test_a_file_in_a_private_conversation_is_kept_under_no_name(w, settings):
     settings.ATTACHMENT_ALLOWED_CONTENT_TYPES = ["image/png"]
     with mock.patch("apps.canopy_sessions.attachment_storage.put") as put, \
             mock.patch("apps.canopy_sessions.attachment_storage.is_configured", return_value=True):
         r = w["c"].post(f"/api/canopy-sessions/{w['hot'].pk}/attachments",
                         {"file": SimpleUploadedFile("amina-chart.png", b"\x89PNG" + b"x" * 64, "image/png")})
-        assert r.status_code == 422 and "private conversation" in r.json()["detail"], r.content
-        assert not put.called and not Attachment.objects.filter(session=w["hot"]).exists()
-        # An ordinary conversation still takes one.
-        ok = w["c"].post(f"/api/canopy-sessions/{w['cold'].pk}/attachments",
-                         {"file": SimpleUploadedFile("chart.png", b"\x89PNG" + b"x" * 64, "image/png")})
-        assert ok.status_code == 201, ok.content
+        assert r.status_code == 201, r.content
+        assert "amina" not in put.call_args.args[0]
+        row = Attachment.objects.get(session=w["hot"])
+        assert row.sensitive and row.content_type == "image/*"
 
 
 # --- 2. the starter's browser makes the key -------------------------------------------

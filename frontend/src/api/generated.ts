@@ -7479,40 +7479,6 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/workspaces/{slug}/shared-vault": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * This tenant's shared 1Password vault (masked — never the key)
-         * @description Owner-only, matching the rest of workspace administration.
-         *
-         *     Reading it is masked, so the restriction is not about the value — it is that
-         *     which vault a tenant reads is administrative, and an editor acts *within* a
-         *     tenant rather than over its credential configuration.
-         */
-        readonly get: operations["get_shared_vault"];
-        /**
-         * Set the shared vault + its service-account token (write-only)
-         * @description The key here must be scoped to the SHARED vault and nothing else.
-         *
-         *     A key that also reads the per-agent vaults would undo the reason those are
-         *     split (Agent.op_vault, 2026-09-06): what this one unlocks is shared by
-         *     definition, so its breadth costs nothing, and that is only true while it
-         *     stays narrow. Nothing here can enforce that — 1Password grants it — so it is
-         *     stated where whoever sets it will read it.
-         */
-        readonly put: operations["set_shared_vault"];
-        readonly post?: never;
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
     readonly "/api/workspaces/{slug}/runner-topology": {
         readonly parameters: {
             readonly query?: never;
@@ -8607,6 +8573,41 @@ export interface paths {
          *     retires with it.
          */
         readonly post: operations["retire_private_runner"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/shared-vault": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * This tenant's shared 1Password vault (masked — never the key)
+         * @description Owner-only, matching the rest of workspace administration.
+         *
+         *     Reading it is masked, so the restriction is not about the value — it is that
+         *     which vault a tenant reads is administrative, and an editor acts *within* a
+         *     tenant rather than over its credential configuration.
+         */
+        readonly get: operations["get_shared_vault"];
+        /**
+         * Set the shared vault + its service-account token (write-only)
+         * @description The key here must be scoped to the SHARED vault and nothing else.
+         *
+         *     A key that also reads the per-agent vaults would undo the reason those are
+         *     split (Agent.op_vault, 2026-09-06): what this one unlocks is shared by
+         *     definition, so its breadth costs nothing, and that is only true while it
+         *     stays narrow. Nothing here can enforce that — 1Password grants it — so it is
+         *     stated where whoever sets it will read it. From a browser it needs a fresh
+         *     passkey step-up (403 `step_up_required` otherwise); a token write does not.
+         */
+        readonly put: operations["set_shared_vault"];
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -13090,6 +13091,57 @@ export interface paths {
          *     it. That ordering is also what lets the UI show a thumbnail before send.
          */
         readonly post: operations["upload_attachment"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/attachments/{attachment_id}/sealed": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The sealed copy of a file in a private conversation
+         * @description The people's copy: ciphertext their browser opens with the conversation key.
+         *     Only for the conversation's own people on its chat surfaces.
+         */
+        readonly get: operations["sealed_attachment_content"];
+        readonly put?: never;
+        /**
+         * Store the people's sealed copy of a file in a private conversation
+         * @description The file's name and bytes, sealed in the uploader's browser to the
+         *     conversation's key (`cf1:` name, `cfb1` blob), bound to the conversation, this
+         *     attachment and its uploader. canopy-web checks the shape and cannot open either.
+         *     Once per file, by its uploader, before it is sent; a send claims only a file
+         *     whose sealed copy is stored.
+         */
+        readonly post: operations["put_sealed_attachment"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/sealed-attachments": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The sealed files sent in a private conversation
+         * @description Each file sent in a private conversation, placed at the person's line it was sent
+         *     with, with its sealed name for their browser to open. No name, no exact size.
+         *     Empty for an ordinary conversation and for anyone `reads_content` does not admit.
+         */
+        readonly get: operations["list_sealed_attachments"];
+        readonly put?: never;
+        readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -28055,41 +28107,6 @@ export interface components {
             /** Role */
             readonly role?: string | null;
         };
-        /**
-         * SharedVaultOut
-         * @description Masked. `key_set` is a boolean on purpose — this route never returns the
-         *     key, and the only reader of the value is a runner that could actually run an
-         *     agent in this workspace (GET /api/agents/{slug}/credentials/resolve).
-         */
-        readonly SharedVaultOut: {
-            /**
-             * Vault
-             * @default
-             */
-            readonly vault: string;
-            /**
-             * Key Set
-             * @default false
-             */
-            readonly key_set: boolean;
-            /**
-             * Inherited From
-             * @default
-             */
-            readonly inherited_from: string;
-        };
-        /**
-         * SharedVaultIn
-         * @description Non-clobbering on the KEY, exactly like AgentVaultIn: a blank or omitted
-         *     service_key leaves the stored one alone, so renaming the vault does not
-         *     silently wipe the credential that reads it.
-         */
-        readonly SharedVaultIn: {
-            /** Vault */
-            readonly vault?: string | null;
-            /** Service Key */
-            readonly service_key?: string | null;
-        };
         /** RunnerAgentOut */
         readonly RunnerAgentOut: {
             /** Slug */
@@ -30488,6 +30505,41 @@ export interface components {
              * @default false
              */
             readonly retired: boolean;
+        };
+        /**
+         * SharedVaultOut
+         * @description Masked. `key_set` is a boolean on purpose — this route never returns the
+         *     key, and the only reader of the value is a runner that could actually run an
+         *     agent in this workspace (GET /api/agents/{slug}/credentials/resolve).
+         */
+        readonly SharedVaultOut: {
+            /**
+             * Vault
+             * @default
+             */
+            readonly vault: string;
+            /**
+             * Key Set
+             * @default false
+             */
+            readonly key_set: boolean;
+            /**
+             * Inherited From
+             * @default
+             */
+            readonly inherited_from: string;
+        };
+        /**
+         * SharedVaultIn
+         * @description Non-clobbering on the KEY, exactly like AgentVaultIn: a blank or omitted
+         *     service_key leaves the stored one alone, so renaming the vault does not
+         *     silently wipe the credential that reads it.
+         */
+        readonly SharedVaultIn: {
+            /** Vault */
+            readonly vault?: string | null;
+            /** Service Key */
+            readonly service_key?: string | null;
         };
         /** VaultAttachmentOut */
         readonly VaultAttachmentOut: {
@@ -34359,6 +34411,11 @@ export interface components {
              */
             readonly session_key: string;
             /**
+             * Transferring
+             * @default false
+             */
+            readonly transferring: boolean;
+            /**
              * Waiting On You
              * @default false
              */
@@ -35164,6 +35221,11 @@ export interface components {
              */
             readonly session_key: string;
             /**
+             * Transferring
+             * @default false
+             */
+            readonly transferring: boolean;
+            /**
              * Waiting On You
              * @default false
              */
@@ -35579,7 +35641,7 @@ export interface components {
             /** Placement */
             readonly placement?: string | null;
             /** Origin */
-            readonly origin?: ("api" | "ace_web" | "email" | "slack") | null;
+            readonly origin?: ("api" | "ace_web") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
             /**
              * Clear Prompt
@@ -35697,6 +35759,30 @@ export interface components {
             readonly size_bytes: number;
             /** Message Id */
             readonly message_id?: string | null;
+        };
+        /**
+         * SealedAttachmentOut
+         * @description A file sent in a private conversation, as its people's browsers open it: no
+         *     name, no exact size. `sealed_name` is a `cf1:` envelope (name, type, size) sealed to
+         *     the conversation's key; the bytes are `GET /attachments/{id}/sealed`. `turn_index`
+         *     is the person's line it was sent with, null until that line is stored.
+         */
+        readonly SealedAttachmentOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Turn Index */
+            readonly turn_index?: number | null;
+            /** Uploaded By */
+            readonly uploaded_by?: number | null;
+            /** Family */
+            readonly family: string;
+            /** Size Bucket */
+            readonly size_bucket: number;
+            /** Sealed Name */
+            readonly sealed_name: string;
         };
         /**
          * RunAgentInputOut
@@ -47856,54 +47942,6 @@ export interface operations {
             };
         };
     };
-    readonly get_shared_vault: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SharedVaultOut"];
-                };
-            };
-        };
-    };
-    readonly set_shared_vault: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SharedVaultIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SharedVaultOut"];
-                };
-            };
-        };
-    };
     readonly runner_topology: {
         readonly parameters: {
             readonly query?: never;
@@ -49133,6 +49171,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PrivateRunnerOut"];
+                };
+            };
+        };
+    };
+    readonly get_shared_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SharedVaultOut"];
+                };
+            };
+        };
+    };
+    readonly set_shared_vault: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SharedVaultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SharedVaultOut"];
                 };
             };
         };
@@ -54132,6 +54218,80 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AttachmentOut"];
+                };
+            };
+        };
+    };
+    readonly sealed_attachment_content: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly put_sealed_attachment: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly attachment_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /** Sealed Name */
+                    readonly sealed_name: string;
+                    /**
+                     * File
+                     * Format: binary
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly list_sealed_attachments: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SealedAttachmentOut"][];
                 };
             };
         };

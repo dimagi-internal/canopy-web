@@ -1,5 +1,6 @@
 import { registerSW } from 'virtual:pwa-register'
 import { markUpdateReady } from './updateReady'
+import { swIsThisBuild, thisPageEntry } from './thisBuild'
 
 // Adopt new service workers — but never underneath a page someone is looking at.
 //
@@ -50,14 +51,46 @@ function applyWhenHidden(apply: () => void): void {
 export function registerPwa(): void {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
+  /** The banner's switch. A page loaded past the SW (a hard reload) has no
+   *  controller to change, so the plugin's reload-on-controlling never fires
+   *  for it: reload it here, or the button does nothing. */
+  const switchNow = (): void => {
+    void updateSW(true)
+    if (!navigator.serviceWorker.controller) window.location.reload()
+  }
+
+  let offered = false
+  /** Offer the reload only when the server's build is not this page's (thisBuild.ts).
+   *  `swSource` is the sw.js the poll just fetched; otherwise it is fetched here. */
+  const offerIfNewer = async (swSource?: string): Promise<void> => {
+    if (offered) return
+    const registration = await navigator.serviceWorker.getRegistration()
+    if (!registration?.waiting) return
+    let source = swSource
+    if (source === undefined) {
+      try {
+        const resp = await fetch(registration.waiting.scriptURL, { cache: 'no-store' })
+        source = resp.ok ? await resp.text() : ''
+      } catch {
+        source = ''
+      }
+    }
+    if (swIsThisBuild(source, thisPageEntry())) return
+    offered = true
+    markUpdateReady(switchNow)
+    applyWhenHidden(() => void updateSW(true))
+  }
+
   const updateSW = registerSW({
     immediate: true,
     // Fired once a new SW is installed and waiting. Nothing has been swapped
     // yet — the running page keeps the precache it was built against.
-    // UpdateBanner offers the same switch to a page that stays visible.
+    // UpdateBanner offers the switch to a page that stays visible, but only when
+    // the waiting build is not the page's own: one loaded after the deploy is
+    // already current, and a hidden switch is all it needs.
     onNeedRefresh() {
-      markUpdateReady(() => void updateSW(true))
       applyWhenHidden(() => void updateSW(true))
+      void offerIfNewer()
     },
     onRegisteredSW(swUrl, registration) {
       if (!registration) return
@@ -73,7 +106,13 @@ export function registerPwa(): void {
             cache: 'no-store',
             headers: { 'cache-control': 'no-cache' },
           })
-          if (resp.status === 200) await registration.update()
+          if (resp.status !== 200) return
+          const source = await resp.text()
+          await registration.update()
+          // workbox-window stops reporting updates after the first one it
+          // judges external (any found by this poll more than 60s after load),
+          // so a later deploy reaches onNeedRefresh only through this check.
+          await offerIfNewer(source)
         } catch {
           // Offline / transient network error — the next tick will retry.
         }

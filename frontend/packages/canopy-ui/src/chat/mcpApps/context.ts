@@ -116,6 +116,11 @@ export function appResourceUpdate(frame: { event: string; data?: unknown }):
 
 export const AppHostContext = createContext<AppHost | null>(null);
 
+/** The newest View in the conversation on screen (its `tool_call_id`), which
+ *  opens expanded; earlier ones open collapsed, so a long chat is not a wall of
+ *  tables. `null` (no list around the View) opens every View expanded. */
+export const LatestAppViewContext = createContext<string | null>(null);
+
 export function useAppHost(): AppHost | null {
   return useContext(AppHostContext);
 }

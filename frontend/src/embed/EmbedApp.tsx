@@ -29,6 +29,9 @@ import { PRIVATE_LABEL, PrivateMark } from '@/components/chat/privateConversatio
 import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
 import { addPerson, type PeopleApi } from '@/components/chat/ChatPeople'
 import type { JoinRequest } from '@/api/chat'
+import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from '@/pages/chat/useAttachments'
+import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
+import { formDataSafeFetch, panelAttachmentApi, panelSealedFilesApi } from './panelFiles'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -215,9 +218,6 @@ export function EmbedApp({ link, app }: Props) {
   // sent a contact down the tenant path once already.
   const principalRef = useRef<Principal | null>(null)
   principalRef.current = principal
-  // Opens the visitor's vault key once in this frame, before their first chat here, so
-  // its key is wrapped to a key the frame has confirmed is theirs (`offeredKey`).
-  const starterUnlock = useUnlockPrompt()
   const initRef = useRef<HostInit | null>(null)
   initRef.current = init
   const clientRef = useRef<CanopyClient | null>(null)
@@ -245,6 +245,8 @@ export function EmbedApp({ link, app }: Props) {
         return link.requestToken()
       },
       source: app,
+      // A file upload is multipart: the browser writes its own Content-Type.
+      fetchImpl: formDataSafeFetch,
     })
     clientRef.current = c
     return c
@@ -380,7 +382,7 @@ export function EmbedApp({ link, app }: Props) {
                 title: '',
                 // The conversation's key, made in this frame: if it is (a sensitive
                 // site's) or becomes private, canopy never sees its private half.
-                ...await offeredKey(client, agent.workspace, starterUnlock.prompt),
+                ...await offeredKey(client, agent.workspace),
                 // `embed_app` is NOT sent: canopy stamps it server-side from the
                 // delegated token, and anything we sent under that key would be
                 // discarded (apps/canopy_sessions/api.py).
@@ -424,7 +426,7 @@ export function EmbedApp({ link, app }: Props) {
       // not for the person who just typed the question to be shown back.
       setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, firstMessageClientId: clientId, agent })
     },
-    [client, link, starterUnlock.prompt],
+    [client, link],
   )
 
   // A question the PAGE asked for the visitor (`widget.ask`, e.g. "Explain this
@@ -518,7 +520,6 @@ export function EmbedApp({ link, app }: Props) {
           setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
         }
         onClose={() => link.requestClose()}
-        unlockElement={starterUnlock.element}
         headerControls={
           <>
             <SnapButton link={link} snappable={snappable} />
@@ -565,7 +566,6 @@ function EmbedStart({
   initialBody,
   initialError,
   headerControls,
-  unlockElement,
 }: {
   agent: EmbedAgent
   client: CanopyClient
@@ -578,8 +578,6 @@ function EmbedStart({
   initialError?: string
   /** Panel controls drawn before × (expand). */
   headerControls?: React.ReactNode
-  /** The vault-key unlock asked before a first chat in this frame (`offeredKey`). */
-  unlockElement?: React.ReactNode
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
   const [body, setBody] = useState(initialBody ?? '')
@@ -591,11 +589,17 @@ function EmbedStart({
     if (!text || sending) return
     setSending(true)
     setError(null)
+    // SendBox empties its own box the moment Send is pressed; it puts a local
+    // draft's body back only when that body CHANGES. So the body is emptied
+    // here too, and set again on failure: without that it never changed, and a
+    // failed start left the box blank with the words gone from the screen.
+    setBody('')
     void onStart(text)
       .catch((e: unknown) => {
-        // The text stays in the box on failure. Losing what somebody typed
+        // The text goes back in the box on failure. Losing what somebody typed
         // because a request failed is the worst possible response to it.
-        setError(e instanceof Error ? e.message : 'could not start the conversation')
+        setBody(text)
+        setError(e instanceof Error && e.message ? e.message : 'Could not start the conversation.')
         setSending(false)
       })
   }, [body, sending, onStart])
@@ -678,7 +682,6 @@ function EmbedStart({
           Rendering SendBox with a local draft (the same adapter the contact
           path uses, since no server draft exists before the session does)
           makes this screen and the chat that follows it one component. */}
-      {unlockElement ? <div className="px-3">{unlockElement}</div> : null}
       <SendBox
         draft={contactDraft(body)}
         connected
@@ -1037,6 +1040,30 @@ function EmbedChat({
     () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
     [socket.state, sealed.messages],
   )
+  // Files, for a canopy user (a contact holds no key and uploads nothing). In a private
+  // conversation each is sealed here, in the frame, to the conversation's people as well
+  // as uploaded for the agent's one turn; until the panel knows whether it is private, a
+  // file waits (refused with why) rather than go up unsealed.
+  const fileApi = useMemo(() => panelAttachmentApi(client.rest), [client])
+  const sealedFilesApi = useMemo(() => panelSealedFilesApi(client.rest), [client])
+  // Who is uploading, bound into the seal: the keyset's own user (sent only to this
+  // person's browser), else who the socket says.
+  const meId = sealedKey?.keyset?.user_id ?? socket.state.current_user_id
+  const privateFiles = useMemo<PrivateFiles | null>(
+    () => (sealedKey && meId != null
+      ? { target: { conversation: sealedKey.conversation, public_jwk: sealedKey.public_jwk as { x?: string; y?: string } },
+          userId: meId }
+      : null),
+    [sealedKey, meId])
+  const fileRefusal = sensitive === null ? 'Opening the conversation — attach the file in a moment.'
+    : sensitive && !privateFiles ? PRIVATE_NO_KEY : undefined
+  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
+    useAttachments(sessionId, fileRefusal, sensitive ? privateFiles : null, fileApi)
+  const userLines = socket.state.messages.filter((m) => m.role === 'user').length
+  const sealedFiles = useSealedAttachments(sessionId, Boolean(sensitive) && !isContact, userLines, sealedFilesApi)
+  const attachmentHost = useMemo(
+    () => sealedAttachmentHost(sealedFiles, sealed.key, () => void sealed.unlock(), sealedFilesApi),
+    [sealedFiles, sealed.key, sealed.unlock, sealedFilesApi])
   const appHost = useMemo(
     () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates),
                         () => keyRef.current, keyOpen),
@@ -1134,8 +1161,10 @@ function EmbedChat({
     // scrolling the transcript should still see the question before the JSON.
     const context = contextPreamble.current
     contextPreamble.current = null
+    // The server takes whatever files this person staged with the send.
+    clearAttachments()
     socket.sendChat(context ? `${body}\n\n${context}` : body)
-  }, [socket, contextPreamble])
+  }, [socket, contextPreamble, clearAttachments])
 
   return (
     <div className="flex h-full flex-col">
@@ -1185,6 +1214,8 @@ function EmbedChat({
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
+        warning={sealed.warning}
+        onDismissWarning={sealed.dismissWarning}
         onUnlock={() => void sealed.unlock()}
         unlockElement={unlocker.element}
         needsMigration={Boolean(sealedKey?.needs_migration)}
@@ -1209,6 +1240,9 @@ function EmbedChat({
           // MCP Apps: a Connected site's View for a tool result, acting as this
           // visitor (their own host grant), narrow-panel sized.
           appHost={appHost}
+          // A private conversation's files, sealed: opened here with the conversation key.
+          attachmentHost={attachmentHost}
+          {...(isContact ? {} : { attachments, onAttach: attach, onRemoveAttachment: removeAttachment })}
           state={panelState}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}

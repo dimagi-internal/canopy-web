@@ -1,3 +1,5 @@
+import datetime as dt
+
 from django.apps import AppConfig
 
 
@@ -18,6 +20,10 @@ class CanopySessionsConfig(AppConfig):
         ticks.register("canopy_sessions.settle_handoffs", _settle_handoffs, 30)
         # A private conversation's page no turn ever ends for is forgotten after a while.
         ticks.register("canopy_sessions.forget_idle_sensitive_pages", _forget_idle_sensitive_pages, 60)
+        # A private conversation's file is held for its agent no longer than its turn's words.
+        ticks.register("canopy_sessions.private_attachments", _sweep_private_attachments, 60)
+        # An upload no send ever claimed (`manage.py sweep_orphaned_attachments` by hand).
+        ticks.register("canopy_sessions.orphaned_attachments", _sweep_orphaned_attachments, 60 * 60)
 
 
 def _purge_expired_secrets() -> None:
@@ -36,3 +42,15 @@ def _forget_idle_sensitive_pages() -> None:
     from .page_state import forget_idle_sensitive_pages  # noqa: PLC0415 — models: the app registry is not ready at module load
 
     forget_idle_sensitive_pages()
+
+
+def _sweep_private_attachments() -> None:
+    from .private_attachments import sweep  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    sweep()
+
+
+def _sweep_orphaned_attachments() -> None:
+    from .send import sweep_orphaned_attachments  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    sweep_orphaned_attachments(older_than=dt.timedelta(hours=24))

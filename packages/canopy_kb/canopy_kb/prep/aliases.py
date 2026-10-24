@@ -63,16 +63,24 @@ def prompts(cards, publisher: str, renames: str = "", apart: str = "") -> dict[s
     return out
 
 
+def groups(rows: list, raw) -> list[dict]:
+    """The groups a writer (a model, a session) returned for one kind's prompt, kept to the
+    names it was shown and to groups of two or more; ValueError if it is not a list."""
+    if not isinstance(raw, list):
+        raise ValueError("alias groups are a JSON list of {canonical, names}")
+    valid = {name for name, _ in rows}
+    out = [{"canonical": g["canonical"], "names": [x for x in g.get("names", []) if x in valid]}
+           for g in raw if isinstance(g, dict) and g.get("canonical")]
+    return [g for g in out if len(g["names"]) >= 2]
+
+
 def ask(prompts_: dict[str, tuple[list, str]]) -> dict:
     """The model's groups for each kind's prompt (Gemini 2.5 Pro)."""
     out = {}
     for kind, (rows, prompt) in prompts_.items():
-        groups, _ = gemini.generate_json(gemini.PRO, [{"text": prompt}], max_tokens=65000, thinking=None,
-                                         timeout=900, tries=3)
-        valid = {name for name, _ in rows}
-        out[kind] = [{"canonical": g["canonical"], "names": [x for x in g.get("names", []) if x in valid]}
-                     for g in groups if isinstance(g, dict) and g.get("canonical")]
-        out[kind] = [g for g in out[kind] if len(g["names"]) >= 2]
+        raw, _ = gemini.generate_json(gemini.PRO, [{"text": prompt}], max_tokens=65000, thinking=None,
+                                      timeout=900, tries=3)
+        out[kind] = groups(rows, raw)
         log(f"aliases: {kind}: {len(out[kind])} groups over the top {len(rows)} names")
     return out
 

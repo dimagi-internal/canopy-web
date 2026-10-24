@@ -52,7 +52,7 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | `runner_code` | `apps/harness/alerts_runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
 | `canopy_projects_off` | `apps/harness/alerts_project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
 | `transfer_left_open` | `apps/canopy_sessions/alerts_handoff.py` (a transferred session's task still open on the box it left: its close keeps failing, or it was kept because it holds the only copy of the work; 14 days) | action | Transfers |
-| `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), or every routed runner is directed-only) | setup | Agent routing |
+| `agent_cant_run` | `apps/harness/alerts_agent_routing.py` (configuration only, never liveness; default routes only — reasons: no routes at all, the routed runners lack its repo, their owners may not hold its turns (`cannot_hold`), every routed runner is directed-only, or none of its own listed runners would take its turns by the setup checklist's `runner_takers` — another tenant's box, or one whose owner may not hold it) | setup | Agent routing |
 
 Actions: a source returns `Action(id, label, closes, href)`. An `href` action is
 a link followed in the browser; the page also posts it to `POST

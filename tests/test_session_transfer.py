@@ -380,3 +380,74 @@ def test_transfer_endpoint_422s_on_an_unknown_runner():
         content_type="application/json",
     )
     assert r.status_code == 422, r.content
+
+
+# --- the list keeps a session while it moves -------------------------------
+
+
+def _laptops(ws, user):
+    from django.utils import timezone
+    now = timezone.now()
+    a, b = (
+        Runner.objects.create(
+            name=name, workspace=ws, location=Runner.LOCAL, status=Runner.ONLINE,
+            owner=user, host=f"jj@{name}", capabilities=SESSION_CAPABLE,
+            sessions_reported_at=now,
+        )
+        for name in ("jj-air", "jj-mbp")
+    )
+    return a, b
+
+
+def _listed(c):
+    return {r["id"]: r for r in c.get("/api/canopy-sessions/").json()}
+
+
+def test_a_session_mid_transfer_stays_listed_and_says_so():
+    """The source's last sighting goes stale while the source packs the worktree
+    and before the target's first report — which dropped the session out of
+    `state=active` (and /ide) for minutes. It stays, flagged `transferring`, until
+    the new box reports it."""
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from apps.canopy_sessions.staleness import SESSION_LIVE_WINDOW, TRANSFER_WINDOW
+
+    user, ws, _cloud, _laptop, c = _ctx()
+    src, dst = _laptops(ws, user)
+    s = _bound_session(ws, src)
+    stale = timezone.now() - SESSION_LIVE_WINDOW - dt.timedelta(minutes=1)
+    RunnerBinding.objects.filter(session=s).update(live_seen_at=stale, pending_question=None)
+    session_placement.transfer_session(session=s, placement=str(dst.id))
+
+    row = _listed(c)[str(s.id)]
+    assert row["transferring"] is True
+    assert row["runner_name"] == "jj-mbp"
+
+    # The new box reports it: an ordinary live session again.
+    RunnerBinding.objects.filter(session=s).update(live_seen_at=timezone.now())
+    assert _listed(c)[str(s.id)]["transferring"] is False
+
+    # A target that never picks it up: retired like any quiet session, in time.
+    RunnerBinding.objects.filter(session=s).update(
+        live_seen_at=stale - TRANSFER_WINDOW,
+        transferred_at=timezone.now() - TRANSFER_WINDOW - dt.timedelta(minutes=1),
+    )
+    assert str(s.id) not in _listed(c)
+
+
+def test_an_untransferred_quiet_session_still_retires():
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from apps.canopy_sessions.staleness import SESSION_LIVE_WINDOW
+
+    user, ws, _cloud, _laptop, c = _ctx()
+    src, _dst = _laptops(ws, user)
+    s = _bound_session(ws, src)
+    RunnerBinding.objects.filter(session=s).update(
+        live_seen_at=timezone.now() - SESSION_LIVE_WINDOW - dt.timedelta(minutes=1),
+        pending_question=None)
+    assert str(s.id) not in _listed(c)

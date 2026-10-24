@@ -17,6 +17,7 @@ from django.test import Client
 from apps.agents.models import Agent
 from apps.events import audit
 from apps.events.models import SettingChange
+from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -86,7 +87,9 @@ def test_an_mcp_call_is_named_as_mcp():
 
 
 def test_secrets_in_the_body_are_withheld(fleet):
-    res = _put(_session(fleet["jj"]), "/api/agents/ace/vault",
+    browser = _session(fleet["jj"])
+    grant_step_up(browser)  # the service key is a secret
+    res = _put(browser, "/api/agents/ace/vault",
                {"vault": "Agent-Ace", "service_key": "ops_SECRETVALUE"})
     assert res.status_code in (200, 201), res.content
     [row] = SettingChange.objects.filter(operation="set_agent_vault")

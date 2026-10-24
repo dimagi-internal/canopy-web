@@ -114,8 +114,8 @@ def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
             # Cross-agent dispatch is a cross-tenant action unless the actor is a
             # member of the target's workspace. Self-dispatch (below) is already
             # authorized — the actor could act on the task, which required its
-            # agent's workspace. Legacy null-workspace targets fall through.
-            if target.workspace_id is not None and target.workspace_id not in actor_workspace_ids:
+            # agent's workspace.
+            if target.workspace_id not in actor_workspace_ids:
                 raise ValueError(
                     f"task {task.key} on_approve[{i}]: not a member of target_agent "
                     f"{spec.target_agent!r}'s workspace"

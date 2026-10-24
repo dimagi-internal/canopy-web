@@ -30,8 +30,9 @@ import { MessageContextMenu } from '@/components/chat/MessageContextMenu'
 import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
-import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
-import { PRIVATE_NO_FILES, useAttachments } from './chat/useAttachments'
+import { menuBlocksComposer, restToKitMessage, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
+import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from './chat/useAttachments'
+import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { PrivateConversationGate } from '@/components/chat/PrivateConversationGate'
@@ -49,6 +50,7 @@ import { useSessionActions } from './chat/useSessionActions'
 import { useSessionMeta } from './chat/useSessionMeta'
 import { useSlashCommands } from './chat/useSlashCommands'
 import { useTranscriptPaging } from './chat/useTranscriptPaging'
+import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
 /**
  * Standalone live-chat route (/w/:workspace/chat/:id). Wires canopy's
@@ -120,8 +122,6 @@ function ChatPageInner({
   // doesn't carry it — it's frozen to the tail page it was built from). Called
   // once the fetch lands, after `paging` below exists.
   const { meta, setMeta, metaError, agentName } = useSessionMeta(id, (m) => paging.seed(m))
-  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
-    useAttachments(id, meta?.sensitive ? PRIVATE_NO_FILES : undefined)
   // Who is asking to join this private conversation, as the socket last said.
   const [liveJoinRequests, setLiveJoinRequests] = useState<JoinRequest[] | null>(null)
 
@@ -172,6 +172,24 @@ function ChatPageInner({
     decline: declineJoinRequest,
   }), [id, vault.unlock, personTrust.confirm])
   sealedKeyRef.current = sealed.key
+  // A private conversation's file is sealed here to its people (vault/sealedFiles.ts) as
+  // well as uploaded for the agent's one turn; with no key to seal to, it is refused.
+  const sealTarget = meta?.sensitive ? meta.sealed_key ?? null : null
+  const meId = socket.state.current_user_id
+  const privateFiles = useMemo<PrivateFiles | null>(
+    () => (sealTarget && meId != null
+      ? { target: { conversation: sealTarget.conversation, public_jwk: sealTarget.public_jwk as { x?: string; y?: string } },
+          userId: meId }
+      : null),
+    [sealTarget, meId])
+  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
+    useAttachments(id, meta?.sensitive && !privateFiles ? PRIVATE_NO_KEY : undefined, privateFiles)
+  // Its sent files, under the lines they went with: "Attachment" until the key opens.
+  const userLines = socket.state.messages.filter((m) => m.role === 'user').length
+  const sealedFiles = useSealedAttachments(id, Boolean(meta?.sensitive), userLines)
+  const attachmentHost = useMemo(
+    () => sealedAttachmentHost(sealedFiles, sealed.key, () => void sealed.unlock()),
+    [sealedFiles, sealed.key, sealed.unlock])
   const keyIsOpen = Boolean(sealed.key)
   useEffect(() => setKeyOpen(keyIsOpen), [keyIsOpen])
   const panelState = useMemo(
@@ -180,6 +198,31 @@ function ChatPageInner({
   )
 
   const paging = useTranscriptPaging(id, socket.prependMessages)
+
+  // Paint before the socket's snapshot lands: from this tab's last copy of the chat
+  // (`sessionCache`) at once, else from the REST detail's tail as soon as it is read.
+  // The snapshot then replaces either (`session.state`), so nothing here is ever the
+  // record; it only fills the wait. Never for a private conversation, which reads
+  // back only through its sealed path and is never cached.
+  const { prependMessages } = socket
+  useEffect(() => {
+    const cached = cachedMessages(id)
+    if (cached) prependMessages(cached)
+  }, [id, prependMessages])
+  // Not `!socket.connected`: the socket opens well before its snapshot (that is
+  // the slow part, ~0.6s on labs against ~0.2s for the REST read), and an empty
+  // transcript is what "no snapshot yet" looks like — REST and the snapshot hold the
+  // same tail (tests/test_transcript_parity.py), so an empty one stays empty.
+  const restTail = meta && !meta.sensitive ? meta.messages : null
+  const noTranscriptYet = socket.state.messages.length === 0
+  useEffect(() => {
+    if (restTail?.length && noTranscriptYet) prependMessages(restTail.map(restToKitMessage))
+  }, [restTail, noTranscriptYet, prependMessages])
+  // …and keep that copy current for next time, once the socket has spoken for it.
+  const live = socket.connected && meta !== null && !meta.sensitive
+  useEffect(() => {
+    if (live && socket.state.messages.length) rememberMessages(id, socket.state.messages)
+  }, [id, live, socket.state.messages])
   const placement = useRunnerPlacement(id, meta, setMeta)
   const { boundOffline, boundRunner, boundPaused } = placement
   const fork = useMessageFork(id, meta?.runner_name, placement.fleetRunners, socket.state.messages, sessionPath)
@@ -187,7 +230,7 @@ function ChatPageInner({
   const { pendingAnswer, menuHidden, visibleMenu } = menuAnswer
   const actions = useSessionActions({ sessionId: id, meta, setMeta, onLeave, onTitleChange, editTitle })
   const slashCommands = useSlashCommands(
-    id, `${meta?.runner_name ?? ''}|${socket.state.messages.length > 0}`)
+    id, meta, `${meta?.runner_name ?? ''}|${socket.state.messages.length > 0}`)
 
   // Attach-on-open / detach-on-unmount. The server's attach counter floors at
   // 0 rather than going negative, so a detach that lands BEFORE its paired
@@ -459,6 +502,8 @@ function ChatPageInner({
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
+        warning={sealed.warning}
+        onDismissWarning={sealed.dismissWarning}
         onUnlock={() => void sealed.unlock()}
         unlockElement={vault.element}
         needsMigration={Boolean(meta?.sealed_key?.needs_migration)}
@@ -511,6 +556,8 @@ function ChatPageInner({
           appHost={appHost}
           // The agent asking for a secret: the zero-knowledge seal card.
           secretRequestHost={secretRequestHost}
+          // A private conversation's files, sealed: opened here with the conversation key.
+          attachmentHost={attachmentHost}
           slashCommands={slashCommands}
           emptyState={emptyState}
           historySlot={historySlot}

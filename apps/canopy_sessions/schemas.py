@@ -9,7 +9,7 @@ import uuid
 from ninja import Schema
 from pydantic import AliasChoices, Field, field_validator
 
-from apps.harness.schemas import Origin, ParentIn, TurnOut, normalize_origin
+from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_origin
 
 
 class ConversationKeyWrapIn(Schema):
@@ -65,11 +65,11 @@ class SendIn(Schema):
     placement: str | None = None
     # What KIND of work this send is, for source-aware routing (spec 2026-07-27).
     # None = the default `canopy_web_chat` (a human typing in the web UI), which
-    # a caller cannot spell for itself: `Origin` admits only the POSTABLE values,
+    # a caller cannot spell for itself: `ChatSendOrigin` admits only `api` and `ace_web`,
     # so the server-only sources keep exactly one producer each. ace-web sets
     # `ace_web` here — without it, a delegated run enqueues as `canopy_web_chat`
     # and an `ace_web` routing rule has nothing to match.
-    origin: Origin | None = None
+    origin: ChatSendOrigin | None = None
     # What this send was made from (ParentIn); recorded on the turn it enqueues.
     parent: ParentIn | None = None
     # "Clear & send": if the session's prompt already holds unsent text, the
@@ -78,7 +78,7 @@ class SendIn(Schema):
     # runner as `origin_ref["clear_prompt"]`.
     clear_prompt: bool = False
 
-    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
+    _norm_origin = field_validator("origin")(staticmethod(chat_send_origin))
 
 
 class PlaceIn(Schema):
@@ -443,6 +443,9 @@ class SessionOut(Schema):
     # it as fine.
     runner_signed_out: bool = False
     session_key: str = ""
+    #: Moved onto `runner_name` and not reported there yet (`staleness.TRANSFER_WINDOW`):
+    #: listed, but nothing to drive until the new box picks it up.
+    transferring: bool = False
     # This session is blocked on a dialog somebody has to answer. A bool here
     # and the dialog itself on the detail read: the list needs to RANK and badge
     # a waiting session, not render its options. Without it a blocked agent and
@@ -759,6 +762,20 @@ class AttachmentOut(Schema):
     @staticmethod
     def resolve_message_id(obj) -> str | None:
         return str(obj.message_id) if obj.message_id else None
+
+
+class SealedAttachmentOut(Schema):
+    """A file sent in a private conversation, as its people's browsers open it: no
+    name, no exact size. `sealed_name` is a `cf1:` envelope (name, type, size) sealed to
+    the conversation's key; the bytes are `GET /attachments/{id}/sealed`. `turn_index`
+    is the person's line it was sent with, null until that line is stored."""
+
+    id: uuid.UUID
+    turn_index: int | None = None
+    uploaded_by: int | None = None
+    family: str
+    size_bucket: int
+    sealed_name: str
 
 
 class ResetOut(Schema):

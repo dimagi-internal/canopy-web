@@ -153,9 +153,21 @@ routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api
   `fullscreen: true` advertises `availableDisplayModes: ["inline","fullscreen"]`
   and grants `ui/request-display-mode` → the same frame restyled `fixed inset-0`
   with a close control and Esc (never remounted; `ui/notifications/host-context-changed`
-  tells the View). Without the flag the answer is always `inline`. ChatPage and
+  tells the View).
+- **A View draws in canopy's look**: `hostContext.styles.variables` carries canopy's
+  tokens, resolved, under the standard MCP Apps names (`mcpApps/hostStyles.ts`; the
+  accent goes as the `info` colours), and again on a theme switch. Without the flag the answer is always `inline`. ChatPage and
   the embed panel set it; the embed lifts `maxWidth: 420` and raises `maxHeight`
   while the panel is expanded.
+- **A View's header names it and collapses it** (a button with `aria-expanded`).
+  The title is its result link's `name` ("Query over …"), else the tool humanised;
+  the raw tool name is the tooltip. `MessageList` names the newest View in the
+  conversation (`LatestAppViewContext`): it opens expanded, every earlier one
+  collapsed to one line (rows × columns, time, a row-cap cut-off, from the tool
+  result's `structuredContent`; the link's `description` when only the link is kept;
+  MCP Apps has no title or size notification). A person's toggle is kept per `tool_call_id` in
+  `sessionStorage`. A collapsed View gets no frame until first expanded; collapsing
+  hides the frame and never unmounts it.
 
 Tests: `tests/test_mcp_apps_{gateway,sandbox,views}.py`; frontend
 `mcpApps/{bridge,AppView}.test.ts(x)`.

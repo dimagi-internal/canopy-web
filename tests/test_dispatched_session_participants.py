@@ -131,3 +131,96 @@ def test_a_turn_from_another_session_does_not_bring_its_asker(world):
     child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(fi.pk),
                       HTTP_X_CANOPY_PARENT_TURN=str(stray.pk))
     assert _roles(child) == {"ace": "owner"}
+
+
+def _web_chat(world, *, status="running", agent=None):
+    """A web chat a PERSON opened with the agent: jj created it, the agent's login
+    is not a participant, so it cannot read it (no agent-login leg in
+    `visible_session_q`). The agent answers it in a turn jj asked for."""
+    import uuid
+
+    from apps.harness.models import Turn
+
+    chat = Session.objects.create(workspace_id="dimagi", agent=agent or world["parent"].agent,
+                                  created_by=world["jj"])
+    SessionParticipant.objects.create(session=chat, user=world["jj"], role=SessionParticipant.OWNER)
+    SessionParticipant.objects.create(session=chat, user=world["watcher"], role=SessionParticipant.VIEWER)
+    turn = Turn.objects.create(chat_session=chat, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="go do it",
+                               idempotency_key=uuid.uuid4().hex, initiator_user=world["jj"], status=status)
+    return chat, turn
+
+
+def _agent_has_login(world):
+    agent = world["parent"].agent
+    agent.user = world["agent_login"]
+    agent.save(update_fields=["user"])
+    return agent
+
+
+def test_an_agent_dispatching_from_a_web_chat_it_is_answering_brings_its_people(world):
+    from apps.canopy_sessions import access
+
+    _agent_has_login(world)
+    chat, turn = _web_chat(world)
+    assert not access.can_read(world["agent_login"], chat)
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(chat.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    assert _roles(child) == {"ace": "owner", "jj": "editor", "watcher": "viewer"}
+
+
+@pytest.mark.parametrize("status", ["queued", "succeeded", "failed"])
+def test_a_turn_that_is_not_in_flight_brings_no_one(world, status):
+    _agent_has_login(world)
+    chat, turn = _web_chat(world, status=status)
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(chat.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    assert _roles(child) == {"ace": "owner"}
+
+
+def test_a_live_turn_in_another_session_brings_no_one(world):
+    _agent_has_login(world)
+    chat, _turn = _web_chat(world)
+    _other, elsewhere = _web_chat(world)
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(chat.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(elsewhere.pk))
+    assert _roles(child) == {"ace": "owner"}
+
+
+def test_another_agent_s_live_turn_brings_no_one(world):
+    _agent_has_login(world)
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace_id="dimagi", owner=world["jj"],
+                               user=_user("eva-login"))
+    chat, turn = _web_chat(world, agent=eva)
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(chat.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    assert _roles(child) == {"ace": "owner"}
+
+
+def test_a_sensitive_web_chat_still_brings_no_one(world):
+    from apps.harness import runner_requirements as rr
+
+    _agent_has_login(world)
+    chat, turn = _web_chat(world)
+    chat.metadata = {rr.METADATA_KEY: [rr.SENSITIVE_DATA]}
+    chat.save(update_fields=["metadata"])
+    child = _dispatch(world["raw"], HTTP_X_CANOPY_PARENT_SESSION=str(chat.pk),
+                      HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    assert _roles(child) == {"ace": "owner"}
+
+
+def test_the_runner_made_session_for_a_dispatched_turn_brings_them_too(world):
+    """`session_sync._adopt_turn_parent` asks the same rule with the turn's dispatcher."""
+    import uuid
+
+    from apps.harness.models import Turn
+    from apps.harness.session_sync import _adopt_turn_parent
+
+    agent = _agent_has_login(world)
+    chat, turn = _web_chat(world)
+    work = Turn.objects.create(agent=agent, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="the work",
+                               idempotency_key=uuid.uuid4().hex, enqueued_by=world["agent_login"],
+                               parent_session=chat, parent_turn=turn)
+    session = Session.objects.create(workspace_id="dimagi", agent=agent, origin=Session.ORIGIN_RUNNER,
+                                     parent_session=chat, parent_turn=turn)
+    _adopt_turn_parent(session, work)
+    assert _roles(session) == {"jj": "editor", "watcher": "viewer"}

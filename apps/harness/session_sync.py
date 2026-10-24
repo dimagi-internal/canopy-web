@@ -126,7 +126,7 @@ def _adopt_turn_parent(session, turn) -> None:
     """The people of the conversation a turn was dispatched from join the session
     the runner made for it — the same rule as a session created in-app with a
     parent (`canopy_sessions.services._inherit_participants`): only from a parent
-    the dispatcher can read, only workspace members, never as owner. Without it
+    the dispatcher can read (or whose live turn it is running), only workspace members, never as owner. Without it
     the work someone asked for in a chat never shows in their /ide."""
     from apps.canopy_sessions.services import _inherit_participants
 

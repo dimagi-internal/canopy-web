@@ -137,7 +137,7 @@ def test_a_turn_that_cannot_be_confined_still_leaves_nothing(load_cloud_runner, 
     mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
     calls = _wire(mod, monkeypatch, tmp_path)
 
-    def unconfinable(turn):
+    def unconfinable(turn, read_dirs=()):
         raise mod.ConfineError("could not write the session profile")
 
     monkeypatch.setattr(mod, "_confine", unconfinable)

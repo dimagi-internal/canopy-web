@@ -367,6 +367,21 @@ In order, each a hard stop:
 same predicates; `blocking_turn` is the "queued behind" twin of the busy
 exclusion (`tests/test_turn_status.py`).
 
+**The box's own gate, before it asks.** A cloud runner skips `POST /claim` (and
+the WS `claim`) while any of its own limits says no — none of which the server
+can see: at its turn cap (`MAX_CONCURRENT_TURNS`, default one per
+`TURN_MEMORY_BUDGET_KB` = 1.5 GiB of RAM), below the memory floor
+(`MemAvailable < CLAIM_MIN_AVAILABLE_KB` = 1 GiB), its token refused (401), or
+an unknown `RUNNER_DATA_MODE`. Both claim loops ask one function,
+`cloud_runner.claim_gate`, and every heartbeat reports it as the **`claim`
+health check**: `ok` "claiming · 1/4 turns in flight · 2.3 GiB free"; `warn`
+"not claiming for 14m: at turn cap 4/4 (in flight: <ids>)" or "… 0.6 GiB free <
+1.0 GiB floor". So a turn that `turn_reach` calls LIVE but nobody claims is read
+off the runner page (or `get_runner`'s `health_checks.claim`), not journald.
+The laptop runner has no such limit of its own: its skips (paused, emdash CDP
+down, Claude signed out) already reach canopy-web as the pause, a degraded
+heartbeat and `signed_out`.
+
 ## Periodic work: the off-request clock (`apps/common/ticks.py`)
 
 A runner's heartbeat is liveness only (its report, lease renewal for the turns it

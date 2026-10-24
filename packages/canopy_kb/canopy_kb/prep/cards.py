@@ -88,6 +88,34 @@ def linked_titles(it: dict, titles: dict[str, str], by_url: dict[str, str]) -> l
     return [titles.get(x) or by_url.get(x) or x for x in (it["meta"].get("linked_from") or [])][:5]
 
 
+#: A card's fields: free text, and lists of names.
+TEXTS = ("summary", "kind", "period", "superseded")
+LISTS = ("orgs", "programs", "countries", "answers")
+
+
+def check(card) -> dict:
+    """A card as a writer (a model, a session) returned it, held to PROMPT's shape:
+    ValueError if it has no summary or a field of the wrong type. Absent fields are empty."""
+    if isinstance(card, list) and len(card) == 1:
+        card = card[0]
+    if not isinstance(card, dict):
+        raise ValueError("a card is a JSON object")
+    if not isinstance(card.get("summary"), str) or not card["summary"].strip():
+        raise ValueError("a card needs a summary")
+    out = {}
+    for f in TEXTS:
+        v = card.get(f) if card.get(f) is not None else ""
+        if not isinstance(v, str):
+            raise ValueError(f"{f} must be a string")
+        out[f] = v
+    for f in LISTS:
+        v = card.get(f) if card.get(f) is not None else []
+        if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+            raise ValueError(f"{f} must be a list of strings")
+        out[f] = v
+    return out
+
+
 def write(it: dict, linked: list[str], publisher: str, kinds: str = KINDS) -> dict:
     """One card from the model."""
     card, _ = gemini.generate_json(gemini.FLASH, [{"text": prompt(it, linked, publisher, kinds)}], max_tokens=MAX_TOKENS)

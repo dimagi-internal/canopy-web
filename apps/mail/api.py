@@ -24,6 +24,7 @@ from apps.api.route_gates import gate
 from apps.events import audit
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
 
 from . import agent_mail, auto_addresses, domains, inbound, reputation, ses, sns
@@ -50,20 +51,6 @@ from .schemas import (
 logger = logging.getLogger(__name__)
 
 router = Router(auth=session_auth, tags=["mail"])
-
-
-def _ws(user, slug: str) -> Workspace:
-    ws = Workspace.objects.filter(slug=slug).first()
-    if ws is None or slug not in wsvc.user_workspace_slugs(user):
-        raise HttpError(404, "no such workspace")
-    return ws
-
-
-def _admin_ws(user, slug: str) -> Workspace:
-    ws = _ws(user, slug)
-    if not perms.can(user, ws, perms.INTEGRATIONS):
-        raise HttpError(403, "requires the admin role or above")
-    return ws
 
 
 def _domain(ws, domain_id: int) -> MailDomain:
@@ -142,7 +129,7 @@ def _refuse_keeping(request, exc: domains.DomainError):
 @router.get("/domains/{workspace}", response=MailDomainListOut, summary="List mail domains")
 @gate("member")
 def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
-    ws = _ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     items = [_domain_out(domains.refresh(d) if d.workspace_id == ws.pk else d, request.user, ws)
              for d in domains.usable_domains(ws)]
     return {"enabled": settings.MAIL_ENABLED, "items": items,
@@ -152,7 +139,7 @@ def list_mail_domains(request: HttpRequest, workspace: str) -> dict:
 @router.post("/domains/{workspace}", response=MailDomainOut, summary="Add a mail domain (admin or owner)")
 @gate("integrations", setting=True)
 def add_mail_domain(request: HttpRequest, workspace: str, payload: MailDomainIn) -> dict:
-    ws = _admin_ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     try:
         d = domains.add_domain(ws, payload.name, by=request.user)
     except domains.DomainError as exc:
@@ -185,7 +172,7 @@ def refresh_mail_domain(request: HttpRequest, workspace: str, domain_id: int) ->
     """Re-check now. When SES gave up verifying (DKIM or MAIL FROM FAILED: the records were
     not found within 72 hours) and those records now check out, this also restarts SES
     verification, at most once every 10 minutes per domain; `restart_note` says what it did."""
-    ws = _ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     d = _domain(ws, domain_id)
     before = {"dkim_tokens": list(d.dkim_tokens or []),
               "verification_restarted_at": _iso(d.verification_restarted_at)}
@@ -208,7 +195,7 @@ def _iso(when) -> str | None:
 @gate("integrations", setting=True)
 def update_mail_domain(request: HttpRequest, workspace: str, domain_id: int,
                        payload: MailDomainPatchIn) -> dict:
-    ws = _admin_ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     d = _domain(ws, domain_id)
     before = {"daily_send_cap": d.daily_send_cap, "status": d.status,
               "agent_addresses": d.agent_addresses}
@@ -264,7 +251,7 @@ def _set_sign_in(user, ws, d: MailDomain, on: bool) -> None:
                summary="Remove a mail domain (admin or owner)")
 @gate("integrations", setting=True)
 def remove_mail_domain(request: HttpRequest, workspace: str, domain_id: int):
-    ws = _admin_ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     d = _domain(ws, domain_id)
     audit.note_change(scope=f"mail.domain:{d.name}", before={"name": d.name}, after=None)
     domains.remove_domain(d)
@@ -275,7 +262,7 @@ def remove_mail_domain(request: HttpRequest, workspace: str, domain_id: int):
             summary="Create or replace the route for one address (admin or owner)")
 @gate("integrations", setting=True)
 def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payload: MailRouteIn) -> dict:
-    ws = _admin_ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     d = _usable_domain(ws, domain_id)
     prior = d.routes.filter(local_part=payload.local_part.strip().lower(), workspace=ws).first()
     try:
@@ -294,7 +281,7 @@ def save_mail_route(request: HttpRequest, workspace: str, domain_id: int, payloa
                summary="Remove an address's route (admin or owner)")
 @gate("integrations", setting=True)
 def delete_mail_route(request: HttpRequest, workspace: str, domain_id: int, route_id: int):
-    ws = _admin_ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     r = _usable_domain(ws, domain_id).routes.filter(pk=route_id, workspace=ws).first()
     if r is None:
         raise HttpError(404, "no such route")
@@ -515,7 +502,7 @@ def set_agent_mailbox(request: HttpRequest, slug: str, payload: AgentMailboxIn) 
 @router.get("/threads/{workspace}", response=MailThreadListOut, summary="List mail threads")
 @gate("member")
 def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", archived: bool = False) -> dict:
-    ws = _ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     qs = MailThread.objects.filter(workspace=ws, archived=archived).select_related("route__agent", "route__domain")
     address = ""
     if agent:
@@ -537,7 +524,7 @@ def list_mail_threads(request: HttpRequest, workspace: str, agent: str = "", arc
 @router.get("/threads/{workspace}/{uuid}", response=MailThreadOut, summary="Read a mail thread")
 @gate("member")
 def get_mail_thread(request: HttpRequest, workspace: str, uuid: str) -> dict:
-    t = _thread(_ws(request.user, workspace), uuid)
+    t = _thread(workspace_for(request.user, workspace), uuid)
     out = _thread_out(t, messages=True)
     newest = t.messages.order_by("-created_at", "-pk").values("direction", "from_addr", "to").first()
     out["counterpart"] = _counterpart(newest["direction"], newest["from_addr"], newest["to"]) if newest else ""
@@ -577,7 +564,7 @@ def _reply_recipients(t) -> list[str]:
 @router.post("/threads/{workspace}/{uuid}/reply", response=MailMessageOut, summary="Reply on a thread as its agent")
 @gate("agent.work", kind="conversation")
 def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: MailReplyIn) -> dict:
-    ws = _ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     t = _thread(ws, uuid)
     if t.route is None or not t.route.enabled:
@@ -598,7 +585,7 @@ def reply_mail_thread(request: HttpRequest, workspace: str, uuid: str, payload: 
 @router.post("/send/{workspace}", response=MailMessageOut, summary="Start a new thread as an agent")
 @gate("agent.work", kind="conversation")
 def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict:
-    ws = _ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     route = _from_route(ws, payload.agent, payload.from_address)
     if route is None:
@@ -615,7 +602,7 @@ def send_mail(request: HttpRequest, workspace: str, payload: MailSendIn) -> dict
 @router.post("/threads/{workspace}/{uuid}/state", response=MailThreadOut, summary="Mark a thread read/archived")
 @gate("agent.work", kind="conversation")
 def set_mail_thread_state(request: HttpRequest, workspace: str, uuid: str, payload: MailThreadStateIn) -> dict:
-    ws = _ws(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     _need(request.user, ws, perms.AGENT_WORK)
     t = _thread(ws, uuid)
     _agent_full(request.user, t.route)
