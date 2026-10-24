@@ -10893,7 +10893,8 @@ export interface paths {
          * @description Turn failures canopy grouped by fingerprint and handed to the debugger
          *     agent, newest first. `status`: open (a debug turn has it), held (the rate cap
          *     stopped its turn; it rides along in the next one), debugger_failed (its debug
-         *     turn failed), resolved, escalated (it came back after a fix).
+         *     turn failed), pending_deploy (fixed by a commit some runner it hit does not
+         *     run yet), resolved, escalated (with a person).
          */
         readonly get: operations["list_failure_investigations"];
         readonly put?: never;
@@ -10936,11 +10937,37 @@ export interface paths {
         readonly put?: never;
         /**
          * Resolve a failure investigation
-         * @description Mark the failure fixed, saying what was changed. If the same failure comes
-         *     back afterwards, canopy sends it to the debugger once more framed as an
-         *     escalation (the fix did not hold), then only counts further repeats.
+         * @description Mark the failure fixed, saying what was wrong and what changed. That closes
+         *     its alert and notifies nobody. Give `fix_commit` (and `fix_committed_at`) when
+         *     the fix is to the runner code that failed: while a runner it hit does not run
+         *     that commit yet, the alert stays open quietly as pending deploy and closes on
+         *     its own once the fix is live everywhere it failed. 409 when it is with a
+         *     person (handed off) and you are the debugger: only a person closes it then.
          */
         readonly post: operations["resolve_failure_investigation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/failure-investigations/{investigation_id}/hand-off": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Hand a failure investigation to a person
+         * @description It needs a person: reassign its alert to them with a one-line `ask`,
+         *     keeping it open. They are notified once; further repeats only count. `to` is
+         *     their email (default: the debugger agent's owner) and must be someone who
+         *     may handle investigations in its workspace. 409 when it is already resolved.
+         */
+        readonly post: operations["hand_off_failure_investigation"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -31532,6 +31559,32 @@ export interface components {
             readonly resolved_at: string | null;
             /** Resolution Note */
             readonly resolution_note: string;
+            /**
+             * Fix Commit
+             * @default
+             */
+            readonly fix_commit: string;
+            /** Fix Committed At */
+            readonly fix_committed_at?: string | null;
+            /**
+             * Fix Pr
+             * @default
+             */
+            readonly fix_pr: string;
+            /**
+             * Handler Email
+             * @default
+             */
+            readonly handler_email: string;
+            /**
+             * Ask
+             * @default
+             */
+            readonly ask: string;
+            /** Evidence */
+            readonly evidence?: {
+                readonly [key: string]: unknown;
+            };
         };
         /** Page[FailureInvestigationOut] */
         readonly Page_FailureInvestigationOut_: {
@@ -31551,6 +31604,42 @@ export interface components {
              * @description What was wrong and what you changed to fix it.
              */
             readonly note: string;
+            /**
+             * Fix Commit
+             * @description The commit that fixes it, when the fix is to the runner code that failed. A recurrence on a runner without it only counts.
+             * @default
+             */
+            readonly fix_commit: string;
+            /**
+             * Fix Committed At
+             * @description That commit's committer time (`git log -1 --format=%cI`). Lets canopy tell a runner whose code is newer than the fix.
+             */
+            readonly fix_committed_at?: string | null;
+            /**
+             * Pr
+             * @description The PR that carries the fix.
+             * @default
+             */
+            readonly pr: string;
+            /**
+             * Merged
+             * @description Is that PR merged?
+             */
+            readonly merged?: boolean | null;
+        };
+        /** HandOffInvestigationIn */
+        readonly HandOffInvestigationIn: {
+            /**
+             * Ask
+             * @description One line: what the person is needed for.
+             */
+            readonly ask: string;
+            /**
+             * To
+             * @description The person's email. Default: the debugger agent's owner.
+             * @default
+             */
+            readonly to: string;
         };
         /** RunnerDeviceKeyCreatedOut */
         readonly RunnerDeviceKeyCreatedOut: {
@@ -32116,6 +32205,16 @@ export interface components {
              * @default
              */
             readonly last_notify: string;
+            /**
+             * Handler Agent
+             * @default
+             */
+            readonly handler_agent: string;
+            /**
+             * Handler Email
+             * @default
+             */
+            readonly handler_email: string;
         };
         /** AlertActIn */
         readonly AlertActIn: {
@@ -49858,7 +49957,7 @@ export interface operations {
     readonly list_failure_investigations: {
         readonly parameters: {
             readonly query?: {
-                readonly status?: ("open" | "held" | "debugger_failed" | "resolved" | "escalated") | null;
+                readonly status?: ("open" | "held" | "debugger_failed" | "resolved" | "pending_deploy" | "escalated") | null;
                 readonly limit?: number;
                 readonly offset?: number;
             };
@@ -49913,6 +50012,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["ResolveInvestigationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["FailureInvestigationOut"];
+                };
+            };
+        };
+    };
+    readonly hand_off_failure_investigation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly investigation_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["HandOffInvestigationIn"];
             };
         };
         readonly responses: {

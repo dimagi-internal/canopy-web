@@ -1898,12 +1898,20 @@ class FailureInvestigation(models.Model):
     OPEN = "open"                        # a debug turn has it (or is about to)
     HELD = "held"                        # wanted a turn; the rate cap said no
     DEBUGGER_FAILED = "debugger_failed"  # the debug turn itself failed
-    RESOLVED = "resolved"                # the debugger says it is fixed
-    ESCALATED = "escalated"              # came back after a fix — Jonathan's now
+    RESOLVED = "resolved"                # fixed, and (if a fix commit was named) live
+    #: Fixed by `fix_commit`, which some runner it hit is not running yet. A
+    #: recurrence on such a runner only counts; it closes on its own once every
+    #: runner it hit runs the fix (`auto_debug.close_live_fixes`).
+    PENDING_DEPLOY = "pending_deploy"
+    #: With a PERSON (`handler`): the debugger handed it off, or it came back on
+    #: a runner that runs the fix. Only a person — or the fix going live — closes
+    #: it; the debugger's resolve is refused. (Value kept from when this meant
+    #: "came back after a fix".)
+    ESCALATED = "escalated"
     STATUS_CHOICES = [
         (OPEN, "Open"), (HELD, "Held by the rate cap"),
         (DEBUGGER_FAILED, "Debug turn failed"), (RESOLVED, "Resolved"),
-        (ESCALATED, "Escalated"),
+        (PENDING_DEPLOY, "Fix pending deploy"), (ESCALATED, "With a person"),
     ]
 
     #: The debugger agent's workspace. Every failure it hears about is in this
@@ -1940,6 +1948,27 @@ class FailureInvestigation(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="+",
     )
+    #: The commit that fixes it, when the fix is to the runner code that failed —
+    #: and its committer time, the ORDER a sha cannot carry (`Runner.code_committed_at`).
+    #: A recurrence is judged against the failing runner: without the fix it only
+    #: counts. Investigations 1, 2 and 10 (2026-10-22..23) were resolved "merged,
+    #: NOT yet deployed" (#1488, #1504, #1527, #1965); investigation 2's 10-23
+    #: recurrence ran on a box without the fix and was escalated as "the fix did
+    #: not hold".
+    fix_commit = models.CharField(max_length=40, blank=True, default="")
+    fix_committed_at = models.DateTimeField(null=True, blank=True)
+    #: The PR that carries the fix, as the debugger gave it. Legible only.
+    fix_pr = models.CharField(max_length=300, blank=True, default="")
+    #: The person it is with (status `escalated`), and the one line they are asked.
+    handler = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    ask = models.CharField(max_length=300, blank=True, default="")
+    #: What canopy knew about the failing runner when it saw the failure
+    #: (`auto_debug.runner_snapshot`) — refreshed on each trigger and rendered
+    #: into the debug prompt. Diagnostic fields only; nothing a person typed.
+    evidence = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

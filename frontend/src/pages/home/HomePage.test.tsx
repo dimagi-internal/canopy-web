@@ -150,7 +150,7 @@ describe('HomePage', () => {
       id: 1, kind: 'runner_credential', severity: 'blocking', title: 'The "hal" token on cloud-ec2-2 is signed out',
       body: '', url: '', workspace: 'connect', organisation: 'connect', scopes: [], status: 'open',
       first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), occurrences: 1,
-      closed_by_email: '', closed_at: null, last_notify: '',
+      closed_by_email: '', closed_at: null, last_notify: '', handler_agent: '', handler_email: '',
       actions: [{ id: 'dismiss', label: 'Dismiss', closes: true, href: '' }],
     }] : [])
     show()

@@ -21,9 +21,16 @@ Home (`apps/attention/services.py`) with their own per-person hide.
   `workspace` (NOT NULL), `scopes` (`workspace:<slug>`, `runner:<pk>`,
   `agent:<slug>` — which screens it belongs on), `title`/`body` in the names
   people gave things (a token's label, never a slot name like `subscription-1`).
+  `handler_agent` / `handler_user` — who has it: an agent working it (shown,
+  **silent**: nobody is notified), a person it was handed to (told once, on the
+  hand-off), or neither (the people holding a closing action). A source sets
+  them on its `Raise`; `alerts.raise_now` raises one immediately instead of on
+  the tick.
 - `AlertEvent` — the audit trail, one row per change (`raised`, `changed`,
-  `acted`, `notified`, `dismissed`, `undismissed`, `resolved`, `reopened`),
-  written in the same transaction; never purged by retention.
+  `acted`, `notified`, `dismissed`, `undismissed`, `resolved`, `reopened`,
+  `assigned` — the handler changed, with the ask), written in the same
+  transaction; never purged by retention. A `resolved` event carries the
+  source's account of the fix when it gives one.
 - `apps/attention/alerts.py` — the framework half: the source registry
   (`SOURCES`, dotted paths, so the framework never imports a product app),
   reconcile, resolve, dismiss/undismiss, `act` (re-checks the action is still
@@ -39,7 +46,7 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | Kind | Source | Severity | Chip |
 |---|---|---|---|
 | `runner_credential` | `apps/harness/alerts_runner_credential.py` | blocking | Runner credential |
-| `turn_failure` | `apps/harness/alerts_turn_failure.py` (investigations `escalated`/`debugger_failed`/`held` only; lives in the investigation's — the debugger's — workspace, see below) | action | Failed turns |
+| `turn_failure` | `apps/harness/alerts_turn_failure.py` (every unresolved investigation, raised the moment the failure is recorded; held by the debugger agent until handed to a person; lives in the investigation's — the debugger's — workspace, see below) | action | Failed turns |
 | `unclaimable_turns` | `apps/harness/alerts_unclaimable.py` | blocking | Stuck turns |
 | `device_key_pending` | `apps/harness/alerts_device_key.py` | blocking | Device key |
 | `runner_code` | `apps/harness/alerts_runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
@@ -63,7 +70,8 @@ back and the route answers 409 `action-failed` with the reason.
 Per-source notes:
 
 - **Fingerprints** are each source's "new fact" rule. `turn_failure`: the
-  investigation's status (a repeat of the same failure is not a new fact).
+  investigation's status and who has it (a repeat of the same failure is not a
+  new fact).
   `unclaimable_turns`: the sorted distinct reasons the turns are stuck (the
   cause — not the turn ids, so a turn cancelled or another stuck for the same
   reason leaves a dismissed alert dismissed). `agent_cant_run`: the computed
@@ -88,8 +96,12 @@ Per-source notes:
   workspace (the debugger's), not the failing agent's — a deliberate deviation
   from the spec's "subject's workspace": `auto_debug.can_handle`, the gate on
   every action, is asked about that workspace. The agent and runners are in
-  its scopes. `mark_resolved` refuses once the investigation has left the
-  raising statuses.
+  its scopes. `mark_resolved` refuses once the investigation is resolved.
+- **`turn_failure` lifecycle.** One alert per investigation, from failure to
+  fix: the debugger's (silent) while it works it, `pending_deploy` (still the
+  debugger's, quiet) while a fix commit is not yet on every runner it hit, the
+  handed-to person's after `hand_off` or a recurrence where the fix runs.
+  Details in `apps/harness/auto_debug.py` and [`api-surface.md`](api-surface.md).
 - **`unclaimable_turns` cost.** Its diagnosis is fleet-wide, and `actions()`
   runs per viewer per read, so it is memoised per process for 30 s (the
   reconcile refreshes it; `perform` re-checks on a fresh read). Agent editors
@@ -116,7 +128,9 @@ Home must not become a list people learn to ignore. Each rule is code or a test:
 - **Notifications**: only `blocking`, on raise and on reopen, once per alert
   (`notified_at`, claimed by a conditional update BEFORE sending, so
   overlapping ticks mail once; given back if every delivery fails), email + Web
-  Push to the people holding a closing action.
+  Push to the people holding a closing action — and never while an agent or a
+  person holds it. Handing any alert to a person notifies that person once,
+  whatever its severity.
 
 ## Read API
 

@@ -80,6 +80,10 @@ class AlertOut(Schema):
     actions: list[AlertActionOut]
     # Display line of the latest `notified` event ("Ann asked Bob at 14:02"); "" if none.
     last_notify: str = ""
+    # Who has it: an agent working it (silent — nobody is notified) or the person it
+    # was handed to. Both empty: unassigned, the people who can close it.
+    handler_agent: str = ""
+    handler_email: str = ""
 
 
 class AlertEventOut(Schema):

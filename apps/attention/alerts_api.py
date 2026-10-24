@@ -80,6 +80,8 @@ def _out(alert: Alert, user, organisation: str, actions: list[alerts.Action]) ->
         closed_at=alert.closed_at,
         actions=[AlertActionOut(id=a.id, label=a.label, closes=a.closes, href=a.href) for a in actions],
         last_notify=_last_notify(alert),
+        handler_agent=alert.handler_agent.slug if alert.handler_agent_id and alert.handler_agent else "",
+        handler_email=alert.handler_user.email if alert.handler_user_id and alert.handler_user else "",
     )
 
 
@@ -88,7 +90,7 @@ def _visible(request: HttpRequest, alert_id: int) -> Alert:
     they are in, and — open — they are offered an action, or — dismissed — they
     are offered dismiss."""
     user = request.user
-    alert = (Alert.objects.select_related("closed_by")
+    alert = (Alert.objects.select_related("closed_by", "handler_agent", "handler_user")
              .filter(pk=alert_id, workspace_id__in=wsvc.request_member_slugs(request)).first())
     if alert is not None:
         if alert.status == Alert.OPEN:
@@ -106,7 +108,7 @@ def _history_visible(request: HttpRequest, alert_id: int) -> Alert:
     """History is the audit trail (it must outlive the alert): visible when the
     workspace is the caller's and the source offers them any action, whatever
     the alert's status."""
-    alert = (Alert.objects.select_related("closed_by")
+    alert = (Alert.objects.select_related("closed_by", "handler_agent", "handler_user")
              .filter(pk=alert_id, workspace_id__in=wsvc.request_member_slugs(request)).first())
     if alert is not None:
         try:
@@ -143,7 +145,8 @@ def list_alerts(request: HttpRequest, scope: str | None = None,
 
     def read() -> list[AlertOut]:
         slugs = wsvc.request_workspace_slugs(request)
-        qs = Alert.objects.filter(workspace_id__in=slugs, status=status).select_related("closed_by")
+        qs = (Alert.objects.filter(workspace_id__in=slugs, status=status)
+              .select_related("closed_by", "handler_agent", "handler_user"))
         if status == Alert.DISMISSED:
             qs = qs.filter(closed_at__gte=timezone.now() - DISMISSED_WINDOW)
         roots = wsvc.tree_roots({a.workspace_id for a in qs}) if slugs else {}
@@ -218,5 +221,5 @@ def _not_offered(detail: str) -> ProblemError:
 
 def _after(request: HttpRequest, alert: Alert) -> AlertOut:
     """The alert as it now stands, with what the caller may still do on it."""
-    alert = Alert.objects.select_related("closed_by").get(pk=alert.pk)
+    alert = Alert.objects.select_related("closed_by", "handler_agent", "handler_user").get(pk=alert.pk)
     return _out(alert, request.user, _organisation(alert), _offered(alert, request.user) or [])

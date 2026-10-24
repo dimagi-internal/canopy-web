@@ -1,8 +1,8 @@
-"""The `turn_failure` alert source: a failure Ada could not handle.
+"""The `turn_failure` alert source: one alert per failure, from the moment it is
+recorded until it is fixed.
 
-An `open` investigation is Ada's (a debug turn has it) — still logged as an
-error, never an alert. Once it is `escalated`, `debugger_failed` or `held` it
-is a person's, and shows up where they look.
+Every status but `resolved` is an open alert. The debugger agent holds it
+(silent) until it is handed to a person (`escalated`), who is the one told.
 """
 from __future__ import annotations
 
@@ -49,29 +49,70 @@ def _inv(fleet, status=FailureInvestigation.ESCALATED, **kw):
         agents=kw.pop("agents", ["ace"]), runners=kw.pop("runners", ["cloud-ec2-2", "ghost-box"]), **kw)
 
 
-def test_open_investigation_raises_nothing(fleet):
-    _inv(fleet, status=FailureInvestigation.OPEN)
+def test_resolved_investigation_raises_nothing(fleet):
     _inv(fleet, status=FailureInvestigation.RESOLVED, fingerprint="fp2")
     assert src.reconcile(timezone.now()) == []
 
 
-@pytest.mark.parametrize("status", ["escalated", "debugger_failed", "held"])
-def test_escalated_raises_action_alert(fleet, status):
-    inv = _inv(fleet, status=status)
+@pytest.fixture
+def ada(fleet):
+    return Agent.objects.create(slug="ada", name="Ada", workspace=fleet["ws"], owner=fleet["jj"])
+
+
+@pytest.mark.parametrize("status", ["open", "debugger_failed", "held", "pending_deploy"])
+def test_the_agent_stages_are_alerts_the_debugger_holds(fleet, ada, status):
+    """They used to raise nothing (open) or raise as a person's (held,
+    debugger_failed): an alert meant "needs a person" and had no assignee."""
     runner = Runner.objects.get(name="cloud-ec2-2")
+    # pending_deploy only stays so while a runner it hit is known to lack the fix.
+    Runner.objects.filter(pk=runner.pk).update(code_sha="aaaaaaa1", code_committed_at=1)
+    inv = _inv(fleet, status=status, fix_commit="bbbbbbb2", fix_committed_at=timezone.now())
     (r,) = src.reconcile(timezone.now())
     assert r.subject_key == f"investigation:{inv.pk}"
     assert r.workspace == "dimagi"
-    assert r.title == ("Turns keep failing on cloud-ec2-2, ghost-box: "
+    lead = "Fix pending deploy on" if status == "pending_deploy" else "Turns keep failing on"
+    assert r.title == (f"{lead} cloud-ec2-2, ghost-box: "
                        "Couldn't confirm your message was delivered to the session.")
     assert r.scopes == ("workspace:dimagi", f"runner:{runner.pk}", "agent:ace")  # unknown runner skipped
     assert r.url == "/w/dimagi/agents/ace/turns"
-    assert r.fingerprint == status
+    assert (r.handler_agent, r.handler_user) == (ada.pk, None)
+    assert r.fingerprint == f"{status}:{ada.pk}:"
     assert src.SEVERITY == "action" and src.CONFIRM_WITHIN is None
 
 
+def test_escalated_is_the_persons_with_the_ask(fleet, ada):
+    _inv(fleet, handler=fleet["jj"], ask="Sign Claude back in on cloud-ec2-2.")
+    (r,) = src.reconcile(timezone.now())
+    assert (r.handler_agent, r.handler_user) == (None, fleet["jj"].pk)
+    assert r.title.startswith("Needs you — turns keep failing on cloud-ec2-2")
+    assert r.body.startswith("Sign Claude back in on cloud-ec2-2.") and r.ask == r.body.split("\n")[0]
+
+
+def test_an_agent_held_alert_is_silent_and_a_hand_off_tells_one_person(fleet, ada, monkeypatch,
+                                                                         django_capture_on_commit_callbacks):
+    """The rule on the framework, not just this source: a BLOCKING alert an agent
+    holds notifies no one on the tick; handing it to a person notifies them once."""
+    monkeypatch.setattr(src, "SEVERITY", "blocking")
+    inv = _inv(fleet, status=FailureInvestigation.OPEN)
+    with django_capture_on_commit_callbacks(execute=True):
+        alerts.tick(timezone.now())
+        alerts.tick(timezone.now())
+    alert = Alert.objects.get(kind=src.KIND)
+    assert alert.handler_agent_id == ada.pk
+    assert not alert.events.filter(kind="notified").exists()
+
+    inv.status, inv.handler, inv.ask = FailureInvestigation.ESCALATED, fleet["jj"], "Look at cloud-ec2-2."
+    inv.save()
+    with django_capture_on_commit_callbacks(execute=True):
+        alerts.tick(timezone.now())
+        alerts.tick(timezone.now())
+    alert.refresh_from_db()
+    assert alert.handler_user_id == fleet["jj"].pk and alert.handler_agent_id is None
+    assert [e.payload["to"] for e in alert.events.filter(kind="notified")] == [[fleet["jj"].pk]]
+
+
 def test_title_is_capped_and_url_falls_back(fleet):
-    inv = _inv(fleet, agents=[], runners=[])
+    inv = _inv(fleet, status=FailureInvestigation.HELD, agents=[], runners=[])
     inv.sample_note = "x" * 400
     inv.save()
     (r,) = src.reconcile(timezone.now())
@@ -115,7 +156,7 @@ def _repeat(inv, note="Same failure again. Details differ."):
     inv.save()
 
 
-def test_dismiss_sticks_through_repeats_and_reopens_on_status_change(fleet):
+def test_dismiss_sticks_through_repeats_and_reopens_on_status_change(fleet, django_capture_on_commit_callbacks):
     inv = _inv(fleet)
     alerts.tick(timezone.now())
     alert = Alert.objects.get(kind=src.KIND)
@@ -133,15 +174,15 @@ def test_dismiss_sticks_through_repeats_and_reopens_on_status_change(fleet):
     assert alert.status == Alert.OPEN  # a status change is
 
 
-@pytest.mark.parametrize("status", ["open", "resolved"])
+@pytest.mark.parametrize("status", ["resolved"])
 def test_mark_resolved_refuses_once_the_investigation_moved_on(fleet, status):
-    """A debug turn took it back (`open`) or someone resolved it since the alert
-    was raised: the stale alert must not clobber that."""
+    """Someone resolved it since the alert was raised: the stale alert must not
+    clobber that."""
     inv = _inv(fleet)
     alerts.tick(timezone.now())
     alert = Alert.objects.get(kind=src.KIND)
     FailureInvestigation.objects.filter(pk=inv.pk).update(status=status, resolution_note="by the debugger")
-    with pytest.raises(ValueError, match="no longer waiting on a person"):
+    with pytest.raises(ValueError, match="already resolved"):
         alerts.act(alert, fleet["jj"], "mark_resolved")
     inv.refresh_from_db()
     assert inv.status == status and inv.resolution_note == "by the debugger"

@@ -67,6 +67,11 @@ class Raise:
     `workspace` is the subject's workspace slug (`Workspace`'s primary key).
     An empty `fingerprint` means "a digest of title + body": a change in what
     the alert says is a change in the facts.
+
+    `handler_agent` / `handler_user` (pks; at most one) say who has it — see
+    `Alert.handler_agent`. Neither is the old "a person must look" alert. A
+    change of handler is an `assigned` event, and a change TO a person notifies
+    that person once, with `ask` as the first line of what they are sent.
     """
 
     subject_key: str
@@ -76,6 +81,13 @@ class Raise:
     scopes: tuple[str, ...]
     body: str = ""
     fingerprint: str = ""
+    handler_agent: int | None = None
+    handler_user: int | None = None
+    ask: str = ""
+
+    def __post_init__(self):
+        if self.handler_agent is not None and self.handler_user is not None:
+            raise ValueError(f"alert {self.subject_key!r}: an agent OR a person has it, not both")
 
     def digest(self) -> str:
         if self.fingerprint:
@@ -203,6 +215,50 @@ def _find_locked(kind: str, subject_key: str) -> Alert | None:
     return Alert.objects.select_for_update().filter(kind=kind, subject_key=subject_key).first()
 
 
+def raise_now(kind: str, r: Raise, now=None) -> Alert | None:
+    """Raise (or update) ONE alert this moment, instead of waiting for the tick.
+
+    For a source whose condition starts at a known event — a turn that just
+    failed — and whose next step depends on the alert existing (the debug turn
+    it starts names it). The tick's `reconcile` reports the same raise, so the
+    two agree and the next tick is a no-op. Returns the row."""
+    now = now or timezone.now()
+    _upsert(kind, source_for(kind).SEVERITY, r, now)
+    return Alert.objects.filter(kind=kind, subject_key=r.subject_key).first()
+
+
+def _assign(alert: Alert, r: Raise, at, *, created: bool) -> None:
+    """Move the alert to `r`'s handler, if it changed: an `assigned` event, and —
+    only when the new handler is a PERSON — one notification to them, after the
+    transaction commits (mail is slow and must not hold the row lock; a rollback
+    must not have told anyone). An agent taking it tells no one."""
+    agent_id, user_id = r.handler_agent, r.handler_user
+    if not created and (alert.handler_agent_id, alert.handler_user_id) == (agent_id, user_id):
+        return
+    alert.handler_agent_id, alert.handler_user_id = agent_id, user_id
+    alert.save(update_fields=["handler_agent", "handler_user"])
+    if agent_id is None and user_id is None:
+        if not created:
+            _log(alert, AlertEvent.ASSIGNED, at=at, payload={"agent": None, "user": None, "ask": ""})
+        return
+    slug = alert.handler_agent.slug if agent_id and alert.handler_agent else None
+    _log(alert, AlertEvent.ASSIGNED, at=at, payload={"agent": slug, "user": user_id, "ask": r.ask})
+    if user_id is not None:
+        pk = alert.pk
+        transaction.on_commit(lambda: _notify_handler(pk, user_id, r.ask))
+
+
+def _notify_handler(alert_pk: int, user_id: int, ask: str) -> None:
+    alert = Alert.objects.filter(pk=alert_pk, status=Alert.OPEN, handler_user_id=user_id).first()
+    user = get_user_model().objects.filter(pk=user_id, is_active=True).first()
+    if alert is None or user is None:
+        return  # closed or handed on again before the commit: nothing to tell
+    try:
+        notify_users(alert, [user], ask=ask)
+    except Exception:  # noqa: BLE001 — the hand-off itself is recorded; a send must not undo it
+        logger.exception("alerts: could not notify the person alert %s was handed to", alert_pk)
+
+
 def _upsert(kind: str, severity: str, r: Raise, now) -> None:
     fingerprint = r.digest()
     fields = dict(workspace_id=r.workspace, scopes=list(r.scopes), severity=severity, title=r.title,
@@ -218,6 +274,7 @@ def _upsert(kind: str, severity: str, r: Raise, now) -> None:
                     alert = Alert.objects.create(kind=kind, subject_key=r.subject_key, first_seen_at=now,
                                                  last_seen_at=now, **fields)
                     _log(alert, AlertEvent.RAISED, at=now)
+                    _assign(alert, r, now, created=True)
                 return
             except IntegrityError:
                 alert = Alert.objects.select_for_update().get(kind=kind, subject_key=r.subject_key)
@@ -245,14 +302,19 @@ def _upsert(kind: str, severity: str, r: Raise, now) -> None:
         alert.save()
         if event:
             _log(alert, event, at=now, payload={"fingerprint": fingerprint})
+        if alert.status == Alert.OPEN:
+            # A dismissed alert keeps whoever had it; it is re-handed when it reopens.
+            _assign(alert, r, now, created=event == AlertEvent.REOPENED)
 
 
 # --- state changes ----------------------------------------------------------
 
 
-def resolve(alert: Alert, *, reason: str, by=None) -> None:
+def resolve(alert: Alert, *, reason: str, by=None, payload: dict | None = None) -> None:
     """Close `alert` as fixed. `reason`: `Alert.REASON_SOURCE | ACTION | STALE`.
-    A no-op on an alert that is already resolved."""
+    `payload` is added to the `resolved` event (a source's account of HOW it was
+    fixed — e.g. a turn failure's cause, PR and deploy state). A no-op on an
+    alert that is already resolved."""
     with transaction.atomic():
         row = _locked(alert)
         if row.status != Alert.RESOLVED:
@@ -261,7 +323,8 @@ def resolve(alert: Alert, *, reason: str, by=None) -> None:
             row.closed_by = by
             row.closed_at = timezone.now()
             row.save(update_fields=["status", "resolved_reason", "closed_by", "closed_at"])
-            _log(row, AlertEvent.RESOLVED, at=row.closed_at, actor=by, payload={"reason": reason})
+            _log(row, AlertEvent.RESOLVED, at=row.closed_at, actor=by,
+                 payload={**(payload or {}), "reason": reason})
     _sync(alert, row)
 
 
@@ -360,16 +423,18 @@ def _absolute(url: str) -> str:
     return url if url.startswith(("http://", "https://")) else f"{base_url()}{url}"
 
 
-def notify_users(alert: Alert, users, *, by=None) -> int:
+def notify_users(alert: Alert, users, *, by=None, ask: str = "") -> int:
     """Email + Web Push `alert` to each of `users`; log ONE `notified` row naming
     the people it reached. Returns how many it reached (an email handed to the
-    mail backend, or at least one push accepted). Never raises on a send."""
+    mail backend, or at least one push accepted). Never raises on a send.
+    `ask` — the one line a hand-off says the person is needed for — leads."""
     link = _absolute(alert.url) if alert.url else base_url()
     subject = f"Canopy: {alert.title}"
     paras = [f"{_who(by)} asked you to look at this."] if by is not None else []
-    paras += [alert.title] + ([alert.body] if alert.body else []) + [f"Open it: {link}"]
+    paras += ([ask] if ask else []) + [alert.title] + ([alert.body] if alert.body else []) + [f"Open it: {link}"]
     text = "\n\n".join(paras) + "\n"
     html = ((f"<p>{escape(_who(by))} asked you to look at this.</p>" if by is not None else "")
+            + (f"<p>{escape(ask)}</p>" if ask else "")
             + f"<p><strong>{escape(alert.title)}</strong></p>"
             + (f"<p>{escape(alert.body)}</p>" if alert.body else "")
             + _button(link, "Open in Canopy"))
@@ -443,8 +508,13 @@ def notify_new_blocking(now) -> None:
     mail. If closers exist but every delivery fails, or the fan-out raises, the
     stamp is cleared so the next tick retries. An alert with no eligible closer
     keeps its stamp, so it is not retried every minute (it is logged).
+
+    Never an alert an agent has (`handler_agent`): that one is silent until it
+    is handed to a person, and the hand-off tells that person (`_assign`). Nor
+    one a person already has — they were told when it was handed to them.
     """
-    pending = list(Alert.objects.filter(severity=Alert.BLOCKING, status=Alert.OPEN, notified_at__isnull=True))
+    pending = list(Alert.objects.filter(severity=Alert.BLOCKING, status=Alert.OPEN, notified_at__isnull=True,
+                                        handler_agent__isnull=True, handler_user__isnull=True))
     if not pending:
         return
     roots = wsvc.tree_roots({a.workspace_id for a in pending})

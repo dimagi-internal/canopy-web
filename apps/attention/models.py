@@ -67,6 +67,26 @@ class Alert(models.Model):
     last_seen_at = models.DateTimeField()
     occurrences = models.PositiveIntegerField(default=1)
     notified_at = models.DateTimeField(null=True, blank=True)
+    # WHO HAS IT: an agent, a person, or nobody yet (both NULL — the old meaning, "it
+    # needs a person", and everyone who holds a closing action is told when it
+    # is blocking). An agent-held alert is shown on canopy-web and is SILENT: no
+    # one is emailed or pushed while an agent works it. Handing it to a person
+    # tells that one person, once (`alerts._assign`), and is an `assigned` event.
+    #
+    # Why (Jonathan, 2026-10-23): a turn failure used to be an alert only once it
+    # was a person's, and before that it lived in a separate FailureInvestigation
+    # with its own lifecycle; the only verb the debugger had was "resolve", so
+    # even "needs Jonathan" resolved it, which cleared the alert and re-armed the
+    # next escalation — investigation 10 ran two debug turns two minutes apart
+    # (2026-10-22 15:02 / 15:04), each one emailing him. One alert, assigned to
+    # whoever is working it, is the lifecycle he asked for: "in a clean alert ->
+    # ada fix -> resolved, I don't want to be notified at all".
+    handler_agent = models.ForeignKey(
+        "agents.Agent", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    handler_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["kind", "subject_key"], name="attention_alert_kind_subject")]
@@ -89,7 +109,11 @@ class AlertEvent(models.Model):
     UNDISMISSED = "undismissed"
     RESOLVED = "resolved"
     REOPENED = "reopened"
-    KIND_CHOICES = [(k, k) for k in (RAISED, CHANGED, ACTED, NOTIFIED, DISMISSED, UNDISMISSED, RESOLVED, REOPENED)]
+    #: The handler changed (`Alert.handler_agent` / `handler_user`). Payload:
+    #: `{"agent": slug|None, "user": id|None, "ask": str}`.
+    ASSIGNED = "assigned"
+    KIND_CHOICES = [(k, k) for k in (RAISED, CHANGED, ACTED, NOTIFIED, DISMISSED, UNDISMISSED, RESOLVED, REOPENED,
+                                     ASSIGNED)]
 
     alert = models.ForeignKey(Alert, on_delete=models.CASCADE, related_name="events")
     at = models.DateTimeField()
