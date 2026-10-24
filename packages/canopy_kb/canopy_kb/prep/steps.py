@@ -7,8 +7,8 @@ the code that makes it, stored on the host, computed only where the host lacks i
 | `card_step(publisher)` | an item's catalog card | its text's sha256, title, type, url, date, referrers' titles |
 | `alias_step(publisher, …)` | the entity alias groups | the prompts (the most covered names and counts) |
 
-The model steps run on an engine (`engine.py`): the AI session running the refresh, or
-Gemini on Vertex. Which model reads a prompt is the step's `meta`, not its key.
+The model steps are done by the AI session running the refresh (`engine.py`). Which
+model read a prompt is not in the key.
 
 A reader's REVISION is per format, so a PDF reader fix re-reads PDFs only. Every step
 lists its source files and the libraries it reads with; `steps.lock` (beside this file)
@@ -24,11 +24,10 @@ import os
 import sys
 from pathlib import Path
 
-from canopy_kb.curate import Budget, Curation, CurationError, Step, check_lock, write_lock
+from canopy_kb.curate import Curation, CurationError, Step, check_lock, write_lock
 from canopy_kb.prep import aliases as _aliases
 from canopy_kb.prep import cards as _cards
 from canopy_kb.prep import engine as _engine
-from canopy_kb.prep import gemini
 from canopy_kb.prep.raw import log
 
 HERE = Path(__file__).parent
@@ -44,8 +43,6 @@ READERS = {
     "xls": ("2", ("extract.py", "xlsx.py"), ("openpyxl", "xlrd")),
     "docx": ("2", ("extract.py",), ("python-docx",)),
 }
-#: Estimated USD per call, for planning (Gemini 2.5 on Vertex, 2026-10).
-CARD_COST, ALIAS_COST = 0.001, 0.75
 
 
 def _src(*names: str) -> tuple[str, ...]:
@@ -68,16 +65,14 @@ _FORMER_MODEL = {"card": "gemini-2.5-flash", "aliases": "gemini-2.5-pro"}
 def card_step(publisher: str, kinds: str = _cards.KINDS) -> Step:
     settings = {"prompt": _cards.PROMPT, "kinds": kinds, "publisher": publisher,
                 "max_tokens": _cards.MAX_TOKENS, "head": _cards.HEAD, "tail": _cards.TAIL}
-    return Step("card", "1", settings, _src("cards.py", "gemini.py", "engine.py"), (), CARD_COST,
-                meta={"model": gemini.FLASH, "call": {"max_tokens": _cards.MAX_TOKENS}},
+    return Step("card", "1", settings, _src("cards.py", "engine.py"), (),
                 formerly=({**settings, "model": _FORMER_MODEL["card"]},))
 
 
 def alias_step(publisher: str, renames: str = "", apart: str = "") -> Step:
     settings = {"prompt": _aliases.PROMPT, "top": _aliases.TOP, "publisher": publisher, "renames": renames,
                 "apart": apart}
-    return Step("aliases", "1", settings, _src("aliases.py", "gemini.py", "engine.py"), (), ALIAS_COST,
-                meta={"model": gemini.PRO, "call": {"max_tokens": 65000, "thinking": None, "timeout": 900, "tries": 3}},
+    return Step("aliases", "1", settings, _src("aliases.py", "engine.py"), (),
                 formerly=({**settings, "model": _FORMER_MODEL["aliases"]},))
 
 
@@ -189,19 +184,18 @@ def card_tasks(step: Step, todo: list[tuple[str, dict, list[str]]]) -> list[dict
 
 
 def cards(cur: Curation, step: Step, todo: list[tuple[str, dict, list[str]]] | None = None, *,
-          tasks: list[dict] | None = None, engine=None) -> dict[str, dict]:
-    """{key: card} for `todo` (or tasks `card_tasks` made), by `engine` (Vertex if none):
+          tasks: list[dict] | None = None, engine: _engine.Session) -> dict[str, dict]:
+    """{key: card} for `todo` (or tasks `card_tasks` made), by the session `engine`:
     each checked to the card's shape and stored as it returns. A task with no result is
     asked again by the next refresh."""
-    engine = engine or _engine.Vertex()
     tasks = tasks if tasks is not None else card_tasks(step, todo or [])
     return engine.run(step, tasks, lambda t, raw: _cards.check(raw), lambda k, card: cur.put(k, card, now=True))
 
 
-def aliases(cur: Curation, step: Step, all_cards: list[dict], budget: Budget | None = None, *,
-            engine=None) -> tuple[str, dict]:
+def aliases(cur: Curation, step: Step, all_cards: list[dict], *,
+            engine: _engine.Session) -> tuple[str, dict]:
     """(key, groups): the stored groups for these names (under this key or a former one),
-    else the engine's (Vertex if none)."""
+    else the session's."""
     p = _aliases.prompts(all_cards, step.settings["publisher"], step.settings["renames"], step.settings["apart"])
     keys = step.keys(prompts=[p[k][1] for k in sorted(p)])
     have = cur.results(keys)
@@ -210,12 +204,11 @@ def aliases(cur: Curation, step: Step, all_cards: list[dict], budget: Budget | N
             if k != keys[0]:
                 cur.put(keys[0], have[k])
             return keys[0], have[k]
-    engine = engine or _engine.Vertex()
     tasks = [{"id": kind, "prompt": prompt, "names": len(rows)} for kind, (rows, prompt) in p.items()]
     got = engine.run(step, tasks, lambda t, raw: _aliases.groups(p[t["id"]][0], raw), lambda k, v: None)
     missing = sorted(set(p) - set(got))
     if missing:
-        raise CurationError(f"aliases: no groups for {', '.join(missing)} from the {engine.name} engine; "
+        raise CurationError(f"aliases: no groups for {', '.join(missing)} from the session; "
                             "the cards are stored, refresh again")
     for kind in sorted(got):
         log(f"aliases: {kind}: {len(got[kind])} groups over the top {len(p[kind][0])} names")

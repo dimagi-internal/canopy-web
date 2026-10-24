@@ -82,21 +82,3 @@ def test_a_google_re_export_that_only_reshuffles_is_unchanged(tmp_path):
         assert (same["sha256"], same["fetched_at"]) == (first["sha256"], first["fetched_at"])
         assert raw.body(same) == raw.body(first)
         assert raw.get(url, refetch=True)["sha256"] != first["sha256"]  # a real edit is a change
-
-
-def test_aliases_are_not_asked_again_when_the_names_are_unchanged(tmp_path, monkeypatch):
-    from canopy_kb.prep import aliases, gemini
-    calls = []
-
-    def ask(model, parts, **kw):
-        calls.append(model)
-        return [{"canonical": "Unlimit Health", "names": ["SCI Foundation", "Unlimit Health"]}], {}
-
-    monkeypatch.setattr(gemini, "generate_json", ask)
-    (tmp_path / "cards.json").write_text(json.dumps({"a": {"card": {"orgs": ["SCI Foundation", "Unlimit Health"]}}}))
-    aliases.run(tmp_path, "GiveWell")
-    aliases.run(tmp_path, "GiveWell")
-    assert len(calls) == 2  # one per kind, once
-    (tmp_path / "cards.json").write_text(json.dumps({"a": {"card": {"orgs": ["SCI Foundation", "Unlimit Health", "AMF"]}}}))
-    aliases.run(tmp_path, "GiveWell")
-    assert len(calls) == 4
