@@ -111,6 +111,7 @@ describe('ProjectPage', () => {
       'project-milestones',
       'project-scope',
       'project-tasks',
+      'project-services',
       'project-proposal',
       'team-ideas',
       'project-checkins',
