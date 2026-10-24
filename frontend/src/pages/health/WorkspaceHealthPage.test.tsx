@@ -172,12 +172,12 @@ describe('every figure opens its source', () => {
   it('links a row’s settings, turns and workspace to where each is set', async () => {
     renderPage()
     await screen.findByText('HAL')
-    const row = screen.getByText('HAL').closest('tr')!
-    const hrefs = [...row.querySelectorAll('a')].map((a) => a.getAttribute('href'))
-    expect(hrefs).toEqual(expect.arrayContaining([
+    // The table draws before each agent's checklist arrives; its links come with it.
+    const hrefs = () => [...screen.getByText('HAL').closest('tr')!.querySelectorAll('a')].map((a) => a.getAttribute('href'))
+    await waitFor(() => expect(hrefs()).toEqual(expect.arrayContaining([
       '/w/connect/agents/hal/settings#credentials', '/w/connect/health', '/w/connect/agents/hal/settings#reach',
       '/w/connect/agents/hal/settings#running', 'mailto:hal@x.org',
-    ]))
+    ])))
   })
 })
 
