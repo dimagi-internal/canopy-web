@@ -16,11 +16,12 @@ const authed = { isAuthed: true, active: 'connect', role: 'owner' }
 const label = (e: ResolvedNavEntry) => (e.kind === 'link' ? e.item.label : e.label)
 
 describe('NAV', () => {
-  it('answers the four questions a person arrives with, plus Chats', () => {
-    // Home: what needs me. Agents: what they are doing. Projects: the work and
-    // what it produces. Workspace: who is in it and how it is set up.
+  it('answers the five questions a person arrives with, plus Chats', () => {
+    // Home: what needs me. Agents: what they are doing. Work: the tasks and
+    // projects. Demos: what the work produces. Workspace: who is in it and how
+    // it is set up.
     expect(NAV.map((e) => (e.kind === 'link' ? e.item.label : e.label))).toEqual([
-      'Home', 'Chats', 'Agents', 'Projects', 'Workspace',
+      'Home', 'Chats', 'Agents', 'Work', 'Demos', 'Workspace',
     ])
   })
 
@@ -59,8 +60,8 @@ describe('resolveNav', () => {
     const nav = resolveNav(authed)
     expect(nav[0]).toEqual({ kind: 'link', item: { href: '/home', label: 'Home' } })
     expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/chat', label: 'Chats' } })
-    const projects = nav.find((e) => label(e) === 'Projects')!
-    expect(entryItems(projects)[0]).toEqual({ href: '/w/connect/projects', label: 'All projects' })
+    const work = nav.find((e) => label(e) === 'Work')!
+    expect(entryItems(work)[0]).toEqual({ href: '/w/connect/tasks', label: 'Tasks' })
   })
 
   it('omits tenant items before the workspace resolves, rather than linking to /w//…', () => {
@@ -107,10 +108,12 @@ describe('active entry', () => {
       '/w/connect/schedules': 'Agents',
       '/w/connect/huddles/4': 'Agents',
       '/w/connect/settings/topology/runners': 'Agents',
-      '/w/connect/projects': 'Projects',
-      '/w/connect/ddd/onboarding': 'Projects',
-      '/w/connect/storyboards': 'Projects',
-      '/w/connect/shareouts/2026-09-01': 'Projects',
+      '/w/connect/projects': 'Work',
+      '/w/connect/tasks/CON-4': 'Work',
+      '/w/connect/triage': 'Work',
+      '/w/connect/ddd/onboarding': 'Demos',
+      '/w/connect/storyboards': 'Demos',
+      '/w/connect/shareouts/2026-09-01': 'Demos',
       '/w/connect/settings': 'Workspace',
       '/w/connect/settings/slack': 'Workspace',
       '/w/connect/settings/members': 'Workspace',
