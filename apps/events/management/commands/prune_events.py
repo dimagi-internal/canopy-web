@@ -1,6 +1,6 @@
 """Drop old event rows.
 
-The off-request clock does this daily (`events.prune`, `apps/events/apps.py`);
+The off-request clock does this daily (`events.prune`, `apps/retention/apps.py`);
 this command runs it by hand, or with a different window. Coalescing already
 keeps the row count near-flat, so this is housekeeping, not a load-bearing part
 of the design.
