@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ExternalLink, Loader2, Minimize2, X } from "lucide-react";
+import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Check, ChevronRight, ExternalLink, Loader2, Minimize2, X } from "lucide-react";
 
-import { AppBridge } from "./bridge";
-import { useAppHost, type AppReceipt, type AppRef, type AppViewResource } from "./context";
+import { AppBridge, type CallToolResult } from "./bridge";
+import {
+  LatestAppViewContext, useAppHost, type AppReceipt, type AppRef, type AppViewResource,
+} from "./context";
 
 const MIN_HEIGHT = 80;
 const MAX_HEIGHT = 900;
@@ -27,6 +29,42 @@ function openLink(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+// A person's open/closed choice for one View, kept for the tab (sessionStorage):
+// it outlives a reload and a remount from history, never the tab.
+const TOGGLE_KEY = "canopy-ui:app-view-open:";
+
+function storedChoice(toolCallId: string): boolean | null {
+  try {
+    const v = window.sessionStorage.getItem(TOGGLE_KEY + toolCallId);
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeChoice(toolCallId: string, open: boolean): void {
+  try {
+    window.sessionStorage.setItem(TOGGLE_KEY + toolCallId, open ? "1" : "0");
+  } catch {
+    // No storage (a private window): the choice lasts as long as the mount.
+  }
+}
+
+/** What a collapsed View says about itself, from its tool result: a row count or a
+ *  title when the result names one. MCP Apps has no notification for a View's
+ *  title, so this is all a host can know; a sensitive conversation withholds the
+ *  result and the line is the tool name alone. */
+export function appSummary(result: CallToolResult | null | undefined): string {
+  const sc = result?.structuredContent;
+  if (!sc || typeof sc !== "object") return "";
+  const rows = sc.row_count;
+  if (typeof rows === "number" && Number.isFinite(rows)) {
+    return `${rows.toLocaleString()} row${rows === 1 ? "" : "s"}`;
+  }
+  const title = sc.title;
+  return typeof title === "string" ? title.slice(0, 120) : "";
+}
+
 function receiptTime(at: string): string {
   const d = new Date(at);
   return Number.isNaN(d.getTime())
@@ -48,6 +86,12 @@ function receiptTime(at: string): string {
  * be drawn over the whole surface, with a close control and Esc to come back.
  * The SAME frame is restyled, never remounted: a remount would reload the View
  * and lose whatever its person had done in it. The sandbox is unchanged.
+ *
+ * The header collapses and expands the View. The newest View in the conversation
+ * opens expanded and earlier ones collapsed (`LatestAppViewContext`), and a
+ * person's own toggle is kept per View for the tab. A View that opens collapsed
+ * has no frame until it is first expanded; collapsing one hides its frame
+ * without unmounting it, for the same reason full screen never remounts.
  */
 export function AppView({ app }: { app: AppRef }) {
   const host = useAppHost();
@@ -71,6 +115,20 @@ export function AppView({ app }: { app: AppRef }) {
   // load again, into a fresh frame, so the View boots with it.
   const revision = host?.inputRevision;
   const bridgeRef = useRef<AppBridge | null>(null);
+  const latest = useContext(LatestAppViewContext);
+  const isLatest = latest === null || latest === app.tool_call_id;
+  const [choice, setChoice] = useState<boolean | null>(() => storedChoice(app.tool_call_id));
+  const expanded = fullscreen || (choice ?? isLatest);
+  // Mounted once ever expanded, then kept: a hidden frame keeps its View's state.
+  const [framed, setFramed] = useState(expanded);
+  if (expanded && !framed) setFramed(true);
+  const bodyId = useId();
+
+  function toggle(): void {
+    const next = !expanded;
+    setChoice(next);
+    storeChoice(app.tool_call_id, next);
+  }
 
   useEffect(() => {
     const host = hostRef.current;
@@ -112,7 +170,7 @@ export function AppView({ app }: { app: AppRef }) {
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !res || !frame.current) return;
+    if (!host || !res || !framed || !frame.current) return;
     const refreshReceipts = () =>
       host.load(app.tool_call_id).then((r) => setReceipts(r.receipts ?? []), () => undefined);
     const bridge = new AppBridge({
@@ -180,7 +238,7 @@ export function AppView({ app }: { app: AppRef }) {
       bridgeRef.current = null;
       bridge.close();
     };
-  }, [res, app.tool_call_id]);
+  }, [res, app.tool_call_id, framed]);
 
   // A grown or shrunk surface is news to the View: it may lay out for it.
   const maxW = host?.maxWidth;
@@ -211,6 +269,7 @@ export function AppView({ app }: { app: AppRef }) {
   const height = Math.max(MIN_HEIGHT, Math.min(host.maxHeight ?? MAX_HEIGHT, requested));
   const label = siteLabel(app.site);
   const bordered = res?.prefers_border !== false;
+  const summary = expanded ? "" : appSummary(res?.tool_result);
 
   return (
     <section
@@ -221,9 +280,30 @@ export function AppView({ app }: { app: AppRef }) {
         ? "fixed inset-0 z-50 flex flex-col overflow-hidden bg-background"
         : `my-2 overflow-hidden rounded-lg ${bordered ? "border border-border bg-card" : ""}`}
     >
-      <header className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
-        <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground">from {label}</span>
-        <span className="truncate font-mono">{app.tool}</span>
+      <header className={`flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground ${expanded ? "border-b border-border/60" : ""}`}>
+        {fullscreen ? (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground">from {label}</span>
+            <span className="truncate font-mono">{app.tool}</span>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={expanded}
+            aria-controls={bodyId}
+            title={expanded ? "Collapse" : "Expand"}
+            className="-mx-1 flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRight
+              aria-hidden
+              className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+            />
+            <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground">from {label}</span>
+            <span className="truncate font-mono">{app.tool}</span>
+            {summary && <span data-testid="app-view-summary" className="truncate">· {summary}</span>}
+          </button>
+        )}
         {fullscreen && (
           <button
             type="button"
@@ -236,6 +316,7 @@ export function AppView({ app }: { app: AppRef }) {
           </button>
         )}
       </header>
+      <div id={bodyId} hidden={!expanded} data-testid="app-view-body" className={fullscreen ? "flex min-h-0 flex-1 flex-col" : undefined}>
       {error ? (
         <p className="px-3 py-2 text-sm text-muted-foreground">{error}</p>
       ) : !res ? (
@@ -255,7 +336,7 @@ export function AppView({ app }: { app: AppRef }) {
               )}
             </p>
           )}
-          <iframe
+          {framed && <iframe
             key={String(revision ?? "")}
             ref={frame}
             title={`${label}: ${app.tool}`}
@@ -267,7 +348,7 @@ export function AppView({ app }: { app: AppRef }) {
             style={fullscreen
               ? { width: "100%", border: 0, display: "block" }
               : { height, width: "100%", border: 0, display: "block" }}
-          />
+          />}
         </>
       )}
       {receipts.length > 0 && (
@@ -282,6 +363,7 @@ export function AppView({ app }: { app: AppRef }) {
           ))}
         </ul>
       )}
+      </div>
     </section>
   );
 }
