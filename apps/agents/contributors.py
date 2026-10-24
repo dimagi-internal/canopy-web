@@ -107,7 +107,7 @@ def may_delete_summary(row: ProjectParticipant, user) -> bool:
     if person.user_id and person.user_id == getattr(user, "pk", None):
         return True
     agent = row.project.agent
-    if agent.is_admin(user):
+    if agent is not None and agent.is_admin(user):
         return True
     writer = row.summary_by_agent
     return writer is not None and writer.is_own_login(user)
@@ -139,13 +139,18 @@ def write_summary(project: AgentProject, person, payload: dict, *, by_agent=None
     # a turn, a sensitive one writes nothing about a person.
     hcp.refuse_if_sensitive()
     # A page claims IDEAS — the project's kind=idea tasks — never the agent's work.
-    task_ids = {t.lower(): t for t in project.tasks.filter(kind="idea").values_list("ext_id", flat=True)}
+    # Named by key or by an agent's alias; stored as the name it was given.
+    task_ids = {}
+    for ext_id, key in project.tasks.filter(kind="idea").values_list("ext_id", "key"):
+        task_ids[key.lower()] = ext_id or key
+        if ext_id:
+            task_ids[ext_id.lower()] = ext_id
     ideas = []
     for idea in payload.get("ideas") or []:
         real = task_ids.get(str(idea.get("task", "")).strip().lower())
         if real is None:
             raise SummaryError(f"ideas: {idea.get('task')!r} is not an idea (a kind=idea task) "
-                               f"of {project.ext_id}")
+                               f"of {project.address}")
         ideas.append({**idea, "task": real})
     summary = {
         "goal": payload["goal"],
@@ -196,7 +201,7 @@ def board(project: AgentProject, reader: Reader) -> dict:
     contributors, every tally a count over that one list."""
 
     ideas = idea_svc.of_project(project)
-    return {"agent": project.agent.slug, "project": project.ext_id, "name": project.name,
+    return {"agent": project.agent_slug or "", "project": project.ext_id or project.handle, "name": project.name,
             "stages": idea_svc.counts(ideas), "ideas": ideas,
             "contributors": idea_svc.contributors(
                 project, ideas, page_visible=lambda row: may_see_summary(row.person, reader))}
@@ -232,7 +237,8 @@ def page(project: AgentProject, person, reader: Reader) -> dict:
     return {
         "person": {"id": person.pk, "display_name": people.display_name(person),
                    "email": people.email_of(person)},
-        "agent": project.agent.slug, "project": project.ext_id, "project_name": project.name,
+        "agent": project.agent_slug or "", "project": project.ext_id or project.handle,
+        "project_name": project.name,
         "role": row.role if row is not None else "",
         "participant_since": row.created_at if row is not None else None,
         "summary_state": state, "summary": summary,

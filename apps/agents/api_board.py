@@ -1,4 +1,9 @@
-"""/api/agents/{slug}/… — an agent's board: projects, tasks and the action queue."""
+"""/api/agents/{slug}/… — an agent's board: projects, tasks and the action queue.
+
+Tasks and projects are the workspace's (`tasks_api` is their own address);
+these routes are an agent's VIEW of them, kept so the fleet names work as it
+always has: a task by its key or this agent's alias ("T12"), a project by its
+handle or this agent's alias ("P5")."""
 from __future__ import annotations
 
 import logging
@@ -17,13 +22,18 @@ from apps.harness import turn_access
 from apps.harness.models import Turn, agent_turns_q
 from apps.workspaces import permissions as perms
 
-from . import engagement, ideas, participants, proposals, services
+from . import engagement, ideas, participants, proposals, services, work
 from .gates import (
     agent_for_read,
     agent_for_work,
+    check_task_visible,
+    may_edit_project,
     project_or_404,
+    require_project_edit,
+    require_task_edit,
     visible_agent_workspaces,
 )
+from .models import AgentTask
 from .proposals_api import resolve_task_ref
 from .schemas import (
     ActionAppliedIn,
@@ -38,7 +48,10 @@ from .schemas import (
     AgentTaskIn,
     AgentTaskOut,
     AgentTaskPatch,
+    MilestoneOut,
     ProjectParticipantOut,
+    ProjectProgressOut,
+    ProjectUpdateOut,
     ProposedTaskOut,
     TurnBriefOut,
 )
@@ -57,10 +70,7 @@ router = Router(auth=session_auth, tags=["agents"])
 def list_projects(request: HttpRequest, slug: str, status: str = "") -> list[AgentProjectOut]:
     agent = agent_for_read(request, slug)
     projects = services.list_projects(agent, status=status)
-    counts = services.project_task_counts(agent)
-    for project in projects:
-        (project._task_count, project._open_task_count,
-         project._waiting_task_count) = counts.get(project.pk, (0, 0, 0))
+    work.annotate_projects(projects)
     return [AgentProjectOut.model_validate(p) for p in projects]
 
 
@@ -79,7 +89,7 @@ def create_project(request: HttpRequest, slug: str, payload: AgentProjectIn) -> 
 _PROJECT_RECENT_TURNS = 10
 
 
-def _turns_touching(agent, ext_ids: list[str]) -> list:
+def _turns_touching(agent, ext_ids: list[str]) -> list:  # noqa: C901
     """The agent's latest turns whose `task_ext_ids` name any of `ext_ids`.
 
     `task_ext_ids` is a JSON list. Postgres answers "contains this element"
@@ -122,24 +132,27 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
 
     live_first = Case(When(status__in=services.LIVE_STATUSES, then=0), default=1,
                       output_field=IntegerField())
-    tasks = list(project.tasks.select_related("agent", "project", "waiting_on_user", "parent")
-                 .prefetch_related("human_whys")
-                 .order_by(live_first, "position", "id"))
+    tasks = list(work.task_rows(project.tasks).order_by(live_first, "rank", "id"))
     project._task_count = len(tasks)
     project._open_task_count = sum(t.status in services.LIVE_STATUSES for t in tasks)
+    project._done_task_count = sum(t.status == AgentTask.DONE for t in tasks)
     # `waiting_task_count` is left to the model property: one COUNT through
     # `services.waiting_q`, rather than a second Python copy of that predicate.
     # Everyone sees what the agent did; a turn's prompt is a log (turn_access).
-    # ext_ids are per agent, so a workspace project's turns are found per task owner.
+    # A turn names the tasks it touched by its agent's alias or their key, so
+    # they are found per agent that did or filed the work.
     by_agent: dict = {}
     for t in tasks:
-        by_agent.setdefault(t.agent_id, (t.agent, []))[1].append(t.ext_id)
+        for a in {t.agent, t.created_by_agent} - {None}:
+            by_agent.setdefault(a.pk, (a, []))[1].extend(x for x in (t.ext_id, t.key) if x)
     found = [turn for a, eids in by_agent.values() for turn in _turns_touching(a, eids)]
     found = sorted({turn.pk: turn for turn in found}.values(), key=lambda turn: turn.created_at,
                    reverse=True)[:_PROJECT_RECENT_TURNS]
     turns = turn_access.redact(found, request.user)
     # Built from the plain project shape: `project.tasks` is a manager, not a list.
 
+    work.annotate_projects([project])
+    editable = may_edit_project(request, project)
     return AgentProjectDetailOut(
         **AgentProjectOut.model_validate(project).model_dump(),
         tasks=[AgentTaskOut.model_validate(t) for t in tasks],
@@ -147,9 +160,15 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
         # Same gate as the rest of the project: members of the agent's workspace.
         participants=[ProjectParticipantOut(**p) for p in participants.of_project(project)],
         proposal=(proposals.card(project, request.user) if proposals.is_proposal(project) else None),
-        proposed_tasks=[ProposedTaskOut(**proposals.task_card(t, request.user))
-                        for t in proposals.proposed_tasks_of(project).filter(status="suggested")],
-        board_readable=project.agent.workspace_id in visible_agent_workspaces(request),
+        proposed_tasks=[ProposedTaskOut(**card) for card in proposals.task_cards(
+            list(proposals.proposed_tasks_of(project).filter(status="suggested")), request.user)],
+        board_readable=project.workspace_id in visible_agent_workspaces(request),
+        progress=ProjectProgressOut(**work.progress_of(project)),
+        milestones=[MilestoneOut.model_validate(m) for m in work.milestones_of(project)],
+        latest_update=(ProjectUpdateOut.model_validate(latest) if (latest := work.latest_update(project)) else None),
+        draft_updates=([ProjectUpdateOut.model_validate(u) for u in project.updates.filter(status="draft")
+                        .select_related("author_user", "author_agent")] if editable else []),
+        may_edit=editable,
     )
 
 
@@ -157,8 +176,9 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
 @gate("agent.work", kind="content")
 def patch_project(request: HttpRequest, slug: str, ref: str,
                   payload: AgentProjectPatch) -> AgentProjectOut:
-    agent = agent_for_work(request, slug)
+    agent = agent_for_read(request, slug)
     project = project_or_404(agent, ref)
+    require_project_edit(request, project)
     data = payload.model_dump(exclude_unset=True)
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump()
@@ -166,11 +186,12 @@ def patch_project(request: HttpRequest, slug: str, ref: str,
     return AgentProjectOut.model_validate(apply_project_patch(request, project, data))
 
 
-def require_workspace_editor(request: HttpRequest, workspace: str, steward) -> None:
-    """Placing a project in a workspace other than its steward's makes it that
-    workspace's, so the caller must be able to edit there too — writing the
-    steward is not enough. Same 404 as a missing workspace for a non-member."""
-    if not workspace or workspace == steward.workspace_id:
+def require_workspace_editor(request: HttpRequest, workspace: str, steward=None) -> None:
+    """Placing a project in a workspace other than its lead agent's makes it
+    that workspace's, so the caller must be able to edit there too — writing
+    the lead agent is not enough. Same 404 as a missing workspace for a
+    non-member."""
+    if not workspace or (steward is not None and workspace == steward.workspace_id):
         return
     if not perms.can(request.user, workspace, perms.CONTENT_WRITE):
         raise HttpError(404, f"workspace '{workspace}' not found")
@@ -185,31 +206,41 @@ def apply_project_patch(request: HttpRequest, project, data: dict):
         ref_ = (data.pop("spawned_from") or "").strip()
         project.spawned_from = resolve_task_ref(request, ref_) if ref_ else None
     handle, steward = data.pop("handle", None), data.pop("steward", None)
+    members = data.pop("member_agents", None)
     workspace = (data.pop("workspace", None) or "").strip()
     if workspace and handle is None:
-        raise HttpError(422, "workspace is set with handle, when the project is promoted")
-    require_workspace_editor(request, workspace, project.agent)
+        handle = project.handle
+    if workspace and workspace != project.workspace_id:
+        require_workspace_editor(request, workspace)
     try:
         with transaction.atomic():
             if handle is not None:
                 project = services.promote_project(project, handle, workspace)
             if steward is not None:
-                project = services.set_steward(project, agent_for_work(request, steward.strip()))
+                steward = steward.strip()
+                project = services.set_steward(project, agent_for_work(request, steward) if steward else None)
+            if members is not None:
+                project = services.set_member_agents(
+                    project, [agent_for_read(request, m.strip(), honor_pin=False) for m in members if m.strip()])
             project = services.patch_project(project, data)
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
     except services.ProjectScopeError as exc:
         raise HttpError(exc.status, str(exc)) from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
     return project
 
 
-# ---- tasks, addressed by `ext_id` ----
+# ---- tasks, by key or this agent's alias ----
 
 
-def _get_task_or_404(agent, ref: str):
+def _get_task_or_404(agent, ref: str, request: HttpRequest | None = None):
     task = services.get_task(agent, ref)
     if task is None:
         raise HttpError(404, f"task {ref} not found")
+    if request is not None:
+        check_task_visible(request, task, ref)
     return task
 
 
@@ -224,8 +255,7 @@ def list_tasks(request: HttpRequest, slug: str, project: str = "", status: str =
     that task's direct subtasks, or `none` for top-level tasks only)."""
     agent = agent_for_read(request, slug)
     qs = services.filter_tasks(
-        agent.tasks.select_related("agent", "project", "waiting_on_user", "parent")
-        .prefetch_related("human_whys"),
+        work.task_rows(AgentTask.objects.filter(services.agent_tasks_q(agent))),
         user=request.user, project=project, status=status, waiting=waiting, ask=ask, batch=batch,
         parent=parent)
     return [AgentTaskOut.model_validate(t) for t in qs]
@@ -242,7 +272,8 @@ def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) ->
     if not agent.is_own_login(request.user):
         agent = agent_for_work(request, slug)
     try:
-        tasks = services.create_tasks(agent, [p.model_dump(exclude_unset=True) for p in payload])
+        tasks = services.create_tasks(agent, [p.model_dump(exclude_unset=True) for p in payload],
+                                      by_user=request.user)
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
     except services.DuplicateTaskError as exc:
@@ -259,7 +290,7 @@ def create_tasks(request: HttpRequest, slug: str, payload: list[AgentTaskIn]) ->
 @gate("member")
 def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
     agent = agent_for_read(request, slug)
-    task = _get_task_or_404(agent, ref)
+    task = _get_task_or_404(agent, ref, request)
     # Built from the plain task shape: `task.actions` is a manager, not a list.
     return AgentTaskDetailOut(
         **AgentTaskOut.model_validate(task).model_dump(),
@@ -271,13 +302,29 @@ def get_task(request: HttpRequest, slug: str, ref: str) -> AgentTaskDetailOut:
 @router.patch("/{slug}/tasks/{ref}/", response=AgentTaskOut, summary="Update a task's fields",)
 @gate("agent.work", kind="content")
 def patch_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskPatch) -> AgentTaskOut:
-    agent = agent_for_work(request, slug)
-    task = _get_task_or_404(agent, ref)
+    agent = agent_for_read(request, slug)
+    task = _get_task_or_404(agent, ref, request)
+    require_task_edit(request, task)
     data = payload.model_dump(exclude_unset=True)
+    return AgentTaskOut.model_validate(apply_task_patch(request, task, data, route_agent=agent))
+
+
+def apply_task_patch(request: HttpRequest, task, data: dict, *, route_agent=None):
+    """A PATCH body against one task, from either address. Giving it to an
+    agent is the editor's (or that agent claiming it under its own login)."""
+    assignee = (data.get("assignee") or "").strip() if data.get("assignee") is not None else None
+    if assignee and "@" not in assignee:
+        slug_ = assignee.removeprefix("agent:")
+        target = agent_for_read(request, slug_, honor_pin=False)
+        if not target.is_own_login(request.user):
+            agent_for_work(request, slug_, honor_pin=False,
+                           forbidden="giving a task to an agent requires the editor role")
+    by_agent = next((a for a in (route_agent, task.agent, task.created_by_agent)
+                     if a is not None and a.is_own_login(request.user)), None)
     try:
-        return AgentTaskOut.model_validate(services.patch_task(task, data))
+        return services.patch_task(task, data, by_user=request.user, by_agent=by_agent)
     except (services.UnknownPersonError, ValueError) as exc:
-        # TaskTreeError, and a quote whose person_id is not known here.
+        # TaskTreeError, AssigneeError, and a quote whose person_id is not known here.
         raise HttpError(422, str(exc)) from exc
 
 
@@ -299,7 +346,7 @@ def _engaged_with_project_task(request: HttpRequest, task, action: str) -> None:
     kind = _ENGAGEMENT_OF_ACTION.get(action)
     if kind is None:
         return
-    engagement.record(kind, workspace=task.agent.workspace_id, surface=engagement.surface_of(request),
+    engagement.record(kind, workspace=task.workspace_id, surface=engagement.surface_of(request),
                       user=request.user, project=task.project, task=task)
     if action == "reply":
         try:
@@ -336,12 +383,23 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
     nudging one that is not in progress); `turn_ids` names the turns the action
     started."""
     agent = agent_for_read(request, slug)
-    task = _get_task_or_404(agent, ref)
-    if payload.action in _EDITOR_ACTIONS:
+    task = _get_task_or_404(agent, ref, request)
+    return act_and_record(request, task, payload)
 
-        # The person whose idea it is may call it shipped, as its owner may (hal T82).
-        if not (payload.action == "done" and ideas.is_ideas_person(task, request.user)):
-            agent_for_work(request, slug)
+
+def act_and_record(request: HttpRequest, task, payload: AgentTaskActionIn) -> ActOut:
+    """One action on one task, from either address."""
+    if payload.action in _EDITOR_ACTIONS:
+        # The person whose idea it is may call it shipped, as its owner may
+        # (hal T82); a task's own assignee may finish it.
+        if not ((payload.action == "done" and ideas.is_ideas_person(task, request.user))
+                or (payload.action == "done" and task.assignee_user_id == request.user.pk)):
+            if task.agent_id is not None:
+                agent_for_work(request, task.agent.slug, honor_pin=False)
+            else:
+                require_task_edit(request, task)
+    doer = task.agent
+    own = doer is not None and doer.is_own_login(request.user)
     try:
         task, row, turns = services.act(
             task, action=payload.action, comment=payload.comment,
@@ -351,11 +409,12 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
             # write); it decides whether a reply wakes the agent. Never the agent
             # replying on its own card: its note would wake itself, and a turn
             # that replies again would wake it again.
-            may_start_turns=(perms.can(request.user, agent.workspace_id, perms.AGENT_WORK)
-                             and not agent.is_own_login(request.user)),
+            may_start_turns=(doer is not None
+                             and perms.can(request.user, doer.workspace_id, perms.AGENT_WORK)
+                             and not own),
             # An ANSWER to an open question wakes the agent whoever writes it (it
             # is the response the agent asked for) — but never the agent itself.
-            by_agent_itself=agent.is_own_login(request.user))
+            by_agent_itself=own)
     except services.ClosedAskError as exc:
         raise HttpError(409, str(exc)) from exc
     except PermissionError as exc:
@@ -365,7 +424,7 @@ def act_on_task(request: HttpRequest, slug: str, ref: str, payload: AgentTaskAct
         # An empty reply, or an `on_approve` spec that cannot run. `act` is
         # atomic: the ask is still open and the action can be retried.
         raise HttpError(422, str(exc)) from exc
-    if task.project_id is not None and not agent.is_own_login(request.user):
+    if task.project_id is not None and not own:
         _engaged_with_project_task(request, task, payload.action)
     return ActOut(task=AgentTaskOut.model_validate(task),
                   action=AgentTaskActionOut.model_validate(row),

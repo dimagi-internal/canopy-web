@@ -12,8 +12,9 @@ A proposal is ordinary rows, so the rest of canopy reads it without knowing:
   why and the done-when. Approve / decline / reply are the existing task actions
   (`services.act` calls `before_act` / `after_act` here), so a decision made on
   the board, the project page or the huddle page is the same click;
-* a linked `suggested` task on each PARTNER's own board (projects stay per agent,
-  Jonathan 2026-09-19), whose `source_url` is the project page;
+* a linked `suggested` task for each PARTNER agent, filed in the project and
+  assigned to the partner (a project spans agents: the partner becomes one of
+  its member agents), whose `source_url` is the project page;
 * `ProjectBacking` rows — where each person and agent stands. A signal, never a
   gate: nobody's backing starts anything.
 
@@ -74,12 +75,12 @@ class UnknownRun(ValueError):
 
 
 def page_path(project: AgentProject) -> str:
-    return f"/agents/{project.agent.slug}/projects/{project.ext_id}"
+    return f"/projects/{project.handle}"
 
 
 def page_url(project: AgentProject) -> str:
 
-    return wslinks.scoped_url(project.agent.workspace_id, page_path(project))
+    return wslinks.scoped_url(project.workspace_id, page_path(project))
 
 
 def _kind(task: AgentTask) -> str:
@@ -96,7 +97,7 @@ def decision_card(project: AgentProject) -> AgentTask | None:
 
 
 def plan_steps(project: AgentProject) -> list[AgentTask]:
-    return list(project.tasks.filter(origin_ref__kind=PLAN_STEP).order_by("position", "pk"))
+    return list(project.tasks.filter(origin_ref__kind=PLAN_STEP).order_by("rank", "pk"))
 
 
 def partner_tasks(project: AgentProject):
@@ -110,7 +111,7 @@ def may_decide(user, project: AgentProject) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     return (project.owner_user_id == user.pk
-            or perms.can(user, project.agent.workspace_id, perms.PROJECTS_DECIDE))
+            or perms.can(user, project.workspace_id, perms.PROJECTS_DECIDE))
 
 
 def _declined_by_a_person(project: AgentProject) -> bool:
@@ -134,24 +135,35 @@ def _sync_plan(agent: Agent, project: AgentProject, plan: list[str]) -> None:
     for i, title in enumerate(plan):
         if i < len(steps):
             step = steps[i]
-            if step.status == AgentTask.SUGGESTED and (step.title, step.position) != (title, i):
-                step.title, step.position = title, i
-                step.save(update_fields=["title", "position", "updated_at"])
+            if step.status == AgentTask.SUGGESTED and (step.title, step.rank) != (title, float(i)):
+                step.title, step.rank = title, float(i)
+                step.save(update_fields=["title", "rank", "updated_at"])
             continue
         services.create_tasks(agent, [{
-            "title": title, "project": project.ext_id, "status": AgentTask.SUGGESTED, "position": i,
+            "title": title, "project": project.address, "status": AgentTask.SUGGESTED, "position": i,
             "origin_ref": {"kind": PLAN_STEP}, "source_url": page_url(project)}])
     for step in steps[len(plan):]:
         if step.status == AgentTask.SUGGESTED:
             step.delete()
 
 
+def _add_member(project: AgentProject, agent: Agent) -> str:
+    """Make `agent` one of the project's agents, where it may work in its
+    workspace; returns the project ref to file its task under ("" when not)."""
+    if services.may_hold_workspace_project(agent, project.workspace_id):
+        project.member_agents.add(agent)
+        return project.address
+    return ""
+
+
 def _sync_partners(project: AgentProject, partners: list[Agent]) -> None:
-    """One linked `suggested` task on each partner's board; a partner dropped by a
+    """One linked `suggested` task for each partner, in the project and assigned
+    to the partner, which becomes one of its agents; a partner dropped by a
     revision has its still-suggested task declined."""
 
+    lead = project.agent_slug or ""
     have = {t.agent_id: t for t in partner_tasks(project)}
-    title = f"[{project.agent.slug} {project.ext_id}] {project.name}"
+    title = f"[{lead} {project.ext_id or project.handle}] {project.name}"
     for partner in partners:
         task = have.pop(partner.pk, None)
         if task is not None:
@@ -160,10 +172,10 @@ def _sync_partners(project: AgentProject, partners: list[Agent]) -> None:
                 task.save(update_fields=["title", "updated_at"])
             continue
         services.create_tasks(partner, [{
-            "title": title, "status": AgentTask.SUGGESTED,
-            "rationale": f"{project.agent.slug} proposes {project.name!r} with you as a partner.",
-            "origin_ref": {"kind": PARTNER, "project_id": project.pk, "lead": project.agent.slug,
-                           "project": project.ext_id},
+            "title": title, "status": AgentTask.SUGGESTED, "project": _add_member(project, partner),
+            "rationale": f"{lead} proposes {project.name!r} with you as a partner.",
+            "origin_ref": {"kind": PARTNER, "project_id": project.pk, "lead": lead,
+                           "project": project.ext_id or project.handle},
             "source_url": page_url(project)}])
     for task in have.values():
         if task.status == AgentTask.SUGGESTED:
@@ -207,12 +219,13 @@ def propose(agent: Agent, *, name: str, outcome: str, why: str, plan: list[str],
                     status=AgentProject.ARCHIVED, name__iexact=name)):
             raise DeclinedBefore(f"{agent.slug} proposed {name!r} before and it was declined: "
                                  "send new_evidence to propose it again")
-        project = AgentProject.objects.create(
-            agent=agent, ext_id=services.next_project_ext_id(agent), name=name, outcome=outcome,
+        project = services.new_project(
+            workspace=agent.workspace_id, agent=agent, by_agent=agent,
+            ext_id=services.next_project_ext_id(agent), name=name, outcome=outcome,
             status=AgentProject.PROPOSED, source_url=source_url, proposed_at=now, owner_user=owner,
             spawned_from=from_task)
         [card] = services.create_tasks(agent, [{
-            "title": DECISION_TITLE, "project": project.ext_id, "status": AgentTask.SUGGESTED,
+            "title": DECISION_TITLE, "project": project.address, "status": AgentTask.SUGGESTED,
             "ask_kind": AgentTask.ASK_REVIEW, "ask_body": _card_body(why, outcome), "rationale": why,
             "origin_ref": {"kind": DECISION}, "source_url": page_url(project),
             "position": -1}])
@@ -325,13 +338,13 @@ def expire_stale(now: dt.datetime | None = None) -> int:
         try:
             if card is not None and card.ask_is_open:
                 services.act(card, action=AgentTaskAction.DECLINE, comment=NOT_TAKEN_UP, by=EXPIRY_BY,
-                             by_user=None, actor_workspace_ids={project.agent.workspace_id})
+                             by_user=None, actor_workspace_ids={project.workspace_id})
             else:
                 AgentProject.objects.filter(pk=project.pk, status=AgentProject.PROPOSED).update(
                     status=AgentProject.ARCHIVED, notes=f"Declined: {NOT_TAKEN_UP}")
         except services.ClosedAskError:
             continue  # decided a moment ago, by a person or another process
-        engagement.record("expired", workspace=project.agent.workspace_id, agent=project.agent,
+        engagement.record("expired", workspace=project.workspace_id, agent=project.agent,
                           project=project, task=card)
         done += 1
     return done + expire_stale_tasks(now)
@@ -350,10 +363,10 @@ def expire_stale_tasks(now: dt.datetime | None = None) -> int:
             continue
         try:
             services.act(task, action=AgentTaskAction.DECLINE, comment=NOT_TAKEN_UP, by=EXPIRY_BY,
-                         by_user=None, actor_workspace_ids={task.agent.workspace_id})
+                         by_user=None, actor_workspace_ids={task.workspace_id})
         except services.ClosedAskError:
             continue
-        engagement.record("expired", workspace=task.agent.workspace_id, agent=task.agent,
+        engagement.record("expired", workspace=task.workspace_id, agent=task.agent,
                           project=task.project, task=task, meta={"level": "task"})
         done += 1
     return done
@@ -419,10 +432,15 @@ def backings_of(project: AgentProject | AgentTask, *, me=None) -> list[dict]:
 # --- the one read ----------------------------------------------------------------
 
 
+def _agent_users(task: AgentTask) -> set[int]:
+    """The canopy logins of the agents a task is assigned to or was filed by."""
+    return {a.user_id for a in (task.agent, task.created_by_agent) if a is not None} - {None}
+
+
 def _comments(card: AgentTask | None) -> list[dict]:
     if card is None:
         return []
-    agent_users = {card.agent.user_id} - {None}
+    agent_users = _agent_users(card)
     rows = card.actions.filter(action=AgentTaskAction.REPLY).order_by("created_at", "pk")
     return [{"by": r.by, "by_agent": r.by_user_id in agent_users, "comment": r.comment,
              "at": r.created_at} for r in rows]
@@ -435,22 +453,20 @@ def card(project: AgentProject, user) -> dict:
 
     decision = decision_card(project)
     me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
-    partners = [{"agent": t.agent.slug, "ext_id": t.ext_id, "task_id": t.pk, "status": t.status,
-                 "url": wslinks.scoped_path(t.agent.workspace_id, f"/agents/{t.agent.slug}/tasks")}
-                for t in partner_tasks(project)]
+    partners = _partner_rows(partner_tasks(project))
     proposed_at = project.proposed_at
     return {
-        "id": project.pk, "agent": project.agent.slug, "workspace": project.agent.workspace_id,
-        "ref": project.ext_id, "name": project.name, "status": project.status,
+        "id": project.pk, "agent": project.agent_slug or "", "workspace": project.workspace_id,
+        "ref": project.ext_id or project.handle, "name": project.name, "status": project.status,
         "outcome": project.outcome, "why": decision.rationale if decision else "",
         "plan": [s.title for s in plan_steps(project)],
-        "url": wslinks.scoped_path(project.agent.workspace_id, page_path(project)),
+        "url": wslinks.scoped_path(project.workspace_id, page_path(project)),
         "source_url": project.source_url, "proposed_at": proposed_at,
         "expires_at": (proposed_at + EXPIRES_AFTER
                        if proposed_at and project.status == AgentProject.PROPOSED else None),
         "owner_email": project.owner_email, "notes": project.notes,
         "spawned_from": project.spawned_from_ref,
-        "decision_task": decision.ext_id if decision else None,
+        "decision_task": decision.ref if decision else None,
         "decision_task_id": decision.pk if decision else None,
         "decision_open": bool(decision and decision.ask_is_open),
         "may_decide": may_decide(user, project),
@@ -473,7 +489,7 @@ def is_task_proposal(task: AgentTask) -> bool:
 
 
 def task_plan_steps(task: AgentTask) -> list[AgentTask]:
-    return list(task.subtasks.filter(origin_ref__kind=TASK_PLAN_STEP).order_by("position", "pk"))
+    return list(task.subtasks.filter(origin_ref__kind=TASK_PLAN_STEP).order_by("rank", "pk"))
 
 
 def task_partner_tasks(task: AgentTask):
@@ -521,7 +537,7 @@ def may_decide_task(user, task: AgentTask) -> bool:
         return False
     project = task.project
     return (project.owner_user_id == user.pk or user.pk in _checkin_leads(task)
-            or perms.can(user, project.agent.workspace_id, perms.PROJECTS_DECIDE))
+            or perms.can(user, project.workspace_id, perms.PROJECTS_DECIDE))
 
 
 def _task_declined_by_a_person(task: AgentTask) -> bool:
@@ -541,12 +557,12 @@ def _sync_task_plan(task: AgentTask, plan: list[str]) -> None:
     for i, title in enumerate(plan):
         if i < len(steps):
             step = steps[i]
-            if step.status == AgentTask.SUGGESTED and (step.title, step.position) != (title, i):
-                step.title, step.position = title, i
-                step.save(update_fields=["title", "position", "updated_at"])
+            if step.status == AgentTask.SUGGESTED and (step.title, step.rank) != (title, float(i)):
+                step.title, step.rank = title, float(i)
+                step.save(update_fields=["title", "rank", "updated_at"])
             continue
-        services.create_tasks(task.agent, [{
-            "title": title, "project": task.project.ext_id, "parent": task.ext_id, "status": AgentTask.SUGGESTED,
+        services.create_tasks(task.created_by_agent or task.agent, [{
+            "title": title, "project": task.project.address, "parent": task.key, "status": AgentTask.SUGGESTED,
             "position": i, "origin_ref": {"kind": TASK_PLAN_STEP, "task_id": task.pk},
             "source_url": page_url(task.project)}])
     for step in steps[len(plan):]:
@@ -559,8 +575,9 @@ def _sync_task_partners(task: AgentTask, partners: list[Agent]) -> None:
     revision has its still-suggested task declined."""
 
     project = task.project
+    lead = project.agent_slug or ""
     have = {t.agent_id: t for t in task_partner_tasks(task)}
-    title = f"[{project.agent.slug} {task.ext_id}] {task.title}"[:300]
+    title = f"[{lead} {task.ref}] {task.title}"[:300]
     for partner in partners:
         row = have.pop(partner.pk, None)
         if row is not None:
@@ -569,10 +586,10 @@ def _sync_task_partners(task: AgentTask, partners: list[Agent]) -> None:
                 row.save(update_fields=["title", "updated_at"])
             continue
         services.create_tasks(partner, [{
-            "title": title, "status": AgentTask.SUGGESTED,
-            "rationale": f"{project.agent.slug} proposes {task.title!r} in {project.name} with you as a partner.",
-            "origin_ref": {"kind": TASK_PARTNER, "task_id": task.pk, "lead": project.agent.slug,
-                           "task": task.ext_id, "project": project.ext_id},
+            "title": title, "status": AgentTask.SUGGESTED, "project": _add_member(project, partner),
+            "rationale": f"{lead} proposes {task.title!r} in {project.name} with you as a partner.",
+            "origin_ref": {"kind": TASK_PARTNER, "task_id": task.pk, "lead": lead,
+                           "task": task.ref, "project": project.ext_id or project.handle},
             "source_url": page_url(project)}])
     for row in have.values():
         if row.status == AgentTask.SUGGESTED:
@@ -583,18 +600,20 @@ def _sync_task_partners(task: AgentTask, partners: list[Agent]) -> None:
 @transaction.atomic
 def propose_task(project: AgentProject, *, title: str, why: str, done_when: str, plan: list[str],
                  partners: list[Agent], source_url: str = "", run=None,
-                 new_evidence: str = "") -> tuple[AgentTask, bool]:
+                 new_evidence: str = "", agent: Agent | None = None) -> tuple[AgentTask, bool]:
     """Create — or revise — a proposed task in `project`; returns (task, created).
 
     The task-level twin of `propose`: REVISING an open proposed task of the same
     title (ignoring case) updates it in place and marks its backings `stale`; a
     title a person DECLINED comes back only with `new_evidence`, else
     `DeclinedBefore`. `run` is the CheckinRun it came from (it must be this
-    project's)."""
+    project's). `agent` files it (default: the project's lead agent)."""
 
     title, why, done_when = title.strip(), why.strip(), done_when.strip()
     plan = [s.strip() for s in plan if s and s.strip()]
-    agent = project.agent
+    agent = agent or project.agent
+    if agent is None:
+        raise ProposalError(f"{project.name} has no lead agent to propose its tasks")
     if not (title and why and done_when):
         raise ProposalError("a proposed task needs a title, a why and a done_when")
     if any(p.pk == agent.pk for p in partners):
@@ -620,7 +639,7 @@ def propose_task(project: AgentProject, *, title: str, why: str, done_when: str,
                "run": run.pk if run is not None else None, "runs": [run.pk] if run is not None else [],
                "huddle_id": huddle_id, "done_when": done_when, "proposed_at": now.isoformat()}
         [task] = services.create_tasks(agent, [{
-            "title": title[:300], "project": project.ext_id, "status": AgentTask.SUGGESTED, "rationale": why,
+            "title": title[:300], "project": project.address, "status": AgentTask.SUGGESTED, "rationale": why,
             "origin_ref": ref, "source_url": source_url or page_url(project)}])
     else:
         ref = dict(_ref_of(task))
@@ -645,7 +664,7 @@ def propose_task(project: AgentProject, *, title: str, why: str, done_when: str,
 
 
 def _task_comments(task: AgentTask) -> list[dict]:
-    agent_users = {task.agent.user_id} - {None}
+    agent_users = _agent_users(task)
     rows = task.actions.filter(action=AgentTaskAction.REPLY).order_by("created_at", "pk")
     return [{"by": r.by, "by_agent": r.by_user_id in agent_users, "comment": r.comment,
              "at": r.created_at} for r in rows]
@@ -654,38 +673,66 @@ def _task_comments(task: AgentTask) -> list[dict]:
 def spawned_of(task: AgentTask) -> list[dict]:
     """The projects this task grew into ("spawned → P9")."""
 
-    return [{"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
-             "url": wslinks.scoped_path(p.agent.workspace_id, page_path(p))}
+    return [{"agent": p.agent_slug or "", "ref": p.ext_id or p.handle, "name": p.name, "status": p.status,
+             "url": wslinks.scoped_path(p.workspace_id, page_path(p))}
             for p in task.spawned_projects.select_related("agent").order_by("pk")]
 
 
-def task_card(task: AgentTask, user) -> dict:
+def _partner_rows(tasks) -> list[dict]:
+    return [{"agent": t.agent_slug or "", "ext_id": t.ref, "key": t.key, "task_id": t.pk, "status": t.status,
+             "url": wslinks.scoped_path(t.workspace_id, f"/tasks/{t.key}")}
+            for t in tasks]
+
+
+def task_cards(tasks: list[AgentTask], user) -> list[dict]:
+    """`task_card` for many tasks, reading the facts that are the same for
+    every card — who the reader is, whether they may decide in each workspace,
+    each project's check-in leads — once (CLAUDE.md: a view judging many pairs
+    reads the facts once)."""
+    me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
+    deciders = perms.slugs_with(user, perms.PROJECTS_DECIDE) if getattr(user, "is_authenticated", False) else set()
+    leads: dict[int, set[int]] = {}
+    return [task_card(t, user, me=me, deciders=deciders, leads=leads) for t in tasks]
+
+
+def task_card(task: AgentTask, user, *, me=None, deciders: set[str] | None = None,
+              leads: dict | None = None) -> dict:
     """A proposed task as the project page and the huddle page both render it
     (`ProposalCard`): what it is, the decision and whether the reader may make
     it, where people stand, what they said, its partners, and any project it
-    spawned."""
+    spawned. `task_cards` passes `me`, `deciders` and `leads` read once."""
 
     project = task.project
     ref = _ref_of(task)
-    me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
+    if me is None and deciders is None:
+        me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
     proposed_at = _proposed_at(task) or task.created_at
-    partners = [{"agent": t.agent.slug, "ext_id": t.ext_id, "task_id": t.pk, "status": t.status,
-                 "url": wslinks.scoped_path(t.agent.workspace_id, f"/agents/{t.agent.slug}/tasks")}
-                for t in task_partner_tasks(task)]
+    partners = _partner_rows(task_partner_tasks(task))
+    if deciders is None:
+        may = may_decide_task(user, task)
+    else:
+        if task.project_id is not None and leads is not None and task.project_id not in leads:
+            leads[task.project_id] = _checkin_leads(task)
+        may = bool(getattr(user, "is_authenticated", False) and project is not None and (
+            project.owner_user_id == user.pk or project.workspace_id in deciders
+            or user.pk in (leads or {}).get(task.project_id, set())))
+    page = wslinks.scoped_path(project.workspace_id, page_path(project)) if project else ""
     return {
-        "id": task.pk, "agent": task.agent.slug, "workspace": task.agent.workspace_id, "ref": task.ext_id,
+        "id": task.pk, "agent": task.agent_slug or "", "workspace": task.workspace_id, "ref": task.ref,
+        "key": task.key,
         "title": task.title, "status": task.status, "why": task.rationale,
         "done_when": str(ref.get("done_when") or ""),
         "plan": [s.title for s in task_plan_steps(task)],
-        "project_ref": project.ext_id if project else "", "project_name": project.name if project else "",
-        "project_url": wslinks.scoped_path(task.agent.workspace_id, page_path(project)) if project else "",
-        "url": wslinks.scoped_path(task.agent.workspace_id, page_path(project)) if project else "",
+        "project_ref": (project.ext_id or project.handle) if project else "",
+        "project_name": project.name if project else "",
+        "project_url": page,
+        "url": page,
         "source_url": task.source_url, "checkin": ref.get("checkin") if str(ref.get("checkin") or "").isdigit()
         else None, "run": ref.get("run") if str(ref.get("run") or "").isdigit() else None,
         "huddle_id": str(ref.get("huddle_id") or ""), "proposed_at": proposed_at,
         "expires_at": proposed_at + EXPIRES_AFTER if task.status == AgentTask.SUGGESTED else None,
         "notes": task.notes, "decision_open": task.status == AgentTask.SUGGESTED,
-        "may_decide": may_decide_task(user, task),
+        "may_decide": may,
         "backings": backings_of(task, me=me), "comments": _task_comments(task), "partners": partners,
         "spawned": spawned_of(task),
     }

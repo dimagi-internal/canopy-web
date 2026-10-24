@@ -43,7 +43,7 @@
 "apps/agents/kb_store.py" = ["PLC0415"]  # 4
 "apps/agents/kb_vectors.py" = ["PLC0415"]  # 2
 "apps/agents/models.py" = ["PLC0415"]  # 11
-"apps/agents/services.py" = ["PLC0415"]  # 14
+"apps/agents/services.py" = ["PLC0415"]  # 6
 "apps/agents/setup.py" = ["PLC0415"]  # 1
 "apps/api/api.py" = ["PLC0415"]  # 1
 "apps/beta_requests/services.py" = ["PLC0415"]  # 2

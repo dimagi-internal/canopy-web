@@ -86,7 +86,7 @@ def test_proposing_files_one_suggested_task_with_steps_and_partners(board):
     assert card["checkin"] == board["checkin"].pk and card["run"] == board["run"].pk and card["huddle_id"] == "h1"
     task = _task()
     assert task.project == board["project"] and task.agent == board["ada"]
-    assert [s.title for s in task.subtasks.order_by("position")] == ["Collect questions", "Draft"]
+    assert [s.title for s in task.subtasks.order_by("rank")] == ["Collect questions", "Draft"]
     assert all(s.status == "suggested" and s.project == board["project"] for s in task.subtasks.all())
     [partner] = proposals.task_partner_tasks(task)
     assert partner.agent == board["eva"] and partner.status == "suggested"

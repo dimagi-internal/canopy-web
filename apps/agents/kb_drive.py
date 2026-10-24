@@ -68,7 +68,8 @@ def may_read(user, project) -> bool:
         return True
     if user is None or not user.is_authenticated:
         return False
-    if project.owner_user_id == user.pk or project.agent.is_own_login(user) or project.agent.is_admin(user):
+    lead = project.agent
+    if project.owner_user_id == user.pk or (lead is not None and (lead.is_own_login(user) or lead.is_admin(user))):
         return True
     return project.kb_readers.filter(pk=user.pk).exists()
 

@@ -29,12 +29,14 @@ What does NOT move, deliberately, and is reported as `left_behind`:
   on `agent.workspace`); the person grants again in the new tenant.
 - **Audit** (`events.Event`, `SettingChange`) stays where it happened.
 
-What REFUSES the move: a workspace project the agent stewards. It is the
-workspace's and stays there, and its steward must be in its workspace or one above it, so the
-move waits until each one is handed to another steward.
+What REFUSES the move: a project of ANOTHER workspace the agent leads (an org's
+agent leading a division's project). It stays there, and its lead agent must be
+in its workspace or one above it, so the move waits until each one is handed on.
 
-What follows the agent with no write at all — tasks, projects, skills,
-schedules, runner assignments, turns (whose tenancy derives from
+Tasks and projects are the workspace's, so they move only as the agent's board
+did: the projects it leads there (with their tasks) and its own loose tasks,
+re-homed under new keys (`_work`). What follows the agent with no write at all —
+skills, schedules, runner assignments, turns (whose tenancy derives from
 `agent.workspace`), session messages — is still COUNTED, so the dry run shows
 the whole of what moves.
 """
@@ -48,6 +50,7 @@ from typing import Callable
 from django.db import IntegrityError, transaction
 
 from apps.admission.models import AdmissionRule
+from apps.agents import services, work
 from apps.agents.services import runner_may_hold_agent, stewarded_workspace_projects
 from apps.canopy_sessions import filing
 from apps.canopy_sessions.models import Message, Session
@@ -163,8 +166,8 @@ def check(agent, dest_slug: str, *, by) -> Workspace:
     stewarded = stewarded_workspace_projects(agent)
     if stewarded:
         # A workspace project stays in its workspace; its steward must be there too.
-        raise MoveError(f"{agent.slug} stewards workspace project(s) {', '.join(stewarded)}, which "
-                        f"stay in '{agent.workspace_id}'; hand each to another steward first", status=409)
+        raise MoveError(f"{agent.slug} leads project(s) {', '.join(stewarded)} of another workspace, "
+                        f"which stay there; give each another lead agent first", status=409)
     return dest
 
 
@@ -330,10 +333,41 @@ def _vault_attachments(p: Plan, apply: bool) -> None:
 
 
 @register
+def _work(p: Plan, apply: bool) -> None:
+    """Tasks and projects are the workspace's, so they move only as the agent's
+    board did: the projects it leads in its old workspace (with every task in
+    them), and its own tasks there in no project. A task it is assigned in a
+    project that stays is unassigned when the agent could no longer work there."""
+
+    source, agent = p.source.slug, p.agent
+    projects = list(AgentProject.objects.filter(agent=agent, workspace_id=source))
+    loose = AgentTask.objects.filter(services.agent_tasks_q(agent), workspace_id=source, project__isnull=True)
+    p.moves("agents.AgentProject", len(projects), "re-homed: the projects it leads, with their tasks")
+    p.moves("agents.AgentTask", loose.count() + sum(pr.tasks.count() for pr in projects),
+            "re-homed under new keys (their old keys still find them)")
+    staying = (AgentTask.objects.filter(agent=agent, workspace_id=source, project__isnull=False)
+               .exclude(project__in=projects))
+    in_tree = source == p.dest.slug or source in p.dest.ancestor_slugs()
+    if staying.exists() and not in_tree:
+        p.breaks("tasks_unassigned", f"{staying.count()} task(s) it is assigned in projects that stay in "
+                                     f"'{source}' are unassigned: it can no longer work there")
+    if not apply:
+        return
+    for project in projects:
+        services.promote_project(project, project.handle if not AgentProject.objects.filter(
+            workspace_id=p.dest.slug, handle=project.handle).exists() else services.free_handle(
+            p.dest.slug, project.name), p.dest.slug)
+    for task in loose:
+        work.rehome(task, p.dest.slug)
+    if not in_tree:
+        staying.update(agent=None)
+
+
+@register
 def _follows(p: Plan, apply: bool) -> None:
     """Agent-keyed tables with no workspace FK: they move by moving the agent."""
 
-    for model in (AgentTask, AgentProject, AgentSkill, AgentSchedule, RunnerAssignment):
+    for model in (AgentSkill, AgentSchedule, RunnerAssignment):
         p.moves(model._meta.label, model.objects.filter(agent=p.agent).count(), "follows the agent")
 
 

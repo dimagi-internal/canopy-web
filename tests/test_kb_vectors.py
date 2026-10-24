@@ -28,8 +28,8 @@ def project(tmp_path, monkeypatch):
     dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
     connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner, parent=dimagi)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=owner)
-    p = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base", scope="workspace",
-                                    owner_workspace=connect, handle="givewell-kb", mcp_kind="kb",
+    p = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base", 
+                                    workspace=connect, handle="givewell-kb", mcp_kind="kb",
                                     kb_key="k", kb_sha256="a" * 64)
     path = kb_fakes.build_kb(tmp_path / "kb.sqlite")
     monkeypatch.setattr(kb_store, "local_path", lambda proj: path)
