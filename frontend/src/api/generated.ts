@@ -6356,12 +6356,15 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * The MCP servers you can add: workspace projects serving their own tools
+         * The MCP servers you can add: what the workspace's projects serve and share
          * @description A directory to browse, not a subscription: nothing here is added to anyone's
-         *     sessions. Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
+         *     sessions. Two kinds of row: a project's own knowledge-base server (`kind: kb`,
+         *     served by canopy), and a remote MCP server a project shares with the workspace
+         *     (`kind: mcp`, its URL as the project declared it — canopy neither proxies nor
+         *     vets it). Pinned to a workspace (`/api/w/<ws>/…`, or the tool's `workspace`), it
          *     covers that workspace and the ones below it you belong to. Every row is one you
          *     can call: the readers a project's server admits (its workspace's members and
-         *     its steward's) are exactly the ones a list spanning those workspaces reaches.
+         *     its lead agent's) are exactly the ones a list spanning those workspaces reaches.
          */
         readonly get: operations["list_mcp_servers"];
         readonly put?: never;
@@ -6758,6 +6761,50 @@ export interface paths {
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/services/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** What a project serves to its workspace: its knowledge base, shared MCP servers, skills, plugins */
+        readonly get: operations["list_project_services"];
+        readonly put?: never;
+        /**
+         * Share an MCP server, a skill or a plugin with the workspace, from this project
+         * @description Listed on the project page and, for an MCP server, in the workspace's
+         *     directory (`GET /api/mcp-servers/`). canopy does not proxy or vet a remote
+         *     server: its URL is what members add to their own Claude Code.
+         */
+        readonly post: operations["add_project_service"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/services/{service_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop sharing an MCP server, skill or plugin
+         * @description A knowledge base is not removed here: it has its own version log.
+         */
+        readonly delete: operations["remove_project_service"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change a shared MCP server, skill or plugin */
+        readonly patch: operations["update_project_service"];
         readonly trace?: never;
     };
     readonly "/api/workspace-projects/{workspace}/{handle}/kb/results": {
@@ -22130,6 +22177,8 @@ export interface components {
              * @default false
              */
             readonly may_edit: boolean;
+            /** Services */
+            readonly services?: readonly components["schemas"]["ProjectServiceOut"][];
         };
         /**
          * AgentTaskOut
@@ -22418,6 +22467,39 @@ export interface components {
             readonly scope_history?: readonly {
                 readonly [key: string]: unknown;
             }[];
+        };
+        /**
+         * ProjectServiceOut
+         * @description Something a project serves to its workspace: its knowledge base, a shared
+         *     MCP server, a skill, a plugin.
+         */
+        readonly ProjectServiceOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+            /**
+             * Add Command
+             * @default
+             */
+            readonly add_command: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
         };
         /** ProjectUpdateOut */
         readonly ProjectUpdateOut: {
@@ -27386,6 +27468,32 @@ export interface components {
             readonly health?: ("on_track" | "at_risk" | "off_track") | null;
             /** Body */
             readonly body?: string | null;
+        };
+        /** ProjectServiceIn */
+        readonly ProjectServiceIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "mcp" | "skill" | "plugin";
+            /** Name */
+            readonly name: string;
+            /** Url */
+            readonly url: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+        };
+        /** ProjectServicePatch */
+        readonly ProjectServicePatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Url */
+            readonly url?: string | null;
+            /** Description */
+            readonly description?: string | null;
         };
         /** KbBlobIn */
         readonly KbBlobIn: {
@@ -46878,6 +46986,106 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ProjectUpdateOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_services: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectServiceOut"][];
+                };
+            };
+        };
+    };
+    readonly add_project_service: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectServiceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectServiceOut"];
+                };
+            };
+        };
+    };
+    readonly remove_project_service: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly service_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_project_service: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly service_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectServicePatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectServiceOut"];
                 };
             };
         };

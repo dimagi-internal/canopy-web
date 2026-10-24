@@ -30,4 +30,10 @@ Tasks and projects belong to a **workspace**, not to an agent. Design record: `d
 
 ## What a project serves
 
-A project can serve things to its workspace; a knowledge base (its own MCP server at `/api/mcp/projects/<ws>/<handle>/`) is the first. The design generalises this to `ProjectService` rows by kind (knowledge base, then MCP server, skill, plugin) — see the design record's "What a project serves to the workspace".
+A project can serve things to its workspace — `ProjectService` rows, one per thing, by `kind`. Its people may use them, its lead agent (or an editor) keeps them current, and the project page and the workspace directory list them.
+
+- `kb` — a **knowledge base**, served by canopy as the project's own MCP server at `/api/mcp/projects/<ws>/<handle>/`; one per project, holding every `kb_*` field (published by the lead agent's curator through `…/kb/`, `kb_store.knowledge_base(project)`). The project's `mcp_kind` / `mcp_path` / `kb_published_at` read through to it.
+- `mcp` — a **remote MCP server** the workspace shares: its URL and the `claude mcp add` line. canopy neither proxies nor vets it; `GET /api/mcp-servers/` lists it beside the knowledge-base servers.
+- `skill`, `plugin` — a Claude Code **skill** or **plugin** (a repository URL), declared on the project and listed there. Loading them into the agents' sessions or the workspace catalog is not built yet.
+
+`…/workspace-projects/<ws>/<handle>/services/` lists, adds, changes and removes them (a knowledge base is not removed there). Design record: the spec's "What a project serves to the workspace".

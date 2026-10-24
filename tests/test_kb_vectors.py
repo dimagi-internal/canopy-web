@@ -13,7 +13,7 @@ from django.core.management import CommandError, call_command
 from django.db import connection
 
 from apps.agents import kb_rerank, kb_store, kb_vectors
-from apps.agents.models import Agent, AgentProject, KbPassage
+from apps.agents.models import Agent, AgentProject, ProjectService, KbPassage
 from apps.workspaces.models import Workspace
 from tests import kb_fakes
 
@@ -28,9 +28,9 @@ def project(tmp_path, monkeypatch):
     dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
     connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner, parent=dimagi)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=owner)
-    p = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base", 
-                                    workspace=connect, handle="givewell-kb", mcp_kind="kb",
-                                    kb_key="k", kb_sha256="a" * 64)
+    p = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base",
+                                    workspace=connect, handle="givewell-kb")
+    ProjectService.objects.create(project=p, kind="kb", name="kb", kb_key="k", kb_sha256="a" * 64)
     path = kb_fakes.build_kb(tmp_path / "kb.sqlite")
     monkeypatch.setattr(kb_store, "local_path", lambda proj: path)
     p.kb_file = path

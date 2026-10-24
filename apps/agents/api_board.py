@@ -20,6 +20,7 @@ from apps.api.route_gates import gate
 from apps.contacts import services as contacts
 from apps.harness import turn_access
 from apps.harness.models import Turn, agent_turns_q
+from apps.workspaces.links import base_url
 from apps.workspaces import permissions as perms
 
 from . import engagement, ideas, participants, proposals, services, work
@@ -51,6 +52,7 @@ from .schemas import (
     MilestoneOut,
     ProjectParticipantOut,
     ProjectProgressOut,
+    ProjectServiceOut,
     ProjectUpdateOut,
     ProposedTaskOut,
     TurnBriefOut,
@@ -169,6 +171,7 @@ def project_detail(request: HttpRequest, project) -> AgentProjectDetailOut:
         draft_updates=([ProjectUpdateOut.model_validate(u) for u in project.updates.filter(status="draft")
                         .select_related("author_user", "author_agent")] if editable else []),
         may_edit=editable,
+        services=[ProjectServiceOut(**row) for row in work.services_of(project, origin=base_url())],
     )
 
 

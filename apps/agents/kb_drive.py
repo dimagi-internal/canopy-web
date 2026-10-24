@@ -21,7 +21,7 @@ the steward agent, unless the agent's login is the owner. The steward then reads
 unapproved file into the index.
 
 A KB with a Drive source is queryable only by its owner, its steward and the people
-the owner names (`may_read`; `AgentProject.kb_readers`) — not by every member of the
+the owner names (`may_read`; `ProjectService.kb_readers`) — not by every member of the
 workspace, as a KB of public material is.
 """
 from __future__ import annotations
@@ -71,7 +71,8 @@ def may_read(user, project) -> bool:
     lead = project.agent
     if project.owner_user_id == user.pk or (lead is not None and (lead.is_own_login(user) or lead.is_admin(user))):
         return True
-    return project.kb_readers.filter(pk=user.pk).exists()
+    kb = project.knowledge_base
+    return kb is not None and kb.kb_readers.filter(pk=user.pk).exists()
 
 
 # ---- the inventory ----
@@ -300,9 +301,10 @@ def write_replica(project, gz: Path) -> str:
     media = MediaFileUpload(str(gz), mimetype="application/gzip", resumable=True)
     made = drive.files().create(body={"name": "kb.sqlite.gz", "parents": [project.drive_folder_id]},
                                 media_body=media, fields="id", supportsAllDrives=True).execute()
-    previous = project.kb_drive_replica_file_id
-    project.kb_drive_replica_file_id = made["id"]
-    project.save(update_fields=["kb_drive_replica_file_id"])
+    kb = project.knowledge_base
+    previous = kb.kb_drive_replica_file_id
+    kb.kb_drive_replica_file_id = made["id"]
+    kb.save(update_fields=["kb_drive_replica_file_id"])
     if previous:
         try:
             drive.files().delete(fileId=previous, supportsAllDrives=True).execute()

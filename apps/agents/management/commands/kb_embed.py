@@ -21,7 +21,7 @@ def project_from(ref: str):
     project = services.get_workspace_project(workspace, handle) if handle else None
     if project is None:
         raise CommandError(f"no workspace project {ref!r} (name it <workspace>/<handle>)")
-    if not project.kb_sha256:
+    if project.knowledge_base is None or not project.knowledge_base.kb_sha256:
         raise CommandError(f"{ref} has not published a knowledge base")
     return project
 

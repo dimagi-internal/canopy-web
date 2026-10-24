@@ -1807,6 +1807,8 @@ class AgentProjectDetailOut(AgentProjectOut):
     draft_updates: list[ProjectUpdateOut] = Field(default_factory=list)
     #: The reader may change it (an editor, its lead, or one of its agents).
     may_edit: bool = False
+    #: What it serves to the workspace.
+    services: list[ProjectServiceOut] = Field(default_factory=list)
 
 
 # ---- shared ----
@@ -3241,6 +3243,37 @@ class ProjectUpdatePublishIn(StrictModel):
     #: The health as the person publishing it judges it (default: the draft's).
     health: Literal["on_track", "at_risk", "off_track"] | None = None
     body: str | None = Field(default=None, max_length=10000)
+
+
+class ProjectServiceOut(StrictModel):
+    """Something a project serves to its workspace: its knowledge base, a shared
+    MCP server, a skill, a plugin."""
+
+    id: int
+    #: kb · mcp · skill · plugin.
+    kind: str
+    name: str
+    description: str = ""
+    #: An MCP server's URL; a skill's or plugin's repository. For a knowledge base,
+    #: the project's own MCP server path (empty until it publishes).
+    url: str = ""
+    #: How to add it to Claude Code, where there is one line for that.
+    add_command: str = ""
+    updated_at: dt.datetime
+
+
+class ProjectServiceIn(StrictModel):
+    #: mcp · skill · plugin (a knowledge base is published through `…/kb/`).
+    kind: Literal["mcp", "skill", "plugin"]
+    name: str = Field(min_length=1, max_length=80)
+    url: str = Field(min_length=1, max_length=500)
+    description: str = Field(default="", max_length=2000)
+
+
+class ProjectServicePatch(StrictModel):
+    name: str | None = Field(default=None, max_length=80)
+    url: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=2000)
 
 
 class ProjectProgressOut(StrictModel):

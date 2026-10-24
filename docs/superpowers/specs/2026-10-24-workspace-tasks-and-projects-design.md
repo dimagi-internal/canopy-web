@@ -151,9 +151,9 @@ So the knowledge-base columns do not move to a one-off `KnowledgeBase` table (D8
 | Kind | What the project serves | Status |
 |---|---|---|
 | `kb` | A knowledge base, as its own MCP server (every `kb_*` field, as today) | Moved in this change |
-| `mcp` | A remote MCP server the workspace shares: its URL and how to add it | Next |
-| `skill` | A skill (a repo path) every agent working on the project loads | Next |
-| `plugin` | A Claude Code plugin, listed in the workspace's catalog | Next |
+| `mcp` | A remote MCP server the workspace shares: its URL and how to add it | Declared and listed in the directory |
+| `skill` | A skill (a repo path) every agent working on the project loads | Declared and listed; loading next |
+| `plugin` | A Claude Code plugin, listed in the workspace's catalog | Declared and listed; the catalog next |
 
 What every kind shares, and why the project is the right owner:
 - **Who may use it** is the project's reach: members of its workspace (and its lead agent's), narrowed per kind where the source is private (a KB built from someone's Drive keeps its readers list).

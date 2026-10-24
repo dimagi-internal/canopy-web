@@ -105,7 +105,8 @@ def bundle(tmp_path, name, items, grants=None):
 def head(world) -> int | None:
     """The version the project serves: what a steward's next publish is made from."""
     project = AgentProject.objects.get(pk=world["project"].pk)
-    return project.kb_version.number if project.kb_version_id else None
+    kb = project.knowledge_base
+    return kb.kb_version.number if kb and kb.kb_version_id else None
 
 
 def full(world, s3, tmp_path, bundle, *, previous=None, base="head", curation="", expect=200):

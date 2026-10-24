@@ -123,17 +123,36 @@ def publish(project, key: str, sha256: str):
     return project
 
 
+def knowledge_base(project, *, create: bool = False, lock: bool = False):
+    """The project's knowledge base (its `kb` `ProjectService` row), or None.
+    `create` makes it on first publish; `lock` reads it for update."""
+    from .models import ProjectService  # cycle: agents.models -> agents.kb_store  # noqa: PLC0415
+
+    qs = ProjectService.objects.filter(project=project, kind=ProjectService.KB).select_related("kb_version")
+    if lock:
+        # Only this row: PostgreSQL refuses FOR UPDATE on the nullable side of the
+        # kb_version outer join.
+        qs = qs.select_for_update(of=("self",))
+    kb = qs.first()
+    if kb is None and create:
+        kb, _ = ProjectService.objects.get_or_create(project=project, kind=ProjectService.KB, name="kb",
+                                                     defaults={"description": project.outcome or ""})
+    project._knowledge_base = kb
+    return kb
+
+
 def point(project, key: str, sha256: str, size: int, version=None) -> None:
     """Serve `key` from now on (every instance re-fetches by its sha256). The previous
     object stays: it is an earlier version's file, pruned by `kb_versions.prune`."""
-    project.mcp_kind = project.MCP_KB
-    project.kb_key, project.kb_sha256, project.kb_bytes = key, sha256, size
-    project.kb_published_at = timezone.now()
-    fields = ["mcp_kind", "kb_key", "kb_sha256", "kb_bytes", "kb_published_at", "updated_at"]
+    kb = knowledge_base(project, create=True)
+    kb.kb_key, kb.kb_sha256, kb.kb_bytes = key, sha256, size
+    kb.kb_published_at = timezone.now()
+    fields = ["kb_key", "kb_sha256", "kb_bytes", "kb_published_at", "updated_at"]
     if version is not None:
-        project.kb_version = version
+        kb.kb_version = version
         fields.append("kb_version")
-    project.save(update_fields=fields)
+    kb.save(update_fields=fields)
+    project.save(update_fields=["updated_at"])
 
 
 def delete_object(key: str) -> None:
@@ -349,27 +368,28 @@ def _lock(name: str) -> threading.Lock:
 def local_path(project) -> Path:
     """The decompressed kb.sqlite for the project's CURRENT publish, fetched once
     per instance. Older copies of the same project are removed."""
-    if not project.kb_key or not project.kb_sha256:
+    kb = project.knowledge_base
+    if kb is None or not kb.kb_key or not kb.kb_sha256:
         raise KbPublishError("this project has not published a knowledge base")
     folder = _cache_root() / f"{project.workspace_id}--{project.handle}"
-    path = folder / f"{project.kb_sha256}.sqlite"
+    path = folder / f"{kb.kb_sha256}.sqlite"
     if path.exists():
         return path
     with _lock(str(path)):
         if path.exists():
             return path
         folder.mkdir(parents=True, exist_ok=True)
-        gz = folder / f".{project.kb_sha256}.gz.part"
+        gz = folder / f".{kb.kb_sha256}.gz.part"
         digest = hashlib.sha256()
-        body = _client().get_object(Bucket=_bucket(), Key=project.kb_key)["Body"]
+        body = _client().get_object(Bucket=_bucket(), Key=kb.kb_key)["Body"]
         with open(gz, "wb") as out:
             for chunk in iter(lambda: body.read(1 << 20), b""):
                 digest.update(chunk)
                 out.write(chunk)
-        if digest.hexdigest() != project.kb_sha256:
+        if digest.hexdigest() != kb.kb_sha256:
             gz.unlink(missing_ok=True)
             raise KbPublishError("the stored knowledge base does not match its published hash")
-        part = folder / f".{project.kb_sha256}.sqlite.part"
+        part = folder / f".{kb.kb_sha256}.sqlite.part"
         with gzip.open(gz, "rb") as src, open(part, "wb") as dst:
             shutil.copyfileobj(src, dst, 1 << 20)
         gz.unlink(missing_ok=True)
@@ -382,12 +402,13 @@ def local_path(project) -> Path:
 
 def file_link(project) -> dict:
     """A 15-minute download of the kb.sqlite.gz the project serves now (`canopy kb pull`)."""
-    if not project.kb_key:
+    kb = project.knowledge_base
+    if kb is None or not kb.kb_key:
         raise KbPublishError("this project has not published a knowledge base")
     url = _client().generate_presigned_url(
-        "get_object", Params={"Bucket": _bucket(), "Key": project.kb_key}, ExpiresIn=ORIGINAL_LINK_SECONDS)
-    return {"url": url, "sha256": project.kb_sha256, "bytes": project.kb_bytes or 0,
-            "version": project.kb_version_number, "published_at": project.kb_published_at}
+        "get_object", Params={"Bucket": _bucket(), "Key": kb.kb_key}, ExpiresIn=ORIGINAL_LINK_SECONDS)
+    return {"url": url, "sha256": kb.kb_sha256, "bytes": kb.kb_bytes or 0,
+            "version": kb.kb_version_number, "published_at": kb.kb_published_at}
 
 
 def open_kb(project):
