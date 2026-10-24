@@ -49,6 +49,24 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+/** Talk to a mounted View's bridge as its frame: what the bridge posts back, and a
+ *  sender. The frame renders before the effect that binds its bridge runs, and a
+ *  message sent in between is dropped, so this pings until the bridge answers. */
+async function bridged(frame: HTMLIFrameElement) {
+  const posted: Array<Record<string, unknown>> = [];
+  vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(((m: unknown) => {
+    posted.push(m as Record<string, unknown>);
+  }) as Window["postMessage"]);
+  const send = (data: Record<string, unknown>) => act(() => {
+    window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow, origin: "null" }));
+  });
+  await waitFor(async () => {
+    await send({ jsonrpc: "2.0", id: "ready", method: "ping", params: {} });
+    expect(posted.some((m) => m.id === "ready")).toBe(true);
+  });
+  return { posted, send };
+}
+
 describe("AppView", () => {
   it("renders the View above its tool row, sandboxed with an opaque origin and labelled", async () => {
     const h = host(resource());
@@ -122,16 +140,9 @@ describe("AppView full screen", () => {
     );
     await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
     const frame = screen.getByTitle("Labs: workflow_run_action") as HTMLIFrameElement;
-    const posted: Array<Record<string, unknown>> = [];
-    vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(((m: unknown) => {
-      posted.push(m as Record<string, unknown>);
-    }) as Window["postMessage"]);
-    const ask = (mode: string) => act(() => {
-      window.dispatchEvent(new MessageEvent("message", {
-        data: { jsonrpc: "2.0", id: 7, method: "ui/request-display-mode", params: { mode } },
-        source: frame.contentWindow, origin: "null",
-      }));
-    });
+    const { posted, send } = await bridged(frame);
+    const ask = (mode: string) =>
+      send({ jsonrpc: "2.0", id: 7, method: "ui/request-display-mode", params: { mode } });
     return { frame, posted, ask, view: () => screen.getByTestId("app-view") };
   }
 
@@ -178,13 +189,7 @@ describe("AppView resource subscriptions", () => {
     );
     await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
     const frame = screen.getByTitle("Labs: workflow_run_action") as HTMLIFrameElement;
-    const posted: Array<Record<string, unknown>> = [];
-    vi.spyOn(frame.contentWindow as Window, "postMessage").mockImplementation(((m: unknown) => {
-      posted.push(m as Record<string, unknown>);
-    }) as Window["postMessage"]);
-    const fromView = (data: unknown) => act(() => {
-      window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow, origin: "null" }));
-    });
+    const { posted, send: fromView } = await bridged(frame);
     await fromView({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} });
     await fromView({ jsonrpc: "2.0", id: 9, method: "resources/subscribe", params: { uri: "labs-result://r1" } });
     await waitFor(() => expect(posted.find((m) => m.id === 9)).toMatchObject({ result: {} }));
