@@ -268,6 +268,10 @@ def _sweep_sensitive(tally, *, now, apply, limit) -> None:
         from apps.harness.sweeps import expire_unrun_sensitive_turns  # noqa: PLC0415 — as the harness models above
 
         tally.add(rule, "turns_scrubbed", expire_unrun_sensitive_turns(now=now))
+        # A file's agent copy is held no longer than its turn's words (`private_attachments`).
+        from apps.canopy_sessions import private_attachments  # noqa: PLC0415 — as the harness models above
+
+        private_attachments.sweep(now=now)
     # `has_key` narrows in SQL on every backend; the predicate decides.
     rows = (Session.objects.filter(pk__in=_chat_candidates(cutoff),
                                    metadata__has_key=sensitivity.rr.METADATA_KEY)
@@ -430,9 +434,11 @@ def _delete_attachment_bytes(attachments) -> set:
     if not attachment_storage.is_configured():
         return set()
     failed = set()
-    for pk, key in attachments.values_list("pk", "storage_key"):
+    for pk, key, sealed_key in attachments.values_list("pk", "storage_key", "sealed_blob_key"):
         try:
-            attachment_storage.delete(key)
+            for k in (key, sealed_key):
+                if k:
+                    attachment_storage.delete(k)
         except Exception:  # noqa: BLE001
             logger.warning("retention: could not delete bytes for attachment %s", pk, exc_info=True)
             failed.add(pk)

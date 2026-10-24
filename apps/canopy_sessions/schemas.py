@@ -761,6 +761,20 @@ class AttachmentOut(Schema):
         return str(obj.message_id) if obj.message_id else None
 
 
+class SealedAttachmentOut(Schema):
+    """A file sent in a private conversation, as its people's browsers open it: no
+    name, no exact size. `sealed_name` is a `cf1:` envelope (name, type, size) sealed to
+    the conversation's key; the bytes are `GET /attachments/{id}/sealed`. `turn_index`
+    is the person's line it was sent with, null until that line is stored."""
+
+    id: uuid.UUID
+    turn_index: int | None = None
+    uploaded_by: int | None = None
+    family: str
+    size_bucket: int
+    sealed_name: str
+
+
 class ResetOut(Schema):
     """One session's reset outcome. `reason` is `ok` | `no_binding` |
     `runner_unreachable` — stable strings the UI renders as the refusal."""

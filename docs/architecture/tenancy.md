@@ -464,9 +464,10 @@ THE predicate; every surface below asks it, one test each in
     lock from fresh rows, so an event written as it switches is reduced or stored as
     metadata, never kept in clear; a keystroke racing it (`drafts.update_draft`) asks again
     under the session row's lock. Every file attached to it, sent or not, is deleted in
-    the same transaction (rows now, stored bytes on commit, `services._drop_attachments`),
-    a send there claims none (`send.claim_pending_attachments`), and the runner's
-    attachment route refuses one. A FORK made while it was ordinary holds a copy of the
+    the same transaction (rows now, stored bytes on commit, `services._drop_attachments`):
+    it was kept in clear with its name, and sealing it would need a browser holding the key
+    at the switch, which a send the server handles has not got — so it is not carried in.
+    A send there claims only a sealed file (see *Files*). A FORK made while it was ordinary holds a copy of the
     same words, so it becomes sensitive with it, recursively (its rows sealed to the key
     its forker carries on); any other child keeps its own state.
   - *Rows from before keys were per conversation.* Migration 0049 re-sealed field-key rows to their conversation's new
@@ -501,9 +502,33 @@ THE predicate; every surface below asks it, one test each in
     keystrokes (canopy-ui `localDrafts`), the text reaches canopy-web only inside the send,
     and peers see no typing preview. Becoming sensitive empties every draft
     (`drafts.forget_words`); a body kept under the field key before reads as nothing.
-  - *No files.* An upload into a sensitive conversation is refused (422; the composer shows
-    why): the agent reads a file on its box, which holds no key to the conversation, so a
-    file could only be kept where canopy-web could read it.
+  - *Files: the agent's copy for one turn, the people's sealed* (`private_attachments`).
+    The agent reads a file on its box, which holds no key to the conversation, so a file is
+    treated like the prompt. Its people's browser (`api.upload_attachment` refuses a token,
+    MCP, a minted session or a site's backend: 422) uploads it in clear for one turn, under
+    a key that names no file (`plain_key`), the row keeping a size bucket and a type family;
+    then seals the name, type and size (`cf1:`) and the padded bytes (`cfb1`) to the
+    conversation's public key with the message construction, bound to the conversation, the
+    attachment and its uploader (`vault/sealedFiles.ts`, `POST …/attachments/{id}/sealed`;
+    canopy-web checks the shape, once, from the uploader, before the send). A send claims
+    only a file whose sealed copy is stored, and the turn's `origin_ref` names it by id
+    alone (`send.claim_pending_attachments`, `bind_turn`). The runner's download route serves
+    it ONCE, to the box holding that turn, deleting object, name and key as it does
+    (`take_for_runner`); the turn's end (`close_turn` → `forget_turn`, so the unrun deadline
+    too) and the sensitive sweep (`private_attachments.sweep`, its own tick and the retention
+    sweep) delete any copy not fetched, and an unsent file whole. The plaintext route
+    (`/attachments/{id}/content`) serves it to nobody. Its people read `GET
+    …/sealed-attachments` (no name; each placed at the line it was sent with) and the sealed
+    bytes (`GET …/attachments/{id}/sealed`), through `reads_content`, and open both in the
+    browser: "Attachment" under the line until the key opens, then the name, a preview and a
+    download (`SealedAttachments`, canopy-ui `AttachmentHost`). On the sensitive-data box the
+    file lands in the turn's own directory (`<cwd>/.canopy-attachments/<turn>/`, owner-only),
+    readable by that turn alone (`sensitive_data_settings(attachment_dir=…)`, and the same
+    path in profile_guard's profile, `_confine(read_dirs=…)`), and goes when the turn ends
+    (`_sensitive_data_forget_turn`); what the agent read of it survives only in the kept
+    session's transcript, which lives no longer than the kept conversation. The transcript
+    the box ships back names it only inside sealed words (the user row's note, a Read
+    call's path), never in a readable column.
 - **Memory is off, both ways:** nothing is written (`hcp.refuse_if_sensitive`), and nothing is
   read into one — `hcp.memory_state` reads every feature as not effective in a sensitive
   session, `hcp.effective` / `hcp.require` refuse a sensitive turn (so the envelope's `person`

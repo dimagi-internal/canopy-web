@@ -74,6 +74,11 @@ def close_turn(
         return False
     if sensitive and (turn.chat_session_id or turn.canopy_session_id):
         _forget_the_page(turn)
+    if sensitive and turn.chat_session_id:
+        # Its files' agent copy was held for this turn alone, like its prompt.
+        from apps.canopy_sessions import private_attachments  # noqa: PLC0415 — harness ↛ chat at import
+
+        private_attachments.forget_turn(turn)
 
     # Whatever runs this turn has stopped: its agent logins die now.
     from .turn_agent_tokens import revoke_for_turn

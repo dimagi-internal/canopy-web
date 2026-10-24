@@ -256,14 +256,16 @@ def _withhold_what_it_kept(session: Session) -> None:
 def _drop_attachments(session: Session) -> int:
     """Every file attached to `session`, sent or not, deleted: the rows in this
     transaction and the stored bytes after it commits (best-effort; a failed delete is
-    logged, the row is gone either way, so no route serves it). A private
-    conversation keeps no files (`api.upload_attachment` refuses one), because the box
-    that reads a file holds no key to seal it. Returns how many."""
-    rows = list(Attachment.objects.filter(session_id=session.pk).values_list("pk", "storage_key"))
+    logged, the row is gone either way, so no route serves it). Called as a
+    conversation becomes private: what was attached while it was ordinary is in clear
+    with its name, and only a file sealed in its people's browser belongs in a private
+    one (`private_attachments`), which the server cannot do for them. Returns how many."""
+    rows = list(Attachment.objects.filter(session_id=session.pk)
+                .values_list("pk", "storage_key", "sealed_blob_key"))
     if not rows:
         return 0
-    Attachment.objects.filter(pk__in=[pk for pk, _ in rows]).delete()
-    keys = [k for _, k in rows if k]
+    Attachment.objects.filter(pk__in=[r[0] for r in rows]).delete()
+    keys = [k for r in rows for k in r[1:] if k]
 
     def _delete_bytes():
         if not attachment_storage.is_configured():

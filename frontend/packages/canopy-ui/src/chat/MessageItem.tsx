@@ -8,6 +8,7 @@ import { ToolCallPair } from "./ToolCallPair";
 import { AppView } from "./mcpApps/AppView";
 import { useAppHost } from "./mcpApps/context";
 import { useSecretRequestHost } from "./secretRequest";
+import { useAttachmentHost } from "./attachmentHost";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
  *  stays free of `react-markdown`. Defaults to plain text in a <span>. */
@@ -120,6 +121,7 @@ export function MessageItem({
 }: Props) {
   const appHost = useAppHost();
   const secretHost = useSecretRequestHost();
+  const attachmentHost = useAttachmentHost();
   const text = message.plaintext;
   const isStreaming = message.status === "streaming";
   const isPending = message.status === "pending";
@@ -231,6 +233,9 @@ export function MessageItem({
       {isStreaming && text && (
         <span className="ml-1 inline-block h-3 w-1 animate-pulse bg-current align-middle" />
       )}
+      {/* The files sent with this line, as the host shows them (a private
+          conversation's are sealed, and opened by the host's vault code). */}
+      {message.role === "user" && attachmentHost?.render(message)}
       {isError && message.role === "assistant" && (
         <ErrorFooter detail={message.error_detail} hasPartial={Boolean(text)} />
       )}

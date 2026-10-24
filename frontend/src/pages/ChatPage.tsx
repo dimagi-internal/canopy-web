@@ -31,7 +31,8 @@ import { useSessionMemory } from '@/components/chat/SessionMemoryToggles'
 import { TitleInput } from '@/components/chat/TitleInput'
 import { sessionTargetLabel } from '@/components/chat/sessionTargetLabel'
 import { menuBlocksComposer, sendBlockReason, shouldShowLoadFull } from './chatPageLogic'
-import { PRIVATE_NO_FILES, useAttachments } from './chat/useAttachments'
+import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from './chat/useAttachments'
+import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { PrivateConversationGate } from '@/components/chat/PrivateConversationGate'
@@ -120,8 +121,6 @@ function ChatPageInner({
   // doesn't carry it — it's frozen to the tail page it was built from). Called
   // once the fetch lands, after `paging` below exists.
   const { meta, setMeta, metaError, agentName } = useSessionMeta(id, (m) => paging.seed(m))
-  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
-    useAttachments(id, meta?.sensitive ? PRIVATE_NO_FILES : undefined)
   // Who is asking to join this private conversation, as the socket last said.
   const [liveJoinRequests, setLiveJoinRequests] = useState<JoinRequest[] | null>(null)
 
@@ -172,6 +171,24 @@ function ChatPageInner({
     decline: declineJoinRequest,
   }), [id, vault.unlock, personTrust.confirm])
   sealedKeyRef.current = sealed.key
+  // A private conversation's file is sealed here to its people (vault/sealedFiles.ts) as
+  // well as uploaded for the agent's one turn; with no key to seal to, it is refused.
+  const sealTarget = meta?.sensitive ? meta.sealed_key ?? null : null
+  const meId = socket.state.current_user_id
+  const privateFiles = useMemo<PrivateFiles | null>(
+    () => (sealTarget && meId != null
+      ? { target: { conversation: sealTarget.conversation, public_jwk: sealTarget.public_jwk as { x?: string; y?: string } },
+          userId: meId }
+      : null),
+    [sealTarget, meId])
+  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
+    useAttachments(id, meta?.sensitive && !privateFiles ? PRIVATE_NO_KEY : undefined, privateFiles)
+  // Its sent files, under the lines they went with: "Attachment" until the key opens.
+  const userLines = socket.state.messages.filter((m) => m.role === 'user').length
+  const sealedFiles = useSealedAttachments(id, Boolean(meta?.sensitive), userLines)
+  const attachmentHost = useMemo(
+    () => sealedAttachmentHost(sealedFiles, sealed.key, () => void sealed.unlock()),
+    [sealedFiles, sealed.key, sealed.unlock])
   const keyIsOpen = Boolean(sealed.key)
   useEffect(() => setKeyOpen(keyIsOpen), [keyIsOpen])
   const panelState = useMemo(
@@ -513,6 +530,8 @@ function ChatPageInner({
           appHost={appHost}
           // The agent asking for a secret: the zero-knowledge seal card.
           secretRequestHost={secretRequestHost}
+          // A private conversation's files, sealed: opened here with the conversation key.
+          attachmentHost={attachmentHost}
           slashCommands={slashCommands}
           emptyState={emptyState}
           historySlot={historySlot}

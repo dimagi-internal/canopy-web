@@ -7,7 +7,7 @@ independent consumer of it.
 """
 from __future__ import annotations
 
-from django.db.models.signals import post_save
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 from apps.harness import sensitivity
@@ -32,6 +32,17 @@ def _key_a_sensitive_session_at_birth(sender, instance, created, **kwargs):
     offered = getattr(instance, "_offered_key", None)
     if offered is not None or sensitivity.is_sensitive(instance):
         conversation_keys.ensure_key(instance, offered=offered)
+
+
+@receiver(post_delete, sender="canopy_sessions.Attachment", dispatch_uid="chat_private_attachment_objects")
+def _private_attachment_objects_go_with_it(sender, instance, **kwargs):
+    """A private conversation's file row going, however it goes (a deleted session's
+    cascade among them), takes both its objects with it, on commit
+    (`private_attachments.delete_all`; deleting one already gone is a no-op)."""
+    if instance.sensitive:
+        from . import private_attachments  # noqa: PLC0415 — models: imported at app ready
+
+        private_attachments.delete_all([instance])
 
 
 @receiver(turn_events_appended, dispatch_uid="chat_project_messages")
