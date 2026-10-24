@@ -153,6 +153,20 @@ def test_a_reachable_source_packs_the_target_restores_then_the_source_closes(ctx
     assert _due(ctx) == []
 
 
+def test_an_ace_web_session_stays_ace_web_work_when_it_moves(ctx):
+    # `send.default_origin`: which product the work is, not which door asked.
+    s = _session(ctx)
+    s.metadata = {"source": "ace-web"}
+    s.save(update_fields=["metadata"])
+    session_placement.transfer_session(session=s, placement=str(ctx.laptop.id), user=ctx.user)
+    h = _upload(ctx, s.handoffs.get())
+    assert h.turn.origin == Turn.ORIGIN_ACE_WEB
+    plain = _session(ctx, task="plain-chat")
+    session_placement.transfer_session(session=plain, placement=str(ctx.laptop.id), user=ctx.user)
+    h = _upload(ctx, plain.handoffs.get())
+    assert h.turn.origin == Turn.ORIGIN_CANOPY_WEB_CHAT
+
+
 def test_only_the_boxes_in_the_transfer_reach_its_snapshot(ctx):
     s = _session(ctx)
     session_placement.transfer_session(session=s, placement=str(ctx.laptop.id), user=ctx.user)
