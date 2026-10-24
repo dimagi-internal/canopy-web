@@ -18,10 +18,10 @@ vi.mock('@/api/alerts', async (orig) => ({
   ...(await orig<typeof import('@/api/alerts')>()),
   loadAlerts: (scope?: string, status?: string) => loadAlerts(scope, status),
 }))
-const actOnTask = vi.fn(async () => ({}))
-vi.mock('@/api/agents', async (orig) => ({
-  ...(await orig<typeof import('@/api/agents')>()),
-  actOnTask: (...a: unknown[]) => actOnTask(...(a as [])),
+const actOn = vi.fn(async () => ({}))
+vi.mock('@/api/work', async (orig) => ({
+  ...(await orig<typeof import('@/api/work')>()),
+  actOn: (...a: unknown[]) => actOn(...(a as [])),
 }))
 vi.mock('@/api/client.v2', async (orig) => ({
   ...(await orig<typeof import('@/api/client.v2')>()),
@@ -38,9 +38,9 @@ const { HomePage } = await import('./HomePage')
 
 const item = (over: Partial<AttentionRow>): AttentionRow => ({
   key: 'task:eva:T1', kind: 'task', state: 'asking', reason: 'Approve or decline', title: 'Send EOI?', body: '',
-  workspace: 'connect', organisation: 'connect', agent_slug: 'eva', project: '', url: '/w/connect/agents/eva/tasks?waiting=me',
+  workspace: 'connect', organisation: 'connect', agent_slug: 'eva', project: '', url: '/w/connect/tasks/CON-1',
   last_activity_at: new Date().toISOString(), actions: ['approve', 'decline', 'reply'],
-  target: { agent: 'eva', task: 'T1' }, private: false, ...over,
+  target: { agent: 'eva', task: 'T1', key: 'CON-1' }, private: false, ...over,
 })
 
 afterEach(() => {
@@ -66,14 +66,16 @@ describe('HomePage', () => {
     expect(screen.queryByText('needs an answer')).toBeNull()
   })
 
-  it('leads with sessions and folds tasks under a count', async () => {
+  it('leads with sessions and shows tasks open below them, each titled with a link to its page', async () => {
     loadAttention.mockResolvedValue({ now: [item({}), chat({})], quiet: [], hidden: [], running: [] })
     show()
-    expect(await screen.findByText('Fix the deploy')).toBeTruthy()
-    // The task is behind its fold until opened.
-    expect(screen.queryByText('Send EOI?')).toBeNull()
+    const session = await screen.findByText('Fix the deploy')
+    const task = screen.getByText('Send EOI?')
+    expect(session.compareDocumentPosition(task) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(task.closest('a')?.getAttribute('href')).toBe('/w/connect/tasks/CON-1')
+    // Still foldable by hand.
     fireEvent.click(screen.getByText('Tasks and requests'))
-    expect(await screen.findByText('Send EOI?')).toBeTruthy()
+    expect(screen.queryByText('Send EOI?')).toBeNull()
   })
 
   it('groups sessions by agent or project, newest group first', async () => {
@@ -110,12 +112,23 @@ describe('HomePage', () => {
     expect(screen.queryByText('Fix the deploy')).toBeNull()
   })
 
-  it('approves a task in place, pinned to its workspace', async () => {
+  it('starts a task in place by its key, pinned to its workspace, and says its agent starts now', async () => {
     loadAttention.mockResolvedValue({ now: [item({})], quiet: [], hidden: [], running: [] })
     show()
-    fireEvent.click(await screen.findByText('Tasks and requests'))
-    fireEvent.click(await screen.findByText('Approve'))
-    await waitFor(() => expect(actOnTask).toHaveBeenCalledWith('eva', 'T1', 'approve', '', 'connect'))
+    const start = await screen.findByRole('button', { name: 'Start now' })
+    expect(start.getAttribute('title')).toContain('Eva starts on it now')
+    expect(screen.getByText(/Start now: Eva starts on it now/)).toBeTruthy()
+    fireEvent.click(start)
+    await waitFor(() => expect(actOn).toHaveBeenCalledWith('CON-1', 'approve', '', 'connect'))
+  })
+
+  it('declines and replies through the same task route', async () => {
+    loadAttention.mockResolvedValue({ now: [item({})], quiet: [], hidden: [], running: [] })
+    show()
+    fireEvent.click(await screen.findByRole('button', { name: 'Reply' }))
+    fireEvent.change(screen.getByPlaceholderText('Reply to eva…'), { target: { value: 'Yes, send it' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(actOn).toHaveBeenCalledWith('CON-1', 'reply', 'Yes, send it', 'connect'))
   })
 
   it('hides without deciding anything, and can undo', async () => {
@@ -123,7 +136,7 @@ describe('HomePage', () => {
     show()
     fireEvent.click(await screen.findByText('Hide'))
     await waitFor(() => expect(hide).toHaveBeenCalledWith(['session:s1'], undefined))
-    expect(actOnTask).not.toHaveBeenCalled()
+    expect(actOn).not.toHaveBeenCalled()
     fireEvent.click(screen.getByText('Undo'))
     await waitFor(() => expect(unhide).toHaveBeenCalledWith('session:s1'))
   })

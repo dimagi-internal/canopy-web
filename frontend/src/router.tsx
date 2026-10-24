@@ -23,6 +23,7 @@ import { PairRunnerPage } from './pages/PairRunnerPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
+import { WorkspaceTaskSettingsPage } from './pages/WorkspaceTaskSettingsPage'
 import { WorkspaceAdmissionRulesPage } from './pages/WorkspaceAdmissionRulesPage'
 import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
@@ -325,6 +326,7 @@ export const routeTable: RouteObject[] = [
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
           { path: 'retention', element: <WorkspaceRetentionPage /> },
+          { path: 'tasks', element: <WorkspaceTaskSettingsPage /> },
           { path: 'admission-rules', element: <WorkspaceAdmissionRulesPage /> },
           { path: 'topology', element: <TopologyMapPage /> },
           { path: 'topology/runners', element: <WorkspaceRunnersPage /> },

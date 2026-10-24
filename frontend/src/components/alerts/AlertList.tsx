@@ -26,7 +26,7 @@ export const KIND_LABEL: Record<string, string> = {
   unclaimable_turns: 'Stuck turns',
   device_key_pending: 'Device key',
   agent_cant_run: 'Agent routing',
-  canopy_projects_off: 'Canopy projects',
+  canopy_projects_off: 'Opted-in repos',
   transfer_left_open: 'Transfers',
 }
 

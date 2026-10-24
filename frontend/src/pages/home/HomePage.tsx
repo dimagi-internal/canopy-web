@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type JSX, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
-import { actOnTask, type ProjectOut } from '@/api/agents'
+import { type ProjectOut } from '@/api/agents'
 import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
 import { apiV2 } from '@/api/client.v2'
+import { actOn } from '@/api/work'
 import { AlertList } from '@/components/alerts/AlertList'
 import { useAuth } from '@/auth/AuthProvider'
 import { usePolled } from '@/hooks/usePolled'
@@ -12,6 +13,7 @@ import { StateDot, type DotTone } from '@/components/sessions/StateDot'
 import { folderKey, shortAge } from '@/pages/ide/ideTree'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { PrivateMark } from '@/components/chat/privateConversation'
+import { displayAgent } from '@/components/work/meta'
 
 // HOME — what is waiting on you, across every workspace you are in.
 //
@@ -21,8 +23,9 @@ import { PrivateMark } from '@/components/chat/privateConversation'
 // floated whatever had gone stale to the top, where it stayed.
 //
 // Sessions lead: a chat whose agent is waiting on your next message is where
-// work actually moves. Tasks and requests sit folded under them as a count —
-// the board is noisy, and listing it alongside the chats buried them. Anything
+// work actually moves. Tasks and requests follow, open: each task's title is
+// its page (`/w/<ws>/tasks/<KEY>`), and its buttons act on it by key through
+// the one task route (`actOn`) — Start now starts its agent at once. Anything
 // nobody has touched in a few days drops into "Gone quiet", folded, with one
 // button to hide all of it. Hiding is not deciding: the task stays open, the
 // chat stays as it is, nobody is told; it comes back by itself when something
@@ -50,7 +53,7 @@ export function HomePage(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('')
   const [showAll, setShowAll] = useState(false)
-  const [showTasks, setShowTasks] = useState(false)
+  const [showTasks, setShowTasks] = useState(true)
   const [showQuiet, setShowQuiet] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
   const [undo, setUndo] = useState<{ keys: string[]; label: string } | null>(null)
@@ -129,9 +132,10 @@ export function HomePage(): JSX.Element {
   }
 
   async function onAct(item: AttentionRow, action: 'approve' | 'decline' | 'reply', comment = '') {
+    if (!item.target.key) return
     drop([item.key])
     try {
-      await actOnTask(item.target.agent, item.target.task, action, comment, item.workspace)
+      await actOn(item.target.key, action, comment, item.workspace)
     } finally {
       void refresh()
     }
@@ -483,8 +487,10 @@ function AttentionRow({ item, workspaceName, onAct, onHide }: {
 }): JSX.Element {
   const [replying, setReplying] = useState(false)
   const [text, setText] = useState('')
-  const canTask = item.kind === 'task'
-  const meta = [item.agent_slug, item.project, workspaceName].filter(Boolean).join(' · ')
+  // A task is acted on by its key; a row without one (another kind) only opens.
+  const canTask = item.kind === 'task' && Boolean(item.target.key)
+  const meta = [item.target.key, item.agent_slug, item.project, workspaceName].filter(Boolean).join(' · ')
+  const starts = item.agent_slug ? `${displayAgent(item.agent_slug)} starts on it now` : 'it moves to In progress now'
 
   return (
     <div className="group border-t border-border px-3 py-2.5 first:border-t-0 hover:bg-card/60" data-testid="attention-row">
@@ -501,11 +507,14 @@ function AttentionRow({ item, workspaceName, onAct, onHide }: {
             {meta && <span>{meta} · </span>}
             <span title={new Date(item.last_activity_at).toLocaleString()}>{relativeAge(item.last_activity_at, new Date(), { seconds: false })}</span>
           </div>
+          {canTask && item.actions.includes('approve') && (
+            <div className="mt-0.5 text-[11px] text-muted-foreground">Start now: {starts}.</div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1 pl-15 text-[12px] sm:pl-0">
           {canTask && item.actions.includes('approve') && (
-            <button type="button" onClick={() => void onAct(item, 'approve')}
-              className="rounded bg-primary px-2 py-0.5 font-medium text-primary-foreground hover:bg-primary/90">Approve</button>
+            <button type="button" onClick={() => void onAct(item, 'approve')} title={`Approve and start: ${starts}`}
+              className="rounded bg-primary px-2 py-0.5 font-medium text-primary-foreground hover:bg-primary/90">Start now</button>
           )}
           {canTask && item.actions.includes('decline') && (
             <button type="button" onClick={() => void onAct(item, 'decline')}
@@ -571,7 +580,7 @@ function YourProjects(): JSX.Element | null {
             <Link to={p.board_url || p.url} className="block truncate text-[13px] text-foreground hover:text-primary">{p.name}</Link>
             <div className="text-[11px] text-muted-foreground">
               {p.agent_slug} · {p.open_task_count} open
-              {p.waiting_task_count > 0 && <span className="text-warning"> · {p.waiting_task_count} waiting</span>}
+              {p.waiting_task_count > 0 && <span className="text-warning"> · {p.waiting_task_count} asking someone</span>}
             </div>
           </li>
         ))}
