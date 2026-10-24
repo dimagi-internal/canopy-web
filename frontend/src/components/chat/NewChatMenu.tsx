@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { createSession, type ChatSession } from '@/api/chat'
-import { getAgentDefaultOrder, getAgentRunners, type AgentOut, type AgentRunnerOut } from '@/api/agents'
+import { getAgentDefaultOrder, getAgentRunners, listMyAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 import { scopedPath } from '../../lib/scopedLinks'
@@ -30,14 +30,14 @@ export type NewChatTarget =
  *
  * The repos offered are the ones the fleet's online, session-capable runners
  * report (`repoChoices`) — the set a project chat can actually be claimed on.
- * `runners` may be passed by a caller that already loaded them; otherwise the
- * menu loads them itself. `onCreated` replaces the default of opening the new
+ * `agents` and `runners` may be passed by a caller that already loaded them;
+ * otherwise the menu loads them itself (Home passes neither). `onCreated` replaces the default of opening the new
  * chat at `/w/<ws>/chat/<id>` (/ide opens it in place). `target` skips the
  * list and opens straight on the "Run on" step for that agent or repo (/ide's
  * per-project +); with no `label` the trigger is the + alone.
  */
 export function NewChatMenu({
-  agents,
+  agents: agentsProp,
   runners: runnersProp,
   onError,
   onCreated,
@@ -46,7 +46,7 @@ export function NewChatMenu({
   title,
   className,
 }: {
-  agents: readonly AgentOut[]
+  agents?: readonly AgentOut[]
   runners?: readonly RunnerOut[] | null
   onError: (message: string) => void
   onCreated?: (session: ChatSession) => void
@@ -57,6 +57,8 @@ export function NewChatMenu({
 }) {
   const navigate = useNavigate()
   const [ownRunners, setOwnRunners] = useState<RunnerOut[] | null>(null)
+  const [ownAgents, setOwnAgents] = useState<AgentOut[]>([])
+  const agents = agentsProp ?? ownAgents
   const fleetRunners = runnersProp ?? ownRunners
   const projects = useMemo(() => repoChoices(fleetRunners ?? []), [fleetRunners])
   const [creating, setCreating] = useState(false)
@@ -76,6 +78,17 @@ export function NewChatMenu({
       live = false
     }
   }, [runnersProp])
+
+  useEffect(() => {
+    if (agentsProp !== undefined) return
+    let live = true
+    listMyAgents({ limit: 100 })
+      .then((page) => { if (live) setOwnAgents(page.items) })
+      .catch(() => { /* repos alone still make a usable menu */ })
+    return () => {
+      live = false
+    }
+  }, [agentsProp])
 
   const start = useCallback(
     (args: Parameters<typeof createSession>[0]) => {
