@@ -186,8 +186,8 @@ def stop_session(session: Session, *, by: str = "") -> str:
     Deliberately not both: a chat turn's cancel already interrupts the same session
     through the bridge, and a second interrupt could land after the agent moved on.
 
-    The ONE stop. The web UI (the session websocket) and REST/MCP
-    (`POST /canopy-sessions/{id}/stop`) both call this; REST used to stop at the
+    The ONE stop. The web UI (the session websocket), REST/MCP
+    (`POST /canopy-sessions/{id}/stop`), a contact's stop and Slack's all call this; REST used to stop at the
     turns, so a stop from MCP or a script did nothing to a working agent
     (canopy-web#1226).
     """

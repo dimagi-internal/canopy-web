@@ -2160,6 +2160,21 @@ def test_a_slack_stop_press_cancels_the_turn(slack, linked, hal, alice,
     assert stopped_by(turn) == (alice.get_full_name() or alice.email)
 
 
+def test_a_slack_stop_of_a_live_turn_does_not_also_interrupt_the_session(
+        slack, linked, hal, alice, monkeypatch, django_capture_on_commit_callbacks):
+    """The ONE stop (`control.stop_session`): a turn that owns the work is cancelled
+    and its bridge interrupts; a second, session-shaped interrupt could land after
+    the agent moved on to the next message."""
+    from apps.canopy_sessions import control
+
+    interrupts = []
+    monkeypatch.setattr(control, "interrupt_session", lambda session: interrupts.append(session) or "sent")
+    _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    event({"type": "agent_session_stopped", "channel_id": "C1",
+           "thread_ts": "1700000000.000100", "user": ALICE})
+    assert interrupts == []
+
+
 def test_a_stopped_turn_reads_stopped_by_the_person(slack, linked, hal, alice):
     from apps.harness.services import cancel_turn
     from apps.slack import status
