@@ -85,7 +85,14 @@ def send_from(
     NotInIt (403 on an HTTP door) for a sensitive conversation `reads_content`
     refuses this sender."""
     spec = DOORS[door]
-    services.add_runner_requirements(session, runner_requirements)
+    try:
+        # A send that would make the conversation private where it can hold no key is
+        # refused before anything changes (`refuse_keyless`): no blanked history.
+        services.add_runner_requirements(session, runner_requirements, refuse_keyless=True)
+    except ValueError as exc:
+        if not spec.http:
+            raise
+        raise HttpError(422, str(exc)) from None
     contact = getattr(initiator, "contact", None)
     if not sensitivity.reads_content(session, chat_surface=chat_surface,
                                      user=None if contact is not None else user, contact=contact):

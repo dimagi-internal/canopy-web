@@ -60,6 +60,7 @@ describe('a chat started in this browser makes its own key', () => {
   it("wraps a fresh pair to my vault key: only my key opens it, to the pair's private half", async () => {
     const mine = await generateKeyPair()
     const thumb = await jkt(mine.publicJwk)
+    pinPerson('7', thumb, '')  // this browser opened it before
     const offer = await newConversationKey({ user_id: '7', public_jwk: mine.publicJwk, jkt: thumb })
     expect(offer.recipient_jkt).toBe(thumb)
     const scalar = await unwrapEcdhEs(offer.wrap, mine.privateKey, mine.publicJwk, wrapInfo(offer.conversation, '7'))

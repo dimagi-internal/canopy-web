@@ -186,15 +186,44 @@ def test_a_later_token_without_the_claim_does_not_unstamp(site, key):
     assert Session.objects.get(pk=sid).metadata["runner_requirements"] == ["sensitive_data"]
 
 
-def test_a_later_token_with_the_claim_stamps_an_older_session(site, key):
+def test_a_later_token_with_the_claim_cannot_make_a_contacts_session_private(site, key):
+    """A contact holds no vault key, so their conversation cannot become private: the
+    send is refused before anything changes (all or nothing) — not stamped and then
+    refused, which left an older conversation private with its history blanked."""
     session = _contact_session(_arrive(key).json()["token"])
     assert "runner_requirements" not in session.metadata
-    # Stamped — and then the contact's send is refused: they hold no vault key.
     r = _bearer(_arrive(key, requirements=["sensitive_data"]).json()["token"]).post(
         f"/api/contact/sessions/{session.pk}/send", {"text": "hello"}, content_type="application/json")
     assert r.status_code == 422 and "vault key" in r.json()["detail"]
     session.refresh_from_db()
-    assert session.metadata["runner_requirements"] == ["sensitive_data"]
+    assert "runner_requirements" not in session.metadata
+
+
+def test_a_sensitive_send_into_a_keyless_starters_older_chat_changes_nothing(site, key):
+    """The starter has no vault key: the send that would make their older conversation
+    private is refused, its history is untouched, and it is not left private."""
+    from apps.canopy_sessions.models import Message
+
+    member = _member(site)
+    from apps.passkeys.models import UserVaultKeyset
+
+    UserVaultKeyset.objects.filter(user=member).delete()
+    plain = _arrive(key, email="mem@dimagi.com", verified=True).json()["token"]
+    sid = _bearer(plain).post("/api/canopy-sessions/", {"agent_slug": "ace"},
+                              content_type="application/json").json()["id"]
+    Message.objects.create(session_id=sid, turn_index=0, role=Message.USER, plaintext="Amina's visits?")
+    Message.objects.create(session_id=sid, turn_index=64, role=Message.ASSISTANT, plaintext="12 visits")
+    sensitive = _arrive(key, requirements=["sensitive_data"], email="mem@dimagi.com", verified=True).json()["token"]
+    r = _bearer(sensitive).post(f"/api/canopy-sessions/{sid}/send", {"text": "and now?"},
+                                content_type="application/json")
+    assert r.status_code == 422 and "vault key" in r.json()["detail"], r.content
+    session = Session.objects.get(pk=sid)
+    assert "runner_requirements" not in session.metadata
+    assert sorted(Message.objects.filter(session=session).values_list("plaintext", flat=True)) == [
+        "12 visits", "Amina's visits?"]
+    from apps.harness.models import Turn
+
+    assert not Turn.objects.filter(chat_session=session).exists()
 
 
 def test_a_member_send_through_the_site_stamps_an_older_session(site, key):

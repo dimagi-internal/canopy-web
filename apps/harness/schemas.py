@@ -610,6 +610,9 @@ class ResolveSessionOut(Schema):
     # For every turn of a forked chat: the chat whose directory a cloud runner runs
     # it in (the source's, so they share a worktree). "" otherwise.
     worktree_of: str = ""
+    # The fork and the chats it was cut from, nearest first, from canopy's own
+    # `parent_session` column. A runner runs in `worktree_of` only if it is here.
+    fork_lineage: list[str] = []
 
 
 class RecordSessionIn(Schema):

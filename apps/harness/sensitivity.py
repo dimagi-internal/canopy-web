@@ -29,6 +29,7 @@ import re
 from collections.abc import Mapping
 
 from canopy_sdk import resources as resource_links
+from django.db.models import Q
 
 from . import runner_requirements as rr
 
@@ -86,6 +87,24 @@ def is_sensitive(obj) -> bool:
     if isinstance(obj, Turn):
         return _is(rr.requirements_of(obj))
     return _is(rr.requirements_of_session(obj))
+
+
+def conversation_of(turn):
+    """The conversation a turn's words belong to: a chat turn's `chat_session`, or the
+    `canopy_session` an agent, board or email turn ran in. None for neither. Every
+    sensitivity rule about a turn's conversation asks this, never one link alone."""
+    if turn is None:
+        return None
+    if turn.chat_session_id:
+        return turn.chat_session
+    if getattr(turn, "canopy_session_id", None):
+        return turn.canopy_session
+    return None
+
+
+def turns_of_q(session_id):
+    """The Q for every turn whose conversation is `session_id` (`conversation_of`)."""
+    return Q(chat_session_id=session_id) | Q(canopy_session_id=session_id)
 
 
 def take_on(session, turn) -> None:
@@ -320,7 +339,8 @@ def claude_session_is_sensitive(claude_session: str) -> bool:
             return True
     turns = Turn.objects.filter(session_key=claude_session) | Turn.objects.filter(
         cli_session_id=claude_session)
-    return any(is_sensitive(t) for t in turns.select_related("chat_session", "parent_session")[:20])
+    return any(is_sensitive(t) for t in turns.select_related("chat_session", "canopy_session",
+                                                              "parent_session")[:20])
 
 
 # ── metadata, never content (Jonathan, 2026-10-22) ────────────────────────────

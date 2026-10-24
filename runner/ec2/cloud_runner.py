@@ -8905,8 +8905,11 @@ def _session_resume_plan(runner_id: str, turn: dict) -> str:
         return ""
     # A forked chat: which chat's directory it runs in (its source's, so they share
     # a worktree), and on its first turn the cut to start from (_cut_fork).
-    if plan.get("worktree_of"):
-        turn["_worktree_of"] = plan["worktree_of"]
+    # Only a chat in the fork's own lineage (canopy's `parent_session` column, never
+    # anything a caller set) — so no turn runs in someone else's directory.
+    worktree = plan.get("worktree_of") or ""
+    if worktree and worktree in (plan.get("fork_lineage") or ()):
+        turn["_worktree_of"] = worktree
     if plan.get("fork"):
         turn["_fork"] = plan["fork"]
     key = plan.get("session_key") or plan.get("emdash_task_id") or ""

@@ -31,7 +31,7 @@ from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, egress, routing, runner_credential_resolve, services
+from . import claim, egress, routing, runner_credential_resolve, sensitivity, services
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -492,6 +492,9 @@ def turn_attachment_content(request: HttpRequest, runner_id: uuid.UUID, turn_id:
         .first()
     )
     if turn is None or turn.chat_session_id is None:
+        raise HttpError(404, "attachment not found")
+    # A private conversation keeps no files (`services._drop_attachments`).
+    if sensitivity.is_sensitive(turn.chat_session):
         raise HttpError(404, "attachment not found")
     # A claim already requires this; re-asked because an owner can be demoted
     # mid-turn.

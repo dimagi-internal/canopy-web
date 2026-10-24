@@ -53,6 +53,7 @@ def test_a_cut_that_cannot_be_made_says_why(cloud_runner, home):
 
 def test_resolve_session_tells_the_turn_where_to_run_and_what_to_cut(cloud_runner, monkeypatch):
     plan = {"reuse": False, "session_key": "", "worktree_of": "src-chat",
+            "fork_lineage": ["fork-chat", "src-chat"],
             "fork": {"session_key": "src-sid", "records": 4}}
     monkeypatch.setattr(cloud_runner, "_api", lambda method, path, body=None: (200, plan))
     turn = {"id": "t1", "project": "canopy-web", "workspace_slug": "w1",
@@ -61,6 +62,19 @@ def test_resolve_session_tells_the_turn_where_to_run_and_what_to_cut(cloud_runne
     assert cloud_runner._session_resume_plan("rid", turn) == ""
     assert turn["_worktree_of"] == "src-chat"
     assert turn["_fork"] == {"session_key": "src-sid", "records": 4}
+
+
+def test_a_directory_outside_the_forks_lineage_is_never_run_in(cloud_runner, monkeypatch):
+    """A `worktree_of` the server's own lineage does not hold (a plan from a server that
+    sent none, or one naming another person's chat) is ignored: the turn runs in its own."""
+    for lineage in (None, [], ["fork-chat"], ["fork-chat", "someone-else"]):
+        plan = {"reuse": False, "session_key": "", "worktree_of": "victim-chat",
+                **({"fork_lineage": lineage} if lineage is not None else {})}
+        monkeypatch.setattr(cloud_runner, "_api", lambda method, path, body=None, p=plan: (200, p))
+        turn = {"id": "t1", "project": "canopy-web", "workspace_slug": "w1",
+                "origin_ref": {"chat_session_id": "fork-chat", "thread_key": "fork-chat"}}
+        cloud_runner._session_resume_plan("rid", turn)
+        assert "_worktree_of" not in turn
 
 
 def test_a_fork_runs_in_its_sources_directory(cloud_runner, home, monkeypatch):

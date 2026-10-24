@@ -74,6 +74,13 @@ def update_draft(session: Session, *, user, expected_version: int, body: str) ->
         forget_words(session)
         return None
     with transaction.atomic():
+        # Asked again under the session row's lock, which a conversation becoming
+        # sensitive also takes (`services.add_runner_requirements`): a keystroke racing
+        # the switch either lands first and is emptied by it, or sees it and stores
+        # nothing — never a body kept in clear after.
+        list(Session.objects.select_for_update().filter(pk=session.pk).values_list("pk", flat=True))
+        if _sensitive(session):
+            return None
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
             raise DraftVersionMismatch(draft.version, body_of(draft))

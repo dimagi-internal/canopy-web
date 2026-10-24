@@ -420,25 +420,60 @@ def _index_offsets(source, offset: int) -> dict:
     return {"index_offsets": sorted({int(offset), *(int(offset) + d for d in earlier)})}
 
 
+#: How far up a chain of forks `fork_lineage` walks.
+MAX_FORK_DEPTH = 32
+
+
+def fork_lineage(session) -> list[str]:
+    """`session` and the sessions it was forked from, nearest first, read from the
+    `parent_session` column canopy itself sets (`fork_session`) — never from metadata."""
+    out, current = [str(session.id)], session
+    while current.parent_session_id and len(out) < MAX_FORK_DEPTH:
+        if str(current.parent_session_id) in out:
+            break
+        out.append(str(current.parent_session_id))
+        current = Session.objects.filter(pk=current.parent_session_id).only(
+            "id", "parent_session_id").first()
+        if current is None:
+            break
+    return out
+
+
 def worktree_of(session) -> str:
     """The canopy session whose directory `session` runs in on a cloud runner: its
-    own, or for a fork the one its source runs in."""
-    return ((session.metadata or {}).get(FORK_KEY) or {}).get("worktree_of") or str(session.id)
+    own, or for a fork the one its source runs in — and only if that one really is in
+    its lineage (`fork_lineage`), so no metadata can aim a turn at someone else's
+    directory, where their transcripts sit."""
+    named = ((session.metadata or {}).get(FORK_KEY) or {}).get("worktree_of") or ""
+    if named and named != str(session.id) and named in fork_lineage(session):
+        return named
+    return str(session.id)
 
 
-def fork_plan(thread_key: str) -> tuple[dict | None, str]:
+def fork_plan(thread_key: str) -> tuple[dict | None, str, list[str]]:
     """For a forked chat: the cut its first turn must make (None once the runner has
     recorded the fork's own Claude session — later turns resume it like any other),
-    and the session whose directory it runs in. (None, "") for anything else."""
+    the session whose directory it runs in, and its lineage (`fork_lineage`, which the
+    runner checks that directory against). (None, "", []) for anything else.
+
+    The cut is the Claude session canopy recorded as the fork's parent
+    (`parent_claude_session`), never one named only in metadata."""
     try:
         sid = uuid.UUID(thread_key)
     except (TypeError, ValueError):
-        return None, ""
+        return None, "", []
     session = Session.objects.filter(pk=sid).select_related("runner_binding").first()
     fork = ((session.metadata or {}).get(FORK_KEY) if session is not None else None)
-    if not fork:
-        return None, ""
+    if not isinstance(fork, dict) or not session.parent_session_id:
+        return None, "", []
+    lineage = fork_lineage(session)
     binding = getattr(session, "runner_binding", None)
-    pending = None if binding is not None and binding.session_key else {
-        "session_key": fork["session_key"], "records": int(fork["records"])}
-    return pending, worktree_of(session)
+    pending = None
+    if not (binding is not None and binding.session_key):
+        if session.parent_claude_session and fork.get("session_key") == session.parent_claude_session:
+            try:
+                pending = {"session_key": session.parent_claude_session,
+                           "records": int(fork.get("records") or 0)}
+            except (TypeError, ValueError):
+                pending = None
+    return pending, worktree_of(session), lineage

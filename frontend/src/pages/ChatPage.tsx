@@ -21,6 +21,7 @@ import {
   appHostFor,
   declineJoinRequest,
   listJoinRequests,
+  setAsideMyKeyCopy,
   type ChatSession,
   type JoinRequest,
 } from '@/api/chat'
@@ -462,6 +463,12 @@ function ChatPageInner({
         unlockElement={vault.element}
         needsMigration={Boolean(meta?.sealed_key?.needs_migration)}
         hasSealed={sealed.hasSealed}
+        onSetAside={sealed.copyBroken ? () => {
+          void setAsideMyKeyCopy(id)
+            .then(() => getSession(id))
+            .then((m) => setMeta((prev) => (prev ? { ...prev, sealed_key: m.sealed_key } : prev)))
+            .catch(() => undefined)
+        } : undefined}
       />
       <div className="min-h-0 flex-1" onContextMenu={fork.onMessageContextMenu}>
         {fork.messageMenu && (

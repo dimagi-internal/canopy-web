@@ -13,6 +13,7 @@ import { openSealed, type ConversationKey } from '@/vault/sealedChat'
  */
 export function SealedConversationBanner({
   state, error, onUnlock, unlockElement, needsMigration, openElsewhere, hasSealed = true, method = 'passkey',
+  onSetAside,
 }: {
   state: SealedState
   error: string | null
@@ -27,6 +28,9 @@ export function SealedConversationBanner({
   hasSealed?: boolean
   /** How the person's vault key opens: says "passkey" or "passphrase". */
   method?: 'passkey' | 'passphrase'
+  /** Their vault key opened and their copy of the conversation key did not: set it
+   *  aside (`DELETE …/key-copies/mine`) so someone in it can give them a fresh one. */
+  onSetAside?: () => void
 }) {
   const lockedish = state === 'locked' || state === 'error' || state === 'opening'
   const showLocked = hasSealed && lockedish
@@ -71,6 +75,15 @@ export function SealedConversationBanner({
         <p className="m-0 mt-1 text-destructive">
           {error} {!showLocked && openElsewhere}
         </p>
+      )}
+      {showError && onSetAside && (
+        <div className="mt-1 flex flex-wrap items-center gap-2" data-testid="sealed-copy-broken">
+          <span>Your copy of this conversation&apos;s key does not open. Set it aside, and someone in it can give you a fresh one.</span>
+          <button type="button" onClick={onSetAside} data-testid="sealed-set-aside"
+                  className="rounded-md border border-input px-3 py-1 text-foreground">
+            Set my copy aside
+          </button>
+        </div>
       )}
       {unlockElement}
     </div>

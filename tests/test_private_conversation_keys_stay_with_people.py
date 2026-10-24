@@ -286,7 +286,17 @@ def test_my_vault_key_is_its_public_half_only(w):
     r = w["c"].get("/api/canopy-sessions/my-vault-key")
     assert r.status_code == 200
     jwk = UserVaultKeyset.objects.get(user=w["user"]).public_jwk
-    assert r.json() == {"user_id": str(w["user"].pk), "public_jwk": jwk, "jkt": ecdh_es.jkt(jwk)}
+    body = r.json()
+    assert {k: body[k] for k in ("user_id", "public_jwk", "jkt")} == {
+        "user_id": str(w["user"].pk), "public_jwk": jwk, "jkt": ecdh_es.jkt(jwk)}
+    # The person's own browser also gets what opens it (public half and seals, never a
+    # private key), to derive the key itself before trusting this one; a token does not.
+    assert body["keyset"]["public_jwk"] == jwk and "seals" in body["keyset"]
+    from apps.tokens.models import PersonalToken
+
+    raw, _ = PersonalToken.create_for_user(user=w["user"], label="cli")
+    assert Client(HTTP_AUTHORIZATION=f"Bearer {raw}").get(
+        "/api/canopy-sessions/my-vault-key").json()["keyset"] is None
     UserVaultKeyset.objects.filter(user=w["user"]).delete()
     assert w["c"].get("/api/canopy-sessions/my-vault-key").status_code == 404
 

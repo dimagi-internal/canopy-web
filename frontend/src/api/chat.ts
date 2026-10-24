@@ -11,7 +11,8 @@
  * reuse the generated OpenAPI schema so the two can't drift.
  */
 
-import { newConversationKey, type ConversationKeyOffer } from "@/vault/sealedChat";
+import { offerForNewChat, type ConversationKeyOffer, type MyVaultKey as VaultKeyNamed } from "@/vault/sealedChat";
+import type { Unlocked } from "@/vault/operations";
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
 import { ApiError } from "./problem";
@@ -30,17 +31,27 @@ export type SlashCommand = components["schemas"]["SlashCommandOut"];
  *  `.status` and `.code` (the problem type's tail, e.g. "not-found"). */
 export { ApiError as ChatApiError };
 
-/** A key pair for a chat this browser starts (`newConversationKey`), or null when it
- *  cannot make one — no vault key, or one this browser does not recognise as yours. The
- *  chat then starts as before, and a server-made key is the fallback if it turns private. */
+/** A key pair for a chat this browser starts (`offerForNewChat`), or null when the person
+ *  has no vault key (404: they cannot hold a private chat, and canopy refuses one).
+ *  Anything else that stops it — a vault key this browser cannot confirm is theirs, a
+ *  changed one, a failed read — THROWS, and the chat is not started: it never falls
+ *  back to a key canopy-web would make. `derive` opens the vault key when this browser
+ *  has not seen it before (`useVaultUnlock`). */
 export async function browserConversationKey(
-  mine: () => Promise<{ user_id: string; public_jwk: Record<string, unknown>; jkt: string }>,
+  mine: () => Promise<MyVaultKey | VaultKeyNamed>,
+  derive?: () => Promise<Pick<Unlocked, "scalar" | "publicJwk">>,
 ): Promise<ConversationKeyOffer | null> {
+  let me: VaultKeyNamed;
   try {
-    return await newConversationKey(await mine());
-  } catch {
-    return null;
+    me = (await mine()) as VaultKeyNamed;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
   }
+  // An answer that names no key says the same as a 404 (and is no weaker: the server
+  // could as well say 404).
+  if (!me || typeof me.jkt !== "string" || !me.public_jwk) return null;
+  return offerForNewChat(me, derive);
 }
 
 // Still raw fetch (not apiV2): several routes here (the session's secrets, the
@@ -79,6 +90,9 @@ export interface CreateSessionInput {
   // Directed placement: pin the session's turns to this runner from creation
   // (rather than the default assignment-cascade routing).
   runnerId?: string;
+  // Opens the person's vault key, for a browser that has not confirmed it is theirs yet
+  // (`browserConversationKey`). Without it such a browser cannot start a chat.
+  unlock?: () => Promise<Pick<Unlocked, "scalar" | "publicJwk">>;
 }
 
 export async function createSession(
@@ -89,7 +103,7 @@ export async function createSession(
     : "/api/canopy-sessions/";
   // The conversation's key is made HERE: if it is, or becomes, private its words are
   // sealed to it, and canopy-web never sees the private half (vault/sealedChat.ts).
-  const conversationKey = await browserConversationKey(myVaultKey);
+  const conversationKey = await browserConversationKey(myVaultKey, input.unlock);
   return request<ChatSession>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -508,6 +522,15 @@ export function putMyKeyCopies(copies: { session_id: string; wrap: { alg: "ecdh-
 /** My vault key's public half, for this browser to wrap a new chat's key to. */
 export function myVaultKey(): Promise<MyVaultKey> {
   return request<MyVaultKey>("/api/canopy-sessions/my-vault-key");
+}
+
+/** Your copy of a private chat's key does not open: drop it, so someone in it can give
+ *  you a fresh one (`POST /{id}/key-copies`). Only you can, for your own copy. */
+export function setAsideMyKeyCopy(id: string): Promise<Participant[]> {
+  return request<Participant[]>(
+    `/api/canopy-sessions/${encodeURIComponent(id)}/key-copies/mine`,
+    { method: "DELETE" },
+  );
 }
 
 /** Owner removes someone; anyone can remove themselves. */

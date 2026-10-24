@@ -704,6 +704,11 @@ class MyVaultKeyOut(Schema):
     user_id: str
     public_jwk: dict
     jkt: str
+    #: The keyset to open it with in your browser (`sealed_key.keyset`'s shape: public half
+    #: and seals, never a private key), so a browser that has not opened it before derives
+    #: its public half itself before wrapping a new chat's key to it. Only to your own
+    #: browser (canopy's page or the panel's frame); null otherwise.
+    keyset: dict | None = None
 
 
 class MyKeyCopyIn(Schema):
