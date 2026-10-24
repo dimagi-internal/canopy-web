@@ -222,7 +222,13 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   viewer stays a viewer (`services._inherit_participants`) — and the parent turn's
   initiator joins as editor when that turn belongs to the parent, since a session started
   in emdash has no participant rows to copy. An agent starting work for the
-  person it is talking to therefore never hides that work from them.
+  person it is talking to therefore never hides that work from them. An agent's own
+  login cannot read a web chat a person opened with it, so the parent also counts as
+  reachable when that login is running a live turn in it (`access.own_turn_session`
+  on the parent turn) — the same people join, nothing else; a finished or queued
+  turn, a turn in another session or another agent's turn brings no one. The
+  runner-made session for a dispatched turn (`session_sync._adopt_turn_parent`)
+  goes through the same rule.
 - `tests/test_session_acl.py` asserts every door gives the same answer for every (person,
   session shape), and fails on a `SessionParticipant` writer outside its allowlist.
 - Where a session is filed and moving it: `roles.md` → "Which workspace a session lives in".

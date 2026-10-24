@@ -351,7 +351,18 @@ def _inherit_participants(session: Session, created_by) -> None:
     reads it through the tenant leg and typing into it never writes a row
     (#926). The asker is the parent TURN's initiator — only a turn in that
     same parent, so naming some other turn is not a way in either
-    (2026-10-19: ACE's handover of a run from emdash task `fi` reached no one)."""
+    (2026-10-19: ACE's handover of a run from emdash task `fi` reached no one).
+
+    The parent is reachable two ways: the creator can read it, or the creator is
+    the agent's own login running a live turn IN it (`access.own_turn_session`
+    on the session's parent turn). An agent's login is not a leg of
+    `visible_session_q`, so a web chat a person opened with it is unreadable to
+    it — and without this second leg the person asking for the work was left
+    out of it. That leg copies the same people the readable leg does: the agent
+    is having that conversation with exactly them, so adding them to the work it
+    starts there tells it nothing it does not already know and shows them only
+    the agent's own new session. It is no wider than reading: named by a turn
+    that is in flight, run AS this login, in that same parent."""
     from apps.workspaces import services as wsvc
 
     from . import access
@@ -359,7 +370,10 @@ def _inherit_participants(session: Session, created_by) -> None:
     from .participants import ensure_participant
 
     parent = session.parent_session
-    if parent is None or not access.can_read(created_by, parent):
+    if parent is None:
+        return
+    if not (access.can_read(created_by, parent)
+            or access.own_turn_session(created_by, session.parent_turn_id) == parent):
         return
     # A private parent's people come along only for one of them: seeing it (an agent's
     # admin) is not being in it (`sensitivity.is_conversation_person`).
