@@ -11,6 +11,7 @@ vi.mock('@/api/chat', () => ({
 vi.mock('@/api/agents', () => ({ getAgent: async () => ({ name: 'Labs Data' }) }))
 
 const { ANSWER_POLL_MS, ANSWER_POLL_MAX_MS, PrivateConversationGate, takeGateFetch } = await import('./PrivateConversationGate')
+const { forgetAll, rememberListed } = await import('@/pages/chat/sessionCache')
 
 const PRIVATE = {
   id: 's1', sensitive: true, agent_slug: 'labsdata', started_by_name: 'Jonathan Jackson',
@@ -21,6 +22,7 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   sessionStorage.clear()
+  forgetAll()
 })
 
 const gate = () => render(
@@ -33,6 +35,21 @@ describe('PrivateConversationGate', () => {
     await screen.findByText('THE CHAT')
     expect(await takeGateFetch('s1')).toMatchObject({ sensitive: false })
     expect(takeGateFetch('s1')).toBeNull()
+  })
+
+  it('opens a conversation a list already said is not private, without waiting on a read', () => {
+    rememberListed([{ id: 's1', sensitive: false }])
+    gate()
+    expect(screen.getByText('THE CHAT')).toBeTruthy()
+    expect(getSession).not.toHaveBeenCalled()
+  })
+
+  it('still asks first for one a list said is private', async () => {
+    rememberListed([{ id: 's1', sensitive: true }])
+    getSession.mockResolvedValue({ ...PRIVATE, you_are_in_it: true })
+    gate()
+    await screen.findByTestId('private-interstitial-text')
+    expect(screen.queryByText('THE CHAT')).toBeNull()
   })
 
   it("asks one of its people to open it on purpose, then remembers it in this tab", async () => {
