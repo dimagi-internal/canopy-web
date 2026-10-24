@@ -19,10 +19,23 @@ function toRunner(row: unknown): RunnerOut {
   return row as RunnerOut
 }
 
+// The last fleet read, whoever made it. The list is the caller's fleet, not a
+// workspace's (/api/harness is not tenant-rewritten), and it takes the server 1-3s,
+// so a page that only needs it to be roughly current (the chat's offline banner)
+// reuses one a poller such as /ide just made instead of asking again per chat.
+let lastFleet: { at: number; rows: RunnerOut[] } | null = null
+
 export async function listRunners(): Promise<RunnerOut[]> {
   const res = await apiV2.GET('/api/harness/runners/')
   // Array.from rebuilds a real outer array; toRunner is the per-row step above.
-  return Array.from(unwrap(res, 'listRunners'), toRunner)
+  const rows = Array.from(unwrap(res, 'listRunners'), toRunner)
+  lastFleet = { at: Date.now(), rows }
+  return rows
+}
+
+/** The fleet as last read, if that was within `maxAgeMs`; else null. */
+export function recentRunners(maxAgeMs: number): RunnerOut[] | null {
+  return lastFleet && Date.now() - lastFleet.at <= maxAgeMs ? lastFleet.rows : null
 }
 
 /** One runner, as its row in `listRunners` (the same visibility and flags). */

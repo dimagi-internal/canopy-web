@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetState
 import type { PlacementRunner } from 'canopy-ui/chat'
 
 import { ChatApiError, getSession, placeTurn, type ChatSessionDetail } from '@/api/chat'
-import { listRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
+import { listRunners, recentRunners, unpauseRunner, type RunnerOut } from '@/api/harness'
 import {
   findBoundRunner,
   isBoundRunnerOffline,
@@ -11,6 +11,8 @@ import {
 import { withFreshLiveness } from '../chatPageLogic'
 
 export const RECOVERY_POLL_MS = 30_000
+/** How old a fleet read another page made may be and still open a chat (`recentRunners`). */
+export const FLEET_REUSE_MS = 60_000
 
 /** The offline-runner placement banner: whether the session's bound runner is
  *  offline or paused, where else the turn could go, and the actions (wait,
@@ -18,13 +20,14 @@ export const RECOVERY_POLL_MS = 30_000
  *
  *  The session payload only carries `runner_name` (no runner id/liveness), so
  *  offline-ness is DERIVED by matching that name against the fleet-wide runner
- *  list, which is fetched once and re-polled while the banner shows. */
+ *  list, which is fetched once (or reused, when another page read it within
+ *  FLEET_REUSE_MS) and re-polled while the banner shows. */
 export function useRunnerPlacement(
   sessionId: string,
   meta: ChatSessionDetail | null,
   setMeta: Dispatch<SetStateAction<ChatSessionDetail | null>>,
 ) {
-  const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>([])
+  const [fleetRunners, setFleetRunners] = useState<RunnerOut[]>(() => recentRunners(FLEET_REUSE_MS) ?? [])
   const [placing, setPlacing] = useState(false)
   const [placeInfo, setPlaceInfo] = useState<string | null>(null)
   const [placeError, setPlaceError] = useState<string | null>(null)
@@ -40,6 +43,7 @@ export function useRunnerPlacement(
   }, [sessionId])
 
   useEffect(() => {
+    if (recentRunners(FLEET_REUSE_MS)) return
     let live = true
     listRunners()
       .then((r) => {

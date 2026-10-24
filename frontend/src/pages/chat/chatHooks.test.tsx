@@ -148,10 +148,11 @@ describe('useSessionMeta', () => {
   })
 
   it('falls back to the slug and reports a missing session', async () => {
-    chat.getSession.mockResolvedValueOnce(meta({ agent_slug: 'ada' } as Partial<ChatSessionDetail>))
+    // Not 'ada': the name the test above resolved is kept for the life of the tab.
+    chat.getSession.mockResolvedValueOnce(meta({ agent_slug: 'eve' } as Partial<ChatSessionDetail>))
     agents.getAgent.mockRejectedValue(new Error('nope'))
     const { result, rerender } = renderHook(({ id }) => useSessionMeta(id), { initialProps: { id: 's1' } })
-    await waitFor(() => expect(result.current.agentName).toBe('ada'))
+    await waitFor(() => expect(result.current.agentName).toBe('eve'))
     chat.getSession.mockRejectedValueOnce(new Error('session not found'))
     rerender({ id: 's2' })
     await waitFor(() => expect(result.current.metaError).toBe('session not found'))

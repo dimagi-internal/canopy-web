@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { listSessions, type ChatSession } from '@/api/chat'
+import { rememberListed } from '@/pages/chat/sessionCache'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { settleClosing } from '@/components/chat/closeAction'
 import { usePolled } from '@/hooks/usePolled'
@@ -52,6 +53,9 @@ export function useIdeData(state: 'all' | 'active') {
     lastFetch.current = Date.now()
     return Promise.allSettled([listSessions(state, { limit: LIST_LIMIT }), listRunners()]).then(([s, r]) => {
       if (s.status === 'fulfilled') {
+        // Which rows are private, so a click opens an ordinary chat without the
+        // gate's read first (PrivateConversationGate).
+        rememberListed(s.value)
         setSessions(s.value)
         setError(null)
         if (Object.keys(closingRef.current).length) {
