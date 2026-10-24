@@ -125,14 +125,15 @@ describe('TriagePage', () => {
   it('Space peeks the focused task; Enter on a project opens its page', async () => {
     await show()
     press(' ')
-    expect(screen.getByTestId('task-peek').textContent).toContain('Detail of CON-1')
+    // The peek mounts through a URL change: wait for it rather than racing a busy runner.
+    expect((await screen.findByTestId('task-peek')).textContent).toContain('Detail of CON-1')
     press('j')
     press('j')
-    expect(focusedRef()).toBe('connect/kenya')
+    await waitFor(() => expect(focusedRef()).toBe('connect/kenya'))
     press('a') // a project is decided on its own page
     expect(actOn).not.toHaveBeenCalled()
     press('Enter')
-    expect(screen.getByTestId('where').textContent).toBe('/w/connect/projects/kenya')
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/w/connect/projects/kenya'))
   })
 
   it('ignores its keys while you type in a box', async () => {
