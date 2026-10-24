@@ -53,7 +53,7 @@ export const STALE_OWN_COPY =
  */
 async function wrapTo(sessionId: string, email: string, unlock: () => Promise<Unlocked>, api: PeopleApi,
                       confirm: ConfirmPerson, sealedKey: SealedKey):
-    Promise<{ recipient: ParticipantRecipient; wrap: SealedKeyWrapIn; trusted: string | null }> {
+    Promise<{ recipient: ParticipantRecipient; wrap: SealedKeyWrapIn; acceptedJkt: string | null }> {
   if (!sealedKey.wrap) throw new Error("You hold no key to this conversation, so you cannot give it to anyone.");
   if (whyNot(sealedKey) === "stale-wrap") throw new Error(STALE_OWN_COPY);
   const recipient = await api.participantRecipient(sessionId, email);
@@ -61,10 +61,10 @@ async function wrapTo(sessionId: string, email: string, unlock: () => Promise<Un
   if (verdict.status === "bad") {
     throw new Error(`The vault key canopy named for ${email} does not match its fingerprint — nothing was shared.`);
   }
-  let trusted: string | null = null;
+  let acceptedJkt: string | null = null;
   if (verdict.status === "new" || verdict.status === "changed") {
     if (!(await confirm({ email: recipient.email || email, verdict }))) throw new Error("Not added — nothing was shared.");
-    trusted = verdict.jkt;
+    acceptedJkt = verdict.jkt;
   }
   const me = await unlock();
   let key: ConversationKey;
@@ -73,7 +73,7 @@ async function wrapTo(sessionId: string, email: string, unlock: () => Promise<Un
   } catch {
     throw new Error(STALE_OWN_COPY);
   }
-  return { recipient, wrap: await wrapForRecipient(key, recipient), trusted };
+  return { recipient, wrap: await wrapForRecipient(key, recipient), acceptedJkt };
 }
 
 /**
@@ -88,9 +88,9 @@ export async function addPerson(sessionId: string, email: string, role: "editor"
   const session = await api.getSession(sessionId);
   const sealedKey = (session.sealed_key ?? null) as SealedKey | null;
   if (!session.sensitive || !sealedKey) return api.addParticipant(sessionId, email, role);
-  const { recipient, wrap, trusted } = await wrapTo(sessionId, email, unlock, api, confirm, sealedKey);
+  const { recipient, wrap, acceptedJkt } = await wrapTo(sessionId, email, unlock, api, confirm, sealedKey);
   const out = await api.addParticipant(sessionId, email, role, wrap);
-  if (trusted) pinPerson(recipient.user_id, trusted, recipient.email);
+  if (acceptedJkt) pinPerson(recipient.user_id, acceptedJkt, recipient.email);
   return out;
 }
 
@@ -103,10 +103,10 @@ export async function giveKey(sessionId: string, person: { user_id: number; emai
   const session = await api.getSession(sessionId);
   const sealedKey = (session.sealed_key ?? null) as SealedKey | null;
   if (!session.sensitive || !sealedKey) throw new Error("This conversation has no key to give.");
-  const { recipient, wrap, trusted } = await wrapTo(sessionId, person.email, unlock, api, confirm, sealedKey);
+  const { recipient, wrap, acceptedJkt } = await wrapTo(sessionId, person.email, unlock, api, confirm, sealedKey);
   if (recipient.user_id !== person.user_id) throw new Error("That is not the person you asked to give it to.");
   const out = await api.giveKeyCopy(sessionId, person.user_id, wrap);
-  if (trusted) pinPerson(recipient.user_id, trusted, recipient.email);
+  if (acceptedJkt) pinPerson(recipient.user_id, acceptedJkt, recipient.email);
   return out;
 }
 
