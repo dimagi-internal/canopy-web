@@ -37,7 +37,6 @@
 "apps/agents/credentials/zk_seal.py" = ["PLC0415"]  # 1
 "apps/agents/engagement.py" = ["PLC0415"]  # 1
 "apps/agents/fleet_api.py" = ["PLC0415"]  # 3
-"apps/agents/health.py" = ["PLC0415"]  # 1
 "apps/agents/ideas.py" = ["PLC0415"]  # 2
 "apps/agents/interface.py" = ["PLC0415"]  # 4
 "apps/agents/kb_store.py" = ["PLC0415"]  # 4
@@ -164,7 +163,7 @@
 "apps/harness/models.py" = ["PLC0415"]  # 2
 "apps/harness/owner_ask.py" = ["PLC0415"]  # 1
 "apps/harness/provenance.py" = ["PLC0415"]  # 1
-"apps/harness/routing.py" = ["PLC0415"]  # 6
+"apps/harness/routing.py" = ["PLC0415"]  # 5
 "apps/harness/routing_audit.py" = ["PLC0415"]  # 1
 "apps/harness/runner_releases.py" = ["PLC0415"]  # 2
 "apps/harness/runners.py" = ["PLC0415"]  # 6

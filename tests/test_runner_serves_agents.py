@@ -121,6 +121,25 @@ def test_the_vault_rule_is_the_routing_rule_plus_two_named_exceptions(fleet):
     assert "fizzy" not in _agents(cloud).json()
 
 
+def test_one_read_of_the_fleet_answers_every_pair_as_asking_each_does(fleet):
+    """PARITY: `ServingFacts` (one read of many runners and agents, what Health
+    and `keys_for_agent` ask through) gives every pair the answer asking it alone
+    gives — including a live turn's exception, and a computer runner's."""
+    a = fleet["agents"]
+    Turn.objects.create(agent=a["fizzy"], origin=Turn.ORIGIN_API, idempotency_key="pin",
+                        status=Turn.RUNNING, claimed_by=fleet["cloud"], pinned_runner=fleet["cloud"])
+    computer = _runner(fleet["laptop"].owner, "shayoni-mac", fleet["cloud"].workspace, kind=Runner.COMPUTER)
+    boxes = [fleet[k] for k in ("cloud", "laptop", "jj_laptop", "eds_box")] + [computer]
+    facts = routing.ServingFacts(Runner.objects.filter(pk__in=[b.pk for b in boxes]), a.values())
+    by_pk = {r.pk: r for r in facts.runners}
+    for box, agent in itertools.product(boxes, a.values()):
+        alone = (routing.runner_routes_agent(box, agent), device_keys.runner_serves_agent(box, agent))
+        batched = (routing.runner_routes_agent(by_pk[box.pk], agent, facts),
+                   device_keys.runner_serves_agent(by_pk[box.pk], agent, facts))
+        assert batched == alone, (box.name, agent.slug, alone, batched)
+    assert device_keys.runner_serves_agent(by_pk[fleet["cloud"].pk], a["fizzy"], facts)
+
+
 def test_the_rule_is_what_claiming_does(fleet):
     """PARITY: for every box and agent, "routes" == "the claim hands it a turn of
     that agent", with the cascade taken out (the turn is past the grace). This is

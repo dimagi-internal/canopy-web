@@ -1865,7 +1865,7 @@ def caller_runs_agent(user, agent) -> bool:
     return bool(inh) and any(r.owner_id == user.pk for r in inh.runners)
 
 
-def runner_may_hold_agent(runner, agent) -> bool:
+def runner_may_hold_agent(runner, agent, *, standings=None) -> bool:
     """May this box run AS this agent — hold its prompt, its caller's token, its
     secrets and its owner's GitHub identity?
 
@@ -1886,11 +1886,16 @@ def runner_may_hold_agent(runner, agent) -> bool:
     agent with a capability that handles sensitive data, whoever owns it — so no
     other agent's full profile, secrets or GitHub identity ever shares a box with a
     sensitive conversation (spec
-    2026-10-22-sensitive-data-agents §1, "A dedicated box")."""
+    2026-10-22-sensitive-data-agents §1, "A dedicated box").
+
+    `standings` (`access.Standings` holding the runner's owner and the agent)
+    answers the admin question from one read, for a caller asking many pairs."""
     if getattr(runner, "owner_id", None) is None:
         return False
     if is_sensitive_data_box(runner) and not sensitive_data.sensitive_capabilities(agent.interface):
         return False
+    if standings is not None:
+        return standings.is_admin(runner.owner, agent)
     return agent.is_admin(runner.owner)
 
 
