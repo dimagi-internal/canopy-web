@@ -1559,10 +1559,13 @@ class ProjectService(models.Model):
         (`/api/mcp/projects/<ws>/<handle>/`), published by its lead agent's
         curator (`kb_store`, `kb_versions`). One per project; every `kb_*` field.
       * `mcp` — a remote MCP server the workspace shares: `url`, and how to add it.
-      * `skill` — a Claude Code skill (`url`: its repo path) for the agents
-        working on the project.
+      * `skill` — a Claude Code skill: its `instructions`, written here or
+        published by the lead agent (`url`: where it came from, optional).
       * `plugin` — a Claude Code plugin (`url`: its repo) for the workspace.
-    Only `kb` is served by canopy; the others are declared and listed.
+    The projects connection (`apps/mcp/project_gateway.py`) serves every project's
+    through one fixed set of tools, so nothing here reaches a session until the
+    work asks for it. canopy serves `kb` and `skill`; an `mcp` or `plugin` is
+    declared and listed, with how to add it.
     """
 
     KB, MCP, SKILL, PLUGIN = "kb", "mcp", "skill", "plugin"
@@ -1577,6 +1580,9 @@ class ProjectService(models.Model):
     description = models.TextField(blank=True, default="")
     #: An MCP server's URL, a skill's or plugin's repository URL. Blank for a KB.
     url = models.URLField(max_length=500, blank=True, default="")
+    #: A skill's instructions (its SKILL.md body): what an agent reads when it
+    #: uses the skill. Blank for the other kinds.
+    instructions = models.TextField(blank=True, default="")
     created_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                         on_delete=models.SET_NULL, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

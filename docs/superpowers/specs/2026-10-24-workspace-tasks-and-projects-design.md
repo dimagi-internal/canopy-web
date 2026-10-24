@@ -161,6 +161,34 @@ What every kind shares, and why the project is the right owner:
 - **Where it is listed**: on the project page, and in the workspace directory (`GET /api/mcp-servers/`, which becomes every project's served things).
 - **Its history**: the project's activity, like any other project change.
 
+## Opening a project: its toolbox loads only when used
+
+Jonathan, on the toolbox: projects "should be added as needed to not overload the context until they are going to be used", and the approach must be powerful and clear to people who do not know how it works.
+
+**Decision: one connection for every project, with a fixed set of tools, and a project's contents arrive only when a call asks for them.** The alternatives were:
+
+- **Hard-wire each project's server into each agent's plugin.** This is how the GiveWell and Connect Library knowledge bases reach Eva. It loads every project into every session of that agent, whether the work touches it or not, and each new project means editing a plugin.
+- **Have the runner add a turn's project servers at session start.** This needs a different mechanism per runner. It also misses chats and people's own Claude Code, and a session that turns to a second project mid-way.
+- **Add a project's tools to a live session when it is opened.** MCP's `tools/list_changed` notification would let a server do this. It was built and failed against Claude Code 2.1.310, which speaks MCP 2026-07-28. That protocol has no sessions, so the server could not tell which session had opened what.
+
+So the tools are fixed: three to find, open and read a skill, plus one set of knowledge-base tools that each take the project they read. The count does not grow with projects. Each call is self-contained, which survives restarts and needs no store.
+
+Three steps, the same for agents and people:
+
+- **Find:** `projects` lists what the caller may open, one line each.
+- **Open:** `open_project` answers with the project's card: what its knowledge base holds, its skills, and what else it shares.
+- **Use:** the `kb_` tools take the project's address; `project_skill` reads a skill's instructions only when the work needs them.
+
+The person-facing explanation is the same three steps in words, on the project page's Toolbox section.
+
+Choices inside it:
+
+- **A skill is stored as its instructions** (`ProjectService.instructions`). Otherwise canopy could serve a skill only by fetching it from a repository, often a private one, with someone's GitHub access. A non-engineer can write one on the page.
+- **Remote MCP servers are not proxied.** canopy would have to hold each server's credentials and call arbitrary URLs from its own network. The card gives the add line instead.
+- **Plugins are listed, not loaded.** They load when Claude Code starts.
+- **An agent is told, not forced.** A board turn on a project's task names `open_project` in its brief. The brief works the same on every runner.
+- **A knowledge base's per-table tools are not repeated.** `kb_table` reads any table by name, and the card's `kb_info` lists the tables.
+
 ## Compatibility with the fleet
 
 - Every stored status string, `T12` and `P5` keeps working on input. Outputs add fields; none are removed from the agent routes.

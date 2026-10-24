@@ -34,6 +34,19 @@ A project can serve things to its workspace — `ProjectService` rows, one per t
 
 - `kb` — a **knowledge base**, served by canopy as the project's own MCP server at `/api/mcp/projects/<ws>/<handle>/`; one per project, holding every `kb_*` field (published by the lead agent's curator through `…/kb/`, `kb_store.knowledge_base(project)`). The project's `mcp_kind` / `mcp_path` / `kb_published_at` read through to it.
 - `mcp` — a **remote MCP server** the workspace shares: its URL and the `claude mcp add` line. canopy neither proxies nor vets it; `GET /api/mcp-servers/` lists it beside the knowledge-base servers.
-- `skill`, `plugin` — a Claude Code **skill** or **plugin** (a repository URL), declared on the project and listed there. Loading them into the agents' sessions or the workspace catalog is not built yet.
+- `skill` — a Claude Code **skill**: its `instructions` (its SKILL.md body), written on the project page or published by the lead agent; `url` is where it came from, optional when the instructions are there.
+- `plugin` — a Claude Code **plugin** (a repository URL), listed with the line that adds it.
 
-`…/workspace-projects/<ws>/<handle>/services/` lists, adds, changes and removes them (a knowledge base is not removed there). Design record: the spec's "What a project serves to the workspace".
+`…/workspace-projects/<ws>/<handle>/services/` lists, adds, changes and removes them (a knowledge base is not removed there). Design record: the spec's "What a project serves to the workspace" and "Opening a project".
+
+## A project's toolbox reaches a session only when the work asks
+
+**One connection serves every project, with the same few tools however many projects exist.** Never wire a project's own server into an agent's plugin or every session's config: each one adds its tools to every session that agent runs. The **projects connection** at `/api/mcp/projects/` (`apps/mcp/project_gateway.py`; the canopy plugin declares it as `projects`) works in three steps:
+
+1. **Find** — `projects`: one line per project the caller may open that carries something.
+2. **Open** — `open_project("<ws>/<handle>")`: the project's card — what its knowledge base holds (its `kb_info`), its skills by name, its shared servers and plugins with their add lines.
+3. **Use** — the knowledge-base tools `kb_search`, `kb_read`, `kb_entity`, … `kb_table` (any table by name), `kb_original`, each taking the `project` it reads; `project_skill(project, skill)` for a skill's instructions.
+
+Every call names its project and nothing is remembered between calls: under MCP 2026-07-28, which Claude Code speaks, a connection has no session to keep state in. A server cannot add one session's tools (`tools/list_changed` reaches a client, but the next `tools/list` arrives as a stranger), so the tool list stays fixed.
+
+canopy serves what it holds (a knowledge base, a skill's instructions). It does not proxy a shared remote MCP server, since it holds no third-party credentials, and it does not load a plugin, since plugins load when Claude Code starts: those are listed with their add lines. A board turn on a task whose project carries something has `open_project("<address>")` in its brief (`apps/harness/dispatch.py::_task_context`). A person asks their Claude to "open <ws>/<handle>"; the project page's Toolbox section says how, with the one connection line for anyone without the canopy plugin. A project's own server (`/api/mcp/projects/<ws>/<handle>/`) still serves one project, for a client that should always have it.

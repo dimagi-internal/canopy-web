@@ -285,11 +285,11 @@ export type ProjectServiceKind = Schemas['ProjectServiceIn']['kind']
 export async function addProjectService(
   workspace: string,
   handle: string,
-  body: { kind: ProjectServiceKind; name: string; url: string; description?: string },
+  body: { kind: ProjectServiceKind; name: string; url: string; description?: string; instructions?: string },
 ): Promise<ProjectService> {
   const res = await apiV2.POST('/api/workspace-projects/{workspace}/{handle}/services/', {
     params: { path: { workspace, handle } },
-    body: { description: '', ...body },
+    body: { description: '', instructions: '', ...body },
   })
   return typed(unwrap(res, 'addProjectService'))
 }

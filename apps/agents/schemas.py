@@ -3259,6 +3259,8 @@ class ProjectServiceOut(StrictModel):
     url: str = ""
     #: How to add it to Claude Code, where there is one line for that.
     add_command: str = ""
+    #: A skill's instructions: what an agent reads when it uses the skill.
+    instructions: str = ""
     updated_at: dt.datetime
 
 
@@ -3266,14 +3268,19 @@ class ProjectServiceIn(StrictModel):
     #: mcp · skill · plugin (a knowledge base is published through `…/kb/`).
     kind: Literal["mcp", "skill", "plugin"]
     name: str = Field(min_length=1, max_length=80)
-    url: str = Field(min_length=1, max_length=500)
+    #: An MCP server's or plugin's address (required for those); for a skill,
+    #: where its instructions came from (optional when it has them).
+    url: str = Field(default="", max_length=500)
     description: str = Field(default="", max_length=2000)
+    #: A skill's instructions (its SKILL.md body).
+    instructions: str = Field(default="", max_length=50000)
 
 
 class ProjectServicePatch(StrictModel):
     name: str | None = Field(default=None, max_length=80)
     url: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None, max_length=2000)
+    instructions: str | None = Field(default=None, max_length=50000)
 
 
 class ProjectProgressOut(StrictModel):

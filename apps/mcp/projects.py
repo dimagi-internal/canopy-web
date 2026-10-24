@@ -169,15 +169,18 @@ def build_http_app():
 
 
 class ProjectMcpDispatch:
-    """`/api/mcp/projects/<workspace>/<handle>[/…]` → the project server at its root.
+    """`/api/mcp/projects/<workspace>/<handle>[/…]` → the project server at its root;
+    `/api/mcp/projects/` itself → `gateway`, the projects connection that opens any
+    project on demand (`apps/mcp/project_gateway.py`).
 
     Mounted at `/api/mcp/projects` ahead of `/api/mcp`. The project is put on the
     scope (`SCOPE_KEY`), and the request is re-rooted so the FastMCP app — built
     with `path="/"` — sees its own endpoint, with or without the trailing slash
-    Claude Code drops. Anything that does not name a project is a 404."""
+    Claude Code drops. Anything else is a 404."""
 
-    def __init__(self, app):
+    def __init__(self, app, gateway=None):
         self.app = app
+        self.gateway = gateway
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket"):
@@ -186,6 +189,9 @@ class ProjectMcpDispatch:
         root = scope.get("root_path", "")
         path = scope.get("path", "")
         rest = path[len(root):] if root and path.startswith(root) else path
+        if rest in ("", "/") and self.gateway is not None:
+            await self.gateway({**scope, "path": root + "/", "raw_path": (root + "/").encode()}, receive, send)
+            return
         m = _REF.match(rest)
         if not m:
             from starlette.responses import PlainTextResponse
