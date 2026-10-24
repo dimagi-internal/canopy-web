@@ -308,6 +308,18 @@ describe("toolPreview / toolDisplayName", () => {
       },
     });
     expect(toolDisplayName(use)).toBe("drive_create_file");
+    expect(toolPreview(use, null)).toBe("from ace-gdrive");
+  });
+
+  it("names an MCP tool once, and its server beside it", () => {
+    const use = msg({
+      id: "1",
+      role: "tool_use",
+      content: { name: "mcp__connect_labs__data_query", input: {} },
+    });
+    expect(toolDisplayName(use)).toBe("data_query");
+    // Never "data_query · data_query".
+    expect(toolPreview(use, null)).toBe("from Labs");
   });
 });
 

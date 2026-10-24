@@ -213,15 +213,30 @@ export function toolPreview(use: Message, result: Message | null): string {
       ?.subagent_type;
     if (typeof sub === "string" && sub) return sub;
   }
-  // MCP tools: the post-`__` segment is the most informative part.
+  // MCP tools: the header already names the tool (the post-`__` segment,
+  // `toolDisplayName`), so the preview says which server it came from --
+  // "data_query · from Labs", never "data_query · data_query".
   if (name.startsWith("mcp__")) {
-    const parts = name.split("__");
-    const tail = parts[parts.length - 1] ?? name;
-    return tail;
+    const server = mcpServerLabel(name);
+    return server ? `from ${server}` : "";
   }
   // Default: a peek at the result body so the user can scan the call
   // outcome without expanding every row.
   return (result?.plaintext || "").split("\n")[0]?.slice(0, 100) ?? "";
+}
+
+/** The MCP server a `mcp__<server>__<tool>` name came from, for people:
+ *  `mcp__connect_labs__data_query` → "Labs",
+ *  `mcp__plugin_ace_ace-gdrive__drive_create_file` → "ace-gdrive". */
+export function mcpServerLabel(name: string): string {
+  const parts = name.split("__");
+  if (parts.length < 3) return "";
+  let server = parts.slice(1, -1).join("__");
+  // A plugin's server: `plugin_<plugin>_<server>` → `<server>`.
+  const plugin = /^plugin_([^_]+)_(.+)$/.exec(server);
+  if (plugin) server = plugin[2];
+  if (/labs/i.test(server)) return "Labs";
+  return server;
 }
 
 /** Short display label for the tool name in the collapsed header. */
