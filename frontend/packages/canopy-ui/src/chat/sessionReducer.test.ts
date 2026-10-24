@@ -569,6 +569,27 @@ describe("sessionReducer — a web send arriving twice", () => {
     expect(next.messages[0].id).toBe("902")
   })
 
+  it("meets its echo when the runner appended the attachment note and dropped the line breaks", () => {
+    // The live bug (2026-10-24): a send with a screenshot stayed at the bottom
+    // as "pending" while its echo rendered above, because the echo carried the
+    // runner's attachment note, glued on with no line break.
+    const seeded = makeState({
+      messages: [
+        makeMessage({ id: "501", turn_index: 37, role: "user", status: "pending",
+                      plaintext: "why is this here?\nsee [Image #1]" }),
+      ],
+    })
+    const next = sessionReducer(seeded, {
+      event: "chat.user_message",
+      data: { message_id: "902", turn_index: 144448,
+              plaintext: "why is this here? see [Image #1]The user attached the following file. " +
+                "Read it with the Read tool before replying:- [Image #1] /Users/x/.canopy/attachments/a/1.png" },
+    } as WsEvent)
+    expect(next.messages).toHaveLength(1)
+    expect(next.messages[0].id).toBe("902")
+    expect(next.messages[0].status).toBe("complete")
+  })
+
   it("a genuine repeat sent much later is still its own row", () => {
     // The dedupe must not swallow real repetition — only the tail is compared.
     const many = Array.from({ length: 9 }, (_, i) =>
