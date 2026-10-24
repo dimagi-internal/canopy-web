@@ -244,7 +244,28 @@ class FakeIam:
         ]}
 
 
+class FakeKms:
+    def __init__(self, tags): self.tags = tags
+    def list_resource_tags(self, KeyId):  # noqa: N803 — boto3's own argument name
+        return {"Tags": [{"TagKey": k, "TagValue": v} for k, v in self.tags.items()]}
+
+
 class TestCheck:
+    def test_a_kms_key_is_simulated_as_its_arn_with_its_own_tags(self):
+        # The vault key's grants are conditioned on its `canopy-app` tag and its physical
+        # id is a bare key id: simulated with neither, the first deploy to change the key
+        # was refused although the real call is allowed (2026-10).
+        described = {"Changes": [{"Type": "Resource", "ResourceChange": {
+            "Action": "Modify", "LogicalResourceId": "VaultKmsKey", "PhysicalResourceId": "abcd-1234",
+            "ResourceType": "AWS::KMS::Key", "Replacement": "False"}}]}
+        iam = FakeIam()
+        check(FakeCfn(described), iam, "s", "cs", "arn:aws:iam::858923557655:role/deploy",
+              FakeKms({"canopy-app": "canopy-web"}))
+        assert iam.calls and all(c["ResourceArns"] == ["arn:aws:kms:us-east-1:858923557655:key/abcd-1234"]
+                                 for c in iam.calls)
+        assert {"ContextKeyName": "aws:ResourceTag/canopy-app", "ContextKeyValues": ["canopy-web"],
+                "ContextKeyType": "string"} in iam.calls[0]["ContextEntries"]
+
     def test_clean_change_set_returns_no_findings(self):
         assert check(FakeCfn(DESCRIBED), FakeIam(), "s", "cs", "arn:role") == []
 
@@ -341,12 +362,12 @@ class TestCheckPagination:
 class TestMain:
     def test_exit_zero_when_clean(self, monkeypatch, capsys):
         monkeypatch.setattr("deploy.aws.preflight._clients",
-                            lambda: (FakeCfn(DESCRIBED), FakeIam()))
+                            lambda: (FakeCfn(DESCRIBED), FakeIam(), None))
         assert main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"]) == 0
 
     def test_exit_one_and_print_when_denied(self, monkeypatch, capsys):
         monkeypatch.setattr("deploy.aws.preflight._clients",
-                            lambda: (FakeCfn(DESCRIBED), FakeIam(deny={"ecs:UpdateService"})))
+                            lambda: (FakeCfn(DESCRIBED), FakeIam(deny={"ecs:UpdateService"}), None))
         rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
         assert rc == 1
         assert "ecs:UpdateService" in capsys.readouterr().out
@@ -356,7 +377,7 @@ class TestMain:
             "Action": "Add", "LogicalResourceId": "K",
             "ResourceType": "AWS::Kinesis::Stream", "Replacement": "False"}}]}
         monkeypatch.setattr("deploy.aws.preflight._clients",
-                            lambda: (FakeCfn(described), FakeIam()))
+                            lambda: (FakeCfn(described), FakeIam(), None))
         rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
         assert rc == 1
         assert "AWS::Kinesis::Stream" in capsys.readouterr().out
@@ -377,7 +398,7 @@ class TestMain:
                 )
 
         monkeypatch.setattr("deploy.aws.preflight._clients",
-                            lambda: (ExplodingCfn(), FakeIam()))
+                            lambda: (ExplodingCfn(), FakeIam(), None))
         rc = main(["--stack", "s", "--change-set", "cs", "--principal", "arn:role"])
         assert rc == 2
         out = capsys.readouterr().out
