@@ -64,7 +64,7 @@ def test_nearest_passages_by_meaning_filtered_by_type_and_date(project):
 def test_another_projects_vectors_never_answer(project):
     kb_vectors.sync(project)
     other = AgentProject.objects.create(agent=project.agent, ext_id="P13", name="Other", 
-                                        workspace=project.owner_workspace, handle="other-kb")
+                                        workspace=project.workspace, handle="other-kb")
     assert kb_vectors.search(other, "inoculation shortage") is None
 
 

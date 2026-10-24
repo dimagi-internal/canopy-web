@@ -69,7 +69,7 @@ function isPastDue(due: string): boolean {
 
 /** `jarvis` → `Jarvis`. Slugs are lowercase `[a-z0-9-]`, so capitalising the
  *  first letter is the agent's display name in every case the fleet has. */
-export function agentDisplayName(slug: string): string {
+export function agentDisplayName(slug: string | null | undefined): string {
   return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'Agent'
 }
 
@@ -546,7 +546,7 @@ function TaskActions({
     setBusy(true)
     setError(null)
     try {
-      await actOnTask(task.agent_slug, task.ext_id, action, comment)
+      await actOnTask(task.agent_slug ?? task.created_by_agent_slug ?? '', task.ext_id, action, comment)
       setReply('')
       onChanged?.()
     } catch (e) {

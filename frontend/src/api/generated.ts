@@ -3327,11 +3327,12 @@ export interface paths {
          *     the agent via `agent_for_read` first, so a non-member gets 404 (no
          *     existence leak) rather than 403.
          *
-         *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
-         *     syncs, projects, schedules, task actions, runner assignments/drills), so
-         *     this is a real delete rather than a soft flag — nothing is left dangling.
-         *     One thing blocks it: a workspace project the agent stewards (409). Its open chat sessions are closed first: the runner
-         *     deletes each emdash task, and an offline runner does so when it is back.
+         *     Every FK into Agent is CASCADE or SET_NULL (runs, turns, skills, syncs,
+         *     schedules, task actions, runner assignments/drills), so this is a real
+         *     delete rather than a soft flag — nothing is left dangling. Its tasks and
+         *     projects are the workspace's and stay, assigned to and led by nobody. Its
+         *     open chat sessions are closed first: the runner deletes each emdash task,
+         *     and an offline runner does so when it is back.
          */
         readonly delete: operations["delete_agent"];
         readonly options?: never;
@@ -6163,12 +6164,45 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Tasks across every agent you can see (the per-agent filters, plus agent)
-         * @description Reviews first, then questions, then the rest; oldest first within each.
-         *     `waiting=me` is the caller's inbox: open asks nobody owns plus tasks parked
-         *     on the caller. `limit` caps the rows (at most 500).
+         * Tasks across every workspace you can see, filtered
+         * @description `waiting=me` is the caller's inbox: open asks nobody owns plus tasks
+         *     parked on the caller. `assignee` / `created_by`: `me`, an email,
+         *     `agent:<slug>` or `none`. `agent`: the tasks that agent's board shows.
+         *     `category`: triage, backlog, unstarted, started, completed, canceled
+         *     (comma list). `label`, `priority` (0-4), `status`: comma lists. `q`
+         *     matches a title, key or next action. `snoozed=hide` leaves out tasks
+         *     snoozed into the future. `sort`: rank, created, updated, priority, due,
+         *     status, title — default reviews first, then questions, then the rest,
+         *     oldest first in each. `limit` caps the rows (at most 500).
          */
         readonly get: operations["list_fleet_tasks"];
+        readonly put?: never;
+        /**
+         * Create a task in a workspace
+         * @description Filed by you, in `workspace` (default: its project's, else the one you
+         *     are pinned to, else your only one), assigned as `assignee` says (nobody
+         *     when omitted). `project` is an address (`<ws>/<handle>`) or a handle there.
+         */
+        readonly post: operations["create_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/count/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * How many tasks match the task list's filters (the badge's number)
+         * @description The same filters as `GET /api/tasks/`, answered as one number, so a badge
+         *     never downloads the list it counts.
+         */
+        readonly get: operations["count_tasks"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -6229,8 +6263,8 @@ export interface paths {
         };
         /**
          * Projects across every agent you can see
-         * @description Active by default; `status=` (empty for all), `repo_slug=` and `scope=`
-         *     (`agent` or `workspace`) narrow it.
+         * @description Active by default; `status=` (a comma list; empty for all, `open` for
+         *     every status still open) and `repo_slug=` narrow it.
          */
         readonly get: operations["list_fleet_projects"];
         readonly put?: never;
@@ -6294,12 +6328,19 @@ export interface paths {
         };
         /**
          * Workspace projects in every workspace you can see
-         * @description Owned by a workspace rather than one agent, each with a steward agent that
-         *     keeps it current. `status=` narrows; default all.
+         * @description Every project of those workspaces (and those led from them), each
+         *     addressed `<workspace>/<handle>`. `status=` (a comma list) narrows; default
+         *     all.
          */
         readonly get: operations["list_workspace_projects"];
         readonly put?: never;
-        /** Create a workspace project, owned by the steward's workspace */
+        /**
+         * Create a project in a workspace, optionally led by an agent
+         * @description In `workspace` — default the lead agent's, else the one you are pinned to
+         *     or the only one you are in — led by `steward` (an agent's slug) when given,
+         *     with `member_agents` working on it. The handle is free from its name when
+         *     omitted.
+         */
         readonly post: operations["create_workspace_project"];
         readonly delete?: never;
         readonly options?: never;
@@ -6338,14 +6379,14 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Get a workspace project: fields, every agent's tasks in it, recent turns */
+        /** Get a project: fields, its tasks, progress, recent turns */
         readonly get: operations["get_workspace_project"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
-        /** Update a workspace project (including handing it to another steward) */
+        /** Update a project (including its lead agent and its agents) */
         readonly patch: operations["patch_workspace_project"];
         readonly trace?: never;
     };
@@ -6412,6 +6453,307 @@ export interface paths {
          *     approvals first (422). Earlier versions' files are kept for rollback (the newest few).
          */
         readonly post: operations["publish_kb"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/{key}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Get one task by key: its fields, history, relations, subtasks and turn */
+        readonly get: operations["get_task_by_key"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Update a task's fields, by key
+         * @description Each field that changes is a history event. `assignee`: an email, an
+         *     agent's slug or `""`; `labels` replaces the list; `before`/`after` (keys)
+         *     place it between two tasks.
+         */
+        readonly patch: operations["patch_task_by_key"];
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/{key}/actions": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Act on a task by key: approve, decline, reply, accept, backlog, snooze, duplicate, nudge, done
+         * @description approve → in progress and, on an agent's task, its agent starts now.
+         *     accept → todo; backlog → backlog (both close a review ask, start nothing).
+         *     snooze (comment: a date, default a week) → out of Triage until then.
+         *     duplicate (comment: the key it duplicates) → canceled, related. decline,
+         *     reply, nudge and done as on an agent's route.
+         */
+        readonly post: operations["act_on_task_by_key"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/bulk": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Change many tasks at once
+         * @description The same PATCH and/or action to each key, each in its own transaction and
+         *     under its own gate, so one task it may not change does not undo the rest.
+         */
+        readonly post: operations["bulk_tasks"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/{key}/relations/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Relate a task to another
+         * @description `blocks` / `blocked_by` / `related` / `duplicate` the task `other` names.
+         */
+        readonly post: operations["add_task_relation"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/tasks/{key}/relations/{kind}/{other}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Remove a relation */
+        readonly delete: operations["remove_task_relation"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/triage/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What waits for a decision: suggested tasks, ideas and proposed projects
+         * @description Oldest first. A snoozed task stays out until its date (or until something
+         *     happens on it). A proposed project's own decision card is shown as the
+         *     project, not as a task. `project` (an address) narrows to one project.
+         */
+        readonly get: operations["list_triage"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/labels/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** The workspace's task labels */
+        readonly get: operations["list_labels"];
+        readonly put?: never;
+        /** Create a task label */
+        readonly post: operations["create_label"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/labels/{label_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete a task label
+         * @description Its tasks keep everything else; they just lose the label.
+         */
+        readonly delete: operations["delete_label"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Rename or recolour a task label */
+        readonly patch: operations["update_label"];
+        readonly trace?: never;
+    };
+    readonly "/api/views/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** Your saved task views, and the shared ones */
+        readonly get: operations["list_views"];
+        readonly put?: never;
+        /** Save a task view */
+        readonly post: operations["create_view"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/views/{view_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete a saved task view of yours */
+        readonly delete: operations["delete_view"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change a saved task view of yours */
+        readonly patch: operations["update_view"];
+        readonly trace?: never;
+    };
+    readonly "/api/task-settings/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A workspace's task settings: key prefix, status names, update cadence */
+        readonly get: operations["get_task_settings"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Change a workspace's task settings
+         * @description The prefix only while no task carries the current one; a status name per
+         *     category (blank restores the default); how many days an active project
+         *     may go without an update before it shows "update missing".
+         */
+        readonly patch: operations["set_task_settings"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/milestones/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A project's milestones, each with its progress */
+        readonly get: operations["list_milestones"];
+        readonly put?: never;
+        /** Add a milestone to a project */
+        readonly post: operations["create_milestone"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/milestones/{milestone_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete a project's milestone (its tasks stay, without it) */
+        readonly delete: operations["delete_milestone"];
+        readonly options?: never;
+        readonly head?: never;
+        /** Change a project's milestone */
+        readonly patch: operations["update_milestone"];
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/updates/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /** A project's status updates, newest first (drafts too, for those who may publish them) */
+        readonly get: operations["list_project_updates"];
+        readonly put?: never;
+        /**
+         * Post a project update: its health and a short note
+         * @description A person's update is published (unless `draft`). An agent posting under
+         *     its own login always writes a draft — the lead publishes it, choosing the
+         *     health: the agent proposes, the person decides.
+         */
+        readonly post: operations["post_project_update"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspace-projects/{workspace}/{handle}/updates/{update_id}/publish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Publish a drafted project update, choosing its health */
+        readonly post: operations["publish_project_update"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -11397,7 +11739,9 @@ export interface paths {
          * Report a check-in run done
          * @description The project agent's own login only. Marks the run done, records how many
          *     tasks it proposed, and (with a channel) posts one line in the announcement's
-         *     thread pointing at the result — the content stays in canopy.
+         *     thread pointing at the result — the content stays in canopy. `update` (its
+         *     health and a short note) drafts the project's status update, which the
+         *     project's lead publishes, choosing the health.
          */
         readonly post: operations["finish_checkin_run"];
         readonly delete?: never;
@@ -19076,13 +19420,18 @@ export interface components {
         };
         /**
          * ProposalPartnerOut
-         * @description A partner's linked task, on the partner's own board.
+         * @description A partner's linked task: in the project, assigned to the partner.
          */
         readonly ProposalPartnerOut: {
             /** Agent */
             readonly agent: string;
             /** Ext Id */
             readonly ext_id: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
             /** Task Id */
             readonly task_id: number;
             /** Status */
@@ -19111,7 +19460,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "proposed" | "active" | "done" | "archived";
+            readonly status: "proposed" | "planned" | "active" | "paused" | "done" | "canceled" | "archived";
             /** Outcome */
             readonly outcome: string;
             /**
@@ -19170,6 +19519,11 @@ export interface components {
             readonly agent: string;
             /** Ref */
             readonly ref: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
             /** Title */
             readonly title: string;
             /** Status */
@@ -19280,13 +19634,18 @@ export interface components {
             readonly workspace: string;
             /** Ref */
             readonly ref: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
             /** Title */
             readonly title: string;
             /**
              * Status
              * @enum {string}
              */
-            readonly status: "suggested" | "in_progress" | "done" | "declined";
+            readonly status: "suggested" | "backlog" | "todo" | "in_progress" | "done" | "declined";
             /**
              * Why
              * @default
@@ -19512,6 +19871,11 @@ export interface components {
             readonly agent: string;
             /** Ref */
             readonly ref: string;
+            /**
+             * Handle
+             * @default
+             */
+            readonly handle: string;
             /** Name */
             readonly name: string;
             /**
@@ -21347,18 +21711,12 @@ export interface components {
             /** Id */
             readonly id: number;
             /** Agent Slug */
-            readonly agent_slug: string;
+            readonly agent_slug?: string | null;
             /**
              * Workspace
              * @default
              */
             readonly workspace: string;
-            /**
-             * Scope
-             * @default agent
-             * @enum {string}
-             */
-            readonly scope: "agent" | "workspace";
             /**
              * Handle
              * @default
@@ -21366,6 +21724,8 @@ export interface components {
             readonly handle: string;
             /** Steward Slug */
             readonly steward_slug?: string | null;
+            /** Member Agents */
+            readonly member_agents?: readonly string[];
             /**
              * Address
              * @default
@@ -21410,11 +21770,37 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "proposed" | "active" | "done" | "archived";
+            readonly status: "proposed" | "planned" | "active" | "paused" | "done" | "canceled" | "archived";
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Start Date */
+            readonly start_date?: string | null;
+            /** Target Date */
+            readonly target_date?: string | null;
             /** Owner Note */
             readonly owner_note: string;
             /** Owner Email */
             readonly owner_email?: string | null;
+            /** Health */
+            readonly health?: string | null;
+            /**
+             * Update Missing
+             * @default false
+             */
+            readonly update_missing: boolean;
+            /**
+             * Done Task Count
+             * @default 0
+             */
+            readonly done_task_count: number;
             /** Drive Folder Id */
             readonly drive_folder_id: string;
             /** Drive Folder Url */
@@ -21480,6 +21866,11 @@ export interface components {
              */
             readonly ext_id: string;
             /**
+             * Handle
+             * @default
+             */
+            readonly handle: string;
+            /**
              * Outcome
              * @default
              */
@@ -21499,6 +21890,15 @@ export interface components {
              * @default
              */
             readonly owner_email: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Start Date */
+            readonly start_date?: string | null;
+            /** Target Date */
+            readonly target_date?: string | null;
             /**
              * Drive Folder Id
              * @default
@@ -21527,18 +21927,12 @@ export interface components {
             /** Id */
             readonly id: number;
             /** Agent Slug */
-            readonly agent_slug: string;
+            readonly agent_slug?: string | null;
             /**
              * Workspace
              * @default
              */
             readonly workspace: string;
-            /**
-             * Scope
-             * @default agent
-             * @enum {string}
-             */
-            readonly scope: "agent" | "workspace";
             /**
              * Handle
              * @default
@@ -21546,6 +21940,8 @@ export interface components {
             readonly handle: string;
             /** Steward Slug */
             readonly steward_slug?: string | null;
+            /** Member Agents */
+            readonly member_agents?: readonly string[];
             /**
              * Address
              * @default
@@ -21590,11 +21986,37 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "proposed" | "active" | "done" | "archived";
+            readonly status: "proposed" | "planned" | "active" | "paused" | "done" | "canceled" | "archived";
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Start Date */
+            readonly start_date?: string | null;
+            /** Target Date */
+            readonly target_date?: string | null;
             /** Owner Note */
             readonly owner_note: string;
             /** Owner Email */
             readonly owner_email?: string | null;
+            /** Health */
+            readonly health?: string | null;
+            /**
+             * Update Missing
+             * @default false
+             */
+            readonly update_missing: boolean;
+            /**
+             * Done Task Count
+             * @default 0
+             */
+            readonly done_task_count: number;
             /** Drive Folder Id */
             readonly drive_folder_id: string;
             /** Drive Folder Url */
@@ -21645,14 +22067,40 @@ export interface components {
              * @default true
              */
             readonly board_readable: boolean;
+            readonly progress?: components["schemas"]["ProjectProgressOut"] | null;
+            /** Milestones */
+            readonly milestones?: readonly components["schemas"]["MilestoneOut"][];
+            readonly latest_update?: components["schemas"]["ProjectUpdateOut"] | null;
+            /** Draft Updates */
+            readonly draft_updates?: readonly components["schemas"]["ProjectUpdateOut"][];
+            /**
+             * May Edit
+             * @default false
+             */
+            readonly may_edit: boolean;
         };
         /**
          * AgentTaskOut
-         * @description A task, addressed by `(agent_slug, ext_id)` — there is no other id.
+         * @description A task, addressed by its `key` (`DIM-142`) anywhere, and on an agent's
+         *     route also by `ext_id` (that agent's alias, else the key).
          */
         readonly AgentTaskOut: {
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
             /** Agent Slug */
-            readonly agent_slug: string;
+            readonly agent_slug?: string | null;
+            /** Assignee Email */
+            readonly assignee_email?: string | null;
+            /** Created By Agent Slug */
+            readonly created_by_agent_slug?: string | null;
             /**
              * Workspace
              * @default
@@ -21662,12 +22110,16 @@ export interface components {
             readonly ext_id: string;
             /** Project Ext Id */
             readonly project_ext_id?: string | null;
+            /** Project Handle */
+            readonly project_handle?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
             /** Project Address */
             readonly project_address?: string | null;
             /** Parent Ext Id */
             readonly parent_ext_id?: string | null;
+            /** Parent Key */
+            readonly parent_key?: string | null;
             /**
              * Kind
              * @default work
@@ -21694,7 +22146,23 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "suggested" | "in_progress" | "done" | "declined";
+            readonly status: "suggested" | "backlog" | "todo" | "in_progress" | "done" | "declined";
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Labels */
+            readonly labels?: readonly components["schemas"]["LabelBriefOut"][];
+            /** Milestone */
+            readonly milestone?: string | null;
+            /** Snoozed Until */
+            readonly snoozed_until?: string | null;
             /** Owner */
             readonly owner: string;
             /** Assigned */
@@ -21760,6 +22228,11 @@ export interface components {
             /** Position */
             readonly position: number;
             /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+            /**
              * Created At
              * Format: date-time
              */
@@ -21798,6 +22271,45 @@ export interface components {
             /** Said At */
             readonly said_at?: string | null;
         };
+        /** LabelBriefOut */
+        readonly LabelBriefOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Color
+             * @default muted
+             */
+            readonly color: string;
+        };
+        /** MilestoneOut */
+        readonly MilestoneOut: {
+            /** Id */
+            readonly id: number;
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Target Date */
+            readonly target_date?: string | null;
+            /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+            /**
+             * Done
+             * @default 0
+             */
+            readonly done: number;
+            /**
+             * Total
+             * @default 0
+             */
+            readonly total: number;
+        };
         /**
          * ProjectParticipantOut
          * @description A person taking part in the project (fleet brain v1.1).
@@ -21832,6 +22344,58 @@ export interface components {
              * Format: date-time
              */
             readonly since: string;
+        };
+        /** ProjectProgressOut */
+        readonly ProjectProgressOut: {
+            /**
+             * Total
+             * @default 0
+             */
+            readonly total: number;
+            /**
+             * Done
+             * @default 0
+             */
+            readonly done: number;
+            /**
+             * Started
+             * @default 0
+             */
+            readonly started: number;
+            /** Scope History */
+            readonly scope_history?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
+        /** ProjectUpdateOut */
+        readonly ProjectUpdateOut: {
+            /** Id */
+            readonly id: number;
+            /** Health */
+            readonly health: string;
+            /** Body */
+            readonly body: string;
+            /** Status */
+            readonly status: string;
+            /** Author Email */
+            readonly author_email?: string | null;
+            /** Author Agent */
+            readonly author_agent?: string | null;
+            /** Published By Email */
+            readonly published_by_email?: string | null;
+            /** Checkin Run */
+            readonly checkin_run?: number | null;
+            /** Diff */
+            readonly diff?: {
+                readonly [key: string]: unknown;
+            };
+            /** Published At */
+            readonly published_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
         };
         /** TurnBriefOut */
         readonly TurnBriefOut: {
@@ -21877,6 +22441,14 @@ export interface components {
             readonly notes?: string | null;
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
+            /** Priority */
+            readonly priority?: number | null;
+            /** Start Date */
+            readonly start_date?: string | null;
+            /** Target Date */
+            readonly target_date?: string | null;
+            /** Member Agents */
+            readonly member_agents?: readonly string[] | null;
             /** Spawned From */
             readonly spawned_from?: string | null;
             /** Handle */
@@ -21940,6 +22512,8 @@ export interface components {
              * @default suggested
              */
             readonly status: string;
+            /** Assignee */
+            readonly assignee?: string | null;
             /**
              * Owner
              * @default
@@ -21960,6 +22534,18 @@ export interface components {
              * @default
              */
             readonly confidence: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Labels */
+            readonly labels?: readonly string[];
+            /**
+             * Milestone
+             * @default
+             */
+            readonly milestone: string;
             /**
              * Score
              * @default
@@ -21994,11 +22580,8 @@ export interface components {
              * @default
              */
             readonly notes: string;
-            /**
-             * Position
-             * @default 0
-             */
-            readonly position: number;
+            /** Position */
+            readonly position?: number | null;
             /**
              * Ask Kind
              * @default
@@ -22114,7 +22697,12 @@ export interface components {
             /** Id */
             readonly id: number;
             /** Agent Slug */
-            readonly agent_slug: string;
+            readonly agent_slug?: string | null;
+            /**
+             * Task Key
+             * @default
+             */
+            readonly task_key: string;
             /** Task Ext Id */
             readonly task_ext_id: string;
             /** Action */
@@ -22137,8 +22725,22 @@ export interface components {
         };
         /** AgentTaskDetailOut */
         readonly AgentTaskDetailOut: {
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
             /** Agent Slug */
-            readonly agent_slug: string;
+            readonly agent_slug?: string | null;
+            /** Assignee Email */
+            readonly assignee_email?: string | null;
+            /** Created By Agent Slug */
+            readonly created_by_agent_slug?: string | null;
             /**
              * Workspace
              * @default
@@ -22148,12 +22750,16 @@ export interface components {
             readonly ext_id: string;
             /** Project Ext Id */
             readonly project_ext_id?: string | null;
+            /** Project Handle */
+            readonly project_handle?: string | null;
             /** Project Name */
             readonly project_name?: string | null;
             /** Project Address */
             readonly project_address?: string | null;
             /** Parent Ext Id */
             readonly parent_ext_id?: string | null;
+            /** Parent Key */
+            readonly parent_key?: string | null;
             /**
              * Kind
              * @default work
@@ -22180,7 +22786,23 @@ export interface components {
              * Status
              * @enum {string}
              */
-            readonly status: "suggested" | "in_progress" | "done" | "declined";
+            readonly status: "suggested" | "backlog" | "todo" | "in_progress" | "done" | "declined";
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Labels */
+            readonly labels?: readonly components["schemas"]["LabelBriefOut"][];
+            /** Milestone */
+            readonly milestone?: string | null;
+            /** Snoozed Until */
+            readonly snoozed_until?: string | null;
             /** Owner */
             readonly owner: string;
             /** Assigned */
@@ -22246,6 +22868,11 @@ export interface components {
             /** Position */
             readonly position: number;
             /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+            /**
              * Created At
              * Format: date-time
              */
@@ -22275,6 +22902,8 @@ export interface components {
             readonly drive_folder_url?: string | null;
             /** Waiting On Email */
             readonly waiting_on_email?: string | null;
+            /** Assignee */
+            readonly assignee?: string | null;
             /** Title */
             readonly title?: string | null;
             /** Human Why */
@@ -22307,6 +22936,20 @@ export interface components {
             readonly position?: number | null;
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][] | null;
+            /** Priority */
+            readonly priority?: number | null;
+            /** Labels */
+            readonly labels?: readonly string[] | null;
+            /** Milestone */
+            readonly milestone?: string | null;
+            /** Snoozed Until */
+            readonly snoozed_until?: string | null;
+            /** Rank */
+            readonly rank?: number | null;
+            /** Before */
+            readonly before?: string | null;
+            /** After */
+            readonly after?: string | null;
         };
         /** ActOut */
         readonly ActOut: {
@@ -22321,7 +22964,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            readonly action: "approve" | "decline" | "reply" | "nudge" | "done";
+            readonly action: "approve" | "decline" | "reply" | "nudge" | "done" | "accept" | "backlog" | "snooze" | "duplicate";
             /**
              * Comment
              * @default
@@ -24661,9 +25304,15 @@ export interface components {
         readonly IdeaOut: {
             /**
              * Ext Id
-             * @description The idea task's ext_id.
+             * @description The idea task's agent alias, else its key.
              */
             readonly ext_id: string;
+            /**
+             * Key
+             * @description The idea task's key.
+             * @default
+             */
+            readonly key: string;
             /** Title */
             readonly title: string;
             /**
@@ -24715,6 +25364,11 @@ export interface components {
         readonly IdeaTaskOut: {
             /** Ext Id */
             readonly ext_id: string;
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
             /** Title */
             readonly title: string;
             /** Status */
@@ -25639,6 +26293,177 @@ export interface components {
             readonly replace: boolean;
         };
         /**
+         * TaskCreateIn
+         * @description One task made in a workspace (`POST /api/tasks/`): `workspace` (default:
+         *     the project's, else the one you are pinned to, else your only one).
+         */
+        readonly TaskCreateIn: {
+            /**
+             * Ext Id
+             * @default
+             */
+            readonly ext_id: string;
+            /**
+             * Project
+             * @default
+             */
+            readonly project: string;
+            /**
+             * Parent
+             * @default
+             */
+            readonly parent: string;
+            /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            readonly kind: "work" | "idea";
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
+            /** Title */
+            readonly title: string;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyIn"][];
+            /**
+             * Next Action
+             * @default
+             */
+            readonly next_action: string;
+            /**
+             * Status
+             * @default suggested
+             */
+            readonly status: string;
+            /** Assignee */
+            readonly assignee?: string | null;
+            /**
+             * Owner
+             * @default
+             */
+            readonly owner: string;
+            /**
+             * Assigned
+             * @default
+             */
+            readonly assigned: string;
+            /**
+             * Waiting On Email
+             * @default
+             */
+            readonly waiting_on_email: string;
+            /**
+             * Confidence
+             * @default
+             */
+            readonly confidence: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Labels */
+            readonly labels?: readonly string[];
+            /**
+             * Milestone
+             * @default
+             */
+            readonly milestone: string;
+            /**
+             * Score
+             * @default
+             */
+            readonly score: string;
+            /**
+             * Review
+             * @default
+             */
+            readonly review: string;
+            /**
+             * Rationale
+             * @default
+             */
+            readonly rationale: string;
+            /**
+             * Source Url
+             * @default
+             */
+            readonly source_url: string;
+            /**
+             * Plan
+             * @default
+             */
+            readonly plan: string;
+            /** Due */
+            readonly due?: string | null;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /**
+             * Notes
+             * @default
+             */
+            readonly notes: string;
+            /** Position */
+            readonly position?: number | null;
+            /**
+             * Ask Kind
+             * @default
+             * @enum {string}
+             */
+            readonly ask_kind: "" | "review" | "question";
+            /**
+             * Ask Body
+             * @default
+             */
+            readonly ask_body: string;
+            /** On Approve */
+            readonly on_approve?: readonly components["schemas"]["TurnSpecIn"][];
+            /**
+             * Batch Key
+             * @default
+             */
+            readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /** Origin Ref */
+            readonly origin_ref?: {
+                readonly [key: string]: unknown;
+            };
+            /** Raised By */
+            readonly raised_by?: string | null;
+            /**
+             * Source
+             * @default
+             */
+            readonly source: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+        };
+        /** TaskCountOut */
+        readonly TaskCountOut: {
+            /** Count */
+            readonly count: number;
+        };
+        /**
          * AgentRosterRowOut
          * @description One agent as a row in the workspace's agent list: what it is, and what it
          *     is doing — the counts its own pages count with (`health._counts`), and its
@@ -25712,8 +26537,8 @@ export interface components {
         };
         /**
          * WorkspaceProjectIn
-         * @description Create a workspace project directly: owned by `workspace` — the steward's
-         *     own (default) or one below it.
+         * @description Create a project in a workspace: `workspace` (default: the lead agent's,
+         *     else the one you are in), led by `steward` (an agent's slug) if given.
          */
         readonly WorkspaceProjectIn: {
             /** Name */
@@ -25723,6 +26548,11 @@ export interface components {
              * @default
              */
             readonly ext_id: string;
+            /**
+             * Handle
+             * @default
+             */
+            readonly handle: string;
             /**
              * Outcome
              * @default
@@ -25743,6 +26573,15 @@ export interface components {
              * @default
              */
             readonly owner_email: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Start Date */
+            readonly start_date?: string | null;
+            /** Target Date */
+            readonly target_date?: string | null;
             /**
              * Drive Folder Id
              * @default
@@ -25765,15 +26604,18 @@ export interface components {
             readonly notes: string;
             /** Links */
             readonly links?: readonly components["schemas"]["AgentTaskLink"][];
-            /** Handle */
-            readonly handle: string;
-            /** Steward */
+            /**
+             * Steward
+             * @default
+             */
             readonly steward: string;
             /**
              * Workspace
              * @default
              */
             readonly workspace: string;
+            /** Member Agents */
+            readonly member_agents?: readonly string[];
         };
         /**
          * McpServerOut
@@ -25891,6 +26733,607 @@ export interface components {
             readonly changes?: {
                 readonly [key: string]: unknown;
             } | null;
+        };
+        /**
+         * TaskBriefOut
+         * @description Another task, as a line in this one (a relation, its parent).
+         */
+        readonly TaskBriefOut: {
+            /** Key */
+            readonly key: string;
+            /** Title */
+            readonly title: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+        };
+        /** TaskDetailOut */
+        readonly TaskDetailOut: {
+            /**
+             * Key
+             * @default
+             */
+            readonly key: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+            /** Agent Slug */
+            readonly agent_slug?: string | null;
+            /** Assignee Email */
+            readonly assignee_email?: string | null;
+            /** Created By Agent Slug */
+            readonly created_by_agent_slug?: string | null;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /** Ext Id */
+            readonly ext_id: string;
+            /** Project Ext Id */
+            readonly project_ext_id?: string | null;
+            /** Project Handle */
+            readonly project_handle?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Project Address */
+            readonly project_address?: string | null;
+            /** Parent Ext Id */
+            readonly parent_ext_id?: string | null;
+            /** Parent Key */
+            readonly parent_key?: string | null;
+            /**
+             * Kind
+             * @default work
+             * @enum {string}
+             */
+            readonly kind: "work" | "idea";
+            /**
+             * Drive Folder Id
+             * @default
+             */
+            readonly drive_folder_id: string;
+            /**
+             * Drive Folder Url
+             * @default
+             */
+            readonly drive_folder_url: string;
+            /** Title */
+            readonly title: string;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyOut"][];
+            /** Next Action */
+            readonly next_action: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "suggested" | "backlog" | "todo" | "in_progress" | "done" | "declined";
+            /**
+             * Category
+             * @default
+             */
+            readonly category: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Labels */
+            readonly labels?: readonly components["schemas"]["LabelBriefOut"][];
+            /** Milestone */
+            readonly milestone?: string | null;
+            /** Snoozed Until */
+            readonly snoozed_until?: string | null;
+            /** Owner */
+            readonly owner: string;
+            /** Assigned */
+            readonly assigned: string;
+            /** Waiting On Email */
+            readonly waiting_on_email?: string | null;
+            /**
+             * Ask Kind
+             * @default
+             */
+            readonly ask_kind: string;
+            /**
+             * Ask Body
+             * @default
+             */
+            readonly ask_body: string;
+            /**
+             * Ask Open
+             * @default false
+             */
+            readonly ask_open: boolean;
+            /** Ask Closed At */
+            readonly ask_closed_at?: string | null;
+            /** On Approve */
+            readonly on_approve?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Dispatched At */
+            readonly dispatched_at?: string | null;
+            /**
+             * Batch Key
+             * @default
+             */
+            readonly batch_key: string;
+            /**
+             * Idempotency Key
+             * @default
+             */
+            readonly idempotency_key: string;
+            /**
+             * Origin
+             * @default
+             */
+            readonly origin: string;
+            /** Confidence */
+            readonly confidence: string;
+            /** Score */
+            readonly score: string;
+            /** Review */
+            readonly review: string;
+            /** Rationale */
+            readonly rationale: string;
+            /** Source Url */
+            readonly source_url: string;
+            /** Plan */
+            readonly plan: string;
+            /** Due */
+            readonly due?: string | null;
+            /** Links */
+            readonly links?: readonly components["schemas"]["AgentTaskLink"][];
+            /** Notes */
+            readonly notes: string;
+            /** Position */
+            readonly position: number;
+            /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Actions */
+            readonly actions?: readonly components["schemas"]["AgentTaskActionOut"][];
+            /** Events */
+            readonly events?: readonly components["schemas"]["TaskEventOut"][];
+            /** Relations */
+            readonly relations?: readonly components["schemas"]["TaskRelationOut"][];
+            /** Subtasks */
+            readonly subtasks?: readonly components["schemas"]["AgentTaskOut"][];
+            readonly parent?: components["schemas"]["TaskBriefOut"] | null;
+            readonly turn?: components["schemas"]["TaskTurnOut"] | null;
+            /**
+             * Blocked
+             * @default false
+             */
+            readonly blocked: boolean;
+            /**
+             * May Edit
+             * @default false
+             */
+            readonly may_edit: boolean;
+            /** Status Names */
+            readonly status_names?: {
+                readonly [key: string]: string;
+            };
+        };
+        /**
+         * TaskEventOut
+         * @description One entry in the task's history.
+         */
+        readonly TaskEventOut: {
+            /** Id */
+            readonly id: number;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Field
+             * @default
+             */
+            readonly field: string;
+            /**
+             * Old
+             * @default
+             */
+            readonly old: string;
+            /**
+             * New
+             * @default
+             */
+            readonly new: string;
+            /**
+             * Comment
+             * @default
+             */
+            readonly comment: string;
+            /** By Email */
+            readonly by_email?: string | null;
+            /**
+             * By Name
+             * @default
+             */
+            readonly by_name: string;
+            /** By Agent */
+            readonly by_agent?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+        };
+        /** TaskRelationOut */
+        readonly TaskRelationOut: {
+            /** Kind */
+            readonly kind: string;
+            readonly task: components["schemas"]["TaskBriefOut"];
+        };
+        /**
+         * TaskTurnOut
+         * @description The assignee agent's latest turn on this task, and its state as every
+         *     channel renders it (`harness.turn_status`).
+         */
+        readonly TaskTurnOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** State */
+            readonly state: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Url
+             * @default
+             */
+            readonly url: string;
+        };
+        /** BulkTaskResultOut */
+        readonly BulkTaskResultOut: {
+            /** Key */
+            readonly key: string;
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            readonly task?: components["schemas"]["AgentTaskOut"] | null;
+        };
+        /**
+         * BulkTaskIn
+         * @description One change to many tasks: a PATCH, or an action, or both (the PATCH first).
+         */
+        readonly BulkTaskIn: {
+            /** Keys */
+            readonly keys: readonly string[];
+            readonly patch?: components["schemas"]["AgentTaskPatch"] | null;
+            readonly action?: components["schemas"]["AgentTaskActionIn"] | null;
+        };
+        /** TaskRelationIn */
+        readonly TaskRelationIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "blocks" | "blocked_by" | "related" | "duplicate";
+            /** Other */
+            readonly other: string;
+        };
+        /**
+         * TriageOut
+         * @description One thing waiting for a decision: a suggested task (`kind` task or idea)
+         *     or a proposed project.
+         */
+        readonly TriageOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Ref */
+            readonly ref: string;
+            /** Title */
+            readonly title: string;
+            /**
+             * Why
+             * @default
+             */
+            readonly why: string;
+            /**
+             * Proposed By
+             * @default
+             */
+            readonly proposed_by: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Project Address */
+            readonly project_address?: string | null;
+            /** Project Name */
+            readonly project_name?: string | null;
+            /** Url */
+            readonly url: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Backers
+             * @default 0
+             */
+            readonly backers: number;
+            /**
+             * Passes
+             * @default 0
+             */
+            readonly passes: number;
+            /**
+             * Ask Kind
+             * @default
+             */
+            readonly ask_kind: string;
+            /**
+             * Confidence
+             * @default
+             */
+            readonly confidence: string;
+            /**
+             * Priority
+             * @default 0
+             */
+            readonly priority: number;
+            /** Human Why */
+            readonly human_why?: readonly components["schemas"]["HumanWhyOut"][];
+        };
+        /** LabelOut */
+        readonly LabelOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /** Color */
+            readonly color: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /**
+             * Task Count
+             * @default 0
+             */
+            readonly task_count: number;
+        };
+        /** LabelIn */
+        readonly LabelIn: {
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Color
+             * @default muted
+             */
+            readonly color: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+        };
+        /** LabelPatch */
+        readonly LabelPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Color */
+            readonly color?: string | null;
+            /** Description */
+            readonly description?: string | null;
+        };
+        /** SavedViewOut */
+        readonly SavedViewOut: {
+            /** Id */
+            readonly id: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /** Shared */
+            readonly shared: boolean;
+            /**
+             * Mine
+             * @default false
+             */
+            readonly mine: boolean;
+            /** Owner Email */
+            readonly owner_email?: string | null;
+            /** Filters */
+            readonly filters?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Group By
+             * @default
+             */
+            readonly group_by: string;
+            /**
+             * Sort
+             * @default
+             */
+            readonly sort: string;
+            /**
+             * Layout
+             * @default table
+             */
+            readonly layout: string;
+            /**
+             * Rank
+             * @default 0
+             */
+            readonly rank: number;
+        };
+        /** SavedViewIn */
+        readonly SavedViewIn: {
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Shared
+             * @default false
+             */
+            readonly shared: boolean;
+            /** Filters */
+            readonly filters?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Group By
+             * @default
+             */
+            readonly group_by: string;
+            /**
+             * Sort
+             * @default
+             */
+            readonly sort: string;
+            /**
+             * Layout
+             * @default table
+             * @enum {string}
+             */
+            readonly layout: "table" | "board" | "calendar";
+        };
+        /** SavedViewPatch */
+        readonly SavedViewPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Shared */
+            readonly shared?: boolean | null;
+            /** Filters */
+            readonly filters?: {
+                readonly [key: string]: string;
+            } | null;
+            /** Group By */
+            readonly group_by?: string | null;
+            /** Sort */
+            readonly sort?: string | null;
+            /** Layout */
+            readonly layout?: ("table" | "board" | "calendar") | null;
+            /** Rank */
+            readonly rank?: number | null;
+        };
+        /** TaskSettingsOut */
+        readonly TaskSettingsOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** Prefix */
+            readonly prefix: string;
+            /** Status Names */
+            readonly status_names?: {
+                readonly [key: string]: string;
+            };
+            /**
+             * Update Cadence Days
+             * @default 7
+             */
+            readonly update_cadence_days: number;
+        };
+        /** TaskSettingsPatch */
+        readonly TaskSettingsPatch: {
+            /** Prefix */
+            readonly prefix?: string | null;
+            /** Status Names */
+            readonly status_names?: {
+                readonly [key: string]: string;
+            } | null;
+            /** Update Cadence Days */
+            readonly update_cadence_days?: number | null;
+        };
+        /** MilestoneIn */
+        readonly MilestoneIn: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Description
+             * @default
+             */
+            readonly description: string;
+            /** Target Date */
+            readonly target_date?: string | null;
+        };
+        /** MilestonePatch */
+        readonly MilestonePatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Description */
+            readonly description?: string | null;
+            /** Target Date */
+            readonly target_date?: string | null;
+            /** Rank */
+            readonly rank?: number | null;
+        };
+        /** ProjectUpdateIn */
+        readonly ProjectUpdateIn: {
+            /**
+             * Health
+             * @enum {string}
+             */
+            readonly health: "on_track" | "at_risk" | "off_track";
+            /**
+             * Body
+             * @default
+             */
+            readonly body: string;
+            /**
+             * Draft
+             * @default false
+             */
+            readonly draft: boolean;
+            /** Checkin Run */
+            readonly checkin_run?: number | null;
+        };
+        /** ProjectUpdatePublishIn */
+        readonly ProjectUpdatePublishIn: {
+            /** Health */
+            readonly health?: ("on_track" | "at_risk" | "off_track") | null;
+            /** Body */
+            readonly body?: string | null;
         };
         /** KbBlobIn */
         readonly KbBlobIn: {
@@ -32426,8 +33869,26 @@ export interface components {
              * @default
              */
             readonly summary: string;
+            readonly update?: components["schemas"]["CheckinRunUpdateIn"] | null;
             /** Tasks Proposed */
             readonly tasks_proposed?: number | null;
+        };
+        /**
+         * CheckinRunUpdateIn
+         * @description The project update a check-in drafts: the agent's reading of its health,
+         *     and a short note. A person publishes it.
+         */
+        readonly CheckinRunUpdateIn: {
+            /**
+             * Health
+             * @enum {string}
+             */
+            readonly health: "on_track" | "at_risk" | "off_track";
+            /**
+             * Body
+             * @default
+             */
+            readonly body: string;
         };
         /** ThreadMessageOut */
         readonly ThreadMessageOut: {
@@ -44358,6 +45819,18 @@ export interface operations {
                 readonly ask?: string;
                 readonly batch?: string;
                 readonly parent?: string;
+                readonly assignee?: string;
+                readonly created_by?: string;
+                readonly label?: string;
+                readonly priority?: string;
+                readonly milestone?: string;
+                readonly category?: string;
+                readonly kind?: string;
+                readonly due_before?: string | null;
+                readonly due_after?: string | null;
+                readonly q?: string;
+                readonly snoozed?: string;
+                readonly sort?: string;
                 readonly limit?: number;
             };
             readonly header?: never;
@@ -44373,6 +45846,64 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentTaskOut"][];
+                };
+            };
+        };
+    };
+    readonly create_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TaskCreateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+        };
+    };
+    readonly count_tasks: {
+        readonly parameters: {
+            readonly query?: {
+                readonly agent?: string;
+                readonly project?: string;
+                readonly status?: string;
+                readonly waiting?: string;
+                readonly ask?: string;
+                readonly assignee?: string;
+                readonly created_by?: string;
+                readonly label?: string;
+                readonly priority?: string;
+                readonly category?: string;
+                readonly kind?: string;
+                readonly snoozed?: string;
+                readonly parent?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskCountOut"];
                 };
             };
         };
@@ -44681,6 +46212,586 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentProjectOut"];
+                };
+            };
+        };
+    };
+    readonly get_task_by_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskDetailOut"];
+                };
+            };
+        };
+    };
+    readonly patch_task_by_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentTaskPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskOut"];
+                };
+            };
+        };
+    };
+    readonly act_on_task_by_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentTaskActionIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActOut"];
+                };
+            };
+        };
+    };
+    readonly bulk_tasks: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["BulkTaskIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["BulkTaskResultOut"][];
+                };
+            };
+        };
+    };
+    readonly add_task_relation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TaskRelationIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskDetailOut"];
+                };
+            };
+        };
+    };
+    readonly remove_task_relation: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly key: string;
+                readonly kind: string;
+                readonly other: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskDetailOut"];
+                };
+            };
+        };
+    };
+    readonly list_triage: {
+        readonly parameters: {
+            readonly query?: {
+                readonly workspace?: string;
+                readonly project?: string;
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["TriageOut"][];
+                };
+            };
+        };
+    };
+    readonly list_labels: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["LabelOut"][];
+                };
+            };
+        };
+    };
+    readonly create_label: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LabelIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LabelOut"];
+                };
+            };
+        };
+    };
+    readonly delete_label: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly label_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_label: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly label_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["LabelPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["LabelOut"];
+                };
+            };
+        };
+    };
+    readonly list_views: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SavedViewOut"][];
+                };
+            };
+        };
+    };
+    readonly create_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SavedViewIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedViewOut"];
+                };
+            };
+        };
+    };
+    readonly delete_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_view: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly view_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SavedViewPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SavedViewOut"];
+                };
+            };
+        };
+    };
+    readonly get_task_settings: {
+        readonly parameters: {
+            readonly query?: {
+                readonly workspace?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskSettingsOut"];
+                };
+            };
+        };
+    };
+    readonly set_task_settings: {
+        readonly parameters: {
+            readonly query?: {
+                readonly workspace?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TaskSettingsPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TaskSettingsOut"];
+                };
+            };
+        };
+    };
+    readonly list_milestones: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MilestoneOut"][];
+                };
+            };
+        };
+    };
+    readonly create_milestone: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MilestoneIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MilestoneOut"];
+                };
+            };
+        };
+    };
+    readonly delete_milestone: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly milestone_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_milestone: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly milestone_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MilestonePatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MilestoneOut"];
+                };
+            };
+        };
+    };
+    readonly list_project_updates: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectUpdateOut"][];
+                };
+            };
+        };
+    };
+    readonly post_project_update: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectUpdateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectUpdateOut"];
+                };
+            };
+        };
+    };
+    readonly publish_project_update: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly workspace: string;
+                readonly handle: string;
+                readonly update_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectUpdatePublishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectUpdateOut"];
                 };
             };
         };

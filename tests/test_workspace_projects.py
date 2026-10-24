@@ -61,7 +61,8 @@ def test_every_project_has_a_workspace_address(client, eva):
     body = _agent_project(client)
     assert (body["handle"], body["steward_slug"], body["address"]) == (
         "givewell-knowledge-base", "eva", "dimagi/givewell-knowledge-base")
-    assert body["url"] == body["board_url"] == "/w/dimagi/projects/givewell-knowledge-base"
+    assert body["url"] == "/w/dimagi/projects/givewell-knowledge-base"
+    assert body["board_url"] == "/w/dimagi/agents/eva/projects/P1"
     assert body["ext_id"] == "P1" and body["member_agents"] == ["eva"]
     assert client.get("/api/agents/eva/projects/P1/").status_code == 200
     assert client.get("/api/workspace-projects/dimagi/givewell-knowledge-base/").status_code == 200
@@ -265,7 +266,7 @@ def test_a_parent_workspaces_agent_stewards_a_project_of_the_division(client, ev
     body = r.json()
     assert (body["address"], body["steward_slug"], body["url"]) == (
         "connect/givewell-kb", "eva", "/w/connect/projects/givewell-kb")
-    assert body["board_url"] == body["url"]  # one page
+    assert body["board_url"] == "/w/dimagi/agents/eva/projects/P1"  # the lead agent's workspace, not connect
     assert client.get("/api/workspace-projects/connect/givewell-kb/").json()["board_readable"] is True
 
 

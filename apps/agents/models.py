@@ -1476,8 +1476,12 @@ class AgentProject(models.Model):
 
     @property
     def board_url(self) -> str:
-        """The same page as `url`. Kept in the API for callers that link it."""
-        return self.url
+        """Its page on its lead agent's board, in the AGENT's workspace (which for
+        a division's project led from the parent is not the project's); `url`
+        when no agent leads it."""
+        if not self.agent_id:
+            return self.url
+        return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id or self.handle}"
 
     @property
     def kb_version_number(self) -> int | None:

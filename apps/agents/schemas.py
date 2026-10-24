@@ -1245,7 +1245,7 @@ class AgentProjectOut(StrictModel):
     address: str = ""
     #: Its one page.
     url: str = ""
-    #: The same page as `url`.
+    #: Its page on its lead agent's board (`url` when no agent leads it).
     board_url: str = ""
     #: What it serves as its own MCP server ("" nothing, "kb" a knowledge base),
     #: and where (relative to canopy's origin; empty until something is published).

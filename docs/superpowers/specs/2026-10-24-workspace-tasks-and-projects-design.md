@@ -96,7 +96,7 @@ A proposed project is started only through its decision card. A PATCH from `prop
 - **`ProjectMilestone`**: `project`, `name`, `description`, `target_date`, `rank`. Progress is the share of its tasks done, by category.
 - **`ProjectUpdate`**: `project`, `health` `on_track` | `at_risk` | `off_track`, `body`, `author_user` / `author_agent`, `status` `draft` | `published`, `checkin_run` (nullable), `diff` (JSON: what changed since the last update: target moved, milestones, tasks done). A check-in run's finish may carry a draft; the lead publishes it, choosing the health.
 - **`SavedView`**: `workspace`, `owner`, `name`, `shared` (personal or the workspace's), `filters` (JSON), `group_by`, `sort`, `layout` `table` | `board` | `calendar`, `rank`.
-- **`KnowledgeBase`**: one-to-one with project, holding `mcp_kind` and every `kb_*` column.
+- **`ProjectService`**: what a project serves to its workspace, one row per thing, by `kind`. A knowledge base is the first kind and holds every `kb_*` column (see "What a project serves to the workspace").
 
 `ProjectCheckin.agents` becomes a many-to-many to Agent (D6).
 
@@ -141,6 +141,25 @@ Kept, as views over the new model, so the fleet keeps working: every `/api/agent
 - **Project page** `/w/:ws/projects/:handle` (one page for everyone): property header (status, health, lead, agents, start, target, priority); latest update with "update missing" and a post-update form; milestones with progress; scope-vs-done graph; tasks table; ideas; backers; check-ins as a table with a cadence preview from `next_runs`; activity. Teammates see all of it except the controls they may not use. The old agent-board project address redirects here.
 - **Command palette** (`⌘K`): jump to any task, project, agent or page; create a task or project; act on the open task. Shortcuts: `C` create, `Space` peek, `X` select, `J`/`K` move, `Esc` close, `?` lists them.
 - **One vocabulary**: project, task, idea, proposal; status words from the category; "waiting" only ever means waiting on you; the opted-in repos are "Opted-in repos"; the header's Projects menu becomes **Demos**.
+
+## What a project serves to the workspace
+
+Once a project is the workspace's and spans its agents and people, it is the natural place to hang the things the workspace shares (Jonathan, 2026-10-24). Knowledge bases were the first such thing: a project that serves its own MCP server at `/api/mcp/projects/<ws>/<handle>/`.
+
+So the knowledge-base columns do not move to a one-off `KnowledgeBase` table (D8). They move to **`ProjectService`**, one row per thing a project serves, with a `kind`:
+
+| Kind | What the project serves | Status |
+|---|---|---|
+| `kb` | A knowledge base, as its own MCP server (every `kb_*` field, as today) | Moved in this change |
+| `mcp` | A remote MCP server the workspace shares: its URL and how to add it | Next |
+| `skill` | A skill (a repo path) every agent working on the project loads | Next |
+| `plugin` | A Claude Code plugin, listed in the workspace's catalog | Next |
+
+What every kind shares, and why the project is the right owner:
+- **Who may use it** is the project's reach: members of its workspace (and its lead agent's), narrowed per kind where the source is private (a KB built from someone's Drive keeps its readers list).
+- **Who keeps it current** is the project's lead agent, or an editor.
+- **Where it is listed**: on the project page, and in the workspace directory (`GET /api/mcp-servers/`, which becomes every project's served things).
+- **Its history**: the project's activity, like any other project change.
 
 ## Compatibility with the fleet
 

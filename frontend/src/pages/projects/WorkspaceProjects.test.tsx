@@ -76,11 +76,9 @@ describe('WorkspaceProjectRedirect', () => {
 })
 
 describe('WorkspaceProjectLine', () => {
-  it('shows only for a workspace project', () => {
-    const { rerender } = render(<WorkspaceProjectLine project={kb} />)
+  it('names the project by its workspace address', () => {
+    render(<WorkspaceProjectLine project={kb} />)
     expect(screen.getByTestId('workspace-project-line').textContent).toContain('dimagi/givewell-kb')
-    rerender(<WorkspaceProjectLine project={{ ...(kb as object), scope: 'agent' } as never} />)
-    expect(screen.queryByTestId('workspace-project-line')).toBeNull()
   })
 })
 
