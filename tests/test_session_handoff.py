@@ -349,3 +349,43 @@ def test_handoffs_route_reports_each_transfer(ctx):
     (row,) = ctx.c.get(f"/api/canopy-sessions/{s.id}/handoffs").json()
     assert row["capture_status"] == "captured" and row["branch"] == "feature/x"
     assert row["skipped"][0]["path"] == ".env.local" and row["turn_id"]
+
+
+# --- a session working right now is not moved ------------------------------
+
+def test_a_session_the_engine_says_is_working_is_not_moved(ctx):
+    """Typed straight into (the chat, /ide, emdash), a session runs Claude with no
+    executing Turn at all; its runner's report is the only witness. Found live
+    2026-10-24: a dry run offered three `running` sessions, one of them the very
+    session asking."""
+    from apps.canopy_sessions import transcript_read
+
+    s = _session(ctx, "live")
+    RunnerBinding.objects.filter(session=s).update(agent_status="working")
+    s.refresh_from_db()
+    assert transcript_read.is_session_running(s.runner_binding)
+    assert not Turn.objects.filter(chat_session=s).exists()
+
+    with pytest.raises(RuntimeError, match="working right now"):
+        session_placement.transfer_session(session=s, placement=str(ctx.laptop.id), user=ctx.user)
+    body = {"from_runner": "haldimagi-mbp-cdp", "to_runner": "jj-mbp-cdp"}
+    for dry in (True, False):
+        (row,) = ctx.c.post("/api/canopy-sessions/transfer-all", data={**body, "dry_run": dry},
+                            content_type="application/json").json()["results"]
+        assert row["status"] == "refused" and "working right now" in row["error"]
+    assert RunnerBinding.objects.get(session=s).runner_id == ctx.source.id
+
+
+def test_a_paused_box_mid_turn_is_still_busy_and_an_offline_one_is_not(ctx):
+    s = _session(ctx, "live")
+    RunnerBinding.objects.filter(session=s).update(agent_status="working")
+    ctx.source.status = Runner.PAUSED  # a pause stops new work, not a turn under way
+    ctx.source.save(update_fields=["status"])
+    s.refresh_from_db()
+    assert session_placement.busy_reason(s) == "the session is working right now — stop it first"
+    # Offline: its last report describes a session nobody can still be driving.
+    Runner.objects.filter(pk=ctx.source.pk).update(
+        last_heartbeat_at=timezone.now() - dt.timedelta(hours=2))
+    s = Session.objects.get(pk=s.pk)
+    assert session_placement.busy_reason(s) == ""
+    session_placement.transfer_session(session=s, placement=str(ctx.laptop.id), user=ctx.user)

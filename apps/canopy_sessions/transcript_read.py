@@ -475,6 +475,14 @@ def is_session_running(binding) -> bool:
         return False
     if binding.runner.live_status != Runner.ONLINE:
         return False
+    return engine_says_running(binding)
+
+
+def engine_says_running(binding) -> bool:
+    """`is_session_running` without its liveness check: what the binding's last
+    report says the engine is doing. For a caller that has already decided the
+    runner is there to be believed — a transfer asks it of a PAUSED box too,
+    since a pause stops new work, not a turn already under way."""
     if binding.agent_status:
         if binding.agent_status in WORKING_STATUSES:
             return True
