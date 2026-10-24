@@ -89,6 +89,12 @@ export async function addZkEndorsements(slug: string, endorsements: ZkEndorsemen
     params: { path: { slug } }, body: { endorsements } }), 'Could not confirm who can read this agent')
 }
 
+/** The agent's requests still waiting for an answer (admins only) — names and reasons, never a value. */
+export async function listSecretRequests(slug: string): Promise<SecretRequestOut[]> {
+  return need<SecretRequestOut[]>(await apiV2.GET('/api/agents/{slug}/secret-requests', {
+    params: { path: { slug } } }), 'Could not load what the agent asked for')
+}
+
 export async function getSecretRequest(slug: string, id: string): Promise<SecretRequestOut> {
   return need<SecretRequestOut>(await apiV2.GET('/api/agents/{slug}/secret-requests/{request_id}', {
     params: { path: { slug, request_id: id } } }), 'Could not load the request')

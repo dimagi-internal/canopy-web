@@ -247,6 +247,25 @@ def test_the_contact_door_never_carries_a_seal_card():
 
 # ---- recipients ---------------------------------------------------------------------------
 
+def test_the_credentials_page_lists_open_requests_including_one_from_no_chat(f):
+    in_chat = _ask(f).json()["id"]
+    no_chat = _ask(f, name="kindora", session=False).json()
+    assert no_chat["session_id"] is None
+    listed = Client().get(f"{BASE}/secret-requests", **_bearer(f.jj_pat))
+    assert listed.status_code == 200, listed.content
+    assert [r["id"] for r in listed.json()] == [no_chat["id"], in_chat]
+    assert all("value" not in r and "value_zk" not in r for r in listed.json())
+    assert _fulfil(f, in_chat, _seal(f), token=f.jj_pat).status_code == 200
+    AgentSecretRequest.objects.filter(pk=no_chat["id"]).update(expires_at=timezone.now())
+    assert Client().get(f"{BASE}/secret-requests", **_bearer(f.jj_pat)).json() == []
+
+
+def test_only_an_admin_lists_the_open_requests(f):
+    _ask(f)
+    for token in (f.sam_pat, f.bot_pat):
+        assert Client().get(f"{BASE}/secret-requests", **_bearer(token)).status_code == 403
+
+
 def test_recipients_are_for_admins_and_whoever_may_answer_the_open_request(f):
     rid = _ask(f).json()["id"]
     url = f"{BASE}/vault/zk/recipients"

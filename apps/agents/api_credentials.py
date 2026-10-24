@@ -571,6 +571,18 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
         "person's browser and never reaches you or canopy. Do not ask for it in the conversation."))
 
 
+@router.get("/{slug}/secret-requests", response=list[SecretRequestOut],
+            summary="This agent's open secret requests (never a value)")
+@gate("agent-admin")  # names and reasons, never a value
+def list_agent_secret_requests(request: HttpRequest, slug: str) -> list[SecretRequestOut]:
+    """The requests still waiting for an answer, newest first — what the agent's
+    Credentials page shows its admins, including a request made outside any of
+    its chats (`session_id` null), which no chat card carries."""
+
+    agent = agent_for_admin(request, slug)
+    return [_secret_request_out(r) for r in secret_requests.open_requests(agent)]
+
+
 @router.get("/{slug}/secret-requests/{request_id}", response=SecretRequestOut,
             summary="A secret request's status (never its value)")
 @gate("agent-login", "agent-admin", "session-acl")  # status, never a value
