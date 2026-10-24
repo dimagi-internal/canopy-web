@@ -7599,9 +7599,33 @@ export interface paths {
          *     route to or that live in it (the runner topology's rows, plus whether each runs
          *     current code and its own failing checks). Each step carries the link
          *     that fixes it; `can_fix` says whether the viewer may follow it, else
-         *     `owner_email` is who to send it to. Admin and above.
+         *     `owner_email` is who to send it to. With `setup=false` each agent's checklist
+         *     and vault state, and the totals counted from them, are null: read them from
+         *     `/health/setup` a few agents at a time. Admin and above.
          */
         readonly get: operations["workspace_health"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/health/setup": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The setup checklist and vault state of some of the tree's agents
+         * @description The `steps`, `vault` and `left` of each named agent (comma-separated slugs,
+         *     at most 25) in this workspace's tree, as `/health` reports them. A slug outside
+         *     the tree is left out. Admin and above.
+         */
+        readonly get: operations["workspace_health_setup"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -28639,11 +28663,11 @@ export interface components {
              * @default []
              */
             readonly ran_on: readonly components["schemas"]["AgentRunnerUseOut"][];
-            readonly vault: components["schemas"]["AgentVaultHealthOut"];
+            readonly vault?: components["schemas"]["AgentVaultHealthOut"] | null;
             /** Steps */
-            readonly steps: readonly components["schemas"]["HealthStepOut"][];
+            readonly steps?: readonly components["schemas"]["HealthStepOut"][] | null;
             /** Left */
-            readonly left: number;
+            readonly left?: number | null;
         };
         /** AgentRunnerUseOut */
         readonly AgentRunnerUseOut: {
@@ -28754,22 +28778,22 @@ export interface components {
             /** Agents */
             readonly agents: number;
             /** Set Up */
-            readonly set_up: number;
+            readonly set_up?: number | null;
             /** Needs Setup */
-            readonly needs_setup: number;
+            readonly needs_setup?: number | null;
             /**
              * Used 30D
              * @default 0
              */
             readonly used_30d: number;
             /** Vault Canopy Web */
-            readonly vault_canopy_web: number;
+            readonly vault_canopy_web?: number | null;
             /** Vault Moving */
-            readonly vault_moving: number;
+            readonly vault_moving?: number | null;
             /** Vault 1Password */
-            readonly vault_1password: number;
+            readonly vault_1password?: number | null;
             /** Vault None */
-            readonly vault_none: number;
+            readonly vault_none?: number | null;
             /** Runners */
             readonly runners: number;
             /** Runners Online */
@@ -28819,6 +28843,21 @@ export interface components {
             /** Runners */
             readonly runners: readonly components["schemas"]["TopologyRunnerOut"][];
             readonly totals: components["schemas"]["HealthTotalsOut"];
+        };
+        /** AgentSetupHealthOut */
+        readonly AgentSetupHealthOut: {
+            /** Slug */
+            readonly slug: string;
+            readonly vault: components["schemas"]["AgentVaultHealthOut"];
+            /** Steps */
+            readonly steps: readonly components["schemas"]["HealthStepOut"][];
+            /** Left */
+            readonly left: number;
+        };
+        /** WorkspaceHealthSetupOut */
+        readonly WorkspaceHealthSetupOut: {
+            /** Agents */
+            readonly agents: readonly components["schemas"]["AgentSetupHealthOut"][];
         };
         /** AnalyticsAgentOut */
         readonly AnalyticsAgentOut: {
@@ -48387,7 +48426,9 @@ export interface operations {
     };
     readonly workspace_health: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly setup?: boolean;
+            };
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
@@ -48403,6 +48444,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceHealthOut"];
+                };
+            };
+        };
+    };
+    readonly workspace_health_setup: {
+        readonly parameters: {
+            readonly query: {
+                readonly agents: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceHealthSetupOut"];
                 };
             };
         };

@@ -64,6 +64,7 @@ from .schemas import (
     WorkspaceAnalyticsOut,
     WorkspaceCreateIn,
     WorkspaceHealthOut,
+    WorkspaceHealthSetupOut,
     WorkspaceNetworkOut,
     WorkspaceOut,
     WorkspaceParentIn,
@@ -818,18 +819,46 @@ def _tree_reader(request: HttpRequest, slug: str):
 @router.get("/{slug}/health", response=WorkspaceHealthOut,
             summary="What is not set up right, across this workspace and every one below it")
 @gate("logs.read")  # same tree read; can_fix mirrors Agent.is_admin
-def workspace_health(request: HttpRequest, slug: str) -> WorkspaceHealthOut:
+def workspace_health(request: HttpRequest, slug: str, setup: bool = True) -> WorkspaceHealthOut:
     """Every agent in the tree with its setup checklist (the same steps as its own
     Settings page and `agent_setup`), its vault state (canopy-web, moving, 1Password)
     and properties; every workspace with its shared vault; the runners its agents
     route to or that live in it (the runner topology's rows, plus whether each runs
     current code and its own failing checks). Each step carries the link
     that fixes it; `can_fix` says whether the viewer may follow it, else
-    `owner_email` is who to send it to. Admin and above."""
+    `owner_email` is who to send it to. With `setup=false` each agent's checklist
+    and vault state, and the totals counted from them, are null: read them from
+    `/health/setup` a few agents at a time. Admin and above."""
+    root, visible = _tree_reader(request, slug)
+    return WorkspaceHealthOut(**_health().build(root, request.user, visible, setup=setup))
+
+
+def _health():
+    """`apps.agents.health`, which both health routes read (an upward import:
+    workspaces sits below agents, so it stays one, and lazy)."""
     from apps.agents import health
 
+    return health
+
+
+#: How many agents one `/health/setup` read may name.
+HEALTH_SETUP_MAX = 25
+
+
+@router.get("/{slug}/health/setup", response=WorkspaceHealthSetupOut,
+            summary="The setup checklist and vault state of some of the tree's agents")
+@gate("logs.read")  # same tree read as /health
+def workspace_health_setup(request: HttpRequest, slug: str, agents: str) -> WorkspaceHealthSetupOut:
+    """The `steps`, `vault` and `left` of each named agent (comma-separated slugs,
+    at most 25) in this workspace's tree, as `/health` reports them. A slug outside
+    the tree is left out. Admin and above."""
+    # The costly half of /health: the page reads the table with setup=false, then
+    # this a few agents at a time, so it shows before every checklist is computed.
+    wanted = {s.strip() for s in agents.split(",") if s.strip()}
+    if len(wanted) > HEALTH_SETUP_MAX:
+        raise HttpError(422, f"At most {HEALTH_SETUP_MAX} agents per read")
     root, visible = _tree_reader(request, slug)
-    return WorkspaceHealthOut(**health.build(root, request.user, visible))
+    return WorkspaceHealthSetupOut(agents=_health().setup_of(root, request.user, visible, wanted))
 
 
 @router.get("/{slug}/analytics", response=WorkspaceAnalyticsOut,

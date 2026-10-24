@@ -142,6 +142,32 @@ def test_health_reads_the_fleet_once_however_many_runners_hold_device_keys(tree)
     assert queries() <= one + 5  # the topology half still reads a little per runner
 
 
+def test_the_page_reads_the_table_first_and_each_checklist_after_as_one_read_has_them(tree):
+    """`setup=false` leaves the checklists out, so the table shows before they are
+    computed; `/health/setup` then gives the same steps and vault the full read does."""
+    full = {a["slug"]: a for a in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["agents"]}
+    body = _get(tree["ceo"], "/api/workspaces/dimagi/health?setup=false").json()
+    assert {a["slug"]: (a["steps"], a["vault"], a["left"]) for a in body["agents"]} == {
+        "eva": (None, None, None), "hal": (None, None, None)}
+    assert body["totals"]["agents"] == 2 and body["totals"]["vault_moving"] is None
+    assert body["agents"][0]["can_fix"] is True
+
+    r = _get(tree["ceo"], "/api/workspaces/dimagi/health/setup?agents=hal,eva")
+    assert r.status_code == 200, r.content
+    setup = {a["slug"]: a for a in r.json()["agents"]}
+    assert {s: (a["steps"], a["vault"], a["left"]) for s, a in setup.items()} == {
+        s: (full[s]["steps"], full[s]["vault"], full[s]["left"]) for s in ("hal", "eva")}
+
+
+def test_a_checklist_read_stays_inside_the_tree_it_names(tree):
+    # eva lives in dimagi, above connect: a read of connect's tree leaves her out.
+    r = _get(tree["ceo"], "/api/workspaces/connect/health/setup?agents=hal,eva,nobody")
+    assert [a["slug"] for a in r.json()["agents"]] == ["hal"]
+    assert _get(tree["staff"], "/api/workspaces/dimagi/health/setup?agents=eva").status_code in (403, 404)
+    many = ",".join(f"a{n}" for n in range(26))
+    assert _get(tree["ceo"], f"/api/workspaces/dimagi/health/setup?agents={many}").status_code == 422
+
+
 def test_health_is_the_admin_tier(tree):
     assert _get(tree["staff"], "/api/workspaces/dimagi/health").status_code in (403, 404)
 
