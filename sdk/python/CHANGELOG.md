@@ -2,6 +2,19 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.22.1 — 2026-10-24
+
+**The panel tells its page which conversation is open, and opens one by id.**
+
+- `canopy_host/panel.html` passes the widget's `onSession` (canopy-web's embedding guide
+  §5e): the conversation open in the panel, `{id, resource, private}` or `null`, is kept
+  for `canopyHost.session()` and announced as a `canopy:session` event on `document`.
+  Never its title or words — a pointer, for a page that keeps conversations (`resource`
+  is where it began, as canopy recorded it).
+- `canopyHost.openSession(id)` opens the panel on a conversation by its canopy id; canopy
+  reads it as the visitor, so its session ACL decides. Returns false on a widget older
+  than the call.
+
 ## 0.22.0 — 2026-10-23
 
 **A kept link is `<scheme>://<id>` and nothing more; the request digest is unambiguous.**

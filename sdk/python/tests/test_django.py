@@ -463,19 +463,24 @@ def _run_panel_script(body: str, calls: str) -> list:
     harness = f"""
       const pushed = [];
       const els = {json.dumps(blocks)};
-      global.window = {{ canopy: {{ init: () => ({{ setPageState: (s) => pushed.push(s) }}) }},
+      const events = [];
+      const opened = [];
+      let options = null;
+      global.window = {{ canopy: {{ init: (o) => {{ options = o; return {{
+                           setPageState: (s) => pushed.push(s),
+                           openSession: (id) => opened.push(id) }}; }} }},
                          location: {{ pathname: "/" }} }};
       global.document = {{
         currentScript: null,
         getElementById: (id) => (id in els ? {{ textContent: els[id] }} : null),
         querySelector: () => null,
-        dispatchEvent: () => true,
+        dispatchEvent: (e) => {{ events.push({{ type: e.type, detail: e.detail }}); return true; }},
       }};
       global.CustomEvent = class {{ constructor(type, init) {{ this.type = type; this.detail = init.detail; }} }};
       {script}
       const host = window.canopyHost;
       {calls}
-      process.stdout.write(JSON.stringify(pushed));
+      process.stdout.write(JSON.stringify(typeof result === "undefined" ? pushed : result));
     """
     out = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
@@ -511,6 +516,29 @@ def test_update_page_state_trims_a_selection_to_the_budget(host, user):
     assert 0 < len(last["visible_ids"]) <= 400
     # Measured as canopy measures it: compact JSON, in bytes.
     assert len(json.dumps(last, separators=(",", ":")).encode()) <= 7 * 1024
+
+
+def test_the_panel_relays_the_open_conversation_and_opens_one(host, user):
+    """0.22.1: `canopy:session` / `canopyHost.session()` carry the widget's report
+    (id, where it began, private) and nothing else; `openSession` forwards an id."""
+    client = Client()
+    client.force_login(user)
+    body = client.get("/marketplace/network/").content.decode()
+    result = _run_panel_script(body, """
+      const before = host.session();
+      options.onSession({ id: "0f8fad5b-d9cb-469f-a165-70867728950e", resource: "labs-data-space://7",
+                          private: true, title: "never relayed" });
+      const during = host.session();
+      options.onSession(null);
+      const forwarded = host.openSession("0f8fad5b-d9cb-469f-a165-70867728950e");
+      var result = { before, during, after: host.session(), forwarded, opened,
+                     sessions: events.filter((e) => e.type === "canopy:session").map((e) => e.detail) };
+    """)
+    report = {"id": "0f8fad5b-d9cb-469f-a165-70867728950e", "resource": "labs-data-space://7", "private": True}
+    assert result["before"] is None and result["after"] is None
+    assert result["during"] == report
+    assert result["sessions"] == [report, None]
+    assert result["forwarded"] is True and result["opened"] == ["0f8fad5b-d9cb-469f-a165-70867728950e"]
 
 
 def test_runner_requirements_are_read_from_the_setting(host):
