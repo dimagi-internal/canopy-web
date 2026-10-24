@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 
@@ -326,6 +325,7 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     fallback for someone whose two emails differ. Requiring it first is what
     made the first live mention on labs (2026-09-19) look like silence.
 
+    "Same email" is `contacts.services.user_for_verified_email`, as on every door.
     Only for a full member of this Slack (`is_home_member`): a guest is
     someone the organisation invited in, and a Slack Connect visitor's email is
     their own org's to set — both are answered as a CONTACT whatever it says. Not on an ambiguous match either — two canopy accounts sharing an
@@ -338,11 +338,16 @@ def auto_link(installation: SlackInstallation, slack_user_id: str, info: dict):
     email = str((info.get("profile") or {}).get("email") or "").strip()
     if not email:
         return None
-    matches = list(get_user_model().objects.filter(email__iexact=email, is_active=True)[:2])
-    if len(matches) != 1:
+    # The account that provably holds the address, by the same rule as every other
+    # door (a VERIFIED allauth email, else an agent's own login) — `User.email` is a
+    # free field and proves nothing for a human.
+    from apps.contacts.services import user_for_verified_email  # noqa: PLC0415 — only a first Slack message pays for it
+
+    user = user_for_verified_email(email)
+    if user is None:
         return None
     link, _ = SlackUserLink.objects.get_or_create(
-        installation=installation, slack_user_id=slack_user_id, defaults={"user": matches[0]},
+        installation=installation, slack_user_id=slack_user_id, defaults={"user": user},
     )
     return link.user
 
