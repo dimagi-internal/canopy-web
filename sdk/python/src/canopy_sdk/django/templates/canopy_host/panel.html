@@ -55,7 +55,17 @@ browser.
         onInvalidate: function (resource) {
           if (declared && resource === declared.resource) window.location.reload();
         },
+        // The conversation open in the panel: {id, resource, private} or null. A
+        // pointer, never its words (canopy's embedding guide §5e). Kept for
+        // `canopyHost.session()` and announced as `canopy:session` on the document,
+        // for a page that keeps pointers to conversations (and reopens them with
+        // `canopyHost.openSession`). A widget too old to report never calls this.
+        onSession: function (next) {
+          session = next ? { id: next.id, resource: next.resource, private: next.private } : null;
+          document.dispatchEvent(new CustomEvent("canopy:session", { detail: host.session() }));
+        },
       };
+      var session = null;
       if (config.pageFromPath && config.tokenUrl) {
         // Key mode: name the page on screen NOW, at every mint.
         options.tokenUrl = function () {
@@ -107,6 +117,15 @@ browser.
           declared = fit(next);
           widget.setPageState(declared);
           return host.pageState();
+        },
+        session: function () { return session ? Object.assign({}, session) : null; },
+        // Open the panel on a conversation by its canopy id. canopy reads it as the
+        // visitor, so its session ACL decides what they see. False when this
+        // widget cannot (older than the call).
+        openSession: function (id) {
+          if (typeof widget.openSession !== "function") return false;
+          widget.openSession(String(id || ""));
+          return true;
         },
       };
       window.canopyHost = host;

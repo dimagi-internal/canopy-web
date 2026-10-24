@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.22.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.22.1#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.22.0/dimagi_canopy-0.22.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.22.1/dimagi_canopy-0.22.1-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -128,6 +128,13 @@ else document.addEventListener("canopy:ready", (e) => share(e.detail), { once: t
 `updatePageState` merges into the declared state (canopy replaces state on every
 push) and keeps `resource` and `backing_tool` as the server rendered them.
 `canopyHost.widget` is the widget, for the rest of its API.
+
+The conversation open in the panel (0.22.1): `canopyHost.session()` is `{id, resource,
+private}` or `null`, and every change is announced as `canopy:session` on `document`
+(`event.detail`). `resource` is the page it was started on, as canopy recorded it. Never
+its title or words — a pointer, to keep and reopen with `canopyHost.openSession(id)`,
+which canopy opens as the visitor under its own session ACL (canopy-web's embedding
+guide §5e).
 
 ### `CANOPY_HOST` as a callable
 
