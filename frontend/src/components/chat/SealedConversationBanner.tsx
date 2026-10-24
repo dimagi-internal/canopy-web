@@ -13,7 +13,7 @@ import { openSealed, type ConversationKey } from '@/vault/sealedChat'
  */
 export function SealedConversationBanner({
   state, error, onUnlock, unlockElement, needsMigration, openElsewhere, hasSealed = true, method = 'passkey',
-  onSetAside,
+  onSetAside, warning, onDismissWarning,
 }: {
   state: SealedState
   error: string | null
@@ -31,6 +31,10 @@ export function SealedConversationBanner({
   /** Their vault key opened and their copy of the conversation key did not: set it
    *  aside (`DELETE …/key-copies/mine`) so someone in it can give them a fresh one. */
   onSetAside?: () => void
+  /** The vault key opened here is not the one earlier chats in this browser were
+   *  wrapped to (`useSealedConversation.warning`): shown whatever the state. */
+  warning?: string | null
+  onDismissWarning?: () => void
 }) {
   const lockedish = state === 'locked' || state === 'error' || state === 'opening'
   const showLocked = hasSealed && lockedish
@@ -38,9 +42,20 @@ export function SealedConversationBanner({
   const showStale = hasSealed && state === 'stale-wrap'
   const showMigration = Boolean(needsMigration) && state === 'open'
   const showError = Boolean(error) && state === 'error'
-  if (!showLocked && !showNoWrap && !showStale && !showMigration && !unlockElement && !showError) return null
+  if (!showLocked && !showNoWrap && !showStale && !showMigration && !unlockElement && !showError && !warning) return null
   return (
     <div data-testid="sealed-banner" className="border-b border-border bg-muted/40 px-4 py-2 text-[12px] text-foreground">
+      {warning && (
+        <div className="mb-1 flex flex-wrap items-start gap-2 text-destructive" role="alert" data-testid="sealed-self-mismatch">
+          <span className="min-w-0 flex-1">{warning}</span>
+          {onDismissWarning && (
+            <button type="button" onClick={onDismissWarning}
+                    className="rounded-md border border-input px-2 py-0.5 text-foreground">
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
       {showLocked && (
         <div className="flex flex-wrap items-center gap-2">
           <span>

@@ -12,7 +12,6 @@
  */
 
 import { offerForNewChat, type ConversationKeyOffer, type MyVaultKey as VaultKeyNamed } from "@/vault/sealedChat";
-import type { Unlocked } from "@/vault/operations";
 import type { components } from "./generated";
 import { apiUrl, getCsrfToken } from "./base";
 import { ApiError } from "./problem";
@@ -31,15 +30,14 @@ export type SlashCommand = components["schemas"]["SlashCommandOut"];
  *  `.status` and `.code` (the problem type's tail, e.g. "not-found"). */
 export { ApiError as ChatApiError };
 
-/** A key pair for a chat this browser starts (`offerForNewChat`), or null when the person
- *  has no vault key (404: they cannot hold a private chat, and canopy refuses one).
- *  Anything else that stops it — a vault key this browser cannot confirm is theirs, a
- *  changed one, a failed read — THROWS, and the chat is not started: it never falls
- *  back to a key canopy-web would make. `derive` opens the vault key when this browser
- *  has not seen it before (`useVaultUnlock`). */
+/** A key pair for a chat this browser starts (`offerForNewChat`), or null — and the chat
+ *  starts with no key — when the person has no vault key (404). Starting a chat never
+ *  asks to unlock the vault key: the key is wrapped to its public half, pinned here, or
+ *  trusted on first use and checked at the first unlock here. A vault key that CHANGED
+ *  since this browser pinned it, or a failed read, THROWS: the chat is not started, and
+ *  the caller shows why. */
 export async function browserConversationKey(
   mine: () => Promise<MyVaultKey | VaultKeyNamed>,
-  derive?: () => Promise<Pick<Unlocked, "scalar" | "publicJwk">>,
 ): Promise<ConversationKeyOffer | null> {
   let me: VaultKeyNamed;
   try {
@@ -51,7 +49,7 @@ export async function browserConversationKey(
   // An answer that names no key says the same as a 404 (and is no weaker: the server
   // could as well say 404).
   if (!me || typeof me.jkt !== "string" || !me.public_jwk) return null;
-  return offerForNewChat(me, derive);
+  return offerForNewChat(me);
 }
 
 // Still raw fetch (not apiV2): several routes here (the session's secrets, the
@@ -90,9 +88,6 @@ export interface CreateSessionInput {
   // Directed placement: pin the session's turns to this runner from creation
   // (rather than the default assignment-cascade routing).
   runnerId?: string;
-  // Opens the person's vault key, for a browser that has not confirmed it is theirs yet
-  // (`browserConversationKey`). Without it such a browser cannot start a chat.
-  unlock?: () => Promise<Pick<Unlocked, "scalar" | "publicJwk">>;
 }
 
 export async function createSession(
@@ -103,7 +98,7 @@ export async function createSession(
     : "/api/canopy-sessions/";
   // The conversation's key is made HERE: if it is, or becomes, private its words are
   // sealed to it, and canopy-web never sees the private half (vault/sealedChat.ts).
-  const conversationKey = await browserConversationKey(myVaultKey, input.unlock);
+  const conversationKey = await browserConversationKey(myVaultKey);
   return request<ChatSession>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

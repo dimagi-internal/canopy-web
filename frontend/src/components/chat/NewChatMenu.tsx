@@ -15,7 +15,6 @@ import { getAgentDefaultOrder, getAgentRunners, type AgentOut, type AgentRunnerO
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 import { scopedPath } from '../../lib/scopedLinks'
-import { useVaultUnlock } from '@/vault/useVaultUnlock'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the menu, before they've confirmed a runner + Start.
@@ -57,9 +56,6 @@ export function NewChatMenu({
   className?: string
 }) {
   const navigate = useNavigate()
-  // A browser that has not opened this person's vault key before opens it once, so the
-  // new chat's key is wrapped to a key it has confirmed is theirs (`offerForNewChat`).
-  const vault = useVaultUnlock()
   const [ownRunners, setOwnRunners] = useState<RunnerOut[] | null>(null)
   const fleetRunners = runnersProp ?? ownRunners
   const projects = useMemo(() => repoChoices(fleetRunners ?? []), [fleetRunners])
@@ -84,7 +80,7 @@ export function NewChatMenu({
   const start = useCallback(
     (args: Parameters<typeof createSession>[0]) => {
       setCreating(true)
-      createSession({ ...args, unlock: args?.unlock ?? vault.unlock })
+      createSession(args)
         .then((s) => {
           if (onCreated) {
             setCreating(false)
@@ -101,7 +97,7 @@ export function NewChatMenu({
           setCreating(false)
         })
     },
-    [navigate, onError, onCreated, vault.unlock],
+    [navigate, onError, onCreated],
   )
 
   // Reset the "Run on" step, e.g. when the menu closes.
@@ -272,7 +268,6 @@ export function NewChatMenu({
                 </button>
               )}
             </div>
-            {vault.element}
           </div>
         )}
       </DropdownMenuContent>

@@ -25,12 +25,11 @@
  * person's vault key opens.
  */
 import type { Unlocked } from './operations'
-import { checkSelf } from './trust'
+import { checkSelf, isUnconfirmed, trustSelfOnFirstUse } from './trust'
 import {
   generateKeyPair,
   importPrivateScalar,
   jkt,
-  publicJwkOfScalar,
   unb64u,
   unwrapEcdhEs,
   wrapEcdhEs,
@@ -177,37 +176,29 @@ export const UNCONFIRMED_SELF =
   'this browser must first see that the vault key canopy names is yours.'
 
 /**
- * The key pair for a chat this browser starts, wrapped only to a vault key it has
- * CONFIRMED is the starter's (`newConversationKey`):
+ * The key pair for a chat this browser starts, wrapped to the starter's vault key. Only
+ * its PUBLIC half is needed, so starting a chat — ordinary or private — never asks to
+ * unlock anything:
  *
- *  - pinned here before (`trust.checkSelf`) → used;
- *  - changed since → refused (`VaultKeyRefused`): that is what a substituted key looks like;
- *  - never seen here → `derive` opens the vault key (passkey or passphrase) and its public
- *    half is computed from the private scalar it opened — the server's word is never taken;
- *    a mismatch is refused, and so is no way to derive (`derive` absent or failing).
- *
- * Nothing falls back to a key the server makes.
+ *  - pinned here (`trust.checkSelf`) → used, silently;
+ *  - changed since → refused (`VaultKeyRefused`): that is what a substituted key looks
+ *    like, and no chat starts on it;
+ *  - never seen here (a fresh browser, or the panel's frame) → trusted on first use:
+ *    wrapped to the key canopy names, and that key pinned here as UNCONFIRMED with the
+ *    chat's id (`trust.trustSelfOnFirstUse`). The first time this browser opens the vault
+ *    key for any reason, the key it actually holds is checked against it, and a mismatch
+ *    is shown naming those chats (`trust.rememberSelf`, `useSealedConversation.warning`).
+ *    So a key substituted on a browser's very first chat is DETECTED at first unlock, not
+ *    prevented (tenancy.md § Sensitive conversations).
  */
-export async function offerForNewChat(me: MyVaultKey,
-                                      derive?: () => Promise<Pick<Unlocked, 'scalar' | 'publicJwk'>>):
-    Promise<ConversationKeyOffer> {
+export async function offerForNewChat(me: MyVaultKey): Promise<ConversationKeyOffer> {
   const thumb = await jkt(me.public_jwk as Jwk)
   if (thumb !== me.jkt) throw new VaultKeyRefused('Your vault key does not match its thumbprint, so this chat was not started.')
   const seen = checkSelf(me.user_id, thumb)
   if (seen === 'changed') throw new VaultKeyRefused(CHANGED_SELF)
-  if (seen === 'new') {
-    if (!derive) throw new VaultKeyRefused(UNCONFIRMED_SELF)
-    let opened: Pick<Unlocked, 'scalar' | 'publicJwk'>
-    try {
-      opened = await derive()
-    } catch (e) {
-      throw new VaultKeyRefused(`${UNCONFIRMED_SELF} (${e instanceof Error ? e.message : 'not opened'})`)
-    }
-    if (!opened.scalar) throw new VaultKeyRefused(UNCONFIRMED_SELF)
-    const real = await jkt(await publicJwkOfScalar(opened.scalar))
-    if (real !== thumb) throw new VaultKeyRefused(CHANGED_SELF)
-  }
-  return newConversationKey(me, { confirmed: true })
+  const offer = await newConversationKey(me, { confirmed: true })
+  if (seen === 'new' || isUnconfirmed(me.user_id)) trustSelfOnFirstUse(me.user_id, thumb, offer.conversation)
+  return offer
 }
 
 /**
@@ -223,7 +214,7 @@ export async function newConversationKey(me: MyVaultKey,
   if (thumb !== me.jkt) throw new VaultKeyRefused('your vault key does not match its thumbprint')
   const seen = checkSelf(me.user_id, thumb)
   if (seen === 'changed') throw new VaultKeyRefused(CHANGED_SELF)
-  // A key never seen here is used only once it has been derived (`offerForNewChat`).
+  // A key never seen here is used only on first use, recorded (`offerForNewChat`).
   if (seen === 'new' && !opts.confirmed) throw new VaultKeyRefused(UNCONFIRMED_SELF)
   const pair = await generateKeyPair()
   const conversation = globalThis.crypto.randomUUID()

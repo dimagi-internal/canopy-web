@@ -342,13 +342,22 @@ THE predicate; every surface below asks it, one test each in
     `sealedChat.ts::newConversationKey`): the public half, a fresh conversation id, and the
     private half wrapped (ECDH-ES + HKDF-SHA256 + AES-256-GCM, the vault's `wrapEcdhEs`, info
     `canopy-chat/v1/wrap|<conversation>|<user>`) to the starter's vault key
-    (`GET /my-vault-key`), and only to a key this browser has CONFIRMED is theirs
-    (`sealedChat.offerForNewChat`): one it opened before (`trust.checkSelf`), or — in a
-    browser that never has, the panel's frame included — one it opens NOW (passkey or
-    passphrase, from the keyset `my-vault-key` sends the person's own browser) and whose
-    public half it derives from the private scalar. A changed key, or one it cannot
-    confirm, stops the new chat with a sentence; it never starts it on a key the server
-    would make. canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
+    (`GET /my-vault-key`) — its PUBLIC half, so starting a chat or sending in one, private
+    or not, never asks for a passkey (`sealedChat.offerForNewChat`). A key pinned in this
+    browser (`trust.checkSelf`) is used silently. A key CHANGED since this browser pinned it
+    stops the new chat with a sentence (a substituted key looks like that); the panel and
+    the chat page show it and keep what was typed. A key never seen in this browser (a fresh
+    browser, the panel's frame, storage the browser will not keep) is **trusted on first
+    use**: the chat starts wrapped to the key canopy names, pinned here as unconfirmed with
+    the chat's id (`trust.trustSelfOnFirstUse`). The first time the person opens their vault
+    key in that browser for any reason (`unlockLocally`, `useVaultUnlock` → `trust.rememberSelf`),
+    the key they actually hold — derived from its private scalar — is checked against it;
+    a mismatch is a warning naming those chats on the sealed-conversation banner
+    (`useSealedConversation.warning`), and the pin becomes the key they hold, so the
+    substituted key is refused from then on. **The trade-off:** a key substituted on a
+    browser's very first chat is DETECTED at the first unlock there, not prevented; with
+    storage blocked nothing is remembered, so each start trusts anew and nothing is checked.
+    canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
     while the chat is ordinary, so if it becomes sensitive its words are sealed to a key
     canopy-web never saw the private half of (`conversation_keys.check_offer`, `ensure_key`).
     **The limit:** a session that becomes sensitive with no browser there — made from Slack,

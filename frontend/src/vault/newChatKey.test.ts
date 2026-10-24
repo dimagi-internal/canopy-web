@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 // A chat a browser starts carries a key pair made here, wrapped to the starter's vault
-// key — but only to a key this browser has CONFIRMED is theirs. A changed key stops the
-// chat; a key never seen here is derived from the vault key the person opens now; and
-// nothing ever falls back to a key canopy-web would make. Driven through chat creation
+// key's PUBLIC half, so starting never asks to unlock. A key pinned here is used; one
+// never seen here is trusted on first use — pinned as unconfirmed with the chat's id —
+// and checked against the key the person actually holds the first time they unlock it
+// here, which names the chats if it does not match. A CHANGED key stops the chat. Driven through chat creation
 // itself (`createSession`, the chat page's; `offeredKey`, the panel's), real crypto,
 // only fetch and the unlock mocked.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createSession } from '@/api/chat'
 import { offeredKey } from '@/embed/offeredKey'
-import { pinPerson } from './trust'
+import { pinPerson, rememberSelf, selfMismatch, checkSelf } from './trust'
 import { generateKeyPair, jkt, unwrapEcdhEs } from './zk'
 import { wrapInfo } from './sealedChat'
 
@@ -42,7 +43,6 @@ function server(named: { pair: Pair; jkt: string } | null) {
   return created
 }
 
-const opened = (pair: Pair) => async () => ({ scalar: pair.scalar, publicJwk: pair.publicJwk })
 
 describe('starting a chat from the chat page', () => {
   it('wraps to my pinned key', async () => {
@@ -60,23 +60,26 @@ describe('starting a chat from the chat page', () => {
     const substituted = await generateKeyPair()
     pinPerson('7', await jkt(mine.publicJwk), '')
     const created = server({ pair: substituted, jkt: await jkt(substituted.publicJwk) })
-    await expect(createSession({ agentSlug: 'a', unlock: opened(mine) })).rejects.toThrow(/not the one this browser last opened/)
+    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/not the one this browser last opened/)
     expect(created).toEqual([])
   })
 
-  it('with no pin, derives the key from the vault key I open, and refuses a substituted one', async () => {
+  it('stops on a key that does not match its thumbprint', async () => {
     const mine = await generateKeyPair()
-    const substituted = await generateKeyPair()
-    let created = server({ pair: substituted, jkt: await jkt(substituted.publicJwk) })
-    await expect(createSession({ agentSlug: 'a', unlock: opened(mine) })).rejects.toThrow(/not the one/)
+    const created = server({ pair: mine, jkt: 'not-its-thumbprint' })
+    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/thumbprint/)
     expect(created).toEqual([])
-    // Without a way to open it, nothing starts either (never a server-made key).
-    created = server({ pair: mine, jkt: await jkt(mine.publicJwk) })
-    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/Open your vault key/)
-    expect(created).toEqual([])
-    // Opened, and it is mine: the chat starts with a key wrapped to it.
-    await createSession({ agentSlug: 'a', unlock: opened(mine) })
-    expect((created[0] as { conversation_key?: unknown }).conversation_key).toBeTruthy()
+  })
+
+  it('with no pin, starts at once with a key wrapped to the named key, and pins it unconfirmed', async () => {
+    const mine = await generateKeyPair()
+    const thumb = await jkt(mine.publicJwk)
+    const created = server({ pair: mine, jkt: thumb })
+    await createSession({ agentSlug: 'a' })
+    await createSession({ agentSlug: 'a' })
+    const ids = created.map((c) => (c as { conversation_key: { conversation: string } }).conversation_key.conversation)
+    expect(ids).toHaveLength(2)
+    expect(JSON.parse(store.get('canopy-vault/v1/pins')!)['7']).toMatchObject({ jkt: thumb, unconfirmed: true, conversations: ids })
   })
 
   it('starts with no key for someone who has no vault key', async () => {
@@ -86,26 +89,56 @@ describe('starting a chat from the chat page', () => {
   })
 })
 
+describe('the first unlock checks a key trusted on first use', () => {
+  it('the key I hold matches: confirmed, no warning', async () => {
+    const mine = await generateKeyPair()
+    server({ pair: mine, jkt: await jkt(mine.publicJwk) })
+    await createSession({ agentSlug: 'a' })
+    await expect(rememberSelf('7', mine.publicJwk, mine.scalar)).resolves.toBeNull()
+    expect(JSON.parse(store.get('canopy-vault/v1/pins')!)['7'].unconfirmed).toBeUndefined()
+    expect(selfMismatch('7')).toBeNull()
+  })
+
+  it('a substituted key: names the chats wrapped to it, and is refused from then on', async () => {
+    const mine = await generateKeyPair()
+    const substituted = await generateKeyPair()
+    const created = server({ pair: substituted, jkt: await jkt(substituted.publicJwk) })
+    await createSession({ agentSlug: 'a' })
+    const id = (created[0] as { conversation_key: { conversation: string } }).conversation_key.conversation
+    const found = await rememberSelf('7', mine.publicJwk, mine.scalar)
+    expect(found).toMatchObject({ wrongJkt: await jkt(substituted.publicJwk), conversations: [id] })
+    expect(selfMismatch('7')).toMatchObject({ conversations: [id] })
+    // The pin is now the key I hold: the substituted one stops the next chat.
+    expect(checkSelf('7', await jkt(substituted.publicJwk))).toBe('changed')
+    await expect(createSession({ agentSlug: 'a' })).rejects.toThrow(/not the one this browser last opened/)
+  })
+})
+
 describe('starting a chat from the embedded panel', () => {
-  const client = (named: { pair: Pair; jkt: string } | null, keyset: unknown = null) => ({
+  const client = (named: { pair: Pair; jkt: string } | null) => ({
     rest: { json: vi.fn(async () => {
       if (!named) throw Object.assign(new Error('no vault key'), { status: 404 })
-      return { user_id: '7', public_jwk: named.pair.publicJwk, jkt: named.jkt, keyset }
+      return { user_id: '7', public_jwk: named.pair.publicJwk, jkt: named.jkt, keyset: null }
     }) },
   }) as never
 
-  it('refuses a changed key, and a key it cannot confirm without a keyset to open', async () => {
+  it('refuses a changed key', async () => {
     const mine = await generateKeyPair()
     const substituted = await generateKeyPair()
     pinPerson('7', await jkt(mine.publicJwk), '')
-    await expect(offeredKey(client({ pair: substituted, jkt: await jkt(substituted.publicJwk) }), 'w1', vi.fn()))
+    await expect(offeredKey(client({ pair: substituted, jkt: await jkt(substituted.publicJwk) }), 'w1'))
       .rejects.toThrow(/not the one this browser last opened/)
-    store.clear()
-    await expect(offeredKey(client({ pair: mine, jkt: await jkt(mine.publicJwk) }), 'w1', vi.fn()))
-      .rejects.toThrow(/Open your vault key/)
+  })
+
+  it('with no pin, offers a key wrapped to the named key, without unlocking anything', async () => {
+    const mine = await generateKeyPair()
+    const got = await offeredKey(client({ pair: mine, jkt: await jkt(mine.publicJwk) }), 'w1')
+    const offer = got.conversation_key as { wrap: never; conversation: string }
+    await expect(unwrapEcdhEs(offer.wrap, mine.privateKey, mine.publicJwk, wrapInfo(offer.conversation, '7')))
+      .resolves.toBeTruthy()
   })
 
   it('a visitor with no vault key starts with none', async () => {
-    await expect(offeredKey(client(null), 'w1', vi.fn())).resolves.toEqual({})
+    await expect(offeredKey(client(null), 'w1')).resolves.toEqual({})
   })
 })

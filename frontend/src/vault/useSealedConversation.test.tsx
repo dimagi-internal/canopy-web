@@ -138,3 +138,38 @@ describe('sealedAppHost', () => {
     expect((await sealedAppHost(host, () => null).load('tu1')).tool_input).toEqual({})
   })
 })
+
+describe('the first unlock in a browser checks the key earlier chats were wrapped to', () => {
+  it('names the chats when the key held is not the one they were wrapped to, until dismissed', async () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    })
+    try {
+      const { trustSelfOnFirstUse, rememberSelf } = await import('./trust')
+      const { jkt } = await import('./zk')
+      const c = await conversation()
+      const substituted = await generateKeyPair()
+      trustSelfOnFirstUse('7', await jkt(substituted.publicJwk), 'chat-earlier')
+      const held = await generateKeyPair()
+      // The unlock opens the key actually held, and pins it (`unlockLocally`, `useVaultUnlock`).
+      const unlockVault = vi.fn(async () => {
+        await rememberSelf('7', held.publicJwk, held.scalar)
+        return c.me
+      })
+      const { result } = renderHook(() => useSealedConversation(c.sealedKey, [], unlockVault))
+      await act(() => result.current.unlock())
+      expect(result.current.warning).toMatch(/chat-earlier/)
+      render(<SealedConversationBanner state={result.current.state} error={null} onUnlock={vi.fn()}
+                                       warning={result.current.warning} onDismissWarning={result.current.dismissWarning} />)
+      expect(screen.getByTestId('sealed-self-mismatch').textContent).toMatch(/not yours/)
+      act(() => fireEvent.click(screen.getByText('Dismiss')))
+      expect(result.current.warning).toBeNull()
+      expect(store.get('canopy-vault/v1/self-mismatch')).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
