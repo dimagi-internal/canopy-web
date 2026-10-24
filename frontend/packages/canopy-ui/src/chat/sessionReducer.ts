@@ -28,6 +28,21 @@ const UNBLOCKING_FRAMES = new Set([
   "chat.tool_result",
 ]);
 
+/** The note a runner appends to a prompt that carries attachments
+ *  (`canopy_runner.execute.prompt_with_attachments`). The transcript echoes
+ *  what was TYPED, so your line comes back with it, and from the laptop runner
+ *  without the line break before it. Server twin: `authorship.without_attachment_note`. */
+const ATTACHMENT_NOTE = /The user attached the following files?\. Read (?:it|them) with the Read tool[\s\S]*$/;
+
+/** A user line as the transcript-echo match compares it: the attachment note
+ *  dropped and ALL whitespace ignored, because the laptop runner types a prompt
+ *  into emdash as one line (server twin: `transcript_ingest._squash`). Without
+ *  this, a send with a file, or with a line break, never met its echo: the echo
+ *  landed as a second row and the pending one stayed at the bottom. */
+export function comparableText(text: string): string {
+  return text.replace(ATTACHMENT_NOTE, "").replace(/\s+/g, "");
+}
+
 /**
  * Every frame `sessionReducer` handles. The socket hook hands the reducer ONLY
  * these, and gives anything else to `onUnknownEvent`, so a frame missing from
@@ -172,11 +187,12 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
           : prev.current_contact_id != null
             ? { name: "", contact_id: prev.current_contact_id }
             : null;
+      const incomingText = comparableText(frame.data.plaintext);
       const sameText = (m: Message) => {
         if (
           m.role !== "user" ||
           m.plaintext.trim() === "" ||
-          m.plaintext.trim() !== frame.data.plaintext.trim()
+          comparableText(m.plaintext) !== incomingText
         ) return false;
         if (isUnconfirmed(m)) return sameAuthor(m.author ?? me, incomingAuthor);
         return m.author != null && incomingAuthor != null && sameAuthor(m.author, incomingAuthor);
