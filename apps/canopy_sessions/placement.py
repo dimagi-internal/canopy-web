@@ -15,7 +15,7 @@ from apps.harness import routing
 from apps.harness.models import Turn
 
 from . import activity as session_activity
-from . import conversation_keys, handoff, services
+from . import conversation_keys, handoff, services, transcript_read
 from .models import Message, RunnerBinding, Session
 
 
@@ -197,6 +197,25 @@ def _initiator(initiator, user, via: str):
     return who.for_user(user, via=via, assurance="")
 
 
+def busy_reason(session: Session) -> str:
+    """Why `session` cannot be moved right now, or "" when it can.
+
+    Two ways a session is mid-thought: a harness turn executing in it, or the
+    engine itself working — a person typing straight into the session (the chat,
+    /ide, emdash) runs Claude with no executing `Turn` at all, so the turn check
+    alone moved live sessions (2026-10-24: a dry run offered all 11 of a box's
+    sessions, three of them `running`). The engine's word counts whenever its
+    runner is reachable, PAUSED included; an offline box's last report describes
+    a session nobody can still be driving, so moving off it stays allowed."""
+    if Turn.objects.filter(chat_session=session, status__in=list(routing.EXECUTING)).exists():
+        return "a turn is still executing — stop the session first"
+    binding = getattr(session, "runner_binding", None)
+    if (binding is not None and binding.runner_id is not None and binding.runner.is_reachable
+            and transcript_read.engine_says_running(binding)):
+        return "the session is working right now — stop it first"
+    return ""
+
+
 def transfer_session(*, session: Session, placement: str, brief: str = "", user=None,
                      initiator=None):
     """Move a live session onto another runner, carrying its history AND its work.
@@ -237,10 +256,8 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         raise _placement_refused(session, placement, "unknown runner for transfer")
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
-    if Turn.objects.filter(
-        chat_session=session, status__in=list(routing.EXECUTING)
-    ).exists():
-        raise RuntimeError("a turn is still executing — stop the session first")
+    if reason := busy_reason(session):
+        raise RuntimeError(reason)
 
     with transaction.atomic():
         binding = (

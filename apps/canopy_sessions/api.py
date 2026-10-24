@@ -28,9 +28,7 @@ from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
 from apps.harness import initiator as who
 from apps.harness import provenance, sensitivity
-from apps.harness import routing as harness_routing
 from apps.harness import runner_requirements as rr
-from apps.harness.models import Turn
 from apps.realtime import groups
 from apps.workspaces import services as wsvc
 
@@ -969,10 +967,8 @@ def transfer_all(request: HttpRequest, payload: TransferAllIn):
             out.update(status="refused", error="you can read this session but not act in it")
             continue
         if payload.dry_run:
-            busy = Turn.objects.filter(chat_session=session,
-                                       status__in=list(harness_routing.EXECUTING)).exists()
-            out.update(status="refused" if busy else "would_move",
-                       error="a turn is still executing — stop the session first" if busy else "")
+            busy = placement.busy_reason(session)
+            out.update(status="refused" if busy else "would_move", error=busy)
             continue
         try:
             req, moved = transfer_requests.request(
