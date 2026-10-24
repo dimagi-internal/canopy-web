@@ -253,6 +253,12 @@ const triggerClass = (active: boolean) =>
       : 'text-muted-foreground hover:text-foreground-secondary hover:bg-card/50',
   )
 
+// The phone menu is one flat list, so a section header has to read as a
+// divider, not as one more muted row: a rule above it, full-contrast text,
+// and links indented under it.
+const MOBILE_SECTION = 'flex flex-col gap-0.5 mt-2 border-t border-border pt-3 pb-1 [&>a]:pl-5'
+const MOBILE_SECTION_HEADER = 'px-3 pb-1 text-xs font-bold uppercase tracking-wider text-foreground'
+
 function DesktopNavEntry({ entry, nav }: { entry: ResolvedNavEntry; nav: ResolvedNavEntry[] }) {
   const { pathname } = useLocation()
   const active = isNavEntryActive(entry, nav, pathname)
@@ -442,8 +448,8 @@ function AppShell() {
                     {entry.item.label}
                   </Link>
                 ) : (
-                  <div key={entry.label} className="flex flex-col gap-0.5 pb-1">
-                    <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div key={entry.label} className={MOBILE_SECTION}>
+                    <div className={MOBILE_SECTION_HEADER}>
                       {entry.label}
                     </div>
                     {entry.items.map((item) => (
@@ -454,8 +460,8 @@ function AppShell() {
                   </div>
                 ),
               )}
-              <div className="flex flex-col gap-0.5 pb-1">
-                <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className={MOBILE_SECTION}>
+                <div className={MOBILE_SECTION_HEADER}>
                   Help
                 </div>
                 {HELP_ITEMS.map((item) => (
