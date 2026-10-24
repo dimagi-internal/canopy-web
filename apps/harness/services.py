@@ -33,6 +33,9 @@ from .routing import MIDTURN_FAILED
 
 logger = logging.getLogger(__name__)
 
+#: Every origin a turn may carry (`Turn.ORIGIN_CHOICES`).
+ORIGINS = frozenset(value for value, _label in Turn.ORIGIN_CHOICES)
+
 
 # How many times a turn that died BEFORE its session existed goes back on the queue
 # before we give up and let it stay FAILED. Three is enough to ride out an emdash
@@ -163,6 +166,12 @@ def enqueue_turn(
     # silent rewrite); this is the leg that catches stored payloads and internal
     # callers. Remove with the aliases, one release on.
     origin = Turn.LEGACY_ORIGIN_ALIASES.get(origin, origin)
+    # And the one check every producer meets: `origin` is what routing rules, the
+    # caller envelope and the access rule key on, so a value outside the vocabulary
+    # (a typo, a stored spec from a retired producer) is refused here rather than
+    # written as a turn nothing routes and no rule recognises.
+    if origin not in ORIGINS:
+        raise ValueError(f"unknown turn origin {origin!r}; one of {sorted(ORIGINS)}")
     # An email thread IS a conversation, so it targets a SESSION rather than the
     # agent directly. A Turn is a fine unit of execution and a poor unit of
     # conversation: it ends, and leaves a human nothing to open, watch or type
