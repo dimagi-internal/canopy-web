@@ -5,9 +5,9 @@ one, so a runner's disk is scratch (canopy-web#1925):
 
 * **Step results.** Every derived thing (an extracted text, an OCR transcription, a
   catalog card, the alias groups) is stored under `Step.key(inputs)`: the sha256 of the
-  step's name, its fingerprint (REVISION, prompt, model, settings) and its inputs'
-  hashes. Change a prompt and every key changes; an unchanged input under unchanged code
-  is never recomputed, on any machine. Results are immutable: the same key is the same
+  step's name, its fingerprint (REVISION, prompt, settings) and its inputs' hashes.
+  Change a prompt and every key changes; an unchanged input under unchanged code is never
+  recomputed, on any machine. The model that does the work is not in the key (`Step.meta`). Results are immutable: the same key is the same
   result, so two runs never conflict over one.
 * **The curation state** (`State`): what a refresh cannot recompute cheaply (the fetch
   index, each input's descriptor, the cards, what was published), as named sections of
@@ -90,10 +90,15 @@ class Step:
     """One kind of derived result.
 
     `revision` changes when the step's output would; `settings` holds everything else
-    that defines it (a prompt template, a model, a reader's page selector) and changes
-    the key by itself. `sources` are the files whose code produces it (shared helpers
-    included) and `libraries` the packages it reads with: `check_lock` compares them
-    with the lock. `cost` is an estimate in USD per call, for a step that calls a model."""
+    that defines it (a prompt template, a reader's page selector) and changes the key by
+    itself. `meta` describes how it is made without defining it, and is not in the key:
+    which model reads a prompt is metadata (Jonathan, 2026-10-24), so a card is the
+    reading of its prompt whoever read it, and moving to another model re-makes nothing.
+    `formerly` lists earlier `settings` whose results are this step's own (a setting that
+    became metadata): `keys` names them too, so what they made is still found. `sources`
+    are the files whose code produces it (shared helpers included) and `libraries` the
+    packages it reads with: `check_lock` compares them with the lock. `cost` is an
+    estimate in USD per call, for a step that calls a model."""
 
     name: str
     revision: str
@@ -101,15 +106,24 @@ class Step:
     sources: tuple[str, ...] = ()
     libraries: tuple[str, ...] = ()
     cost: float = 0.0
+    meta: dict = dataclasses.field(default_factory=dict)
+    formerly: tuple[dict, ...] = ()
+
+    def _fp(self, settings: dict) -> str:
+        return sha({"step": self.name, "revision": self.revision, "settings": settings})
 
     @property
     def fingerprint(self) -> str:
-        return sha({"step": self.name, "revision": self.revision, "settings": self.settings})
+        return self._fp(self.settings)
 
     def key(self, **inputs) -> str:
         """The result's address: this step, as it is now, applied to `inputs` (hashes and
         small fields, never bytes)."""
         return sha({"fp": self.fingerprint, "in": inputs})
+
+    def keys(self, **inputs) -> list[str]:
+        """`key(**inputs)` first, then the addresses the same result had under `formerly`."""
+        return [self.key(**inputs)] + [sha({"fp": self._fp(s), "in": inputs}) for s in self.formerly]
 
 
 def source_hash(paths: Iterable[str | Path]) -> str:
@@ -378,8 +392,10 @@ class Budget:
         self.usd = float(usd)
         self.planned: dict[str, dict] = {}
 
-    def plan(self, step: Step, calls: int) -> None:
-        self.planned[step.name] = {"calls": int(calls), "usd": round(calls * step.cost, 2)}
+    def plan(self, step: Step, calls: int, cost: float | None = None) -> None:
+        """`cost`: USD per call when it is not the step's own (another engine does the work)."""
+        per = step.cost if cost is None else cost
+        self.planned[step.name] = {"calls": int(calls), "usd": round(calls * per, 2)}
 
     @property
     def total(self) -> float:
