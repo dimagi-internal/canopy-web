@@ -11831,6 +11831,7 @@ export interface paths {
          *     of the key to (a wrap only your vault key opens — never what was said), so your
          *     browser can re-wrap each to the new key while the old one is open, and name them
          *     to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set.
+         *     Canopy's own signed-in page only.
          */
         readonly get: operations["my_key_copies"];
         /**

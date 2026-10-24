@@ -289,3 +289,13 @@ def test_my_vault_key_is_its_public_half_only(w):
     assert r.json() == {"user_id": str(w["user"].pk), "public_jwk": jwk, "jkt": ecdh_es.jkt(jwk)}
     UserVaultKeyset.objects.filter(user=w["user"]).delete()
     assert w["c"].get("/api/canopy-sessions/my-vault-key").status_code == 404
+
+
+def test_my_key_copies_are_for_my_own_browser_only(w):
+    from apps.tokens.models import PersonalToken
+
+    raw, _ = PersonalToken.create_for_user(user=w["user"], label="cli")
+    token = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert token.get("/api/canopy-sessions/my-keys").status_code == 403
+    assert token.put("/api/canopy-sessions/my-keys", {"copies": []},
+                     content_type="application/json").status_code == 403

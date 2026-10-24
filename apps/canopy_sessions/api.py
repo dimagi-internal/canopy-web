@@ -817,6 +817,14 @@ def my_vault_key(request: HttpRequest):
     return {"user_id": str(found["user_id"]), "public_jwk": found["public_jwk"], "jkt": found["jkt"]}
 
 
+def _own_browser_or_403(request: HttpRequest) -> None:
+    # Your conversation keys are re-wrapped where your vault key is set up: canopy's own
+    # signed-in page. Not MCP, a token, a contact, or a site's delegated token.
+    if (getattr(request, "delegated_app", None) or getattr(request, "contact", None)
+            or not sensitivity.request_is_chat_surface(request)):
+        raise HttpError(403, "your conversation keys are re-wrapped from canopy in your browser")
+
+
 @router.get("/my-keys", response=list[MyKeyCopyOut],
             summary="The private chats whose key I hold a copy of")
 @gate("self")
@@ -824,9 +832,9 @@ def my_key_copies(request: HttpRequest):
     """Before you replace your vault key: every sensitive conversation you hold a copy
     of the key to (a wrap only your vault key opens — never what was said), so your
     browser can re-wrap each to the new key while the old one is open, and name them
-    to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set."""
-    if not sensitivity.request_is_chat_surface(request):
-        raise HttpError(403, "your conversation keys are re-wrapped from your browser")
+    to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set.
+    Canopy's own signed-in page only."""
+    _own_browser_or_403(request)
     return conversation_keys.my_copies(request.user)
 
 
@@ -838,8 +846,7 @@ def put_my_key_copies(request: HttpRequest, payload: MyKeyCopiesIn):
     keys, each re-wrapped in your browser to your NEW vault key. Replaces only copies
     you already hold, and only to your current vault key; 422 (storing none) when one
     is not."""
-    if not sensitivity.request_is_chat_surface(request):
-        raise HttpError(403, "your conversation keys are re-wrapped from your browser")
+    _own_browser_or_403(request)
     try:
         n = conversation_keys.replace_my_copies(request.user, [
             {"session_id": c.session_id, "wrap": c.wrap.model_dump(), "recipient_jkt": c.recipient_jkt}
