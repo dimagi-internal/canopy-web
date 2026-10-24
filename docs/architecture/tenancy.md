@@ -507,7 +507,9 @@ THE predicate; every surface below asks it, one test each in
   sensitive one out (the turn in it still reads and acts on its own, by its caller token
   or chat key, asked again at the call), an action's arguments and answer are not kept on
   its row (`page_actions._forget`), and the page is forgotten when its
-  last live turn ends (`closing._forget_the_page`); the unbound stream door
+  last live turn ends (`closing._forget_the_page`), or after
+  `CANOPY_SENSITIVE_PAGE_TTL_SECONDS` (15 min) with no live turn
+  (`page_state.forget_idle_sensitive_pages`, a tick); the unbound stream door
   (`api_session_sync._turn_end_session`) takes only the confined turn's own transcript
   (the first it ships, stamped on `Turn.session_key`) from a box that may still hold the
   agent (`runner_may_hold_agent`); a list reads who is in which once per page

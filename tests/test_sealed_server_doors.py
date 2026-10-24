@@ -295,6 +295,21 @@ def test_a_sensitive_conversations_page_is_forgotten_when_its_turn_ends(w):
     assert w["hot"].page_state == {}
 
 
+def test_a_sensitive_page_no_turn_ends_for_is_forgotten_after_its_ttl(w):
+    page_state.set_page_state(w["hot"], PHI)
+    page_state.set_page_state(w["cold"], {"filters": {"opp": "kmc"}})
+    soon = timezone.now() + page_state.sensitive_page_ttl() + dt.timedelta(seconds=5)
+    # Within its TTL, or while a turn of it is live, it stays.
+    assert page_state.forget_idle_sensitive_pages(now=timezone.now()) == 0
+    live = _turn(w["hot"], status=Turn.RUNNING, claimed_by=w["runner"])
+    assert page_state.forget_idle_sensitive_pages(now=soon) == 0
+    Turn.objects.filter(pk=live.pk).update(status=Turn.DONE)
+    assert page_state.forget_idle_sensitive_pages(now=soon) == 1
+    w["hot"].refresh_from_db()
+    w["cold"].refresh_from_db()
+    assert w["hot"].page_state == {} and w["cold"].page_state["filters"] == {"opp": "kmc"}
+
+
 # --- 5b. its page's actions are behind the same gate -----------------------------
 
 ACTION = {"name": "flagVisit", "description": "Flag Amina Okafor's visit",

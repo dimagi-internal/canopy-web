@@ -34,6 +34,13 @@ made rather than in a code review nobody runs.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
+
+from django.conf import settings
+from django.utils import timezone
+
+from apps.harness import sensitivity
+from apps.harness.models import Turn
 
 from .models import Session
 
@@ -117,3 +124,33 @@ def clear_page_state(session: Session) -> None:
     if session.page_state:
         session.page_state = {}
         session.save(update_fields=["page_state", "updated_at"])
+
+
+#: How long a sensitive conversation's page is kept while no turn of it is live.
+#: Its last turn ending forgets it at once (`harness.closing._forget_the_page`); this
+#: covers the page no turn ever ends for — declared, and then nothing sent, or a turn
+#: that never existed. The panel declares the page again before its next send, so
+#: forgetting it costs nothing a person sees.
+SENSITIVE_PAGE_TTL_SECONDS = 15 * 60
+
+
+def sensitive_page_ttl() -> timedelta:
+    return timedelta(seconds=int(getattr(settings, "CANOPY_SENSITIVE_PAGE_TTL_SECONDS",
+                                         SENSITIVE_PAGE_TTL_SECONDS)))
+
+
+def forget_idle_sensitive_pages(now=None) -> int:
+    """Forget every sensitive conversation's page that has sat past its TTL with no
+    live turn to read it. Off-request (`apps/common/ticks.py`). Returns how many."""
+    now = now or timezone.now()
+    live = Turn.objects.filter(status__in=list(Turn.NON_TERMINAL)).values("chat_session_id")
+    rows = (Session.objects.exclude(page_state={})
+            .filter(metadata__has_key=sensitivity.rr.METADATA_KEY,
+                    updated_at__lt=now - sensitive_page_ttl())
+            .exclude(pk__in=live))
+    stale = [s.pk for s in rows.only("id", "metadata").iterator(chunk_size=500)
+             if sensitivity.is_sensitive(s)]
+    if not stale:
+        return 0
+    # `update` leaves `updated_at` alone: forgetting the page is not activity.
+    return Session.objects.filter(pk__in=stale).exclude(page_state={}).update(page_state={})
