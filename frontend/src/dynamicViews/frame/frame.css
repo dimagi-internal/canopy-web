@@ -1,0 +1,36 @@
+/*
+ * The frame's stylesheet: canopy's own (tokens, fonts, every utility the app
+ * uses), plus a safelist of common utilities. Tailwind emits only classes it
+ * finds in scanned source, and a view's code is data, never scanned — so a
+ * class a view uses that canopy itself does not would otherwise do nothing.
+ * Its own file, so the safelist costs the app's stylesheet nothing.
+ */
+@import "../../index.css";
+
+/* A plain <a href> in a view reads as a link (the frame routes it through canopy). */
+@layer base {
+  #dv-root a:not([class]) {
+    color: var(--color-primary);
+    text-underline-offset: 2px;
+  }
+  #dv-root a:not([class]):hover {
+    text-decoration: underline;
+  }
+}
+
+@source inline("{sm:,md:,lg:,}{flex,inline-flex,grid,block,inline-block,hidden,contents}");
+@source inline("{sm:,md:,lg:,}grid-cols-{1,2,3,4,5,6,8,12}");
+@source inline("{sm:,md:,lg:,}col-span-{1,2,3,4,6,12}");
+@source inline("{flex-col,flex-row,flex-wrap,flex-1,shrink-0,grow,items-start,items-center,items-end,items-baseline,justify-start,justify-center,justify-end,justify-between}");
+@source inline("{gap,gap-x,gap-y,space-y,space-x}-{0,1,2,3,4,5,6,8,10,12}");
+@source inline("{p,px,py,pt,pb,pl,pr,m,mx,my,mt,mb,ml,mr}-{0,1,2,3,4,5,6,8,10,12}");
+@source inline("{w,h,min-w,max-w,min-h,max-h}-{full,auto,screen,fit,min,max}");
+@source inline("max-w-{xs,sm,md,lg,xl,2xl,3xl,4xl,5xl,prose}");
+@source inline("text-{xs,sm,base,lg,xl,2xl,3xl,4xl,left,center,right}");
+@source inline("font-{normal,medium,semibold,bold,mono}");
+@source inline("{truncate,tabular-nums,uppercase,italic,underline,whitespace-nowrap,whitespace-pre-wrap,break-words,leading-tight,leading-relaxed,tracking-wide}");
+@source inline("{hover:,}{bg,text,border}-{background,foreground,card,muted,muted-foreground,primary,primary-foreground,secondary,accent,success,warning,destructive,info,border,foreground-secondary,foreground-subtle}");
+@source inline("{bg,text,border}-{success,warning,destructive,info,primary}/{10,15,20,30,40}");
+@source inline("{border,border-t,border-b,border-l,border-r,border-0,border-2}");
+@source inline("rounded{,-sm,-md,-lg,-xl,-full,-none}");
+@source inline("{shadow,shadow-sm,shadow-md,opacity-50,opacity-75,overflow-hidden,overflow-auto,overflow-x-auto,relative,absolute,sticky,top-0,inset-0,z-10,cursor-pointer,select-none}");

@@ -62,7 +62,12 @@ def _manifest() -> dict:
 
 
 def _embed_assets() -> tuple[str | None, list[str]]:
-    """`(entry js, css files)` for the in-frame app, from the build manifest.
+    """`(entry js, css files)` for the in-frame app, from the build manifest."""
+    return entry_assets(_EMBED_ENTRY)
+
+
+def entry_assets(entry_key: str) -> tuple[str | None, list[str]]:
+    """`(entry js, css files)` for one vite entry, from the build manifest.
 
     The CSS is NOT on the entry. Both the app and the frame import
     `src/index.css`, so vite hoists it onto a SHARED chunk and records it
@@ -71,7 +76,7 @@ def _embed_assets() -> tuple[str | None, list[str]]:
     unstyled frame, and does so silently.
     """
     manifest = _manifest()
-    entry = manifest.get(_EMBED_ENTRY)
+    entry = manifest.get(entry_key)
     if not entry:
         return None, []
 

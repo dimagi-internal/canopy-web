@@ -28,6 +28,7 @@ import {
   type ProjectUpdate,
 } from '@/api/work'
 import { Markdown } from '@/components/Markdown'
+import { ProjectViewsSection } from '@/dynamicViews/ProjectViewsSection'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { ProposalCard } from '@/components/projects/ProposalCard'
 import { useEngagementView } from '@/components/projects/useEngagementView'
@@ -149,6 +150,7 @@ export function ProjectPage(): JSX.Element {
       <UpdatesSection detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       <ProjectWork detail={detail} workspace={workspace} handle={handle} address={address} onChanged={reload} />
       <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
+      <ProjectViewsSection workspace={workspace} handle={handle} projectName={detail.name} />
 
       {detail.proposal && (
         <Section id="project-proposal" title="Proposal" description="This project was proposed. Start it or decline it here.">

@@ -440,6 +440,22 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Copy a storyboard\'s share link', 'Open a storyboard'],
   },
   {
+    path: '/w/:workspace/views',
+    title: 'Views',
+    audience: 'Anyone in the workspace',
+    what: "The workspace's dynamic views — screens an agent (or an editor) generated over its tasks, projects, agents, people and activity — as one table: the view, whether it belongs to the workspace or one of its projects, its version and when it last changed. Each runs in a sandbox and shows only what the person looking at it can already read. Editors start one from the example here; usually an agent makes it, from the dynamic-view MCP tools.",
+    actions: ['Open a view', 'See which project a view belongs to', 'Start a view from the example'],
+  },
+  {
+    path: '/w/:workspace/views/:id',
+    home: '/w/:workspace/views',
+    title: 'View',
+    audience: 'Anyone in the workspace',
+    what: "One dynamic view, drawn in its sandbox from its sources, read as you. Editors open its code and sources beside a live preview of the draft, save it as a new version, restore an earlier version from its history, or delete it.",
+    needsFirst: 'A dynamic view in this workspace.',
+    actions: ['Read the view', 'Edit its code and sources with a live preview', 'Restore an earlier version', 'Delete it'],
+  },
+  {
     path: '/w/:workspace/agents',
     title: 'Agents',
     audience: 'Anyone working with the fleet',
@@ -481,7 +497,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/projects',
     title: 'Project',
     audience: 'Anyone in the workspace',
-    what: "A project's one page, for teammates and editors alike. Its properties: status, health, lead (a person), lead agent and the other agents on it, priority, start and target dates, its outcome, and where its files are (Drive folder, repo, links, a knowledge base's sources and MCP server). Then its latest update — health, words, who wrote it, and what changed since the one before (tasks done and added, target moved, milestones) — or Update missing when one is due, the form to post one, and an agent's drafts to publish with a health; its milestones with their progress (pick one to see only its tasks); scope against done, week by week; every task in it as a table, subtasks under their parent, grouped by status, done and canceled behind a switch; then a proposal's decision card, the tasks its check-ins proposed, its ideas and the people behind them, its check-ins and their timeline, and the turns that touched it. Teammates see all of it; the controls they may not use are not shown. A proposed project is started from its decision card.",
+    what: "A project's one page, for teammates and editors alike. Its properties: status, health, lead (a person), lead agent and the other agents on it, priority, start and target dates, its outcome, and where its files are (Drive folder, repo, links, a knowledge base's sources and MCP server). Then its latest update — health, words, who wrote it, and what changed since the one before (tasks done and added, target moved, milestones) — or Update missing when one is due, the form to post one, and an agent's drafts to publish with a health; its dynamic views, each drawn in its sandbox; its milestones with their progress (pick one to see only its tasks); scope against done, week by week; every task in it as a table, subtasks under their parent, grouped by status, done and canceled behind a switch; then a proposal's decision card, the tasks its check-ins proposed, its ideas and the people behind them, its check-ins and their timeline, and the turns that touched it. Teammates see all of it; the controls they may not use are not shown. A proposed project is started from its decision card.",
     actions: ['Post an update', 'Publish an agent’s draft update', 'Add, rename, date or delete a milestone', 'Show one milestone’s tasks', 'Add a task', 'Open a task beside the list', 'Change its name, outcome, lead, agents, dates, priority or status', 'Start or decline a proposed project', 'Add your idea', 'Add or run a check-in'],
   },
   {

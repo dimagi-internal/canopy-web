@@ -84,6 +84,8 @@ const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
 
 // Agent Workspace sections are lazy-loaded — each owns its data fetch and only
 // the active section's bundle is pulled in.
+const DynamicViewsPage = lazySection(() => import('./pages/DynamicViewsPage'))
+const DynamicViewPage = lazySection(() => import('./pages/DynamicViewPage'))
 const NewAgentPage = lazySection(() =>
   import('./pages/agents/NewAgentPage').then((m) => ({ default: m.NewAgentPage })),
 )
@@ -361,6 +363,9 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/shareouts/:period', element: <ShareoutsPage /> },
       { path: '/w/:workspace/walkthroughs', element: <WalkthroughsPage /> },
       { path: '/w/:workspace/storyboards', element: <StoryboardsPage /> },
+      // AI-generated screens over the workspace's data, each drawn in a sandbox.
+      { path: '/w/:workspace/views', element: <LazySection><DynamicViewsPage /></LazySection> },
+      { path: '/w/:workspace/views/:id', element: <LazySection><DynamicViewPage /></LazySection> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       // Static, so it outranks `agents/:slug`; the server reserves the slug `new`.
       { path: '/w/:workspace/agents/new', element: <LazySection><NewAgentPage /></LazySection> },

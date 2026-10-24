@@ -64,6 +64,7 @@ the arrow's direction and enforce it in CI.
 | `walkthroughs` | **product** | DDD walkthrough artifacts (HTML/video demos). |
 | `reviews` | **product** | DDD narrative review surface. |
 | `shareouts` | **product** | Team shareout briefings. |
+| `dynamic_views` | **product** | Dynamic views: AI-generated screens (JSX as data) owned by a workspace or one of its projects, versioned, and drawn in a sandboxed opaque-origin frame (`/dynamic-views/frame/`) that reads canopy only through a catalog of existing REST reads, as the viewer. Reads `agents`, `workspaces`, `embedding`, `mcp_apps_host`. See `docs/architecture/dynamic-views.md`. |
 | `runs` | **product** | DDD run aggregation/versioning. |
 | `beta_requests` | **product** | The public site's request-access form (`POST /api/beta-requests`, anonymous; access is closed to Dimagi and its partners). Stores the request and emails the person who grants access; grants nothing and creates no user. Product because the public site is canopy's own, not substrate an agent host would reuse. |
 | `storyboards` | **product** | An ordered arc of DDD narratives — acts over entries — shareable as ONE capability-bearing link (`read`/`comment`/`suggest`). Curates narratives, so product. An entry FOLLOWS its narrative's current release rather than freezing a run id, which is safe only because every `feedback.Feedback` row records the version it was left against. Anonymous read mirrors `runs`' release endpoint: `auth=None`, self-enforcing, 404 (never 403) on a wrong token so existence never leaks. |

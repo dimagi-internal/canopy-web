@@ -1,0 +1,169 @@
+/**
+ * Draws one dynamic view: frames the sandbox (`/dynamic-views/frame/`) and answers it.
+ *
+ * The frame's sandbox grants scripts and nothing else — never the same-origin
+ * flag: beside scripts on a same-origin URL it is no sandbox at all (the guard in
+ * lib/uploadedContentSandbox.test.ts holds every app iframe to that). So the
+ * frame has an opaque origin, and its messages arrive with `origin === "null"`;
+ * we accept one only when `event.source` is this frame's own window. Every read
+ * it asks for goes through `resolveRead` (bridge.ts) and is made here, as the
+ * viewer, under the view's workspace. Design: docs/architecture/dynamic-views.md.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { apiUrl } from '@/api/base'
+import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
+import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
+import { CHANNEL, isMessage, type FrameMessage, type HostMessage, type ReadRequest, type ViewScope } from './protocol'
+
+export interface FrameView {
+  code: string
+  sources: DynamicViewSource[]
+}
+
+interface Props {
+  view: FrameView
+  scope: ViewScope
+  /** Called with the frame's compile or runtime error, or null once it draws again. */
+  onError?: (message: string | null) => void
+}
+
+async function readAs(url: string): Promise<unknown> {
+  const res = await fetch(apiUrl(url), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+  const text = await res.text()
+  let body: unknown = null
+  try {
+    body = text ? JSON.parse(text) : null
+  } catch {
+    body = null
+  }
+  if (!res.ok) {
+    const detail = body && typeof body === 'object' ? (body as { detail?: unknown; title?: unknown }).detail ?? (body as { title?: unknown }).title : null
+    throw new Error(typeof detail === 'string' ? detail : `HTTP ${res.status}`)
+  }
+  return body
+}
+
+export async function readSources(catalog: CatalogModel[], ctx: ReadContext, sources: DynamicViewSource[]) {
+  const entries = await Promise.all(
+    (sources ?? []).map(async (s) => {
+      const r = resolveRead(catalog, ctx, { model: s.model, params: s.params, path: s.path })
+      if (!r.ok) return [s.alias, { error: r.error }] as const
+      try {
+        return [s.alias, await readAs(r.url)] as const
+      } catch (e) {
+        return [s.alias, { error: e instanceof Error ? e.message : String(e) }] as const
+      }
+    }),
+  )
+  return Object.fromEntries(entries) as Record<string, unknown>
+}
+
+function theme(): 'light' | 'dark' {
+  return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+}
+
+export function DynamicViewFrame({ view, scope, onError }: Props) {
+  const frame = useRef<HTMLIFrameElement>(null)
+  const loads = useRef(0)
+  const [height, setHeight] = useState(240)
+  const [gone, setGone] = useState(false)
+  const navigate = useNavigate()
+  const ctx: ReadContext = { workspace: scope.workspace.slug, project: scope.project?.handle ?? null }
+  const ctxKey = `${ctx.workspace}/${ctx.project ?? ''}`
+
+  const post = useCallback((msg: HostMessage) => {
+    // An opaque-origin frame can only be addressed as "*"; the window we post to
+    // is our own frame's, and the `gone` check stops us talking to a document it
+    // navigated to.
+    frame.current?.contentWindow?.postMessage(msg, '*')
+  }, [])
+
+  const draw = useCallback(async () => {
+    const guide = await getDynamicViewGuide()
+    const data = await readSources(guide.catalog, ctx, view.sources)
+    post({ channel: CHANNEL, type: 'render', code: view.code, data, scope, theme: theme() })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post, view.code, view.sources, ctxKey, scope.view.version])
+
+  useEffect(() => {
+    async function onMessage(ev: MessageEvent) {
+      if (!frame.current || ev.source !== frame.current.contentWindow || gone) return
+      const msg = ev.data as FrameMessage
+      if (!isMessage(msg)) return
+      switch (msg.type) {
+        case 'ready':
+          onError?.(null)
+          draw().catch((e) => onError?.(e instanceof Error ? e.message : String(e)))
+          return
+        case 'refresh': {
+          const guide = await getDynamicViewGuide()
+          post({ channel: CHANNEL, type: 'data', data: await readSources(guide.catalog, ctx, view.sources) })
+          return
+        }
+        case 'read': {
+          const guide = await getDynamicViewGuide()
+          const r = resolveRead(guide.catalog, ctx, msg.request as ReadRequest)
+          if (!r.ok) {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: r.error })
+            return
+          }
+          try {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: true, data: await readAs(r.url) })
+          } catch (e) {
+            post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+        case 'navigate': {
+          const to = resolveNavigation(ctx.workspace, msg.path)
+          if (to.kind === 'app') navigate(to.to)
+          else if (to.kind === 'external' && window.confirm(`This view wants to open ${to.url}`)) {
+            window.open(to.url, '_blank', 'noopener,noreferrer')
+          }
+          return
+        }
+        case 'resize':
+          if (Number.isFinite(msg.height)) setHeight(Math.min(Math.max(Math.round(msg.height), 80), 20000))
+          return
+        case 'error':
+          onError?.(String(msg.message ?? 'the view failed'))
+          return
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draw, post, navigate, gone, ctxKey, view.sources])
+
+  // A changed view (an edit, a restored version) redraws in the same frame.
+  useEffect(() => {
+    if (loads.current > 0 && !gone) draw().catch((e) => onError?.(e instanceof Error ? e.message : String(e)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.code, view.sources])
+
+  if (gone) {
+    return (
+      <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+        This view navigated its frame away, so canopy stopped talking to it. Reload the page to draw it again.
+      </div>
+    )
+  }
+  return (
+    <iframe
+      ref={frame}
+      title="Dynamic view"
+      src={apiUrl(`/dynamic-views/frame/?theme=${theme()}`)}
+      sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+      className="block w-full border-0"
+      style={{ height }}
+      onLoad={() => {
+        loads.current += 1
+        // The first load is the frame; any later one means the view's code
+        // replaced the document. Stop answering it.
+        if (loads.current > 1) setGone(true)
+      }}
+    />
+  )
+}
