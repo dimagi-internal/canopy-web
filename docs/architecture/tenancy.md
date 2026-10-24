@@ -500,9 +500,13 @@ THE predicate; every surface below asks it, one test each in
   `tests/test_sealed_server_doors.py`): a session minted from a
   token is refused by the app-view routes (`app_views_api.browser_only`) and the panel's
   own token (`embed_api.embed_self_token`), both via `is_machine`, and by the chat socket
-  (`auth_method="minted"`); its page state (`GET /{id}/page-state`, MCP `read_page_state`)
-  asks `reads_content`, `current_page` over MCP leaves a sensitive one out (the turn in it
-  still reads its own, by its caller token or chat key), and the page is forgotten when its
+  (`auth_method="minted"`); every page route — its state and actions, declared, listed,
+  invoked and answered (`/{id}/page-state`, `/run-input`, `/page-actions…`; MCP
+  `read_page_state`, `list_page_actions`, `invoke_page_action`) — asks `reads_content`
+  (`api._page_in_it_or_403`), `current_page` and the `page_*` tools over MCP leave a
+  sensitive one out (the turn in it still reads and acts on its own, by its caller token
+  or chat key, asked again at the call), an action's arguments and answer are not kept on
+  its row (`page_actions._forget`), and the page is forgotten when its
   last live turn ends (`closing._forget_the_page`); the unbound stream door
   (`api_session_sync._turn_end_session`) takes only the confined turn's own transcript
   (the first it ships, stamped on `Turn.session_key`) from a box that may still hold the

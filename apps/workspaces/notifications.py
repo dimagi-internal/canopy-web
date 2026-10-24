@@ -30,7 +30,7 @@ def _send(subject: str, text: str, html: str, to: str, reply_to: str | None = No
     try:
         return "sent" if message.send() else "not_configured"
     except Exception:  # noqa: BLE001
-        _access_log.exception("access-request email failed: to=%s subject=%r", to, subject)
+        _access_log.exception("access-request email failed")  # never the address or subject: they name people
         return "failed"
 
 

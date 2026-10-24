@@ -183,7 +183,7 @@ def _notify(w: _Waiting, notice, *, new_key=None) -> dict:
                     else:
                         result["not_configured"] = True
                 except Exception:  # noqa: BLE001
-                    logger.exception("zk grant notice email failed: to=%s", person.email)
+                    logger.exception("zk grant notice email failed: user=%s", person.pk)
                     result["failed"].append(person.email)
             try:
                 result["pushed"] += send_to_user(person, f"Vault key wanted · {w.what}", detail[:180], rel)

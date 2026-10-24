@@ -87,7 +87,7 @@ def notify(runner, item: dict) -> dict:
                     if message.send():
                         result["emailed"].append(person.email)
                 except Exception:  # noqa: BLE001
-                    logger.exception("credential notice email failed: to=%s", person.email)
+                    logger.exception("credential notice email failed: user=%s", person.pk)
                     result["failed"].append(person.email)
             try:
                 from apps.push.services import send_to_user

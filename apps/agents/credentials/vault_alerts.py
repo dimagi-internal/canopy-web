@@ -322,7 +322,7 @@ def _notify(agent, alert) -> dict:
                     else:
                         result["not_configured"] = True
                 except Exception:  # noqa: BLE001
-                    logger.exception("vault alert email failed: to=%s", person.email)
+                    logger.exception("vault alert email failed: user=%s", person.pk)
                     result["failed"].append(person.email)
             try:
 

@@ -40,6 +40,8 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.base import Provider
 from fastmcp.tools.base import Tool, ToolResult
 
+from apps.harness import sensitivity
+
 log = logging.getLogger(__name__)
 
 #: Prefix on every page-derived tool name. Namespaced so a host cannot shadow
@@ -62,7 +64,10 @@ def _attached_sessions(user):
     """
     from apps.canopy_sessions.page_access import sessions_with_page_for
 
-    return list(sessions_with_page_for(user).exclude(page_actions_available=[]))
+    # MCP is never a sensitive conversation's chat surface (`sensitivity.reads_content`):
+    # its page is acted on only by the turn running in it, through its chat key.
+    return [session for session in sessions_with_page_for(user).exclude(page_actions_available=[])
+            if sensitivity.reads_content(session, chat_surface=False, user=user)]
 
 
 def page_tool_specs(user) -> list[tuple]:
@@ -120,6 +125,13 @@ class PageActionTool(Tool):
             session = Session.objects.filter(id=self.session_id).first()
             if session is None:
                 raise page_actions.PageActionError("no_page", "that page is no longer open")
+            # Asked again at the call, not only at the listing: a conversation can turn
+            # sensitive in between, and then only the turn running in it — the request
+            # carrying its chat key — may act on its page.
+            if sensitivity.is_sensitive(session):
+                chat = _current_chat()
+                if chat is None or chat.pk != session.pk:
+                    raise page_actions.PageActionError("refused", sensitivity.NOT_IN_IT_PAGE)
             return page_actions.request_action(
                 session=session,
                 name=self.action_name,
