@@ -111,3 +111,14 @@ def test_a_stored_dispatch_spec_with_a_retired_origin_still_enqueues_a_valid_one
     agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
     turn, _ = services.enqueue_turn(agent=agent, origin="manual", idempotency_key="legacy-1")
     assert turn.origin == Turn.ORIGIN_API
+
+
+@pytest.mark.parametrize("origin", ["board-v2", "", "Email", "runner"])
+def test_a_producer_naming_no_known_origin_is_refused_and_writes_nothing(origin):
+    """Every producer comes through enqueue_turn, and not all through a schema (a stored
+    dispatch spec, an internal caller). A value outside the vocabulary would be a turn no
+    routing rule, envelope or access check recognises — refused there instead."""
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=a_workspace())
+    with pytest.raises(ValueError, match="unknown turn origin"):
+        services.enqueue_turn(agent=agent, origin=origin, idempotency_key="bad-1")
+    assert not Turn.objects.exists()
