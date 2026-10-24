@@ -438,3 +438,49 @@ def test_canopy_web_accepts_the_vectors_shape_and_never_opens_it():
 
 def _write():  # pragma: no cover — a maintainer's regeneration helper
     VECTORS.write_text(json.dumps(_vector(), indent=2) + "\n")
+
+
+# ── the embedded panel: the person's browser in canopy's frame, not the site's backend ──
+
+
+def _site_token(w):
+    from apps.tokens.models import AppCredential, AppCredentialAgent, DelegatedToken
+
+    app = AppCredential.create_credential(name="connect-labs", created_by=w["user"], workspace=w["ws"])
+    AppCredentialAgent.objects.create(app=app, agent=w["agent"])
+    raw, _ = DelegatedToken.issue(app=app, user=w["user"], ttl_seconds=600, runner_requirements=["sensitive_data"])
+    return raw
+
+
+def test_the_panels_frame_attaches_a_file_and_the_sites_backend_cannot(w, bucket, django_capture_on_commit_callbacks):
+    raw = _site_token(w)
+    backend = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    panel = Client(HTTP_AUTHORIZATION=f"Bearer {raw}", HTTP_SEC_FETCH_SITE="same-origin")
+    # The site's server, calling canopy with the visitor's token: refused, nothing kept.
+    assert _upload(backend, w["hot"]).status_code == 422
+    assert not Attachment.objects.filter(session=w["hot"]).exists() and not bucket.objects
+    # The panel's frame: the file for the turn, then the sealed copy.
+    up = _upload(panel, w["hot"])
+    assert up.status_code == 201, up.content
+    aid = up.json()["id"]
+    sealed_name, blob = _seal(w["hot"], aid, w["user"].pk)
+    # Nor can the backend store (or replace) the sealed copy for it.
+    assert _post_sealed(backend, aid, sealed_name, blob).status_code == 422
+    assert _post_sealed(panel, aid, sealed_name, blob).status_code == 204
+    # Sent from the panel, the agent's box receives it once.
+    r = panel.post(f"/api/canopy-sessions/{w['hot'].pk}/send", {"text": "what do these say?"},
+                   content_type="application/json")
+    assert r.status_code == 200, r.content
+    turn = Turn.objects.filter(chat_session=w["hot"]).latest("created_at")
+    assert turn.origin_ref["attachments"] == [{"id": aid, "sealed": True}]
+    box = _box(w)
+    _claim(turn, box)
+    with django_capture_on_commit_callbacks(execute=True):
+        got = _fetch(box, turn, aid)
+    assert got.status_code == 200 and got.content == PNG
+    # The panel's history lists it and fetches the sealed copy, which its people open.
+    [entry] = panel.get(f"/api/canopy-sessions/{w['hot'].pk}/sealed-attachments").json()
+    sealed = panel.get(f"/api/canopy-sessions/attachments/{aid}/sealed")
+    assert sealed.status_code == 200
+    meta, raw_bytes = _open(w["hot"], w["user"], w["key"], entry["sealed_name"], sealed.content)
+    assert meta["name"] == NAME and raw_bytes == PNG

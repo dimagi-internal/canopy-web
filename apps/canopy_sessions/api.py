@@ -1907,7 +1907,7 @@ def request_backfill(request: HttpRequest, session_id: uuid.UUID):
 
 #: Why a private conversation's file was not taken (`upload_attachment`).
 ATTACHMENTS_NOT_HERE = ("a file in a private conversation is sealed to its people in their browser: "
-                        "attach it from canopy's own chat page")
+                        "attach it from canopy's chat page or the panel, not from a server")
 ATTACHMENTS_KEYLESS = ("this private conversation has no key yet, so a file could not be sealed to "
                        "its people: send a message first")
 
@@ -1931,12 +1931,11 @@ def upload_attachment(
     # A private conversation's file is two copies (`private_attachments`): this one, for
     # the agent, held only until its turn fetches it or ends, under a key that names no
     # file; and the people's, sealed in their browser (`POST …/sealed`). Only its own
-    # people, at a browser, attach one — the door the sealed copy comes back through.
+    # people, at a browser, attach one: canopy's chat page, or the embedded panel's
+    # frame (`_from_its_peoples_browser`) — never a site's backend, a token or MCP.
     sensitive = sensitivity.is_sensitive(session)
     if sensitive:
-        if not sensitivity.reads_content(session, user=request.user,
-                                         chat_surface=sensitivity.request_is_chat_surface(request)) \
-                or getattr(request, "delegated_app", None) or getattr(request, "contact", None):
+        if not _from_its_peoples_browser(request, session):
             raise HttpError(422, ATTACHMENTS_NOT_HERE)
         if conversation_keys.key_of(session) is None:
             raise HttpError(422, ATTACHMENTS_KEYLESS)
@@ -1981,6 +1980,20 @@ def upload_attachment(
     return 201, attachment
 
 
+def _from_its_peoples_browser(request: HttpRequest, session) -> bool:
+    """Whether this request is one of a private conversation's own people at a browser:
+    `reads_content` on a chat surface, never a contact (who holds no key), and — when a
+    site's delegated token carries it — from the panel's own frame, not the site's
+    backend calling server to server (`sensitivity.request_is_panel_browser`, the rule
+    the keyset goes out under). A file is attached, and its sealed copy stored, only so."""
+    if getattr(request, "contact", None) is not None:
+        return False
+    if not sensitivity.reads_content(session, user=request.user,
+                                     chat_surface=sensitivity.request_is_chat_surface(request)):
+        return False
+    return sensitivity.request_is_panel_browser(request)
+
+
 def _sealed_attachment_or_404(request: HttpRequest, attachment_id: uuid.UUID) -> Attachment:
     """A private conversation's file, for one of its own people on its chat surfaces
     (`sensitivity.reads_content`, the gate its words go out through); 404 for anyone
@@ -2014,6 +2027,8 @@ def put_sealed_attachment(request: HttpRequest, attachment_id: uuid.UUID,
     whose sealed copy is stored."""
     attachment = _sealed_attachment_or_404(request, attachment_id)
     session = attachment.session
+    if not _from_its_peoples_browser(request, session):
+        raise HttpError(422, ATTACHMENTS_NOT_HERE)
     if attachment.uploaded_by_id != request.user.pk or not access.can_write(request.user, session):
         raise HttpError(403, "only the person who attached a file stores its sealed copy")
     if attachment.sent_at is not None:

@@ -510,8 +510,10 @@ THE predicate; every surface below asks it, one test each in
     (`drafts.forget_words`); a body kept under the field key before reads as nothing.
   - *Files: the agent's copy for one turn, the people's sealed* (`private_attachments`).
     The agent reads a file on its box, which holds no key to the conversation, so a file is
-    treated like the prompt. Its people's browser (`api.upload_attachment` refuses a token,
-    MCP, a minted session or a site's backend: 422) uploads it in clear for one turn, under
+    treated like the prompt. Its people's browser — canopy's chat page, or the embedded
+    panel's frame (`api._from_its_peoples_browser`: a delegated token only with
+    `Sec-Fetch-Site: same-origin`, the keyset's rule, `request_is_panel_browser`); a token,
+    MCP, a minted session, a contact or a site's backend gets 422 — uploads it in clear for one turn, under
     a key that names no file (`plain_key`), the row keeping a size bucket and a type family;
     then seals the name, type and size (`cf1:`) and the padded bytes (`cfb1`) to the
     conversation's public key with the message construction, bound to the conversation, the
@@ -529,8 +531,10 @@ THE predicate; every surface below asks it, one test each in
     browser: "Attachment" under the line until the key opens, then the name, a preview and a
     download (`SealedAttachments`, canopy-ui `AttachmentHost`). On the sensitive-data box the
     file lands in the turn's own directory (`<cwd>/.canopy-attachments/<turn>/`, owner-only),
-    readable by that turn alone (`sensitive_data_settings(attachment_dir=…)`, and the same
-    path in profile_guard's profile, `_confine(read_dirs=…)`), and goes when the turn ends
+    readable by that turn alone (`sensitive_data_settings(attachment_dir=…)`, and the
+    profile's `attachment_dirs`, which profile_guard ≥ 4 — canopy 0.2.781 — lets Read open
+    and nothing else; the capability's own tools and read_paths are unchanged, and an older
+    guard gets no file, named as not available), and goes when the turn ends
     (`_sensitive_data_forget_turn`); what the agent read of it survives only in the kept
     session's transcript, which lives no longer than the kept conversation. The transcript
     the box ships back names it only inside sealed words (the user row's note, a Read
