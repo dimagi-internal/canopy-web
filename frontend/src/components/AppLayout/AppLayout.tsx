@@ -16,6 +16,8 @@ import { wsUrl } from '@/lib/wsUrl'
 import { usePresenceReconnectNonce } from '@/presence/usePresenceReconnectNonce'
 import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
+import { CommandPalette } from '@/components/work/CommandPalette'
+import { KeyboardHelp } from '@/components/work/KeyboardHelp'
 import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, isNavEntryActive, resolveNav, switchWorkspacePath, type ResolvedNavEntry } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
@@ -488,6 +490,9 @@ function AppShell() {
           /invite) would be both useless and wrong. Renders nothing unless the
           deployment turns it on — see GET /api/embed/self. */}
       <CanopyWidget />
+      {/* ⌘K and `?`: signed-in only; the palette searches the active workspace. */}
+      {isAuthed && active && <CommandPalette workspace={active} nav={nav} />}
+      {isAuthed && <KeyboardHelp />}
     </div>
   )
 }

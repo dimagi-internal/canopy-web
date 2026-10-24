@@ -394,7 +394,7 @@ export function sizeWords(effort: string, confidence: number | null): string {
 
 /** A board task's status, as the person reading the huddle has to act on it.
  * `suggested` is the board's inbox: a task waiting for its owner to Accept or
- * Decline (TasksBoard). In progress, `assigned` is who the next step waits on. */
+ * Decline (the task actions). In progress, `assigned` is who the next step waits on. */
 export function taskStatusWords(o: Pick<HuddleOutput, 'status' | 'assigned'>): string {
   return taskStatusPlain(o.status)
 }

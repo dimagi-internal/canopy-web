@@ -23,6 +23,7 @@ import { PairRunnerPage } from './pages/PairRunnerPage'
 import { ConnectedAppsPage } from './pages/ConnectedAppsPage'
 import { WorkspaceSecretsPage } from './pages/WorkspaceSecretsPage'
 import { WorkspaceRetentionPage } from './pages/WorkspaceRetentionPage'
+import { WorkspaceTaskSettingsPage } from './pages/WorkspaceTaskSettingsPage'
 import { WorkspaceAdmissionRulesPage } from './pages/WorkspaceAdmissionRulesPage'
 import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
@@ -46,10 +47,14 @@ import { SessionsPage } from './pages/SessionsPage'
 import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
-import { WorkspaceProjectRedirect } from './pages/projects/WorkspaceProjects'
 import { KnowledgeBasePage } from './pages/projects/KnowledgeBasePage'
 import { McpServersPage } from './pages/projects/McpServersPage'
 import { ProjectsPage } from './pages/projects/ProjectsPage'
+import { TaskPage } from './pages/work/TaskPage'
+import { TasksPage } from './pages/work/TasksPage'
+import { TriagePage } from './pages/work/TriagePage'
+import { ProjectPage } from './pages/work/ProjectPage'
+import { ProjectRefRedirect } from './pages/work/ProjectRefRedirect'
 import { HomePage } from './pages/home/HomePage'
 import { AgentWorkspacePage } from './pages/AgentWorkspacePage'
 import { RunnerPage, RunnerTabRoute } from './pages/runner/RunnerPage'
@@ -214,11 +219,13 @@ function WorkspaceIndex() {
   return <Navigate to={scopedPath(workspace, '/agents')} replace />
 }
 
-// /w/:workspace/projects/:agent/:ref[/people/:person] → the project's one page.
+// /w/:workspace/projects/:agent/:ref → the project's one page at its address;
+// with /people/:person, that contributor's page on the agent's board.
 export function ProjectPageRedirect() {
   const { workspace = '', agent = '', ref = '', person } = useParams()
+  if (!person) return <ProjectRefRedirect slug={agent} projectRef={ref} />
   const page = scopedPath(workspace, `/agents/${agent}/projects/${encodeURIComponent(ref)}`)
-  return <Navigate to={person ? `${page}/people/${person}` : page} replace />
+  return <Navigate to={`${page}/people/${person}`} replace />
 }
 
 /**
@@ -322,6 +329,7 @@ export const routeTable: RouteObject[] = [
           { path: 'connected-apps', element: <ConnectedAppsPage /> },
           { path: 'secrets', element: <WorkspaceSecretsPage /> },
           { path: 'retention', element: <WorkspaceRetentionPage /> },
+          { path: 'tasks', element: <WorkspaceTaskSettingsPage /> },
           { path: 'admission-rules', element: <WorkspaceAdmissionRulesPage /> },
           { path: 'topology', element: <TopologyMapPage /> },
           { path: 'topology/runners', element: <WorkspaceRunnersPage /> },
@@ -356,15 +364,17 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       // Static, so it outranks `agents/:slug`; the server reserves the slug `new`.
       { path: '/w/:workspace/agents/new', element: <LazySection><NewAgentPage /></LazySection> },
-      // Every project in the workspace, across its agents — an index of rows;
-      // each project's one page is on its agent's board.
+      // The workspace's work: every task (My tasks, Waiting on me, …) as a table,
+      // a board or a calendar; one task's page; what waits for a decision.
+      { path: '/w/:workspace/tasks', element: <TasksPage /> },
+      { path: '/w/:workspace/tasks/:taskKey', element: <TaskPage /> },
+      { path: '/w/:workspace/triage', element: <TriagePage /> },
+      // Every project in the workspace, one row each; each opens its one page.
       { path: '/w/:workspace/projects', element: <ProjectsPage /> },
       // The MCP servers its projects serve, to browse and add by hand.
       { path: '/w/:workspace/mcp', element: <McpServersPage /> },
-      // The old team-view address (hal T82) — a second page about the same
-      // project, outside the agent console. A project has one page now; links
-      // already sent land on it.
-      { path: '/w/:workspace/projects/:handle', element: <WorkspaceProjectRedirect /> },
+      // A project's one page, for everyone: its address in the workspace.
+      { path: '/w/:workspace/projects/:handle', element: <ProjectPage /> },
       // A knowledge base's sources and its owner's review of a Drive source. Static
       // `kb` outranks `:agent/:ref`.
       { path: '/w/:workspace/projects/:handle/kb', element: <KnowledgeBasePage /> },

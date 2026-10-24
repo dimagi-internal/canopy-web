@@ -22,6 +22,7 @@ export function ProjectOverview({
   pageHref,
   showRefs = false,
   details,
+  bare = false,
 }: {
   agent: string
   projectRef: string
@@ -31,6 +32,8 @@ export function ProjectOverview({
   showRefs?: boolean
   /** The project's own fields under the header (status, Drive, repo). */
   details?: ReactNode
+  /** Leave out the header (name, outcome, links, owner): the project page has its own. */
+  bare?: boolean
 }): JSX.Element {
   const key = `${agent}/${ref}`
   const [state, setState] = useState<{
@@ -75,39 +78,41 @@ export function ProjectOverview({
   return (
     <div data-testid="project-overview">
       {/* What it is */}
-      <header className="mb-8 border-b border-border pb-5">
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Project</p>
-        <h1 className="mt-1 text-xl font-semibold text-foreground">{data.name}</h1>
-        {data.outcome && (
-          <p className="mt-2 text-[14px] leading-relaxed text-foreground-secondary" data-testid="team-outcome">
-            {data.outcome}
+      {!bare && (
+        <header className="mb-8 border-b border-border pb-5">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Project</p>
+          <h1 className="mt-1 text-xl font-semibold text-foreground">{data.name}</h1>
+          {data.outcome && (
+            <p className="mt-2 text-[14px] leading-relaxed text-foreground-secondary" data-testid="team-outcome">
+              {data.outcome}
+            </p>
+          )}
+          {links.length > 0 && (
+            // Unlabelled, a row of pills read as tags or filters; they are where to go.
+            <ul className="mt-3 flex flex-wrap items-center gap-2" data-testid="team-links" aria-label="Links">
+              <li className="text-[11px] uppercase tracking-wide text-muted-foreground">Links</li>
+              {links.map((l) => (
+                <li key={`${l.label}|${l.url}`}>
+                  <a
+                    href={l.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-block rounded-full border border-border px-2.5 py-1 text-[12px] text-primary hover:bg-muted"
+                  >
+                    {l.label || l.url}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-[12px] text-muted-foreground">
+            {data.owner_name
+              ? `Owned by ${data.owner_name}, built with ${data.agent_name}.`
+              : `Built with ${data.agent_name}.`}
           </p>
-        )}
-        {links.length > 0 && (
-          // Unlabelled, a row of pills read as tags or filters; they are where to go.
-          <ul className="mt-3 flex flex-wrap items-center gap-2" data-testid="team-links" aria-label="Links">
-            <li className="text-[11px] uppercase tracking-wide text-muted-foreground">Links</li>
-            {links.map((l) => (
-              <li key={`${l.label}|${l.url}`}>
-                <a
-                  href={l.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-block rounded-full border border-border px-2.5 py-1 text-[12px] text-primary hover:bg-muted"
-                >
-                  {l.label || l.url}
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className="mt-3 text-[12px] text-muted-foreground">
-          {data.owner_name
-            ? `Owned by ${data.owner_name}, built with ${data.agent_name}.`
-            : `Built with ${data.agent_name}.`}
-        </p>
-        {details}
-      </header>
+          {details}
+        </header>
+      )}
 
       {/* Where it stands */}
       <Section id="team-standing" title="Where it stands">
