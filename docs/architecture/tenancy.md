@@ -413,6 +413,11 @@ THE predicate; every surface below asks it, one test each in
     end, before deleting it. Every ship of one transcript lands in the same epoch, and a row
     already held is neither stored nor fanned out again, so the final ship adds nothing the
     live tail sent. A sensitive-data box still runs no `/streams` tail or backfill.
+  - *An agent's own login.* It holds no vault key, so it cannot start or read one —
+    unless an admin of the agent turned on its TEST vault key, which receives copies only
+    of the conversations that login is itself in (`docs/architecture/vault.md` § An agent
+    login's test vault key). A harness signed in as the agent then reads them exactly as a
+    person does: the passphrase unlock in its browser.
   - *Who may send into one.* Its own people on its chat surfaces, the read gate
     (`reads_content`, asked in `doors.send_from` for every door: REST, socket, contact,
     app view, MCP, Slack) — 403 `NOT_IN_IT_SEND` otherwise, `forbidden` on the socket.

@@ -658,6 +658,9 @@ class ParticipantOut(Schema):
     #: they cannot read it and are not on its live socket. Anyone in it can give them
     #: one from their browser (`POST /{id}/key-copies`).
     needs_key: bool = False
+    #: An agent's own login holding its agent's TEST vault key, not a person's key
+    #: (`apps/agents/credentials/login_test_key.py`).
+    test_key: bool = False
 
 
 class SealedKeyWrapIn(Schema):
@@ -737,6 +740,8 @@ class ParticipantRecipientOut(Schema):
     email: str
     public_jwk: dict
     jkt: str
+    #: The key is an agent login's TEST vault key, not a person's.
+    test_key: bool = False
 
 
 class StreamStateOut(Schema):

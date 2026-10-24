@@ -210,6 +210,27 @@ class SlackEnabledIn(StrictModel):
     slack_enabled: bool
 
 
+class TestVaultKeyIn(StrictModel):
+    """Turn an agent login's TEST vault key on or off. Its own endpoint, never on the
+    agent-repo upsert: an agent must not be able to give its own login a key."""
+
+    enabled: bool
+
+
+class TestVaultKeyOut(StrictModel):
+    """Whether the agent's own login may hold a test vault key, and the key if one was
+    made. `conversations` counts the sensitive conversations it holds a copy of the
+    key to — the only thing such a key ever receives."""
+
+    enabled: bool
+    login_email: str = ""
+    has_key: bool = False
+    #: The key's thumbprint (RFC 7638), to tell one key from another.
+    key_jkt: str = ""
+    key_made_at: dt.datetime | None = None
+    conversations: int = 0
+
+
 class SlackEnabledOut(StrictModel):
     """The switch's new state, and what happened to the agent's `/<slug>` command.
 

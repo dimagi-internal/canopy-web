@@ -47,7 +47,7 @@ from apps.workspaces import services as wsvc
 from . import access, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
-from .credentials import delegations, licenses, zk
+from .credentials import delegations, licenses, login_test_key, zk
 from .gates import (
     agent_for_admin,
     agent_for_read,
@@ -94,6 +94,8 @@ from .schemas import (
     RepositoryIn,
     SlackEnabledIn,
     SlackEnabledOut,
+    TestVaultKeyIn,
+    TestVaultKeyOut,
     TurnModeIn,
 )
 from .setup import request_setup
@@ -989,6 +991,51 @@ def set_slack_enabled(request: HttpRequest, slug: str, payload: SlackEnabledIn) 
             detail = f"Removed {name} from Slack."
     return SlackEnabledOut(slack_enabled=agent.slack_enabled, command_status=result["status"],
                            command_detail=detail)
+
+
+@router.get("/{slug}/test-vault-key", response=TestVaultKeyOut,
+            summary="Whether the agent's own login may hold a test vault key")
+@gate("agent-admin")
+def get_test_vault_key(request: HttpRequest, slug: str) -> TestVaultKeyOut:
+    """The switch, and the key the agent's own login made with it if any: its
+    thumbprint, when it was made, and how many sensitive conversations it holds a
+    copy of the key to. Owner or admin only."""
+    agent = agent_for_admin(request, slug)
+    return TestVaultKeyOut(**login_test_key.state(agent))
+
+
+@router.put("/{slug}/test-vault-key", response=TestVaultKeyOut,
+            summary="Turn the agent login's test vault key on or off")
+# on: browser session + passkey step-up (a token is refused); off: any caller who may turn it on
+@gate("agent-admin", setting=True, step_up=True)
+def set_test_vault_key(request: HttpRequest, slug: str, payload: TestVaultKeyIn) -> TestVaultKeyOut:
+    """`{enabled}`. FOR TESTING: while on, the agent's own canopy login may make one
+    personal vault key, sealed with a passphrase (`PUT /api/vault/keyset` as that
+    login), so a headless harness signed in as the agent can take part in its own
+    sensitive conversations. That key receives only copies of the keys of
+    conversations the login is itself in — never a copy of any vault's key, never
+    an endorsement, never a device approval. Turning it on needs an owner or admin
+    of the agent at a browser with a fresh passkey step-up; 409 `no_agent_login`
+    when the agent has no login of its own. Turning it off deletes the key and every
+    conversation-key copy wrapped to it."""
+    agent = agent_for_admin(request, slug)
+    before = login_test_key.state(agent)
+    if payload.enabled:
+        # Giving a login that is not a person a key is a person's act, at a browser.
+        stepup.require_recent_step_up(request)
+        try:
+            login_test_key.enable(agent)
+        except login_test_key.NotAPerson as exc:
+            raise ProblemError(exc.status, "Test vault key", type_=TYPE_CONFLICT, detail=str(exc),
+                               members={"error": exc.code}) from exc
+    else:
+        # Taking it away never waits on a passkey.
+        login_test_key.disable(agent)
+    after = login_test_key.state(agent)
+    audit.note_change(scope=f"agent:{agent.slug}/test-vault-key",
+                      before={"enabled": before["enabled"], "has_key": before["has_key"]},
+                      after={"enabled": after["enabled"], "has_key": after["has_key"]})
+    return TestVaultKeyOut(**after)
 
 
 @router.get("/{slug}/runtime", response=AgentRuntimeOut,

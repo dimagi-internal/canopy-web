@@ -3711,6 +3711,40 @@ export interface paths {
         readonly patch: operations["set_slack_enabled"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/test-vault-key": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Whether the agent's own login may hold a test vault key
+         * @description The switch, and the key the agent's own login made with it if any: its
+         *     thumbprint, when it was made, and how many sensitive conversations it holds a
+         *     copy of the key to. Owner or admin only.
+         */
+        readonly get: operations["get_test_vault_key"];
+        /**
+         * Turn the agent login's test vault key on or off
+         * @description `{enabled}`. FOR TESTING: while on, the agent's own canopy login may make one
+         *     personal vault key, sealed with a passphrase (`PUT /api/vault/keyset` as that
+         *     login), so a headless harness signed in as the agent can take part in its own
+         *     sensitive conversations. That key receives only copies of the keys of
+         *     conversations the login is itself in — never a copy of any vault's key, never
+         *     an endorsement, never a device approval. Turning it on needs an owner or admin
+         *     of the agent at a browser with a fresh passkey step-up; 409 `no_agent_login`
+         *     when the agent has no login of its own. Turning it off deletes the key and every
+         *     conversation-key copy wrapped to it.
+         */
+        readonly put: operations["set_test_vault_key"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runtime": {
         readonly parameters: {
             readonly query?: never;
@@ -6157,6 +6191,11 @@ export interface paths {
          *     must name one of the caller's passkeys. A different `public_jwk` from the
          *     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
          *     drops every agent's member wrap to the old key.
+         *
+         *     An agent's own login, while an admin has turned its test vault key on, makes
+         *     its FIRST key here with passphrase seals only, and with no passkey step-up (it
+         *     has no passkey, and may hold none); anything else from such a login is refused
+         *     (403 `not_a_person`, 409 `test_key_exists`, 422 `test_key_passphrase_only`).
          */
         readonly put: operations["put_vault_keyset"];
         readonly post?: never;
@@ -21145,6 +21184,47 @@ export interface components {
             readonly slack_enabled: boolean;
         };
         /**
+         * TestVaultKeyOut
+         * @description Whether the agent's own login may hold a test vault key, and the key if one was
+         *     made. `conversations` counts the sensitive conversations it holds a copy of the
+         *     key to — the only thing such a key ever receives.
+         */
+        readonly TestVaultKeyOut: {
+            /** Enabled */
+            readonly enabled: boolean;
+            /**
+             * Login Email
+             * @default
+             */
+            readonly login_email: string;
+            /**
+             * Has Key
+             * @default false
+             */
+            readonly has_key: boolean;
+            /**
+             * Key Jkt
+             * @default
+             */
+            readonly key_jkt: string;
+            /** Key Made At */
+            readonly key_made_at?: string | null;
+            /**
+             * Conversations
+             * @default 0
+             */
+            readonly conversations: number;
+        };
+        /**
+         * TestVaultKeyIn
+         * @description Turn an agent login's TEST vault key on or off. Its own endpoint, never on the
+         *     agent-repo upsert: an agent must not be able to give its own login a key.
+         */
+        readonly TestVaultKeyIn: {
+            /** Enabled */
+            readonly enabled: boolean;
+        };
+        /**
          * AgentRuntimeOut
          * @description What a runner needs from canopy-web to run this agent: the repo pointer
          *     (whose runtime.yaml is the declarative spec), the secret-reference names to
@@ -26438,6 +26518,11 @@ export interface components {
             readonly passkeys?: readonly components["schemas"]["VaultKeysetPasskeyOut"][];
             /** Updated At */
             readonly updated_at?: string | null;
+            /**
+             * Test Key
+             * @default false
+             */
+            readonly test_key: boolean;
         };
         /** VaultKeysetPasskeyOut */
         readonly VaultKeysetPasskeyOut: {
@@ -35713,6 +35798,11 @@ export interface components {
              * @default false
              */
             readonly needs_key: boolean;
+            /**
+             * Test Key
+             * @default false
+             */
+            readonly test_key: boolean;
         };
         /**
          * ParticipantAddIn
@@ -35769,6 +35859,11 @@ export interface components {
             };
             /** Jkt */
             readonly jkt: string;
+            /**
+             * Test Key
+             * @default false
+             */
+            readonly test_key: boolean;
         };
         /**
          * KeyCopyIn
@@ -42790,6 +42885,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SlackEnabledOut"];
+                };
+            };
+        };
+    };
+    readonly get_test_vault_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TestVaultKeyOut"];
+                };
+            };
+        };
+    };
+    readonly set_test_vault_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TestVaultKeyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TestVaultKeyOut"];
                 };
             };
         };

@@ -90,3 +90,5 @@ class VaultKeysetOut(StrictModel):
     seals: list[dict[str, Any]] = Field(default_factory=list)
     passkeys: list[VaultKeysetPasskeyOut] = Field(default_factory=list)
     updated_at: dt.datetime | None = None
+    #: An agent's own login holding its TEST vault key (`login_test_key`), not a person's.
+    test_key: bool = False

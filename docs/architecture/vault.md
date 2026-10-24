@@ -13,7 +13,7 @@ Who may open a vault is `credentials.vault_members.members(vault)`, the union of
   - `agent`: everyone with full access to the agent (`access.roster`), plus everyone with an active license to use it locally (`AgentLicense`). The agent's owner comes in as `owner`, its admins as `admin`, everyone else as the link's role;
   - `workspace_owners` / `workspace_admins`: the owners (or admins) of a workspace, inherited down the tree as those roles are.
 
-Members are **people only**: an agent's own canopy login (`Agent.user`) and a workspace's system account are never members by any source, and cannot be added (`vault_members.not_a_person`). They hold no vault key, and an agent that could change its own vault's membership could hand its key to anyone.
+Members are **people only**: an agent's own canopy login (`Agent.user`) and a workspace's system account are never members by any source, and cannot be added (`vault_members.not_a_person`). They hold no vault key — except an agent login's test key, which opens no vault (below) — and an agent that could change its own vault's membership could hand its key to anyone.
 
 A vault's roles are the agent's, without contacts: `owner`, `admin` and `member`. A person's role is the highest any source gives them. Owners and admins see and edit values and change membership (`vault_members.is_admin`); members open the values. Owner is never stored: it comes only from owning the linked agent, or, for a workspace vault, the workspace. A direct member or a link gives `admin` or `member` (`manage` and `use`, the earlier words, are still accepted). Every member carries their sources, so the vault's page says why each person is in it. A new agent vault starts with one `agent` link, so giving someone the agent gives them its vault.
 
@@ -22,6 +22,16 @@ A change that would leave the vault with no owner or admin is refused (409 `vaul
 ## Everyone has a vault key
 
 A person can be given a vault's key only once they have a vault key of their own, so everyone sets one up at sign-in: after Google sign-in, a person at a browser with no vault key sees one screen (`VaultSetupGate`, from `GET /api/vault/setup`) that registers a passkey and makes the key with it, or with a passphrase where the passkey cannot hold one. A failed check or a browser that cannot make a passkey lets them continue for that tab, and they are asked again next time.
+
+## An agent login's test vault key
+
+For testing, an agent's own login may hold a personal vault key, so a headless harness signed in as the agent can take part in its own sensitive conversations (`apps/agents/credentials/login_test_key.py`). It opens nothing in any vault.
+
+- **The switch:** `Agent.test_vault_key`, off by default. `GET|PUT /api/agents/{slug}/test-vault-key` `{enabled}`, agent admin. Turning it on needs a browser and a fresh passkey step-up (a token is refused); turning it off needs neither. Audited as a setting.
+- **The key:** while on, the login makes ONE key with `PUT /api/vault/keyset`, as itself (its token will do; no step-up, since it holds no passkey): passphrase seals only (`2skd`, optionally `recovery`; a `prf` seal is 422 `test_key_passphrase_only`), never replaced (409 `test_key_exists`). With the switch off it is 403 `not_a_person`, as for a system account always. `VaultKeysetOut.test_key` marks it.
+- **What it receives:** only copies of the keys of sensitive conversations the login is itself in — their creator or a participant (`conversation_keys.add_wrap`; adding a participant writes them in before their copy). A conversation key is wrapped to it only while the switch is on (`conversation_keys._keyset`). The chat's people list and the recipient read mark it `test_key` ("agent test key").
+- **What it never receives:** a copy of any vault's key or a value sealed to it — agent, workspace, shared or runner vault, by a person or a keeper (`vault_engine.parse_wraps` / `parse_values`, 403 `not_a_person`, whatever eligibility says) — or an endorsement (`zk_endorse.add`). A login that is not a person never registers a passkey or steps up (`passkeys.stepup.require_a_person`), so it approves no device key or invitation and reaches no step-up route.
+- **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it (`login_test_key.disable`).
 
 ## Who may hold a copy of the vault's key (zero-knowledge)
 

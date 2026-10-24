@@ -68,6 +68,7 @@ def begin_passkey_registration(request: HttpRequest, upgrade: bool = False) -> P
     it is left out of `excludeCredentials` so the passkey app will make the new
     one for the same account."""
     stepup.require_browser(request, "registering a passkey")
+    stepup.require_a_person(request, "registering a passkey")
     if Passkey.objects.filter(user=request.user).exists():
         stepup.require_recent_step_up(request)
     return PasskeyOptionsOut(options=services.begin_registration(request, upgrade=upgrade))
@@ -81,6 +82,7 @@ def finish_passkey_registration(request: HttpRequest, payload: PasskeyRegisterIn
     registration required user verification, so it also opens a step-up window
     — the person just proved themselves with this very passkey."""
     stepup.require_browser(request, "registering a passkey")
+    stepup.require_a_person(request, "registering a passkey")
     try:
         passkey = services.finish_registration(request, payload.credential, payload.label)
     except services.CeremonyError as exc:
@@ -122,6 +124,7 @@ def passkey_step_up_status(request: HttpRequest) -> StepUpStatusOut:
 @gate("self", kind="ephemeral-credential")  # passkeys: a ceremony's challenge, and the five-minute step-up it earns
 def begin_passkey_step_up(request: HttpRequest) -> PasskeyOptionsOut:
     stepup.require_browser(request, "a passkey step-up")
+    stepup.require_a_person(request, "a passkey step-up")
     options = services.begin_assertion(request)
     if options is None:
         raise ProblemError(
@@ -137,6 +140,7 @@ def begin_passkey_step_up(request: HttpRequest) -> PasskeyOptionsOut:
 @gate("self", kind="ephemeral-credential")
 def finish_passkey_step_up(request: HttpRequest, payload: PasskeyAssertIn) -> StepUpStatusOut:
     stepup.require_browser(request, "a passkey step-up")
+    stepup.require_a_person(request, "a passkey step-up")
     try:
         services.finish_assertion(request, payload.credential)
     except services.CeremonyError as exc:
