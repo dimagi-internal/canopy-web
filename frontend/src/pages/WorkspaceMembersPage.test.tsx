@@ -203,6 +203,20 @@ describe('WorkspaceMembersPage', () => {
     expect(screen.getByText('bob@example.com')).toBeTruthy()
   })
 
+  it('puts the invite form directly under the members list, above system accounts and pending invites', async () => {
+    listMembers.mockResolvedValue([member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' })])
+    listInvites.mockResolvedValue([])
+
+    renderPage()
+
+    await screen.findByText('alice@dimagi.com')
+    const invite = screen.getByText('Invite someone')
+    const after = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(after(screen.getByText('alice@dimagi.com'), invite)).toBe(true)
+    expect(after(invite, screen.getByText('Pending invites'))).toBe(true)
+    expect(after(invite, screen.getByTestId('workspace-role-help'))).toBe(true)
+  })
+
   it('shows an owner of a parent workspace without controls, and lets the direct owner step down', async () => {
     listMembers.mockResolvedValue([
       member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
