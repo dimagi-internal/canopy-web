@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from apps.harness import sensitivity
 
-from . import access
 from .models import Session, SessionKeyWrap, SessionParticipant
 
 
@@ -43,13 +42,3 @@ def ensure_participant(session: Session, user,
         session=session, user=user, defaults={"role": role}
     )
     return obj
-
-
-def can_access(session: Session, user) -> bool:
-    """Read access — `access.can_read`, under the name the socket used."""
-    return access.can_read(user, session)
-
-
-def role_for(session: Session, user) -> str | None:
-    """Effective role — `access.role_for`."""
-    return access.role_for(user, session)

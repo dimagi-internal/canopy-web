@@ -110,7 +110,7 @@ layered too, and an import may only point down (or sideways, within a layer):
 
 | Layer | Apps | What belongs here |
 |---|---|---|
-| L0 kit | `common`, `events`, `workspaces`, `api` (the kit: `auth`, `errors`, `pagination`, `etag`, `renderers`, `route_gates`, `tenancy`) | Infrastructure every app may use. Knows no agent, turn or session. |
+| L0 kit | `common`, `events`, `workspaces`, `api` (the kit: `auth`, `errors`, `pagination`, `renderers`, `route_gates`, `tenancy`) | Infrastructure every app may use. Knows no agent, turn or session. |
 | L1 core | `agents`, `harness`, `canopy_sessions`, `tokens`, `contacts`, `admission`, `retention`, `realtime`, `push`, `passkeys`, `embedding`, `mcp_apps_host`, `attention` | The agent/turn/session substrate and who may reach it. |
 | L2 features | `agent_runs`, `capabilities`, `feedback`, `github_connect`, `host_grants`, `huddles`, `inbound`, `issues`, `mcp`, `oauth_server`, `plugins`, `session_sharing`, `slack`, `system`, `timeline`, `threads` | Framework surfaces built on the core. Nothing below names them. |
 | L3 product | the product tier above | canopy's own features. |

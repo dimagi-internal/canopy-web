@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 
-from apps.canopy_sessions import drafts, participants, presence
+from apps.canopy_sessions import access, drafts, participants, presence
 from apps.canopy_sessions import services as chat
 from apps.canopy_sessions.models import SessionParticipant
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -24,7 +24,7 @@ def _ctx():
 
 def test_creator_is_owner():
     owner, _ws, session = _ctx()
-    assert participants.role_for(session, owner) == SessionParticipant.OWNER
+    assert access.role_for(owner, session) == SessionParticipant.OWNER
 
 
 def test_a_workspace_member_is_not_in_someone_elses_chat():
@@ -34,8 +34,8 @@ def test_a_workspace_member_is_not_in_someone_elses_chat():
     owner, ws, session = _ctx()
     teammate = User.objects.create_user("t", "t@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=teammate, workspace=ws, role=WorkspaceMembership.EDITOR)
-    assert participants.can_access(session, teammate) is False
-    assert participants.role_for(session, teammate) is None
+    assert access.can_read(teammate, session) is False
+    assert access.role_for(teammate, session) is None
     assert not SessionParticipant.objects.filter(session=session, user=teammate).exists()
 
 
@@ -44,14 +44,14 @@ def test_a_shared_teammate_gets_the_role_they_were_given():
     teammate = User.objects.create_user("t", "t@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=teammate, workspace=ws, role=WorkspaceMembership.EDITOR)
     participants.ensure_participant(session, teammate, SessionParticipant.VIEWER)
-    assert participants.can_access(session, teammate) is True
-    assert participants.role_for(session, teammate) == SessionParticipant.VIEWER
+    assert access.can_read(teammate, session) is True
+    assert access.role_for(teammate, session) == SessionParticipant.VIEWER
 
 
 def test_non_member_denied():
     _owner, _ws, session = _ctx()
     outsider = User.objects.create_user("no", "no@dimagi.com", "pw")
-    assert participants.can_access(session, outsider) is False
+    assert access.can_read(outsider, session) is False
 
 
 # -- presence --
