@@ -12,7 +12,8 @@ import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { unlockLocally } from '@/vault/localUnlock'
-import { newConversationKey, type MyVaultKey, type SealedKey } from '@/vault/sealedChat'
+import type { SealedKey } from '@/vault/sealedChat'
+import { offeredKey } from './offeredKey'
 import { usePersonTrust } from '@/vault/PersonTrustPrompt'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { useSealedConversation } from '@/vault/useSealedConversation'
@@ -197,20 +198,6 @@ async function declarePage(
  *  has to pick. Derived in one place because the two paths diverging per
  *  call-site is what left contacts silently without page state.
  */
-/** `{conversation_key}` for a new chat: a key pair made in this frame, wrapped to the
- *  visitor's own vault key (`GET …/my-vault-key`, which the frame's token may read) —
- *  or nothing when they have no vault key or this browser does not recognise it as
- *  theirs, and canopy makes one only if the chat turns private with no browser there. */
-async function offeredKey(client: CanopyClient, workspace: string): Promise<{ conversation_key?: unknown }> {
-  try {
-    const mine = await client.rest.json<MyVaultKey>(
-      `/api/w/${encodeURIComponent(workspace)}/canopy-sessions/my-vault-key`)
-    return { conversation_key: await newConversationKey(mine) }
-  } catch {
-    return {}
-  }
-}
-
 function sessionBase(isContact: boolean, sid: string): string {
   const id = encodeURIComponent(sid)
   return isContact ? `/api/contact/sessions/${id}` : `/api/canopy-sessions/${id}`
@@ -228,6 +215,9 @@ export function EmbedApp({ link, app }: Props) {
   // sent a contact down the tenant path once already.
   const principalRef = useRef<Principal | null>(null)
   principalRef.current = principal
+  // Opens the visitor's vault key once in this frame, before their first chat here, so
+  // its key is wrapped to a key the frame has confirmed is theirs (`offeredKey`).
+  const starterUnlock = useUnlockPrompt()
   const initRef = useRef<HostInit | null>(null)
   initRef.current = init
   const clientRef = useRef<CanopyClient | null>(null)
@@ -390,7 +380,7 @@ export function EmbedApp({ link, app }: Props) {
                 title: '',
                 // The conversation's key, made in this frame: if it is (a sensitive
                 // site's) or becomes private, canopy never sees its private half.
-                ...await offeredKey(client, agent.workspace),
+                ...await offeredKey(client, agent.workspace, starterUnlock.prompt),
                 // `embed_app` is NOT sent: canopy stamps it server-side from the
                 // delegated token, and anything we sent under that key would be
                 // discarded (apps/canopy_sessions/api.py).
@@ -434,7 +424,7 @@ export function EmbedApp({ link, app }: Props) {
       // not for the person who just typed the question to be shown back.
       setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, firstMessageClientId: clientId, agent })
     },
-    [client, link],
+    [client, link, starterUnlock.prompt],
   )
 
   // A question the PAGE asked for the visitor (`widget.ask`, e.g. "Explain this
@@ -528,6 +518,7 @@ export function EmbedApp({ link, app }: Props) {
           setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
         }
         onClose={() => link.requestClose()}
+        unlockElement={starterUnlock.element}
         headerControls={
           <>
             <SnapButton link={link} snappable={snappable} />
@@ -574,6 +565,7 @@ function EmbedStart({
   initialBody,
   initialError,
   headerControls,
+  unlockElement,
 }: {
   agent: EmbedAgent
   client: CanopyClient
@@ -586,6 +578,8 @@ function EmbedStart({
   initialError?: string
   /** Panel controls drawn before × (expand). */
   headerControls?: React.ReactNode
+  /** The vault-key unlock asked before a first chat in this frame (`offeredKey`). */
+  unlockElement?: React.ReactNode
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
   const [body, setBody] = useState(initialBody ?? '')
@@ -684,6 +678,7 @@ function EmbedStart({
           Rendering SendBox with a local draft (the same adapter the contact
           path uses, since no server draft exists before the session does)
           makes this screen and the chat that follows it one component. */}
+      {unlockElement ? <div className="px-3">{unlockElement}</div> : null}
       <SendBox
         draft={contactDraft(body)}
         connected

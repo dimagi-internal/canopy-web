@@ -30,6 +30,7 @@ import {
   generateKeyPair,
   importPrivateScalar,
   jkt,
+  publicJwkOfScalar,
   unb64u,
   unwrapEcdhEs,
   wrapEcdhEs,
@@ -149,8 +150,65 @@ export interface ConversationKeyOffer {
   recipient_jkt: string
 }
 
-/** My vault key's public half, as `GET /my-vault-key` names it. */
-export interface MyVaultKey { user_id: string; public_jwk: Jwk | Record<string, unknown>; jkt: string }
+/** My vault key's public half, as `GET /my-vault-key` names it (with the keyset to open
+ *  it, for the panel's frame, which has no browser session to read the vault with). */
+export interface MyVaultKey {
+  user_id: string
+  public_jwk: Jwk | Record<string, unknown>
+  jkt: string
+  keyset?: SealedKey['keyset']
+}
+
+/** Why a new chat was not started: the vault key canopy-web named as yours is not one
+ *  this browser can confirm is yours. Never answered by starting the chat anyway. */
+export class VaultKeyRefused extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'VaultKeyRefused'
+  }
+}
+
+export const CHANGED_SELF =
+  'The vault key canopy names as yours is not the one this browser last opened, so this chat was ' +
+  'not started. If you did not replace your vault key, someone may be trying to read your chats: ' +
+  'tell your canopy admin. If you did, open it once (Settings → Vault key) and start again.'
+export const UNCONFIRMED_SELF =
+  'Open your vault key in this browser once to start a chat here: its key is made for you, and ' +
+  'this browser must first see that the vault key canopy names is yours.'
+
+/**
+ * The key pair for a chat this browser starts, wrapped only to a vault key it has
+ * CONFIRMED is the starter's (`newConversationKey`):
+ *
+ *  - pinned here before (`trust.checkSelf`) → used;
+ *  - changed since → refused (`VaultKeyRefused`): that is what a substituted key looks like;
+ *  - never seen here → `derive` opens the vault key (passkey or passphrase) and its public
+ *    half is computed from the private scalar it opened — the server's word is never taken;
+ *    a mismatch is refused, and so is no way to derive (`derive` absent or failing).
+ *
+ * Nothing falls back to a key the server makes.
+ */
+export async function offerForNewChat(me: MyVaultKey,
+                                      derive?: () => Promise<Pick<Unlocked, 'scalar' | 'publicJwk'>>):
+    Promise<ConversationKeyOffer> {
+  const thumb = await jkt(me.public_jwk as Jwk)
+  if (thumb !== me.jkt) throw new VaultKeyRefused('Your vault key does not match its thumbprint, so this chat was not started.')
+  const seen = checkSelf(me.user_id, thumb)
+  if (seen === 'changed') throw new VaultKeyRefused(CHANGED_SELF)
+  if (seen === 'new') {
+    if (!derive) throw new VaultKeyRefused(UNCONFIRMED_SELF)
+    let opened: Pick<Unlocked, 'scalar' | 'publicJwk'>
+    try {
+      opened = await derive()
+    } catch (e) {
+      throw new VaultKeyRefused(`${UNCONFIRMED_SELF} (${e instanceof Error ? e.message : 'not opened'})`)
+    }
+    if (!opened.scalar) throw new VaultKeyRefused(UNCONFIRMED_SELF)
+    const real = await jkt(await publicJwkOfScalar(opened.scalar))
+    if (real !== thumb) throw new VaultKeyRefused(CHANGED_SELF)
+  }
+  return newConversationKey(me, { confirmed: true })
+}
 
 /**
  * A new conversation key, made here. Refuses (throws) when the vault key the server
@@ -158,14 +216,15 @@ export interface MyVaultKey { user_id: string; public_jwk: Jwk | Record<string, 
  * substituted key would hand the conversation to whoever holds it.
  */
 export async function newConversationKey(me: MyVaultKey,
-                                         opts: { ephemeral?: Ephemeral; nonce?: Uint8Array } = {}):
+                                         opts: { ephemeral?: Ephemeral; nonce?: Uint8Array; confirmed?: boolean } = {}):
     Promise<ConversationKeyOffer> {
   const mine = me.public_jwk as Jwk
   const thumb = await jkt(mine)
-  if (thumb !== me.jkt) throw new Error('your vault key does not match its thumbprint')
-  if (checkSelf(me.user_id, thumb) === 'changed') {
-    throw new Error('your vault key is not the one this browser last opened')
-  }
+  if (thumb !== me.jkt) throw new VaultKeyRefused('your vault key does not match its thumbprint')
+  const seen = checkSelf(me.user_id, thumb)
+  if (seen === 'changed') throw new VaultKeyRefused(CHANGED_SELF)
+  // A key never seen here is used only once it has been derived (`offerForNewChat`).
+  if (seen === 'new' && !opts.confirmed) throw new VaultKeyRefused(UNCONFIRMED_SELF)
   const pair = await generateKeyPair()
   const conversation = globalThis.crypto.randomUUID()
   const wrap = await wrapEcdhEs(pair.scalar, mine as PublicJwk, wrapInfo(conversation, me.user_id), opts)

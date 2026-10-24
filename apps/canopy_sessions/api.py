@@ -808,11 +808,18 @@ def my_vault_key(request: HttpRequest):
     """Your vault key's PUBLIC half and its thumbprint, for your browser to wrap a new
     conversation's key to before it starts one (`SessionCreateIn.conversation_key`) —
     also from the embedded panel, which has no browser session to read
-    `/api/vault/keyset` with. 404 when you have none."""
+    `/api/vault/keyset` with. With it, to your own browser only, the keyset that opens
+    it: a browser that has not opened your vault key before derives its public half
+    from it before trusting this one. 404 when you have none."""
     found = conversation_keys.recipient(request.user)
     if found is None:
         raise HttpError(404, "you have no vault key")
-    return {"user_id": str(found["user_id"]), "public_jwk": found["public_jwk"], "jkt": found["jkt"]}
+    # The seals go only to the person's browser, as `sealed_key.keyset` does.
+    keyset = (conversation_keys.keyset_for_browser(request.user)
+              if sensitivity.request_is_chat_surface(request)
+              and sensitivity.request_is_panel_browser(request) else None)
+    return {"user_id": str(found["user_id"]), "public_jwk": found["public_jwk"], "jkt": found["jkt"],
+            "keyset": keyset}
 
 
 def _own_browser_or_403(request: HttpRequest) -> None:
@@ -1490,9 +1497,11 @@ def _store_wrap(request: HttpRequest, session, target, wrap) -> None:
     """A sensitive conversation's new person needs their copy of its key, which only a
     browser already in it can make (canopy-web cannot unwrap the key). Not needed again
     for a role change: they already hold a current one."""
+    # Someone who already holds a current copy keeps it (a role change, a re-add): an
+    # overwrite could lock them out (`conversation_keys.CopyExists`).
+    if conversation_keys.has_current_wrap(session, target):
+        return
     if wrap is None:
-        if conversation_keys.has_current_wrap(session, target):
-            return
         raise ProblemError(409, "Their copy of the key is needed", type_=TYPE_CONFLICT,
                            detail="this conversation is sealed to its people: add them from a "
                                   "browser already in it, which wraps its key to their vault key",
@@ -1538,11 +1547,17 @@ def give_key_copy(request: HttpRequest, session_id: uuid.UUID, payload: KeyCopyI
     """For someone ALREADY in a sensitive conversation who cannot read it: given it
     before it became sensitive, or whose vault key changed since (its starter
     included). Your browser opens your copy of the key and wraps it to their current
-    vault key (`GET /{id}/participants/recipient`); canopy-web stores the wrap. Anyone
-    in the conversation who holds a current copy may give one. It puts nobody in it:
-    404 when they are not in it."""
+    vault key (`GET /{id}/participants/recipient`); canopy-web stores the wrap. An editor
+    or the owner who holds a current copy may give one (403 otherwise), and only to
+    someone holding no copy for their current vault key: 409 when they do. A copy for
+    an older vault key is replaced; one that does not open is set aside by its holder
+    first (`DELETE /{id}/key-copies/mine`). It puts nobody in it: 404 when they are not
+    in it."""
     session = _session_or_404(request, session_id)
     _in_it_or_403(request, session)
+    if not access.can_write(request.user, session):
+        raise HttpError(403, "only an editor or the owner of this conversation can give "
+                             "someone a copy of its key")
     if not sensitivity.is_sensitive(session) or conversation_keys.key_of(session) is None:
         raise HttpError(409, "this conversation has no key to give")
     if not conversation_keys.has_current_wrap(session, request.user):
@@ -1554,8 +1569,24 @@ def give_key_copy(request: HttpRequest, session_id: uuid.UUID, payload: KeyCopyI
     try:
         conversation_keys.add_wrap(session, target, payload.wrap.model_dump(exclude={"recipient_jkt"}),
                                    recipient_jkt=payload.wrap.recipient_jkt, by=request.user)
+    except conversation_keys.CopyExists as exc:
+        raise HttpError(409, str(exc)) from None
     except conversation_keys.WrapRefused as exc:
         raise HttpError(422, str(exc)) from None
+    return _participants(session)
+
+
+@router.delete("/{session_id}/key-copies/mine", response=list[ParticipantOut],
+               summary="Set aside your copy of a private chat's key that does not open")
+@gate("session-acl", setting=True)  # your own copy, in the conversation
+def set_aside_my_key_copy(request: HttpRequest, session_id: uuid.UUID):
+    """Your copy of this conversation's key does not open in your browser (it was
+    damaged, or wrapped to a vault key you no longer have). Setting it aside drops it,
+    so you are listed `needs_key` and someone in it can give you a fresh one
+    (`POST /{id}/key-copies`). Only you can do this for your copy."""
+    session = _session_or_404(request, session_id)
+    _in_it_or_403(request, session)
+    conversation_keys.set_aside_my_copy(session, request.user)
     return _participants(session)
 
 

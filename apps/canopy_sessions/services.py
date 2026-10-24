@@ -19,9 +19,9 @@ from apps.harness.models import Turn, TurnEvent, TurnTranscript
 from apps.realtime import groups
 
 from . import activity as session_activity
-from . import conversation_keys, drafts
+from . import attachment_storage, conversation_keys, drafts
 from . import transcript_read
-from .models import Message, RunnerBinding, Session
+from .models import Attachment, Message, RunnerBinding, Session
 
 logger = logging.getLogger(__name__)
 
@@ -51,21 +51,43 @@ SERVER_OWNED_METADATA = frozenset({
     # Where each confined turn's transcript sits in the session
     # (apps/harness/session_sync.py::TURN_END_EPOCHS).
     "turn_end_epochs",
+    # A fork's cut and the directory it runs in (apps/canopy_sessions/placement.py::FORK_KEY).
+    "fork",
 })
+
+#: The metadata keys a caller MAY set — an allowlist, so a key canopy starts acting on
+#: later is canopy's until it is added here on purpose. The host linkage the session list
+#: filters by (`host_filters`: `source`, `origin_key`, `opp_slug`, `opp_run_id`) and
+#: ace-web's `opp_step_skill`, an embedding page's `workflow_id` / `opportunity_id`;
+#: anything else a host wants to keep goes under `x_`, a
+#: namespace canopy never reads (tests/test_session_metadata.py checks no app does).
+HOST_METADATA_KEYS = frozenset({"source", "origin_key", "opp_slug", "opp_run_id", "opp_step_skill",
+                                "workflow_id", "opportunity_id"})
+HOST_METADATA_PREFIX = "x_"
+
+
+def is_host_key(key) -> bool:
+    """Whether a caller may set (and read back) metadata `key`."""
+    key = str(key)
+    return key not in SERVER_OWNED_METADATA and (
+        key in HOST_METADATA_KEYS or key.startswith(HOST_METADATA_PREFIX))
+
+
 MAX_HOST_METADATA_KEYS = 20
 MAX_HOST_METADATA_BYTES = 4096
 
 
 def host_metadata(raw) -> dict:
     """What a caller may put on a session: their own descriptive keys (ace-web's
-    `origin_key`, `opp_slug`, …), never one canopy acts on. ONE rule for every
-    principal — a signed-in user, a PAT, a widget contact — so a contact's
-    conversation carries a host's link exactly as a user's does."""
+    `origin_key`, `opp_slug`, …, `HOST_METADATA_KEYS` and the `x_` namespace), never
+    one canopy acts on; any other key is dropped. ONE rule for every principal — a
+    signed-in user, a PAT, a widget contact — so a contact's conversation carries a
+    host's link exactly as a user's does."""
     import json
 
     if not isinstance(raw, dict):
         return {}
-    out = {str(k): v for k, v in raw.items() if str(k) not in SERVER_OWNED_METADATA}
+    out = {str(k): v for k, v in raw.items() if is_host_key(k)}
     if len(out) > MAX_HOST_METADATA_KEYS or len(json.dumps(out, default=str)) > MAX_HOST_METADATA_BYTES:
         raise ValueError(f"session metadata is limited to {MAX_HOST_METADATA_KEYS} keys "
                          f"and {MAX_HOST_METADATA_BYTES} bytes")
@@ -127,10 +149,17 @@ def _merge_metadata(session: Session, updates: dict) -> None:
     session.updated_at = locked.updated_at
 
 
-def add_runner_requirements(session: Session, reqs) -> None:
+def add_runner_requirements(session: Session, reqs, *, refuse_keyless: bool = False) -> None:
     """Union `reqs` into the session's requirements. Never removes one: a
     conversation that held a host's data keeps the host's floor, whatever token
-    touches it next (spec 2026-09-30-zdr-runners)."""
+    touches it next (spec 2026-09-30-zdr-runners).
+
+    `refuse_keyless` (a person's send, `doors.send_from`): when this would make the
+    conversation sensitive and it can get no key — its starter has no vault key, or it
+    is a contact's — raise `conversation_keys.CannotHold` and change nothing. All or
+    nothing: the switch, the sealing of its history and the refusal never land apart,
+    so a refused send never leaves an older conversation private with its past
+    blanked."""
     from apps.harness import runner_requirements as rr
 
     reqs = set(reqs or ())
@@ -157,16 +186,28 @@ def add_runner_requirements(session: Session, reqs) -> None:
                 # Its words are sealed from now on, to a key made for its people
                 # (`conversation_keys.ensure_key`; a starter with no vault key gets
                 # none, and the send door refuses them).
-                conversation_keys.ensure_key(s)
+                key = conversation_keys.ensure_key(s)
+                if key is None and refuse_keyless:
+                    # Rolls the whole switch back (this atomic block).
+                    raise conversation_keys.CannotHold()
                 # What it said before is held to the same rule as what it says next,
                 # in this transaction: its rows sealed, its turns' words withheld.
                 conversation_keys.seal_existing(s)
                 _withhold_what_it_kept(s)
+                # A file attached before is no more sealed than its words were: it goes
+                # (rows now, stored bytes once this commits), so nothing serves it on.
+                _drop_attachments(s)
                 # What its people had typed and not sent stays in their browsers now.
                 drafts.forget_words(s)
                 # Every open socket on it re-asks `reads_content`: a token's, or a
                 # co-tenant's who is not in it, closes now rather than reading on.
                 transaction.on_commit(lambda pk=s.pk: recheck_sockets(pk))
+                # A fork made while it was ordinary holds a copy of the same words:
+                # it is made private with it, in this transaction (its rows sealed to
+                # the key its forker carries on, `conversation_keys.ensure_key`).
+                for child in Session.objects.filter(parent_session_id=s.pk).only("id", "metadata"):
+                    if isinstance((child.metadata or {}).get("fork"), dict):
+                        add_runner_requirements(child, merged)
     # Either way the caller's copy says what the row says, so a decision read off
     # it next (`sensitivity.seals`) is never made on a stale instance.
     session.metadata = meta
@@ -182,12 +223,20 @@ def _withhold_what_it_kept(session: Session) -> None:
     its metadata and a tool's result to its call; no raw transcript; the binding's
     tail, summary and pending dialog's words gone. Its Message rows are sealed
     beside this (`conversation_keys.seal_existing`)."""
-    turns = Turn.objects.filter(chat_session_id=session.pk)
+    # Every turn whose conversation this is: a chat turn's, and an agent, board or email
+    # turn's that ran in it (`sensitivity.conversation_of`).
+    of_it = sensitivity.turns_of_q(session.pk)
+    turn_ids = list(Turn.objects.filter(of_it).values_list("pk", flat=True))
+    turns = Turn.objects.filter(pk__in=turn_ids)
     for turn in turns.filter(status__in=list(Turn.TERMINAL)).exclude(prompt="", result_note=""):
         Turn.objects.filter(pk=turn.pk).update(
             prompt="", result_note=sensitivity.withheld_note(turn.result_note))
     events = []
-    for e in TurnEvent.objects.filter(turn__chat_session_id=session.pk).iterator():
+    # Locked against an appender racing the switch: an event written as it happens
+    # either lands before (and is reduced here) or after (and is stored as metadata,
+    # `ledger.append_events` locks the same turn rows).
+    list(Turn.objects.select_for_update().filter(pk__in=turn_ids).values_list("pk", flat=True))
+    for e in TurnEvent.objects.filter(turn_id__in=turn_ids).iterator():
         payload = e.payload if isinstance(e.payload, dict) else {}
         if payload.get("redacted") == sensitivity.REDACTED:
             continue
@@ -197,11 +246,37 @@ def _withhold_what_it_kept(session: Session) -> None:
         events.append(e)
     if events:
         TurnEvent.objects.bulk_update(events, ["payload"], batch_size=500)
-    TurnTranscript.objects.filter(turn__chat_session_id=session.pk).delete()
+    TurnTranscript.objects.filter(turn_id__in=turn_ids).delete()
     binding = RunnerBinding.objects.filter(session_id=session.pk).first()
     if binding is not None:
         RunnerBinding.objects.filter(pk=binding.pk).update(
             tail=[], summary="", pending_question=sensitivity.menu_metadata(binding.pending_question))
+
+
+def _drop_attachments(session: Session) -> int:
+    """Every file attached to `session`, sent or not, deleted: the rows in this
+    transaction and the stored bytes after it commits (best-effort; a failed delete is
+    logged, the row is gone either way, so no route serves it). A private
+    conversation keeps no files (`api.upload_attachment` refuses one), because the box
+    that reads a file holds no key to seal it. Returns how many."""
+    rows = list(Attachment.objects.filter(session_id=session.pk).values_list("pk", "storage_key"))
+    if not rows:
+        return 0
+    Attachment.objects.filter(pk__in=[pk for pk, _ in rows]).delete()
+    keys = [k for _, k in rows if k]
+
+    def _delete_bytes():
+        if not attachment_storage.is_configured():
+            return
+        for key in keys:
+            try:
+                attachment_storage.delete(key)
+            except Exception:  # noqa: BLE001 — the row is gone; bytes are logged for cleanup
+                logger.warning("could not delete a private conversation's attachment %s", key,
+                               exc_info=True)
+
+    transaction.on_commit(_delete_bytes)
+    return len(rows)
 
 
 def recheck_sockets(session_id, *, user_ids=()) -> None:
@@ -283,6 +358,10 @@ def _inherit_participants(session: Session, created_by) -> None:
 
     parent = session.parent_session
     if parent is None or not access.can_read(created_by, parent):
+        return
+    # A private parent's people come along only for one of them: seeing it (an agent's
+    # admin) is not being in it (`sensitivity.is_conversation_person`).
+    if sensitivity.is_sensitive(parent) and not sensitivity.is_conversation_person(parent, user=created_by):
         return
     for p in parent.participants.select_related("user").exclude(user=created_by):
         if not wsvc.is_member(p.user, session.workspace_id):

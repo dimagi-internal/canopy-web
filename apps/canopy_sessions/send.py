@@ -46,6 +46,10 @@ def claim_pending_attachments(session, message=None, user=None) -> list[dict]:
 
     if user is None or getattr(user, "pk", None) is None:
         return []
+    # A private conversation takes no files (the box reading one holds no key to it):
+    # whatever is pending was attached before it became private and is not sent.
+    if sensitivity.is_sensitive(session):
+        return []
     pending = list(Attachment.objects.filter(
         session=session, uploaded_by=user, sent_at__isnull=True))
     if not pending:

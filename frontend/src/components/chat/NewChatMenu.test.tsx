@@ -46,7 +46,8 @@ describe('NewChatMenu with a target (/ide per-project +)', () => {
     expect(screen.queryByText('Back')).toBeNull()
     fireEvent.click(screen.getByText('Start chat'))
     await waitFor(() => expect(onCreated).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ agentSlug: 'ace', workspace: 'dimagi', runnerId: undefined })
+    expect(createSession).toHaveBeenCalledWith({ agentSlug: 'ace', workspace: 'dimagi', runnerId: undefined,
+                                                 unlock: expect.any(Function) })
   })
 
   it('starts a repo session for a project target', async () => {
@@ -67,7 +68,8 @@ describe('NewChatMenu with a target (/ide per-project +)', () => {
     fireEvent.click(screen.getByLabelText('New session with canopy-web'))
     fireEvent.click(await screen.findByText('Start chat'))
     await waitFor(() =>
-      expect(createSession).toHaveBeenCalledWith({ project: 'canopy-web', workspace: 'dimagi', runnerId: undefined }),
+      expect(createSession).toHaveBeenCalledWith({ project: 'canopy-web', workspace: 'dimagi', runnerId: undefined,
+                                                   unlock: expect.any(Function) }),
     )
   })
 })

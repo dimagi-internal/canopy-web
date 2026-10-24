@@ -54,8 +54,9 @@ MAX_ANCESTORS = 25
 
 
 def requirements_of(turn) -> frozenset[str]:
-    """What the runner a turn runs on must satisfy: the union of its own conversation,
-    the conversation it was started from (`parent_session`) and every ancestor turn's.
+    """What the runner a turn runs on must satisfy: the union of its own conversation
+    (`chat_session`, or for an agent/project turn the `canopy_session` it ran in), the
+    conversation it was started from (`parent_session`) and every ancestor turn's.
 
     Requirements only grow down a chain: a turn a sensitive conversation started (a dispatch,
     a re-ask, a transfer) carries the conversation's data with it, so it is held to the
@@ -79,6 +80,10 @@ def requirements_of(turn) -> frozenset[str]:
         seen.add(key)
         if node.chat_session_id:
             reqs |= requirements_of_session(node.chat_session)
+        # An agent, board or email turn's conversation is the one its runner recorded
+        # (`canopy_session`): held to the same floor as a chat turn's.
+        if getattr(node, "canopy_session_id", None):
+            reqs |= requirements_of_session(node.canopy_session)
         if getattr(node, "parent_session_id", None):
             reqs |= requirements_of_session(node.parent_session)
         if live and lost_lineage(node):

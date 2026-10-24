@@ -1676,6 +1676,38 @@ def test_an_admin_moves_a_stranded_turn_to_the_cloud(slack, linked, hal, alice, 
     assert not [b for b in old["blocks"] if b["type"] == "actions"]
 
 
+def test_a_private_conversation_is_not_moved_from_slack(slack, linked, hal, alice, cloud,
+                                                        django_capture_on_commit_callbacks):
+    """"Run on cloud" on a private conversation would close its turn as lost and then
+    have Slack re-ask it, which a private conversation refuses: the turn was lost and
+    `/canopy cloud` stopped on the uncaught refusal. Now it is refused up front, and
+    nothing changes."""
+    RunnerAdmin.objects.create(runner=cloud, user=alice)
+    runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)
+    _lapse(runner)
+    slack_status.sweep(force=True)
+    value = _route_button(slack.said("chat.update")[-1])["value"]
+    session = turn.chat_session
+    session.metadata = {**session.metadata, "runner_requirements": ["sensitive_data"]}
+    session.save(update_fields=["metadata"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = click("route_cloud", value)
+
+    assert resp.status_code == 200
+    turn.refresh_from_db()
+    assert turn.status == Turn.CLAIMED and Turn.objects.count() == 1
+    assert "private" in slack.said("chat.postEphemeral")[-1]["text"]
+    # `/canopy cloud` says the same for it, and does not stop.
+    mention("hal two", ts="1700000300.000100")
+    queued = Turn.objects.get(status=Turn.QUEUED)
+    queued.chat_session.metadata = {**queued.chat_session.metadata, "runner_requirements": ["sensitive_data"]}
+    queued.chat_session.save(update_fields=["metadata"])
+    out = command("cloud").json()["text"]
+    assert "private" in out
+    assert Turn.objects.filter(status=Turn.LOST).count() == 0
+
+
 def test_a_stranded_turn_is_not_moved_by_a_non_admin(slack, linked, hal, alice, cloud,
                                                      django_capture_on_commit_callbacks):
     runner, turn = _claimed(slack, hal, alice, django_capture_on_commit_callbacks)

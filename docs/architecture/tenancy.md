@@ -342,15 +342,24 @@ THE predicate; every surface below asks it, one test each in
     `sealedChat.ts::newConversationKey`): the public half, a fresh conversation id, and the
     private half wrapped (ECDH-ES + HKDF-SHA256 + AES-256-GCM, the vault's `wrapEcdhEs`, info
     `canopy-chat/v1/wrap|<conversation>|<user>`) to the starter's vault key
-    (`GET /my-vault-key`, checked against the key this browser last opened as theirs,
-    `trust.checkSelf`). canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
+    (`GET /my-vault-key`), and only to a key this browser has CONFIRMED is theirs
+    (`sealedChat.offerForNewChat`): one it opened before (`trust.checkSelf`), or — in a
+    browser that never has, the panel's frame included — one it opens NOW (passkey or
+    passphrase, from the keyset `my-vault-key` sends the person's own browser) and whose
+    public half it derives from the private scalar. A changed key, or one it cannot
+    confirm, stops the new chat with a sentence; it never starts it on a key the server
+    would make. canopy-web keeps it (`SessionKey.public_jwk`, a `SessionKeyWrap`) even
     while the chat is ordinary, so if it becomes sensitive its words are sealed to a key
     canopy-web never saw the private half of (`conversation_keys.check_offer`, `ensure_key`).
     **The limit:** a session that becomes sensitive with no browser there — made from Slack,
     MCP, a contact or a host's grant, or a chat that came with no key — gets a pair made on
     the server, its private half wrapped to the starter and dropped at once (the `zk_seal`
     stance: canopy-web saw it once). A fork, successor or branch (`parent_session`) carries
-    the same key and every wrap (`copy_key`).
+    the same key and every wrap (`copy_key`) — only when its creator is one of the
+    parent's own people (`conversation_keys._carries_on`, `is_conversation_person`):
+    naming a private chat as `parent` gives anyone else a key of their own, no copy in
+    their `/my-keys`, and none of its people (`services._inherit_participants` asks the
+    same of a sensitive parent).
   - *Sealing.* Each stored message's words (`{plaintext, content}`; never a tool's result)
     go into `Message.sealed` as a `cc1:` ECIES envelope to the conversation's public key,
     info and AAD `canopy-chat/v1/message|<conversation>|<turn_index>|<role>`, the role also
@@ -392,7 +401,10 @@ THE predicate; every surface below asks it, one test each in
   - *Who may hold one.* A canopy user with a vault key. A contact, or a starter with none,
     is refused in a sentence ("a sensitive conversation needs a canopy account with a vault
     key; set yours up at …") at create (422) and at every send door (`CannotHold`: 422 on
-    REST, `session.error` `cannot_hold` on the socket). Rows an agent ships into a keyless
+    REST, `session.error` `cannot_hold` on the socket). A send that would MAKE an older
+    conversation sensitive is refused before the switch, in its transaction
+    (`add_runner_requirements(..., refuse_keyless=True)` from `doors.send_from`): all or
+    nothing, so a refused send never leaves it private with its history blanked. Rows an agent ships into a keyless
     sensitive conversation keep no words at all.
   - *Multiplayer.* Adding someone is a browser act by someone in it: their browser unwraps
     its copy and wraps it to the newcomer's current vault key (`POST …/participants` with
@@ -400,8 +412,10 @@ THE predicate; every surface below asks it, one test each in
     them is never taken on its word: the browser wraps only to a key it already trusts for
     that person (pinned in this browser) or one the adder accepts now, having seen its
     fingerprint (`trust.trustPerson`, `PersonTrustPrompt`; then pinned) — the ZK vault's
-    rule. A key that does not match its thumbprint, or changed under a pinned person, stops
-    the add with a sentence; so does an adder's own copy gone stale ("ask someone else in it
+    rule. A key that does not match its thumbprint stops the add with a sentence. A key
+    that changed under a pinned person is a STOP: the prompt shows no new fingerprint and
+    no button that continues until the adder types the fingerprint the person read them
+    by another channel (`fingerprintMatches`). So does an adder's own copy gone stale ("ask someone else in it
     to give you a fresh copy"). Removing someone deletes their wrap; the key is not rotated
     (they could have kept what they read). Nothing else makes
     anyone one of its people: `participants.ensure_participant` adds nobody to a sensitive
@@ -409,23 +423,43 @@ THE predicate; every surface below asks it, one test each in
     reply, a dispatch's asker — can. Asking to join is once an hour per conversation
     (`join_requests.TooSoon`, 429; `CANOPY_JOIN_REQUEST_REASK_SECONDS`).
   - *Given it before it became sensitive.* A participant with no copy for their current
-    vault key is listed `needs_key` (People); anyone in it holding a current copy gives them
-    one in a click (`POST …/key-copies`, the same trust rule). Until they hold a copy the
+    vault key is listed `needs_key` (People); an editor or the owner in it holding a current
+    copy gives them one in a click (`POST …/key-copies`, the same trust rule; 403 for a
+    viewer). A copy is written only where the person holds none for their CURRENT vault key
+    (`conversation_keys.add_wrap` → `CopyExists`, 409): the server cannot tell a good wrap
+    from random bytes, so an overwrite could lock anyone out, the owner included. A copy
+    for an older vault key is provably stale (its `recipient_jkt` names a key they no
+    longer have) and is replaced; a current one that does not open is set aside by its
+    holder alone (`DELETE …/key-copies/mine`, the banner's "Set my copy aside"), after
+    which they are `needs_key` again. A re-add or role change keeps a current copy. Until they hold a copy the
     live socket, whose frames carry the words, turns them away (`sensitivity.hears_live`,
     asked at connect and on every re-check; `session.error` `needs_key`).
   - *A new vault key.* Replacing one (Settings → Vault key → Start over) names the private
     conversations at stake, unlocks the OLD key, opens every copy the person holds
     (`GET /my-keys`), sets the new key, and stores each copy re-wrapped to it
     (`PUT /my-keys`; `vault/conversationCopies.ts`). A copy the old key no longer opened, or
-    a starter who replaced their key elsewhere, is refreshed by anyone else in it
-    (`POST …/key-copies` takes the starter too).
+    a starter who replaced their key elsewhere, is refreshed by an editor in it
+    (`POST …/key-copies` takes the starter too, since their copy is provably stale).
   - *Rows from before it became sensitive.* Sealed in the transaction that makes it
     sensitive (`services.add_runner_requirements` → `conversation_keys.seal_existing`): the
     server holds the conversation's PUBLIC key, so it seals what it can no longer read back,
     clears the columns, and drops a tool's result; an ended turn's prompt is wiped and its
     note withheld, its events reduced to metadata, its raw transcript deleted, and the
     binding's tail, summary and dialog words cleared (`_withhold_what_it_kept`). A live
-    turn keeps its prompt until it ends.
+    turn keeps its prompt until it ends. "Its turns" are every turn whose conversation it
+    is (`sensitivity.conversation_of`, `turns_of_q`): a chat turn's `chat_session`, and an
+    agent, board or email turn's `canopy_session` — which is also in what a turn requires
+    of its runner (`runner_requirements.requirements_of`), so such a turn routes only to a
+    sensitive-data box, stores metadata and loses its prompt at its end. Those turn rows
+    are locked by the switch, and `ledger.append_events` reads sensitivity under the same
+    lock from fresh rows, so an event written as it switches is reduced or stored as
+    metadata, never kept in clear; a keystroke racing it (`drafts.update_draft`) asks again
+    under the session row's lock. Every file attached to it, sent or not, is deleted in
+    the same transaction (rows now, stored bytes on commit, `services._drop_attachments`),
+    a send there claims none (`send.claim_pending_attachments`), and the runner's
+    attachment route refuses one. A FORK made while it was ordinary holds a copy of the
+    same words, so it becomes sensitive with it, recursively (its rows sealed to the key
+    its forker carries on); any other child keeps its own state.
   - *Rows from before keys were per conversation.* Migration 0049 re-sealed field-key rows to their conversation's new
     key, wrapped to the starter; a session whose starter had no vault key kept the field key,
     is served to nobody, and is logged — `manage.py reseal_sensitive_conversations` moves it
@@ -448,6 +482,11 @@ THE predicate; every surface below asks it, one test each in
     opens it. Their seals would let a site that forged the browser's header try passphrases
     offline (a passkey seal cannot be attacked so); the header keeps them out of every
     ordinary server-to-server call, and is not a proof against a site that forges it.
+    **A connected site's backend hears live words.** It holds the visitor's delegated
+    token, so it can open the chat socket or send as them, and the socket's live frames
+    carry the words in transit: sealing protects what canopy-web STORES, not a site the
+    person chose to use canopy through. Only connect a site you would trust with the
+    conversation.
   - *Drafts stay in the browser.* A sensitive conversation stores no draft: the keystroke
     path stores nothing there (`drafts.update_draft` → None), the composer never mirrors
     keystrokes (canopy-ui `localDrafts`), the text reaches canopy-web only inside the send,
@@ -468,9 +507,10 @@ THE predicate; every surface below asks it, one test each in
   read (REST, MCP, the board, the unclaimable report, the caller envelope) returns its
   prompt, note or report while it runs. The `TURN_CREATED` log line keeps no prompt head.
   A sensitive turn no runner has started (QUEUED or CLAIMED) is closed MISSED through
-  `close_turn`, prompt wiped, `CANOPY_SENSITIVE_TURN_DEADLINE_SECONDS` (1 h) after it was
-  asked (`harness.sweeps.expire_unrun_sensitive_turns`, its own tick, and the sensitive
-  sweep). Session info (`GET /{id}/info`) shows an allowlist of metadata
+  `close_turn`, prompt wiped, `CANOPY_SENSITIVE_TURN_DEADLINE_SECONDS` (1 h) after it could
+  first RUN (`harness.sweeps.expire_unrun_sensitive_turns`, its own tick, and the
+  sensitive sweep): never while another turn of its conversation is running, and then
+  from when the last turn before it that ran ended, or when it was asked if later. Session info (`GET /{id}/info`) shows an allowlist of metadata
   (`api.INFO_METADATA_KEYS`) and, for a sensitive one, no box Claude session or summary.
   Its "done" push says "Reply ready" or "The turn failed", nothing more.
 - **Only its people hand it on:** adding a participant (which needs their wrap, made in a
@@ -478,11 +518,20 @@ THE predicate; every surface below asks it, one test each in
   need `reads_content` too, so an agent's admin who may open a thread they
   are not in cannot add themselves or copy it. A fork is the OWNER's act as well
   (`access.can_share`): it carries the key, the wraps and the agent's memory into a
-  conversation its forker owns, so an editor in it cannot.
+  conversation its forker owns, so an editor in it cannot. A fork is canopy's to make:
+  `metadata.fork` is server-owned (create takes only an allowlist of host keys,
+  `services.HOST_METADATA_KEYS` and `x_…`), and what the runner is told
+  (`placement.fork_plan`) is read from canopy's own columns — `worktree_of` only within
+  the fork's lineage up `parent_session` (`fork_lineage`, which the cloud runner checks
+  before running in another chat's directory), the cut only from the recorded
+  `parent_claude_session`. No member can aim their turn at someone else's worktree,
+  where their transcripts sit.
 - **Nothing from outside its people:** Slack takes no message into one — a reply in its
   thread, a mention, a branch, a channel read, even from its owner — and says so with the
   link (`slack.services.private_refusal`); an email in its thread runs as the agent's own
-  turn beside it (`channels.email.arrive`).
+  turn beside it (`channels.email.arrive`). Nor is it moved from Slack: "Run on cloud" and
+  `/canopy cloud` leave a private conversation as it is and say so (`_move_to_cloud`),
+  since its stranded turn could only be re-asked by Slack sending into it.
 - **The agent's memory:** every turn of a sensitive conversation runs confined to the same
   capability, so it resumes the Claude session of the conversation's previous turn when it
   runs on the same sensitive-data box, in the same capability for the same agent, and the

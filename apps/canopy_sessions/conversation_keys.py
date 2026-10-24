@@ -105,7 +105,10 @@ def ensure_key(session: Session, *, starter=None, offered: dict | None = None) -
 
     * already keyed → that key;
     * it carries on a conversation that has one (`parent_session`: a fork, a successor,
-      a branch) → the same key pair and the same people's wraps (`copy_key`);
+      a branch) and its creator is one of that conversation's people (`_carries_on`)
+      → the same key pair and the same people's wraps (`copy_key`). Naming a private
+      chat as `parent` is not a way to its key: someone not in it gets a key of their
+      own;
     * a key pair its starter's BROWSER made (`offered`, checked by `check_offer`) →
       that one: canopy-web never sees its private half;
     * otherwise — no browser was there: a conversation made sensitive mid-turn, from
@@ -116,7 +119,7 @@ def ensure_key(session: Session, *, starter=None, offered: dict | None = None) -
     if key is not None:
         return key
     parent = Session.objects.filter(pk=session.parent_session_id).first() if session.parent_session_id else None
-    if parent is not None and key_of(parent) is not None:
+    if parent is not None and key_of(parent) is not None and _carries_on(session, parent, starter):
         return copy_key(parent, session)
     if offered is not None:
         return _store_offer(session, offered)
@@ -139,6 +142,16 @@ def ensure_key(session: Session, *, starter=None, offered: dict | None = None) -
     if key is not None:
         session._conversation_key = key
     return key
+
+
+def _carries_on(session: Session, parent: Session, starter=None) -> bool:
+    """Whether `session` may carry `parent`'s key on: its creator (else `starter`) is
+    one of `parent`'s own people (`sensitivity.is_conversation_person`) — its creator
+    or a participant — never an agent admin or co-tenant who can merely see it."""
+    from apps.harness import sensitivity  # noqa: PLC0415 — harness's gate reads this module lazily
+
+    person = session.created_by if session.created_by_id else starter
+    return person is not None and sensitivity.is_conversation_person(parent, user=person)
 
 
 def require_key(session: Session, *, user=None, contact=None) -> SessionKey:
@@ -320,6 +333,12 @@ def index_offsets(session: Session) -> list[int] | None:
     return value
 
 
+def keyset_for_browser(user) -> dict | None:
+    """`user`'s own keyset (public half and seals), for their browser to open it with."""
+    keyset = _keyset(user)
+    return _keyset_out(user, keyset) if keyset else None
+
+
 def _keyset_out(user, keyset) -> dict:
     """The reader's own vault keyset (public half and its seals), so a surface that
     has no browser session — the embedded panel — can unlock it in the browser."""
@@ -339,26 +358,55 @@ class WrapRefused(ValueError):
     pass
 
 
+class CopyExists(WrapRefused):
+    """They already hold a copy for their current vault key. Nobody else may write over
+    it: the server cannot tell a good wrap from random bytes, so an overwrite could
+    lock its holder out — the owner included — with nothing showing it."""
+
+    def __init__(self, user=None):
+        super().__init__(f"{getattr(user, 'email', None) or 'they'} already hold a copy of this "
+                         "conversation's key for their current vault key; if it no longer opens, "
+                         "they set it aside themselves (People → my copy does not open) and "
+                         "then someone in it gives them a fresh one")
+
+
 def add_wrap(session: Session, user, wrap, *, recipient_jkt: str, by) -> SessionKeyWrap:
     """Store `wrap`, made in `by`'s browser, as `user`'s copy of the conversation key.
     The server cannot open it; it checks what it can: the shape, that it is the length
-    of a wrapped P-256 scalar, and that it names `user`'s CURRENT vault key."""
+    of a wrapped P-256 scalar, and that it names `user`'s CURRENT vault key.
+
+    It is written only where `user` holds no copy for that key (CopyExists otherwise):
+    a copy for an OLDER vault key is provably stale (its `recipient_jkt` names a key
+    they no longer have) and is replaced; a current one that does not open is set
+    aside by its holder first (`set_aside_my_copy`)."""
     if key_of(session) is None:
         raise WrapRefused("this conversation has no key to share")
     keyset = _keyset(user)
     if keyset is None:
         raise WrapRefused(f"{getattr(user, 'email', 'they')} has no vault key yet, so they cannot "
                           "read a sensitive conversation; ask them to set one up first")
-    if recipient_jkt != ecdh_es.jkt(keyset.public_jwk):
+    current = ecdh_es.jkt(keyset.public_jwk)
+    if recipient_jkt != current:
         raise WrapRefused("that wrap is not for their current vault key; reload and try again")
     try:
         clean = ecdh_es.check_wrap(wrap, plaintext_len=32)
     except ecdh_es.ShapeError as exc:
         raise WrapRefused(f"not a conversation key wrap: {exc}") from None
-    row, _ = SessionKeyWrap.objects.update_or_create(
-        session=session, user=user,
-        defaults={"wrap": clean, "recipient_jkt": recipient_jkt, "created_by": by})
+    with transaction.atomic():
+        held = SessionKeyWrap.objects.select_for_update().filter(session=session, user=user).first()
+        if held is not None and held.recipient_jkt == current:
+            raise CopyExists(user)
+        row, _ = SessionKeyWrap.objects.update_or_create(
+            session=session, user=user,
+            defaults={"wrap": clean, "recipient_jkt": recipient_jkt, "created_by": by})
     return row
+
+
+def set_aside_my_copy(session: Session, user) -> bool:
+    """`user`'s own act: their copy of this conversation's key does not open for them
+    (broken, or wrapped to a key they lost), so they drop it and someone in it can give
+    them a fresh one (`add_wrap`). Only the holder can; True if they held one."""
+    return SessionKeyWrap.objects.filter(session=session, user_id=user.pk).delete()[0] > 0
 
 
 def has_current_wrap(session: Session, user) -> bool:

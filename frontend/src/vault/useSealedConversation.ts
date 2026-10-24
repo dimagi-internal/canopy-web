@@ -56,8 +56,12 @@ export function useSealedConversation<M extends Row>(
      key: ConversationKey | null; keyRef: { current: ConversationKey | null };
      /** Some row here came sealed — history or scroll-back, not a live frame — so
       *  there is something for this browser to open. */
-     hasSealed: boolean } {
+     hasSealed: boolean
+     /** The vault key opened, and this person's copy of the conversation key did not:
+      *  it is broken, and only they can set it aside for a fresh one. */
+     copyBroken: boolean } {
   const [key, setKey] = useState<ConversationKey | null>(null)
+  const [copyBroken, setCopyBroken] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [, setVersion] = useState(0)
@@ -114,9 +118,15 @@ export function useSealedConversation<M extends Row>(
     if (!sealedKey || opening) return
     setOpening(true)
     setError(null)
+    setCopyBroken(false)
     try {
       const me = await unlockVault()
-      setKey(await openConversationKey(sealedKey, me))
+      try {
+        setKey(await openConversationKey(sealedKey, me))
+      } catch (e) {
+        setCopyBroken(true)
+        throw e
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not unlock this conversation.')
     } finally {
@@ -156,5 +166,5 @@ export function useSealedConversation<M extends Row>(
         : whyNot(sealedKey) ?? (error ? 'error' : 'locked')
   // Something sealed this browser cannot show yet: neither opened nor heard live here.
   const hasSealed = messages.some((m) => isSealed(m.sealed) && !heard.current.has(placeOf(m)))
-  return { state, messages: shown, unlock, error, key, keyRef, hasSealed }
+  return { state, messages: shown, unlock, error, key, keyRef, hasSealed, copyBroken }
 }

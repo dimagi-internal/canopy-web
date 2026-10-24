@@ -501,7 +501,7 @@ def _session_or_404(request: HttpRequest, session_id):
 
 
 def _session_out(s) -> ContactSessionOut:
-    from apps.canopy_sessions.services import SERVER_OWNED_METADATA
+    from apps.canopy_sessions.services import is_host_key
     from apps.canopy_sessions.transcript_read import opening_of
 
     return ContactSessionOut(
@@ -511,7 +511,7 @@ def _session_out(s) -> ContactSessionOut:
         opening=opening_of(s),
         status=s.status,
         created_at=s.created_at.isoformat(),
-        metadata={k: v for k, v in (s.metadata or {}).items() if k not in SERVER_OWNED_METADATA},
+        metadata={k: v for k, v in (s.metadata or {}).items() if is_host_key(k)},
     )
 
 

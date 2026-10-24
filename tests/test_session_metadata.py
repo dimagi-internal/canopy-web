@@ -75,9 +75,9 @@ def test_a_member_cannot_aim_the_slack_relay_or_capture_an_email_thread(member):
 
 def test_host_metadata_is_bounded():
     with pytest.raises(ValueError):
-        services.host_metadata({f"k{i}": i for i in range(services.MAX_HOST_METADATA_KEYS + 1)})
+        services.host_metadata({f"x_k{i}": i for i in range(services.MAX_HOST_METADATA_KEYS + 1)})
     with pytest.raises(ValueError):
-        services.host_metadata({"big": "x" * services.MAX_HOST_METADATA_BYTES})
+        services.host_metadata({"x_big": "x" * services.MAX_HOST_METADATA_BYTES})
     assert services.host_metadata("not a dict") == {}
 
 
@@ -156,3 +156,31 @@ def test_a_contact_can_attach_to_their_own_conversation_only():
     assert c.post(f"/api/contact/sessions/{sid}/detach").status_code == 200
     other = S.objects.create(workspace_id=S.objects.get(pk=sid).workspace_id, title="not theirs")
     assert c.post(f"/api/contact/sessions/{other.pk}/attach").status_code == 404
+
+
+def test_a_caller_sets_only_the_allowlisted_keys(member):
+    """An allowlist, not a denylist: a key canopy acts on later (a fork's `fork`, which
+    once let a member run their turn in someone else's worktree) is canopy's until it is
+    named here. The host linkage and the `x_` namespace survive; anything else is dropped."""
+    meta = {"source": "ace-web", "origin_key": "ace-web:w", "opp_slug": "bednets", "opp_run_id": "r1",
+            "opp_step_skill": "idea-to-pdd", "x_anything": {"a": 1},
+            "fork": {"worktree_of": "someone-else", "session_key": "sid", "records": 9,
+                     "index_offsets": "junk"},
+            "made_up_key": "dropped"}
+    r = member.post("/api/canopy-sessions/", {"agent_slug": "echo", "metadata": meta},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+    stored = Session.objects.get(pk=r.json()["id"]).metadata
+    assert {k: stored[k] for k in meta if k in stored} == {
+        k: meta[k] for k in ("source", "origin_key", "opp_slug", "opp_run_id", "opp_step_skill", "x_anything")}
+
+
+def test_no_app_reads_the_host_namespace():
+    """`x_` is the host's own: if canopy ever read a key there, a caller could steer it."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "apps"
+    hits = [str(p) for p in root.rglob("*.py")
+            if re.search(r"""metadata[^\n]{0,40}["']x_""", p.read_text(encoding="utf-8"))]
+    assert hits == []

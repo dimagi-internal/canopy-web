@@ -27,21 +27,30 @@ logger = logging.getLogger(__name__)
 def append_events(turn: Turn, events: list[dict]) -> int:
     from . import sensitivity
 
-    sensitive = sensitivity.is_sensitive(turn)
-    if sensitive and any(e.get("kind") in sensitivity.RESULT_KINDS for e in events):
+    def _stripped(sensitive_now: bool, conversation) -> list[dict]:
+        if not (sensitive_now and any(e.get("kind") in sensitivity.RESULT_KINDS for e in events)):
+            return events
         # A sensitive conversation's tool results are never stored (spec
         # 2026-10-22-sensitive-data-agents §4): the row keeps which call and
         # whether it failed, and so does the live frame built from it.
-        session = turn.chat_session if turn.chat_session_id else None
         calls = sensitivity.calls_in(events, kind_key="kind", use="tool_start", payload_key="payload")
-        events = [{**e, "payload": sensitivity.strip_result(e.get("payload"), session=session, calls=calls)}
-                  if e.get("kind") in sensitivity.RESULT_KINDS else e for e in events]
+        return [{**e, "payload": sensitivity.strip_result(e.get("payload"), session=conversation, calls=calls)}
+                if e.get("kind") in sensitivity.RESULT_KINDS else e for e in events]
+
     with transaction.atomic():
         # Lock the turn row first so concurrent appenders to the same turn
         # serialize on the Max("seq") read instead of racing each other into
         # the turnevent_seq_unique_per_turn index (sqlite ignores
         # select_for_update; Postgres serializes — that's the point).
-        Turn.objects.select_for_update().get(pk=turn.pk)
+        # Sensitivity is read AFTER the lock, from fresh rows: a conversation becoming
+        # sensitive locks these turn rows too (`services._withhold_what_it_kept`), so an
+        # event written as it switches is either reduced by the switch or stored here
+        # as metadata — never kept in clear in between.
+        locked = (Turn.objects.select_for_update(of=("self",))
+                  .select_related("chat_session", "canopy_session", "parent_session")
+                  .get(pk=turn.pk))
+        sensitive = sensitivity.is_sensitive(locked)
+        events = _stripped(sensitive, sensitivity.conversation_of(locked))
         current = (
             TurnEvent.objects.filter(turn=turn).aggregate(m=Max("seq"))["m"] or 0
         )

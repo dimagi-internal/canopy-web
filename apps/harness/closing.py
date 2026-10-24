@@ -72,7 +72,7 @@ def close_turn(
     turn.refresh_from_db()
     if not updated:
         return False
-    if sensitive and turn.chat_session_id:
+    if sensitive and (turn.chat_session_id or turn.canopy_session_id):
         _forget_the_page(turn)
 
     # Whatever runs this turn has stopped: its agent logins die now.
@@ -140,12 +140,15 @@ def _forget_the_page(turn: Turn) -> None:
     patient's name in a filter, say) is kept only while a turn of it may read it
     (`current_page`): once its last live turn ends it is forgotten, and the panel
     declares the page again before its next send."""
-    if Turn.objects.filter(chat_session_id=turn.chat_session_id,
+    from . import sensitivity  # noqa: PLC0415 — as close_turn: sensitivity reads harness models
+
+    conversation_id = turn.chat_session_id or turn.canopy_session_id
+    if Turn.objects.filter(sensitivity.turns_of_q(conversation_id),
                            status__in=list(Turn.NON_TERMINAL)).exists():
         return
     from apps.canopy_sessions.models import Session  # noqa: PLC0415 — harness ↛ chat at import
 
-    Session.objects.filter(pk=turn.chat_session_id).exclude(page_state={}).update(page_state={})
+    Session.objects.filter(pk=conversation_id).exclude(page_state={}).update(page_state={})
 
 
 def close_riders(turn: Turn, status: str | None = None, *, now=None) -> None:

@@ -985,6 +985,15 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
 
     from . import status
 
+    # A private conversation is not moved from Slack: its stranded turn could only be
+    # re-asked by Slack sending into it (which it refuses), and a turn closed as lost
+    # first would be lost for good. Its people move it from canopy.
+    if sensitivity.is_sensitive(session):
+        url = links.scoped_url_or_none(session.workspace_id, f"/chat/{session.pk}") or ""
+        where = f" Open it in canopy to run it elsewhere: {url}" if url else " Open it in canopy."
+        return Outcome(PRIVATE, "This conversation is private, so canopy does not move it from "
+                       f"Slack, and nothing was changed.{where}",
+                       session=session, agent=session.agent, workspace_id=session.workspace_id)
     runner = session_send.available_cloud_runner(session, user=user)
     if runner is None:
         return Outcome(NO_CLOUD, "No cloud runner is online to take this right now.", session=session)

@@ -11834,7 +11834,9 @@ export interface paths {
          * @description Your vault key's PUBLIC half and its thumbprint, for your browser to wrap a new
          *     conversation's key to before it starts one (`SessionCreateIn.conversation_key`) —
          *     also from the embedded panel, which has no browser session to read
-         *     `/api/vault/keyset` with. 404 when you have none.
+         *     `/api/vault/keyset` with. With it, to your own browser only, the keyset that opens
+         *     it: a browser that has not opened your vault key before derives its public half
+         *     from it before trusting this one. 404 when you have none.
          */
         readonly get: operations["my_vault_key"];
         readonly put?: never;
@@ -12364,12 +12366,38 @@ export interface paths {
          * @description For someone ALREADY in a sensitive conversation who cannot read it: given it
          *     before it became sensitive, or whose vault key changed since (its starter
          *     included). Your browser opens your copy of the key and wraps it to their current
-         *     vault key (`GET /{id}/participants/recipient`); canopy-web stores the wrap. Anyone
-         *     in the conversation who holds a current copy may give one. It puts nobody in it:
-         *     404 when they are not in it.
+         *     vault key (`GET /{id}/participants/recipient`); canopy-web stores the wrap. An editor
+         *     or the owner who holds a current copy may give one (403 otherwise), and only to
+         *     someone holding no copy for their current vault key: 409 when they do. A copy for
+         *     an older vault key is replaced; one that does not open is set aside by its holder
+         *     first (`DELETE /{id}/key-copies/mine`). It puts nobody in it: 404 when they are not
+         *     in it.
          */
         readonly post: operations["give_key_copy"];
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/key-copies/mine": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Set aside your copy of a private chat's key that does not open
+         * @description Your copy of this conversation's key does not open in your browser (it was
+         *     damaged, or wrapped to a vault key you no longer have). Setting it aside drops it,
+         *     so you are listed `needs_key` and someone in it can give you a fresh one
+         *     (`POST /{id}/key-copies`). Only you can do this for your copy.
+         */
+        readonly delete: operations["set_aside_my_key_copy"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -30533,6 +30561,11 @@ export interface components {
              * @default
              */
             readonly worktree_of: string;
+            /**
+             * Fork Lineage
+             * @default []
+             */
+            readonly fork_lineage: readonly string[];
         };
         /** ResolveSessionIn */
         readonly ResolveSessionIn: {
@@ -33164,6 +33197,10 @@ export interface components {
             };
             /** Jkt */
             readonly jkt: string;
+            /** Keyset */
+            readonly keyset?: {
+                readonly [key: string]: unknown;
+            } | null;
         };
         /**
          * MyKeyCopyOut
@@ -51557,6 +51594,28 @@ export interface operations {
                 readonly "application/json": components["schemas"]["KeyCopyIn"];
             };
         };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
+                };
+            };
+        };
+    };
+    readonly set_aside_my_key_copy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {
