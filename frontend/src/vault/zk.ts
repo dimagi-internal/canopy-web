@@ -56,7 +56,7 @@ export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-function concat(...parts: Uint8Array[]): Bytes {
+export function concat(...parts: Uint8Array[]): Bytes {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
   let at = 0
   for (const p of parts) {
@@ -152,7 +152,7 @@ export async function generateKeyPair(): Promise<{ privateKey: CryptoKey; public
   return { privateKey: await importPrivateScalar(scalar, pub), publicJwk: pub, scalar }
 }
 
-async function ecdhZ(priv: CryptoKey, pub: { x?: string; y?: string }): Promise<Bytes> {
+export async function ecdhZ(priv: CryptoKey, pub: { x?: string; y?: string }): Promise<Bytes> {
   return new Uint8Array(await subtle().deriveBits({ name: 'ECDH', public: await importPublic(pub) }, priv, 256))
 }
 

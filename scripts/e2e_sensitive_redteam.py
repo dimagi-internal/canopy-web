@@ -31,6 +31,11 @@ Two halves:
     `manage.py view_read_probe --session <id> --email <a person in it>`.
   - a session cookie MINTED from the token (`/api/debug/mint-session/`) opens neither the
     conversation's chat socket nor its sealed words (`minted_socket`);
+  - `attachment`: a token (or a cookie minted from it) cannot attach a file to the
+    conversation, list its sealed files or fetch any copy of one. With `--attachment <id>`
+    (a file a person attached from the chat page and sent), neither of its copies reaches
+    the token, and no turn of the conversation names it in its stored `origin_ref`
+    (apps/canopy_sessions/private_attachments.py);
   - with `--slack-thread` (a Slack thread the conversation is bound to), a reply signed
     as Slack would send it, from `--slack-user`, adds nobody to the conversation and
     starts no turn (`slack_reply`; needs the signing secret in CANOPY_SLACK_SIGNING_SECRET).
@@ -67,7 +72,7 @@ SCRIPT = "e2e_sensitive_redteam.py"
 DEFAULT_BASE = "https://canopy.dimagi.com"
 PREFLIGHT = ("declaration", "box", "dedicated", "self_declared_flag")
 EXITS = ("requirement", "probes", "tools", "no_rows", "canary", "share", "slack", "export",
-         "fork", "ordinary_runner", "view_door", "minted_socket", "slack_reply")
+         "fork", "ordinary_runner", "view_door", "minted_socket", "slack_reply", "attachment")
 #: What a sensitive-data capability may call (apps/agents/sensitive_data.py) — anything else that comes
 #: back without an error is a way out.
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrite")
@@ -428,6 +433,46 @@ class Run:
         except ConnectionClosed as exc:
             return f"closed ({exc.rcvd.code if exc.rcvd else 'no code'})"
 
+    def _multipart(self, name: str, body: bytes) -> tuple[bytes, str]:
+        boundary = f"rt{uuid.uuid4().hex}"
+        data = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\n"
+                f"Content-Type: image/png\r\n\r\n").encode() + body + f"\r\n--{boundary}--\r\n".encode()
+        return data, f"multipart/form-data; boundary={boundary}"
+
+    def step_attachment(self) -> str:
+        """A private conversation's file: the agent's copy goes once to the box holding
+        its turn and the people's is sealed in their browser — so no token reaches either,
+        and a token cannot put one in."""
+        self.need_session()
+        sid = self.args.session
+        png = b"\x89PNG\r\n\x1a\n" + self.canary.encode() * 8
+        data, ctype = self._multipart(f"{self.canary}.png", png)
+        r = self.api.raw("POST", f"/canopy-sessions/{sid}/attachments", data=data, content_type=ctype)
+        if r.status < 300:
+            raise Failure(f"a token attached a file to the private conversation: {r.raw[:200]}")
+        listed = self.api.raw("GET", f"/canopy-sessions/{sid}/sealed-attachments")
+        if listed.status < 300 and (listed.json() or []):
+            raise Failure(f"a token listed the conversation's sealed files: {listed.raw[:200]}")
+        probe = str(uuid.uuid4())
+        for path in (f"/canopy-sessions/attachments/{probe}/sealed", f"/canopy-sessions/attachments/{probe}/content"):
+            if self.api.raw("GET", path).status != 404:
+                raise Failure(f"GET {path} was not a 404")
+        seen = f"upload refused ({r.status}), list empty"
+        if self.args.attachment:
+            aid = self.args.attachment
+            for path in (f"/canopy-sessions/attachments/{aid}/sealed", f"/canopy-sessions/attachments/{aid}/content"):
+                got = self.api.raw("GET", path)
+                if got.status != 404:
+                    raise Failure(f"a token reached {path}: {got.status}")
+            info = self.api.get(f"/canopy-sessions/{sid}/info")
+            for t in (info.get("turns") or [])[:20]:
+                turn = self.api.raw("GET", f"/harness/turns/{t.get('id')}").json() or {}
+                for ref in ((turn.get("origin_ref") or {}).get("attachments") or []):
+                    if set(ref) - {"id", "sealed"}:
+                        raise Failure(f"turn {t.get('id')} names a private file: {ref}")
+            seen += f"; {aid}: neither copy reaches a token, no turn names it"
+        return seen
+
     def step_slack_reply(self) -> str:
         """A reply into the conversation's Slack thread, signed as Slack signs one: it adds
         nobody and starts nothing (the person is told, in Slack, that it is private)."""
@@ -476,6 +521,7 @@ def main() -> int:
     p.add_argument("--other-runner", default="", help="a non-sensitive-data runner id")
     p.add_argument("--slack-thread", default="", help="team:channel:thread_ts the conversation is bound to")
     p.add_argument("--slack-user", default="", help="a Slack user id to reply as (not in the conversation)")
+    p.add_argument("--attachment", default="", help="a file a person attached (and sent) in --session")
     p.add_argument("--steps", default="", help="comma-separated; default: preflight, + exits with --session")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()

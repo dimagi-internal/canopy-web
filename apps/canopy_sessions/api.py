@@ -13,10 +13,10 @@ import uuid
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.http import Http404, HttpRequest
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from ninja import File, Router
+from ninja import File, Form, Router
 from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
@@ -44,6 +44,7 @@ from . import (
     page_actions,
     page_state,
     placement,
+    private_attachments,
     secrets,
     serializers,
     services,
@@ -88,6 +89,7 @@ from .schemas import (
     PlaceIn,
     ResetIn,
     ResetOut,
+    SealedAttachmentOut,
     ResetSummaryOut,
     RunAgentInputIn,
     RunAgentInputOut,
@@ -1902,9 +1904,11 @@ def request_backfill(request: HttpRequest, session_id: uuid.UUID):
                            detail=str(exc)) from exc
 
 
-#: Why a private conversation takes no file (`upload_attachment`).
-ATTACHMENTS_REFUSED = ("files cannot be attached to a private conversation yet: canopy would have "
-                       "to keep them where it could read them. Paste the part that matters as text.")
+#: Why a private conversation's file was not taken (`upload_attachment`).
+ATTACHMENTS_NOT_HERE = ("a file in a private conversation is sealed to its people in their browser: "
+                        "attach it from canopy's own chat page")
+ATTACHMENTS_KEYLESS = ("this private conversation has no key yet, so a file could not be sealed to "
+                       "its people: send a message first")
 
 
 @router.post(
@@ -1923,12 +1927,18 @@ def upload_attachment(
     it. That ordering is also what lets the UI show a thumbnail before send.
     """
     session = _session_or_404(request, session_id, write=True)   # membership gate: non-member -> 404
-    # A private conversation's words are sealed to its people, and its files would be
-    # its words too — but the agent reads a file on its box, which holds no key to the
-    # conversation. Until the box can open a sealed file, none is taken in one rather
-    # than kept where canopy-web could read it.
-    if sensitivity.is_sensitive(session):
-        raise HttpError(422, ATTACHMENTS_REFUSED)
+    # A private conversation's file is two copies (`private_attachments`): this one, for
+    # the agent, held only until its turn fetches it or ends, under a key that names no
+    # file; and the people's, sealed in their browser (`POST …/sealed`). Only its own
+    # people, at a browser, attach one — the door the sealed copy comes back through.
+    sensitive = sensitivity.is_sensitive(session)
+    if sensitive:
+        if not sensitivity.reads_content(session, user=request.user,
+                                         chat_surface=sensitivity.request_is_chat_surface(request)) \
+                or getattr(request, "delegated_app", None) or getattr(request, "contact", None):
+            raise HttpError(422, ATTACHMENTS_NOT_HERE)
+        if conversation_keys.key_of(session) is None:
+            raise HttpError(422, ATTACHMENTS_KEYLESS)
     if not attachment_storage.is_configured():
         raise HttpError(503, "attachments are not configured on this deployment")
 
@@ -1954,12 +1964,119 @@ def upload_attachment(
     attachment.storage_key = attachment_storage.storage_key(
         session.id, attachment.id, attachment.filename
     )
+    if sensitive:
+        # The row and the key say nothing about the file: a size bucket, a type family,
+        # an object key without its name. The name is held only for the runner's one
+        # download (`private_attachments.take_for_runner`).
+        attachment.sensitive = True
+        attachment.size_bytes = private_attachments.size_bucket(file.size)
+        attachment.content_type = private_attachments.family(content_type)
+        attachment.storage_key = private_attachments.plain_key(session.id, attachment.id)
     # Bytes FIRST, row second: a row whose object is missing is a broken
     # thumbnail and a runner download that 500s, while an orphaned object is
     # invisible and sweepable. Fail in the harmless direction.
     attachment_storage.put(attachment.storage_key, file.read(), content_type)
     attachment.save()
     return 201, attachment
+
+
+def _sealed_attachment_or_404(request: HttpRequest, attachment_id: uuid.UUID) -> Attachment:
+    """A private conversation's file, for one of its own people on its chat surfaces
+    (`sensitivity.reads_content`, the gate its words go out through); 404 for anyone
+    else, and for an ordinary conversation's file."""
+    attachment = get_object_or_404(
+        Attachment.objects.select_related("session").filter(
+            session__in=_site_scoped(request, Session.objects.all()), sensitive=True),
+        pk=attachment_id,
+    )
+    session = attachment.session
+    if session.workspace_id not in _visible_slugs(request) or not access.can_read(request.user, session):
+        raise HttpError(404, "attachment not found")
+    if not sensitivity.is_sensitive(session) or not sensitivity.reads_content(
+            session, user=request.user, chat_surface=sensitivity.request_is_chat_surface(request)):
+        raise HttpError(404, "attachment not found")
+    return attachment
+
+
+@router.post(
+    "/attachments/{attachment_id}/sealed",
+    response={204: None},
+    summary="Store the people's sealed copy of a file in a private conversation",
+)
+@gate("session-acl", kind="conversation")  # its uploader, while unsent, one of its people
+def put_sealed_attachment(request: HttpRequest, attachment_id: uuid.UUID,
+                          sealed_name: Form[str], file: UploadedFile = File(...)):
+    """The file's name and bytes, sealed in the uploader's browser to the
+    conversation's key (`cf1:` name, `cfb1` blob), bound to the conversation, this
+    attachment and its uploader. canopy-web checks the shape and cannot open either.
+    Once per file, by its uploader, before it is sent; a send claims only a file
+    whose sealed copy is stored."""
+    attachment = _sealed_attachment_or_404(request, attachment_id)
+    session = attachment.session
+    if attachment.uploaded_by_id != request.user.pk or not access.can_write(request.user, session):
+        raise HttpError(403, "only the person who attached a file stores its sealed copy")
+    if attachment.sent_at is not None:
+        raise HttpError(409, "this attachment has already been sent")
+    if attachment.sealed_blob_key:
+        raise HttpError(409, "this attachment's sealed copy is already stored")
+    key = conversation_keys.key_of(session)
+    if key is None:
+        raise HttpError(422, ATTACHMENTS_KEYLESS)
+    blob = file.read()
+    try:
+        private_attachments.check_sealed_name(sealed_name, attachment, key.conversation)
+        private_attachments.check_sealed_blob(
+            blob, attachment, key.conversation,
+            max_bytes=private_attachments.max_blob_bytes(settings.ATTACHMENT_MAX_UPLOAD_BYTES))
+    except private_attachments.SealedRefused as exc:
+        raise HttpError(422, str(exc)) from exc
+    blob_key = private_attachments.blob_key(session.id, attachment.pk)
+    attachment_storage.put(blob_key, blob, "application/octet-stream")
+    won = Attachment.objects.filter(pk=attachment.pk, sealed_blob_key="", sent_at__isnull=True) \
+        .update(sealed_blob_key=blob_key, sealed_name=sealed_name)
+    if not won:
+        raise HttpError(409, "this attachment's sealed copy is already stored")
+    return 204, None
+
+
+@router.get(
+    "/attachments/{attachment_id}/sealed",
+    summary="The sealed copy of a file in a private conversation",
+)
+@gate("session-acl")  # sensitivity.reads_content
+def sealed_attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
+    """The people's copy: ciphertext their browser opens with the conversation key.
+    Only for the conversation's own people on its chat surfaces."""
+    attachment = _sealed_attachment_or_404(request, attachment_id)
+    if not attachment.sealed_blob_key or (attachment.sent_at is None
+                                          and attachment.uploaded_by_id != request.user.pk):
+        raise HttpError(404, "attachment not found")
+    if not attachment_storage.is_configured():
+        raise HttpError(503, "attachments are not configured on this deployment")
+    stored = attachment_storage.get(attachment.sealed_blob_key)
+    response = HttpResponse(stored.body, content_type="application/octet-stream")
+    response["Content-Disposition"] = "attachment"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "sandbox"
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@router.get(
+    "/{session_id}/sealed-attachments",
+    response=list[SealedAttachmentOut],
+    summary="The sealed files sent in a private conversation",
+)
+@gate("session-acl")  # readable_sessions, then sensitivity.reads_content
+def list_sealed_attachments(request: HttpRequest, session_id: uuid.UUID):
+    """Each file sent in a private conversation, placed at the person's line it was sent
+    with, with its sealed name for their browser to open. No name, no exact size.
+    Empty for an ordinary conversation and for anyone `reads_content` does not admit."""
+    session = _session_or_404(request, session_id)
+    if not sensitivity.is_sensitive(session) or not sensitivity.reads_content(
+            session, user=request.user, chat_surface=sensitivity.request_is_chat_surface(request)):
+        return []
+    return private_attachments.history(session)
 
 
 @router.get(
@@ -1988,6 +2105,10 @@ def attachment_content(request: HttpRequest, attachment_id: uuid.UUID):
     if not sensitivity.reads_content(attachment.session, user=request.user,
                                      chat_surface=sensitivity.request_is_chat_surface(request)):
         raise HttpError(404, "attachment not found")
+    # A private conversation's file is never served in clear to anyone: its agent's
+    # copy goes once to the box holding its turn, and its people open the sealed copy.
+    if attachment.sensitive:
+        raise HttpError(404, "attachment not found")
     return attachment_storage.http_response(attachment)
 
 
@@ -2010,10 +2131,12 @@ def delete_attachment(request: HttpRequest, attachment_id: uuid.UUID):
         raise HttpError(404, "attachment not found")
     if not access.can_write(request.user, attachment.session):
         raise HttpError(403, "you can read this session but not act in it")
-    if attachment.message_id is not None:
+    if attachment.message_id is not None or (attachment.sensitive and attachment.sent_at is not None):
         raise HttpError(409, "this attachment has already been sent")
     if attachment_storage.is_configured():
-        attachment_storage.delete(attachment.storage_key)
+        for key in (attachment.storage_key, attachment.sealed_blob_key):
+            if key:
+                attachment_storage.delete(key)
     attachment.delete()
     return 204, None
 

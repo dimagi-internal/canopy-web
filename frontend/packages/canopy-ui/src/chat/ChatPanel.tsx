@@ -15,6 +15,7 @@ import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLa
 import { useStickyBottom } from "./useStickyBottom";
 import { AppHostContext, type AppHost } from "./mcpApps/context";
 import { SecretRequestHostContext, type SecretRequestHost } from "./secretRequest";
+import { AttachmentHostContext, type AttachmentHost } from "./attachmentHost";
 import { SubagentsContext } from "./subagents";
 
 export interface ChatPanelProps {
@@ -68,6 +69,9 @@ export interface ChatPanelProps {
   /** How this page shows an agent's request for one of its secrets (a seal
    *  card). Omit and such a row renders as an ordinary tool row. */
   secretRequestHost?: SecretRequestHost;
+  /** How this page shows the files sent with a person's line (a private
+   *  conversation's are sealed). Omit and a line shows only its words. */
+  attachmentHost?: AttachmentHost;
   /** Commands the composer offers when a message starts with `/`. */
   slashCommands?: readonly SlashCommand[];
 }
@@ -105,6 +109,7 @@ export function ChatPanel({
   onTypingVisibilityChange,
   appHost,
   secretRequestHost,
+  attachmentHost,
   slashCommands,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
@@ -269,6 +274,7 @@ export function ChatPanel({
   return (
     <AppHostContext.Provider value={appHost ?? null}>
     <SecretRequestHostContext.Provider value={secretRequestHost ?? null}>
+    <AttachmentHostContext.Provider value={attachmentHost ?? null}>
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
         <ConnectionStatus connected={connected} />
@@ -364,6 +370,7 @@ export function ChatPanel({
         onTypingVisibilityChange={onTypingVisibilityChange}
       />
     </div>
+    </AttachmentHostContext.Provider>
     </SecretRequestHostContext.Provider>
     </AppHostContext.Provider>
   );

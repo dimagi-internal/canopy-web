@@ -428,6 +428,42 @@ export async function deleteAttachment(attachmentId: string): Promise<void> {
   }
 }
 
+/** A file sent in a private conversation, as its people's browsers open it (no name). */
+export type SealedAttachment = components["schemas"]["SealedAttachmentOut"];
+
+/** Store the people's sealed copy of a file in a private conversation
+ *  (`vault/sealedFiles.ts::sealAttachment`). Once, by its uploader, before it is sent. */
+export async function uploadSealedCopy(attachmentId: string, sealedName: string, blob: Uint8Array): Promise<void> {
+  const body = new FormData();
+  body.append("sealed_name", sealedName);
+  body.append("file", new Blob([blob as Uint8Array<ArrayBuffer>], { type: "application/octet-stream" }), "sealed");
+  const res = await fetch(apiUrl(`/api/canopy-sessions/attachments/${attachmentId}/sealed`), {
+    method: "POST",
+    credentials: "include",
+    headers: { "X-CSRFToken": getCsrfToken() },
+    body,
+  });
+  if (!res.ok) {
+    throw ApiError.from(res.status, await res.json().catch(() => undefined), `sealing failed (${res.status})`);
+  }
+}
+
+/** The sealed files sent in a private conversation, each at the line it was sent with. */
+export function listSealedAttachments(sessionId: string): Promise<SealedAttachment[]> {
+  return request<SealedAttachment[]>(`/api/canopy-sessions/${encodeURIComponent(sessionId)}/sealed-attachments`);
+}
+
+/** A sealed file's ciphertext, for this browser to open with the conversation key. */
+export async function fetchSealedAttachment(attachmentId: string): Promise<Uint8Array> {
+  const res = await fetch(apiUrl(`/api/canopy-sessions/attachments/${attachmentId}/sealed`), {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw ApiError.from(res.status, await res.json().catch(() => undefined), `could not fetch the file (${res.status})`);
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 /** Where to render an attachment from. No signed URL to expire or leak — the
  *  server streams the bytes and gates on session membership. */
 export function attachmentUrl(attachmentId: string): string {

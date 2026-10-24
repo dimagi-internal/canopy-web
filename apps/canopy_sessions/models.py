@@ -719,13 +719,27 @@ class Attachment(models.Model):
     # is therefore sent_at IS NULL, not message IS NULL.
     sent_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # A file in a SENSITIVE conversation (`private_attachments`) is two things. The
+    # agent's copy is the bytes at `storage_key`, held like the turn's prompt: only
+    # until the turn that claimed it (`turn`) fetches it or ends, then deleted with
+    # `filename`. The people's copy is sealed in their browser to the conversation's
+    # key, which canopy-web cannot open: the name and type in `sealed_name` (a `cf1:`
+    # envelope) and the bytes at `sealed_blob_key`. `size_bytes` is then a bucket and
+    # `content_type` a family, never the file's own.
+    sensitive = models.BooleanField(default=False)
+    turn = models.ForeignKey(
+        "harness.Turn", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    sealed_name = models.TextField(null=True, blank=True)
+    sealed_blob_key = models.CharField(max_length=500, blank=True, default="")
 
     class Meta:
         ordering = ["created_at"]
         indexes = [models.Index(fields=["session", "message"])]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"attachment:{str(self.id)[:8]}:{self.filename}"
+        # A private conversation's file is never named, here or in any log.
+        return f"attachment:{str(self.id)[:8]}" + ("" if self.sensitive else f":{self.filename}")
 
 
 class SessionSecret(models.Model):

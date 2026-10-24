@@ -100,10 +100,35 @@ nothing here.
 - **What canopy-web keeps able to read:** the metadata columns (kind, tool names,
   argument names, ids, sizes, hashes), turn status, the ledger (already metadata) and
   logs — everything troubleshooting needs.
-- **What a sensitive conversation does not take.** A file (refused at upload: the agent
-  reads it on its box, which holds no key to the conversation, so it could only be kept
-  readable), and a draft on the server (the composer keeps it in the browser and sends
-  the text with the send).
+- **What a sensitive conversation does not take.** A draft on the server (the composer
+  keeps it in the browser and sends the text with the send).
+- **Files: treated like the prompt, not like an archive.** The agent reads a file on its
+  box, which holds no conversation key, so a file is two copies
+  (`apps/canopy_sessions/private_attachments.py`):
+  - *The agent's copy is transient.* The browser uploads it in clear for one turn, stored
+    under a key that names no file, with a size bucket and a type family on the row. A
+    send claims it only once the people's copy is stored, and the turn's `origin_ref`
+    names it by id alone. The runner's download route serves it ONCE, to the box holding
+    the claiming turn, and deletes object, name and key as it does; the turn's end
+    (`close_turn`, the unrun deadline among its callers) and the sensitive sweep delete
+    any copy not fetched. Never served to a person, MCP, a PAT or another box; no log
+    line names it.
+  - *On the box* it lands in the turn's own directory (`<cwd>/.canopy-attachments/<turn>/`,
+    owner-only), readable by that turn alone (a Read rule in its locked settings, the same
+    path in profile_guard's profile), and goes when the turn ends with the rest of its
+    per-turn state. What the agent read of it survives only in the kept session's
+    transcript, which lives no longer than the kept conversation.
+  - *The people's copy is sealed in the uploader's browser* to the conversation's public
+    key with the message construction (ECDH-ES + HKDF-SHA256 + AES-256-GCM), bound to the
+    conversation, the attachment id and the uploader: the name, type and size as a `cf1:`
+    envelope, the bytes, padded to within an eighth, as a `cfb1` blob
+    (`docs/vault/chat-v1/file_v1_vectors.json` pins both). canopy-web checks the shape and
+    cannot open either. Members see "Attachment" under the line until the key opens,
+    then the name, a preview and a download, all decrypted in the browser.
+  - *Becoming sensitive* still deletes every file the conversation held while ordinary:
+    sealing them would need a browser holding the key at the moment of the switch, which
+    happens on a send the server handles; what was attached in clear is not carried in.
+  - *A fork* carries the sealed words, not the files (rows are per session).
 - **Server-side consumers of the words, after this:**
   - MCP Apps: a View's `tool_input` is decrypted in the browser and handed to the
     View by the client (which loads the View again once the key opens); the server derives which View a call has from the metadata

@@ -56,3 +56,17 @@ describe("MessageItem — Claude Code's own error notice", () => {
     expect(screen.queryByTestId("api-error-row")).toBeNull();
   });
 });
+
+describe("MessageItem — the files sent with a line", () => {
+  it("shows what the host renders under a person's line, and nothing under the agent's", async () => {
+    const { AttachmentHostContext } = await import("./attachmentHost");
+    const host = { render: (m: Message) => <span data-testid="files">files of {m.turn_index}</span> };
+    render(
+      <AttachmentHostContext.Provider value={host}>
+        <MessageItem message={userRow({})} />
+        <MessageItem message={agentRow("a reply")} />
+      </AttachmentHostContext.Provider>,
+    );
+    expect(screen.getAllByTestId("files").map((e) => e.textContent)).toEqual(["files of 1"]);
+  });
+});
