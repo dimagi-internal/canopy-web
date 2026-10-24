@@ -499,14 +499,26 @@ def engine_says_running(binding) -> bool:
 _BACKFILL_ROLES = {Message.USER, Message.ASSISTANT, Message.TOOL_USE, Message.TOOL_RESULT, Message.SYSTEM}
 
 
+def last_message_at():
+    """Each session's newest message time, as a correlated subquery.
+
+    Not `Max("messages__created_at")`: that joins every message row into the query
+    and groups them back down, so the planner read the whole message table (526k
+    rows, a sequential scan and a sort) on every session-list call, polled every
+    ~2s -- the largest single query on the shared labs RDS, 2026-10-24. This is
+    one probe per session on `message_session_created_idx`."""
+    return Subquery(
+        Message.objects.filter(session=OuterRef("pk")).order_by("-created_at").values("created_at")[:1]
+    )
+
+
 def with_activity(sessions):
     """Annotate `_last_msg_at` and `_activity`: `last_activity_at`'s rule (binding >
     newest message > created) in SQL, so a list can window, sort or aggregate on it.
     The one SQL spelling, for the session list and the workspace health dashboard."""
-    from django.db.models import Max
     from django.db.models.functions import Coalesce
 
-    return sessions.annotate(_last_msg_at=Max("messages__created_at")).annotate(
+    return sessions.annotate(_last_msg_at=last_message_at()).annotate(
         _activity=Coalesce("runner_binding__last_interacted_at", "_last_msg_at", "created_at"))
 
 

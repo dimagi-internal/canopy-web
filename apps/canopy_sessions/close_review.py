@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import uuid
 
-from django.db.models import Max
-
 from . import access
 from . import control
 from . import transcript_read
@@ -48,7 +46,7 @@ def _ids(values) -> list[uuid.UUID]:
 def _readable(user, ids: list[uuid.UUID]) -> dict[uuid.UUID, Session]:
     rows = (access.readable_sessions(user).filter(pk__in=ids)
             .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
-            .annotate(_last_msg_at=Max("messages__created_at")))
+            .annotate(_last_msg_at=transcript_read.last_message_at()))
     rows = transcript_read.with_open_turn(transcript_read.with_last_reply(transcript_read.with_driving_turn(rows)))
     return {s.pk: s for s in rows}
 
