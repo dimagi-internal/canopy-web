@@ -8,3 +8,6 @@ class CanopyHostConfig(AppConfig):
     label = "canopy_host"
     verbose_name = "canopy host grants"
     default_auto_field = "django.db.models.BigAutoField"
+
+    def ready(self):
+        from . import checks  # noqa: F401 — registers the host's system checks

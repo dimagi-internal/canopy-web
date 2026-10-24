@@ -23,7 +23,7 @@ this whole module is a view concern and is allowed to drop anything.
 from __future__ import annotations
 
 from canopy_transcript import STATUS_COMPLETE, STATUS_PENDING, scrub
-from canopy_transcript.rows import _tool_input, _tool_result_text
+from canopy_transcript.rows import _tool_input, _tool_result_text, tool_result_content
 
 # ACP status values that mean the call is over. `failed` is terminal too — the
 # row is complete, the RESULT is an error, and those are different questions.
@@ -133,7 +133,9 @@ class ToolCall:
             return [use]
         return [use, {
             "index": -1, "role": "tool_result", "text": self.result_text,
-            "content": {"tool_use_id": self.id, "is_error": self.is_error},
+            "content": tool_result_content(
+                self.id, self.is_error,
+                self._tool_response if self._tool_response is not None else self.raw_output),
         }]
 
 

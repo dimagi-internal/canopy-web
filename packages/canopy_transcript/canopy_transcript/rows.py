@@ -144,12 +144,15 @@ def _tool_result_text(content) -> str:
     (text, image, tool_reference — all three occur live). Non-text blocks become
     a short marker so the row still renders and, more importantly, still PAIRS:
     an image-only result that emitted nothing would leave its tool_use stuck
-    showing "running…" forever.
+    showing "running…" forever. A `resource_link` is the exception when the result
+    has text too: the link is kept whole beside the text (`tool_result_links`), and
+    a marker glued onto a JSON body would only stop a View parsing it.
     """
     if isinstance(content, str):
         return _truncate(content.strip(), TOOL_TEXT_MAX)
     if not isinstance(content, list):
         return ""
+    has_text = any(isinstance(b, dict) and b.get("type") == "text" and b.get("text") for b in content)
     parts: list[str] = []
     for b in content:
         if not isinstance(b, dict):
@@ -158,9 +161,91 @@ def _tool_result_text(content) -> str:
             parts.append(b.get("text", ""))
         elif b.get("type") == "tool_reference":
             parts.append(f"[tool_reference: {b.get('tool_name', '')}]")
+        elif b.get("type") == RESOURCE_LINK and has_text:
+            continue
         else:
             parts.append(f"[{b.get('type', 'block')}]")
     return _truncate("".join(parts).strip(), TOOL_TEXT_MAX)
+
+
+# --- resource links: a host's address for a result it keeps -----------------------
+#
+# A host's tool may answer with facts plus an MCP `resource_link` naming a result the
+# HOST keeps (spec 2026-10-23-host-held-results); the person's View reads the rows back
+# through it. The body is cut at TOOL_TEXT_MAX above, and a realistic answer's facts are
+# bigger than that, so a link inside the text (a gateway answer is JSON) or as its own
+# block was lost to the cut. Links are therefore pulled out of the RAW result first and
+# kept whole, under `content["resource_links"]`. This is extraction, not trust: the
+# server checks each one (`canopy_sdk.resources.validate_links`) before a View or a
+# sensitive conversation's row uses it.
+
+RESOURCE_LINK = "resource_link"
+#: The most links kept off one result, and the members kept of each.
+TOOL_LINKS_MAX = 10
+_LINK_FIELDS = (("uri", 2_048), ("name", 200), ("mimeType", 100))
+#: The most text parsed looking for links (a gateway answer is one JSON text block).
+_LINK_PARSE_MAX = 4 * 1024 * 1024
+_LINK_DEPTH_MAX = 8
+
+
+def _link(block: dict) -> dict | None:
+    out: dict = {"type": RESOURCE_LINK}
+    for key, limit in _LINK_FIELDS:
+        value = block.get(key, block.get("mime_type") if key == "mimeType" else None)
+        if not isinstance(value, str) or not value or len(value) > limit:
+            return None
+        out[key] = scrub(value)
+    return out
+
+
+def tool_result_links(content) -> list[dict]:
+    """The `resource_link`s in a raw tool result, before any cut: the host's own content
+    blocks (an MCP server attached directly), and those inside a JSON text body (canopy's
+    `site_call` answer, `{site, tool, is_error, links, content, structured}`). In order,
+    de-duplicated by URI, at most TOOL_LINKS_MAX; [] for a result with none."""
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def walk(value, depth: int) -> None:
+        if depth > _LINK_DEPTH_MAX or len(out) >= TOOL_LINKS_MAX:
+            return
+        if isinstance(value, str):
+            head = value.lstrip()[:1]
+            if head not in ("{", "[") or len(value) > _LINK_PARSE_MAX:
+                return
+            try:
+                value = json.loads(value)
+            except ValueError:
+                return
+            walk(value, depth + 1)
+        elif isinstance(value, list):
+            for item in value[:500]:
+                walk(item, depth + 1)
+        elif isinstance(value, dict):
+            if value.get("type") == RESOURCE_LINK:
+                link = _link(value)
+                if link is not None and link["uri"] not in seen and len(out) < TOOL_LINKS_MAX:
+                    seen.add(link["uri"])
+                    out.append(link)
+            elif value.get("type") == "text":
+                walk(value.get("text"), depth + 1)
+            else:
+                for key in ("links", "content"):
+                    if isinstance(value.get(key), (list, str)):
+                        walk(value[key], depth + 1)
+
+    walk(content, 0)
+    return out
+
+
+def tool_result_content(tool_use_id, is_error: bool, raw) -> dict:
+    """A tool_result row's structured fields: which call, whether it failed, and the
+    host's resource links found in `raw` (`tool_result_links`), when there are any."""
+    out: dict = {"tool_use_id": tool_use_id or "", "is_error": bool(is_error)}
+    links = tool_result_links(raw)
+    if links:
+        out["resource_links"] = links
+    return out
 
 
 #: The structural fields Claude Code stamps on a `type: "user"` record that say
@@ -279,10 +364,9 @@ def _rows_for_blocks(kind: str, content: list) -> list[dict]:
             rows.append({
                 "block": b_i, "role": "tool_result",
                 "text": _tool_result_text(block.get("content")),
-                "content": {
-                    "tool_use_id": block.get("tool_use_id", ""),
-                    "is_error": bool(block.get("is_error", False)),
-                },
+                "content": tool_result_content(block.get("tool_use_id", ""),
+                                               bool(block.get("is_error", False)),
+                                               block.get("content")),
             })
         # thinking / image / anything else: not a chat row (yet). It still
         # occupies its block ordinal, so adding one later re-keys nothing.

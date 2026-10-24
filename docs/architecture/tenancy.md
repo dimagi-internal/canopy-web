@@ -309,9 +309,11 @@ THE predicate; every surface below asks it, one test each in
   an empty success); a `tool_end`/`tool_result` event, a `TOOL_RESULT` `Message` and its
   live frame keep `{tool_use_id, is_error, withheld}`, never the result
   (`sensitivity.strip_result`, in `ledger.append_events`, `persist_transcript_rows` and
-  `post_session_stream`) — plus the host's **resource links** (`resource_links`: URI,
-  name, mimeType — addresses, not data; spec `2026-10-23-host-held-results`). A link is
-  kept only when it is a valid MCP `resource_link` (at most 20, bounded strings, never a
+  `post_session_stream`; an allowlist, so a new field stays withheld) — plus the host's
+  **resource links** (`resource_links`: URI ≤ 256 characters, mimeType, and the scheme
+  as the name — addresses, not data; spec `2026-10-23-host-held-results`). A runner pulls
+  links out of the raw result before cutting its text (`canopy_transcript.tool_result_links`).
+  A link is kept only when it is a valid MCP `resource_link` (at most 10, never a
   reserved scheme such as `http(s)`/`data`/`ui`) under a URI scheme the conversation's site
   declares in its signed `site.json` (`site.resource_schemes`, read live through
   `site_needs.resource_schemes_for`, registered as `sensitivity.register_resource_schemes`;

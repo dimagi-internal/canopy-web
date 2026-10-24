@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.20.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.21.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.20.0/dimagi_canopy-0.20.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.21.0/dimagi_canopy-0.21.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -536,7 +536,14 @@ things canopy needs:
   declares (`site.resource_schemes`, read live — no owner step):
   `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]` on Django, or
   `site_document(..., site={"resource_schemes": [...]})` without it. Never `http(s)`,
-  `data`, `ui`, `file`… (`check_scheme`, `RESERVED_SCHEMES`).
+  `data`, `ui`, `file`… (`check_scheme`, `RESERVED_SCHEMES`). On Django a bad entry
+  fails the system check `canopy_host.E011` at startup: one would make the whole
+  `site.json` malformed.
+* **Keep the link an address.** canopy keeps `{type, uri, name, mimeType}` of a link
+  (`validate_link`), never its `description`, `_meta` or `annotations`; in a
+  sensitive conversation, where links rest in plaintext, not its `name` either. A URI
+  is at most `MAX_URI_LENGTH` (256) characters and a result keeps at most `MAX_LINKS`
+  (10): make the URI an opaque id, never a query or a filter.
 * **Relay "it changed".** A View may `resources/subscribe` to a link; canopy holds the
   subscription. When a result changes, tell canopy:
   `canopy_sdk.resources.notify_updated(canopy_url, site_name, site_key, [uri, ...],
@@ -571,13 +578,18 @@ def result(rid: str, page: str = "1", page_size: str = "100"):
     kept = RESULTS.get(rid)
     if kept is None or not may_read(current_subject(), kept):   # your ACL
         raise ResourceError("not found")
+    if kept.get("sensitive") and not cleared(f"labs-result://{rid}"):  # the tool's own rule
+        raise ResourceError("forbidden: sensitive")
     start = (int(page) - 1) * int(page_size)                    # large results page here,
     return json.dumps({**kept, "rows": kept["rows"][start:start + int(page_size)]})  # not in chat
 ```
 
 `current_subject()` is whoever the MCP request acts for — on a delegated request canopy
 made for a visitor, `DelegatedPrincipal.subject` (the ID-JAG's `sub`) from the
-`DPoPGate`. Expire results on your own schedule.
+`DPoPGate`. `cleared(uri)` is the rule your tool applies before it releases sensitive
+data — `verify_execution` + `sensitive_clearance` for an agent's turn, `verify_view` for
+the person's own View — asked again on every read, because a result is a second door to
+the same rows. Expire results on your own schedule.
 
 ## The live probe (optional, recommended)
 

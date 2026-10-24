@@ -57,6 +57,13 @@ never the data. One design for every conversation; sensitivity only changes what
 
 ## The SDK's host half: artifacts in a line
 
+> **Superseded by SDK 0.19.** The SDK store below was built in 0.18 and removed in
+> 0.19: keeping a tool's result is the host's own MCP business (Labs keeps it in its
+> own `KeptResult` table). The SDK keeps only the link's definition and checks
+> (`canopy_sdk.resources`: `resource_link`, `validate_link(s)`, `check_scheme`,
+> `notify_updated`) and the `RESOURCE_SCHEMES` declaration in `site.json`. What canopy
+> keeps of a link, and its bounds, is in `docs/architecture/embedding-a-canopy-agent.md` §8b.
+
 `canopy_sdk` gains a host helper so a host returns "facts + an artifact" without building
 storage, expiry or ACL itself:
 

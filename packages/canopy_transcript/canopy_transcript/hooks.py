@@ -22,7 +22,7 @@ thing — the transcript — and the hook path is therefore allowed to drop even
 """
 from __future__ import annotations
 
-from .rows import row_payload, scrub, _tool_input, _tool_result_text
+from .rows import row_payload, scrub, _tool_input, _tool_result_text, tool_result_content
 
 # PreToolUse fires when a call STARTS, PostToolUse when it finishes. Both are
 # forwarded, which is what turns the view from "something happened" into a
@@ -144,7 +144,7 @@ def rows_for_hook(payload: dict) -> list[dict]:
         {
             "index": -1, "role": "tool_result",
             "text": _result_text(payload.get("tool_response")),
-            "content": {"tool_use_id": tool_use_id, "is_error": _is_error(payload)},
+            "content": tool_result_content(tool_use_id, _is_error(payload), payload.get("tool_response")),
         },
     ]
 

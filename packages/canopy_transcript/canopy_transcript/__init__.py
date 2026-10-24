@@ -53,6 +53,8 @@ from .rows import (
     rows_to_ship,
     scrub,
     stream_event,
+    tool_result_content,
+    tool_result_links,
     user_text,
 )
 from .signed_out import (
@@ -81,7 +83,7 @@ __all__ = [
     "activity_for_hook", "emdash_task_candidates", "events_for_hook", "parse_emdash_worktree",
     "read_records", "resolve_cli_transcript",
     "resolve_emdash_transcript", "rows_for_hook",
-    "row_payload", "rows_for_record", "scrub", "user_text",
+    "row_payload", "rows_for_record", "scrub", "tool_result_content", "tool_result_links", "user_text",
     "SIGNED_OUT_NOTE", "answered_at_transcript_end", "is_auth_required",
     "signed_out_at_transcript_end", "signed_out_in_record",
 ]

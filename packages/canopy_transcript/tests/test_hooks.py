@@ -133,3 +133,12 @@ def test_a_notification_is_a_state_not_a_row():
     """It carries no chat content — emitting a row would put a phantom message
     in the transcript."""
     assert ct.rows_for_hook({"hook_event_name": "Notification", "message": "x"}) == []
+
+
+def test_a_post_tool_use_keeps_the_hosts_resource_link():
+    from canopy_transcript import rows_for_hook
+
+    link = {"type": "resource_link", "uri": "labs-result://abc", "name": "r", "mimeType": "application/json"}
+    rows = rows_for_hook({"hook_event_name": "PostToolUse", "tool_use_id": "t1", "tool_name": "mcp__labs__q",
+                          "tool_input": {}, "tool_response": [{"type": "text", "text": "x" * 9000}, link]})
+    assert rows[1]["content"]["resource_links"] == [link]

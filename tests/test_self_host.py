@@ -23,6 +23,7 @@ visited by its own users — and their token reaches no more than their own ACL.
 from __future__ import annotations
 
 import contextlib
+import json
 
 import httpx2
 import pytest
@@ -37,10 +38,10 @@ from apps.canopy_sessions.models import Session
 from apps.common.encryption import decrypt_secret
 from apps.harness import caller_tokens
 from apps.harness.models import Turn
+from apps.host_grants import client_identity, host_gateway, self_host
 from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
-from apps.host_grants import client_identity, host_gateway, self_host
 from apps.tokens.models import HostGrant
 from tests.fixtures.self_host import BASE, _ctx, _in_lifespan, _mint
 
@@ -103,7 +104,8 @@ def test_a_member_on_the_tasks_page_gets_an_agent_that_reads_as_them(world, gate
                                                                       "arguments": {}}))
     body = out.structured_content
     assert body["is_error"] is False, body
-    text = " ".join(block.get("text", "") for block in body["content"])
+    # The facts once: `structured`, without MCP's text copy of it (`host_gateway.agent_answer`).
+    text = " ".join(block.get("text", "") for block in body["content"]) + json.dumps(body["structured"])
     assert "visible to gillian" in text
     assert "NOT visible" not in text, "the tool ran with the visitor's own ACL"
 

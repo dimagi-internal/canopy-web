@@ -271,6 +271,74 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
 _transport_override = None
 
 
+#: The most bytes canopy reads of one answer from a host (`HOST_GATEWAY_MAX_RESPONSE_BYTES`).
+#: A result a host keeps is paged by its reader; one that arrives bigger than this is a
+#: request for too much, refused rather than held in memory and handed to an agent or a View.
+DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+TOO_LARGE = "result too large; use a smaller page_size"
+
+
+def max_response_bytes() -> int:
+    from django.conf import settings  # noqa: PLC0415 — read per call, so a test or an operator can change it
+
+    return int(getattr(settings, "HOST_GATEWAY_MAX_RESPONSE_BYTES", DEFAULT_MAX_RESPONSE_BYTES)
+               or DEFAULT_MAX_RESPONSE_BYTES)
+
+
+class _ByteCap:
+    """One MCP session's byte budget for what the host sends back: counted as the body
+    STREAMS in (`_CappedTransport`), so an answer over the cap is abandoned mid-stream,
+    never buffered whole. `tripped` survives the MCP client's own error handling, which
+    turns any stream failure into a generic one."""
+
+    def __init__(self, limit: int | None = None):
+        self.limit = int(limit or max_response_bytes())
+        self.tripped = False
+
+    def refusal(self, ctx: SiteContext) -> GatewayRefusal:
+        return GatewayRefusal("too_large", f"{ctx.site}'s {TOO_LARGE}")
+
+
+def _capped_transport(inner, cap: _ByteCap):
+    import httpx2  # noqa: PLC0415 — as _client: the HTTP client loads with a call
+
+    class _TooLarge(httpx2.StreamError):
+        pass
+
+    class _Stream(httpx2.AsyncByteStream):
+        def __init__(self, stream):
+            self._stream = stream
+            self._seen = 0
+
+        async def __aiter__(self):
+            async for chunk in self._stream:
+                self._seen += len(chunk)
+                if self._seen > cap.limit:
+                    cap.tripped = True
+                    raise _TooLarge(TOO_LARGE)
+                yield chunk
+
+        async def aclose(self):
+            await self._stream.aclose()
+
+    class _Transport(httpx2.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            response = await inner.handle_async_request(request)
+            declared = response.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > cap.limit:
+                cap.tripped = True
+                await response.aclose()
+                raise _TooLarge(TOO_LARGE)
+            return httpx2.Response(status_code=response.status_code, headers=response.headers,
+                                   stream=_Stream(response.stream), extensions=response.extensions,
+                                   request=request)
+
+        async def aclose(self):
+            await inner.aclose()
+
+    return _Transport()
+
+
 #: How a request proves possession. Only `dpop` is ever used for a real call;
 #: the rest exist so the live probe can show the host REFUSES a bound token
 #: without a valid proof — through this same client, not a hand-built request.
@@ -348,7 +416,7 @@ def _reads(body: bytes, uri: str) -> bool:
 
 
 def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None,
-            view_uri: str = ""):
+            view_uri: str = "", cap: _ByteCap | None = None):
     import httpx2
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
@@ -366,8 +434,8 @@ def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = Non
         }
         if statuses is not None:
             kwargs["event_hooks"] = {"response": [record]}
-        if _transport_override is not None:
-            kwargs["transport"] = _transport_override
+        inner = _transport_override if _transport_override is not None else httpx2.AsyncHTTPTransport()
+        kwargs["transport"] = _capped_transport(inner, cap or _ByteCap())
         return httpx2.AsyncClient(**kwargs)
 
     transport = StreamableHttpTransport(
@@ -477,8 +545,9 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
         raise GatewayRefusal("not_allowed", f"{tool} is not something I may use on {ctx.site} here")
     await _check_target(ctx)
     name = host_tool_name(tool)
+    cap = _ByteCap()
     try:
-        async with _client(ctx) as client:
+        async with _client(ctx, cap=cap) as client:
             if not await _model_may_call(ctx, name, client):
                 raise GatewayRefusal(
                     "not_allowed",
@@ -487,18 +556,49 @@ async def call_tool(ctx: SiteContext, tool: str, arguments: dict) -> dict:
     except GatewayRefusal:
         raise
     except Exception as exc:  # noqa: BLE001 - the type only; never the token
+        if cap.tripped:
+            raise cap.refusal(ctx) from None
         raise GatewayRefusal("host_unreachable",
                              f"{ctx.site} did not answer ({type(exc).__name__})") from None
-    content = []
+    answer = agent_answer(ctx.site, name, result)
+    await sync_to_async(remember_links, thread_sensitive=True)(ctx, name, answer["links"])
+    return answer
+
+
+def agent_answer(site: str, name: str, result) -> dict:
+    """A host's `CallToolResult` as `site_call` gives it to the agent:
+    `{site, tool, is_error, links, content, structured}`.
+
+    `links` — the result's `resource_link`s, by their MCP wire names (`mimeType`) —
+    come FIRST: everything after them in a transcript row can be cut
+    (`canopy_transcript.TOOL_TEXT_MAX`), and the link is what the person's View reads
+    the result back through. `content` is the rest. A text block that is only the
+    JSON of `structured` (MCP's backwards-compatible copy) is left out: the agent reads
+    `structured`, and the facts are not carried twice."""
+    links, content = [], []
     for block in result.content or []:
         text = getattr(block, "text", None)
-        # By alias: the MCP wire names (`mimeType`), which a `resource_link` the host
-        # returned must keep for the View and for `sensitivity.strip_result` to read.
-        content.append({"type": "text", "text": text} if text is not None
-                       else block.model_dump(mode="json", by_alias=True, exclude_none=True))
-    await sync_to_async(remember_links, thread_sensitive=True)(ctx, name, content)
-    return {"site": ctx.site, "tool": name, "is_error": bool(result.is_error),
-            "content": content, "structured": result.structured_content}
+        if text is not None:
+            content.append({"type": "text", "text": text})
+            continue
+        dumped = block.model_dump(mode="json", by_alias=True, exclude_none=True)
+        (links if dumped.get("type") == "resource_link" else content).append(dumped)
+    structured = result.structured_content
+    if structured is not None:
+        content = [b for b in content if not _is_json_of(b, structured)]
+    return {"site": site, "tool": name, "is_error": bool(result.is_error),
+            "links": links, "content": content, "structured": structured}
+
+
+def _is_json_of(block: dict, value) -> bool:
+    import json  # noqa: PLC0415 — as the rest of this module: loaded with a call
+
+    if block.get("type") != "text" or not isinstance(block.get("text"), str):
+        return False
+    try:
+        return json.loads(block["text"]) == value
+    except ValueError:
+        return False
 
 
 # --- MCP Apps: a View's own calls, as the VIEWER ---------------------------------
@@ -519,14 +619,17 @@ async def view_call(ctx: SiteContext, name: str, arguments: dict, *, check) -> d
     GatewayRefusal), then call — one MCP session, so the visibility decided is
     the visibility of the server the call goes to (§Visibility gate 3-4)."""
     await _check_target(ctx)
+    cap = _ByteCap()
     try:
-        async with _client(ctx) as client:
+        async with _client(ctx, cap=cap) as client:
             tools = await _listing(ctx, client)
             check(next((t for t in tools if t.name == name), None))
             result = await client.call_tool(name, arguments or {}, raise_on_error=False)
     except GatewayRefusal:
         raise
     except Exception as exc:  # noqa: BLE001 - the type only; never the token
+        if cap.tripped:
+            raise cap.refusal(ctx) from None
         raise _unreachable(ctx, exc) from None
     out = {"content": [b.model_dump(mode="json", by_alias=True, exclude_none=True)
                        for b in result.content or []],
@@ -622,19 +725,22 @@ async def view_read(ctx: SiteContext, uri: str) -> list[dict]:
     from mcp.shared.exceptions import MCPError as McpError  # noqa: PLC0415 — as probe_call: the MCP client loads with a call
 
     await _check_target(ctx)
+    cap = _ByteCap()
     try:
         # A View's read carries `Canopy-View` for THIS uri when `ctx.view` says the person
         # is looking; an agent's (`read_resource`) carries its `Canopy-Execution` instead.
-        async with _client(ctx, view_uri=uri) as client:
+        async with _client(ctx, view_uri=uri, cap=cap) as client:
             contents = await client.read_resource(uri)
-    except McpError as exc:
+    except Exception as exc:  # noqa: BLE001 — sorted below
+        if cap.tripped:
+            raise cap.refusal(ctx) from None
+        if not isinstance(exc, McpError):
+            raise _unreachable(ctx, exc) from None
         # The host answered and said no (an artifact expired, not this person's):
         # its sentence, never "did not answer".
         detail = str(getattr(exc, "message", "") or getattr(getattr(exc, "error", None), "message", "")
                      or exc)[:300]
         raise GatewayRefusal("host_refused", f"{ctx.site} refused: {detail}") from None
-    except Exception as exc:  # noqa: BLE001
-        raise _unreachable(ctx, exc) from None
     return [c.model_dump(mode="json", by_alias=True, exclude_none=True) for c in contents or []]
 
 

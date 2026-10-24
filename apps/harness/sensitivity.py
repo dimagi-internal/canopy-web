@@ -44,8 +44,13 @@ NOT_OWNER_FORK = ("this conversation holds a host's sensitive data: only its own
 #: Why a send into one is refused: only its people, in canopy, may steer its agent.
 NOT_IN_IT_SEND = ("this conversation holds a host's sensitive data: only the people in it can "
                   "send into it, from canopy's chat or the site's panel")
-#: Result-bearing keys a tool result may carry, from every runner and the gateway.
+#: Result-bearing keys a tool result may carry, from every runner and the gateway:
+#: where its links are looked for. Never kept.
 _RESULT_KEYS = ("content", "text", "output", "result", "structured", "structuredContent")
+#: What a stripped tool result keeps — an allowlist, as `redact_payload`'s: a key not
+#: named here (a new field a runner starts sending) is dropped until someone decides it
+#: is safe. Scalars only; `resource_links` is added after its own check.
+_STRIPPED_KEYS = ("tool_use_id", "id", "name", "is_error", "status", "withheld")
 #: Event kinds whose payload is a tool's answer.
 RESULT_KINDS = frozenset({"tool_end", "tool_result"})
 
@@ -104,15 +109,27 @@ def strip_result(payload: dict | None, *, session=None, text: str = "") -> dict:
     agent reads it back from the host as the person. Kept only when it is a valid
     MCP `resource_link` under a URI scheme the conversation's site declared
     (`resource_schemes`), bounded (`canopy_sdk.resources.validate_links`); anything
-    else in the result is dropped. `text` is the row's plaintext, where a runner
-    puts a tool's answer."""
+    else in the result is dropped, and only `_STRIPPED_KEYS` survive of the rest.
+    Each kept link is `{type, uri, name, mimeType}` with the URI's scheme as its
+    name, so the host's words never rest here in plaintext. `text` is the row's
+    plaintext, where a runner puts a tool's answer."""
     payload = payload if isinstance(payload, dict) else {}
-    out = {k: v for k, v in payload.items() if k not in _RESULT_KEYS}
+    out = {}
+    for key in _STRIPPED_KEYS:
+        value = payload.get(key)
+        if isinstance(value, (bool, int, float)):
+            out[key] = value
+        elif isinstance(value, str):
+            out[key] = value[:MAX_META_STRING]
     out["withheld"] = True
-    out.pop(RESOURCE_LINKS, None)  # only ever what THIS function found and checked
-    candidates = _link_candidates([payload.get(k) for k in _RESULT_KEYS] + [text])
+    # The runner's row carries the links it pulled out of the raw result before cutting
+    # its text (`canopy_transcript.tool_result_links`): read first, as they are whole.
+    # Like everything else here they are only candidates until checked below.
+    kept = payload.get(RESOURCE_LINKS)
+    candidates = [b for b in kept if isinstance(b, dict)] if isinstance(kept, list) else []
+    candidates += _link_candidates([payload.get(k) for k in _RESULT_KEYS] + [text])
     if candidates and session is not None:
-        links = resource_links.validate_links(candidates, resource_schemes(session))
+        links = resource_links.validate_links(candidates, resource_schemes(session), keep_name=False)
         if links:
             out[RESOURCE_LINKS] = links
     return out
@@ -179,8 +196,10 @@ def _link_candidates(values) -> list[dict]:
         elif isinstance(value, dict):
             if value.get("type") == resource_links.RESOURCE_LINK:
                 out.append(value)
-            elif isinstance(value.get("content"), (list, str)):
-                blocks(value["content"], depth + 1)
+            else:
+                for key in ("links", "content"):
+                    if isinstance(value.get(key), (list, str)):
+                        blocks(value[key], depth + 1)
 
     for v in values:
         blocks(v)

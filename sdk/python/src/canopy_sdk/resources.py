@@ -42,13 +42,17 @@ RESERVED_SCHEMES = frozenset({
     "about", "blob", "chrome", "data", "file", "filesystem", "ftp", "http", "https",
     "javascript", "mailto", "sms", "tel", "ui", "vbscript", "ws", "wss",
 })
-#: Bounds on one link, as canopy keeps it.
-MAX_URI_LENGTH = 2048
+#: Bounds on one link, as canopy keeps it. A link is an ADDRESS: in a sensitive
+#: conversation it is the one thing canopy keeps of a tool's result, in plaintext, so
+#: it is kept short enough that it cannot double as a place to put the data. A host's
+#: result id fits many times over (``labs-result://`` + 24 characters).
+MAX_URI_LENGTH = 256
 MAX_NAME_LENGTH = 200
 MAX_MIME_TYPE_LENGTH = 100
+#: The longest ``description`` the builder takes. canopy never keeps one.
 MAX_DESCRIPTION_LENGTH = 500
 #: The most links canopy keeps from one tool result.
-MAX_LINKS = 20
+MAX_LINKS = 10
 
 #: Where canopy takes "these resources changed", under its base URL.
 UPDATED_PATH = "/api/sites/resources-updated"
@@ -99,13 +103,17 @@ def resource_link(uri: str, name: str, *, mime_type: str = "application/json",
                   description: str = "") -> dict:
     """An MCP ``resource_link`` content item: ``{"type": "resource_link", "uri",
     "name", "mimeType", "description"?}``. Raises ``ResourceError`` on a link canopy
-    would not keep."""
+    would not keep.
+
+    The ``description`` reaches the model with the rest of your tool's answer; canopy
+    keeps none (``validate_link``), so put nothing in it a View depends on."""
     link = {"type": RESOURCE_LINK, "uri": uri, "name": name, "mimeType": mime_type}
-    if description:
-        link["description"] = description
     checked = validate_link(link, schemes=None)
     if checked is None:
         raise ResourceError("bad_link", f"{uri!r} is not a link canopy keeps (scheme, length, name)")
+    description = _bounded(description, MAX_DESCRIPTION_LENGTH)
+    if description:
+        checked["description"] = description
     return checked
 
 
@@ -116,17 +124,18 @@ def _bounded(value, limit: int) -> str | None:
     return value if value and len(value) <= limit and not any(ord(c) < 32 for c in value) else None
 
 
-def validate_link(block, schemes: Iterable[str] | None) -> dict | None:
+def validate_link(block, schemes: Iterable[str] | None, *, keep_name: bool = True) -> dict | None:
     """``block`` as canopy keeps it, or None when it is not a link canopy keeps.
 
     It must be a ``resource_link`` with a ``uri`` (no whitespace or control
     characters, at most ``MAX_URI_LENGTH``) under a scheme in ``schemes`` (the
     host's declared list; None skips that check — the host's own builder) and never
-    a reserved one, a ``name`` and a ``mimeType`` within their bounds. A
-    ``description`` over its bound is dropped, not the link. Every other member is
-    dropped: what canopy keeps is an address, never data (a ``_meta`` or
-    ``annotations`` could carry anything). ``mime_type`` (the MCP SDK's field name
-    without aliases) is read as ``mimeType``."""
+    a reserved one, a ``name`` and a ``mimeType`` within their bounds. What canopy
+    keeps is ``{type, uri, name, mimeType}`` and nothing else: an address, never data
+    (a ``description``, ``_meta`` or ``annotations`` could carry anything).
+    ``keep_name=False`` — a sensitive conversation, where the link is kept in
+    plaintext — keeps the URI's scheme as its ``name`` instead of the host's words.
+    ``mime_type`` (the MCP SDK's field name without aliases) is read as ``mimeType``."""
     if not isinstance(block, Mapping) or block.get("type") != RESOURCE_LINK:
         return None
     uri = block.get("uri")
@@ -143,20 +152,18 @@ def validate_link(block, schemes: Iterable[str] | None) -> dict | None:
     mime = _bounded(block.get("mimeType", block.get("mime_type")), MAX_MIME_TYPE_LENGTH)
     if name is None or mime is None or "/" not in mime:
         return None
-    out = {"type": RESOURCE_LINK, "uri": uri, "name": name, "mimeType": mime}
-    description = _bounded(block.get("description"), MAX_DESCRIPTION_LENGTH)
-    if description:
-        out["description"] = description
-    return out
+    return {"type": RESOURCE_LINK, "uri": uri, "name": name if keep_name else scheme, "mimeType": mime}
 
 
-def validate_links(blocks: Iterable, schemes: Iterable[str] | None) -> list[dict]:
-    """Every link in ``blocks`` canopy keeps, de-duplicated by URI, at most ``MAX_LINKS``."""
+def validate_links(blocks: Iterable, schemes: Iterable[str] | None, *,
+                   keep_name: bool = True) -> list[dict]:
+    """Every link in ``blocks`` canopy keeps (``validate_link``), de-duplicated by URI,
+    at most ``MAX_LINKS``."""
     schemes = None if schemes is None else frozenset(str(s).lower() for s in schemes)
     out: list[dict] = []
     seen: set[str] = set()
     for block in blocks or ():
-        link = validate_link(block, schemes)
+        link = validate_link(block, schemes, keep_name=keep_name)
         if link is None or link["uri"] in seen:
             continue
         seen.add(link["uri"])

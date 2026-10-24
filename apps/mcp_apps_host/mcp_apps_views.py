@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from asgiref.sync import async_to_sync
+from canopy_sdk import resources as resource_links
 from django.db import transaction
 from django.utils import timezone
 
@@ -291,19 +292,42 @@ def tool_result(row: ViewRow) -> dict | None:
     body = row.result.get("content")
     is_error = bool(row.result.get("is_error"))
     blocks = _blocks(body)
+    kept = _kept_links(row.result)
     if row.ref["path"] == "gateway":
         for b in blocks:
             try:
                 data = json.loads(b.get("text") or "")
             except (TypeError, ValueError):
                 continue
-            if isinstance(data, dict) and "content" in data:
-                out = {"content": data.get("content") or [],
+            if isinstance(data, dict) and ("content" in data or "links" in data):
+                links = [x for x in data.get("links") or [] if isinstance(x, dict)]
+                content = [x for x in data.get("content") or [] if isinstance(x, dict)]
+                structured = data.get("structured")
+                if structured is not None and not any(x.get("type") == "text" for x in content):
+                    # `site_call` drops MCP's text copy of `structured` (`agent_answer`);
+                    # a View written to the spec may read either, so it gets both back.
+                    content.append({"type": "text", "text": json.dumps(structured)})
+                out = {"content": _with_links(links + content, kept),
                        "isError": bool(data.get("is_error"))}
-                if data.get("structured") is not None:
-                    out["structuredContent"] = data["structured"]
+                if structured is not None:
+                    out["structuredContent"] = structured
                 return out
-    return {"content": blocks, "isError": is_error}
+    # Path D, or a gateway answer whose text was cut (a row keeps TOOL_TEXT_MAX of it):
+    # the links the runner kept whole carry the View to the host's result regardless.
+    return {"content": _with_links(blocks, kept), "isError": is_error}
+
+
+def _kept_links(result: dict) -> list[dict]:
+    """The `resource_links` a row kept whole (`canopy_transcript.tool_result_links`, or
+    `sensitivity.strip_result` for a sensitive conversation), as canopy keeps a link."""
+    links = result.get(sensitivity.RESOURCE_LINKS)
+    return resource_links.validate_links(links, None) if isinstance(links, list) else []
+
+
+def _with_links(blocks: list[dict], kept: list[dict]) -> list[dict]:
+    """`blocks` with every kept link not already among them, links first."""
+    have = {b.get("uri") for b in blocks if b.get("type") == resource_links.RESOURCE_LINK}
+    return [link for link in kept if link["uri"] not in have] + blocks
 
 
 #: `_meta` on a sensitive conversation's tool result: canopy did not keep it.
@@ -313,10 +337,10 @@ WITHHELD_META = "canopy/withheld"
 def withheld_result(row: ViewRow) -> dict | None:
     """A sensitive conversation's tool result as its View receives it: the host's
     resource links and nothing else, or None when the call left none."""
-    links = (row.result or {}).get(sensitivity.RESOURCE_LINKS)
-    if not isinstance(links, list) or not links:
+    links = _kept_links(row.result or {})
+    if not links:
         return None
-    return {"content": [dict(link) for link in links if isinstance(link, dict)],
+    return {"content": links,
             "structuredContent": None, "_meta": {WITHHELD_META: True},
             "isError": bool((row.result or {}).get("is_error"))}
 
@@ -637,6 +661,16 @@ def unsubscribe(session, viewer: Viewer, tool_call_id: str, uri: str) -> dict:
     AppViewSubscription.objects.filter(session=session, tool_call_id=tool_call_id,
                                        uri=str(uri or "").strip()).delete()
     return {}
+
+
+def sweep_subscriptions() -> int:
+    """Delete every lapsed subscription, in every conversation (the off-request clock,
+    `apps.common.ticks`). `subscribe` also clears its own conversation's, but a
+    conversation nobody subscribes in again would keep its rows for ever."""
+    from apps.canopy_sessions.models import AppViewSubscription  # noqa: PLC0415 — as above
+
+    deleted, _ = AppViewSubscription.objects.filter(expires_at__lte=timezone.now()).delete()
+    return deleted
 
 
 def resources_updated(app, uris) -> int:
