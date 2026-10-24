@@ -39,6 +39,8 @@ const alert = (over: Partial<Alert>): Alert => ({
     { id: 'dismiss', label: 'Dismiss', closes: true, href: '' },
   ],
   last_notify: '',
+  handler_agent: '',
+  handler_email: '',
   ...over,
 })
 
