@@ -28,8 +28,10 @@ from __future__ import annotations
 from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
 
+from apps.mcp import page_tools
 from apps.mcp.audit import current_user_id, write_audit
 from apps.mcp.server import mcp
+from apps.mcp.turn_scope import caller_turn_ids
 
 
 def _current_turn_id() -> str:
@@ -62,9 +64,7 @@ def _page_action_named(tool: str) -> str:
     Only a name the page declares matches: a site may have tools of its own whose
     names start `page_` (Labs' `page_context`), and those still go to the site. A bare
     action name is left alone too — it could as well be one of the site's tools."""
-    from apps.host_grants import host_gateway
-    from apps.mcp import page_tools
-    from apps.mcp.turn_scope import caller_turn_ids
+    from apps.host_grants import host_gateway  # noqa: PLC0415 — as site_call: the gateway loads with a call
 
     turn_ids = caller_turn_ids()
     if not turn_ids:

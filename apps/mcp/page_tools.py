@@ -41,6 +41,7 @@ from fastmcp.server.providers.base import Provider
 from fastmcp.tools.base import Tool, ToolResult
 
 from apps.harness import sensitivity
+from apps.mcp.turn_scope import caller_turn_ids
 
 log = logging.getLogger(__name__)
 
@@ -79,8 +80,8 @@ def conversation_sessions(turn_ids: list[str]) -> list:
     The token already names its conversation, minted by canopy for this turn: that
     is the page it acts on, and nothing else (as `current_page._pages_of_turns`).
     """
-    from apps.canopy_sessions.models import Session
-    from apps.harness.models import Turn
+    from apps.canopy_sessions.models import Session  # noqa: PLC0415 — models: imported before apps load
+    from apps.harness.models import Turn  # noqa: PLC0415 — models: imported before apps load
 
     ids = {sid for sid in Turn.objects.filter(pk__in=turn_ids)
            .values_list("chat_session_id", flat=True) if sid}
@@ -225,8 +226,6 @@ class PageActionProvider(Provider):
 
 
 def _caller_turn_ids() -> list[str] | None:
-    from apps.mcp.turn_scope import caller_turn_ids
-
     return caller_turn_ids()
 
 
@@ -236,7 +235,7 @@ def _is_own_conversation(session) -> bool:
     chat = _current_chat()
     if chat is not None:
         return chat.pk == session.pk
-    from apps.harness.models import Turn
+    from apps.harness.models import Turn  # noqa: PLC0415 — models: imported before apps load
 
     turn_ids = _caller_turn_ids()
     return bool(turn_ids) and Turn.objects.filter(pk__in=turn_ids, chat_session=session).exists()
