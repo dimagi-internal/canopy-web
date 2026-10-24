@@ -57,6 +57,7 @@ from apps.inbound.schemas import (
 from apps.inbound.verify import VerificationError, verify_push
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
+from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
 
 logger = logging.getLogger(__name__)
@@ -65,23 +66,6 @@ router = Router(auth=session_auth, tags=["inbound"])
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
-
-
-def _workspace_or_404(user, slug: str) -> Workspace:
-    """Membership first — a non-member gets 404, never a role hint."""
-    ws = Workspace.objects.filter(slug=slug).first()
-    if ws is None or slug not in wsvc.user_workspace_slugs(user):
-        raise HttpError(404, "no such workspace")
-    return ws
-
-
-def _admin_workspace_or_404(user, slug: str) -> Workspace:
-    """Push config is security config: reads are member, writes are the
-    workspace's INTEGRATIONS tier (admin or owner — `permissions`)."""
-    ws = _workspace_or_404(user, slug)
-    if not perms.can(user, ws, perms.INTEGRATIONS):
-        raise HttpError(403, "requires the admin role or above")
-    return ws
 
 
 def _config_out(request: HttpRequest, cfg) -> dict:
@@ -178,14 +162,14 @@ def gmail_push(request: HttpRequest, workspace: str, payload: PushEnvelopeIn) ->
 @router.get("/config/{workspace}", response=PushConfigOut, summary="Read push config")
 @gate("member")
 def get_push_config(request: HttpRequest, workspace: str) -> dict:
-    ws = _workspace_or_404(request.user, workspace)
+    ws = workspace_for(request.user, workspace)
     return _config_out(request, services.get_config(ws))
 
 
 @router.put("/config/{workspace}", response=PushConfigOut, summary="Set push config (admin or owner)")
 @gate("integrations", setting=True)
 def set_push_config(request: HttpRequest, workspace: str, payload: PushConfigIn) -> dict:
-    ws = _admin_workspace_or_404(request.user, workspace)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     cfg = services.set_config(
         ws,
         audience=payload.audience,
@@ -198,7 +182,7 @@ def set_push_config(request: HttpRequest, workspace: str, payload: PushConfigIn)
 @router.get("/mailboxes/{workspace}", response=MailboxListOut, summary="List mailboxes")
 @gate("member")
 def list_mailboxes(request: HttpRequest, workspace: str) -> dict:
-    _workspace_or_404(request.user, workspace)
+    workspace_for(request.user, workspace)
     qs = (
         InboundMailbox.objects.select_related("agent")
         .filter(agent__workspace_id=workspace)
@@ -210,7 +194,7 @@ def list_mailboxes(request: HttpRequest, workspace: str) -> dict:
 @router.post("/mailboxes/{workspace}", response=MailboxOut, summary="Register a mailbox (admin or owner)")
 @gate("integrations", setting=True)
 def create_mailbox(request: HttpRequest, workspace: str, payload: MailboxIn) -> dict:
-    _admin_workspace_or_404(request.user, workspace)
+    workspace_for(request.user, workspace, perms.INTEGRATIONS)
     agent = Agent.objects.filter(slug=payload.agent_slug, workspace_id=workspace).first()
     if agent is None:
         raise HttpError(422, f"no agent {payload.agent_slug!r} in this workspace")
@@ -234,7 +218,7 @@ def create_mailbox(request: HttpRequest, workspace: str, payload: MailboxIn) -> 
 @gate("integrations", setting=True)
 def update_mailbox(request: HttpRequest, workspace: str, mailbox_id: int,
                    payload: MailboxPatchIn) -> dict:
-    _admin_workspace_or_404(request.user, workspace)
+    workspace_for(request.user, workspace, perms.INTEGRATIONS)
     mb = (
         InboundMailbox.objects.select_related("agent")
         .filter(pk=mailbox_id, agent__workspace_id=workspace)
@@ -261,7 +245,7 @@ def update_mailbox(request: HttpRequest, workspace: str, mailbox_id: int,
                summary="Remove a mailbox (admin or owner)")
 @gate("integrations", setting=True)
 def delete_mailbox(request: HttpRequest, workspace: str, mailbox_id: int):
-    _admin_workspace_or_404(request.user, workspace)
+    workspace_for(request.user, workspace, perms.INTEGRATIONS)
     deleted, _ = InboundMailbox.objects.filter(
         pk=mailbox_id, agent__workspace_id=workspace
     ).delete()

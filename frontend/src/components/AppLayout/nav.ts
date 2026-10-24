@@ -5,11 +5,12 @@
  * testable without mounting the shell (which pulls in auth, workspaces,
  * presence sockets and the AI-status poll).
  *
- * The header answers the four questions a person arrives with, one entry each:
+ * The header answers the five questions a person arrives with, one entry each:
  *
  *   Home       — what needs me, and what changed (personal, every workspace)
  *   Agents ▾   — what the agents are doing, will do, and run on
- *   Projects ▾ — the work: projects, and what they produce (demos, shareouts)
+ *   Work ▾     — the work: tasks, Triage, projects
+ *   Demos ▾    — what the work produces (storyboards, walkthroughs, shareouts)
  *   Workspace ▾ — who is in it and how it is set up
  *
  * Chats sits beside Home as a plain link: it is where you talk to an agent, not
@@ -64,12 +65,20 @@ export const NAV: NavEntry[] = [
   },
   {
     kind: 'menu',
-    label: 'Projects',
+    label: 'Work',
     items: [
-      { path: 'projects', label: 'All projects', tenant: true },
-      // The tools projects serve as their own MCP servers, to add by hand.
-      { path: 'mcp', label: 'MCP servers', tenant: true },
-      // What projects produce for people to read and review.
+      { path: 'tasks', label: 'Tasks', tenant: true },
+      { path: 'triage', label: 'Triage', tenant: true },
+      { path: 'projects', label: 'Projects', tenant: true },
+      // What projects serve to the whole workspace, to add by hand.
+      { path: 'mcp', label: 'Shared MCP servers', tenant: true },
+    ],
+  },
+  {
+    kind: 'menu',
+    label: 'Demos',
+    items: [
+      // What the work produces for people to read and review.
       { path: 'storyboards', label: 'Storyboards', tenant: true },
       { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },
       { path: 'ddd', label: 'DDD runs', tenant: true },

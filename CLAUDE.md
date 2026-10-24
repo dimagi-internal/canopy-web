@@ -61,9 +61,10 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - (index) → `agents` — the workspace's agents (a table, `GET /api/agent-roster/`); `projects` — every project in the workspace
 - `agents/new` — create an agent: pushes the factory scaffold into an empty repo the person made, with their fine-grained token (which then becomes its GitHub identity), registers it, lands on its Settings setup checklist (persona + first skill are handed to Claude Code)
 - `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Schedules, Huddles, Mail, Skills (+ History), Capabilities, Settings
-- `agents/:slug/projects/:ref` is a project's ONE page, for teammates and editors alike (`projects/:agent/:ref` redirects there, and a workspace project's address `projects/:handle` opens it on its lead agent's board, at `board_url` — the lead agent's workspace, which for a division's project kept from the parent is not the address's); an idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
+- `tasks` (+ `/:key`), `triage` — the workspace's tasks as a table / board / calendar with saved views, one task's page (`?peek=KEY` beside a list), what waits for a decision; ⌘K is the command palette anywhere
+- `projects/:handle` is a project's ONE page, for teammates and editors alike; `agents/:slug/projects/:ref` and `projects/:agent/:ref` redirect there. An idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
 - `runners/:id/<tab>`, `vaults/:id/<tab>` — one page per runner and per workspace vault, each tab a route; everything else links there (one editor per object, `components/objectPage/` → `docs/architecture/pages.md`)
-- `settings/<section>` — workspace settings: members, access-requests, slack, inbound, email, connected-apps, secrets, retention, admission-rules, topology (fleet map + runners/agents tables)
+- `settings/<section>` — workspace settings: members, access-requests, slack, inbound, email, connected-apps, secrets, tasks, retention, admission-rules, topology (fleet map + runners/agents tables)
 - `chat`, `chat/:id` — your chat sessions; live multiplayer chat with an agent
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
 - `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed

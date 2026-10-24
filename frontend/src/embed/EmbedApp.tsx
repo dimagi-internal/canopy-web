@@ -29,6 +29,9 @@ import { PRIVATE_LABEL, PrivateMark } from '@/components/chat/privateConversatio
 import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
 import { addPerson, type PeopleApi } from '@/components/chat/ChatPeople'
 import type { JoinRequest } from '@/api/chat'
+import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from '@/pages/chat/useAttachments'
+import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
+import { formDataSafeFetch, panelAttachmentApi, panelSealedFilesApi } from './panelFiles'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -242,6 +245,8 @@ export function EmbedApp({ link, app }: Props) {
         return link.requestToken()
       },
       source: app,
+      // A file upload is multipart: the browser writes its own Content-Type.
+      fetchImpl: formDataSafeFetch,
     })
     clientRef.current = c
     return c
@@ -1035,6 +1040,30 @@ function EmbedChat({
     () => (sealed.messages === socket.state.messages ? socket.state : { ...socket.state, messages: sealed.messages }),
     [socket.state, sealed.messages],
   )
+  // Files, for a canopy user (a contact holds no key and uploads nothing). In a private
+  // conversation each is sealed here, in the frame, to the conversation's people as well
+  // as uploaded for the agent's one turn; until the panel knows whether it is private, a
+  // file waits (refused with why) rather than go up unsealed.
+  const fileApi = useMemo(() => panelAttachmentApi(client.rest), [client])
+  const sealedFilesApi = useMemo(() => panelSealedFilesApi(client.rest), [client])
+  // Who is uploading, bound into the seal: the keyset's own user (sent only to this
+  // person's browser), else who the socket says.
+  const meId = sealedKey?.keyset?.user_id ?? socket.state.current_user_id
+  const privateFiles = useMemo<PrivateFiles | null>(
+    () => (sealedKey && meId != null
+      ? { target: { conversation: sealedKey.conversation, public_jwk: sealedKey.public_jwk as { x?: string; y?: string } },
+          userId: meId }
+      : null),
+    [sealedKey, meId])
+  const fileRefusal = sensitive === null ? 'Opening the conversation — attach the file in a moment.'
+    : sensitive && !privateFiles ? PRIVATE_NO_KEY : undefined
+  const { attachments, attach, remove: removeAttachment, clear: clearAttachments } =
+    useAttachments(sessionId, fileRefusal, sensitive ? privateFiles : null, fileApi)
+  const userLines = socket.state.messages.filter((m) => m.role === 'user').length
+  const sealedFiles = useSealedAttachments(sessionId, Boolean(sensitive) && !isContact, userLines, sealedFilesApi)
+  const attachmentHost = useMemo(
+    () => sealedAttachmentHost(sealedFiles, sealed.key, () => void sealed.unlock(), sealedFilesApi),
+    [sealedFiles, sealed.key, sealed.unlock, sealedFilesApi])
   const appHost = useMemo(
     () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates),
                         () => keyRef.current, keyOpen),
@@ -1132,8 +1161,10 @@ function EmbedChat({
     // scrolling the transcript should still see the question before the JSON.
     const context = contextPreamble.current
     contextPreamble.current = null
+    // The server takes whatever files this person staged with the send.
+    clearAttachments()
     socket.sendChat(context ? `${body}\n\n${context}` : body)
-  }, [socket, contextPreamble])
+  }, [socket, contextPreamble, clearAttachments])
 
   return (
     <div className="flex h-full flex-col">
@@ -1209,6 +1240,9 @@ function EmbedChat({
           // MCP Apps: a Connected site's View for a tool result, acting as this
           // visitor (their own host grant), narrow-panel sized.
           appHost={appHost}
+          // A private conversation's files, sealed: opened here with the conversation key.
+          attachmentHost={attachmentHost}
+          {...(isContact ? {} : { attachments, onAttach: attach, onRemoveAttachment: removeAttachment })}
           state={panelState}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}

@@ -1,118 +1,16 @@
 import { useState, type JSX } from 'react'
-import { Link } from 'react-router-dom'
+import { StatusBadge } from 'canopy-ui/ui'
 
-import { createProject, patchProject, type ProjectOut, type TaskOut } from '@/api/agents'
+import { createProject } from '@/api/agents'
+import { projectStatusMeta } from '@/components/work/meta'
 
-// What a PROJECT knows that a task cannot: how much is open, what is waiting on
-// a person, and where the Drive folder is. canopy keeps the state; Drive keeps
-// the files, per `agent-core/deliverables.md`.
-//
-// Shared by the Projects page (`AgentProjectsSection`), the project page
-// (`AgentProjectPage`) and the Tasks page's group-by-project view, which uses
-// `ProjectGroupHeader` as the header of each group.
-
-const STATUS_LABEL: Record<string, string> = {
-  proposed: 'Proposed',
-  active: 'Active',
-  done: 'Done',
-  archived: 'Archived',
-}
-
-/** The `<option>`s for a project-status `<select>`, labelled like the chip. */
-export function ProjectStatusOptions(): JSX.Element {
-  return (
-    <>
-      {Object.entries(STATUS_LABEL).map(([value, label]) => (
-        <option key={value} value={value}>
-          {label}
-        </option>
-      ))}
-    </>
-  )
-}
+// Two small pieces of an agent's project list that the workspace's project
+// pages do not need: the status chip a proposal card shows, and the agent's own
+// "Add project" (made through its route, so the project carries its `P<n>`).
 
 export function StatusChip({ status }: { status: string }): JSX.Element {
-  const tone =
-    status === 'done'
-      ? 'bg-success/10 text-success border-success/30'
-      : status === 'archived'
-        ? 'bg-muted text-muted-foreground border-border'
-        : status === 'proposed'
-          ? 'bg-special/10 text-special border-special/30'
-          : 'bg-primary/10 text-primary border-primary/30'
-  return (
-    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}>
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  )
-}
-
-export function ProjectGroupHeader({
-  project,
-  tasks,
-  slug,
-  onChanged,
-}: {
-  project: ProjectOut
-  tasks: TaskOut[]
-  slug: string
-  onChanged: () => void
-}): JSX.Element {
-  // The cards below carry their own ask, so this is a count rather than the
-  // sole signal.
-  const waiting = tasks.filter((t) => t.status === 'suggested' || t.ask_open).length
-
-  return (
-    <div className="border-b border-border pb-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-muted-foreground">{project.ext_id}</span>
-            {/* The group header is the way back to the project's own page. */}
-            <h3 className="truncate text-sm font-medium text-foreground">
-              <Link to={`../projects/${project.ext_id}`} className="hover:text-primary hover:underline">
-                {project.name}
-              </Link>
-            </h3>
-            <StatusChip status={project.status} />
-          </div>
-          {project.outcome && (
-            <p className="mt-1 text-[13px] text-foreground-secondary">{project.outcome}</p>
-          )}
-        </div>
-        {project.status === 'active' && (
-          <button
-            type="button"
-            className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground"
-            onClick={() => {
-              void patchProject(slug, project.ext_id, { status: 'done' }).then(onChanged)
-            }}
-          >
-            Mark done
-          </button>
-        )}
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-        <span>
-          {project.open_task_count} open / {project.task_count} task
-          {project.task_count === 1 ? '' : 's'}
-        </span>
-        {waiting > 0 && <span className="text-primary">{waiting} waiting on a person</span>}
-        {project.drive_folder_url && (
-          <a
-            href={project.drive_folder_url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary hover:underline"
-          >
-            Drive folder
-          </a>
-        )}
-        {project.repo_slug && <span>repo: {project.repo_slug}</span>}
-      </div>
-    </div>
-  )
+  const meta = projectStatusMeta(status)
+  return <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
 }
 
 /** "Add project" takes a name AND an outcome, both required: a project without

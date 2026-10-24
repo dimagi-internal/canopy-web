@@ -33,7 +33,7 @@ def _leave(path, text="the host's data"):
     return path
 
 
-def _box(load_cloud_runner, monkeypatch, tmp_path, *, served=None):
+def _box(load_cloud_runner, monkeypatch, tmp_path, *, served=None, guard=4):
     monkeypatch.setenv("RUNNER_NAME", "cloud-sensitive-1")
     monkeypatch.setenv("RUNNER_DATA_MODE", "sensitive_data")
     monkeypatch.setenv("WORK_DIR", str(tmp_path / "work"))
@@ -52,6 +52,7 @@ def _box(load_cloud_runner, monkeypatch, tmp_path, *, served=None):
     monkeypatch.setattr(mod, "_record_session_resume", lambda *a: None)
     monkeypatch.setattr(mod, "_ship_transcript_rows", lambda *a: None)
     monkeypatch.setattr(mod, "_log", lambda msg: calls["log"].append(msg))
+    monkeypatch.setattr(mod, "profiles_supported", lambda plugin_root=None: guard)
     monkeypatch.setattr(mod, "_native_settings", lambda turn, c, caller: str(_leave(
         tmp_path / "profiles" / f"cloud-{turn['id']}.settings.json", "{}")))
 
@@ -102,8 +103,10 @@ def test_the_file_lands_in_the_turns_own_directory_readable_by_it_alone_and_goes
     from canopy_runner import native_permissions as np
 
     assert not np.denied_by(seen["settings"]["permissions"]["deny"], os.path.realpath(str(f)))
-    cap = seen["profile"]["capability"]
-    assert "Read" in cap["tools"] and f"{os.path.realpath(str(att))}/**" in cap["read_paths"]
+    # The guard's exception names the directory alone; the capability is as declared,
+    # so Read opens nothing else it lists.
+    assert seen["profile"]["attachment_dirs"] == [os.path.realpath(str(att))]
+    assert seen["profile"]["capability"] == CAP
     # Gone when the turn ends; only the kept transcript (the conversation's own session,
     # which lives no longer than the conversation) holds what it read.
     assert not att.exists() and not (cwd / mod.SENSITIVE_ATTACHMENT_DIRNAME).exists()
@@ -166,3 +169,12 @@ def test_the_forget_removes_the_turns_files_and_leaves_another_turns(load_cloud_
     theirs = _leave(mod._sensitive_attachment_dir(cwd, "t-running") / "1-x.png")
     mod._sensitive_data_forget_turn(TID, cwd, [], True)
     assert not mine.parent.exists() and theirs.exists()
+
+
+def test_a_guard_too_old_for_the_exception_gets_no_file_and_no_wider_reads(load_cloud_runner, monkeypatch, tmp_path):
+    mod, calls, cwd, _project = _box(load_cloud_runner, monkeypatch, tmp_path, served=(PNG, NAME), guard=3)
+    mod._run_turn("r-1", _turn())
+    assert calls["downloads"] == [] and calls["seen"]["files"] == []
+    assert "attachment 1" in calls["seen"]["prompt"]
+    assert "attachment_dirs" not in calls["seen"]["profile"]
+    assert calls["seen"]["profile"]["capability"] == CAP

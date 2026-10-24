@@ -15,7 +15,7 @@ from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
-from apps.workspaces import services as wsvc
+from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
 
 from . import commands, ingest, services
@@ -70,24 +70,6 @@ def _reinstall_out(inst: SlackInstallation | None) -> dict:
 router = Router(auth=session_auth, tags=["slack"])
 
 
-def _workspace_or_404(user, slug: str) -> Workspace:
-    ws = Workspace.objects.filter(slug=slug).first()
-    if ws is None or slug not in wsvc.user_workspace_slugs(user):
-        raise HttpError(404, "no such workspace")
-    return ws
-
-
-def _workspace_with(user, slug: str, capability: str) -> Workspace:
-    """The workspace, if the caller holds `capability` there (`permissions`).
-    The Slack APP is the owner's (config token, declaring it an agent — one
-    Slack can serve several workspaces, and declaring cannot be undone);
-    reading history in and syncing are integrations, run by an admin."""
-    ws = _workspace_or_404(user, slug)
-    if not perms.can(user, ws, capability):
-        raise HttpError(403, f"requires the {perms.MINIMUM_ROLE[capability]} role or above")
-    return ws
-
-
 def _installation_or_409(ws: Workspace) -> SlackInstallation:
     inst = services.installation_for_workspace(ws.slug)
     if inst is None:
@@ -138,7 +120,7 @@ def _allow_out(a: SlackChannelIngestAllow) -> dict:
 @router.get("/{workspace}", response=SlackConfigOut, summary="This workspace's Slack connection")
 @gate("member")
 def get_config(request: HttpRequest, workspace: str) -> dict:
-    return _out(_workspace_or_404(request.user, workspace))
+    return _out(workspace_for(request.user, workspace))
 
 
 @router.put("/{workspace}/config-token", response=SlackSyncOut,
@@ -147,7 +129,7 @@ def get_config(request: HttpRequest, workspace: str) -> dict:
 def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigTokenIn) -> dict:
     """Takes the REFRESH token of a Slack app configuration token, then syncs
     the app's slash commands to the agents that are on for Slack."""
-    ws = _workspace_with(request.user, workspace, perms.OWN)
+    ws = workspace_for(request.user, workspace, perms.OWN)
     inst = _installation_or_409(ws)
     try:
         commands.set_config_token(inst, payload.refresh_token, user=request.user)
@@ -160,7 +142,7 @@ def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigT
                summary="Stop managing the Slack app's slash commands (owner)")
 @gate("own", setting=True)
 def clear_config_token(request: HttpRequest, workspace: str) -> dict:
-    ws = _workspace_with(request.user, workspace, perms.OWN)
+    ws = workspace_for(request.user, workspace, perms.OWN)
     commands.clear_config_token(_installation_or_409(ws))
     return _out(ws)
 
@@ -171,7 +153,7 @@ def clear_config_token(request: HttpRequest, workspace: str) -> dict:
 def set_history(request: HttpRequest, workspace: str, payload: SlackHistoryIn) -> dict:
     """The policy for `@canopy <agent> --history <minutes> <ask>` in this workspace:
     whether it may read the channel's recent past at all, and the longest window."""
-    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     _installation_or_409(ws)
     SlackWorkspaceLink.objects.filter(workspace=ws).update(
         history_enabled=payload.enabled, history_max_minutes=payload.max_minutes)
@@ -186,7 +168,7 @@ def set_channel_ingest(request: HttpRequest, workspace: str, payload: SlackChann
 
     On, an agent may ASK; every read still waits for an approval posted in the
     channel itself. Off, new requests are refused and live reads stop."""
-    ws = _workspace_with(request.user, workspace, perms.OWN)
+    ws = workspace_for(request.user, workspace, perms.OWN)
     _installation_or_409(ws)
     SlackWorkspaceLink.objects.filter(workspace=ws).update(channel_ingest_enabled=payload.enabled)
     return _out(ws)
@@ -201,7 +183,7 @@ def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackCha
     posts a notice with Revoke in the channel instead of Approve/Decline.
     Works whether or not asking is on for the workspace. Adding it again
     updates `follow` and `note`."""
-    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     _installation_or_409(ws)
     agent = Agent.objects.filter(slug=payload.agent, workspace=ws).first()
     if agent is None:
@@ -220,7 +202,7 @@ def allow_channel_ingest(request: HttpRequest, workspace: str, payload: SlackCha
 # an admin's standing grant of one channel to one agent
 @gate("integrations", setting=True)
 def disallow_channel_ingest(request: HttpRequest, workspace: str, allow_id: str) -> dict:
-    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     try:
         entry = (SlackChannelIngestAllow.objects.select_related("agent", "workspace", "installation")
                  .filter(pk=allow_id, workspace=ws).first())
@@ -235,7 +217,7 @@ def disallow_channel_ingest(request: HttpRequest, workspace: str, allow_id: str)
 @router.post("/{workspace}/sync", response=SlackSyncOut, summary="Sync slash commands now (admin or owner)")
 @gate("integrations", kind="action")
 def sync(request: HttpRequest, workspace: str) -> dict:
-    ws = _workspace_with(request.user, workspace, perms.INTEGRATIONS)
+    ws = workspace_for(request.user, workspace, perms.INTEGRATIONS)
     return commands.sync_quietly(_installation_or_409(ws))
 
 
@@ -258,7 +240,7 @@ def declare_agent(request: HttpRequest, workspace: str) -> dict:
     """
     from django.utils import timezone
 
-    ws = _workspace_with(request.user, workspace, perms.OWN)
+    ws = workspace_for(request.user, workspace, perms.OWN)
     inst = _installation_or_409(ws)
     try:
         result = commands.declare_agent(inst)

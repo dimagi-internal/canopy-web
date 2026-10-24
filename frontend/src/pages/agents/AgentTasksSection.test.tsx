@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// Tasks is the board plus one filter bar. The filters are the URL — a link to
-// "what is waiting on me" is `?waiting=me`, and the old Inbox/Work addresses
-// redirect onto these same views rather than onto a page that no longer exists.
+// An agent's Tasks tab is the workspace task list pinned to the agent. Old
+// links keep working: `?waiting=me` (and the retired Inbox, which redirects
+// to it) opens Waiting on me; `?batch=` opens one sitting, settled tasks too.
+// A change made here re-reads the rail's waiting badge.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
@@ -17,22 +18,28 @@ import {
   type RouteObject,
 } from 'react-router-dom'
 
-const { listTasks, listTaskActions, listProjects, actOnTask, refreshWaiting } = vi.hoisted(() => ({
-  listTasks: vi.fn<(slug: string, f?: unknown) => Promise<unknown[]>>(async () => []),
-  listTaskActions: vi.fn<() => Promise<unknown[]>>(async () => []),
-  listProjects: vi.fn<() => Promise<unknown[]>>(async () => []),
-  actOnTask: vi.fn(async () => ({})),
+const { listTasks, updateTask, refreshWaiting } = vi.hoisted(() => ({
+  listTasks: vi.fn<(q?: unknown, ws?: string) => Promise<unknown[]>>(async () => []),
+  updateTask: vi.fn(async (key: string, body: Record<string, unknown>) => ({ ...task({ key }), ...body })),
   refreshWaiting: vi.fn(),
 }))
 
-vi.mock('@/api/agents', async (orig) => ({
-  ...(await orig<typeof import('@/api/agents')>()),
-  listTasks, listTaskActions, listProjects, actOnTask,
+vi.mock('@/api/work', async (orig) => ({
+  ...(await orig<typeof import('@/api/work')>()),
+  listTasks,
+  updateTask,
+  countTasks: vi.fn(async () => 2),
+  getTaskSettings: vi.fn(async () => ({ workspace: 'connect', prefix: 'CON', status_names: {}, update_cadence_days: 7 })),
+  listViews: vi.fn(async () => []),
 }))
-vi.mock('@/pages/agents/QuickTurn', () => ({ QuickTurn: () => <div>quick-turn</div> }))
+vi.mock('@/components/work/useDirectory', () => ({
+  useDirectory: () => ({ people: [], agents: [], labels: [], projects: [] }),
+  invalidateDirectory: () => {},
+}))
+vi.mock('@/components/work/TaskDetailView', () => ({ TaskDetailView: () => null }))
 vi.mock('@/widget/usePageState', () => ({ usePageState: () => {} }))
-// The router test imports the whole route table; the fleet page is rebuilt in
-// its own task and is not under test here.
+vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspaceList: () => [{ slug: 'connect', role: 'owner' }] }))
+// The router test imports the whole route table; the fleet page is not under test here.
 vi.mock('@/pages/SupervisorPage', () => ({ default: () => null }))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
@@ -49,20 +56,13 @@ const { KeepQueryRedirect } = await import('./KeepQueryRedirect')
 
 function task(over: Record<string, unknown> = {}) {
   return {
-    agent_slug: 'eva', ext_id: 'T1', title: 'Ship the thing', next_action: '',
-    status: 'in_progress', owner: '', assigned: 'eva', confidence: '', score: '',
-    review: '', rationale: '', source_url: '', plan: '', notes: '', position: 1,
-    created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
-    ask_kind: '', ask_body: '', ask_open: false, links: [],
-    project_ext_id: null, project_name: null, ...over,
-  }
-}
-
-function project(over: Record<string, unknown> = {}) {
-  return {
-    id: 2, agent_slug: 'eva', ext_id: 'P2', name: 'Connect Enterprise', outcome: '',
-    status: 'active', owner_note: '', drive_folder_id: '', drive_folder_url: '',
-    repo_slug: '', notes: '', links: [], task_count: 1, open_task_count: 1, ...over,
+    id: 1, key: 'CON-1', url: '', workspace: 'connect', ext_id: 'T1', kind: 'work', title: 'Ship the thing',
+    next_action: '', status: 'in_progress', category: 'started', priority: 0, labels: [], owner: '',
+    assigned: '', agent_slug: 'eva', assignee_email: null, ask_kind: '', ask_body: '', ask_open: false,
+    batch_key: '', idempotency_key: '', origin: '', confidence: '', score: '', review: '', rationale: '',
+    source_url: '', plan: '', due: null, notes: '', position: 0, rank: 0, drive_folder_id: '',
+    drive_folder_url: '', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-01T00:00:00Z',
+    ...over,
   }
 }
 
@@ -75,122 +75,49 @@ function show(entry: string) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
-        <Route
-          path="/w/:workspace/agents/:slug/tasks"
-          element={<><AgentTasksSection /><Where /></>}
-        />
+        <Route path="/w/:workspace/agents/:slug/tasks" element={<><AgentTasksSection /><Where /></>} />
       </Routes>
     </MemoryRouter>,
   )
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+const lastCall = () => listTasks.mock.calls.at(-1) as [Record<string, unknown>, string]
+
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 describe('AgentTasksSection', () => {
-  it('reads ?waiting=me and asks the server for exactly that', async () => {
-    show('/w/connect/agents/eva/tasks?waiting=me')
-    await waitFor(() => expect(listTasks).toHaveBeenCalledWith('eva', { waiting: 'me' }))
-    const chip = screen.getByTestId('filter-waiting')
-    expect(chip.getAttribute('aria-pressed')).toBe('true')
-    expect(chip.textContent).toContain('Waiting on you · 3')
-  })
-
-  it('defaults to Open: suggested and in progress', async () => {
+  it('is the workspace list pinned to the agent, open work, All first', async () => {
     show('/w/connect/agents/eva/tasks')
-    await waitFor(() =>
-      expect(listTasks).toHaveBeenCalledWith('eva', { status: 'suggested,in_progress' }))
-    expect(screen.getByTestId('filter-open').getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByTestId('filter-waiting').getAttribute('aria-pressed')).toBe('false')
+    await waitFor(() => expect(lastCall()).toEqual([{ agent: 'eva', category: 'triage,backlog,unstarted,started' }, 'connect']))
+    expect(screen.getByTestId('tab-all').getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByTestId('tab-mine')).toBeNull()
   })
 
-  it('Done rewrites the URL and refetches the finished tasks', async () => {
+  it('reads ?waiting=me as the Waiting on me tab', async () => {
     show('/w/connect/agents/eva/tasks?waiting=me')
-    await waitFor(() => expect(listTasks).toHaveBeenCalledWith('eva', { waiting: 'me' }))
-    fireEvent.click(screen.getByTestId('filter-done'))
-    await waitFor(() =>
-      expect(listTasks).toHaveBeenCalledWith('eva', { status: 'done,declined' }))
-    expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/eva/tasks?view=done')
-    expect(screen.getByTestId('filter-done').getAttribute('aria-pressed')).toBe('true')
-  })
-
-  it('narrows to one project, or to tasks with none', async () => {
-    listProjects.mockResolvedValue([project()])
-    show('/w/connect/agents/eva/tasks')
-    await waitFor(() => expect(screen.getByRole('option', { name: /Connect Enterprise/ })).toBeTruthy())
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'P2' } })
-    await waitFor(() => expect(listTasks).toHaveBeenCalledWith(
-      'eva', { status: 'suggested,in_progress', project: 'P2' }))
-    expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/eva/tasks?project=P2')
-
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'none' } })
-    await waitFor(() => expect(listTasks).toHaveBeenCalledWith(
-      'eva', { status: 'suggested,in_progress', project: 'none' }))
+    await waitFor(() => expect(lastCall()[0]).toMatchObject({ agent: 'eva', waiting: 'me' }))
+    expect(screen.getByTestId('tab-waiting').getAttribute('aria-selected')).toBe('true')
+    // A filter change from an old link keeps what the link asked for, in the new words.
+    fireEvent.change(screen.getByLabelText('Priority'), { target: { value: '1' } })
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/eva/tasks?tab=waiting&priority=1'))
   })
 
   it('opens one sitting on ?batch=, settled tasks included', async () => {
-    // An old `/items?batch=` link lands here; a batch is usually opened to read
-    // back what was decided, so it is not narrowed to open tasks.
     show('/w/connect/agents/eva/tasks?batch=fleet-audit-2026-07-14')
-    await waitFor(() =>
-      expect(listTasks).toHaveBeenCalledWith('eva', { batch: 'fleet-audit-2026-07-14' }))
+    await waitFor(() => expect(lastCall()[0]).toEqual({ agent: 'eva', batch: 'fleet-audit-2026-07-14' }))
+    fireEvent.click(screen.getByTestId('filter-batch'))
+    await waitFor(() => expect(lastCall()[0]).toEqual({ agent: 'eva', category: 'triage,backlog,unstarted,started' }))
   })
 
-  it('under ?batch= the batch chip is the pressed one, and Open clears it', async () => {
-    show('/w/connect/agents/eva/tasks?batch=b1')
-    await waitFor(() => expect(listTasks).toHaveBeenCalledWith('eva', { batch: 'b1' }))
-    expect(screen.getByTestId('filter-open').getAttribute('aria-pressed')).toBe('false')
-    expect(screen.getByTestId('filter-batch').getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByTestId('filter-batch').textContent).toContain('b1')
-    fireEvent.click(screen.getByTestId('filter-open'))
-    await waitFor(() =>
-      expect(listTasks).toHaveBeenLastCalledWith('eva', { status: 'suggested,in_progress' }))
-    expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/eva/tasks')
-    expect(screen.queryByTestId('filter-batch')).toBeNull()
-  })
-
-  it('fetches the queue and recent actions, not every action', async () => {
+  it('an edit re-reads the waiting badge', async () => {
+    listTasks.mockResolvedValue([task()])
     show('/w/connect/agents/eva/tasks')
-    await waitFor(() => expect(listTaskActions).toHaveBeenCalledWith('eva', { limit: 50 }))
-  })
-
-  it('grouped, a project with nothing in this view is hidden unless it is the filter', async () => {
-    listProjects.mockResolvedValue([project(), project({ id: 3, ext_id: 'P3', name: 'Idle' })])
-    listTasks.mockResolvedValue([task({ ext_id: 'T1', project_ext_id: 'P2' })])
-    show('/w/connect/agents/eva/tasks?by=project')
-    await waitFor(() => expect(screen.getByTestId('project-P2')).toBeTruthy())
-    expect(screen.queryByTestId('project-P3')).toBeNull()
-
-    cleanup()
-    listTasks.mockResolvedValue([])
-    show('/w/connect/agents/eva/tasks?by=project&project=P3')
-    await waitFor(() => expect(screen.getByTestId('project-P3')).toBeTruthy())
-    expect(screen.queryByTestId('project-P2')).toBeNull()
-  })
-
-  it('groups by project on ?by=project', async () => {
-    listProjects.mockResolvedValue([project()])
-    listTasks.mockResolvedValue([
-      task({ ext_id: 'T1', project_ext_id: 'P2', project_name: 'Connect Enterprise' }),
-      task({ ext_id: 'T2' }),
-    ])
-    show('/w/connect/agents/eva/tasks')
-    await waitFor(() => expect(screen.getByTestId('task-T1')).toBeTruthy())
-    fireEvent.click(screen.getByLabelText('Group by project'))
-    await waitFor(() => expect(screen.getByTestId('project-P2')).toBeTruthy())
-    expect(screen.getByTestId('project-none')).toBeTruthy()
-    expect(screen.getByTestId('where').textContent).toBe('/w/connect/agents/eva/tasks?by=project')
-  })
-
-  it('an action on a card refetches the list and the waiting count', async () => {
-    listTasks.mockResolvedValue([task({ ext_id: 'T1' })])
-    show('/w/connect/agents/eva/tasks')
-    await waitFor(() => expect(screen.getByTestId('task-T1')).toBeTruthy())
-    const before = listTasks.mock.calls.length
-    fireEvent.click(screen.getByRole('button', { name: 'Mark done' }))
-    await waitFor(() => expect(actOnTask).toHaveBeenCalled())
-    expect((actOnTask.mock.calls[0] as unknown[]).slice(0, 3)).toEqual(['eva', 'T1', 'done'])
-    await waitFor(() => expect(listTasks.mock.calls.length).toBeGreaterThan(before))
-    expect(refreshWaiting).toHaveBeenCalled()
+    fireEvent.change(await screen.findByLabelText('Due date'), { target: { value: '2026-11-01' } })
+    await waitFor(() => expect(updateTask).toHaveBeenCalledWith('CON-1', { due: '2026-11-01' }))
+    await waitFor(() => expect(refreshWaiting).toHaveBeenCalled())
   })
 })
 

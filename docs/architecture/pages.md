@@ -84,20 +84,44 @@ Every browser-facing address canopy-web serves. The SPA route table is
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
   **Chats** are links; **Agents** (All agents, New agent, Huddles, Schedules,
-  Turn log, Runners), **Projects** (All projects, Storyboards, Walkthroughs, DDD
-  runs, Shareouts) and **Workspace** (Members, Health, Timeline, Settings) are
+  Turn log, Runners), **Work** (Tasks, Triage, Projects, Shared MCP servers),
+  **Demos** (Storyboards, Walkthroughs, DDD runs, Shareouts) and **Workspace**
+  (Members, Health, Timeline, Settings) are
   menus, every entry scoped to the active workspace; Guide, Get started and
   System sit behind `?`; personal pages (account settings, `/people/me`,
   `/sessions`, `/supervisor`, `/ide`) in the account menu. The active entry is
   the longest matching href, so Runners (`settings/topology`) and not Settings
   lights on the topology pages.
-- **`/w/:workspace`** → redirects to `/w/:workspace/agents`. An agent's projects
-  and tasks (`AgentProject` / `AgentTask`) are canopy's one project system.
-- **`/projects`** — every project in the workspace as a row (agent or steward,
-  status, open, waiting, owner, updated): `GET /api/projects/` merged with this
-  workspace's `GET /api/workspace-projects/` (a workspace project kept by a
-  parent workspace's agent is only in the second). Active and proposed by
-  default; a row opens the project's one page on its agent's board.
+- **`/w/:workspace`** → redirects to `/w/:workspace/agents`. Tasks and projects
+  are the workspace's (`docs/architecture/work.md`).
+- **Anywhere in the app**: **⌘K** opens the command palette (pages, projects,
+  agents, tasks by title or key, New task / New project / My tasks;
+  `components/work/CommandPalette.tsx`), and **?** lists every keyboard shortcut.
+- **`/tasks`** — every task in the workspace as one dense table
+  (`components/work/TasksView.tsx`, one `TaskTable` row everywhere): tabs My tasks
+  (`assignee=me`), Waiting on me (`waiting=me`), Created by me, All; filters for
+  category, assignee, project, label, priority, kind, due and text, group and
+  sort, and layout Table / Board (by status, drag to change status or order) /
+  Calendar (by due date) — all of it in the URL, and saveable as a view (yours,
+  or shared by an editor). Status, priority, assignee and due are edited in the
+  row. `X` or a checkbox selects; the bulk bar changes many at once. `J`/`K` move,
+  `Space` opens the task beside the list (`?peek=<KEY>`), `C` makes a task.
+- **`/tasks/:key`** — a task's one page (`TaskDetailView`; the peek is the same
+  component beside a list): properties edited in place, what it asks you (Start
+  now · Accept · Backlog · Snooze · Decline), the people's own words, the plan,
+  subtasks, relations, the assigned agent's current turn, and its history with
+  the reply box.
+- **`/triage`** — what waits for a decision (`GET /api/triage/`): suggested tasks,
+  ideas and proposed projects, oldest first; `A` accept, `S` start now, `B`
+  backlog, `D` decline, `H` snooze, `M` duplicate on the focused row.
+- **`/projects`** — every project in the workspace as a row (status, health or
+  Update missing, lead, lead agent, agents, progress, open and waiting, target,
+  updated; `GET /api/projects/`). Open by default; **New project** for editors.
+- **`/projects/:handle`** — a project's ONE page, for teammates and editors alike
+  (`pages/work/ProjectPage.tsx`): properties (status, health, lead, lead agent,
+  agents, dates, priority), its latest update with Post update and drafts to
+  publish, milestones with progress, the scope-versus-done graph, its tasks, then
+  its proposal card, proposed tasks, ideas and people, check-ins and recent turns.
 - **`/projects/:handle/kb`** — a knowledge base's sources and its owner's review
   (`GET …/kb/review`, `KnowledgeBasePage.tsx`): each Drive source as a folder tree
   with every file's status (pending, approved, excluded, new since approval, held
@@ -105,8 +129,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
   alone gets the switches, the per-folder auto-approve rule, Release hold, and the
   list of who may query it; everyone it admits (owner, steward, named readers) sees
   the version log. Linked from a KB project's page.
-- **`/projects/:agent/:ref`** (+ `/people/:person`) → redirects to the
-  project's one page, `/agents/:agent/projects/:ref`.
+- **`/projects/:agent/:ref`** and **`/agents/:agent/projects/:ref`** → redirect
+  to the project's one page, `/projects/:handle` (`/people/:person` is the
+  contributor page).
   **An idea is a task with `kind: "idea"`** — never inferred; `work` is the
   default — and it must carry a person's own words (at least one `human_why`,
   enforced on create and patch). The work toward it is its subtasks. Its stage
@@ -133,26 +158,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
   on `canopy-ui`. Above every section, the open alerts about this agent
   (`AlertList scope="agent:<slug>"`, nothing when there are none —
   [`alerts.md`](alerts.md)). Rail sections, in order:
-  - **Projects** (landing; index redirects here) — one row per project `P<N>`,
-    active first, with outcome, owner, open and waiting-on-you counts;
-    done/archived collapse below; "Add project" takes a name and its done
-    outcome.
-  - **Project** (`projects/:ref`) — the project's ONE page, and the link to
-    send a teammate. In order: what it is (outcome, links, owner); where it
-    stands (ideas built / in progress, and decisions waiting on people — one
-    line each, from open asks, tasks parked on a person, and task links with
-    `kind: "decision"`); the ideas with **Add your idea** (any member, in their
-    own words; tells the agent with one turn and emails the project's
-    `owner_user`); the people (`GET …/projects/{ref}/team/`,
-    `apps/agents/ideas.py::team`). Editors also get status / Drive / repo, task
-    numbers on the ideas, the agent's task cards and the turns that touched
-    them; a teammate gets none of those. **Contributor**
-    (`projects/:ref/people/:person`) — one person's words and ideas on the project.
-  - **Tasks** — the "who has the ball" board: `?waiting=me` (open asks nobody
-    owns + tasks parked on you), Open, Done; project filter, group-by-project,
-    `?batch=<key>` for one sitting. One card, `TaskCard`: a review offers
-    Approve · Decline, a question a reply box, any live task Reply, and for
-    editors Dispatch · Done.
+  - **Projects** (landing; index redirects here) — the projects table, filtered
+    to the projects this agent leads or works on; "Add project" makes one through
+    the agent's route (it carries the agent's `P<N>`). A project opens on its one
+    page, `/projects/:handle`. **Contributor** (`projects/:ref/people/:person`) —
+    one person's words and ideas on the project.
+  - **Tasks** — the Tasks list pinned to this agent (`agent=<slug>`: the tasks it
+    is assigned, and the ones it filed that no agent is), tabs All and Waiting on
+    me; `?batch=<key>` for one sitting.
   - **Turns** — packaged units of work + optional transcript, and the
     **Status reports** section (`#status-reports`).
   - **Schedules**, **Huddles**.
@@ -242,6 +255,9 @@ Every browser-facing address canopy-web serves. The SPA route table is
     credential model whole: an agent's own vault is on the agent (Settings →
     Security), a box's Claude login is on the runner (`/supervisor` →
     Runners), GitHub is the owner's identity lent per agent.
+  - **tasks** — how the workspace's tasks read: key prefix (changeable only
+    while no task carries it), a name per status category, the project update
+    cadence, and the labels (`WorkspaceTaskSettingsPage.tsx`). Editors change it.
   - **retention** — content-retention rules.
   - **admission-rules** — turns the workspace refuses before they run.
   - **topology** — the fleet map (`frontend/src/pages/topology/`): this
@@ -495,15 +511,16 @@ Every browser-facing address canopy-web serves. The SPA route table is
   browser; a row opens in `/ide` on a computer,
   the chat on a phone);
   **Tasks and requests** (approvals, questions, tasks parked on you, access
-  requests), folded with a count; **Gone quiet** (nothing for 3+ days, folded,
+  requests), open by default; a task's title opens its page, Start now /
+  Decline / Reply act on it by key; **Gone quiet** (nothing for 3+ days, folded,
   "Hide all"); **Hidden** (folded, "Show again"). Tasks are approved, declined
   or answered in place. **Hide** only takes a thing off your own Home — the task
   stays open, the chat stays as it is, nobody is told — until something new
   happens on it. Beside it, the active projects you own.
   `/app` (and an in-app link to `/`) lands here.
 - **`/supervisor`** — cross-fleet screens: Feed (home), **Waiting on you**
-  (`GET /api/tasks/?waiting=me`, the same `TaskCard` tagged with its agent,
-  actionable in place; `?tab=inbox` lands here), Sessions, Agents, Runners
+  (`GET /api/me/tasks/?waiting=me`, the shared task table, a row opening beside
+  it; `?tab=inbox` lands here), Sessions, Agents, Runners
   (live status; links each runner to the topology map; a runner's detail leads
   with its open alerts, `runner:<id>`, above the raw health list). Root because the fleet
   spans workspaces. Loaded by the phone PWA, desktop browsers and the menubar's
@@ -549,7 +566,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   edits reuse the agent rail's `ScheduleEditor`.
 - **`/settings`** — your account: runners you administer (each linking to
   `/supervisor?tab=runners&runner=<id>`, where a box's Claude login and admins
-  live), Canopy projects (every repo, or only the ones you tick — the rest stay plain
+  live), Opted-in repos (every repo, or only the ones you tick — the rest stay plain
   Claude Code, `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens on —
   Supervisor or IDE, also settable from the app's right-click menu → Opens on; it loads `/runner-app/`, a bare view that redirects to the
   choice, `RunnerAppPreference`), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,

@@ -129,6 +129,13 @@ const WS_SCOPED_API_PREFIXES = [
   // would see every workspace while its per-agent calls saw one.
   "/api/tasks",
   "/api/projects",
+  // The workspace's work by its own address: a project's page, Triage, labels,
+  // saved views and the workspace's task settings.
+  "/api/workspace-projects",
+  "/api/triage",
+  "/api/labels",
+  "/api/views",
+  "/api/task-settings",
   "/api/agent-roster",
   // Huddles are derived from one tenant's turns; /w/:ws/huddles reads that tenant.
   "/api/huddles",
