@@ -54,6 +54,12 @@ from apps.mcp.projects import build_http_app as build_project_http_app  # noqa: 
 
 _project_mcp_app = build_project_http_app()
 
+# /api/mcp/projects/ itself: the projects connection, one server that opens any
+# project's toolbox on demand (apps/mcp/project_gateway.py).
+from apps.mcp.project_gateway import build_http_app as build_gateway_http_app  # noqa: E402
+
+_gateway_mcp_app = build_gateway_http_app()
+
 # The catch-all: HTTP goes to Django as before; WebSocket goes through the
 # realtime handshake auth + URL router (apps/realtime). Same shape ace-web uses.
 _django_with_ws = ProtocolTypeRouter(
@@ -67,6 +73,10 @@ _django_with_ws = ProtocolTypeRouter(
 )
 
 from apps.mcp.delegation import gate as _dpop_gate  # noqa: E402
+
+#: MCP endpoints Claude Code stores without their trailing slash.
+_BARE_MCP_PATHS = (_MCP_PREFIX, _MCP_PREFIX + "/projects")
+
 
 class _McpWithoutSlash:
     """`/api/mcp` reaches the MCP app, not Django.
@@ -82,8 +92,9 @@ class _McpWithoutSlash:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] in ("http", "websocket") and scope.get("path") == _MCP_PREFIX:
-            scope = {**scope, "path": _MCP_PREFIX + "/", "raw_path": (_MCP_PREFIX + "/").encode()}
+        if scope["type"] in ("http", "websocket") and scope.get("path") in _BARE_MCP_PATHS:
+            path = scope["path"] + "/"
+            scope = {**scope, "path": path, "raw_path": path.encode()}
         await self.app(scope, receive, send)
 
 
@@ -96,7 +107,7 @@ from apps.common import ticks as _ticks  # noqa: E402
 async def _lifespan(app):
     """The MCP session manager and the off-request clock (apps/common/ticks.py:
     every app's registered periodic jobs), for the life of the process."""
-    async with _mcp_app.lifespan(app), _project_mcp_app.lifespan(app):
+    async with _mcp_app.lifespan(app), _project_mcp_app.lifespan(app), _gateway_mcp_app.lifespan(app):
         async with _ticks.running():
             yield
 
@@ -109,7 +120,7 @@ application = Starlette(
         # gate verifies the proof and hands FastMCP a plain bearer. Every other
         # request passes through untouched.
         # A project's own server, ahead of the main one so its prefix wins.
-        Mount(_MCP_PREFIX + "/projects", app=_dpop_gate(ProjectMcpDispatch(_project_mcp_app))),
+        Mount(_MCP_PREFIX + "/projects", app=_dpop_gate(ProjectMcpDispatch(_project_mcp_app, gateway=_gateway_mcp_app))),
         Mount(_MCP_PREFIX, app=_dpop_gate(_mcp_app)),
         # Django + realtime WS handle everything else (mounted last as catch-all).
         Mount("/", app=_django_with_ws),

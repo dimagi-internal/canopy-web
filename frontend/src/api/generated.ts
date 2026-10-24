@@ -22523,6 +22523,11 @@ export interface components {
              */
             readonly add_command: string;
             /**
+             * Instructions
+             * @default
+             */
+            readonly instructions: string;
+            /**
              * Updated At
              * Format: date-time
              */
@@ -27505,13 +27510,21 @@ export interface components {
             readonly kind: "mcp" | "skill" | "plugin";
             /** Name */
             readonly name: string;
-            /** Url */
+            /**
+             * Url
+             * @default
+             */
             readonly url: string;
             /**
              * Description
              * @default
              */
             readonly description: string;
+            /**
+             * Instructions
+             * @default
+             */
+            readonly instructions: string;
         };
         /** ProjectServicePatch */
         readonly ProjectServicePatch: {
@@ -27521,6 +27534,8 @@ export interface components {
             readonly url?: string | null;
             /** Description */
             readonly description?: string | null;
+            /** Instructions */
+            readonly instructions?: string | null;
         };
         /** KbBlobIn */
         readonly KbBlobIn: {

@@ -199,12 +199,31 @@ _TASK_LABELS = {"approve": "APPROVED BY", "nudge": "NUDGED BY", "reply": "NOTE F
 _NOT_STARTED = (Turn.QUEUED, Turn.CLAIMED)
 
 
+def _toolbox(project) -> str:
+    """What a project carries, in a few words (`a knowledge base, 2 skills`), or ""."""
+    counts: dict[str, int] = {}
+    for kind in project.served.values_list("kind", flat=True):
+        counts[kind] = counts.get(kind, 0) + 1
+    words = (("kb", "a knowledge base", "knowledge bases"), ("skill", "skill", "skills"),
+             ("mcp", "shared MCP server", "shared MCP servers"), ("plugin", "plugin", "plugins"))
+    parts = []
+    for kind, one, many in words:
+        n = counts.get(kind)
+        if n:
+            parts.append(one if kind == "kb" and n == 1 else f"{n} {one if n == 1 else many}")
+    return ", ".join(parts)
+
+
 def _task_context(task) -> str:
     """What the agent needs to act without re-reading the board first."""
     lines = []
     if task.project_id:
         project = task.project
         lines.append(f"Project: {project.address} · {project.name}")
+        toolbox = _toolbox(project)
+        if toolbox:
+            # Its card says what it holds and how to read it (apps/mcp/project_gateway.py).
+            lines.append(f'Its toolbox ({toolbox}): open it first with open_project("{project.address}").')
     # The person's own words come before the agent's inference, and outweigh it (T68).
     for why in task.human_whys.all():
         who = why.who_name or why.who_email or "someone"

@@ -612,8 +612,10 @@ def services_of(project: AgentProject, *, origin: str = "") -> list[dict]:
             add = f"claude mcp add --transport http {svc.name} {svc.url}"
         elif svc.kind == ProjectService.PLUGIN:
             add = f"/plugin marketplace add {svc.url}"
-        out.append({"id": svc.pk, "kind": svc.kind, "name": svc.name if svc.kind != ProjectService.KB else project.handle,
-                    "description": svc.description, "url": url, "add_command": add, "updated_at": svc.updated_at})
+        name = svc.name if svc.kind != ProjectService.KB else project.handle
+        out.append({"id": svc.pk, "kind": svc.kind, "name": name,
+                    "description": svc.description, "url": url, "add_command": add,
+                    "instructions": svc.instructions, "updated_at": svc.updated_at})
     return out
 
 
@@ -630,11 +632,21 @@ def save_service(project: AgentProject, data: dict, service=None, *, by_user=Non
         svc.name = name
     if data.get("url") is not None:
         url = data["url"].strip()
-        if not url.startswith(("https://", "http://")):
+        if url and not url.startswith(("https://", "http://")):
             raise ValueError("url must be an http(s) address")
         svc.url = url
     if data.get("description") is not None:
         svc.description = data["description"].strip()
+    if data.get("instructions") is not None:
+        if svc.kind != ProjectService.SKILL and data["instructions"].strip():
+            raise ValueError("only a skill has instructions")
+        svc.instructions = data["instructions"].strip()
+    # A server or a plugin is only its address; a skill is what an agent reads, so
+    # it needs its instructions (or, until they are published, where they live).
+    if svc.kind in (ProjectService.MCP, ProjectService.PLUGIN) and not svc.url:
+        raise ValueError(f"a shared {svc.kind} needs its url")
+    if svc.kind == ProjectService.SKILL and not (svc.instructions or svc.url):
+        raise ValueError("a skill needs its instructions or the url they live at")
     try:
         with transaction.atomic():
             svc.save()
