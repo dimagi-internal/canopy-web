@@ -459,6 +459,8 @@ function ChatPageInner({
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
+        warning={sealed.warning}
+        onDismissWarning={sealed.dismissWarning}
         onUnlock={() => void sealed.unlock()}
         unlockElement={vault.element}
         needsMigration={Boolean(meta?.sealed_key?.needs_migration)}

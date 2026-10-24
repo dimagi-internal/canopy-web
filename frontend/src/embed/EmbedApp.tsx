@@ -215,9 +215,6 @@ export function EmbedApp({ link, app }: Props) {
   // sent a contact down the tenant path once already.
   const principalRef = useRef<Principal | null>(null)
   principalRef.current = principal
-  // Opens the visitor's vault key once in this frame, before their first chat here, so
-  // its key is wrapped to a key the frame has confirmed is theirs (`offeredKey`).
-  const starterUnlock = useUnlockPrompt()
   const initRef = useRef<HostInit | null>(null)
   initRef.current = init
   const clientRef = useRef<CanopyClient | null>(null)
@@ -380,7 +377,7 @@ export function EmbedApp({ link, app }: Props) {
                 title: '',
                 // The conversation's key, made in this frame: if it is (a sensitive
                 // site's) or becomes private, canopy never sees its private half.
-                ...await offeredKey(client, agent.workspace, starterUnlock.prompt),
+                ...await offeredKey(client, agent.workspace),
                 // `embed_app` is NOT sent: canopy stamps it server-side from the
                 // delegated token, and anything we sent under that key would be
                 // discarded (apps/canopy_sessions/api.py).
@@ -424,7 +421,7 @@ export function EmbedApp({ link, app }: Props) {
       // not for the person who just typed the question to be shown back.
       setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, firstMessageClientId: clientId, agent })
     },
-    [client, link, starterUnlock.prompt],
+    [client, link],
   )
 
   // A question the PAGE asked for the visitor (`widget.ask`, e.g. "Explain this
@@ -518,7 +515,6 @@ export function EmbedApp({ link, app }: Props) {
           setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
         }
         onClose={() => link.requestClose()}
-        unlockElement={starterUnlock.element}
         headerControls={
           <>
             <SnapButton link={link} snappable={snappable} />
@@ -565,7 +561,6 @@ function EmbedStart({
   initialBody,
   initialError,
   headerControls,
-  unlockElement,
 }: {
   agent: EmbedAgent
   client: CanopyClient
@@ -578,8 +573,6 @@ function EmbedStart({
   initialError?: string
   /** Panel controls drawn before × (expand). */
   headerControls?: React.ReactNode
-  /** The vault-key unlock asked before a first chat in this frame (`offeredKey`). */
-  unlockElement?: React.ReactNode
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
   const [body, setBody] = useState(initialBody ?? '')
@@ -591,11 +584,17 @@ function EmbedStart({
     if (!text || sending) return
     setSending(true)
     setError(null)
+    // SendBox empties its own box the moment Send is pressed; it puts a local
+    // draft's body back only when that body CHANGES. So the body is emptied
+    // here too, and set again on failure: without that it never changed, and a
+    // failed start left the box blank with the words gone from the screen.
+    setBody('')
     void onStart(text)
       .catch((e: unknown) => {
-        // The text stays in the box on failure. Losing what somebody typed
+        // The text goes back in the box on failure. Losing what somebody typed
         // because a request failed is the worst possible response to it.
-        setError(e instanceof Error ? e.message : 'could not start the conversation')
+        setBody(text)
+        setError(e instanceof Error && e.message ? e.message : 'Could not start the conversation.')
         setSending(false)
       })
   }, [body, sending, onStart])
@@ -678,7 +677,6 @@ function EmbedStart({
           Rendering SendBox with a local draft (the same adapter the contact
           path uses, since no server draft exists before the session does)
           makes this screen and the chat that follows it one component. */}
-      {unlockElement ? <div className="px-3">{unlockElement}</div> : null}
       <SendBox
         draft={contactDraft(body)}
         connected
@@ -1185,6 +1183,8 @@ function EmbedChat({
       <SealedConversationBanner
         state={sealed.state}
         error={sealed.error}
+        warning={sealed.warning}
+        onDismissWarning={sealed.dismissWarning}
         onUnlock={() => void sealed.unlock()}
         unlockElement={unlocker.element}
         needsMigration={Boolean(sealedKey?.needs_migration)}

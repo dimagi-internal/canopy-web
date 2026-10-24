@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { dismissSelfMismatch, selfMismatch, selfMismatchMessage } from './trust'
 import type { Unlocked } from './operations'
 import {
   isSealed,
@@ -59,11 +60,16 @@ export function useSealedConversation<M extends Row>(
      hasSealed: boolean
      /** The vault key opened, and this person's copy of the conversation key did not:
       *  it is broken, and only they can set it aside for a fresh one. */
-     copyBroken: boolean } {
+     copyBroken: boolean
+     /** The vault key opened here is not the one chats started in this browser before
+      *  were wrapped to (trust on first use, `trust.rememberSelf`): the sentence naming
+      *  them, until dismissed. */
+     warning: string | null; dismissWarning: () => void } {
   const [key, setKey] = useState<ConversationKey | null>(null)
   const [copyBroken, setCopyBroken] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [warning, setWarning] = useState<string | null>(null)
   const [, setVersion] = useState(0)
   const opened = useRef(new Map<string, Words | null>())
   // The words of rows that arrived live in this tab, by place (turn index + role).
@@ -121,6 +127,10 @@ export function useSealedConversation<M extends Row>(
     setCopyBroken(false)
     try {
       const me = await unlockVault()
+      // The first unlock in this browser checks the key chats started here were wrapped
+      // to before it had ever opened yours (`trust.trustSelfOnFirstUse`).
+      const mismatch = selfMismatch(me.userId)
+      setWarning(mismatch ? selfMismatchMessage(mismatch) : null)
       try {
         setKey(await openConversationKey(sealedKey, me))
       } catch (e) {
@@ -166,5 +176,9 @@ export function useSealedConversation<M extends Row>(
         : whyNot(sealedKey) ?? (error ? 'error' : 'locked')
   // Something sealed this browser cannot show yet: neither opened nor heard live here.
   const hasSealed = messages.some((m) => isSealed(m.sealed) && !heard.current.has(placeOf(m)))
-  return { state, messages: shown, unlock, error, key, keyRef, hasSealed, copyBroken }
+  const dismissWarning = useCallback(() => {
+    dismissSelfMismatch()
+    setWarning(null)
+  }, [])
+  return { state, messages: shown, unlock, error, key, keyRef, hasSealed, copyBroken, warning, dismissWarning }
 }

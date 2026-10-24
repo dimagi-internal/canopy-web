@@ -54,8 +54,12 @@ nothing here.
 
 - **The conversation keypair, made in the starter's browser.** A chat started from
   canopy's own chat surfaces carries a P-256 ECDH keypair the starter's browser made,
-  its private half wrapped there to the starter's vault key (checked against the key
-  that browser last opened as theirs); canopy-web keeps it even while the chat is
+  its private half wrapped there to the starter's vault PUBLIC key, so starting or
+  sending never asks for a passkey. A key that browser pinned is used; a key that CHANGED
+  since stops the start; a key never seen there is trusted on first use (pinned as
+  unconfirmed with the chat's id) and checked against the key the person actually holds
+  at their first unlock in that browser, which warns naming those chats on a mismatch —
+  substitution on a browser's first chat is detected then, not prevented. canopy-web keeps it even while the chat is
   ordinary and seals to it if it becomes sensitive, so it never sees the private half.
 - **Where no browser is there** (a session made sensitive from Slack, MCP, a host's
   grant, or one created with no key): when its requirements gain `sensitive_data`,
