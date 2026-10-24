@@ -223,6 +223,28 @@ def test_a_session_header_naming_another_agents_chat_is_ignored(f):
     assert res.status_code == 200 and res.json()["session_id"] is None
 
 
+def test_a_contacts_chat_is_never_asked_for_a_secret(f):
+    # A contact can't fill a secret and never sees a seal card, so the agent
+    # isn't given the option: it is told to ask its owner instead.
+    from apps.contacts.models import Contact
+
+    contact = Contact.objects.create(workspace=f.ws, email="visitor@example.org")
+    f.session.contact = contact
+    f.session.save(update_fields=["contact"])
+    res = _ask(f)
+    assert res.status_code == 409 and res.json()["error"] == "contact_chat"
+    assert "jj@dimagi.com" in res.json()["detail"] and "Credentials page" in res.json()["detail"]
+    assert not AgentSecretRequest.objects.exists()
+
+
+def test_the_contact_door_never_carries_a_seal_card():
+    # The contact transcript route doesn't annotate `secret_request`, on purpose.
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1].joinpath("apps/contacts/contact_api.py").read_text()
+    assert "secret_request" not in src
+
+
 # ---- recipients ---------------------------------------------------------------------------
 
 def test_recipients_are_for_admins_and_whoever_may_answer_the_open_request(f):
