@@ -7,6 +7,12 @@ def delete_drive_sources(apps, schema_editor):
     """A knowledge base's sources are a curator's crawler only; drop every Drive one
     (its files go with it)."""
     apps.get_model("agents", "KbSource").objects.filter(kind="drive_folders").delete()
+    # Postgres defers FK checks (Django's are DEFERRABLE INITIALLY DEFERRED), so the
+    # delete above leaves pending trigger events, and the ALTER TABLEs below then fail
+    # with "cannot ALTER TABLE ... because it has pending trigger events" — only when
+    # there was something to delete, so only in production. Fire them now.
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class Migration(migrations.Migration):
