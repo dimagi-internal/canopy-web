@@ -1059,6 +1059,7 @@ def health_report() -> dict:
         _disk_check()
         _egress_check()
         _data_mode_check()
+        _claim_check()
         if _BOOTSTRAPPED_AT:
             # Before bootstrap the packages are not exposed yet; reporting them
             # as failed would be a false alarm on every start.
@@ -9167,6 +9168,62 @@ def _in_flight_ids() -> list[str]:
         return sorted(_IN_FLIGHT)
 
 
+# ── the claim gate ──────────────────────────────────────────────────────────
+# The box decides for itself whether to ask for a turn, and none of those
+# reasons is visible to canopy-web: on 2026-10-24 an Eva chat turn sat queued
+# 15 minutes behind cloud-ec2-2 while the server saw an online, ready, idle box,
+# and only journald knew why. So the ONE gate both claim loops ask is also
+# reported on every heartbeat, as the `claim` health check.
+
+#: When the current not-claiming streak began (None while claiming).
+_NOT_CLAIMING_SINCE: float | None = None
+
+_GIB_KB = 1024 * 1024
+
+
+def _span(seconds: float) -> str:
+    m = int(seconds // 60)
+    if m < 1:
+        return "<1m"
+    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m"
+
+
+def claim_gate(*, now: float | None = None) -> tuple[bool, str, str]:
+    """(claiming, reason, detail): may this box ask for a turn right now, and if
+    not, which of its own limits says no. `reason` is "" while claiming, else one
+    of turn_cap / memory / token_refused / data_mode. Also records when the
+    current not-claiming streak started, which the detail names."""
+    global _NOT_CLAIMING_SINCE
+    now = time.time() if now is None else now
+    in_flight = _in_flight_ids()
+    avail = _meminfo_kb(_read_meminfo(), "MemAvailable")
+    load = f"{len(in_flight)}/{MAX_CONCURRENT_TURNS} turns in flight"
+    free = f"{avail / _GIB_KB:.1f} GiB free" if avail is not None else "free memory unknown"
+    if len(in_flight) >= MAX_CONCURRENT_TURNS:
+        reason, why = "turn_cap", (f"at turn cap {len(in_flight)}/{MAX_CONCURRENT_TURNS} "
+                                   f"(in flight: {', '.join(t[:8] for t in in_flight)})")
+    elif not _memory_headroom_ok():
+        reason, why = "memory", (f"{(avail or 0) / _GIB_KB:.1f} GiB free < "
+                                 f"{CLAIM_MIN_AVAILABLE_KB / _GIB_KB:.1f} GiB floor ({load})")
+    elif _token_refused():
+        reason, why = "token_refused", ("canopy-web refused this box's token (401); replace "
+                                        "canopy/cloud-runner/canopy-pat and restart")
+    elif _data_mode_refused():
+        reason, why = "data_mode", (f"RUNNER_DATA_MODE {RUNNER_DATA_MODE!r} is not one canopy "
+                                    "knows (see `claude.sensitive_data`)")
+    else:
+        _NOT_CLAIMING_SINCE = None
+        return True, "", f"claiming · {load} · {free}"
+    if _NOT_CLAIMING_SINCE is None:
+        _NOT_CLAIMING_SINCE = now
+    return False, reason, f"not claiming for {_span(now - _NOT_CLAIMING_SINCE)}: {why}"
+
+
+def _claim_check() -> None:
+    claiming, _, detail = claim_gate()
+    _set_check("claim", "ok" if claiming else "warn", detail)
+
+
 def _transcript_core():
     """canopy_transcript, imported lazily and cached.
 
@@ -10655,8 +10712,7 @@ def run_over_rest(runner_id: str) -> None:
         _maybe_reread_credentials()
         _credential_tick()
         _drain_inbox(runner_id)
-        if (len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS or not _memory_headroom_ok()
-                or _token_refused() or _data_mode_refused()):
+        if not claim_gate()[0]:
             time.sleep(POLL_SECONDS)
             continue
         paused = backed_off_slugs()
@@ -10771,14 +10827,10 @@ def _claim_and_run_once(ws, runner_id: str) -> bool:
     is not safe across threads, the same constraint `_start_lease_renewal`
     observes.
     """
-    if len(_in_flight_ids()) >= MAX_CONCURRENT_TURNS:
+    if not claim_gate()[0]:
+        # The poll tick retries; the queued turn waits, nothing is lost. The
+        # heartbeat's `claim` check says which limit held it.
         return False
-    if not _memory_headroom_ok():
-        return False  # the poll tick retries; the queued turn waits, nothing is lost
-    if _token_refused():
-        return False  # it could never report back; leave it for a box that can
-    if _data_mode_refused():
-        return False  # health says why (`claude.sensitive_data`); nothing runs until it is fixed
     paused = backed_off_slugs()
     res = _ws_request(ws, {"action": "claim", **({"paused": paused} if paused else {})}, "claim.result")
     turn = res.get("turn") if res else None
