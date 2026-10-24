@@ -248,6 +248,42 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         )}
       </div>
 
+      {canManage && (
+        <div className="mb-8 rounded-lg border border-border bg-card p-5">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Invite someone</h2>
+          <AddPersonForm
+            options={roleOptions(grantable)}
+            defaultRole="viewer"
+            onAdd={(email, role) => handleCreateInvite(email, role as InviteRole)}
+            submitLabel="Send invite"
+            busyLabel="Sending…"
+            placeholder="teammate@example.com"
+          />
+
+          {created && (
+            <div
+              className={
+                created.status === 'sent'
+                  ? 'mt-4 rounded-lg border border-success/30 bg-success/5 p-4'
+                  : 'mt-4 rounded-lg border border-warning/30 bg-warning/5 p-4'
+              }
+            >
+              <p className="text-[12px] font-semibold text-foreground">
+                {emailOutcomeText(created.status, created.email)}
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 text-[12px] text-foreground-secondary">
+                  {created.link}
+                </code>
+                <Button type="button" size="sm" variant="outline" onClick={() => void handleCopy()}>
+                  {copied ? 'Copied!' : 'Copy link'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <SystemAccountsSection
         slug={slug}
         accounts={systemAccounts}
@@ -363,42 +399,6 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           ))}
         </dl>
       </div>
-
-      {canManage && (
-        <div className="rounded-lg border border-border bg-card p-5">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Invite someone</h2>
-          <AddPersonForm
-            options={roleOptions(grantable)}
-            defaultRole="viewer"
-            onAdd={(email, role) => handleCreateInvite(email, role as InviteRole)}
-            submitLabel="Send invite"
-            busyLabel="Sending…"
-            placeholder="teammate@example.com"
-          />
-
-          {created && (
-            <div
-              className={
-                created.status === 'sent'
-                  ? 'mt-4 rounded-lg border border-success/30 bg-success/5 p-4'
-                  : 'mt-4 rounded-lg border border-warning/30 bg-warning/5 p-4'
-              }
-            >
-              <p className="text-[12px] font-semibold text-foreground">
-                {emailOutcomeText(created.status, created.email)}
-              </p>
-              <div className="mt-2 flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1 text-[12px] text-foreground-secondary">
-                  {created.link}
-                </code>
-                <Button type="button" size="sm" variant="outline" onClick={() => void handleCopy()}>
-                  {copied ? 'Copied!' : 'Copy link'}
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
