@@ -212,6 +212,12 @@ class Agent(models.Model):
     # Reachable from Slack (apps/slack). Off by default and owner-only to flip:
     # it opens the agent to a new channel of people, which is a deliberate act.
     slack_enabled = models.BooleanField(default=False)
+    # The agent's own login (`user`) may hold a personal vault key for TESTING, so a
+    # headless harness signed in as the agent can take part in its own sensitive
+    # conversations (apps/agents/credentials/test_key.py). Off by default; an agent
+    # admin turns it on from a browser behind a passkey step-up. The key opens nothing
+    # but conversation keys of conversations that login is in — never a vault.
+    test_vault_key = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

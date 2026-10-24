@@ -21,10 +21,11 @@ from apps.canopy_sessions import access, staleness
 from apps.canopy_sessions import transcript_read as session_transcript_read
 from apps.canopy_sessions.models import Session
 from apps.events import analytics
-from apps.harness import topology
+from apps.harness import device_keys, topology
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import access as access_rule
 from . import interface as iface_mod
 from .credentials.vault_health import vault_health
 from .models import Agent, AgentProject, AgentTask
@@ -42,9 +43,13 @@ def _shared_vault(ws: Workspace) -> dict:
     }
 
 
-def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict) -> dict:
-    can_fix = agent.is_admin(viewer)
-    steps = setup_steps(agent, viewer_is_admin=can_fix)
+def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict,
+              standings: access_rule.Standings, facts) -> dict:
+    """One agent's row. `standings` holds the viewer and `facts`
+    (`device_keys.serving_facts`) the fleet, each read once for every agent."""
+    can_fix = standings.is_admin(viewer, agent)
+    vault = vault_health(agent, facts)
+    steps = setup_steps(agent, viewer_is_admin=can_fix, vault_state=vault, facts=facts)
     left = [s for s in steps if s["status"] not in (DONE, OPTIONAL)]
     last = last_turns.get(agent.slug) or {}
     c = counts.get(agent.pk) or {}
@@ -75,7 +80,7 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "failed_30d": last.get("failed", 0),
         "people_30d": last.get("people", 0),
         "ran_on": last.get("runners", []),
-        "vault": vault_health(agent),
+        "vault": vault,
         "steps": steps,
         "left": len(left),
     }
@@ -84,18 +89,25 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
 def _counts(agents: list[Agent]) -> dict[int, dict]:
     """Per agent, in one query: skills, schedules, active projects, open tasks
     (`AgentTask.LIVE_STATUSES`) and open tasks waiting on a person
-    (`services.waiting_q`) — the definitions the agent's own pages count with."""
-    from django.db.models import Q
+    (`services.waiting_q`) — the definitions the agent's own pages count with.
 
-    rows = (Agent.objects.filter(pk__in=[a.pk for a in agents]).order_by()
-            .annotate(skills_n=Count("skills", distinct=True),
-                      schedules_n=Count("schedules", distinct=True),
-                      projects_n=Count("projects", filter=Q(projects__status=AgentProject.ACTIVE), distinct=True),
-                      open_n=Count("tasks", filter=Q(tasks__status__in=AgentTask.LIVE_STATUSES), distinct=True),
-                      waiting_n=Count("tasks", filter=waiting_q("tasks__"), distinct=True))
-            .values("pk", "skills_n", "schedules_n", "projects_n", "open_n", "waiting_n"))
-    return {r["pk"]: {"skills": r["skills_n"], "schedules": r["schedules_n"], "projects": r["projects_n"],
-                      "open_tasks": r["open_n"], "waiting_tasks": r["waiting_n"]} for r in rows}
+    One grouped count per kind: counting them all in one query joins every
+    agent's skills × schedules × projects × tasks before counting, which took a
+    second on labs with a dozen agents and grows with each of them."""
+    ids = [a.pk for a in agents]
+    out: dict[int, dict] = {i: {} for i in ids}
+    kinds = {
+        "skills": Agent.skills.rel.related_model.objects.all(),
+        "schedules": Agent.schedules.rel.related_model.objects.all(),
+        "projects": AgentProject.objects.filter(status=AgentProject.ACTIVE),
+        "open_tasks": AgentTask.objects.filter(status__in=AgentTask.LIVE_STATUSES),
+        "waiting_tasks": AgentTask.objects.filter(waiting_q()),
+    }
+    for kind, rows in kinds.items():
+        for agent_id, n in (rows.filter(agent_id__in=ids).order_by().values("agent_id")
+                            .annotate(n=Count("pk")).values_list("agent_id", "n")):
+            out[agent_id][kind] = n
+    return out
 
 
 #: How many of an agent's latest sessions a row lists.
@@ -136,7 +148,8 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
 
     last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents)
     sessions = _sessions(agents, viewer)
-    rows = [agent_row(a, viewer, last_turns, counts, sessions) for a in agents]
+    standings, facts = access_rule.Standings([viewer], agents), device_keys.serving_facts(agents)
+    rows = [agent_row(a, viewer, last_turns, counts, sessions, standings, facts) for a in agents]
     per_ws: dict[str, int] = {}
     for r in rows:
         per_ws[r["workspace"]] = per_ws.get(r["workspace"], 0) + 1

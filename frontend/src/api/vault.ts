@@ -28,7 +28,7 @@ export async function getKeyset(): Promise<VaultKeysetOut> {
   const err = (res as { error?: unknown }).error as (Partial<VaultKeysetOut> & { error?: string }) | undefined
   if (res.response?.status === 404 && err?.error === 'no_vault_keyset' && err.user_id) {
     return { user_id: err.user_id, prf_input: err.prf_input ?? '', exists: false, public_jwk: null, seals: [],
-             passkeys: err.passkeys ?? [] } as VaultKeysetOut
+             passkeys: err.passkeys ?? [], test_key: false } as VaultKeysetOut
   }
   return need<VaultKeysetOut>(res, 'Could not load your vault key')
 }
@@ -229,4 +229,22 @@ export async function putAgentZkPins(slug: string, body: VaultKeeperPinsIn): Pro
 export async function putWorkspaceVaultPins(vaultId: string, body: VaultKeeperPinsIn): Promise<VaultKeeperPinsOut> {
   return need<VaultKeeperPinsOut>(await apiV2.PUT('/api/vaults/{vault_id}/zk/pins', {
     params: { path: { vault_id: vaultId } }, body }), 'Could not record the granted keys')
+}
+
+// ---- an agent login's TEST vault key (apps/agents/credentials/login_test_key.py) -------------
+
+export type TestVaultKeyOut = Schemas['TestVaultKeyOut']
+
+export async function getTestVaultKey(slug: string): Promise<TestVaultKeyOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/test-vault-key', { params: { path: { slug } } })
+  return need<TestVaultKeyOut>(res, 'getTestVaultKey')
+}
+
+/** Turning it on needs a passkey step-up, which `apiV2` prompts for; off never does. */
+export async function setTestVaultKey(slug: string, enabled: boolean): Promise<TestVaultKeyOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/test-vault-key', {
+    params: { path: { slug } },
+    body: { enabled },
+  })
+  return need<TestVaultKeyOut>(res, 'setTestVaultKey')
 }

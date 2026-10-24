@@ -153,19 +153,20 @@ def check_seal(seal, what: str = "seal") -> dict:
 
 # ---- who may hold a wrap ---------------------------------------------------------
 
-def eligible_device_keys(agent) -> list:
+def eligible_device_keys(agent, facts=None) -> list:
     """ACTIVE device keys with an APPROVED ECDH key, on runners whose proof this
     agent's resolve accepts — the devices that can be (and, at the current kv,
     should be) wrapped to. A new ECDH key a person has not approved yet gets
-    nothing, though its signing key stays active."""
-    return list(eligible_device_keys_qs(agent))
+    nothing, though its signing key stays active. `facts`: `device_keys.serving_facts`."""
+    return list(eligible_device_keys_qs(agent, facts))
 
 
-def eligible_device_keys_qs(agent):
+def eligible_device_keys_qs(agent, facts=None):
     """`eligible_device_keys` as a queryset, for a caller that only asks whether any exist."""
 
-    ids = vault_members.agent_member_ids(agent)
-    return (device_keys.keys_for_agent(agent)
+    ids = (facts.once(("vault-members", agent.pk), lambda: vault_members.agent_member_ids(agent)) if facts
+           else vault_members.agent_member_ids(agent))
+    return (device_keys.keys_for_agent(agent, facts)
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
             .exclude(ecdh_jkt="")
             .filter(Q(runner__owner_id__in=ids) | Q(runner__owner__isnull=True, approved_by_id__in=ids)))
@@ -179,14 +180,24 @@ def device_waits(agent, key) -> bool:
     predicate behind "Give access" on the approve flow
     (`api_device_keys.zk_agents_waiting_on`) and the vault health of an agent
     (`vault_health.machines_waiting`)."""
+    return key.pk in devices_waiting(agent, [key])
+
+
+def devices_waiting(agent, keys) -> set:
+    """The pks of those of `keys` that `device_waits` — asked of many keys in one
+    query, for a screen listing every machine."""
     from .zk_seal import sealed_targets  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
 
-    if not agent.zk_enabled or not key.ecdh_jkt:
-        return False
+    keys = [k for k in keys if k.ecdh_jkt]
+    if not agent.zk_enabled or not keys:
+        return set()
     if agent.zk_kv == 0:
-        stored = AgentCredential.objects.filter(agent=agent).exclude(value_zk="").values_list("value_zk", flat=True)
-        return any(("device", key.ecdh_jkt) not in sealed_targets(v) for v in stored)
-    return not AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device", device_key=key).exists()
+        stored = [sealed_targets(v) for v in AgentCredential.objects.filter(agent=agent)
+                  .exclude(value_zk="").values_list("value_zk", flat=True)]
+        return {k.pk for k in keys if any(("device", k.ecdh_jkt) not in t for t in stored)}
+    wrapped = set(AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
+                                                device_key__in=keys).values_list("device_key_id", flat=True))
+    return {k.pk for k in keys if k.pk not in wrapped}
 
 
 def eligible_members(agent) -> list:
@@ -380,8 +391,19 @@ def device_wrap_missing(agent, request, device_key) -> None:
 def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
     """Create or extend the caller's keyset. Changing the PUBLIC key is a new
     identity: it needs `replace`, and drops every member wrap to the old one
-    (those agents then list the person as pending)."""
+    (those agents then list the person as pending).
 
+    A login that is not a person writes one only as an agent's TEST vault key
+    (`login_test_key.check_keyset_write`): first key only, passphrase seals only."""
+    from . import login_test_key  # cycle: login_test_key -> zk (disable)  # noqa: PLC0415
+
+    def _test_key_check(exists: bool) -> None:
+        try:
+            login_test_key.check_keyset_write(user, seals=seals or [], exists=exists)
+        except login_test_key.NotAPerson as exc:
+            raise ZkError(exc.status, exc.code, str(exc)) from exc
+
+    _test_key_check(UserVaultKeyset.objects.filter(user=user).exists())
     try:
         jwk = device_keys.normalize_public_jwk(public_jwk)
     except device_keys.KeyError_ as exc:
@@ -410,6 +432,7 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
         checked.append(seal)
     with transaction.atomic():
         ks = UserVaultKeyset.objects.select_for_update().filter(user=user).first()
+        _test_key_check(ks is not None)  # again under the lock: two first writes make one key
         if ks is not None and ks.public_jwk != jwk:
             if not replace:
                 raise ZkError(409, "zk_keyset_exists",

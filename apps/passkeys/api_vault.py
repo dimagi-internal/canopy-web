@@ -31,9 +31,12 @@ def prf_input(user_id) -> str:
 
 
 def _out(user) -> VaultKeysetOut:
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports passkeys
+
     ks = UserVaultKeyset.objects.filter(user=user).first()
     sealed = {s.get("cred") for s in (ks.seals if ks else [])}
     return VaultKeysetOut(
+        test_key=ks is not None and not login_test_key.is_person(user),
         user_id=str(user.pk), prf_input=prf_input(user.pk), exists=ks is not None,
         public_jwk=ks.public_jwk if ks else None, seals=list(ks.seals) if ks else [],
         updated_at=ks.updated_at if ks else None,
@@ -51,9 +54,12 @@ def get_vault_setup(request: HttpRequest) -> VaultSetupOut:
     being added to a vault later never waits on them."""
     # Everyone sets it up at sign-in, not when a vault first needs them: a
     # member with no vault key is one no keeper can pass a key to.
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports passkeys
+
     has_key = UserVaultKeyset.objects.filter(user=request.user).exists()
     return VaultSetupOut(
-        required=stepup.is_browser(request) and not has_key,
+        # Never asked of an agent's login or a system account: they are not people.
+        required=stepup.is_browser(request) and not has_key and login_test_key.is_person(request.user),
         has_passkey=Passkey.objects.filter(user=request.user).exists(),
         has_vault_key=has_key,
     )
@@ -82,10 +88,20 @@ def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeyse
     """`{public_jwk, seals, replace}`. `seals` replaces the stored list; each
     must name one of the caller's passkeys. A different `public_jwk` from the
     stored one is 409 `zk_keyset_exists` unless `replace` is true, which also
-    drops every agent's member wrap to the old key."""
-    from apps.agents.credentials import zk
+    drops every agent's member wrap to the old key.
 
-    stepup.require_recent_step_up(request)
+    An agent's own login, while an admin has turned its test vault key on, makes
+    its FIRST key here with passphrase seals only, and with no passkey step-up (it
+    has no passkey, and may hold none); anything else from such a login is refused
+    (403 `not_a_person`, 409 `test_key_exists`, 422 `test_key_passphrase_only`)."""
+    from apps.agents.credentials import login_test_key, zk  # noqa: PLC0415 — agents imports passkeys
+
+    # The step-up is what makes a person's write theirs. A login that is not a person
+    # never steps up: `zk.put_keyset` refuses it outright, unless it is an agent login
+    # whose test key an admin turned on with their own step-up — and then holds it to
+    # one first key, passphrase-sealed.
+    if login_test_key.is_person(request.user):
+        stepup.require_recent_step_up(request)
     try:
         zk.put_keyset(request.user, public_jwk=payload.public_jwk, seals=payload.seals,
                       replace=payload.replace)

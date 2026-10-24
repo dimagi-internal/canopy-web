@@ -248,6 +248,11 @@ export function VaultKeyPanel({ email = '', onlyWhenLinked = false, embedded = f
         </div>
       ) : (
         <div className="space-y-2">
+          {ks.test_key && (
+            <p className="text-xs text-warning" data-testid="vault-key-test-key">
+              Agent test key: this login is an agent&rsquo;s, and its key opens only the private conversations it is in.
+            </p>
+          )}
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-muted-foreground">

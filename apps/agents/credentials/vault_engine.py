@@ -68,8 +68,29 @@ def wrap_key(w) -> tuple:
     return ("recovery",)
 
 
+def _refuse_logins_that_are_not_people(member_targets, what: str) -> None:
+    """No copy of any vault's key, and no value sealed to one, is ever written for an
+    agent's own login or a system account — an agent login holding a TEST vault key
+    (`login_test_key`) included. `eligible_members` already leaves them out (they are
+    never members); this refuses them by name, whatever eligibility says."""
+    from .vault_members import not_a_person  # noqa: PLC0415 — vault_members imports zk
+
+    ids = set()
+    for t in member_targets:
+        try:
+            ids.add(int(str(t)))
+        except ValueError:
+            continue
+    if ids and not_a_person(ids):
+        raise _zk.ZkError(403, "not_a_person",
+                          f"{what}: an agent's login or a system account is not a person, and holds "
+                          "nothing in any vault")
+
+
 def parse_wraps(store: Store, kv: int, wraps: list, *, allow_recovery: bool) -> list:
     """Validate `[{kind, target, wrap}]` and return unsaved wrap rows."""
+    _refuse_logins_that_are_not_people(
+        [item.target for item in wraps if item.kind == "member"], "wraps")
     devices = {str(k.pk): k for k in store.eligible_devices()}
     members = {str(k.user_id): k for k in store.eligible_members()}
     out, seen = [], set()
@@ -141,7 +162,8 @@ def check_full_set(rows: list, user) -> None:
 def parse_values(store: Store, values: list, *, allow_sealed: bool = False) -> dict[str, str]:
     """`allow_sealed`: a `zks1:` value is accepted too — only where the store takes
     them, and never by enable/rotate, which must leave every value `zk1`."""
-    from .zk_seal import SEALED_PREFIX, check_sealed_value  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
+    from .zk_seal import (  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
+        SEALED_PREFIX, check_sealed_value, sealed_targets)
 
     sealed_ok = allow_sealed and store.accepts_sealed
     out: dict[str, str] = {}
@@ -153,6 +175,8 @@ def parse_values(store: Store, values: list, *, allow_sealed: bool = False) -> d
             raise _zk._shape(f"values[{i}]: {name} appears twice")
         if sealed_ok and isinstance(v.value_zk, str) and v.value_zk.startswith(SEALED_PREFIX):
             out[name] = check_sealed_value(v.value_zk, name)
+            _refuse_logins_that_are_not_people(
+                [t for kind, t in sealed_targets(out[name]) if kind == "member"], f"values[{i}]")
         else:
             out[name] = _zk.check_value_zk(v.value_zk, name)
     return out
