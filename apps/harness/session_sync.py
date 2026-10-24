@@ -1370,6 +1370,27 @@ def _turn_end_epoch(session, transcript_id: str) -> int:
     return offset
 
 
+def turn_end_held(session) -> dict[str, int]:
+    """{transcript id: how many of its records `session` holds rows through} for every
+    confined turn's transcript that has shipped into it (`TURN_END_EPOCHS`): one past
+    the record of its highest row. A runner resuming that transcript ships from
+    here, not from what it believes it shipped before — a ship that failed then is
+    sent again, never assumed to have landed. Each transcript's rows are the ones in
+    its epoch, up to the next epoch's start."""
+    epochs = sorted((int(off), key) for key, off in
+                    ((session.metadata or {}).get(TURN_END_EPOCHS) or {}).items() if key != "-")
+    if not epochs:
+        return {}
+    bounds = [(key, off, nxt) for (off, key), nxt in
+              zip(epochs, [o for o, _ in epochs[1:]] + [None], strict=True)]
+    highs = Message.objects.filter(session=session).aggregate(**{
+        f"e{i}": Max("turn_index", filter=Q(turn_index__gte=off) & (
+            Q(turn_index__lt=nxt) if nxt is not None else Q()))
+        for i, (_key, off, nxt) in enumerate(bounds)})
+    return {key: (int(highs[f"e{i}"]) - off) // BLOCK_STRIDE + 1
+            for i, (key, off, _nxt) in enumerate(bounds) if highs.get(f"e{i}") is not None}
+
+
 def _ingest(session, *, transcript_id, events, index_offset, live, binding,
             fan_out_held=True) -> int:
     """`fan_out_held=False`: a row the session already held before this batch is

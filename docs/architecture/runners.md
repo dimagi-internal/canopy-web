@@ -509,7 +509,11 @@ sensitive data. It is not "zero data retention" itself: it runs Claude only on a
 key, runs every turn under a locked harness, limits egress to an allowlist of hosts
 (`runner/ec2/README.md` § Egress lock), keeps nothing after a turn, and holds only agents
 that handle sensitive data. The box runs in that mode with `RUNNER_DATA_MODE=sensitive_data`
-and reports it on every heartbeat; any other non-empty value takes no turn.
+and reports it on every heartbeat; any other non-empty value takes no turn. The report
+is believed only from a **cloud** runner's beat signed in with its own device key
+(`RunnerAccessToken`, `runner_protocol.data_mode_trusted`); a laptop's, or any beat sent
+with a person's token, is recorded as no data mode. So the declaration (a person) and the
+report (the box's stack) never come from the same hand. `tests/test_data_mode_trust.py`.
 
 Nothing of a sensitive-data box's transcripts reaches canopy-web except a confined
 turn's sealed turn-end rows. Its usage report keeps no title, a session canopy has no
@@ -519,15 +523,30 @@ reported session (`session_sync.session_home`) or posting `session-backfill` is 
 with 409 on the routes. `tests/test_sensitive_box_uploads.py`.
 
 On the box (`runner/ec2/README.md` § Sensitive-data mode): every turn's read tools are
-scoped to its own working directory and caller envelope, and every transcript, the
-kept-conversation records and the other per-turn state under `~/.canopy` are denied by
-name (`sensitive_data_settings`; a confined session elsewhere gets the same denies from
-`native_permissions`, and a read tool with no `read_paths` reaches only its worktree).
+scoped to its own working directory, its caller envelope and its OWN sessions' tool output
+(the settings are rewritten as each session starts, so a fork never reads its source's),
+and every transcript, the kept-conversation records and the other per-turn state under
+`~/.canopy` are denied (`sensitive_data_settings`; a confined session elsewhere gets the
+same denies from `native_permissions`, and a read tool with no `read_paths` reaches only
+its worktree). Every other session's directory and every other turn's caller envelope are
+denied by PATTERN — every name but the turn's own (`native_permissions.complement_globs`),
+never a snapshot — as are `/proc` and browser profiles.
+
+**A caller's words never reach a confined prompt with a live `@`.** Claude Code expands
+`@/path` into the file's contents before the model runs, with no tool call: only deny
+rules stop it, not the allow list or `profile_guard`. Every confined turn, cloud and
+laptop, turns each `@` that could start a mention into `＠` (Claude Code's own escape;
+`caller.neutralise_mentions`, cloud `_neutralise_mentions`); an email address keeps its
+`@`, and server-side attribution folds `＠` back (`transcript_ingest._squash`).
+
 A sensitive conversation's kept session is forgotten when it idles, closes, the box's
-ask is refused (401/403/404, a retired box) or the box shuts down; the sweep never
-deletes a record a finishing turn rewrote meanwhile. A resumed turn ships only the
-records after its resume point, chunked, with retries, and its live tail ticks once
-more as it stops. `runner/ec2/tests/test_sensitive_data_box.py`.
+ask is refused (401/403/404, a retired box) or the box shuts down — after its turns drain,
+and no turn finishing then keeps one; the stop handler only sets flags (`_finish_stop`).
+The sweep never deletes a record a finishing turn rewrote meanwhile. A resumed turn ships
+the records after what canopy-web says it holds (the claim's `transcript_held`,
+`session_sync.turn_end_held`), so a failed earlier ship is sent again — chunked, with
+retries, and its live tail ticks once more as it stops.
+`runner/ec2/tests/test_sensitive_data_box.py`.
 
 - A **host** requires flags of its visitors' conversations with
   `CANOPY_HOST["RUNNER_REQUIREMENTS"] = ["sensitive_data"]` (SDK `dimagi-canopy`); the SDK signs

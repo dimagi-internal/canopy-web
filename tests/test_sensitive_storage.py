@@ -591,3 +591,41 @@ def test_a_sensitive_turns_ledger_reads_as_a_log_of_metadata(w):
     c = Client()
     c.force_login(outsider)
     assert c.get(f"/api/harness/turns/{t.pk}/events").status_code == 404
+
+
+def _ship_records(w, runner, transcript_id, rows):
+    """Rows at their real ordinals: one per transcript record (`compose_index(record)`)."""
+    from canopy_transcript import compose_index
+
+    return w["c"].post(f"/api/harness/runners/{runner.id}/session-stream", data={
+        "session_id": str(w["hot"].id), "transcript_id": transcript_id,
+        "events": [{"kind": k, "seq": compose_index(rec), "index": compose_index(rec),
+                    "payload": {"text": t}} for rec, k, t in rows]}, content_type="application/json")
+
+
+def test_the_claim_says_how_much_of_each_transcript_canopy_holds(w):
+    """A resumed turn ships from what canopy-web HOLDS, not from what its box believes
+    an earlier turn shipped: a ship that failed then is sent again."""
+    from apps.canopy_sessions.services import TRANSCRIPT_SOURCED
+    from apps.harness.schemas import ClaimedTurnOut
+    from apps.harness.session_sync import turn_end_held
+
+    w["hot"].metadata = {**w["hot"].metadata, TRANSCRIPT_SOURCED: True}
+    w["hot"].save(update_fields=["metadata"])
+    assert ClaimedTurnOut.resolve_transcript_held(_turn(w["hot"])) == {}
+    first = _turn(w["hot"], prompt=ASKED, capability="data", claimed_by=w["runner"],
+                  status=Turn.RUNNING)
+    # The first turn's reply (record 2) never landed: only records 0 and 1 did.
+    assert _ship_records(w, w["runner"], "cli-1", [(0, "user", ASKED),
+                                                   (1, "assistant", "Looking.")]).status_code == 200
+    first.status, first.finished_at = Turn.DONE, timezone.now()
+    first.save(update_fields=["status", "finished_at"])
+    _turn(w["hot"], prompt="and last month?", capability="data", claimed_by=w["runner"],
+          status=Turn.RUNNING)
+    assert _ship_records(w, w["runner"], "cli-2", [(0, "user", "x"), (1, "assistant", "y"),
+                                                   (4, "assistant", "z")]).status_code == 200
+    w["hot"].refresh_from_db()
+    assert turn_end_held(w["hot"]) == {"cli-1": 2, "cli-2": 5}
+    assert ClaimedTurnOut.resolve_transcript_held(_turn(w["hot"])) == {"cli-1": 2, "cli-2": 5}
+    # Never for a conversation that is not sensitive.
+    assert ClaimedTurnOut.resolve_transcript_held(_turn(w["cold"])) == {}

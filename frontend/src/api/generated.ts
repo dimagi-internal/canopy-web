@@ -30498,6 +30498,13 @@ export interface components {
              * @default false
              */
             readonly sensitive_conversation: boolean;
+            /**
+             * Transcript Held
+             * @default {}
+             */
+            readonly transcript_held: {
+                readonly [key: string]: number;
+            };
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {

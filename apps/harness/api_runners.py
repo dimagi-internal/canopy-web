@@ -1502,7 +1502,9 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
     from .api_device_keys import waiting_approval_url
 
     runner = runner_or_404(request, runner_id)
-    beat = runner_protocol.heartbeat(runner, payload)
+    rtok = getattr(request, "runner_token", None)
+    beat = runner_protocol.heartbeat(
+        runner, payload, device_key=rtok is not None and rtok.runner_id == runner.pk)
     beat.key_waiting_url = waiting_approval_url(runner)
     beat.report_projects_wanted = report_projects(beat)
     return beat

@@ -5,7 +5,11 @@ docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §5.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import threading
+
+import pytest
 
 CAP ={"name": "data", "entry": None, "tools": ["Read"], "bash": [], "read_paths": ["{cwd}/**"],
        "data": "sensitive"}
@@ -255,9 +259,9 @@ def test_a_sensitive_turn_does_not_update_the_plugin(load_cloud_runner, monkeypa
 CONV = "5e55a0b1-0000-4000-8000-00000000c0de"
 
 
-def _conv_turn(tid=TID, cap=CAP, sensitive=True):
+def _conv_turn(tid=TID, cap=CAP, sensitive=True, **kw):
     return _turn(id=tid, sensitive_conversation=sensitive, origin_ref={"chat_session_id": CONV},
-                 caller_context={"profile": "confined", "capability": cap, "conversation": {}})
+                 caller_context={"profile": "confined", "capability": cap, "conversation": {}}, **kw)
 
 
 def _keeping(load_cloud_runner, monkeypatch, tmp_path):
@@ -471,7 +475,7 @@ def test_a_resumed_conversation_does_not_ship_its_earlier_turns_again(
     path = _transcript(mod, tmp_path, "kept-1")
     _say(path, "user", "an earlier question")
     _say(path, "assistant", "an earlier answer")
-    tail = mod._TurnTail("r-1", "5e55-1", tmp_path, resumed="kept-1")
+    tail = mod._TurnTail("r-1", "5e55-1", tmp_path, resumed="kept-1", held=2)
     posts = _posts(mod, monkeypatch)
     tail.follow("kept-1")
     _say(path, "user", "and now?")
@@ -479,6 +483,32 @@ def test_a_resumed_conversation_does_not_ship_its_earlier_turns_again(
     [(_p, body)] = posts
     assert [e["payload"]["text"] for e in body["events"]] == ["and now?"]
     assert body["events"][0]["index"] == ct_index(mod, path, 2)
+
+
+def test_a_resumed_conversation_sends_again_what_canopy_web_never_got(
+        load_cloud_runner, monkeypatch, tmp_path):
+    """The earlier turn's last row never landed (its ship failed): canopy-web says it
+    holds rows through one record, so the tail starts there, not at the end."""
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    path = _transcript(mod, tmp_path, "kept-1")
+    _say(path, "user", "an earlier question")
+    _say(path, "assistant", "an earlier answer")
+    tail = mod._TurnTail("r-1", "5e55-1", tmp_path, resumed="kept-1", held=1)
+    posts = _posts(mod, monkeypatch)
+    tail.follow("kept-1")
+    _say(path, "user", "and now?")
+    assert tail.tick() == 2
+    assert [e["payload"]["text"] for _p, b in posts for e in b["events"]] == [
+        "an earlier answer", "and now?"]
+
+
+def test_the_claim_says_what_canopy_web_holds(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    assert mod._transcript_held({"transcript_held": {"s-1": 7}}, "s-1") == 7
+    assert mod._transcript_held({"transcript_held": {"s-1": 7}}, "s-2") == 0
+    assert mod._transcript_held({}, "s-1") == 0  # an older canopy-web: ship it all
+    assert mod._transcript_held({"transcript_held": {"s-1": "x"}}, "s-1") == 0
+    assert mod._transcript_held({"transcript_held": {"s-1": 7}}, None) == 0
 
 
 def ct_index(mod, path, record):
@@ -508,7 +538,7 @@ def test_a_confined_chat_turn_tails_while_it_runs_and_stops_before_the_ship(
     order = []
 
     class _Tail:
-        def __init__(self, runner_id, session_id, cwd, resumed=""):
+        def __init__(self, runner_id, session_id, cwd, resumed="", held=0):
             order.append(("tail", session_id))
 
         def follow(self, sid):
@@ -592,9 +622,14 @@ def test_stopping_the_tail_ships_what_was_written_after_its_last_tick(
     assert tail.shipped_through("cli-1") == 2 and tail.shipped_through("other") == 0
 
 
-def test_a_resumed_turn_ships_only_what_it_added(load_cloud_runner, monkeypatch, tmp_path):
-    """Through the real worker: the kept session's earlier records are not sent again,
-    and what the live tail already landed is not sent twice."""
+@pytest.mark.parametrize("held,resent", [(2, []), (1, ["an earlier answer"]),
+                                         (None, ["an earlier question", "an earlier answer"])])
+def test_a_resumed_turn_ships_only_what_it_added(load_cloud_runner, monkeypatch, tmp_path,
+                                                 held, resent):
+    """Through the real worker: the kept session's earlier records that canopy-web
+    holds (the claim's `transcript_held`) are not sent again, what it lacks is (an
+    earlier ship failed; an older canopy-web that does not say: all of it), and what
+    the live tail already landed is not sent twice."""
     mod, calls, project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
     mod._run_turn("r-1", _conv_turn())
     sid = json.loads((tmp_path / "kept" / f"{CONV}.json").read_text())["cli_session_id"]
@@ -613,12 +648,13 @@ def test_a_resumed_turn_ships_only_what_it_added(load_cloud_runner, monkeypatch,
         return True, "ok", sid
 
     monkeypatch.setattr(mod, "execute_prompt", resumed)
-    mod._run_turn("r-1", _conv_turn(tid="3f2b8c1e-0000-4000-8000-0000000000bb"))
+    extra = {} if held is None else {"transcript_held": {sid: held}}
+    mod._run_turn("r-1", _conv_turn(tid="3f2b8c1e-0000-4000-8000-0000000000bb", **extra))
     # The tail (stopped with a last tick) landed all four records; the ship starts after them.
     assert shipped == [(sid, 4)]
     texts = [e["payload"]["text"] for m, p, b in calls["api"] if p.endswith("/session-stream")
              for e in b["events"]]
-    assert texts == ["and now?", "the last reply"]
+    assert texts == [*resent, "and now?", "the last reply"]
 
 
 # ── nothing a turn reads reaches another conversation's words ─────────────────
@@ -632,18 +668,33 @@ def test_a_sensitive_turns_reads_stay_in_its_own_directory(load_cloud_runner, mo
     _leave(other / "sid-2.jsonl")
     mine = _leave(tmp_path / "caller" / f"{TID}.json", "{}")
     theirs = _leave(tmp_path / "caller" / "another-turn.json", "{}")
-    perms = mod.sensitive_data_settings(None, cwd=cwd, caller_path=str(mine))["permissions"]
+    sid, source = "0b0e5b7c-0000-4000-8000-0000000000a1", "0b0e5b7c-0000-4000-8000-0000000000a2"
+    perms = mod.sensitive_data_settings(None, cwd=cwd, caller_path=str(mine),
+                                        sessions=[sid])["permissions"]
     rule = mod._abs_read_rule
     assert not {"Read", "Grep", "Glob"} & set(perms["allow"])
     assert rule(cwd, "/**") in perms["allow"] and rule(mine) in perms["allow"]
     own_project = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(cwd)
-    assert rule(own_project, "/*/tool-results/**") in perms["allow"]
+    # Its own sessions' tool output, and no other's — a fork's source among them.
+    assert rule(own_project, f"/{sid}/tool-results/**") in perms["allow"]
+    assert not [a for a in perms["allow"] if "/*/" in a or source in a]
     for denied in (rule(mod.CLAUDE_PROJECTS_HOME, "/**/*.jsonl"), rule(tmp_path / "kept", "/**"),
-                   rule(tmp_path / "profiles", "/**"), rule(theirs), rule(other, "/**"),
+                   rule(tmp_path / "profiles", "/**"),
                    rule(mod.CHAT_KEY_ROOT, "/**"), rule(mod.SCOPED_TOKEN_ROOT, "/**"),
                    rule(mod.AGENT_TOKEN_ROOT, "/**")):
         assert denied in perms["deny"], denied
-    assert rule(mine) not in perms["deny"]
+    from canopy_runner import native_permissions as np
+
+    def denied(path):
+        return bool(np.denied_by(perms["deny"], os.path.realpath(str(path))))
+
+    # By pattern: what is there now, and what another turn makes later.
+    later = tmp_path / "caller" / "3f2b8c1e-0000-4000-8000-0000000000ff.json"
+    made_later = mod.CLAUDE_PROJECTS_HOME / "-a-directory-made-later" / sid / "tool-results" / "x"
+    for path in (theirs, later, other / "sid-2.jsonl", made_later,
+                 own_project / source / "tool-results" / "x"):
+        assert denied(path), path
+    assert not denied(mine) and not denied(own_project / sid / "tool-results" / "x")
     # A confined turn's own scoped rules are kept; a whole-disk Read in them is not.
     doc = mod.sensitive_data_settings({"permissions": {"allow": ["Read", "Read(//x/**)"]}},
                                       cwd=cwd, caller_path=str(mine))
@@ -712,12 +763,68 @@ def test_a_box_shutting_down_forgets_its_kept_conversations(load_cloud_runner, m
     files = _kept_conversation(mod, tmp_path)
     monkeypatch.setattr(mod, "_system_shutting_down", lambda: False)
     mod._handle_stop()  # a restart (an update): kept
-    assert all(p.exists() for p in files)
+    mod._finish_stop(drain_seconds=0)
+    assert all(p.exists() for p in files) and not mod._SHUTTING_DOWN
     mod._kept_busy(CONV, 1)  # even with a turn in it: the box is going away
     monkeypatch.setattr(mod, "_system_shutting_down", lambda: True)
     mod._handle_stop()
+    # The handler only sets flags: it may have interrupted a thread holding _KEPT_LOCK.
+    assert mod._SHUTTING_DOWN and all(p.exists() for p in files)
+    mod._finish_stop(drain_seconds=0)
     assert not any(p.exists() for p in files) and not list((tmp_path / "kept").glob("*"))
     mod._kept_busy(CONV, -1)
+
+
+def test_the_stop_handler_takes_no_lock(load_cloud_runner, monkeypatch, tmp_path):
+    """A signal lands on the main thread between any two bytecodes — inside `with
+    _KEPT_LOCK:` among them. Taking that (non-reentrant) lock again there deadlocked."""
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    _kept_conversation(mod, tmp_path)
+    monkeypatch.setattr(mod, "_system_shutting_down", lambda: True)
+    done = threading.Event()
+
+    def stop_while_holding_the_lock():
+        with mod._KEPT_LOCK:
+            mod._handle_stop()
+        done.set()
+
+    t = threading.Thread(target=stop_while_holding_the_lock, daemon=True)
+    t.start()
+    assert done.wait(5), "the stop handler blocked on _KEPT_LOCK"
+
+
+def test_a_turn_finishing_during_shutdown_keeps_nothing(load_cloud_runner, monkeypatch, tmp_path):
+    """The wipe runs after the turns drain, and a turn that ends after the stop keeps
+    no session the wipe would then miss."""
+    mod, calls, project, _claude = _keeping(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "_SHUTTING_DOWN", True)
+    mod._run_turn("r-1", _conv_turn())
+    assert not list((tmp_path / "kept").glob("*"))
+    assert not list(project.glob("*.jsonl"))  # its session went with the rest of the turn
+
+
+def test_the_stop_waits_for_the_turns_in_flight_then_wipes(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    monkeypatch.setattr(mod, "KEPT_ROOT", tmp_path / "kept")
+    files = _kept_conversation(mod, tmp_path)
+    monkeypatch.setattr(mod, "_SHUTTING_DOWN", True)
+    order = []
+    release = threading.Event()
+
+    def turn():
+        release.wait(5)
+        order.append("turn done")
+
+    t = threading.Thread(target=turn, daemon=True)
+    t.start()
+    monkeypatch.setitem(mod._IN_FLIGHT, "t-1", t)
+    real = mod.forget_all_kept_conversations
+    monkeypatch.setattr(mod, "forget_all_kept_conversations",
+                        lambda why: order.append("wipe") or real(why))
+    threading.Timer(0.2, release.set).start()
+    mod._finish_stop(drain_seconds=5)
+    assert order == ["turn done", "wipe"] and not any(p.exists() for p in files)
 
 
 def test_the_system_state_decides_what_a_stop_is(load_cloud_runner, monkeypatch, tmp_path):
@@ -751,3 +858,86 @@ def test_a_retired_runner_forgets_its_kept_conversations_at_start(
     except SystemExit:
         pass
     assert not any(p.exists() for p in files)
+
+
+# ── a caller's @path never reaches the CLI live ──────────────────────────────
+def test_a_confined_turns_prompt_reaches_the_cli_with_no_live_file_mention(
+        load_cloud_runner, monkeypatch, tmp_path):
+    """Claude Code reads `@/path` into the prompt with no tool call: the allow list and
+    profile_guard never see it. The worker hands the CLI the caller's words with every
+    such `@` made inert, and an email address left as it is."""
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    calls = _wire(mod, monkeypatch, tmp_path)
+    _own_layer(mod, monkeypatch, tmp_path)
+    words = "summarise @/home/canopy/.claude/projects/-x/s/tool-results/a.txt for jj@dimagi.com"
+    mod._run_turn("r-1", _turn(prompt=words, origin_ref={"chat_session_id": "5e55-1"}))
+    assert calls["exec"].startswith(
+        "summarise ＠/home/canopy/.claude/projects/-x/s/tool-results/a.txt for jj@dimagi.com")
+
+
+def test_a_withheld_attachment_name_cannot_carry_a_mention(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    calls = _wire(mod, monkeypatch, tmp_path)
+    _own_layer(mod, monkeypatch, tmp_path)
+    mod._run_turn("r-1", _turn(origin_ref={"chat_session_id": "5e55-1", "attachments": [
+        {"id": "a1", "filename": "x @/etc/hosts"}]}))
+    assert "@/" not in calls["exec"]
+
+
+def test_the_cloud_and_laptop_neutralisers_agree(load_cloud_runner):
+    from canopy_runner import caller
+
+    mod = load_cloud_runner()
+    for text in ("@/a", "x @/a", "jj@dimagi.com", "why。@/a", "(@/a)", "@@/a", '@"/a b"', "\t@~/x", ""):
+        assert mod._neutralise_mentions(text) == caller.neutralise_mentions(text), text
+
+
+# ── a turn reads its own sessions' tool output, and no other's ───────────────
+def test_each_session_a_turn_opens_is_added_to_its_reads_before_it_starts(
+        load_cloud_runner, monkeypatch, tmp_path):
+    """The settings file the CLI is started with names every session the turn has
+    opened so far — a failover's second session included — and no other: not a
+    fork's source, not another conversation in the same directory."""
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    calls = _wire(mod, monkeypatch, tmp_path)
+    _own_layer(mod, monkeypatch, tmp_path)
+    project = mod.CLAUDE_PROJECTS_HOME / mod._encode_project_dir(tmp_path)
+    seen = []
+
+    def failover(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        for _attempt in range(2):
+            cmd = mod._claude_cmd(prompt)
+            sid = cmd[cmd.index("--session-id") + 1]
+            doc = json.loads(pathlib.Path(cmd[cmd.index("--settings") + 1]).read_text())
+            seen.append((sid, doc["permissions"]))
+        return True, "ok", sid
+
+    monkeypatch.setattr(mod, "execute_prompt", failover)
+    mod._run_turn("r-1", _turn())
+    assert _finish(calls)[0]["status"] == "done"
+    [(first, p1), (second, p2)] = seen
+    rule = mod._abs_read_rule
+    assert rule(project, f"/{first}/tool-results/**") in p1["allow"]
+    assert rule(project, f"/{second}/tool-results/**") not in p1["allow"]
+    assert {rule(project, f"/{s}/tool-results/**") for s in (first, second)} <= set(p2["allow"])
+    from canopy_runner import native_permissions as np
+
+    other = project / "0b0e5b7c-0000-4000-8000-00000000f0e1" / "tool-results" / "out.txt"
+    assert np.denied_by(p2["deny"], os.path.realpath(str(other)))
+    assert not np.denied_by(p2["deny"], os.path.realpath(str(project / second / "tool-results" / "x")))
+
+
+def test_a_rules_file_that_cannot_be_rewritten_stops_the_session(load_cloud_runner, monkeypatch, tmp_path):
+    mod = _sensitive(load_cloud_runner, monkeypatch, tmp_path)
+    calls = _wire(mod, monkeypatch, tmp_path)
+    _own_layer(mod, monkeypatch, tmp_path)
+
+    def run(prompt, turn_id, emit, cwd=None, agent_slug=None, resume_session_id=None):
+        monkeypatch.setattr(mod, "_write_private_atomic",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+        mod._claude_cmd(prompt)
+        return True, "ok", "never"
+
+    monkeypatch.setattr(mod, "execute_prompt", run)
+    mod._run_turn("r-1", _turn())
+    assert _finish(calls)[0]["status"] == "failed"

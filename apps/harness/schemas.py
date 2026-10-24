@@ -12,7 +12,7 @@ from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_v
 
 from apps.workspaces import links
 
-from . import sensitivity
+from . import sensitivity, session_sync
 from .models import Turn
 from .runner_requirements import is_sensitive_data_box
 
@@ -971,6 +971,11 @@ class ClaimedTurnOut(TurnOut):
     # to the same capability, so a sensitive-data runner resumes the Claude session
     # it kept for the conversation's previous turn rather than start fresh.
     sensitive_conversation: bool = False
+    # For a turn in a sensitive conversation: {Claude session id: how many of that
+    # transcript's records canopy-web holds rows through} for each transcript an
+    # earlier turn of it shipped (`session_sync.turn_end_held`). A runner resuming one
+    # ships what comes after, so a ship that failed before is sent again.
+    transcript_held: dict[str, int] = {}
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -990,6 +995,13 @@ class ClaimedTurnOut(TurnOut):
     def resolve_sensitive_conversation(obj) -> bool:
         session = getattr(obj, "chat_session", None)
         return session is not None and sensitivity.any_sensitive(session, obj)
+
+    @staticmethod
+    def resolve_transcript_held(obj) -> dict[str, int]:
+        session = getattr(obj, "chat_session", None)
+        if session is None or not sensitivity.any_sensitive(session, obj):
+            return {}
+        return session_sync.turn_end_held(session)
 
     @staticmethod
     def resolve_caller_context(obj) -> dict:

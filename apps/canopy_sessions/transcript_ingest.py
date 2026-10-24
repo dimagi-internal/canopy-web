@@ -579,8 +579,13 @@ def _squash(text: str) -> str:
     exactly the characters the delivery path is known to mangle, at the cost
     of conflating "a b" and "ab" — accepted, because `_MatchPool.claim` still
     resolves that ambiguity the same way as an exact duplicate: earliest
-    unlinked candidate, consumed in send order."""
-    return re.sub(r"\s+", "", text or "")
+    unlinked candidate, consumed in send order.
+
+    Also blind to the fullwidth `＠` (U+FF20): a runner types a confined turn's
+    prompt with every `@` that could be a file mention turned into one
+    (canopy_runner `caller.neutralise_mentions`), so the transcript's line has it
+    where the person's send has `@`."""
+    return re.sub(r"\s+", "", text or "").replace("\uff20", "@")
 
 
 class _MatchPool:
