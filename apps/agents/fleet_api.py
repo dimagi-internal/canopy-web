@@ -26,7 +26,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path
 from apps.workspaces.models import Workspace
 
-from . import kb_drive, kb_store, kb_vectors, kb_versions, services, work
+from . import kb_store, kb_vectors, kb_versions, services, work
 from .api import list_agents
 from .api_board import apply_project_patch, project_detail, require_workspace_editor
 from .gates import (
@@ -329,7 +329,7 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
         common = {"address": p.address, "workspace": p.workspace_id,
                   "workspace_name": names.get(p.workspace_id, p.workspace_id),
                   "steward_slug": p.agent_slug or "", "project_url": p.url}
-        if p.mcp_path and kb_drive.may_read(request.user, p):
+        if p.mcp_path:
             url = f"{base}{p.mcp_path}".rstrip("/")
             out.append(McpServerOut(
                 name=p.handle, title=p.name, description=p.outcome, kind=p.mcp_kind, url=url,
@@ -445,8 +445,7 @@ def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPub
     (every serving instance re-fetches it by its sha256), as a new FULL version of its
     log (`…/kb/versions`) made from version `base`: 409 when another landed since. It
     carries the `curation` state it was built from, which the next refresh starts from.
-    A Drive-sourced file is opened and its documents checked against the owner's
-    approvals first (422). Earlier versions' files are kept for rollback (the newest few)."""
+    Earlier versions' files are kept for rollback (the newest few)."""
 
     project = _workspace_project_or_404(request, workspace, handle)
     require_project_edit(request, project)
@@ -454,8 +453,7 @@ def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPub
         project, _ = _kb_call(lambda: kb_versions.publish_full(project, payload.key, payload.sha256,
                                                                base=payload.base, curation=payload.curation,
                                                                published_by=kb_versions.publisher(request.user),
-                                                               changes=payload.changes,
-                                                               check_ids=kb_drive.check_ids(project)))
+                                                               changes=payload.changes))
     except kb_versions.KbConflict as exc:
         raise HttpError(409, str(exc)) from exc
     # Dormant: a no-op while KB_VECTORS is off (kb_vectors.py). When on, it brings

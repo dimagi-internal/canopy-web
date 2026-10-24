@@ -1603,9 +1603,6 @@ class ProjectService(models.Model):
     #: the project's Drive folder (`kb_versions`); no reader needs it — readers call the MCP.
     kb_drive_replica = models.BooleanField(default=False)
     kb_drive_replica_file_id = models.CharField(max_length=128, blank=True, default="")
-    #: Who may query a KB with a Drive source, beside its owner and its lead agent
-    #: (`kb_drive.may_read`). A KB of public sources ignores it.
-    kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")
 
     class Meta:
         ordering = ["kind", "name"]
@@ -2656,20 +2653,16 @@ class KbSource(models.Model):
     (`meta.source` on its record); what happens after the source is shared by all.
 
     * `web` — a curator's crawler (GiveWell's, in eva). `config` notes what it reads.
-    * `drive_folders` — Google Drive folders (`config.folders`: ids). Nothing in them is
-      read until the project's owner approves it (`KbDriveFile`, `kb_drive`).
+      The only kind.
     """
 
-    WEB, DRIVE = "web", "drive_folders"
-    KIND_CHOICES = [(WEB, "Web crawl"), (DRIVE, "Google Drive folders")]
+    WEB = "web"
+    KIND_CHOICES = [(WEB, "Web crawl")]
 
     project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="kb_sources")
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     name = models.CharField(max_length=100)
     config = models.JSONField(default=dict, blank=True)
-    #: A Drive source's changes feed position (`changes.list` page token), kept by the steward.
-    page_token = models.CharField(max_length=200, blank=True, default="")
-    inventoried_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2677,60 +2670,3 @@ class KbSource(models.Model):
         db_table = "agents_kb_source"
         ordering = ["project", "id"]
         constraints = [models.UniqueConstraint(fields=["project", "name"], name="kb_source_name_unique")]
-
-
-class KbDriveFile(models.Model):
-    """One file or folder of a Drive source, as its METADATA showed it — the owner's
-    review list. The inventory never opens a file; its contents are read only once
-    `decision` is approved (`kb_drive.readable`), and indexed only when it is not held.
-
-    A decision persists across refreshes (an excluded file stays excluded). A file
-    that appears later under an approved folder is approved by that folder's
-    `auto_approve` rule, else it waits as pending: the "new since approval" queue.
-    """
-
-    PENDING, APPROVED, EXCLUDED = "pending", "approved", "excluded"
-    DECISION_CHOICES = [(PENDING, "Pending"), (APPROVED, "Approved"), (EXCLUDED, "Excluded")]
-
-    source = models.ForeignKey(KbSource, on_delete=models.CASCADE, related_name="drive_files")
-    file_id = models.CharField(max_length=128)
-    parent_id = models.CharField(max_length=128, blank=True, default="")
-    name = models.CharField(max_length=500)
-    #: Its folders' names from the source's root down ("Kangaroo care / Protocols").
-    path = models.TextField(blank=True, default="")
-    mime_type = models.CharField(max_length=200, blank=True, default="")
-    is_folder = models.BooleanField(default=False)
-    size = models.BigIntegerField(null=True, blank=True)
-    owner = models.CharField(max_length=254, blank=True, default="")
-    modified_time = models.CharField(max_length=40, blank=True, default="")
-    #: What says it changed: an upload's md5Checksum, a Google Doc's version.
-    md5 = models.CharField(max_length=64, blank=True, default="")
-    drive_version = models.CharField(max_length=40, blank=True, default="")
-    web_url = models.URLField(max_length=500, blank=True, default="")
-    #: Who can open it ("user:a@x", "domain:x", "anyone"), and why it is skipped if it is.
-    readers = models.JSONField(default=list, blank=True)
-    skip_reason = models.CharField(max_length=200, blank=True, default="")
-    #: Why its metadata suggests a second look (`canopy_kb.sensitive.name_flags`).
-    flags = models.JSONField(default=list, blank=True)
-    decision = models.CharField(max_length=10, choices=DECISION_CHOICES, default=PENDING)
-    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-                                   related_name="+")
-    decided_at = models.DateTimeField(null=True, blank=True)
-    #: A folder's rule for files that appear in it after approval.
-    auto_approve = models.BooleanField(default=False)
-    #: After approval, before indexing: column headers that look like personal data
-    #: (`canopy_kb.sensitive.header_flags`). Held until the owner releases it.
-    held_headers = models.JSONField(default=list, blank=True)
-    hold_released = models.BooleanField(default=False)
-    #: Still in the folder at the last inventory (trashed, deleted or moved out: False).
-    present = models.BooleanField(default=True)
-    first_seen_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "agents_kb_drive_file"
-        ordering = ["source", "path", "name"]
-        constraints = [models.UniqueConstraint(fields=["source", "file_id"], name="kb_drive_file_unique")]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"{self.source_id}:{self.name} {self.decision}"

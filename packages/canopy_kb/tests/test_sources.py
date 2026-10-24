@@ -1,40 +1,9 @@
-"""What sources need from the engine: conditional refetches, the sensitivity checks a
-Drive source's review runs, and a Drive file's `original`."""
+"""What sources need from the engine: conditional refetches and a Drive file's `original`."""
 import json
 
 import pytest
 
-from canopy_kb import KB, build, sensitive
-
-
-def test_names_that_suggest_records_about_people_are_flagged_before_anything_is_read():
-    assert sensitive.name_flags("Patient list March.xlsx")
-    assert sensitive.name_flags("summary.docx", folders=["Kangaroo care", "Raw data"])
-    assert sensitive.name_flags("Consent forms") and sensitive.name_flags("KMC line_list v2")
-    assert sensitive.name_flags("Protocol.pdf", owner="someone@hospital.org", internal_domains=("dimagi.com",))
-    assert sensitive.name_flags("Protocol.pdf", folders=["Kangaroo care"], owner="a@dimagi.com",
-                                internal_domains=("dimagi.com",)) == []
-
-
-def test_spreadsheet_headers_that_name_or_identify_a_person_hold_it():
-    assert sensitive.header_flags(["Mother name", "DOB", "Phone", "Weight (g)", "Facility"]) == ["Mother name", "DOB", "Phone"]
-    assert sensitive.header_flags(["Patient ID", "Date of birth"]) == ["Patient ID", "Date of birth"]
-    assert sensitive.header_flags(["Indicator", "Program name", "Q1", "Q2", "File name"]) == []
-
-
-def test_header_candidates_come_from_every_sheets_top_rows(tmp_path):
-    openpyxl = pytest.importorskip("openpyxl")
-    wb = openpyxl.Workbook()
-    wb.active.append(["KMC register (synthetic)"])
-    wb.active.append(["Baby name", "Birth weight"])
-    wb.create_sheet("Notes").append(["Indicator", "Value"])
-    p = tmp_path / "x.xlsx"
-    wb.save(p)
-    heads = sensitive.spreadsheet_headers(p, "xlsx")
-    assert "Baby name" in heads and "Indicator" in heads
-    assert sensitive.header_flags(heads) == ["Baby name"]
-    (tmp_path / "x.csv").write_text("\nfirst_name,village\nA,B\n")
-    assert sensitive.header_flags(sensitive.spreadsheet_headers(tmp_path / "x.csv", "csv")) == ["first_name"]
+from canopy_kb import KB, build
 
 
 def test_a_refetch_is_conditional_and_a_304_keeps_the_bytes_and_the_record(tmp_path):
