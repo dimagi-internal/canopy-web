@@ -17,6 +17,11 @@ Who may answer (`may_answer`), the "secret writer" gate:
   nothing read, so replacing stays admin-only;
 * never an agent's own login, not even its own agent's: a prompt-injected agent
   must not be able to "answer" its request with a token it was handed.
+
+A contact's chat (`Session.contact`) never carries a request: a contact is
+anonymous to Django and can't answer one, so the agent is refused there
+(409 `contact_chat`) and told to ask its owner instead. The contact door
+doesn't annotate `secret_request` on rows either (`contacts/contact_api.py`).
 """
 from __future__ import annotations
 
@@ -96,6 +101,12 @@ def create(agent, *, name: str, reason: str, user):
                            f"{agent.slug}'s secrets are not zero-knowledge: store them from its Credentials page")
     name = _declared(agent, name)
     session = _session_of_caller(agent)
+    if session is not None and session.contact_id:
+        owner = agent.owner.email if agent.owner_id else "its owner"
+        raise RequestError(409, "contact_chat",
+                           f"this chat is with a contact, who can't be asked for {agent.slug}'s secrets. "
+                           f"Don't ask for {name} in the conversation; tell them it isn't set up yet, "
+                           f"and ask {owner} to store it from {agent.slug}'s Credentials page")
     now = timezone.now()
     existing = (AgentSecretRequest.objects
                 .filter(agent=agent, name=name, session=session, status=AgentSecretRequest.OPEN,

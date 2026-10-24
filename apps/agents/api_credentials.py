@@ -556,7 +556,8 @@ def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequest
     card that seals the value in their browser and stores ciphertext only — you
     never receive the value, and must not ask for it in the chat. Read the
     request back (`get_agent_secret_request`) for `status: fulfilled`, then
-    resolve the secret the usual way."""
+    resolve the secret the usual way. Refused in a contact's chat (409
+    `contact_chat`): a contact can't fill a secret, so ask the agent's owner."""
 
     agent = agent_for_read(request, slug)
     try:
