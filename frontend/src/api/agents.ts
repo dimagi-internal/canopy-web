@@ -388,6 +388,8 @@ export async function createProject(
     // (Ninja emits required-with-default); fill them here, not at each caller.
     body: {
       ext_id: '',
+      handle: '',
+      priority: 0,
       status: 'active',
       owner_note: '',
       owner_email: '',

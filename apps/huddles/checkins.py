@@ -81,8 +81,8 @@ def _event(subject, kind: str, summary: str, *, level: str = "", **payload) -> N
         events_services.record([{
             "source": "huddles", "kind": f"huddles.checkin_{kind}", "level": level or Event.INFO,
             "summary": summary[:500],
-            "payload": {"checkin": cid, "project": project.ext_id, "agent": project.agent.slug, **payload},
-        }], workspace=project.agent.workspace)
+            "payload": {"checkin": cid, "project": project.address, "agent": project.agent_slug or "", **payload},
+        }], workspace=project.workspace)
     except Exception:  # noqa: BLE001 — bookkeeping never fails the act
         logger.exception("could not record a check-in event")
 
@@ -92,7 +92,7 @@ def _engage(kind: str, run: CheckinRun, *, user=None, surface: str = "slack", **
     from apps.agents import engagement
 
     try:
-        engagement.record(kind, workspace=run.project.agent.workspace_id, surface=surface, user=user,
+        engagement.record(kind, workspace=run.project.workspace_id, surface=surface, user=user,
                           agent=run.project.agent, project=run.project,
                           checkin=str(run.checkin_id or ""), meta={"run": run.pk, **meta})
     except Exception:  # noqa: BLE001
@@ -104,7 +104,7 @@ def _who(user) -> str:
 
 
 def project_path(project: AgentProject) -> str:
-    return f"/w/{project.agent.workspace_id}/agents/{project.agent.slug}/projects/{project.ext_id}"
+    return project.url
 
 
 def page_url(project: AgentProject) -> str:
@@ -172,7 +172,7 @@ def may_write(user, project: AgentProject) -> bool:
     """The project's owner, or an owner or admin of its workspace."""
     if not getattr(user, "is_authenticated", False):
         return False
-    return project.owner_user_id == user.pk or perms.can(user, project.agent.workspace_id, perms.INTEGRATIONS)
+    return project.owner_user_id == user.pk or perms.can(user, project.workspace_id, perms.INTEGRATIONS)
 
 
 # --- saving a check-in -------------------------------------------------------------
@@ -210,8 +210,10 @@ def save(*, project: AgentProject, by, data: dict, checkin: ProjectCheckin | Non
         return data[key] if data.get(key) is not None else default
 
     agent = project.agent
+    if agent is None:
+        raise CheckinError("a check-in is run by the project's lead agent — give the project one first", 409)
     if not may_write(by, project):
-        raise CheckinError(f"only the project's owner, or an owner or admin of {agent.workspace_id}, can change "
+        raise CheckinError(f"only the project's owner, or an owner or admin of {project.workspace_id}, can change "
                            "its check-ins", 403)
     name = (pick("name", getattr(checkin, "name", "")) or "").strip()
     if not name:
@@ -279,7 +281,6 @@ def save(*, project: AgentProject, by, data: dict, checkin: ProjectCheckin | Non
             checkin = ProjectCheckin(project=project, created_by=by)
         checkin.name, checkin.topic, checkin.lead, checkin.lead_slack_id = name, topic, lead, lead_slack
         checkin.installation, checkin.channel_id, checkin.channel_name = installation, channel_id, channel_name
-        checkin.agents = [m.slug for m in members]
         checkin.enabled = enabled
         moved = old is None or old[0] != channel_id
         if channel_id and ingest_svc.allowance_for(agent, channel_id) is None:
@@ -300,6 +301,7 @@ def save(*, project: AgentProject, by, data: dict, checkin: ProjectCheckin | Non
         elif moved:
             checkin.added_allowance = False
         checkin.save()
+        checkin.agent_members.set(members)
         _save_schedule(checkin, cron=cron, tz=tz, by=by)
         if old and moved and old[0]:
             _release_channel(agent, old[0], by=by, keep=checkin, owned=old[1])
@@ -699,8 +701,10 @@ def proposed_tasks(run: CheckinRun):
 
 
 def finish(run: CheckinRun, *, huddle_id: str, result_url: str, summary: str,
-           tasks_proposed: int | None = None) -> CheckinRun:
-    """The project agent's login reports the run done. Idempotent once done."""
+           tasks_proposed: int | None = None, update: dict | None = None) -> CheckinRun:
+    """The project agent's login reports the run done. Idempotent once done.
+    `update` ({health, body}) drafts the project's status update for its lead
+    to publish (`work.post_update`: an agent's update is always a draft)."""
     if run.status == CheckinRun.DONE:
         return run
     if run.status != CheckinRun.RUNNING:
@@ -710,6 +714,11 @@ def finish(run: CheckinRun, *, huddle_id: str, result_url: str, summary: str,
         status=CheckinRun.DONE, huddle_id=(huddle_id or "")[:128], result_url=(result_url or "")[:500],
         summary=summary or "", tasks_proposed=max(0, int(n)), finished_at=timezone.now())
     run.refresh_from_db()
+    if update:
+        from apps.agents import work  # cycle: agents.work -> agents.models <- huddles  # noqa: PLC0415
+
+        work.post_update(run.project, health=update["health"], body=update.get("body") or summary or "",
+                         author_agent=run.project.agent, checkin_run=run)
     link = run.result_url
     if not link and run.huddle_id:
         from apps.slack.services import public_url

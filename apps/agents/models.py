@@ -1248,57 +1248,64 @@ class AgentSkill(models.Model):
 
 
 class AgentProject(models.Model):
-    """A real project of this agent's — the thing its `Projects/<name>` Drive
-    folder holds.
+    """A project: a piece of work with an end, owned by a workspace.
 
-    **Why canopy holds a record and Drive still holds the files.** The layout in
-    `agent-core/deliverables.md` is per agent and non-negotiable: one Drive root
-    per agent, `Projects/<name>/` beneath it, deliverables inside. That is a good
-    home for FILES and a poor one for state — a folder cannot say who the work is
-    waiting on, whether it is finished, or which tasks belong to it, and nothing
-    can list "everything in flight" across agents by reading Drive. So the folder
-    stays exactly where it is and this row points AT it.
+    **The workspace owns it** (`workspace`), and it is addressed there by its
+    `handle`: `dimagi/unga-2026`, page `/w/dimagi/projects/unga-2026`. Any agent
+    of the workspace (or of one above it) may file tasks into it; the agents
+    working on it are its `member_agents`, and the person accountable is its
+    lead (`owner_user`).
 
-    **Two scopes.** An AGENT project (the default) is a piece of that agent's
-    work with an end; two agents on one initiative have a project each, as they
-    have a Drive folder each. A WORKSPACE project is a standing resource many
-    agents share — a funder knowledge base, say — that outlives every task
-    citing it. It is owned by the workspace (`owner_workspace`), addressed by a
-    `handle` unique there (`dimagi/givewell-kb`), and `agent` is its STEWARD:
-    the one agent that keeps it current, whose Drive folder holds its files.
-    The steward can change without the project's address changing, any agent
-    in the workspace can file tasks into it, the steward may belong to the
-    workspace or one above it (an org's agent curating a division's resource:
-    `connect/givewell-kb`, stewarded by dimagi's Eva), and an agent cannot be moved or
-    deleted out from under a workspace project it stewards
-    (`services.set_steward`, `move.py`, `api.delete_agent`).
+    **Its lead agent (`agent`) holds its files.** The layout in
+    `agent-core/deliverables.md` is per agent: one Drive root per agent,
+    `Projects/<name>/` beneath it. That is a good home for FILES and a poor one
+    for state, so the folder stays in the lead agent's Drive and this row points
+    AT it (`drive_folder_*`). A project nobody's agent leads has no folder yet.
+    The lead agent may belong to the workspace or one above it (an org's agent
+    leading a division's project: Eva, of dimagi, leads `connect/givewell-kb`).
 
-    This is canopy's one project system (the pre-agentic workbench registry of
-    repos was retired 2026-10-06). A project is a piece of work with an end —
-    "UNGA 2026 conference planning" — and names a repo it touches only as a
-    slug (`repo_slug`); there is no repo registry to point at.
+    **`ext_id` is an agent's alias** ("P5"): projects were once numbered per
+    agent, and the fleet still names them that way through
+    `/api/agents/{slug}/projects/P5/`. The alias belongs to the agent that
+    numbered it (`created_by_agent`) and survives a change of lead. A project
+    made outside an agent's route has none.
+
+    This is canopy's one project system. A project names a repo it touches only
+    as a slug (`repo_slug`); there is no repo registry to point at.
     """
 
     #: `proposed` — an agent proposed it (from a huddle, a chat, its own turn) and
     #: nobody has started or declined it yet; its decision card ("Start this
     #: project?") is how a person does either (`apps/agents/proposals.py`).
-    PROPOSED, ACTIVE, DONE, ARCHIVED = "proposed", "active", "done", "archived"
-    STATUS_CHOICES = [(PROPOSED, "Proposed"), (ACTIVE, "Active"), (DONE, "Done"), (ARCHIVED, "Archived")]
-
-    AGENT_SCOPE, WORKSPACE_SCOPE = "agent", "workspace"
-    SCOPE_CHOICES = [(AGENT_SCOPE, "Agent project"), (WORKSPACE_SCOPE, "Workspace project")]
+    PROPOSED, PLANNED, ACTIVE, PAUSED = "proposed", "planned", "active", "paused"
+    DONE, CANCELED, ARCHIVED = "done", "canceled", "archived"
+    STATUS_CHOICES = [(PROPOSED, "Proposed"), (PLANNED, "Planned"), (ACTIVE, "Active"),
+                      (PAUSED, "Paused"), (DONE, "Done"), (CANCELED, "Canceled"),
+                      (ARCHIVED, "Archived")]
+    #: Status -> category, the only thing progress, health and lists read.
+    CATEGORY = {PROPOSED: "triage", PLANNED: "unstarted", ACTIVE: "started", PAUSED: "paused",
+                DONE: "completed", CANCELED: "canceled", ARCHIVED: "canceled"}
+    #: Statuses a project is still open in, in the order a list shows them.
+    OPEN_STATUSES = (ACTIVE, PAUSED, PLANNED, PROPOSED)
     HANDLE_RE = r"^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$"
 
-    #: The owning agent of an agent project; the STEWARD of a workspace project.
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="projects")
-    scope = models.CharField(max_length=16, choices=SCOPE_CHOICES, default=AGENT_SCOPE)
-    #: Set exactly when `scope` is workspace: the workspace that owns it. The
-    #: steward's workspace or one below it (`services.may_hold_workspace_project`).
-    owner_workspace = models.ForeignKey("workspaces.Workspace", null=True, blank=True,
-                                        on_delete=models.CASCADE, related_name="workspace_projects")
-    #: A workspace project's address, unique in its workspace ("givewell-kb").
-    #: Blank for agent projects, which are addressed `<agent>/<ext_id>`.
-    handle = models.CharField(max_length=60, blank=True, default="")
+    #: The workspace that owns it. The lead agent's workspace or one below it
+    #: (`services.may_hold_workspace_project`).
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="projects")
+    #: Its address in its workspace ("givewell-kb"), lower case.
+    handle = models.CharField(max_length=60)
+    #: The LEAD AGENT: keeps it current and holds its Drive folder. Null for a
+    #: project no agent leads.
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="projects")
+    #: The agents working on it. The lead agent is always one (`services`).
+    member_agents = models.ManyToManyField(Agent, blank=True, related_name="member_projects")
+    #: The agent whose `P<n>` alias `ext_id` is.
+    created_by_agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL,
+                                         related_name="filed_projects")
+    created_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                        on_delete=models.SET_NULL, related_name="filed_projects")
     #: What a workspace project SERVES as its own MCP server at `mcp_path`
     #: (`apps/mcp/projects.py`): "" nothing, "kb" a knowledge base its steward
     #: publishes (`kb_*` below; tools from the KB's own manifest, `canopy_kb.tools`).
@@ -1322,17 +1329,21 @@ class AgentProject(models.Model):
     #: Who may query a KB with a Drive source, beside its owner and its steward
     #: (`kb_drive.may_read`). A KB of public sources ignores it.
     kb_readers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="readable_kbs")
-    #: Stable id the agent addresses it by, unique per agent — the same shape as
-    #: `AgentTask.ext_id` ("P1", "P2"), so the CLI can name a project without
-    #: guessing at database ids.
-    ext_id = models.CharField(max_length=64, help_text="Stable id, unique per agent (P1, P2 …).")
+    #: `created_by_agent`'s alias for it ("P5"), unique per that agent; blank for
+    #: a project made outside an agent's route.
+    ext_id = models.CharField(max_length=64, blank=True, default="",
+                              help_text="An agent's alias (P1, P2 …), unique per that agent.")
     name = models.CharField(max_length=200, help_text="What the project is called — and its Drive folder's name.")
     outcome = models.TextField(blank=True, default="", help_text="What done looks like.")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=ACTIVE)
+    #: 0 none, 1 urgent, 2 high, 3 medium, 4 low — the same scale as a task's.
+    priority = models.PositiveSmallIntegerField(default=0)
+    start_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
 
-    #: The human who owns the outcome. A real person where canopy knows them, so
-    #: "waiting on you" can reach someone; free text otherwise, because half the
-    #: stakeholders in the fleet's boards today are names canopy has never seen.
+    #: The LEAD: the person accountable for the outcome. A real person where
+    #: canopy knows them, so "waiting on you" can reach someone; free text
+    #: (`owner_note`) otherwise.
     owner_user = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="agent_projects",
@@ -1375,66 +1386,102 @@ class AgentProject(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["status", "-updated_at"]
+        ordering = ["-updated_at", "-id"]
         constraints = [
-            models.UniqueConstraint(fields=["agent", "ext_id"], name="agent_project_ext_id_unique"),
-            models.UniqueConstraint(fields=["owner_workspace", "handle"],
-                                    condition=models.Q(scope="workspace"),
-                                    name="workspace_project_handle_unique"),
-            # owner + handle exactly when it is a workspace project, never half of one
-            models.CheckConstraint(
-                condition=(models.Q(scope="agent", owner_workspace__isnull=True, handle="")
-                           | (models.Q(scope="workspace", owner_workspace__isnull=False)
-                              & ~models.Q(handle=""))),
-                name="project_scope_fields_agree"),
+            models.UniqueConstraint(fields=["created_by_agent", "ext_id"], condition=~models.Q(ext_id=""),
+                                    name="project_agent_alias_unique"),
+            models.UniqueConstraint(fields=["workspace", "handle"], name="project_handle_unique"),
+            models.CheckConstraint(condition=~models.Q(handle=""), name="project_has_handle"),
         ]
-        indexes = [models.Index(fields=["agent", "status"])]
+        indexes = [models.Index(fields=["agent", "status"]), models.Index(fields=["workspace", "status"])]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"{self.agent_id}:{self.ext_id} {self.name}"
+        return f"{self.workspace_id}/{self.handle} {self.name}"
+
+    def save(self, *args, **kwargs):
+        """Fill what a row may not lack, whoever builds it: its workspace (its
+        lead agent's), a handle (free, from its name), and — carrying an alias —
+        the agent the alias is of. Its lead agent is always a member."""
+        creating = self.pk is None
+        if not self.workspace_id and self.agent_id:
+            self.workspace_id = self.agent.workspace_id
+        if not self.handle:
+            from .services import free_handle  # noqa: PLC0415 — services imports models
+
+            self.handle = free_handle(self.workspace_id, self.name, fallback=self.ext_id or "project")
+        if self.ext_id and not self.created_by_agent_id and creating:
+            self.created_by_agent_id = self.agent_id
+        super().save(*args, **kwargs)
+        if creating and self.agent_id:
+            self.member_agents.add(self.agent_id)
 
     # Schemas here are plain pydantic (`StrictModel`), not ninja `Schema`, so a
     # `resolve_*` on the schema is ignored — the models carry these instead, the
     # way `AgentTask.agent_slug` already does.
     @property
-    def agent_slug(self) -> str:
-        return self.agent.slug
-
-    @property
-    def workspace(self) -> str:
-        """The workspace this row lives in — the owner of a workspace project,
-        else its agent's. A list pinned to a parent workspace also carries its
-        children's rows, and the UI badges the ones from elsewhere."""
-        return self.owner_workspace_id or self.agent.workspace_id
-
-    @property
-    def is_workspace_project(self) -> bool:
-        return self.scope == self.WORKSPACE_SCOPE
+    def agent_slug(self) -> str | None:
+        """Its lead agent's slug, or None when no agent leads it."""
+        return self.agent.slug if self.agent_id else None
 
     @property
     def steward_slug(self) -> str | None:
-        """The agent that keeps a workspace project current (None for an agent project)."""
-        return self.agent.slug if self.is_workspace_project else None
+        return self.agent_slug
+
+    @property
+    def category(self) -> str:
+        return self.CATEGORY.get(self.status, "started")
+
+    @property
+    def member_slugs(self) -> list[str]:
+        if hasattr(self, "_member_slugs"):
+            return self._member_slugs
+        if self.pk is None:
+            return []
+        return sorted(a.slug for a in self.member_agents.all())
+
+    # Health and progress: a list route computes them for every row at once
+    # (`work.annotate_projects`) and caches them here; a single project reads
+    # its own.
+    @property
+    def health(self) -> str | None:
+        if hasattr(self, "_health"):
+            return self._health
+        from .work import latest_update  # cycle: agents.work -> agents.models  # noqa: PLC0415
+
+        latest = latest_update(self)
+        return latest.health if latest else None
+
+    @property
+    def update_missing(self) -> bool:
+        if hasattr(self, "_update_missing"):
+            return self._update_missing
+        from .work import update_missing  # cycle: agents.work -> agents.models  # noqa: PLC0415
+
+        return update_missing(self)
+
+    @property
+    def done_task_count(self) -> int:
+        cached = getattr(self, "_done_task_count", None)
+        return self.tasks.filter(status=AgentTask.DONE).count() if cached is None else cached
 
     @property
     def address(self) -> str:
-        """How every caller names it: `<workspace>/<handle>`, else `<agent>/<ext_id>`."""
-        if self.is_workspace_project:
-            return f"{self.owner_workspace_id}/{self.handle}"
-        return f"{self.agent.slug}/{self.ext_id}"
+        """How every caller names it: `<workspace>/<handle>`."""
+        return f"{self.workspace_id}/{self.handle}"
 
     @property
     def url(self) -> str:
-        if self.is_workspace_project:
-            return f"/w/{self.owner_workspace_id}/projects/{self.handle}"
-        return self.board_url
+        """Its one page."""
+        return f"/w/{self.workspace_id}/projects/{self.handle}"
 
     @property
     def board_url(self) -> str:
-        """Its page on its agent's (steward's) board — in the AGENT's workspace,
-        which for a division's project stewarded from the parent is not the
-        project's (`connect/givewell-kb` → `/w/dimagi/agents/eva/projects/P12`)."""
-        return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id}"
+        """Its page on its lead agent's board, in the AGENT's workspace (which for
+        a division's project led from the parent is not the project's); `url`
+        when no agent leads it."""
+        if not self.agent_id:
+            return self.url
+        return f"/w/{self.agent.workspace_id}/agents/{self.agent.slug}/projects/{self.ext_id or self.handle}"
 
     @property
     def kb_version_number(self) -> int | None:
@@ -1446,8 +1493,8 @@ class AgentProject(models.Model):
         something, else "". Under `/api/mcp/` so the same sign-in (a personal
         token, or OAuth) reaches it: one server per project, so a reader adds just
         this one and not the whole canopy surface."""
-        if self.is_workspace_project and self.mcp_kind and self.kb_key:
-            return f"/api/mcp/projects/{self.owner_workspace_id}/{self.handle}/"
+        if self.mcp_kind and self.kb_key:
+            return f"/api/mcp/projects/{self.workspace_id}/{self.handle}/"
         return ""
 
     @property
@@ -1460,11 +1507,11 @@ class AgentProject(models.Model):
         if not self.spawned_from_id:
             return None
         t = self.spawned_from
-        return {"agent": t.agent.slug, "ref": t.ext_id, "title": t.title, "status": t.status,
-                "project_ref": t.project.ext_id if t.project_id else "",
+        return {"agent": t.agent_slug or "", "ref": t.ref, "key": t.key, "title": t.title,
+                "status": t.status,
+                "project_ref": (t.project.ext_id or t.project.handle) if t.project_id else "",
                 "project_name": t.project.name if t.project_id else "",
-                # the project's own page: a workspace project's task may be another agent's
-                "url": (t.project.url if t.project_id else f"/w/{t.agent.workspace_id}/agents/{t.agent.slug}/tasks")}
+                "url": t.url}
 
     @property
     def task_count(self) -> int:
@@ -1671,27 +1718,71 @@ class ProjectBacking(models.Model):
 
 
 class AgentTask(models.Model):
-    """A task in the agent's tracker. Source of truth is a Google Sheet the
-    agent maintains; Echo syncs rows here so canopy-web can render a board.
-    `status` is normalized to one of the board columns. Synced wholesale per
-    agent, keyed by `ext_id` (stable sheet-row id) so edits/removals
-    propagate."""
+    """A task: one step of work, owned by a workspace and addressed by its KEY
+    (`DIM-142`) — the workspace's prefix (`TaskSettings`) and its number there.
 
-    # Suggested = the agent proposed it; a human must validate (Linear "Triage").
-    # No "To do" (the agent would just do it) and no "Blocked" column — "waiting
-    # on a person" is expressed by `assigned` being a human, shown as an overlay.
-    SUGGESTED, IN_PROGRESS, DONE, DECLINED = "suggested", "in_progress", "done", "declined"
+    **Assigned to a person or an agent** (decision 2026-10-24), never both: the
+    agent doing it (`agent`) or the person (`assignee_user`), or nobody yet. An
+    agent assignee is who an approval starts a turn for; a person assignee is
+    who "My tasks" lists it for.
+
+    **`ext_id` is an agent's alias** ("T12"): tasks were once numbered per agent
+    and the fleet still names them so, through `/api/agents/{slug}/tasks/T12/`
+    and the canopy CLI (which numbers them on the client). The alias belongs to
+    the agent that filed it (`created_by_agent`) and survives reassignment. A
+    task filed anywhere else has none.
+
+    `status` values are fixed; each maps to a category (`CATEGORY`), which is
+    what progress, counts and agents read. A workspace may rename how each
+    category is SHOWN (`TaskSettings.status_names`)."""
+
+    # Suggested = the agent proposed it; a person decides (Linear "Triage").
+    # Backlog = accepted, not now. Todo = accepted, next up. "Waiting on a person"
+    # is not a status: it is `waiting_on_user` or an open ask, shown as an overlay.
+    SUGGESTED, BACKLOG, TODO, IN_PROGRESS = "suggested", "backlog", "todo", "in_progress"
+    DONE, DECLINED = "done", "declined"
     #: An OPEN task — the one definition every count of "open tasks" uses.
-    LIVE_STATUSES = (SUGGESTED, IN_PROGRESS)
+    LIVE_STATUSES = (SUGGESTED, BACKLOG, TODO, IN_PROGRESS)
     STATUS_CHOICES = [
-        (SUGGESTED, "Suggested"),
+        (SUGGESTED, "Triage"),
+        (BACKLOG, "Backlog"),
+        (TODO, "Todo"),
         (IN_PROGRESS, "In progress"),
         (DONE, "Done"),
-        (DECLINED, "Declined"),
+        (DECLINED, "Canceled"),
     ]
+    #: Status -> category (Linear's six). Code that judges progress reads these.
+    CATEGORY = {SUGGESTED: "triage", BACKLOG: "backlog", TODO: "unstarted",
+                IN_PROGRESS: "started", DONE: "completed", DECLINED: "canceled"}
+    #: Status order a list or board shows them in.
+    STATUS_ORDER = (SUGGESTED, IN_PROGRESS, TODO, BACKLOG, DONE, DECLINED)
 
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="tasks")
-    ext_id = models.CharField(max_length=64, help_text="Stable id from the source sheet.")
+    #: 0 none, 1 urgent, 2 high, 3 medium, 4 low (Linear's scale).
+    PRIORITY_CHOICES = [(0, "No priority"), (1, "Urgent"), (2, "High"), (3, "Medium"), (4, "Low")]
+    CONFIDENCE_VALUES = ("", "high", "medium", "low")
+
+    #: The workspace that owns it.
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="tasks")
+    #: Its number in its workspace; with the prefix, its `key`.
+    number = models.PositiveIntegerField()
+    #: `<PREFIX>-<number>`, frozen when it is made (a prefix never changes once
+    #: used), so a lookup by key is one indexed read.
+    key = models.CharField(max_length=24, unique=True)
+    #: The ASSIGNEE AGENT — the agent doing the work. Null when a person is the
+    #: assignee, or nobody is.
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL,
+                              related_name="tasks")
+    #: The ASSIGNEE PERSON. At most one of `agent` / `assignee_user` is set.
+    assignee_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                      on_delete=models.SET_NULL, related_name="assigned_tasks")
+    #: Who filed it. `created_by_agent` also owns the `ext_id` alias.
+    created_by_agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL,
+                                         related_name="filed_tasks")
+    created_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                        on_delete=models.SET_NULL, related_name="filed_tasks")
+    ext_id = models.CharField(max_length=64, blank=True, default="",
+                              help_text="An agent's alias (T1, T2 …), unique per the agent that filed it.")
     #: The project this task is part of. Optional: plenty of work is a one-off,
     #: and forcing a project on it would produce a project per task, which is
     #: what the Drive layout already warns against ("never dump flat in
@@ -1703,7 +1794,7 @@ class AgentTask(models.Model):
     #: The task this one is a step of. Subtasks, not subprojects (T72,
     #: Jonathan 2026-10-09): a product area is ONE project board, and a big
     #: piece of work inside it breaks down into child tasks rather than a new
-    #: project per piece. Same agent and same project as the parent, no cycles,
+    #: project per piece. Same workspace and project as the parent, no cycles,
     #: at most `MAX_TASK_DEPTH` levels — all enforced in `services.set_parent`,
     #: the one writer. SET_NULL: deleting a parent promotes its children to
     #: top-level tasks instead of deleting work.
@@ -1744,7 +1835,15 @@ class AgentTask(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=SUGGESTED)
     owner = models.CharField(max_length=120, blank=True, default="", help_text="Human stakeholder who owns the outcome — never the agent.")
     assigned = models.CharField(max_length=120, blank=True, default="", help_text="Who the next action waits on — the agent or a person.")
-    confidence = models.CharField(max_length=10, blank=True, default="", help_text="high / low — how sure the agent is about a suggestion.")
+    #: How sure the agent is about a suggestion: one of `CONFIDENCE_VALUES`.
+    confidence = models.CharField(max_length=10, blank=True, default="")
+    priority = models.PositiveSmallIntegerField(default=0, choices=PRIORITY_CHOICES)
+    labels = models.ManyToManyField("agents.Label", blank=True, related_name="tasks")
+    milestone = models.ForeignKey("agents.ProjectMilestone", null=True, blank=True,
+                                  on_delete=models.SET_NULL, related_name="tasks")
+    #: Out of Triage until then — or until something new happens on it (an
+    #: action or a field change clears it, `services`).
+    snoozed_until = models.DateTimeField(null=True, blank=True)
     # The agent's self-assessment, captured WHEN the task is marked done — so a
     # manager sync reads the score from completion time instead of re-grading
     # weeks later. `score` is a short grade ("A-", "B+", "4/5"); `review` is the
@@ -1805,22 +1904,89 @@ class AgentTask(models.Model):
         related_name="raised_tasks",
     )
 
-    position = models.IntegerField(default=0, help_text="Order within a status column.")
+    #: Order within a list or a board column: a fractional rank, so moving one
+    #: task between two others writes one row (`services.rank_between`).
+    rank = models.FloatField(default=0)
     source = models.CharField(max_length=100, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["status", "position", "id"]
+        ordering = ["rank", "id"]
         constraints = [
-            # Ignoring case: a task is looked up `ext_id__iexact`, so "t1" beside
+            # Ignoring case: an alias is looked up `ext_id__iexact`, so "t1" beside
             # "T1" would leave one of them unreachable.
-            models.UniqueConstraint(Lower("ext_id"), "agent", name="uniq_agent_task_extid_ci"),
+            models.UniqueConstraint(Lower("ext_id"), "created_by_agent", condition=~models.Q(ext_id=""),
+                                    name="uniq_task_agent_alias_ci"),
+            models.UniqueConstraint(fields=["workspace", "number"], name="uniq_task_number"),
+            models.CheckConstraint(condition=models.Q(agent__isnull=True) | models.Q(assignee_user__isnull=True),
+                                   name="task_one_assignee"),
+            models.CheckConstraint(condition=models.Q(confidence__in=["", "high", "medium", "low"]),
+                                   name="task_confidence_known"),
+            models.CheckConstraint(condition=models.Q(priority__lte=4), name="task_priority_known"),
         ]
-        indexes = [models.Index(fields=["agent", "status"])]
+        indexes = [models.Index(fields=["agent", "status"]), models.Index(fields=["workspace", "status"]),
+                   models.Index(fields=["assignee_user", "status"])]
 
     def __str__(self):
-        return f"task:{self.agent.slug}:{self.ext_id}:{self.status}"
+        return f"task:{self.key}:{self.status}"
+
+    def save(self, *args, **kwargs):
+        """Fill what a row may not lack, whoever builds it: its workspace (its
+        project's, else its parent's, else its agent's), its number and key
+        there, and — carrying an alias — the agent the alias is of."""
+        if not self.workspace_id:
+            for src in (self.project if self.project_id else None, self.parent if self.parent_id else None,
+                        self.agent if self.agent_id else None,
+                        self.created_by_agent if self.created_by_agent_id else None):
+                if src is not None:
+                    self.workspace_id = src.workspace_id
+                    break
+        if self.ext_id and not self.created_by_agent_id and self.pk is None:
+            self.created_by_agent_id = self.agent_id
+        if not self.key:
+            from .work import allocate_number  # noqa: PLC0415 — work imports models
+
+            self.number, self.key = allocate_number(self.workspace_id)
+        super().save(*args, **kwargs)
+
+    @property
+    def ref(self) -> str:
+        """What an agent's route names it by: its alias where it has one, else its key."""
+        return self.ext_id or self.key
+
+    @property
+    def url(self) -> str:
+        """Its one page."""
+        return f"/w/{self.workspace_id}/tasks/{self.key}"
+
+    @property
+    def category(self) -> str:
+        return self.CATEGORY.get(self.status, "triage")
+
+    @property
+    def position(self) -> int:
+        """`rank` as the integer older callers read."""
+        return int(self.rank)
+
+    @property
+    def assignee_email(self) -> str | None:
+        return self.assignee_user.email if self.assignee_user_id else None
+
+    @property
+    def created_by_agent_slug(self) -> str | None:
+        return self.created_by_agent.slug if self.created_by_agent_id else None
+
+    @property
+    def label_list(self) -> list[dict]:
+        """Its labels, from the prefetch cache when the list prefetched them."""
+        if self.pk is None:
+            return []
+        return [{"name": lb.name, "color": lb.color} for lb in self.labels.all()]
+
+    @property
+    def milestone_name(self) -> str | None:
+        return self.milestone.name if self.milestone_id else None
 
     @property
     def waiting_on_email(self) -> str | None:
@@ -1832,7 +1998,12 @@ class AgentTask(models.Model):
 
     @property
     def project_ext_id(self) -> str | None:
-        return self.project.ext_id if self.project_id else None
+        """The project's agent alias where it has one, else its handle."""
+        return (self.project.ext_id or self.project.handle) if self.project_id else None
+
+    @property
+    def project_handle(self) -> str | None:
+        return self.project.handle if self.project_id else None
 
     @property
     def project_name(self) -> str | None:
@@ -1840,24 +2011,21 @@ class AgentTask(models.Model):
 
     @property
     def project_address(self) -> str | None:
-        """`<workspace>/<handle>` for a workspace project (whose ext_id is its
-        steward's numbering, ambiguous on another agent's board), else
-        `<agent>/<ext_id>`."""
+        """`<workspace>/<handle>`."""
         return self.project.address if self.project_id else None
 
     @property
     def parent_ext_id(self) -> str | None:
-        return self.parent.ext_id if self.parent_id else None
+        return self.parent.ref if self.parent_id else None
 
     @property
-    def agent_slug(self) -> str:
-        return self.agent.slug
+    def parent_key(self) -> str | None:
+        return self.parent.key if self.parent_id else None
 
     @property
-    def workspace(self) -> str:
-        """The workspace this task lives in — its agent's (see `AgentProject.workspace`)."""
-        return self.agent.workspace_id
-
+    def agent_slug(self) -> str | None:
+        """The assignee agent's slug, or None when an agent is not the assignee."""
+        return self.agent.slug if self.agent_id else None
 
     @property
     def human_why(self) -> list[dict]:
@@ -1930,16 +2098,22 @@ class AgentTaskHumanWhy(models.Model):
 
 
 class AgentTaskAction(models.Model):
-    """Something a person did to a task. One row is both the task's history and,
-    while `pending`, the agent's to-do: it drains pending rows on its next turn
-    and marks each applied."""
+    """Something a person did to a task. While `pending` it is also the assignee
+    agent's to-do: the agent drains pending rows on its next turn and marks each
+    applied. The task's whole history is its `TaskEvent` stream, which links
+    these rows."""
 
     APPROVE, DECLINE, REPLY, NUDGE, DONE = "approve", "decline", "reply", "nudge", "done"
-    ACTION_CHOICES = [(a, a) for a in (APPROVE, DECLINE, REPLY, NUDGE, DONE)]
+    ACCEPT, BACKLOG, SNOOZE, DUPLICATE = "accept", "backlog", "snooze", "duplicate"
+    ACTIONS = (APPROVE, DECLINE, REPLY, NUDGE, DONE, ACCEPT, BACKLOG, SNOOZE, DUPLICATE)
+    ACTION_CHOICES = [(a, a) for a in ACTIONS]
     PENDING, APPLIED = "pending", "applied"
     STATUS_CHOICES = [(PENDING, "Pending"), (APPLIED, "Applied")]
 
-    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="task_actions")
+    #: The task's assignee agent when it was done — whose queue a pending row is
+    #: on. Null on a task no agent is assigned.
+    agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.CASCADE,
+                              related_name="task_actions")
     task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="actions")
     action = models.CharField(max_length=10, choices=ACTION_CHOICES)
     comment = models.TextField(blank=True, default="")
@@ -1959,12 +2133,220 @@ class AgentTaskAction(models.Model):
         return f"{self.agent_id}:{self.task_id}:{self.action}"
 
     @property
-    def agent_slug(self) -> str:
-        return self.agent.slug
+    def agent_slug(self) -> str | None:
+        return self.agent.slug if self.agent_id else None
 
     @property
     def task_ext_id(self) -> str:
-        return self.task.ext_id
+        return self.task.ref
+
+    @property
+    def task_key(self) -> str:
+        return self.task.key
+
+
+class TaskSettings(models.Model):
+    """A workspace's task settings: the prefix its keys carry, the counter that
+    numbers them, how each status category is shown, and how often an active
+    project should post an update. Made on first use (`work.settings_for`)."""
+
+    workspace = models.OneToOneField("workspaces.Workspace", primary_key=True, on_delete=models.CASCADE,
+                                     related_name="task_settings")
+    #: `DIM` in `DIM-142`. Upper-case letters and digits, unique across canopy so
+    #: a key names one task anywhere; frozen once a task carries it.
+    prefix = models.CharField(max_length=10, unique=True)
+    #: The last number handed out. Only goes up: a reused number would make an
+    #: old link point at new work.
+    last_number = models.PositiveIntegerField(default=0)
+    #: category -> the name this workspace shows it by ({"unstarted": "Ready"}).
+    #: Missing categories use the default names.
+    status_names = models.JSONField(default=dict, blank=True)
+    #: An active project with no update in this many days shows "update missing".
+    update_cadence_days = models.PositiveSmallIntegerField(default=7)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.workspace_id}:{self.prefix}"
+
+
+class Label(models.Model):
+    """A label tasks in one workspace share."""
+
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="labels")
+    name = models.CharField(max_length=60)
+    #: A semantic colour token name (`primary`, `success`, `warning`,
+    #: `destructive`, `info`, `muted`), never a raw palette value.
+    color = models.CharField(max_length=20, blank=True, default="muted")
+    description = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(Lower("name"), "workspace", name="uniq_label_name_ci")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.workspace_id}:{self.name}"
+
+
+class TaskRelation(models.Model):
+    """`from_task` blocks / relates to / duplicates `to_task`. "Blocked by" is
+    `blocks` read from the other end — never stored twice."""
+
+    BLOCKS, RELATED, DUPLICATE = "blocks", "related", "duplicate"
+    KINDS = (BLOCKS, RELATED, DUPLICATE)
+    from_task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="relations_out")
+    to_task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="relations_in")
+    kind = models.CharField(max_length=10, choices=[(k, k) for k in KINDS])
+    created_by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                        on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["from_task", "to_task", "kind"], name="uniq_task_relation"),
+            models.CheckConstraint(condition=~models.Q(from_task=models.F("to_task")),
+                                   name="task_relation_not_self"),
+            models.CheckConstraint(condition=models.Q(kind__in=["blocks", "related", "duplicate"]),
+                                   name="task_relation_kind_known"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.from_task_id} {self.kind} {self.to_task_id}"
+
+
+class TaskEvent(models.Model):
+    """One entry in a task's history, append-only: it was created, a field
+    changed, someone acted on it (the `AgentTaskAction` row, whose comment is
+    the comment), or a relation was added or removed. Written by `work.record`
+    from every writer, so the stream is the same whichever door the change came
+    through."""
+
+    CREATED, FIELD, ACTION, RELATION = "created", "field", "action", "relation"
+    KINDS = (CREATED, FIELD, ACTION, RELATION)
+    task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name="events")
+    kind = models.CharField(max_length=10, choices=[(k, k) for k in KINDS])
+    #: For `field`: which one, and its value before and after, as shown (a key,
+    #: an email, a status) — the history must read the same after the related
+    #: row is gone. For `relation`: the kind, and the other task's key in `new`
+    #: (added) or `old` (removed).
+    field = models.CharField(max_length=40, blank=True, default="")
+    old = models.TextField(blank=True, default="")
+    new = models.TextField(blank=True, default="")
+    action = models.ForeignKey(AgentTaskAction, null=True, blank=True, on_delete=models.CASCADE,
+                               related_name="events")
+    by_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                on_delete=models.SET_NULL, related_name="+")
+    by_agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["task", "created_at"])]
+        constraints = [models.CheckConstraint(condition=models.Q(kind__in=["created", "field", "action", "relation"]),
+                                              name="task_event_kind_known")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.task_id}:{self.kind}:{self.field}"
+
+
+class ProjectMilestone(models.Model):
+    """A checkpoint inside a project. Its progress is the share of its tasks done."""
+
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="milestones")
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default="")
+    target_date = models.DateField(null=True, blank=True)
+    rank = models.FloatField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["rank", "id"]
+        constraints = [models.UniqueConstraint(fields=["project", "name"], name="uniq_milestone_name")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}:{self.name}"
+
+
+class ProjectUpdate(models.Model):
+    """A project's status update: its health, a short note, who wrote it, and
+    what changed since the last one (`diff`, filled in when it is published).
+
+    An agent may DRAFT one (a check-in run ends with one); a person PUBLISHES it,
+    choosing the health — the agent proposes, the person decides. A project's
+    health is its latest published update's."""
+
+    ON_TRACK, AT_RISK, OFF_TRACK = "on_track", "at_risk", "off_track"
+    HEALTHS = (ON_TRACK, AT_RISK, OFF_TRACK)
+    DRAFT, PUBLISHED = "draft", "published"
+    project = models.ForeignKey(AgentProject, on_delete=models.CASCADE, related_name="updates")
+    health = models.CharField(max_length=10, choices=[(h, h) for h in HEALTHS])
+    body = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=10, choices=[(DRAFT, DRAFT), (PUBLISHED, PUBLISHED)], default=PUBLISHED)
+    author_user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                    on_delete=models.SET_NULL, related_name="+")
+    author_agent = models.ForeignKey(Agent, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                     on_delete=models.SET_NULL, related_name="+")
+    checkin_run = models.ForeignKey("huddles.CheckinRun", null=True, blank=True, on_delete=models.SET_NULL,
+                                    related_name="updates")
+    #: What changed since the previous published update: `{tasks_done, tasks_added,
+    #: target_date: [old, new], milestones: [{name, done, total}]}`.
+    diff = models.JSONField(default=dict, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["project", "status", "published_at"])]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(health__in=["on_track", "at_risk", "off_track"]),
+                                   name="project_update_health_known"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.project_id}:{self.health}:{self.status}"
+
+    @property
+    def author_email(self) -> str | None:
+        return self.author_user.email if self.author_user_id else None
+
+    @property
+    def author_agent_slug(self) -> str | None:
+        return self.author_agent.slug if self.author_agent_id else None
+
+    @property
+    def published_by_email(self) -> str | None:
+        return self.published_by.email if self.published_by_id else None
+
+
+class SavedView(models.Model):
+    """A saved task list: filters, grouping, sorting and layout under a name.
+    Personal unless `shared`, when everyone in the workspace sees it."""
+
+    TABLE, BOARD, CALENDAR = "table", "board", "calendar"
+    LAYOUTS = (TABLE, BOARD, CALENDAR)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE, related_name="saved_views")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="saved_views")
+    name = models.CharField(max_length=100)
+    shared = models.BooleanField(default=False)
+    #: The list's query, as the Tasks page puts it in its URL ({"assignee": "me",
+    #: "category": "started,unstarted", "label": "bug"}).
+    filters = models.JSONField(default=dict, blank=True)
+    group_by = models.CharField(max_length=20, blank=True, default="")
+    sort = models.CharField(max_length=20, blank=True, default="")
+    layout = models.CharField(max_length=10, choices=[(x, x) for x in LAYOUTS], default=TABLE)
+    rank = models.FloatField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["rank", "id"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.workspace_id}:{self.name}"
 
 
 class SkillHistorySync(models.Model):

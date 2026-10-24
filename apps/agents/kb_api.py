@@ -62,6 +62,8 @@ _BASE = "/workspace-projects/{workspace}/{handle}/kb"
 
 def _steward(request: HttpRequest, workspace: str, handle: str):
     project = _workspace_project_or_404(request, workspace, handle)
+    if project.agent_id is None:
+        raise HttpError(409, f"{project.address} has no lead agent to keep its knowledge base")
     agent_for_work(request, project.agent.slug)  # the steward's write gate: its curator publishes
     return project
 
@@ -274,7 +276,7 @@ def kb_review(request: HttpRequest, workspace: str, handle: str) -> KbReviewOut:
     return KbReviewOut(
         address=project.address, name=project.name,
         owner_email=project.owner_user.email if project.owner_user_id else None,
-        steward_slug=project.agent.slug, may_decide=kb_drive.may_decide(request.user, project), sources=sources,
+        steward_slug=project.agent_slug or "", may_decide=kb_drive.may_decide(request.user, project), sources=sources,
         readers=sorted(project.kb_readers.values_list("email", flat=True)),
         drive_replica=project.kb_drive_replica, version=project.kb_version_number)
 

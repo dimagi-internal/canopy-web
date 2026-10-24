@@ -49,8 +49,8 @@ def test_tasks_waiting_on_you_with_their_actions(jj):
     assert set(items) == {"task:eva:T1", "task:eva:T2"}
     review = items["task:eva:T1"]
     assert review["actions"] == ["approve", "decline", "reply"]
-    assert review["target"] == {"agent": "eva", "task": "T1"}
-    assert review["url"] == "/w/connect/agents/eva/tasks?waiting=me"
+    assert review["target"] == {"agent": "eva", "task": "T1", "key": "CON-1"}
+    assert review["url"] == "/w/connect/tasks/CON-1"
     assert review["reason"] == "Approve or decline" and review["body"] == "ok?"
     assert review["state"] == "asking"
     assert items["task:eva:T2"]["state"] == "your_move"

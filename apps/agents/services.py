@@ -6,7 +6,9 @@ import datetime as dt
 import re
 
 from django.db import IntegrityError, transaction
+from django.db.models import Count, F, Q
 from django.utils import timezone
+from django.utils.text import slugify
 
 from apps.agents.credentials import vault_import
 from apps.agents.schemas import AgentVaultOut
@@ -24,7 +26,7 @@ from apps.workspaces import role_cap
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import participants, sensitive_data
+from . import participants, sensitive_data, work
 from .definition import definition_key, siblings
 from .models import (
     MAX_TASK_DEPTH,
@@ -41,7 +43,7 @@ from .models import (
     ZeroKnowledgeValue,
 )
 
-_VALID_TASK_STATUS = {AgentTask.SUGGESTED, AgentTask.IN_PROGRESS, AgentTask.DONE, AgentTask.DECLINED}
+_VALID_TASK_STATUS = set(AgentTask.CATEGORY)
 
 
 def _aware(value):
@@ -249,7 +251,10 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
     Non-expiring, like the agent's vault key: nothing watches either for expiry, and a
     lapsed one fails every turn silently."""
 
-    from .agent_login import AgentLoginRefused, create_agent_login  # cycle: agents.agent_login -> agents.services  # noqa: PLC0415
+    from .agent_login import (  # cycle: agents.agent_login -> agents.services  # noqa: PLC0415
+        AgentLoginRefused,
+        create_agent_login,
+    )
 
     created = False
     user = agent.user
@@ -285,7 +290,10 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
     with nowhere to go."""
     from django.db import transaction
 
-    from .credentials import pat_rotation, zk_seal  # cycle: agents.credentials.pat_rotation -> agents.services  # noqa: PLC0415
+    from .credentials import (  # cycle: agents.credentials.pat_rotation -> agents.services  # noqa: PLC0415
+        pat_rotation,
+        zk_seal,
+    )
 
     if agent.credential_source != Agent.CANOPY_WEB:
         raise AgentTokenRefused(
@@ -436,33 +444,40 @@ def list_skills(agent: Agent) -> list[AgentSkill]:
 
 # ---- projects ----
 #
-# A project is the work an agent's `Projects/<name>` Drive folder holds. canopy
-# keeps the state (status, owner, what is waiting); Drive keeps the files. See
-# `AgentProject`.
+# A project is the workspace's (`AgentProject`): addressed `<ws>/<handle>`, led
+# by a person and/or an agent, worked on by its member agents. The lead agent's
+# `Projects/<name>` Drive folder holds its files; canopy keeps the state.
+
+
+def agent_projects_q(agent: Agent):
+    """The projects an agent's board shows: the ones it leads or works on."""
+    return Q(agent=agent) | Q(member_agents=agent)
 
 
 def list_projects(agent: Agent, status: str = "") -> list:
-    qs = agent.projects.select_related("owner_user")
+    qs = (AgentProject.objects.filter(agent_projects_q(agent)).distinct()
+          .select_related("agent", "owner_user", "workspace"))
     if status:
-        qs = qs.filter(status=status)
+        qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
     return list(qs)
 
 
 def get_project(agent: Agent, ref: str):
-    """By `ext_id` ("P3") or by numeric id — the CLI and the board name projects
-    differently, and a caller should not have to know which it holds.
-
-    Also a WORKSPACE project, by handle ("givewell-kb") or address
-    ("connect/givewell-kb"): any agent in the workspace may file a task into
-    one, which is most of what makes it the workspace's. A bare handle is looked
-    up in the agent's workspace, then up its tree (a division's agents use the
-    org's projects); an address may also name a workspace below the agent's,
-    where a steward from the parent keeps it."""
-    ref = str(ref)
-    qs = agent.projects.select_related("owner_user")
-    project = qs.filter(ext_id__iexact=ref).first()
+    """A project an agent names: by its alias ("P3", its own first, then one a
+    project it leads or works on carries), by numeric id among those, or by
+    handle ("givewell-kb") or address ("connect/givewell-kb"). A bare handle
+    is looked up in the agent's workspace, then up its tree (a division's
+    agents use the org's projects); an address may also name a workspace below
+    the agent's, where an agent of the parent can lead a project."""
+    ref = str(ref or "").strip()
+    if not ref:
+        return None
+    base = AgentProject.objects.select_related("agent", "owner_user", "workspace")
+    project = base.filter(created_by_agent=agent, ext_id__iexact=ref).first()
+    if project is None:
+        project = base.filter(agent_projects_q(agent), ext_id__iexact=ref).distinct().first()
     if project is None and ref.isdigit():
-        project = qs.filter(pk=int(ref)).first()
+        project = base.filter(agent_projects_q(agent), pk=int(ref)).distinct().first()
     if project is None:
         ws, _, handle = ref.rpartition("/")
         lineage = [agent.workspace_id, *agent.workspace.ancestor_slugs()]
@@ -478,10 +493,10 @@ def get_project(agent: Agent, ref: str):
 
 
 def may_hold_workspace_project(steward: Agent, workspace_slug: str) -> bool:
-    """May `steward` keep a project owned by `workspace_slug`? Its own workspace,
-    or one below it: an org's agent can curate a division's resource (Eva, of
-    dimagi, stewards `connect/givewell-kb`), but not the other way round, nor
-    across organisations."""
+    """May `steward` lead (or be assigned work in) `workspace_slug`? Its own
+    workspace, or one below it: an org's agent can curate a division's
+    resource (Eva, of dimagi, leads `connect/givewell-kb`), but not the other
+    way round, nor across organisations."""
 
     if workspace_slug == steward.workspace_id:
         return True
@@ -490,7 +505,7 @@ def may_hold_workspace_project(steward: Agent, workspace_slug: str) -> bool:
 
 
 class ProjectScopeError(ValueError):
-    """A workspace-project write that cannot be done, with its HTTP status."""
+    """A project write that cannot be done, with its HTTP status."""
 
     def __init__(self, message: str, status: int = 422):
         super().__init__(message)
@@ -498,85 +513,106 @@ class ProjectScopeError(ValueError):
 
 
 def get_workspace_project(workspace_slug: str, handle: str):
-    return (AgentProject.objects.select_related("agent", "owner_user")
-            .filter(scope=AgentProject.WORKSPACE_SCOPE, owner_workspace_id=workspace_slug,
-                    handle__iexact=(handle or "").strip()).first())
+    return (AgentProject.objects.select_related("agent", "owner_user", "workspace")
+            .filter(workspace_id=workspace_slug, handle__iexact=(handle or "").strip()).first())
 
 
 def workspace_projects(workspace_slugs, status: str = "", steward_workspaces=()) -> list:
-    """Owned by any of `workspace_slugs` — or stewarded from any of
-    `steward_workspaces` (a parent's agent keeping a division's project)."""
-    from django.db.models import Q
-
-    qs = (AgentProject.objects.select_related("agent", "owner_user")
-          .filter(Q(owner_workspace_id__in=list(workspace_slugs))
-                  | Q(agent__workspace_id__in=list(steward_workspaces)),
-                  scope=AgentProject.WORKSPACE_SCOPE))
+    """Owned by any of `workspace_slugs` — or led from any of
+    `steward_workspaces` (a parent's agent leading a division's project)."""
+    qs = (AgentProject.objects.select_related("agent", "owner_user", "workspace")
+          .filter(Q(workspace_id__in=list(workspace_slugs))
+                  | Q(agent__workspace_id__in=list(steward_workspaces))))
     if status:
-        qs = qs.filter(status=status)
-    return list(qs.order_by("owner_workspace_id", "handle"))
+        qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
+    return list(qs.order_by("workspace_id", "handle"))
 
 
-def promote_project(project: AgentProject, handle: str, workspace: str = "") -> AgentProject:
-    """Make an agent project a workspace's, with its agent as steward. Its
-    ext_id, tasks, Drive folder and history are untouched; it gains an address.
-    `workspace` defaults to the agent's own; it may be one below it
-    (`may_hold_workspace_project`)."""
-    import re
-
-    from django.db import IntegrityError, transaction
-
+def _clean_handle(handle: str) -> str:
     handle = (handle or "").strip().lower()
     if not re.match(AgentProject.HANDLE_RE, handle):
         raise ProjectScopeError("handle must be 3-60 characters of a-z, 0-9 and '-', "
                                 "starting and ending with a letter or digit")
-    workspace = (workspace or "").strip() or project.agent.workspace_id
-    if project.is_workspace_project:
-        if project.handle == handle and project.owner_workspace_id == workspace:
-            return project
-        raise ProjectScopeError(f"already the workspace project '{project.address}'; "
-                                "readdressing it would break every caller that names it", 409)
-    if not may_hold_workspace_project(project.agent, workspace):
-        raise ProjectScopeError(f"'{project.agent.slug}' can only steward a project of "
+    return handle
+
+
+def free_handle(workspace_slug: str, name: str, fallback: str = "project") -> str:
+    """A handle for a new project from its name, unique in the workspace."""
+    base = slugify(name or "")[:56].strip("-")
+    if not re.match(AgentProject.HANDLE_RE, base):
+        base = slugify(fallback)[:56].strip("-")
+    if not re.match(AgentProject.HANDLE_RE, base):
+        base = "project"
+    taken = set(AgentProject.objects.filter(workspace_id=workspace_slug, handle__startswith=base[:52])
+                .values_list("handle", flat=True))
+    handle, i = base, 2
+    while handle in taken:
+        handle = f"{base[:52]}-{i}"
+        i += 1
+    return handle
+
+
+def promote_project(project: AgentProject, handle: str, workspace: str = "") -> AgentProject:
+    """Give a project the address `<workspace>/<handle>` — a new handle, and/or
+    a workspace below its lead agent's. The same address is a no-op; an address
+    already taken is refused (409). Its alias, tasks, folder and history are
+    untouched."""
+    handle = _clean_handle(handle)
+    workspace = (workspace or "").strip() or project.workspace_id
+    if project.handle == handle and project.workspace_id == workspace:
+        return project
+    if project.agent_id is not None and not may_hold_workspace_project(project.agent, workspace):
+        raise ProjectScopeError(f"'{project.agent.slug}' can only lead a project of "
                                 f"'{project.agent.workspace_id}' or a workspace below it")
-    project.scope = AgentProject.WORKSPACE_SCOPE
-    project.owner_workspace_id = workspace
+    project.workspace_id = workspace
     project.handle = handle
     try:
         with transaction.atomic():
-            project.save(update_fields=["scope", "owner_workspace", "handle", "updated_at"])
+            project.save(update_fields=["workspace", "handle", "updated_at"])
     except IntegrityError:
         raise ProjectScopeError(f"'{workspace}/{handle}' is already taken", 409) from None
+    # A task lives where its project does.
+    for task in project.tasks.exclude(workspace_id=workspace):
+        work.rehome(task, workspace)
     return project
 
 
-def set_steward(project: AgentProject, steward: Agent) -> AgentProject:
-    """Hand a workspace project to another agent of its workspace (or of one
-    above it — `may_hold_workspace_project`).
-
-    The address (`<workspace>/<handle>`) is the identity, so callers notice
-    nothing. The ext_id is the old steward's numbering, so it is re-issued from
-    the new steward's counter if it would collide there. Tasks stay on the
-    boards of the agents that own them."""
-    if not project.is_workspace_project:
-        raise ProjectScopeError("only a workspace project has a steward; promote it first")
-    if not may_hold_workspace_project(steward, project.owner_workspace_id):
-        raise ProjectScopeError(f"the steward must be an agent of '{project.owner_workspace_id}' "
-                                "or of a workspace above it")
-    if steward.pk == project.agent_id:
+def set_steward(project: AgentProject, steward: Agent | None) -> AgentProject:
+    """Make `steward` the project's lead agent (None: no agent leads it). It
+    must belong to the project's workspace or one above it. The address is the
+    identity, so callers notice nothing; the alias stays its maker's."""
+    if steward is None:
+        project.agent = None
+        project.save(update_fields=["agent", "updated_at"])
         return project
-    if steward.projects.filter(ext_id__iexact=project.ext_id).exists():
-        project.ext_id = next_project_ext_id(steward)
-    project.agent = steward
-    project.save(update_fields=["agent", "ext_id", "updated_at"])
+    if not may_hold_workspace_project(steward, project.workspace_id):
+        raise ProjectScopeError(f"the lead agent must be an agent of '{project.workspace_id}' "
+                                "or of a workspace above it")
+    if steward.pk != project.agent_id:
+        project.agent = steward
+        project.save(update_fields=["agent", "updated_at"])
+    project.member_agents.add(steward)
+    return project
+
+
+def set_member_agents(project: AgentProject, agents: list[Agent]) -> AgentProject:
+    """Replace the agents working on it. Its lead agent stays one."""
+    for a in agents:
+        if not may_hold_workspace_project(a, project.workspace_id):
+            raise ProjectScopeError(f"'{a.slug}' is not an agent of '{project.workspace_id}' "
+                                    "or of a workspace above it")
+    keep = {a.pk for a in agents}
+    if project.agent_id:
+        keep.add(project.agent_id)
+    project.member_agents.set(list(keep))
     return project
 
 
 def stewarded_workspace_projects(agent: Agent) -> list[str]:
-    """Addresses of the workspace projects `agent` stewards — what blocks moving
-    or deleting it: either would carry the workspace's project away, or delete it."""
-    return [p.address for p in agent.projects.filter(scope=AgentProject.WORKSPACE_SCOPE)
-            .select_related("agent")]
+    """Addresses of the projects `agent` leads OUTSIDE its own workspace (a
+    division's, led from the org) — what blocks moving it: the move would take
+    it out of the tree those projects live in."""
+    return [p.address for p in agent.projects.exclude(workspace_id=agent.workspace_id)]
 
 
 def next_project_ext_id(agent: Agent) -> str:
@@ -587,41 +623,91 @@ def next_project_ext_id(agent: Agent) -> str:
     then point at different work. The increment is a single UPDATE so two turns
     numbering at once cannot collide.
     """
-    from django.db.models import F
-
     Agent.objects.filter(pk=agent.pk).update(project_seq=F("project_seq") + 1)
     agent.refresh_from_db(fields=["project_seq"])
     return f"P{agent.project_seq}"
 
 
 _PROJECT_FIELDS = ("name", "outcome", "status", "owner_note", "drive_folder_id",
-                   "drive_folder_url", "repo_slug", "notes")
-_PROJECT_STATUS = {AgentProject.PROPOSED, AgentProject.ACTIVE, AgentProject.DONE, AgentProject.ARCHIVED}
+                   "drive_folder_url", "repo_slug", "notes", "priority", "start_date", "target_date")
+_PROJECT_STATUS = {s for s, _ in AgentProject.STATUS_CHOICES}
 
 
 def _norm_project_status(value: str) -> str:
     return value if value in _PROJECT_STATUS else AgentProject.ACTIVE
 
 
-def create_project(agent: Agent, data) -> AgentProject:
+def new_project(*, workspace: str, name: str, agent: Agent | None = None, by_agent: Agent | None = None,
+                by_user=None, handle: str = "", ext_id: str = "", **fields) -> AgentProject:
+    """The one constructor of a project row: its workspace, a handle (given, or
+    free from its name), its lead agent as a member, and — made through an
+    agent's route — that agent's alias."""
+    if agent is not None and not may_hold_workspace_project(agent, workspace):
+        raise ProjectScopeError(f"'{agent.slug}' can only lead a project of "
+                                f"'{agent.workspace_id}' or a workspace below it")
+    handle = _clean_handle(handle) if handle else free_handle(workspace, name, fallback=ext_id or "project")
+    try:
+        with transaction.atomic():
+            project = AgentProject.objects.create(
+                workspace_id=workspace, handle=handle, agent=agent, name=name,
+                created_by_agent=by_agent, ext_id=ext_id,
+                created_by_user=by_user if getattr(by_user, "is_authenticated", False) else None,
+                **fields)
+    except IntegrityError:
+        raise ProjectScopeError(f"'{workspace}/{handle}' is already taken", 409) from None
+    if agent is not None:
+        project.member_agents.add(agent)
+    return project
+
+
+def create_project(agent: Agent | None, data, *, workspace: str = "", by_user=None) -> AgentProject:
+    """A project from an API body. Through an agent's route (`agent` given and
+    no `workspace`), the agent leads it, it lives in the agent's workspace and
+    carries the agent's next `P<n>` alias. Otherwise it is made in `workspace`,
+    led by `agent` if one is named."""
     payload = {f: getattr(data, f) for f in _PROJECT_FIELDS if getattr(data, f, None) is not None}
     payload["status"] = _norm_project_status(payload.get("status", AgentProject.ACTIVE))
     if getattr(data, "links", None):
         payload["links"] = [link.model_dump() for link in data.links]
-    ext_id = (getattr(data, "ext_id", "") or "").strip() or next_project_ext_id(agent)
-    payload["owner_user"] = resolve_project_owner(agent, getattr(data, "owner_email", ""))
-    return AgentProject.objects.create(agent=agent, ext_id=ext_id, **payload)
+    via_agent = agent is not None and not workspace
+    ws = workspace or agent.workspace_id
+    owner_email = getattr(data, "owner_email", "") or getattr(data, "lead_email", "")
+    payload["owner_user"] = resolve_project_owner_in(ws, owner_email)
+    name = payload.pop("name")
+    ext_id = ""
+    if via_agent:
+        ext_id = (getattr(data, "ext_id", "") or "").strip() or next_project_ext_id(agent)
+    return new_project(workspace=ws, name=name, agent=agent, by_agent=agent if via_agent else None,
+                       by_user=by_user, handle=(getattr(data, "handle", "") or "").strip(),
+                       ext_id=ext_id, **payload)
+
+
+class ProposalStartError(ValueError):
+    """Starting a proposed project by PATCH, past its decision card."""
 
 
 def patch_project(project: AgentProject, data: dict) -> AgentProject:
+    if "status" in data and data["status"] is not None:
+        new = _norm_project_status(data["status"])
+        if (project.status == AgentProject.PROPOSED and new not in
+                (AgentProject.PROPOSED, AgentProject.CANCELED, AgentProject.ARCHIVED)):
+            raise ProjectScopeError("a proposed project is started through its decision card "
+                                    "(approve its decision task), not by changing its status", 409)
     for f in _PROJECT_FIELDS:
         if f in data:
             value = data[f]
-            setattr(project, f, _norm_project_status(value) if f == "status" else value)
+            if f == "status":
+                value = _norm_project_status(value)
+            elif f == "priority":
+                value = int(value or 0)
+                if not 0 <= value <= 4:
+                    raise ValueError("priority is 0 (none) to 4 (low)")
+            setattr(project, f, value)
     if "links" in data:
         project.links = data["links"]
-    if "owner_email" in data:
-        project.owner_user = resolve_project_owner(project.agent, data["owner_email"])
+    for key in ("owner_email", "lead_email"):
+        if key in data:
+            project.owner_user = resolve_project_owner_in(project.workspace_id, data[key])
     project.save()
     return project
 
@@ -632,12 +718,10 @@ def project_task_counts(agent: Agent) -> dict:
     The board shows a count per project, and resolving it per row would be a
     query per project on a page that lists them all.
     """
-    from django.db.models import Count, Q
-
-    # Tasks IN this agent's projects, whoever owns them: a workspace project it
-    # stewards collects other agents' tasks too.
+    # Every task IN the projects the agent leads or works on, whoever does it.
+    project_ids = AgentProject.objects.filter(agent_projects_q(agent)).values("pk")
     rows = (
-        AgentTask.objects.filter(project__agent=agent)
+        AgentTask.objects.filter(project__in=project_ids)
         .values("project_id")
         .annotate(
             total=Count("id"),
@@ -649,9 +733,12 @@ def project_task_counts(agent: Agent) -> dict:
 
 
 def set_task_project(task, project) -> None:
-    """Put a task in a project (or take it out with None)."""
+    """Put a task in a project (or take it out with None). It moves to the
+    project's workspace."""
     task.project = project
     task.save(update_fields=["project", "updated_at"])
+    if project is not None and project.workspace_id != task.workspace_id:
+        work.rehome(task, project.workspace_id)
     _link_participants(task)
 
 
@@ -668,8 +755,40 @@ def _norm_status(s: str) -> str:
 
 
 _TASK_FIELDS = ("title", "next_action", "status", "owner", "assigned", "confidence",
-                "score", "review", "rationale", "source_url", "plan", "due", "notes", "position",
-                "drive_folder_id", "drive_folder_url")
+                "score", "review", "rationale", "source_url", "plan", "due", "notes",
+                "drive_folder_id", "drive_folder_url", "priority")
+
+
+def _norm_confidence(value) -> str:
+    value = (value or "").strip().lower()
+    return value if value in AgentTask.CONFIDENCE_VALUES else ""
+
+
+def _norm_priority(value) -> int:
+    try:
+        value = int(value or 0)
+    except (TypeError, ValueError):
+        raise ValueError(f"priority is 0 (none) to 4 (low), got {value!r}") from None
+    if not 0 <= value <= 4:
+        raise ValueError(f"priority is 0 (none) to 4 (low), got {value!r}")
+    return value
+
+
+def _norm_field(f: str, value):
+    if f == "status":
+        return _norm_status(value)
+    if f == "confidence":
+        return _norm_confidence(value)
+    if f == "priority":
+        return _norm_priority(value)
+    return value
+
+
+def agent_tasks_q(agent: Agent, prefix: str = ""):
+    """The tasks an agent's board shows: the ones it is assigned, and the ones
+    it filed that no agent is assigned (a suggestion for a person, say)."""
+    p = prefix
+    return Q(**{f"{p}agent": agent}) | Q(**{f"{p}created_by_agent": agent, f"{p}agent__isnull": True})
 
 
 class TaskTreeError(ValueError):
@@ -704,7 +823,7 @@ def _height_below(task: AgentTask) -> int:
     return height
 
 
-def resolve_parent(task: AgentTask, ref: str) -> AgentTask | None:
+def resolve_parent(task: AgentTask, ref: str, agent: Agent | None = None) -> AgentTask | None:
     """The task `ref` names as `task`'s parent, checked — or None to clear.
 
     Refused (TaskTreeError) when the parent is unknown, is the task itself or
@@ -715,24 +834,25 @@ def resolve_parent(task: AgentTask, ref: str) -> AgentTask | None:
     ref = (ref or "").strip()
     if not ref:
         return None
-    parent = get_task(task.agent, ref)
-    if parent is None:
-        raise TaskTreeError(f"parent {ref} is not a task of {task.agent.slug}")
+    namer = agent or task.created_by_agent or task.agent
+    parent = get_task(namer, ref) if namer is not None else work.task_by_key(ref)
+    if parent is None or parent.workspace_id != task.workspace_id:
+        raise TaskTreeError(f"parent {ref} is not a task of {namer.slug if namer else task.workspace_id}")
     if task.pk is not None:
         node, seen = parent, set()
         while node is not None and node.pk not in seen:
             if node.pk == task.pk:
-                raise TaskTreeError(f"{parent.ext_id} is {task.ext_id} or one of its subtasks "
+                raise TaskTreeError(f"{parent.ref} is {task.ref} or one of its subtasks "
                                     f"— a task cannot be its own ancestor")
             seen.add(node.pk)
             node = node.parent
     if parent.project_id != task.project_id:
-        where = parent.project.ext_id if parent.project_id else "no project"
-        raise TaskTreeError(f"parent {parent.ext_id} is in {where}; a subtask lives in its "
+        where = parent.project.address if parent.project_id else "no project"
+        raise TaskTreeError(f"parent {parent.ref} is in {where}; a subtask lives in its "
                             f"parent's project")
     levels = _depth_above(parent) + 1 + 1 + _height_below(task)
     if levels > MAX_TASK_DEPTH:
-        raise TaskTreeError(f"making {parent.ext_id} the parent would nest tasks {levels} deep "
+        raise TaskTreeError(f"making {parent.ref} the parent would nest tasks {levels} deep "
                             f"(at most {MAX_TASK_DEPTH}) — file the deeper work as its own task")
     return parent
 
@@ -751,10 +871,10 @@ def _require_words(human_why) -> None:
                          "human_why quote; the agent's own work is kind=work")
 
 
-def _resolve_who(agent: Agent, who: dict):
+def _resolve_who(workspace_slug: str, who: dict):
     """(person, email, name) for one quote's speaker.
 
-    A Person is linked only when canopy knows them in the agent's workspace
+    A Person is linked only when canopy knows them in the task's workspace
     (`people.known_in`) — the same gate as every per-person read, so a quote
     cannot be used to learn that canopy knows someone another tenant deals
     with. An email canopy does not know is kept as text: the quote still says
@@ -766,11 +886,11 @@ def _resolve_who(agent: Agent, who: dict):
     person = None
     if pid is not None:
         person = Person.objects.filter(pk=pid).first()
-        if person is None or not people.known_in(person, agent.workspace_id):
-            raise ValueError(f"person {pid} is not someone {agent.workspace_id} knows")
+        if person is None or not people.known_in(person, workspace_slug):
+            raise ValueError(f"person {pid} is not someone {workspace_slug} knows")
     elif email:
         found = people.by_email(email)
-        if found is not None and people.known_in(found, agent.workspace_id):
+        if found is not None and people.known_in(found, workspace_slug):
             person = found
     if person is not None:
         email = email or people.email_of(person)
@@ -785,7 +905,7 @@ def set_human_why(task: AgentTask, items: list[dict]) -> None:
         quote = (item.get("quote") or "").strip()
         if not quote:
             raise ValueError("a human_why entry needs the person's quote")
-        person, email, name = _resolve_who(task.agent, item.get("who") or {})
+        person, email, name = _resolve_who(task.workspace_id, item.get("who") or {})
         rows.append(AgentTaskHumanWhy(
             task=task, position=i, quote=quote, person=person, who_email=email,
             who_name=name, source_url=(item.get("source_url") or "").strip(),
@@ -817,9 +937,46 @@ def _plain_links(links) -> list:
     return [link.model_dump() if hasattr(link, "model_dump") else dict(link) for link in links or []]
 
 
+class AssigneeError(ValueError):
+    """An assignee canopy cannot give the task to: an unknown person or agent,
+    or one outside the task's workspace."""
+
+
+def resolve_assignee(workspace_slug: str, value: str) -> tuple[Agent | None, object | None]:
+    """`(agent, user)` from an assignee string: `""` (nobody), a member's email,
+    or an agent's slug (`agent:<slug>` or bare). An agent must belong to the
+    workspace or one above it; a person must be a member."""
+    value = (value or "").strip()
+    if not value:
+        return None, None
+    if "@" in value:
+        return None, _workspace_member(workspace_slug, value, instead="assigned")
+    slug = value.removeprefix("agent:").strip()
+    agent = Agent.objects.filter(slug=slug).first()
+    if agent is None or not may_hold_workspace_project(agent, workspace_slug):
+        raise AssigneeError(f"no agent '{slug}' can be assigned work in {workspace_slug}")
+    return agent, None
+
+
+def _task_workspace(agent: Agent | None, project, workspace: str) -> str:
+    if project is not None:
+        return project.workspace_id
+    if workspace:
+        return workspace
+    if agent is not None:
+        return agent.workspace_id
+    raise ValueError("a task needs a workspace")
+
+
 @transaction.atomic
-def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
+def create_tasks(agent: Agent | None, payloads: list[dict], *, workspace: str = "",
+                 by_user=None) -> list[AgentTask]:
     """Create a batch of tasks, idempotent per `idempotency_key`.
+
+    Through an agent's route (`agent` given, `workspace` not): the agent filed
+    them, is their assignee unless the payload names one (`assignee`), and each
+    carries its `T<n>` alias. Otherwise they are made in `workspace` by
+    `by_user`, assigned as the payload says.
 
     ONE outer transaction, so a batch that cannot route somebody's wait
     (`UnknownPersonError`) leaves nothing behind; each row keeps its own
@@ -827,17 +984,18 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
     batch back. A key already used by ANOTHER agent is refused rather than
     replayed — handing back somebody else's task would cross a tenant line.
     """
+    via_agent = agent is not None and not workspace
     out = []
     for p in payloads:
         key = (p.get("idempotency_key") or "").strip()
         existing = AgentTask.objects.filter(idempotency_key=key).first() if key else None
         if existing is not None:
-            if existing.agent_id != agent.pk:
+            if existing.created_by_agent_id != (agent.pk if agent else None):
                 raise ValueError(f"idempotency_key {key!r} is already used by another agent")
             out.append(existing)
             continue
 
-        fields = {f: p[f] for f in _TASK_FIELDS if p.get(f) is not None}
+        fields = {f: _norm_field(f, p[f]) for f in _TASK_FIELDS if p.get(f) is not None}
         fields.update({f: p[f] for f in _TASK_CREATE_EXTRAS if p.get(f) is not None})
         fields["status"] = _norm_status(fields.get("status", AgentTask.SUGGESTED))
         ask_kind = p.get("ask_kind") or AgentTask.ASK_NONE
@@ -850,28 +1008,46 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
         # not cost the agent the work it just recorded. The response carries
         # `project_ext_id: null`, so the miss is visible.
         ref = str(p.get("project") or "").strip()
-        waiting_on = resolve_waiting_on(agent, p["waiting_on_email"]) if p.get("waiting_on_email") else None
         raised_by = p.get("raised_by") or None
-        if raised_by and not Turn.objects.filter(pk=raised_by, agent=agent).exists():
+        if raised_by and agent is not None and not Turn.objects.filter(pk=raised_by, agent=agent).exists():
             raise ValueError(f"raised_by {raised_by} is not a turn of {agent.slug}")
-        project = get_project(agent, ref) if ref else None
+        project = _project_ref(agent, ref, workspace) if ref else None
         parent_ref = str(p.get("parent") or "").strip()
         parent = None
+        ws = _task_workspace(agent, project, workspace)
         if parent_ref:
             # A subtask lives in its parent's project: one named with no project
             # inherits it, so `{"parent": "T66"}` alone files it correctly.
             if not ref:
-                found = get_task(agent, parent_ref)
+                found = get_task(agent, parent_ref) if agent is not None else work.task_by_key(parent_ref)
                 project = found.project if found is not None else None
-            parent = resolve_parent(AgentTask(agent=agent, project=project), parent_ref)
+                ws = _task_workspace(agent, project, found.workspace_id if found is not None else workspace)
+            parent = resolve_parent(AgentTask(agent=agent, created_by_agent=agent, project=project,
+                                              workspace_id=ws), parent_ref, agent)
+        waiting_on = _workspace_member(ws, p["waiting_on_email"], instead="assigned") \
+            if p.get("waiting_on_email") else None
+        if "assignee" in p and p["assignee"] is not None:
+            assignee_agent, assignee_user = resolve_assignee(ws, p["assignee"])
+        else:
+            assignee_agent, assignee_user = (agent if via_agent else None), None
         kind = _kind(p.get("kind"))
         if kind == AgentTask.IDEA:
             _require_words(p.get("human_why"))
-        ext_id = _claim_ext_id(agent, (p.get("ext_id") or "").strip())
+        ext_id = _claim_ext_id(agent, (p.get("ext_id") or "").strip()) if via_agent else ""
+        labels = work.resolve_labels(ws, p.get("labels") or [], create=True) if p.get("labels") else []
+        milestone = work.resolve_milestone(project, p.get("milestone")) if p.get("milestone") else None
+        rank = float(p["position"]) if p.get("position") is not None else work.top_rank(ws)
+        number, task_key = work.allocate_number(ws)
         try:
             with transaction.atomic():  # savepoint
                 task = AgentTask.objects.create(
-                    agent=agent,
+                    workspace_id=ws,
+                    number=number,
+                    key=task_key,
+                    agent=assignee_agent,
+                    assignee_user=assignee_user,
+                    created_by_agent=agent,
+                    created_by_user=by_user if getattr(by_user, "is_authenticated", False) else None,
                     ext_id=ext_id,
                     project=project,
                     parent=parent,
@@ -880,21 +1056,36 @@ def create_tasks(agent: Agent, payloads: list[dict]) -> list[AgentTask]:
                     idempotency_key=key or None,
                     raised_by_id=raised_by,
                     waiting_on_user=waiting_on,
+                    milestone=milestone,
+                    rank=rank,
                     **fields,
                 )
                 if p.get("human_why"):
                     set_human_why(task, p["human_why"])
+                if labels:
+                    task.labels.set(labels)
+                work.record_created(task, by_user=by_user, by_agent=agent)
             out.append(task)
             _link_participants(task)
         except IntegrityError:
-            replay = AgentTask.objects.filter(agent=agent, idempotency_key=key).first() if key else None
+            replay = (AgentTask.objects.filter(created_by_agent=agent, idempotency_key=key).first()
+                      if key and agent is not None else None)
             if replay is not None:
                 out.append(replay)
                 continue
-            if _ext_id_taken(agent, ext_id):  # a concurrent create took it first
+            if agent is not None and ext_id and _ext_id_taken(agent, ext_id):  # a concurrent create took it
                 raise DuplicateTaskError(f"{agent.slug} already has a task {ext_id}") from None
             raise
     return out
+
+
+def _project_ref(agent: Agent | None, ref: str, workspace: str):
+    """A project named by an agent (alias, handle or address), else by address
+    or handle in `workspace`."""
+    if agent is not None:
+        return get_project(agent, ref)
+    ws, _, handle = ref.rpartition("/")
+    return get_workspace_project(ws or workspace, handle)
 
 
 class DuplicateTaskError(Exception):
@@ -902,11 +1093,11 @@ class DuplicateTaskError(Exception):
 
 
 def _ext_id_taken(agent: Agent, ext_id: str) -> bool:
-    return agent.tasks.filter(ext_id__iexact=ext_id).exists()
+    return AgentTask.objects.filter(created_by_agent=agent, ext_id__iexact=ext_id).exists()
 
 
 def _claim_ext_id(agent: Agent, explicit: str) -> str:
-    """The ext_id a new task gets.
+    """The alias a new task filed through an agent's route gets.
 
     Explicit: refused if the agent already has it in ANY case — lookups are
     case-insensitive (`get_task`), so "t1" beside "T1" would make one of them
@@ -920,6 +1111,8 @@ def _claim_ext_id(agent: Agent, explicit: str) -> str:
         if "/" in explicit:
             # A task is addressed as `/tasks/{ext_id}/` — a slash cannot be routed.
             raise ValueError(f"ext_id {explicit!r} may not contain '/'")
+        if work.looks_like_key(explicit) and not re.fullmatch(r"[Tt]\d+", explicit):
+            raise ValueError(f"ext_id {explicit!r} looks like a task key; an alias may not")
         if _ext_id_taken(agent, explicit):
             raise DuplicateTaskError(f"{agent.slug} already has a task {explicit}")
         m = re.fullmatch(r"[Tt](\d+)", explicit)
@@ -937,91 +1130,141 @@ class UnknownPersonError(Exception):
     """canopy cannot route a wait to somebody it has never seen."""
 
 
-def resolve_waiting_on(agent: Agent, email: str):
-    """The member of this agent's workspace with that email, or None to clear.
+def resolve_waiting_on(agent_or_ws, email: str):
+    """The member of the workspace (an agent's, or a slug) with that email, or
+    None to clear.
 
     Scoped to the workspace on purpose: "waiting on you" is a claim on somebody
-    canopy can notify AND who can see the agent, so routing it to a stranger
+    canopy can notify AND who can see the work, so routing it to a stranger
     would create a wait nobody will ever answer.
     """
-    return _workspace_member(agent, email, instead="assigned")
+    ws = agent_or_ws if isinstance(agent_or_ws, str) else agent_or_ws.workspace_id
+    return _workspace_member(ws, email, instead="assigned")
 
 
 def resolve_project_owner(agent: Agent, email: str):
-    """A project's owner as a real person, or None to clear — the same
-    workspace rule as `resolve_waiting_on`, because the owner is who an idea
+    """A project's lead as a real person, or None to clear — the same
+    workspace rule as `resolve_waiting_on`, because the lead is who an idea
     added on the team view emails (`ideas.notify`)."""
-    return _workspace_member(agent, email, instead="owner_note")
+    return resolve_project_owner_in(agent.workspace_id, email)
 
 
-def _workspace_member(agent: Agent, email: str, *, instead: str):
+def resolve_project_owner_in(workspace_slug: str, email: str):
+    return _workspace_member(workspace_slug, email, instead="owner_note")
+
+
+def _workspace_member(workspace_slug: str, email: str, *, instead: str):
     email = (email or "").strip().lower()
     if not email:
         return None
     from django.contrib.auth import get_user_model
 
     user = get_user_model().objects.filter(email__iexact=email).first()
-    if user is None or not wsvc.is_member(user, agent.workspace_id):
+    if user is None or not wsvc.is_member(user, workspace_slug):
         raise UnknownPersonError(
-            f"{email or 'that person'} is not a member of this agent's workspace — "
+            f"{email or 'that person'} is not a member of this workspace — "
             f"put the name in `{instead}` instead"
         )
     return user
 
 
 @transaction.atomic
-def patch_task(task: AgentTask, data) -> AgentTask:
-    """Partial update — only fields present in `data` (a dict) are written.
-    Atomic: a refused quote or tree move leaves the task exactly as it was."""
+def patch_task(task: AgentTask, data, *, by_user=None, by_agent=None) -> AgentTask:
+    """Partial update — only fields present in `data` (a dict) are written, and
+    each tracked field that changes is a `TaskEvent`. Atomic: a refused quote,
+    assignee or tree move leaves the task exactly as it was.
+
+    `assignee`: `""` (nobody), a member's email, or an agent's slug. `labels`
+    REPLACES the list (names; unknown ones are made). `position` is the old
+    integer order and sets `rank`; `before`/`after` (keys) place it between two
+    tasks. Any change but a snooze wakes a snoozed task."""
+    before = work.snapshot(task)
     for f in _TASK_FIELDS:
         if f in data:
-            setattr(task, f, _norm_status(data[f]) if f == "status" else data[f])
+            setattr(task, f, _norm_field(f, data[f]))
     if "links" in data:
         task.links = data["links"]
     if "waiting_on_email" in data:
-        task.waiting_on_user = resolve_waiting_on(task.agent, data["waiting_on_email"])
+        task.waiting_on_user = _workspace_member(task.workspace_id, data["waiting_on_email"],
+                                                 instead="assigned")
+    if "assignee" in data and data["assignee"] is not None:
+        task.agent, task.assignee_user = resolve_assignee(task.workspace_id, data["assignee"])
+    if data.get("position") is not None:
+        task.rank = float(data["position"])
+    if data.get("rank") is not None:
+        task.rank = float(data["rank"])
+    if "snoozed_until" in data:
+        task.snoozed_until = data["snoozed_until"]
+    elif task.snoozed_until is not None:
+        task.snoozed_until = None
     moved = False
     if "project" in data:
         # Present-and-empty means "take it out of its project"; absent means
         # "leave it where it is" (the schema keeps the two apart).
         ref = (data["project"] or "").strip()
-        new_project = get_project(task.agent, ref) if ref else None
+        namer = by_agent or task.created_by_agent or task.agent
+        new_project = (_project_ref(namer, ref, task.workspace_id) if ref else None)
+        if ref and new_project is None:
+            raise ValueError(f"no project {ref!r}")
         moved = (new_project.pk if new_project else None) != task.project_id
         task.project = new_project
+        if moved and task.milestone_id and "milestone" not in data:
+            task.milestone = None  # a milestone is its project's
     if "parent" in data:
-        task.parent = resolve_parent(task, data["parent"] or "")
+        task.parent = resolve_parent(task, data["parent"] or "", by_agent)
     elif moved and task.parent_id is not None:
         # Moving a subtask out of its parent's project, without naming a new
         # parent, would leave a child filed somewhere its parent is not.
-        raise TaskTreeError(f"{task.ext_id} is a subtask of {task.parent.ext_id}; move the parent, "
+        raise TaskTreeError(f"{task.ref} is a subtask of {task.parent.ref}; move the parent, "
                             f"or send \"parent\": \"\" to detach it first")
+    if "milestone" in data:
+        task.milestone = work.resolve_milestone(task.project, data["milestone"])
     if data.get("kind") is not None:
         task.kind = _kind(data["kind"])
     task.save()
+    if data.get("before") is not None or data.get("after") is not None:
+        work.move_task(task, before_key=data.get("before") or "", after_key=data.get("after") or "")
+    if "labels" in data and data["labels"] is not None:
+        task.labels.set(work.resolve_labels(task.workspace_id, data["labels"], create=True))
+    if moved and task.project_id and task.project.workspace_id != task.workspace_id:
+        work.rehome(task, task.project.workspace_id, by_user=by_user, by_agent=by_agent)
     if moved:
         # A subtree moves as one: a parent's subtasks follow it to its new project.
         for child in _descendants(task):
             child.project = task.project
             child.save(update_fields=["project", "updated_at"])
+            if child.workspace_id != task.workspace_id:
+                work.rehome(child, task.workspace_id, by_user=by_user, by_agent=by_agent)
             _link_participants(child)
     if "human_why" in data:
         set_human_why(task, data["human_why"] or [])
     if task.kind == AgentTask.IDEA and not task.human_whys.exists():
         # Atomic: refusing here leaves the task exactly as it was.
-        raise ValueError(f"{task.ext_id} is an idea, and an idea carries a person's own words — "
+        raise ValueError(f"{task.ref} is an idea, and an idea carries a person's own words — "
                          f"give it at least one human_why quote")
     if "project" in data:
         _link_participants(task)
+    work.record_changes(task, before, by_user=by_user, by_agent=by_agent)
     return task
 
 
 def get_task(agent: Agent, ref: str) -> AgentTask | None:
-    """By `ext_id` ("T3"), the way every route and link names a task."""
-    return agent.tasks.filter(ext_id__iexact=str(ref)).select_related("agent", "project").first()
+    """A task an agent names: by key (`DIM-142`), or by alias ("T3") — its own
+    first, then one it is assigned."""
+    ref = str(ref or "").strip()
+    if not ref:
+        return None
+    if work.looks_like_key(ref):
+        found = work.task_by_key(ref)
+        if found is not None:
+            return found
+    base = AgentTask.objects.select_related("agent", "project", "workspace", "assignee_user", "created_by_agent")
+    return (base.filter(created_by_agent=agent, ext_id__iexact=ref).first()
+            or base.filter(agent=agent, ext_id__iexact=ref).first())
 
 
 def list_tasks(agent: Agent) -> list[AgentTask]:
-    return list(agent.tasks.select_related("agent"))
+    return list(AgentTask.objects.filter(agent_tasks_q(agent)).select_related("agent"))
 
 
 # ---- actions: everything a person does TO a task ------------------------
@@ -1053,7 +1296,32 @@ _EFFECT = {
     AgentTaskAction.REPLY: (None, None, True),  # closes only a question
     AgentTaskAction.NUDGE: (False, None, True),
     AgentTaskAction.DONE: (True, AgentTask.DONE, False),
+    # Triage: decide it without starting it. A review ask ("should I do this?")
+    # is answered — yes, later — so it closes; a question stays open.
+    AgentTaskAction.ACCEPT: (None, AgentTask.TODO, False),
+    AgentTaskAction.BACKLOG: (None, AgentTask.BACKLOG, False),
+    AgentTaskAction.SNOOZE: (False, None, False),
+    AgentTaskAction.DUPLICATE: (True, AgentTask.DECLINED, False),
 }
+
+#: How long a snooze lasts when the comment names no date.
+SNOOZE_DEFAULT = dt.timedelta(days=7)
+
+
+def _snooze_until(comment: str):
+    """A snooze's end: an ISO date (or datetime) in the comment, else a week."""
+    text = (comment or "").strip()
+    if text:
+        try:
+            when = dt.datetime.fromisoformat(text)
+        except ValueError:
+            raise ValueError(f"snooze takes a date (YYYY-MM-DD) or nothing, got {text!r}") from None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=dt.UTC)
+        if when <= timezone.now():
+            raise ValueError("snooze until a date in the future")
+        return when
+    return timezone.now() + SNOOZE_DEFAULT
 
 
 @transaction.atomic
@@ -1061,7 +1329,13 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
         actor_workspace_ids: set, may_start_turns: bool = False,
         by_agent_itself: bool = False,
         ) -> tuple[AgentTask, AgentTaskAction, list[Turn]]:
-    """Do one of the five actions to `task`; returns (task, action row, turns).
+    """Do one of the actions to `task`; returns (task, action row, turns).
+
+    `accept`/`backlog` decide a task without starting it (→ todo / backlog);
+    `snooze` takes it out of Triage until the date in `comment` (default a
+    week); `duplicate` cancels it as a duplicate of the task `comment` names.
+    Only approve, nudge and an answer start an agent's turn, and only on a
+    task an agent is assigned.
 
     `may_start_turns` is whether the actor holds the tier that may start an
     agent turn (editor — the QuickTurn gate). It decides only whether a REPLY
@@ -1096,33 +1370,53 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
 
     task = (AgentTask.objects.select_for_update(of=("self",))
             .select_related("agent", "project").get(pk=task.pk))
-    if action in (AgentTaskAction.APPROVE, AgentTaskAction.DECLINE):
-        if task.ask_kind and not task.ask_is_open:
-            raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} has no open ask")
-        # A plain task with nothing to ask is approvable/declinable only while it
-        # is live — approving a finished one would quietly re-open it.
-        if not task.ask_kind and task.status not in LIVE_STATUSES:
-            raise ClosedAskError(f"{task.agent.slug}/{task.ext_id} is already {task.status}")
+    before = work.snapshot(task)
+    name = task.key
+    deciding = (AgentTaskAction.APPROVE, AgentTaskAction.DECLINE, AgentTaskAction.ACCEPT,
+                AgentTaskAction.BACKLOG, AgentTaskAction.DUPLICATE)
+    if action in deciding:
+        if task.ask_kind and not task.ask_is_open and action in (AgentTaskAction.APPROVE,
+                                                                  AgentTaskAction.DECLINE):
+            raise ClosedAskError(f"{name} has no open ask")
+        # A plain task with nothing to ask is decidable only while it is live —
+        # approving a finished one would quietly re-open it.
+        if task.status not in LIVE_STATUSES and (not task.ask_kind or action not in (
+                AgentTaskAction.APPROVE, AgentTaskAction.DECLINE)):
+            raise ClosedAskError(f"{name} is already {task.status}")
         # ...and approvable only once: approving starts a turn, so approving a
         # plain task that is already in progress would be a nudge any viewer
         # could send. Nudge is the action for that, and it is an editor's.
         if (action == AgentTaskAction.APPROVE and not task.ask_kind
                 and task.status == AgentTask.IN_PROGRESS):
-            raise ClosedAskError(
-                f"{task.agent.slug}/{task.ext_id} is already in progress — nudge it instead")
+            raise ClosedAskError(f"{name} is already in progress — nudge it instead")
+    duplicate_of = None
+    if action == AgentTaskAction.DUPLICATE:
+        duplicate_of = work.task_by_key(comment) if comment else None
+        if duplicate_of is None and comment and task.created_by_agent_id:
+            duplicate_of = get_task(task.created_by_agent, comment)
+        if duplicate_of is None or duplicate_of.workspace_id != task.workspace_id or duplicate_of.pk == task.pk:
+            raise ValueError("duplicate needs the key of the task this one duplicates, in the comment")
+    snooze_until = _snooze_until(comment) if action == AgentTaskAction.SNOOZE else None
     # A proposed project's decision card: who may start or decline it is narrower
     # than who may act on a card (decision 4(b)) — `proposals.before_act`.
     proposals.before_act(task, action, by_user)
     if action == AgentTaskAction.NUDGE and task.status != AgentTask.IN_PROGRESS:
         # A suggested task is started by approving it; nudging it would start
         # work nobody approved. A finished one has nothing to nudge.
-        raise ClosedAskError(
-            f"{task.agent.slug}/{task.ext_id} is {task.status}, not in progress — nothing to nudge")
+        raise ClosedAskError(f"{name} is {task.status}, not in progress — nothing to nudge")
+    if action == AgentTaskAction.NUDGE and task.agent_id is None:
+        raise ClosedAskError(f"{name} is not assigned to an agent — there is nobody to nudge")
 
     closes, status, follow_up = _EFFECT[action]
     if action == AgentTaskAction.REPLY:
         # A reply on a question IS the answer; on anything else it is a note.
         closes = task.ask_kind == AgentTask.ASK_QUESTION and task.ask_is_open
+    elif action in (AgentTaskAction.ACCEPT, AgentTaskAction.BACKLOG):
+        closes = task.ask_kind == AgentTask.ASK_REVIEW and task.ask_is_open
+    if task.agent_id is None:
+        # Nobody's queue to put it on, and no agent to start: the action is the
+        # whole of it. Approving a person's task moves it to In progress.
+        follow_up = False
 
     row = AgentTaskAction(
         agent=task.agent, task=task, action=action, comment=comment, by=by,
@@ -1132,13 +1426,15 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
     # Answering a question runs `on_approve` when the card has one; without one,
     # the card's own turn carries the answer (below) — the agent asked for it.
     runs_on_approve = action == AgentTaskAction.APPROVE or (action == AgentTaskAction.REPLY and closes)
+    starts_card_turn = task.agent_id is not None and (
+        action in (AgentTaskAction.APPROVE, AgentTaskAction.NUDGE)
+        or (action == AgentTaskAction.REPLY and closes and not by_agent_itself)
+        or (action == AgentTaskAction.REPLY and not closes and may_start_turns))
     if runs_on_approve and task.on_approve:
         turns = dispatch(task, action=row, actor_workspace_ids=actor_workspace_ids)
         task.dispatched_at = timezone.now()
         follow_up = False  # the dispatched turn IS the follow-up
-    elif (action in (AgentTaskAction.APPROVE, AgentTaskAction.NUDGE)
-          or (action == AgentTaskAction.REPLY and closes and not by_agent_itself)
-          or (action == AgentTaskAction.REPLY and not closes and may_start_turns)):
+    elif starts_card_turn:
         # No spec of its own: the card's own turn. The row is saved first because
         # its pk keys the turn (one enqueue per click; a replay is the same turn).
         # An answer to a question is its own kind of board turn ("ANSWERED BY").
@@ -1158,17 +1454,26 @@ def act(task: AgentTask, *, action: str, comment: str = "", by: str, by_user=Non
         task.status = status
     elif runs_on_approve and turns:
         task.status = AgentTask.IN_PROGRESS  # the agent has the ball now
+    # Anything that happens to a snoozed task wakes it; a snooze sets it.
+    task.snoozed_until = snooze_until
     task.save()
     proposals.after_act(task, action, comment)  # a decision card starts or archives its project
 
     row.status = AgentTaskAction.PENDING if follow_up else AgentTaskAction.APPLIED
     row.applied_at = None if follow_up else (row.applied_at or timezone.now())
     row.save()
+    actor = by_user if getattr(by_user, "is_authenticated", False) else None
+    by_agent = task.agent if by_agent_itself else None
+    work.record_action(task, row, by_user=actor, by_agent=by_agent)
+    work.record_changes(task, before, by_user=actor, by_agent=by_agent)
+    if duplicate_of is not None:
+        work.add_relation(task, "duplicate", duplicate_of, by_user=actor, by_agent=by_agent)
     return task, row, turns
 
 
 def pending_actions(agent: Agent):
-    """The agent's queue: actions it still has to carry out, oldest first."""
+    """The agent's queue: actions it still has to carry out, oldest first —
+    on the tasks it was assigned when each was done."""
     return (agent.task_actions.filter(status=AgentTaskAction.PENDING)
             .select_related("agent", "task", "by_user")
             .order_by("created_at", "id"))
@@ -1186,8 +1491,6 @@ def mark_applied(action_row: AgentTaskAction, result_note: str = "") -> AgentTas
 def next_task_ext_id(agent: Agent) -> str:
     """T1, T2, … from a counter that only goes up — the same rule projects use,
     and for the same reason: a reused id makes an old link point at new work."""
-    from django.db.models import F
-
     Agent.objects.filter(pk=agent.pk).update(task_seq=F("task_seq") + 1)
     agent.refresh_from_db(fields=["task_seq"])
     return f"T{agent.task_seq}"
@@ -1211,8 +1514,6 @@ def waiting_q(prefix: str = ""):
     paid for the same predicate written three times. `prefix` (e.g. "tasks__")
     lets a query on a related model — a project annotating its tasks — reuse it.
     """
-    from django.db.models import Q
-
     p = prefix
     return Q(**{f"{p}status__in": LIVE_STATUSES}) & (
         (~Q(**{f"{p}ask_kind": ""}) & Q(**{f"{p}ask_closed_at__isnull": True}))
@@ -1221,20 +1522,45 @@ def waiting_q(prefix: str = ""):
 
 
 def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting: str = "",
-                 ask: str = "", batch: str = "", parent: str = ""):
-    """The task list's filters, shared by the per-agent and fleet routes.
+                 ask: str = "", batch: str = "", parent: str = "", assignee: str = "",
+                 created_by: str = "", label: str = "", priority: str = "", milestone: str = "",
+                 category: str = "", kind: str = "", due_before=None, due_after=None, q: str = "",
+                 snoozed: str = ""):
+    """The task list's filters, shared by the per-agent and workspace routes.
 
     `waiting=me` is what lands in a person's inbox: tasks parked on them, plus
     open asks routed to nobody — an unrouted ask waits on whoever looks at it.
+    `assignee` / `created_by`: `me`, an email, `agent:<slug>` (or a bare slug),
+    or `none`. `label`, `priority`, `category`, `status` take comma lists.
+    `project`: an alias ("P3"), a handle, an address, or `none`. `snoozed=hide`
+    leaves out tasks snoozed into the future; `only` keeps just those.
     """
-    from django.db.models import Q
+    def _split(value: str) -> list[str]:
+        return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+    def _who(value: str, *, agent_field: str, user_field: str) -> Q:
+        value = (value or "").strip()
+        if value == "none":
+            return Q(**{f"{agent_field}__isnull": True, f"{user_field}__isnull": True})
+        if value == "me":
+            return Q(**{user_field: user}) if getattr(user, "is_authenticated", False) else Q(pk__in=[])
+        if "@" in value:
+            return Q(**{f"{user_field}__email__iexact": value})
+        return Q(**{f"{agent_field}__slug": value.removeprefix("agent:")})
 
     if project == "none":
         qs = qs.filter(project__isnull=True)
     elif project:
-        qs = qs.filter(project__ext_id__iexact=project)
+        ws, _, handle = project.rpartition("/")
+        pq = Q(project__ext_id__iexact=project) | Q(project__handle__iexact=handle or project)
+        if ws:
+            pq = Q(project__workspace_id=ws, project__handle__iexact=handle)
+        qs = qs.filter(pq)
     if status:
-        qs = qs.filter(status__in=[s.strip() for s in status.split(",") if s.strip()])
+        qs = qs.filter(status__in=_split(status))
+    if category:
+        cats = set(_split(category))
+        qs = qs.filter(status__in=[st for st, c in AgentTask.CATEGORY.items() if c in cats])
     if waiting == "me":
         unrouted_ask = (~Q(ask_kind="") & Q(ask_closed_at__isnull=True)
                         & Q(waiting_on_user__isnull=True))
@@ -1249,7 +1575,37 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
     if parent == "none":
         qs = qs.filter(parent__isnull=True)
     elif parent:
-        qs = qs.filter(parent__ext_id__iexact=parent)
+        qs = qs.filter(Q(parent__key__iexact=parent) | Q(parent__ext_id__iexact=parent))
+    if assignee:
+        qs = qs.filter(_who(assignee, agent_field="agent", user_field="assignee_user"))
+    if created_by:
+        qs = qs.filter(_who(created_by, agent_field="created_by_agent", user_field="created_by_user"))
+    if label:
+        for name in _split(label):
+            qs = qs.filter(labels__name__iexact=name)
+    if priority:
+        qs = qs.filter(priority__in=[int(p) for p in _split(priority) if p.isdigit()])
+    if milestone == "none":
+        qs = qs.filter(milestone__isnull=True)
+    elif milestone:
+        qs = qs.filter(Q(milestone__name__iexact=milestone) | Q(milestone_id=int(milestone))
+                       if milestone.isdigit() else Q(milestone__name__iexact=milestone))
+    if kind:
+        qs = qs.filter(kind=kind)
+    if due_before:
+        qs = qs.filter(due__lte=due_before)
+    if due_after:
+        qs = qs.filter(due__gte=due_after)
+    if q:
+        text = q.strip()
+        qs = qs.filter(Q(title__icontains=text) | Q(key__iexact=text) | Q(next_action__icontains=text)
+                       | Q(ext_id__iexact=text))
+    if snoozed == "hide":
+        qs = qs.filter(Q(snoozed_until__isnull=True) | Q(snoozed_until__lte=timezone.now()))
+    elif snoozed == "only":
+        qs = qs.filter(snoozed_until__gt=timezone.now())
+    if label:
+        qs = qs.distinct()
     return qs
 
 

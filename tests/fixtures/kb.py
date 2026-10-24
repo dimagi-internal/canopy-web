@@ -67,7 +67,7 @@ def world():
     WorkspaceMembership.objects.create(user=owner, workspace=dimagi, role=WorkspaceMembership.OWNER)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=owner)
     project = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base",
-                                          scope="workspace", owner_workspace=connect, handle="givewell-kb")
+                                           workspace=connect, handle="givewell-kb")
     client = Client()
     client.force_login(owner)
     return {"owner": owner, "connect": connect, "eva": eva, "project": project, "client": client}

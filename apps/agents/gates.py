@@ -133,3 +133,76 @@ def project_or_404(agent: Agent, ref: str):
     if project is None:
         raise HttpError(404, f"project {ref} not found")
     return project
+
+
+# ---- tasks and projects: the workspace's, gated by the workspace ----------
+#
+# A task or project belongs to a workspace (design 2026-10-24), so reading one
+# is membership THERE (the same scope `agent_for_read` checks), and a key or
+# address outside it is the same 404 as one that does not exist.
+
+
+def task_or_404(request: HttpRequest, key: str):
+    """A task by key, if the caller may see its workspace; else 404."""
+    from . import work  # noqa: PLC0415 — work imports models only
+
+    task = work.task_by_key(key)
+    if task is None or task.workspace_id not in visible_agent_workspaces(request):
+        raise HttpError(404, f"task {key} not found")
+    return task
+
+
+def check_task_visible(request: HttpRequest, task, ref: str = "") -> None:
+    """404 unless the caller may see the task's workspace — for a task found by
+    a global key through an agent's route."""
+    if task.workspace_id not in visible_agent_workspaces(request):
+        raise HttpError(404, f"task {ref or task.key} not found")
+
+
+def may_edit_task(request: HttpRequest, task) -> bool:
+    """May the caller change this task's fields? An editor of its workspace
+    (`perms.AGENT_WORK`), its assignee person, or the login of the agent it is
+    assigned to or that filed it."""
+    user = request.user
+    if perms.can(user, task.workspace_id, perms.AGENT_WORK):
+        return True
+    if task.assignee_user_id is not None and task.assignee_user_id == getattr(user, "pk", None):
+        return True
+    return any(a is not None and a.is_own_login(user) for a in (task.agent, task.created_by_agent))
+
+
+def require_task_edit(request: HttpRequest, task) -> None:
+    if not may_edit_task(request, task):
+        raise HttpError(403, "changing a task requires the editor role, being its assignee, or being its agent")
+
+
+def project_ws_or_404(request: HttpRequest, workspace: str, handle: str):
+    """A project by address, if the caller may see its workspace or its lead
+    agent's (a dimagi agent leading connect's project reads it as the dimagi
+    member it is); else 404 — the same for "no such project"."""
+    project = services.get_workspace_project(workspace, handle)
+    if project is None or (workspace not in set(listed_agent_workspaces(request))
+                           and workspace not in visible_agent_workspaces(request)
+                           and (project.agent_id is None
+                                or project.agent.workspace_id not in visible_agent_workspaces(request))):
+        raise HttpError(404, f"project {workspace}/{handle} not found")
+    return project
+
+
+def may_edit_project(request: HttpRequest, project) -> bool:
+    """An editor of its workspace or of its lead agent's, its lead, or the
+    login of an agent leading or working on it."""
+    user = request.user
+    if perms.can(user, project.workspace_id, perms.AGENT_WORK):
+        return True
+    if project.agent_id is not None and (perms.can(user, project.agent.workspace_id, perms.AGENT_WORK)
+                                         or project.agent.is_own_login(user)):
+        return True
+    if project.owner_user_id is not None and project.owner_user_id == getattr(user, "pk", None):
+        return True
+    return project.member_agents.filter(user=user).exists() if getattr(user, "is_authenticated", False) else False
+
+
+def require_project_edit(request: HttpRequest, project) -> None:
+    if not may_edit_project(request, project):
+        raise HttpError(403, "changing a project requires the editor role, being its lead, or being its agent")

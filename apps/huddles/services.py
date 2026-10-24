@@ -126,7 +126,7 @@ def _outputs_qs(workspaces):
     """Board tasks pointing at a huddle page, filed by an agent in any of
     `workspaces` (the caller's own) — a huddle's members span workspaces."""
     return AgentTask.objects.select_related("agent", "project").filter(
-        agent__workspace_id__in=list(workspaces), source_url__contains="/huddles/")
+        workspace_id__in=list(workspaces), source_url__contains="/huddles/")
 
 
 def _huddle_of_url(url: str) -> str:
@@ -168,7 +168,7 @@ def summaries(anchor_rows, visible_qs, workspaces) -> list[dict]:
         # A huddle's outcomes: its proposed projects, and (filed before those
         # existed) its loose tasks.
         urls = list(_outputs_qs(workspaces).values_list("source_url", flat=True))
-        urls += AgentProject.objects.filter(agent__workspace_id__in=list(workspaces),
+        urls += AgentProject.objects.filter(workspace_id__in=list(workspaces),
                                             source_url__contains="/huddles/").values_list("source_url", flat=True)
         for url in urls:
             h = _huddle_of_url(url)
@@ -249,10 +249,10 @@ def detail(anchor, *, user, visible_qs, workspaces) -> dict:
                                                              str(_ref(t).get("member") or "")))]
     r1 = [t.created_at for (_, r), t in latest.items() if r == 1]
     outputs = [
-        {"agent": a.agent.slug, "task_id": a.id, "ext_id": a.ext_id, "title": a.title,
+        {"agent": a.agent_slug or "", "task_id": a.id, "ext_id": a.ref, "title": a.title,
          "status": a.status, "assigned": a.assigned,
-         "project": a.project.ext_id if a.project_id else "",
-         "url": f"/w/{a.agent.workspace_id}/agents/{a.agent.slug}/tasks",
+         "project": (a.project.ext_id or a.project.handle) if a.project_id else "",
+         "url": a.url,
          "next_action": a.next_action, "updated_at": a.updated_at}
         for a in _outputs_qs(workspaces).filter(
             Q(source_url__endswith=f"/huddles/{hid}") | Q(source_url__endswith=f"/huddles/{hid}/"))
@@ -286,7 +286,7 @@ def projects_of(huddle_id: str, workspaces, *, user) -> list[dict]:
     from apps.agents import proposals
 
     rows = (AgentProject.objects.select_related("agent", "owner_user")
-            .filter(agent__workspace_id__in=list(workspaces))
+            .filter(workspace_id__in=list(workspaces))
             .filter(Q(source_url__endswith=f"/huddles/{huddle_id}")
                     | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
             .order_by("agent__slug", "pk"))
@@ -299,7 +299,7 @@ def tasks_of(huddle_id: str, workspaces, *, user) -> list[dict]:
     from apps.agents import proposals
 
     rows = (AgentTask.objects.select_related("agent", "project", "project__owner_user")
-            .filter(agent__workspace_id__in=list(workspaces), origin_ref__kind=proposals.CHECKIN_PROPOSAL)
+            .filter(workspace_id__in=list(workspaces), origin_ref__kind=proposals.CHECKIN_PROPOSAL)
             .filter(Q(origin_ref__huddle_id=huddle_id) | Q(source_url__endswith=f"/huddles/{huddle_id}")
                     | Q(source_url__endswith=f"/huddles/{huddle_id}/"))
             .order_by("agent__slug", "pk"))
@@ -318,14 +318,14 @@ def checkin_ref(anchor, workspaces) -> dict | None:
     if not run_id:
         return None
     r = (CheckinRun.objects.select_related("checkin", "checkin__lead", "project", "project__agent")
-         .filter(pk=run_id, project__agent__workspace_id__in=list(workspaces)).first())
+         .filter(pk=run_id, project__workspace_id__in=list(workspaces)).first())
     if r is None:
         return None
     p = r.project
     lead = getattr(getattr(r.checkin, "lead", None), "email", "") or (r.participants or {}).get("lead_email") or ""
     return {"id": r.checkin_id, "name": r.checkin_name,
-            "project": {"agent": p.agent.slug, "ref": p.ext_id, "name": p.name, "status": p.status,
-                        "url": project_path(p), "workspace": p.agent.workspace_id},
+            "project": {"agent": p.agent_slug or "", "ref": p.ext_id or p.handle, "handle": p.handle,
+                        "name": p.name, "status": p.status, "url": project_path(p), "workspace": p.workspace_id},
             "channel_name": r.channel_name, "lead_email": lead, "run_id": r.pk,
             "read": ({"messages": r.read_messages, "first_ts": r.read_first_ts, "last_ts": r.read_last_ts,
                       "since": r.read_since.isoformat() if r.read_since else ""} if r.channel_id else None)}

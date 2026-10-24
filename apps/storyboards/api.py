@@ -363,7 +363,7 @@ def patch_storyboard(request: HttpRequest, slug: str, payload: StoryboardPatchIn
         project = artifact_origin.explicit_project(payload.agent_project, user=request.user, turn=None)
         # One message for "unknown" and "another workspace's": a caller must not be able
         # to probe which project ids exist in other tenants.
-        if project is None or project.agent.workspace_id != board.workspace_id:
+        if project is None or project.workspace_id != board.workspace_id:
             raise HttpError(422, f"no such project: {payload.agent_project!r}")
     try:
         with transaction.atomic():

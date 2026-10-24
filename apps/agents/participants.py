@@ -94,7 +94,7 @@ def projects_of(person, workspace_slug: str, *, limit: int | None = None,
     most recently active project first. Only that workspace's: a project is
     served only where its agent lives."""
     qs = (ProjectParticipant.objects
-          .filter(person=person, project__agent__workspace_id=workspace_slug)
+          .filter(person=person, project__workspace_id=workspace_slug)
           .select_related("project", "project__agent")
           .order_by("-project__updated_at", "-created_at", "-pk"))
     if not include_archived:

@@ -88,7 +88,7 @@ function WorkspaceProjectReadOnly({ project }: { project: ProjectDetailOut }): J
 
 /** The line a workspace project's page shows under its title. */
 export function WorkspaceProjectLine({ project }: { project: ProjectOut }): JSX.Element | null {
-  if (project.scope !== 'workspace') return null
+  if (!project.handle) return null
   return (
     <p className="text-[12px] text-muted-foreground mt-1" data-testid="workspace-project-line">
       Workspace project <span className="font-mono">{project.address}</span> · kept current by{' '}
@@ -99,7 +99,7 @@ export function WorkspaceProjectLine({ project }: { project: ProjectOut }): JSX.
 
 /** A link to a knowledge-base project's sources and its owner's review (`…/projects/:handle/kb`). */
 export function ProjectKbLink({ project }: { project: ProjectOut }): JSX.Element | null {
-  if (project.scope !== 'workspace' || project.mcp_kind !== 'kb') return null
+  if (project.mcp_kind !== 'kb') return null
   // The address names the project's own workspace, which for a division's project
   // kept from the parent is not the board's.
   const [ws, handle] = project.address.split('/')

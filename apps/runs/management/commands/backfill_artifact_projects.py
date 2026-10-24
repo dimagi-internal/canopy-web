@@ -66,7 +66,7 @@ class Command(BaseCommand):
             if project is None:
                 stats[f"{label}:{how}"] += 1
                 return
-            if project.agent.workspace_id != obj.workspace_id:
+            if project.workspace_id != obj.workspace_id:
                 stats[f"{label}:other-workspace"] += 1
                 return
             stats[f"{label}:linked-by-{how}"] += 1

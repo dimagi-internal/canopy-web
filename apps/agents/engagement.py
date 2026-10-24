@@ -91,7 +91,7 @@ def resolve_checkin(workspaces, checkin: str) -> list[str]:
     checkin = (checkin or "").strip()
     if not checkin or checkin.isdigit():
         return [checkin] if checkin else []
-    ids = ProjectCheckin.objects.filter(project__agent__workspace_id__in=list(workspaces),
+    ids = ProjectCheckin.objects.filter(project__workspace_id__in=list(workspaces),
                                         name__iexact=checkin).values_list("pk", flat=True)
     return [str(i) for i in ids] or [checkin]
 
@@ -159,7 +159,7 @@ def summary(workspaces, *, days: int = 14, checkin: str = "", agent: str = "",
         born = (mine.filter(kind="proposed").order_by("at").values_list("at", flat=True).first()
                 or project.proposed_at or project.created_at)
         row = _proposal_row(mine, born, agent_users=agent_users, name=project.name, status=project.status,
-                            backers=project.backings.count(), agent=project.agent.slug, ref=project.ext_id)
+                            backers=project.backings.count(), agent=project.agent_slug or "", ref=project.ext_id or project.handle)
         proposals.append(row)
         if row["first_reaction_s"] is None:
             unanswered.append(row)
@@ -168,8 +168,8 @@ def summary(workspaces, *, days: int = 14, checkin: str = "", agent: str = "",
         mine = EngagementEvent.objects.filter(task=task)
         born = mine.filter(kind="proposed").order_by("at").values_list("at", flat=True).first() or task.created_at
         row = _proposal_row(mine, born, agent_users=agent_users, name=task.title, status=task.status,
-                            backers=ProjectBacking.objects.filter(task=task).count(), agent=task.agent.slug,
-                            ref=task.ext_id, project=task.project.ext_id if task.project_id else "")
+                            backers=ProjectBacking.objects.filter(task=task).count(), agent=task.agent_slug or "",
+                            ref=task.ref, project=(task.project.ext_id or task.project.handle) if task.project_id else "")
         task_proposals.append(row)
         if row["first_reaction_s"] is None:
             unanswered_tasks.append(row)

@@ -228,7 +228,10 @@ def test_every_action_is_deliberately_tiered():
     from apps.agents.models import AgentTaskAction
 
     all_actions = {a for a, _ in AgentTaskAction.ACTION_CHOICES}
-    interaction = {AgentTaskAction.APPROVE, AgentTaskAction.DECLINE, AgentTaskAction.REPLY}
+    interaction = {AgentTaskAction.APPROVE, AgentTaskAction.DECLINE, AgentTaskAction.REPLY,
+                   # Triage's verbs decide what is on the board, as approve and decline do.
+                   AgentTaskAction.ACCEPT, AgentTaskAction.BACKLOG, AgentTaskAction.SNOOZE,
+                   AgentTaskAction.DUPLICATE}
     assert _EDITOR_ACTIONS | interaction == all_actions, (
         f"unclassified actions: {all_actions - (_EDITOR_ACTIONS | interaction)}"
     )

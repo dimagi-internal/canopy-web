@@ -879,12 +879,18 @@ class HumanWhyOut(StrictModel):
 class AgentProjectIn(StrictModel):
     name: str = Field(min_length=1, max_length=200)
     ext_id: str = Field(default="", max_length=64)
+    #: Its address in its workspace; free from its name when omitted.
+    handle: str = Field(default="", max_length=60)
     outcome: str = ""
     status: str = "active"
     owner_note: str = Field(default="", max_length=200)
-    # The owner as a real person — a member of the agent's workspace — so an
+    # The lead as a real person — a member of the project's workspace — so an
     # idea added on the team view can email them. Unknown → 422.
     owner_email: str = Field(default="", max_length=254)
+    #: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
+    priority: int = Field(default=0, ge=0, le=4)
+    start_date: dt.date | None = None
+    target_date: dt.date | None = None
     drive_folder_id: str = Field(default="", max_length=128)
     drive_folder_url: str = Field(default="", max_length=500)
     repo_slug: str = Field(default="", max_length=100)
@@ -904,26 +910,33 @@ class AgentProjectPatch(StrictModel):
     repo_slug: str | None = Field(default=None, max_length=100)
     notes: str | None = None
     links: list[AgentTaskLink] | None = None
+    priority: int | None = Field(default=None, ge=0, le=4)
+    start_date: dt.date | None = None
+    target_date: dt.date | None = None
+    #: The agents working on it, by slug — REPLACES the list (its lead agent
+    #: stays one).
+    member_agents: list[str] | None = Field(default=None, max_length=50)
     #: The task this project grew out of, as `<agent>/<task ext_id>` ("ada/T41");
     #: `""` clears it. Same agent's or another visible agent's task.
     spawned_from: str | None = Field(default=None, max_length=130)
-    #: Make it a WORKSPACE project addressed `<workspace>/<handle>`, this agent as
-    #: steward. One-way: a handle is an address other agents hold.
+    #: A new address in its workspace — callers holding the old one lose it.
     handle: str | None = Field(default=None, max_length=60)
-    #: With `handle`: the workspace that owns it — the agent's own (default) or
-    #: one below it ("connect" for a dimagi agent).
+    #: With `handle`: move it to this workspace — its lead agent's own or one
+    #: below it ("connect" for a dimagi agent).
     workspace: str | None = Field(default=None, max_length=100)
-    #: Hand a workspace project to another agent of its workspace.
+    #: Its lead agent, by slug (`""`: no agent leads it).
     steward: str | None = Field(default=None, max_length=100)
 
 
 class WorkspaceProjectIn(AgentProjectIn):
-    """Create a workspace project directly: owned by `workspace` — the steward's
-    own (default) or one below it."""
+    """Create a project in a workspace: `workspace` (default: the lead agent's,
+    else the one you are in), led by `steward` (an agent's slug) if given."""
 
-    handle: str = Field(min_length=3, max_length=60)
-    steward: str = Field(min_length=1, max_length=100)
+    handle: str = Field(default="", max_length=60)
+    steward: str = Field(default="", max_length=100)
     workspace: str = Field(default="", max_length=100)
+    #: The agents working on it, by slug, beside its lead agent.
+    member_agents: list[str] = Field(default_factory=list, max_length=50)
 
 
 class KbUploadOut(StrictModel):
@@ -1200,34 +1213,39 @@ class SpawnedFromOut(StrictModel):
 
     agent: str
     ref: str
+    key: str = ""
     title: str
     status: str
     project_ref: str = ""
     project_name: str = ""
-    #: The page to open: the task's project, else its agent's board.
+    #: The task's own page.
     url: str
+
+
+class LabelBriefOut(StrictModel):
+    name: str
+    color: str = "muted"
 
 
 class AgentProjectOut(StrictModel):
     id: int
-    #: The owning agent; for a workspace project, its steward.
-    agent_slug: str
-    #: The workspace the project lives in (its owner's, else its agent's). A list
-    #: pinned to a parent workspace carries its children's rows too.
-    workspace: str = ""
-    #: `agent` — one agent's piece of work; `workspace` — owned by the workspace,
-    #: kept current by its steward, shared by every agent in it.
-    scope: Literal["agent", "workspace"] = "agent"
-    #: A workspace project's address within its workspace (blank otherwise).
+    #: Its lead agent, which holds its Drive folder (None: no agent leads it).
+    agent_slug: str | None = None
+    #: The workspace that owns it. A list pinned to a parent workspace carries
+    #: its children's rows too.
+    workspace: str = Field(default="", validation_alias=AliasChoices("workspace_id", "workspace"))
+    #: Its address within its workspace.
     handle: str = ""
-    #: The agent keeping a workspace project current (None for an agent project).
+    #: Its lead agent (the same as `agent_slug`).
     steward_slug: str | None = None
-    #: How to name it anywhere: `<workspace>/<handle>` or `<agent>/<ext_id>`.
+    #: The agents working on it, its lead agent among them.
+    member_agents: list[str] = Field(default_factory=list,
+                                     validation_alias=AliasChoices("member_slugs", "member_agents"))
+    #: How to name it anywhere: `<workspace>/<handle>`.
     address: str = ""
-    #: Its page.
+    #: Its one page.
     url: str = ""
-    #: Its page on its agent's board, in the agent's workspace (`url` for an
-    #: agent project; where a workspace project's address redirects to).
+    #: Its page on its lead agent's board (`url` when no agent leads it).
     board_url: str = ""
     #: What it serves as its own MCP server ("" nothing, "kb" a knowledge base),
     #: and where (relative to canopy's origin; empty until something is published).
@@ -1238,12 +1256,25 @@ class AgentProjectOut(StrictModel):
     #: version is also written into its Drive folder (off by default).
     kb_version_number: int | None = None
     kb_drive_replica: bool = False
+    #: Its maker agent's alias ("P5"); blank for a project made elsewhere.
     ext_id: str
     name: str
     outcome: str
-    status: Literal["proposed", "active", "done", "archived"]
+    status: Literal["proposed", "planned", "active", "paused", "done", "canceled", "archived"]
+    #: triage | unstarted | started | paused | completed | canceled.
+    category: str = ""
+    priority: int = 0
+    start_date: dt.date | None = None
+    target_date: dt.date | None = None
     owner_note: str
+    #: Its lead (the person accountable).
     owner_email: str | None = None
+    #: The latest published update's health (on_track | at_risk | off_track).
+    health: str | None = None
+    #: Active, and no update within the workspace's cadence.
+    update_missing: bool = False
+    #: Tasks done / in scope (canceled ones out), by category.
+    done_task_count: int = 0
     drive_folder_id: str
     drive_folder_url: str
     repo_slug: str
@@ -1289,12 +1320,23 @@ class AgentTaskIn(StrictModel):
     #: Leave it empty rather than paraphrase.
     human_why: list[HumanWhyIn] = Field(default_factory=list, max_length=20)
     next_action: str = Field(default="", max_length=300)
+    #: suggested · backlog · todo · in_progress · done · declined.
     status: str = "suggested"  # normalized server-side
+    #: Who does it: a member's email, or an agent's slug (`agent:<slug>`).
+    #: Omitted: the agent whose route filed it (nobody, on the workspace route).
+    assignee: str | None = Field(default=None, max_length=254)
     owner: str = Field(default="", max_length=120)
     assigned: str = Field(default="", max_length=120)
-    #: Who the next step waits on, by email — a member of the agent's workspace.
+    #: Who the next step waits on, by email — a member of the task's workspace.
     waiting_on_email: str = Field(default="", max_length=254)
+    #: high · medium · low (anything else is stored as blank).
     confidence: str = Field(default="", max_length=10)
+    #: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
+    priority: int = Field(default=0, ge=0, le=4)
+    #: Label names; unknown ones are made.
+    labels: list[str] = Field(default_factory=list, max_length=20)
+    #: A milestone of its project, by name or id.
+    milestone: str = Field(default="", max_length=200)
     score: str = Field(default="", max_length=8)
     review: str = ""
     rationale: str = ""
@@ -1303,7 +1345,8 @@ class AgentTaskIn(StrictModel):
     due: dt.date | None = None
     links: list[AgentTaskLink] = Field(default_factory=list)
     notes: str = ""
-    position: int = 0
+    #: Order in a list (sets its rank). Omitted: above every other task.
+    position: int | None = None
     #: What the task asks a person, if anything: `review` ("should I do
     #: this?") or `question` ("I need an answer"). Blank asks nothing.
     ask_kind: Literal["", "review", "question"] = ""
@@ -1332,18 +1375,31 @@ class AgentTaskIn(StrictModel):
 
 
 class AgentTaskOut(StrictModel):
-    """A task, addressed by `(agent_slug, ext_id)` — there is no other id."""
+    """A task, addressed by its `key` (`DIM-142`) anywhere, and on an agent's
+    route also by `ext_id` (that agent's alias, else the key)."""
 
-    agent_slug: str
-    #: The workspace the task lives in (its agent's) — see `AgentProjectOut.workspace`.
-    workspace: str = ""
-    ext_id: str
+    #: `<PREFIX>-<number>`: its one name.
+    key: str = ""
+    #: Its one page.
+    url: str = ""
+    #: The assignee agent (None when a person, or nobody, is the assignee).
+    agent_slug: str | None = None
+    #: The assignee person.
+    assignee_email: str | None = None
+    created_by_agent_slug: str | None = None
+    #: The workspace that owns it — see `AgentProjectOut.workspace`.
+    workspace: str = Field(default="", validation_alias=AliasChoices("workspace_id", "workspace"))
+    #: Its agent alias ("T12") where it has one, else its key.
+    ext_id: str = Field(validation_alias=AliasChoices("ref", "ext_id"))
+    #: Its project's alias where it has one, else the project's handle.
     project_ext_id: str | None = None
+    project_handle: str | None = None
     project_name: str | None = None
-    #: `<workspace>/<handle>` for a workspace project, else `<agent>/<ext_id>`.
+    #: `<workspace>/<handle>`.
     project_address: str | None = None
-    #: The task this is a subtask of; null for a top-level task.
+    #: The task this is a subtask of (its alias, else its key); null for a top-level task.
     parent_ext_id: str | None = None
+    parent_key: str | None = None
     #: `idea` — a person's want, in their words (`human_why`); `work` otherwise.
     kind: Literal["work", "idea"] = "work"
     drive_folder_id: str = ""
@@ -1352,7 +1408,14 @@ class AgentTaskOut(StrictModel):
     #: What people actually said, verbatim, oldest first — above `rationale`.
     human_why: list[HumanWhyOut] = Field(default_factory=list)
     next_action: str
-    status: Literal["suggested", "in_progress", "done", "declined"]
+    status: Literal["suggested", "backlog", "todo", "in_progress", "done", "declined"]
+    #: triage · backlog · unstarted · started · completed · canceled.
+    category: str = ""
+    priority: int = 0
+    labels: list[LabelBriefOut] = Field(default_factory=list,
+                                        validation_alias=AliasChoices("label_list", "labels"))
+    milestone: str | None = Field(default=None, validation_alias=AliasChoices("milestone_name", "milestone"))
+    snoozed_until: dt.datetime | None = None
     owner: str
     assigned: str
     waiting_on_email: str | None = None
@@ -1380,6 +1443,7 @@ class AgentTaskOut(StrictModel):
     links: list[AgentTaskLink] = Field(default_factory=list)
     notes: str
     position: int
+    rank: float = 0
     created_at: dt.datetime
     updated_at: dt.datetime
 
@@ -1387,6 +1451,10 @@ class AgentTaskOut(StrictModel):
     @classmethod
     def _null_key_is_blank(cls, v):
         return v or ""
+
+
+class TaskCountOut(StrictModel):
+    count: int
 
 
 class AgentTaskPatch(StrictModel):
@@ -1407,6 +1475,9 @@ class AgentTaskPatch(StrictModel):
     #: `assigned` is where an unknown counterpart belongs, and a wait that
     #: looks routed but reaches nobody is the failure this field exists to end.
     waiting_on_email: str | None = Field(default=None, max_length=254)
+    #: Who does it: a member's email, an agent's slug (`agent:<slug>`), or `""`
+    #: for nobody. Giving it to an agent starts nothing; approving does.
+    assignee: str | None = Field(default=None, max_length=254)
     title: str | None = Field(default=None, max_length=300)
     #: REPLACES the list (send every quote you want kept); `[]` clears it.
     human_why: list[HumanWhyIn] | None = Field(default=None, max_length=20)
@@ -1424,19 +1495,36 @@ class AgentTaskPatch(StrictModel):
     notes: str | None = None
     position: int | None = None
     links: list[AgentTaskLink] | None = None
+    priority: int | None = Field(default=None, ge=0, le=4)
+    #: REPLACES its labels (names; unknown ones are made). `[]` clears them.
+    labels: list[str] | None = Field(default=None, max_length=20)
+    #: A milestone of its project, by name or id; `""` clears it.
+    milestone: str | None = Field(default=None, max_length=200)
+    #: Out of Triage until then; null wakes it.
+    snoozed_until: dt.datetime | None = None
+    rank: float | None = None
+    #: Place it between two tasks — what a drag sends: `before` is the key of the
+    #: task just ABOVE where it lands, `after` the one just below (either may be
+    #: omitted at the top or bottom of the list).
+    before: str | None = Field(default=None, max_length=24)
+    after: str | None = Field(default=None, max_length=24)
 
 
 # ---- actions: everything a person does TO a task ----
 class AgentTaskActionIn(StrictModel):
-    #: approve · decline · reply (a reply needs a comment) · nudge · done.
-    #: Field changes are a PATCH, not an action.
-    action: Literal["approve", "decline", "reply", "nudge", "done"]
+    #: approve (start now) · decline · reply (a reply needs a comment) · nudge ·
+    #: done · accept (→ todo) · backlog · snooze (comment: a date, default a
+    #: week) · duplicate (comment: the key it duplicates). Field changes are a
+    #: PATCH, not an action.
+    action: Literal["approve", "decline", "reply", "nudge", "done", "accept", "backlog", "snooze",
+                    "duplicate"]
     comment: str = ""
 
 
 class AgentTaskActionOut(StrictModel):
     id: int
-    agent_slug: str
+    agent_slug: str | None = None
+    task_key: str = ""
     task_ext_id: str
     action: str
     comment: str
@@ -1539,10 +1627,11 @@ class ProposalCommentOut(StrictModel):
 
 
 class ProposalPartnerOut(StrictModel):
-    """A partner's linked task, on the partner's own board."""
+    """A partner's linked task: in the project, assigned to the partner."""
 
     agent: str
     ext_id: str
+    key: str = ""
     task_id: int
     status: str
     url: str
@@ -1558,7 +1647,7 @@ class ProposedProjectOut(StrictModel):
     workspace: str
     ref: str
     name: str
-    status: Literal["proposed", "active", "done", "archived"]
+    status: Literal["proposed", "planned", "active", "paused", "done", "canceled", "archived"]
     outcome: str
     why: str = ""
     plan: list[str] = Field(default_factory=list)
@@ -1633,12 +1722,15 @@ class ProposedTaskOut(StrictModel):
     what they said, its partners and any project it spawned."""
 
     id: int
+    #: Its assignee agent ("" when none).
     agent: str
     workspace: str
-    #: The task's `ext_id` — act on it with `POST /api/agents/{agent}/tasks/{ref}/actions`.
+    #: Its agent alias, else its key.
     ref: str
+    #: Act on it with `POST /api/tasks/{key}/actions`.
+    key: str = ""
     title: str
-    status: Literal["suggested", "in_progress", "done", "declined"]
+    status: Literal["suggested", "backlog", "todo", "in_progress", "done", "declined"]
     why: str = ""
     done_when: str = ""
     plan: list[str] = Field(default_factory=list)
@@ -1705,9 +1797,16 @@ class AgentProjectDetailOut(AgentProjectOut):
     #: The tasks its check-ins proposed that wait for Start or Decline, each as
     #: the huddle page shows it.
     proposed_tasks: list[ProposedTaskOut] = Field(default_factory=list)
-    #: Can the caller open `board_url`? False for a member of a division reading
-    #: a project its parent's agent stewards: the page then renders at its address.
+    #: Can the caller read its workspace's board? Always true for a member.
     board_readable: bool = True
+    #: Tasks by category, and the scope-versus-done graph's points.
+    progress: ProjectProgressOut | None = None
+    milestones: list[MilestoneOut] = Field(default_factory=list)
+    #: Its latest published update, and any drafts waiting for a person.
+    latest_update: ProjectUpdateOut | None = None
+    draft_updates: list[ProjectUpdateOut] = Field(default_factory=list)
+    #: The reader may change it (an editor, its lead, or one of its agents).
+    may_edit: bool = False
 
 
 # ---- shared ----
@@ -2658,6 +2757,7 @@ class IdeaWhoOut(StrictModel):
 
 class IdeaTaskOut(StrictModel):
     ext_id: str
+    key: str = ""
     title: str
     status: str
 
@@ -2666,7 +2766,8 @@ class IdeaOut(StrictModel):
     """An idea: a task with `kind: "idea"` — a person's want about the product,
     in their words, with the work toward it as its subtasks."""
 
-    ext_id: str = Field(description="The idea task's ext_id.")
+    ext_id: str = Field(description="The idea task's agent alias, else its key.")
+    key: str = Field(default="", description="The idea task's key.")
     title: str
     status: str = Field(description="The idea task's status.")
     stage: Literal["proposed", "started", "shipped", "declined"] = Field(
@@ -2890,3 +2991,264 @@ class AgentRosterRowOut(StrictModel):
     last_turn_status: str = ""
     turns_7d: int = 0
     failed_7d: int = 0
+
+
+# ---- the workspace's work: one task by key, and the planning around it ----
+# (design 2026-10-24-workspace-tasks-and-projects-design.md)
+
+
+class TaskBriefOut(StrictModel):
+    """Another task, as a line in this one (a relation, its parent)."""
+
+    key: str
+    title: str
+    status: str
+    category: str = ""
+    url: str = ""
+
+
+class TaskRelationOut(StrictModel):
+    #: blocks · blocked_by · related · duplicate_of · duplicated_by.
+    kind: str
+    task: TaskBriefOut
+
+
+class TaskEventOut(StrictModel):
+    """One entry in the task's history."""
+
+    id: int
+    #: created · field · action · relation.
+    kind: str
+    #: For `field`: which field. For `action`: the action. For `relation`: its kind.
+    field: str = ""
+    old: str = ""
+    new: str = ""
+    #: An action's comment — a reply is the comment thread.
+    comment: str = ""
+    by_email: str | None = None
+    by_name: str = ""
+    by_agent: str | None = None
+    created_at: dt.datetime
+
+
+class TaskTurnOut(StrictModel):
+    """The assignee agent's latest turn on this task, and its state as every
+    channel renders it (`harness.turn_status`)."""
+
+    id: uuid.UUID
+    status: str
+    state: str
+    created_at: dt.datetime
+    #: Its page (the turn log).
+    url: str = ""
+
+
+class TaskDetailOut(AgentTaskOut):
+    actions: list[AgentTaskActionOut] = Field(default_factory=list)
+    events: list[TaskEventOut] = Field(default_factory=list)
+    relations: list[TaskRelationOut] = Field(default_factory=list)
+    subtasks: list[AgentTaskOut] = Field(default_factory=list)
+    parent: TaskBriefOut | None = None
+    turn: TaskTurnOut | None = None
+    #: Blocked by a task that is still open.
+    blocked: bool = False
+    #: The reader may change its fields.
+    may_edit: bool = False
+    #: category -> how this workspace names it.
+    status_names: dict[str, str] = Field(default_factory=dict)
+
+
+class TaskCreateIn(AgentTaskIn):
+    """One task made in a workspace (`POST /api/tasks/`): `workspace` (default:
+    the project's, else the one you are pinned to, else your only one)."""
+
+    workspace: str = Field(default="", max_length=64)
+
+
+class TaskRelationIn(StrictModel):
+    #: blocks · blocked_by · related · duplicate.
+    kind: Literal["blocks", "blocked_by", "related", "duplicate"]
+    #: The other task's key.
+    other: str = Field(min_length=3, max_length=24)
+
+
+class BulkTaskIn(StrictModel):
+    """One change to many tasks: a PATCH, or an action, or both (the PATCH first)."""
+
+    keys: list[str] = Field(min_length=1, max_length=200)
+    patch: AgentTaskPatch | None = None
+    action: AgentTaskActionIn | None = None
+
+
+class BulkTaskResultOut(StrictModel):
+    key: str
+    ok: bool
+    #: Why it was not changed (a 403/404/409/422 detail).
+    error: str = ""
+    task: AgentTaskOut | None = None
+
+
+class TriageOut(StrictModel):
+    """One thing waiting for a decision: a suggested task (`kind` task or idea)
+    or a proposed project."""
+
+    #: task · idea · project.
+    kind: str
+    #: A task's key, or a project's address.
+    ref: str
+    title: str
+    why: str = ""
+    #: Who proposed it: an agent's slug, or a person's email.
+    proposed_by: str = ""
+    workspace: str
+    project_address: str | None = None
+    project_name: str | None = None
+    url: str
+    created_at: dt.datetime
+    #: How many back it / pass, from its backings.
+    backers: int = 0
+    passes: int = 0
+    ask_kind: str = ""
+    confidence: str = ""
+    priority: int = 0
+    human_why: list[HumanWhyOut] = Field(default_factory=list)
+
+
+class LabelOut(StrictModel):
+    id: int
+    workspace: str = Field(validation_alias=AliasChoices("workspace_id", "workspace"))
+    name: str
+    color: str
+    description: str = ""
+    task_count: int = 0
+
+
+class LabelIn(StrictModel):
+    workspace: str = Field(default="", max_length=64)
+    name: str = Field(min_length=1, max_length=60)
+    #: muted · primary · success · warning · destructive · info.
+    color: str = "muted"
+    description: str = Field(default="", max_length=200)
+
+
+class LabelPatch(StrictModel):
+    name: str | None = Field(default=None, max_length=60)
+    color: str | None = None
+    description: str | None = Field(default=None, max_length=200)
+
+
+class SavedViewOut(StrictModel):
+    id: int
+    workspace: str = Field(validation_alias=AliasChoices("workspace_id", "workspace"))
+    name: str
+    shared: bool
+    #: Yours (you may change it), or shared by someone else.
+    mine: bool = False
+    owner_email: str | None = None
+    filters: dict[str, str] = Field(default_factory=dict)
+    group_by: str = ""
+    sort: str = ""
+    layout: str = "table"
+    rank: float = 0
+
+
+class SavedViewIn(StrictModel):
+    workspace: str = Field(default="", max_length=64)
+    name: str = Field(min_length=1, max_length=100)
+    shared: bool = False
+    filters: dict[str, str] = Field(default_factory=dict)
+    group_by: str = Field(default="", max_length=20)
+    sort: str = Field(default="", max_length=20)
+    layout: Literal["table", "board", "calendar"] = "table"
+
+
+class SavedViewPatch(StrictModel):
+    name: str | None = Field(default=None, max_length=100)
+    shared: bool | None = None
+    filters: dict[str, str] | None = None
+    group_by: str | None = Field(default=None, max_length=20)
+    sort: str | None = Field(default=None, max_length=20)
+    layout: Literal["table", "board", "calendar"] | None = None
+    rank: float | None = None
+
+
+class TaskSettingsOut(StrictModel):
+    workspace: str = Field(validation_alias=AliasChoices("workspace_id", "workspace"))
+    prefix: str
+    #: category -> name, every category (defaults filled in).
+    status_names: dict[str, str] = Field(default_factory=dict)
+    update_cadence_days: int = 7
+
+
+class TaskSettingsPatch(StrictModel):
+    #: Only while no task of the workspace carries the current one.
+    prefix: str | None = Field(default=None, max_length=10)
+    #: category -> name; a blank name restores the default.
+    status_names: dict[str, str] | None = None
+    update_cadence_days: int | None = Field(default=None, ge=1, le=90)
+
+
+class MilestoneOut(StrictModel):
+    id: int
+    name: str
+    description: str = ""
+    target_date: dt.date | None = None
+    rank: float = 0
+    done: int = 0
+    total: int = 0
+
+
+class MilestoneIn(StrictModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    target_date: dt.date | None = None
+
+
+class MilestonePatch(StrictModel):
+    name: str | None = Field(default=None, max_length=200)
+    description: str | None = None
+    target_date: dt.date | None = None
+    rank: float | None = None
+
+
+class ProjectUpdateOut(StrictModel):
+    id: int
+    #: on_track · at_risk · off_track.
+    health: str
+    body: str
+    #: draft (an agent's, waiting for a person) · published.
+    status: str
+    author_email: str | None = None
+    author_agent: str | None = Field(default=None, validation_alias=AliasChoices("author_agent_slug", "author_agent"))
+    published_by_email: str | None = None
+    checkin_run: int | None = Field(default=None, validation_alias=AliasChoices("checkin_run_id", "checkin_run"))
+    diff: dict = Field(default_factory=dict)
+    published_at: dt.datetime | None = None
+    created_at: dt.datetime
+
+
+class ProjectUpdateIn(StrictModel):
+    health: Literal["on_track", "at_risk", "off_track"]
+    body: str = Field(default="", max_length=10000)
+    #: A person's update is published at once unless `draft`; an agent's (its
+    #: own login) is always a draft a person publishes.
+    draft: bool = False
+    #: The check-in run it reports on, if any.
+    checkin_run: int | None = None
+
+
+class ProjectUpdatePublishIn(StrictModel):
+    #: The health as the person publishing it judges it (default: the draft's).
+    health: Literal["on_track", "at_risk", "off_track"] | None = None
+    body: str | None = Field(default=None, max_length=10000)
+
+
+class ProjectProgressOut(StrictModel):
+    total: int = 0
+    done: int = 0
+    started: int = 0
+    #: Weekly points for the scope-versus-done graph, oldest first.
+    scope_history: list[dict] = Field(default_factory=list)
+
+
+AgentProjectDetailOut.model_rebuild()

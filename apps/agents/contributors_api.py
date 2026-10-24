@@ -51,14 +51,14 @@ def _person(project, ref: str):
     ref = (ref or "").strip()
     person = (Person.objects.select_related("user").filter(pk=int(ref)).first() if ref.isdigit()
               else svc.person_by_email(ref))
-    if person is None or not people.known_in(person, project.agent.workspace_id):
+    if person is None or not people.known_in(person, project.workspace_id):
         raise HttpError(404, "person not found")
     return person
 
 
 def _log_read(person, project, request: HttpRequest, reader: svc.Reader) -> None:
 
-    people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=project.agent.workspace_id,
+    people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=project.workspace_id,
                       reader_user=request.user, reader_agent=reader.agent)
 
 
@@ -108,9 +108,9 @@ def create_idea(request: HttpRequest, slug: str, ref: str, payload: IdeaIn) -> S
         raise HttpError(422, str(exc)) from None
     told = idea_svc.notify(task, by_user=request.user)
 
-    engagement.record("idea_added", workspace=agent.workspace_id, surface=engagement.surface_of(request),
+    engagement.record("idea_added", workspace=project.workspace_id, surface=engagement.surface_of(request),
                       user=request.user, project=project, task=task)
-    [out] = [i for i in idea_svc.of_project(project) if i["ext_id"] == task.ext_id]
+    [out] = [i for i in idea_svc.of_project(project) if i["key"] == task.key]
     return Status(201, {"idea": out, "notified": told})
 
 

@@ -77,10 +77,11 @@ def _dispatch_initiator(task, action):
     person did — they are the one who authorised it, whatever agent drafted the
     card. With no human behind the action, it is the agent that raised it."""
     from . import initiator as who
-    via = f"task:{task.agent.slug}/{task.ext_id}"
+    via = f"task:{task.key}"
     if action.by_user_id or getattr(action, "by_user", None) is not None:
         return who.for_user(action.by_user, via=via, assurance=who.APPROVAL)
-    return who.for_agent(task.agent.slug, via=via)
+    raiser = task.created_by_agent or task.agent
+    return who.for_agent(raiser.slug, via=via)
 
 
 def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
@@ -108,7 +109,7 @@ def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
             target = Agent.objects.filter(slug=spec.target_agent).first()
             if target is None:
                 raise ValueError(
-                    f"task {task.ext_id} on_approve[{i}]: unknown target_agent {spec.target_agent!r}"
+                    f"task {task.key} on_approve[{i}]: unknown target_agent {spec.target_agent!r}"
                 )
             # Cross-agent dispatch is a cross-tenant action unless the actor is a
             # member of the target's workspace. Self-dispatch (below) is already
@@ -116,11 +117,14 @@ def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
             # agent's workspace.
             if target.workspace_id not in actor_workspace_ids:
                 raise ValueError(
-                    f"task {task.ext_id} on_approve[{i}]: not a member of target_agent "
+                    f"task {task.key} on_approve[{i}]: not a member of target_agent "
                     f"{spec.target_agent!r}'s workspace"
                 )
         else:
             target = task.agent
+            if target is None:
+                raise ValueError(f"task {task.key} on_approve[{i}]: names no target_agent, and no agent "
+                                 "is assigned the task")
         # STAMP HERE, and only here. This is the one enqueue path where the server KNOWS the
         # prompt was written by an agent — it came off the agent's own card. `enqueue_turn`
         # itself must NOT stamp: its other callers include `canopy_sessions`, where the prompt
@@ -131,7 +135,8 @@ def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
         #
         # Idempotent, so an agent that already stamped client-side (Ada does, ada#55) passes
         # through untouched and is not double-marked.
-        brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=task.agent.slug)
+        sender = task.agent or task.created_by_agent or target
+        brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=sender.slug)
         # Carry the card's title so the runner can NAME the emdash session after the
         # work rather than after its slash command — `c-retry-the-backoff-on-429`
         # instead of `c-turn`, which is what every board dispatch would otherwise
@@ -199,7 +204,7 @@ def _task_context(task) -> str:
     lines = []
     if task.project_id:
         project = task.project
-        lines.append(f"Project: {project.ext_id} · {project.name}")
+        lines.append(f"Project: {project.address} · {project.name}")
     # The person's own words come before the agent's inference, and outweigh it (T68).
     for why in task.human_whys.all():
         who = why.who_name or why.who_email or "someone"
@@ -218,19 +223,22 @@ def _task_context(task) -> str:
 def task_turn_prompt(task, *, action: str, by: str = "") -> str:
     """The brief for a board turn on `task`, before the stamp and the human's words."""
     who = by or "a person"
-    ref = f"{task.agent.slug}/{task.ext_id}"
+    # The key names it everywhere; the agent's own alias, where it has one, is
+    # what its board and notes already call it.
+    name = task.key if not task.ext_id else f"{task.ext_id} ({task.key})"
+    ref = task.key
     if action == "answer":
-        head = (f"{who} answered your question on task {task.ext_id}: {task.title}\n\n"
+        head = (f"{who} answered your question on task {name}: {task.title}\n\n"
                 f"The answer is below. Act on it now — carry on with the work it unblocks, "
                 f"or do what it says instead if it redirects you.")
     elif action == "reply":
-        head = (f"{who} left a note on task {task.ext_id}: {task.title}\n\n"
+        head = (f"{who} left a note on task {name}: {task.title}\n\n"
                 f"Read it, answer it on the task, and fold it into the work if it changes "
                 f"anything. Do not restart work the note does not ask for.")
     else:
         verb = ("approved this task on the board" if action == "approve"
                 else "nudged this in-progress task on the board")
-        head = (f"Work task {task.ext_id}: {task.title}\n\n"
+        head = (f"Work task {name}: {task.title}\n\n"
                 f"{who} {verb} — work it now, starting from the next action.")
     tail = (f"Report on the task when you stop: update {ref} (status, next_action, notes) "
             f"so the board shows where it stands.")
@@ -264,6 +272,8 @@ def enqueue_task_turn(task, *, action, kind: str | None = None) -> tuple[Turn, b
                    .order_by("created_at").first())
         if waiting is not None:
             return waiting, False
+    if task.agent is None:
+        raise ValueError(f"task {task.key} is not assigned to an agent — no turn to start")
     brief = stamp_dispatched(task_turn_prompt(task, action=kind, by=action.by),
                              sender=task.agent.slug)
     turn, created = services.enqueue_turn(
@@ -271,7 +281,7 @@ def enqueue_task_turn(task, *, action, kind: str | None = None) -> tuple[Turn, b
         origin=Turn.ORIGIN_API,
         idempotency_key=f"task-{task.pk}-{kind}-{action.pk}",
         prompt=_with_reply(brief, comment, action.by, label=_TASK_LABELS[kind]),
-        origin_ref={"task_title": task.title, "task": task.ext_id,
+        origin_ref={"task_title": task.title, "task": task.ref, "task_key": task.key,
                     "trigger": TASK_TRIGGERS[kind]},
         initiator=_dispatch_initiator(task, action),
         parent=_dispatch_parent(task),

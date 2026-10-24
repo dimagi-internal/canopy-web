@@ -13,8 +13,9 @@ every number on every page is a count over its result: the stage tally, each
 contributor's tally, a contributor page's list. Two views cannot disagree about
 a figure neither computes itself.
 
-An idea's stage IS its task's status, in a contributor's words: suggested →
-proposed, in progress → started, done → shipped (declined → not pursued).
+An idea's stage IS its task's status, in a contributor's words: suggested,
+backlog or todo → proposed, in progress → started, done → shipped (declined →
+not pursued).
 Subtask progress alone never ships it: the idea task is marked done by its
 owner (an editor) or by the person whose idea it is.
 """
@@ -39,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 PROPOSED, STARTED, SHIPPED, DECLINED = "proposed", "started", "shipped", "declined"
 STAGES = (PROPOSED, STARTED, SHIPPED, DECLINED)
-STAGE = {AgentTask.SUGGESTED: PROPOSED, AgentTask.IN_PROGRESS: STARTED,
-         AgentTask.DONE: SHIPPED, AgentTask.DECLINED: DECLINED}
+STAGE = {AgentTask.SUGGESTED: PROPOSED, AgentTask.BACKLOG: PROPOSED, AgentTask.TODO: PROPOSED,
+         AgentTask.IN_PROGRESS: STARTED, AgentTask.DONE: SHIPPED, AgentTask.DECLINED: DECLINED}
 
 #: An idea's title when the person gave none: the start of their words.
 _TITLE_FROM_QUOTE = 120
@@ -54,16 +55,17 @@ class IdeaError(ValueError):
 
 
 def may_edit_project(project: AgentProject, user) -> bool:
-    """The project's owner, an editor of the agent's workspace, the agent's
-    admins, or the agent itself — the people the work board is for."""
+    """The project's lead, an editor of its workspace (or its lead agent's), the
+    lead agent's admins, or the lead agent itself — the people the work board is
+    for."""
 
     agent = project.agent
     if not getattr(user, "is_authenticated", False):
         return False
     return (project.owner_user_id == user.pk
-            or agent.is_own_login(user)
-            or agent.is_admin(user)
-            or perms.can(user, agent.workspace_id, perms.AGENT_WORK))
+            or perms.can(user, project.workspace_id, perms.AGENT_WORK)
+            or (agent is not None and (agent.is_own_login(user) or agent.is_admin(user)
+                                       or perms.can(user, agent.workspace_id, perms.AGENT_WORK))))
 
 
 def is_ideas_person(task: AgentTask, user) -> bool:
@@ -89,12 +91,14 @@ def add_own_idea(project: AgentProject, *, quote: str, title: str, user) -> Agen
     if person is None:
         raise IdeaError("canopy could not tell who you are")
     title = (title or "").strip() or _title_from(quote)
-    [task] = services.create_tasks(project.agent, [{
-        "title": title, "project": project.ext_id, "kind": AgentTask.IDEA,
+    # Filed by the person, in the project; its lead agent is who takes it on.
+    [task] = services.create_tasks(None, [{
+        "title": title, "project": project.address, "kind": AgentTask.IDEA,
+        "assignee": f"agent:{project.agent.slug}" if project.agent_id else "",
         "status": AgentTask.SUGGESTED, "origin": "api", "source": "team view",
         "origin_ref": {"submitted_by": user.email or user.get_username()},
         "human_why": [{"quote": quote, "who": {"person_id": person.pk}}],
-    }])
+    }], workspace=project.workspace_id, by_user=user)
     return task
 
 
@@ -126,12 +130,12 @@ def idea_dict(task: AgentTask, names: dict | None = None) -> dict:
     who, why = _who(task, {} if names is None else names)
     subs = sorted(task.subtasks.all(), key=lambda t: (t.status != AgentTask.IN_PROGRESS, t.pk))
     return {
-        "ext_id": task.ext_id, "title": task.title, "status": task.status,
+        "ext_id": task.ref, "key": task.key, "title": task.title, "status": task.status,
         "stage": STAGE.get(task.status, PROPOSED),
         "quote": why.quote if why else "", "who": who,
         "source_url": why.source_url if why else "", "said_at": why.said_at if why else None,
         "people": sorted({w.person_id for w in task.human_whys.all() if w.person_id is not None}),
-        "subtasks": [{"ext_id": t.ext_id, "title": t.title, "status": t.status} for t in subs],
+        "subtasks": [{"ext_id": t.ref, "key": t.key, "title": t.title, "status": t.status} for t in subs],
         "created_at": task.created_at, "updated_at": task.updated_at,
     }
 
@@ -171,24 +175,23 @@ def notify(task: AgentTask, *, by_user) -> list[str]:
     told: list[str] = []
     who_name = by_user.get_full_name() or by_user.email or "someone"
     quote = next((w.quote for w in task.human_whys.all()), "")
-    try:
-
-        prompt = (
-            f"{who_name} added an idea to {project.ext_id} {project.name} on its team view "
-            f"(task {task.ext_id}, kind idea). In their words:\n\n> {quote}\n\n"
-            f"It shows as proposed. Read it; if you take it on, file the work as its subtasks "
-            f"(`parent: {task.ext_id}`), and make sure the project's owner has seen it."
-        )
-        once = "idea-" + str(task.pk)  # one notice per idea, however often this runs
-        harness.enqueue_turn(
-            agent=agent, origin=Turn.ORIGIN_API, idempotency_key=once, prompt=prompt,
-            origin_ref={"project": project.ext_id, "task": task.ext_id, "trigger": "idea_added"},
-            initiator=who.for_user(by_user, via=f"idea:{agent.slug}/{task.ext_id}",
-                                   assurance=who.SESSION),
-        )
-        told.append(agent.name or agent.slug)
-    except Exception:  # noqa: BLE001 — see docstring
-        logger.exception("ideas: could not tell %s about idea %s", agent.slug, task.pk)
+    if agent is not None:
+        try:
+            prompt = (
+                f"{who_name} added an idea to {project.address} {project.name} on its team view "
+                f"(task {task.key}, kind idea). In their words:\n\n> {quote}\n\n"
+                f"It shows as proposed. Read it; if you take it on, file the work as its subtasks "
+                f"(`parent: {task.key}`), and make sure the project's owner has seen it."
+            )
+            once = "idea-" + str(task.pk)  # one notice per idea, however often this runs
+            harness.enqueue_turn(
+                agent=agent, origin=Turn.ORIGIN_API, idempotency_key=once, prompt=prompt,
+                origin_ref={"project": project.address, "task": task.key, "trigger": "idea_added"},
+                initiator=who.for_user(by_user, via=f"idea:{task.key}", assurance=who.SESSION),
+            )
+            told.append(agent.name or agent.slug)
+        except Exception:  # noqa: BLE001 — see docstring
+            logger.exception("ideas: could not tell %s about idea %s", agent.slug, task.pk)
     owner = project.owner_user
     if owner is not None and owner.pk != getattr(by_user, "pk", None) and owner.email:
         try:
@@ -228,7 +231,7 @@ def owner_name(project: AgentProject) -> str:
 
 def _is_agent_label(text: str, agent) -> bool:
     t = (text or "").strip().lower()
-    return t in {"", agent.slug.lower(), (agent.name or "").lower()}
+    return t in ({""} if agent is None else {"", agent.slug.lower(), (agent.name or "").lower()})
 
 
 def waiting_on_people(project: AgentProject) -> list[dict]:
@@ -244,7 +247,7 @@ def waiting_on_people(project: AgentProject) -> list[dict]:
     agent = project.agent
     out: list[dict] = []
     tasks = (project.tasks.filter(status__in=LIVE_STATUSES)
-             .select_related("waiting_on_user").order_by("position", "id"))
+             .select_related("waiting_on_user").order_by("rank", "id"))
     for task in tasks:
         person = (_user_name(task.waiting_on_user) if task.waiting_on_user_id
                   else (task.assigned if not _is_agent_label(task.assigned, agent) else ""))
@@ -307,8 +310,8 @@ def team(project: AgentProject, user) -> dict:
     agent = project.agent
     me = contacts.person_for(user=user) if getattr(user, "is_authenticated", False) else None
     return {
-        "agent": agent.slug, "agent_name": agent.name or agent.slug,
-        "project": project.ext_id, "name": project.name, "outcome": project.outcome,
+        "agent": agent.slug if agent else "", "agent_name": (agent.name or agent.slug) if agent else "",
+        "project": project.ext_id or project.handle, "name": project.name, "outcome": project.outcome,
         "status": project.status, "owner_name": owner_name(project),
         "links": [link for link in (project.links or []) if isinstance(link, dict) and link.get("url")],
         "may_edit": may_edit_project(project, user),

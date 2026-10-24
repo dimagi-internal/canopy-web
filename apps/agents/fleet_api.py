@@ -1,10 +1,13 @@
-"""Fleet-wide task and project lists — `/api/tasks/` and `/api/projects/` — and
-workspace projects, addressed `/api/workspace-projects/<workspace>/<handle>/`.
+"""The workspace's task and project lists — `/api/tasks/` and `/api/projects/` —
+and every project's own address, `/api/workspace-projects/<workspace>/<handle>/`.
 
-The same filters as the per-agent routes, across every agent the caller can
-see. "Waiting on you" is `GET /api/tasks/?waiting=me`.
+The same filters as the per-agent routes, across every workspace the caller
+can see. "Waiting on you" is `GET /api/tasks/?waiting=me`; "My tasks" is
+`?assignee=me`. One task by key is `tasks_api`.
 """
 from __future__ import annotations
+
+import datetime as dt
 
 from django.db import transaction
 from django.db.models import Case, Count, IntegerField, Q, When
@@ -18,14 +21,22 @@ from apps.api.route_gates import gate
 from apps.harness.api_turns import visible_turns_qs
 from apps.harness.models import Turn
 from apps.oauth_server.views import issuer
+from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.links import scoped_path
 from apps.workspaces.models import Workspace
 
-from . import kb_drive, kb_store, kb_vectors, kb_versions, services
+from . import kb_drive, kb_store, kb_vectors, kb_versions, services, work
 from .api import list_agents
 from .api_board import apply_project_patch, project_detail, require_workspace_editor
-from .gates import agent_for_work, listed_agent_workspaces, visible_agent_workspaces
+from .gates import (
+    agent_for_read,
+    agent_for_work,
+    listed_agent_workspaces,
+    project_ws_or_404,
+    require_project_edit,
+    visible_agent_workspaces,
+)
 from .health import _counts
 from .models import Agent, AgentProject, AgentTask
 from .schemas import (
@@ -36,10 +47,12 @@ from .schemas import (
     AgentRosterRowOut,
     AgentTaskOut,
     KbOriginalsIn,
+    TaskCreateIn,
     KbOriginalsOut,
     KbPublishIn,
     KbUploadOut,
     McpServerOut,
+    TaskCountOut,
     WorkspaceProjectIn,
 )
 
@@ -52,27 +65,117 @@ _ASK_RANK = Case(When(ask_kind=AgentTask.ASK_REVIEW, then=0),
                  default=2, output_field=IntegerField())
 
 
-@router.get("/tasks/", response=list[AgentTaskOut],
-            summary="Tasks across every agent you can see (the per-agent filters, plus agent)")
-@gate("member")
-def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
-                     waiting: str = "", ask: str = "", batch: str = "", parent: str = "",
-                     limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
-    """Reviews first, then questions, then the rest; oldest first within each.
-    `waiting=me` is the caller's inbox: open asks nobody owns plus tasks parked
-    on the caller. `limit` caps the rows (at most 500)."""
+#: `sort=` values: the column, and its order.
+_SORTS = {
+    "": None,  # reviews, then questions, then the rest; oldest first in each
+    "rank": ("rank", "id"),
+    "created": ("-created_at", "-id"),
+    "updated": ("-updated_at", "-id"),
+    "priority": (Case(When(priority=0, then=9), default="priority", output_field=IntegerField()), "rank"),
+    "due": ("due", "rank"),
+    "status": (Case(*[When(status=st, then=i) for i, st in enumerate(AgentTask.STATUS_ORDER)],
+                    output_field=IntegerField()), "rank"),
+    "title": ("title", "id"),
+}
+
+
+def task_query(request: HttpRequest, *, agent: str = "", project: str = "", status: str = "",
+               waiting: str = "", ask: str = "", batch: str = "", parent: str = "", assignee: str = "",
+               created_by: str = "", label: str = "", priority: str = "", milestone: str = "",
+               category: str = "", kind: str = "", due_before=None, due_after=None, q: str = "",
+               snoozed: str = ""):
+    """The workspace task list's rows, scoped to what the caller may list."""
     # Scope FIRST: `filter_tasks(waiting="me")` adds unrouted open asks from
     # whatever queryset it is handed, so an unscoped one would leak other
     # tenants' asks into the inbox.
-    qs = AgentTask.objects.filter(agent__workspace_id__in=listed_agent_workspaces(request))
+    qs = AgentTask.objects.filter(workspace_id__in=listed_agent_workspaces(request))
     if agent:
-        qs = qs.filter(agent__slug=agent)
-    qs = services.filter_tasks(qs.select_related("agent", "project", "waiting_on_user", "parent")
-                               .prefetch_related("human_whys"),
-                               user=request.user, project=project, status=status,
-                               waiting=waiting, ask=ask, batch=batch, parent=parent)
-    qs = qs.order_by(_ASK_RANK, "created_at", "id")[:clamp_limit(limit)]
-    return [AgentTaskOut.model_validate(t) for t in qs]
+        qs = qs.filter(Q(agent__slug=agent) | Q(created_by_agent__slug=agent, agent__isnull=True))
+    return services.filter_tasks(work.task_rows(qs), user=request.user, project=project, status=status,
+                                 waiting=waiting, ask=ask, batch=batch, parent=parent, assignee=assignee,
+                                 created_by=created_by, label=label, priority=priority,
+                                 milestone=milestone, category=category, kind=kind,
+                                 due_before=due_before, due_after=due_after, q=q, snoozed=snoozed)
+
+
+@router.get("/tasks/", response=list[AgentTaskOut],
+            summary="Tasks across every workspace you can see, filtered")
+@gate("member")
+def list_fleet_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
+                     waiting: str = "", ask: str = "", batch: str = "", parent: str = "",
+                     assignee: str = "", created_by: str = "", label: str = "", priority: str = "",
+                     milestone: str = "", category: str = "", kind: str = "",
+                     due_before: dt.date | None = None, due_after: dt.date | None = None,
+                     q: str = "", snoozed: str = "", sort: str = "",
+                     limit: int = DEFAULT_LIMIT_CAP) -> list[AgentTaskOut]:
+    """`waiting=me` is the caller's inbox: open asks nobody owns plus tasks
+    parked on the caller. `assignee` / `created_by`: `me`, an email,
+    `agent:<slug>` or `none`. `agent`: the tasks that agent's board shows.
+    `category`: triage, backlog, unstarted, started, completed, canceled
+    (comma list). `label`, `priority` (0-4), `status`: comma lists. `q`
+    matches a title, key or next action. `snoozed=hide` leaves out tasks
+    snoozed into the future. `sort`: rank, created, updated, priority, due,
+    status, title — default reviews first, then questions, then the rest,
+    oldest first in each. `limit` caps the rows (at most 500)."""
+    qs = task_query(request, agent=agent, project=project, status=status, waiting=waiting, ask=ask,
+                    batch=batch, parent=parent, assignee=assignee, created_by=created_by, label=label,
+                    priority=priority, milestone=milestone, category=category, kind=kind,
+                    due_before=due_before, due_after=due_after, q=q, snoozed=snoozed)
+    order = _SORTS.get(sort)
+    if sort not in _SORTS:
+        raise HttpError(422, f"sort must be one of {', '.join(k for k in _SORTS if k)}")
+    qs = qs.order_by(*order) if order else qs.order_by(_ASK_RANK, "created_at", "id")
+    return [AgentTaskOut.model_validate(t) for t in qs[:clamp_limit(limit)]]
+
+
+@router.post("/tasks/", response={201: AgentTaskOut}, summary="Create a task in a workspace")
+@gate("agent.work", kind="content")
+def create_task(request: HttpRequest, payload: TaskCreateIn) -> Status:
+    """Filed by you, in `workspace` (default: its project's, else the one you
+    are pinned to, else your only one), assigned as `assignee` says (nobody
+    when omitted). `project` is an address (`<ws>/<handle>`) or a handle there."""
+    data = payload.model_dump(exclude_unset=True)
+    ws = (data.pop("workspace", "") or "").strip() or getattr(request, "workspace_slug", None) or ""
+    ref = (data.get("project") or "").strip()
+    if ref and "/" in ref:
+        ws = ws or ref.split("/", 1)[0]
+    if not ws:
+        found = wsvc.creation_workspace(request)
+        if found is None:
+            raise HttpError(422, wsvc.creation_refusal(request))
+        ws = found.slug
+    if ws not in visible_agent_workspaces(request):
+        raise HttpError(404, f"workspace '{ws}' not found")
+    if not perms.can(request.user, ws, perms.AGENT_WORK):
+        raise HttpError(403, "creating a task requires the editor role")
+    if data.get("on_approve"):
+        raise HttpError(422, "on_approve is set by an agent filing its own work (its route), not here")
+    if ref and services._project_ref(None, ref, ws) is None:
+        raise HttpError(422, f"no project {ref!r} in {ws}")
+    if (data.get("assignee") or "").strip() and "@" not in data["assignee"]:
+        agent_for_read(request, data["assignee"].removeprefix("agent:"), honor_pin=False)
+    try:
+        [task] = services.create_tasks(None, [data], workspace=ws, by_user=request.user)
+    except services.UnknownPersonError as exc:
+        raise HttpError(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc
+    return Status(201, AgentTaskOut.model_validate(task))
+
+
+@router.get("/tasks/count/", response=TaskCountOut,
+            summary="How many tasks match the task list's filters (the badge's number)")
+@gate("member")
+def count_tasks(request: HttpRequest, agent: str = "", project: str = "", status: str = "",
+                waiting: str = "", ask: str = "", assignee: str = "", created_by: str = "",
+                label: str = "", priority: str = "", category: str = "", kind: str = "",
+                snoozed: str = "", parent: str = "") -> TaskCountOut:
+    """The same filters as `GET /api/tasks/`, answered as one number, so a badge
+    never downloads the list it counts."""
+    qs = task_query(request, agent=agent, project=project, status=status, waiting=waiting, ask=ask,
+                    assignee=assignee, created_by=created_by, label=label, priority=priority,
+                    category=category, kind=kind, snoozed=snoozed, parent=parent)
+    return TaskCountOut(count=qs.order_by().values("pk").distinct().count())
 
 
 @router.get("/me/tasks/", response=list[AgentTaskOut],
@@ -103,11 +206,10 @@ def list_my_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
 @gate("member")
 def list_fleet_projects(request: HttpRequest, status: str = "active",
                         repo_slug: str = "", scope: str = "") -> list[AgentProjectOut]:
-    """Active by default; `status=` (empty for all), `repo_slug=` and `scope=`
-    (`agent` or `workspace`) narrow it."""
-    qs = AgentProject.objects.filter(agent__workspace_id__in=listed_agent_workspaces(request))
-    if scope:
-        qs = qs.filter(scope=scope)
+    """Active by default; `status=` (a comma list; empty for all, `open` for
+    every status still open) and `repo_slug=` narrow it."""
+    qs = AgentProject.objects.filter(workspace_id__in=listed_agent_workspaces(request))
+    # `scope` is accepted and ignored: every project is the workspace's now.
     if repo_slug:
         qs = qs.filter(repo_slug=repo_slug)
     return _project_rows(qs, status=status)
@@ -124,24 +226,19 @@ def list_my_projects(request: HttpRequest, status: str = "active") -> list[Agent
     (`each_organisation`) and every row carries its workspace. Active by
     default; `status=` (empty for all)."""
     return wsvc.each_organisation(request, lambda: _project_rows(
-        AgentProject.objects.filter(agent__workspace_id__in=listed_agent_workspaces(request),
+        AgentProject.objects.filter(workspace_id__in=listed_agent_workspaces(request),
                                     owner_user=request.user),
         status=status,
     ))
 
 
 def _project_rows(qs, *, status: str) -> list[AgentProjectOut]:
-    if status:
-        qs = qs.filter(status=status)
-    # Counted in the same query: the property would cost two queries a project.
-    qs = qs.annotate(
-        n_tasks=Count("tasks", distinct=True),
-        n_open=Count("tasks", filter=Q(tasks__status__in=services.LIVE_STATUSES), distinct=True),
-        n_waiting=Count("tasks", filter=services.waiting_q("tasks__"), distinct=True),
-    )
-    projects = list(qs.select_related("agent", "owner_user").order_by("agent__slug", "-updated_at"))
-    for p in projects:
-        p._task_count, p._open_task_count, p._waiting_task_count = p.n_tasks, p.n_open, p.n_waiting
+    if status == "open":
+        qs = qs.filter(status__in=AgentProject.OPEN_STATUSES)
+    elif status:
+        qs = qs.filter(status__in=[st.strip() for st in status.split(",") if st.strip()])
+    projects = list(qs.select_related("agent", "owner_user").order_by("workspace_id", "-updated_at"))
+    work.annotate_projects(projects)
     return [AgentProjectOut.model_validate(p) for p in projects]
 
 
@@ -191,30 +288,19 @@ def agent_roster(request: HttpRequest) -> list[AgentRosterRowOut]:
 
 def _workspace_project_or_404(request: HttpRequest, workspace: str, handle: str) -> AgentProject:
     # Same 404 for "no such project" and "not your workspace": no oracle over names.
-    # Readable from its workspace, and from its steward's (a dimagi agent keeping
-    # connect's project reads it as the dimagi member it is).
-    project = services.get_workspace_project(workspace, handle)
-    if project is None or (workspace not in set(listed_agent_workspaces(request))
-                           and project.agent.workspace_id not in visible_agent_workspaces(request)):
-        raise HttpError(404, f"workspace project {workspace}/{handle} not found")
-    return project
+    return project_ws_or_404(request, workspace, handle)
 
 
 @router.get("/workspace-projects/", response=list[AgentProjectOut],
             summary="Workspace projects in every workspace you can see")
 @gate("member")
 def list_workspace_projects(request: HttpRequest, status: str = "") -> list[AgentProjectOut]:
-    """Owned by a workspace rather than one agent, each with a steward agent that
-    keeps it current. `status=` narrows; default all."""
+    """Every project of those workspaces (and those led from them), each
+    addressed `<workspace>/<handle>`. `status=` (a comma list) narrows; default
+    all."""
     listed = listed_agent_workspaces(request)
     projects = services.workspace_projects(listed, status=status, steward_workspaces=listed)
-    counts = {r["project_id"]: r for r in AgentTask.objects.filter(project__in=projects)
-              .values("project_id").annotate(n=Count("id"),
-                                             live=Count("id", filter=Q(status__in=services.LIVE_STATUSES)),
-                                             waiting=Count("id", filter=services.waiting_q()))}
-    for p in projects:
-        c = counts.get(p.pk, {})
-        p._task_count, p._open_task_count, p._waiting_task_count = c.get("n", 0), c.get("live", 0), c.get("waiting", 0)
+    work.annotate_projects(projects)
     return [AgentProjectOut.model_validate(p) for p in projects]
 
 
@@ -231,32 +317,46 @@ def list_mcp_servers(request: HttpRequest) -> list[McpServerOut]:
     listed = listed_agent_workspaces(request)
     projects = [p for p in services.workspace_projects(listed, steward_workspaces=listed)
                 if p.mcp_path and p.status != AgentProject.ARCHIVED and kb_drive.may_read(request.user, p)]
-    names = dict(Workspace.objects.filter(slug__in={p.owner_workspace_id for p in projects})
+    names = dict(Workspace.objects.filter(slug__in={p.workspace_id for p in projects})
                  .values_list("slug", "display_name"))
     base = issuer(request)
     out = []
     for p in projects:
         url = f"{base}{p.mcp_path}".rstrip("/")
         out.append(McpServerOut(
-            name=p.handle, address=f"{p.owner_workspace_id}/{p.handle}", workspace=p.owner_workspace_id,
-            workspace_name=names.get(p.owner_workspace_id, p.owner_workspace_id), title=p.name,
-            description=p.outcome, kind=p.mcp_kind, steward_slug=p.agent.slug, url=url,
+            name=p.handle, address=p.address, workspace=p.workspace_id,
+            workspace_name=names.get(p.workspace_id, p.workspace_id), title=p.name,
+            description=p.outcome, kind=p.mcp_kind, steward_slug=p.agent_slug or "", url=url,
             add_command=f"claude mcp add --transport http {p.handle} {url}",
-            project_url=f"/w/{p.owner_workspace_id}/projects/{p.handle}",
+            project_url=p.url,
             published_at=p.kb_published_at, bytes=p.kb_bytes))
     return out
 
 
 @router.post("/workspace-projects/", response={201: AgentProjectOut},
-             summary="Create a workspace project, owned by the steward's workspace")
-@gate("agent.work", kind="content")  # the steward's write gate
+             summary="Create a project in a workspace, optionally led by an agent")
+@gate("agent.work", kind="content")  # an editor of the workspace (and of the lead agent's)
 def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
-    steward = agent_for_work(request, payload.steward.strip())
-    require_workspace_editor(request, payload.workspace.strip(), steward)
+    """In `workspace` — default the lead agent's, else the one you are pinned to
+    or the only one you are in — led by `steward` (an agent's slug) when given,
+    with `member_agents` working on it. The handle is free from its name when
+    omitted."""
+    steward = agent_for_work(request, payload.steward.strip()) if payload.steward.strip() else None
+    workspace = payload.workspace.strip() or (steward.workspace_id if steward else "")
+    if not workspace:
+        ws = wsvc.creation_workspace(request)
+        if ws is None:
+            raise HttpError(422, wsvc.creation_refusal(request))
+        workspace = ws.slug
+    require_workspace_editor(request, workspace, steward)
+    if steward is None and not perms.can(request.user, workspace, perms.AGENT_WORK):
+        raise HttpError(403, "creating a project requires the editor role")
     try:
         with transaction.atomic():
-            project = services.create_project(steward, payload)
-            project = services.promote_project(project, payload.handle, payload.workspace)
+            project = services.create_project(steward, payload, workspace=workspace, by_user=request.user)
+            if payload.member_agents:
+                services.set_member_agents(project, [agent_for_read(request, m.strip(), honor_pin=False)
+                                                     for m in payload.member_agents if m.strip()])
     except services.UnknownPersonError as exc:
         raise HttpError(422, str(exc)) from exc
     except services.ProjectScopeError as exc:
@@ -265,19 +365,20 @@ def create_workspace_project(request: HttpRequest, payload: WorkspaceProjectIn):
 
 
 @router.get("/workspace-projects/{workspace}/{handle}/", response=AgentProjectDetailOut,
-            summary="Get a workspace project: fields, every agent's tasks in it, recent turns")
+            summary="Get a project: fields, its tasks, progress, recent turns")
 @gate("member")
 def get_workspace_project(request: HttpRequest, workspace: str, handle: str) -> AgentProjectDetailOut:
     return project_detail(request, _workspace_project_or_404(request, workspace, handle))
 
 
 @router.patch("/workspace-projects/{workspace}/{handle}/", response=AgentProjectOut,
-              summary="Update a workspace project (including handing it to another steward)")
-@gate("agent.work", kind="content")  # the steward's (and a new steward's) write gate
+              summary="Update a project (including its lead agent and its agents)")
+# an editor of its workspace or its lead agent's, its lead, or a working agent's own login
+@gate("agent.work", "agent-login", "self", kind="content")
 def patch_workspace_project(request: HttpRequest, workspace: str, handle: str,
                             payload: AgentProjectPatch) -> AgentProjectOut:
     project = _workspace_project_or_404(request, workspace, handle)
-    agent_for_work(request, project.agent.slug)  # the steward's write gate
+    require_project_edit(request, project)
     data = payload.model_dump(exclude_unset=True)
     if "links" in data and data["links"] is not None:
         data["links"] = [link if isinstance(link, dict) else link.model_dump() for link in data["links"]]
@@ -305,7 +406,7 @@ def kb_upload_target(request: HttpRequest, workspace: str, handle: str) -> KbUpl
     then `POST …/kb/publish`. The bytes never pass through canopy."""
 
     project = _workspace_project_or_404(request, workspace, handle)
-    agent_for_work(request, project.agent.slug)
+    require_project_edit(request, project)
     return KbUploadOut(**_kb_call(lambda: kb_store.upload_target(project)))
 
 
@@ -319,7 +420,7 @@ def kb_upload_originals(request: HttpRequest, workspace: str, handle: str, paylo
     kept beside its earlier versions. The `original` tool hands readers these files."""
 
     project = _workspace_project_or_404(request, workspace, handle)
-    agent_for_work(request, project.agent.slug)
+    require_project_edit(request, project)
     files = [f.model_dump() for f in payload.files]
     return KbOriginalsOut(**_kb_call(lambda: kb_store.originals_upload(project, files)))
 
@@ -336,7 +437,7 @@ def publish_kb(request: HttpRequest, workspace: str, handle: str, payload: KbPub
     approvals first (422). Earlier versions' files are kept for rollback (the newest few)."""
 
     project = _workspace_project_or_404(request, workspace, handle)
-    agent_for_work(request, project.agent.slug)
+    require_project_edit(request, project)
     try:
         project, _ = _kb_call(lambda: kb_versions.publish_full(project, payload.key, payload.sha256,
                                                                base=payload.base, curation=payload.curation,

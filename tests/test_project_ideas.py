@@ -102,7 +102,7 @@ def test_a_member_adds_their_own_idea_and_the_agent_and_owner_are_told(world):
     assert out["idea"]["stage"] == "proposed" and out["idea"]["who"]["name"] == "Sophie"
     assert out["idea"]["quote"] == "Show me which suppliers never answered"
     assert out["notified"] == ["Hal", "Jonathan Jackson"]
-    task = AgentTask.objects.get(ext_id=out["idea"]["ext_id"])
+    task = AgentTask.objects.get(key=out["idea"]["key"])
     assert (task.kind, task.status, task.project_id) == ("idea", "suggested", world["project"].pk)
     turn = Turn.objects.get(idempotency_key=f"idea-{task.pk}")
     assert "never answered" in turn.prompt and turn.initiator_user == world["sophie"]
@@ -133,10 +133,10 @@ def test_its_owner_marks_an_idea_shipped_and_a_bystander_may_not(world):
 
 def test_a_person_marks_their_own_idea_shipped(world):
     ref = _client(world["sophie"]).post(f"{BASE}/ideas/", data={"quote": "mine"},
-                                        content_type="application/json").json()["idea"]["ext_id"]
-    agent_services.patch_task(AgentTask.objects.get(ext_id=ref), {"status": "in_progress"})
+                                        content_type="application/json").json()["idea"]["key"]
+    agent_services.patch_task(AgentTask.objects.get(key=ref), {"status": "in_progress"})
     assert _act(_client(world["sophie"]), ref).status_code == 200
-    assert AgentTask.objects.get(ext_id=ref).status == "done"
+    assert AgentTask.objects.get(key=ref).status == "done"
     # Not someone else's work, though.
     assert _act(_client(world["sophie"]), "T2").status_code == 403
 

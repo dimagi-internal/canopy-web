@@ -152,7 +152,7 @@ def back_project(request: HttpRequest, slug: str, ref: str, payload: ProjectBack
                        source=engagement.surface_of(request))
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
-    engagement.record("backed", workspace=project.agent.workspace_id,
+    engagement.record("backed", workspace=project.workspace_id,
                       surface=engagement.surface_of(request), user=request.user, project=project,
                       meta={"stance": payload.stance})
     return _one(project, person=person)
@@ -307,7 +307,7 @@ def back_task(request: HttpRequest, slug: str, ref: str, task: str, payload: Pro
                        source=engagement.surface_of(request))
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
-    engagement.record("backed", workspace=project.agent.workspace_id,
+    engagement.record("backed", workspace=project.workspace_id,
                       surface=engagement.surface_of(request), user=request.user, project=project, task=row,
                       meta={"stance": payload.stance})
     return _one(row, person=person)

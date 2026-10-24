@@ -226,7 +226,7 @@ describe('AgentProjectPage', () => {
 
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Connect Enterprise'])
     const sections = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(sections).toEqual(['Where it stands', 'Ideas', 'People', 'Check-ins', 'Timeline', "Eva's work", 'Activity'])
+    expect(sections).toEqual(['Where it stands', 'Ideas', 'People', 'Check-ins', 'Timeline', 'The work', 'Activity'])
 
     expect(screen.getByRole('link', { name: '← Projects' }).getAttribute('href')).toBe('/w/connect/agents/eva/projects')
     expect(screen.getByRole('link', { name: 'Overview doc' }).getAttribute('href')).toBe(

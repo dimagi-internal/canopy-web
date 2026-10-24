@@ -77,7 +77,8 @@ def readable_project(user, workspace: str, handle: str):
     project = services.get_workspace_project(workspace, handle)
     if project is None or not project.mcp_path:
         return None
-    if not ({project.owner_workspace_id, project.agent.workspace_id} & wsvc.user_workspace_slugs(user)):
+    readers = {project.workspace_id} | ({project.agent.workspace_id} if project.agent_id else set())
+    if not (readers & wsvc.user_workspace_slugs(user)):
         return None
     if not kb_drive.may_read(user, project):  # a KB made from private Drive folders: its readers only
         return None
@@ -85,8 +86,9 @@ def readable_project(user, workspace: str, handle: str):
 
 
 def _specs(workspace: str, handle: str) -> list[dict]:
-    from apps.agents import kb_store
     from canopy_kb.tools import tool_specs
+
+    from apps.agents import kb_store
 
     project = readable_project(_current_user(), workspace, handle)
     if project is None:
@@ -99,9 +101,10 @@ def _specs(workspace: str, handle: str) -> list[dict]:
 
 
 def _call(workspace: str, handle: str, name: str, arguments: dict):
-    from apps.agents import kb_rerank, kb_store, kb_vectors
     from canopy_kb import KBError
     from canopy_kb.tools import run
+
+    from apps.agents import kb_rerank, kb_store, kb_vectors
 
     project = readable_project(_current_user(), workspace, handle)
     if project is None:

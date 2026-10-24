@@ -55,7 +55,7 @@ def test_approve_without_on_approve_starts_the_card_turn(world):
     assert turn.agent == agent and turn.raised_from_task_id == task.pk
     assert turn.idempotency_key == f"task-{task.pk}-approve-{row.pk}"
     assert turn.origin_ref["trigger"] == "task_approve" and turn.origin_ref["task"] == task.ext_id
-    assert turn.prompt.startswith(f"Work task {task.ext_id}: Send the EOI?")
+    assert turn.prompt.startswith(f"Work task {task.ext_id} ({task.key}): Send the EOI?")
     assert "Next action: Draft the EOI" in turn.prompt and "2. draft" in turn.prompt
     # Stamped as the agent's card, with the approver's words delimited after it.
     assert DISPATCH_MARKER in turn.prompt and HUMAN_REPLY_OPEN in turn.prompt

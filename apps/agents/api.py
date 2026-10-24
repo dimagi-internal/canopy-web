@@ -851,21 +851,17 @@ def delete_agent(request: HttpRequest, slug: str):
     the agent via `agent_for_read` first, so a non-member gets 404 (no
     existence leak) rather than 403.
 
-    Every FK into Agent is CASCADE or SET_NULL (runs, turns, tasks, skills,
-    syncs, projects, schedules, task actions, runner assignments/drills), so
-    this is a real delete rather than a soft flag — nothing is left dangling.
-    One thing blocks it: a workspace project the agent stewards (409). Its open chat sessions are closed first: the runner
-    deletes each emdash task, and an offline runner does so when it is back.
+    Every FK into Agent is CASCADE or SET_NULL (runs, turns, skills, syncs,
+    schedules, task actions, runner assignments/drills), so this is a real
+    delete rather than a soft flag — nothing is left dangling. Its tasks and
+    projects are the workspace's and stay, assigned to and led by nobody. Its
+    open chat sessions are closed first: the runner deletes each emdash task,
+    and an offline runner does so when it is back.
     """
 
     agent = agent_for_work(request, slug)
-    # A workspace project it stewards is the workspace's, not the agent's: the
-    # cascade would delete it. Hand it on first.
-    stewarded = services.stewarded_workspace_projects(agent)
-    if stewarded:
-        raise HttpError(409, f"{agent.slug} stewards workspace project(s) {', '.join(stewarded)}; "
-                             "hand each to another steward (PATCH …/workspace-projects/<ws>/<handle>/ "
-                             "with steward) before deleting it")
+    # Its projects and tasks are the workspace's: they stay, led and assigned by
+    # nobody (`AgentProject.agent` / `AgentTask.agent` are SET_NULL).
     # Its sessions would otherwise outlive it: still listed, their emdash tasks
     # still on the box. Closed first, while they can still be told apart by agent.
     close_agent_sessions(agent)

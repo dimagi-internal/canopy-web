@@ -419,7 +419,7 @@ def list_person_projects(request: HttpRequest, person_id: int, workspace: str | 
     rows = participants.projects_of(person, ws.pk)
     return {"person": person.pk, "workspace": ws.pk, "projects": [
         {"id": r.project_id, "ext_id": r.project.ext_id, "name": r.project.name,
-         "agent": r.project.agent.slug, "status": r.project.status, "role": r.role,
+         "agent": (r.project.agent_slug or ""), "status": r.project.status, "role": r.role,
          "source": r.source, "since": _iso(r.created_at)} for r in rows]}
 
 
@@ -460,7 +460,7 @@ def add_person_fact(request: HttpRequest, person_id: int, payload: PersonFactIn)
     project = None
     if payload.project_id is not None:
         project = AgentProject.objects.select_related("agent").filter(pk=payload.project_id).first()
-        if project is None or project.agent.workspace_id != ws.pk:
+        if project is None or project.workspace_id != ws.pk:
             raise _bad("project_id is not a project in that workspace")
     if people.agent_of_login(request.user) is not None and not hcp.may_record(person, source_turn):
         raise ProblemError(403, "This person has not let agents learn about them",

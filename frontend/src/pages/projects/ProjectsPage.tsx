@@ -119,7 +119,7 @@ export function ProjectsPage(): JSX.Element {
                     <Link to={p.board_url || p.url} className="font-medium text-foreground hover:text-primary">
                       {p.name}
                     </Link>
-                    {p.scope === 'workspace' && (
+                    {p.handle && (
                       <span className="ml-1.5 rounded bg-muted px-1 py-px text-[10px] text-muted-foreground" title="Owned by the workspace, kept current by its steward">
                         workspace · {p.address || p.handle}
                       </span>
@@ -127,7 +127,7 @@ export function ProjectsPage(): JSX.Element {
                     {p.outcome && <div className="line-clamp-1 text-[12px] text-muted-foreground">{p.outcome}</div>}
                   </td>
                   <td className="px-3 py-2">
-                    {p.scope === 'workspace' ? (
+                    {p.steward_slug ? (
                       // A steward may live in a parent workspace: its board is the project's link.
                       <span className="text-foreground-secondary">{p.steward_slug || p.agent_slug}</span>
                     ) : (

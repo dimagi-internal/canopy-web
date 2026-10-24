@@ -83,7 +83,7 @@ def test_proposing_files_the_project_its_plan_one_card_and_partner_tasks(world):
     assert decision.title == proposals.DECISION_TITLE and "Done when: Twenty" in decision.ask_body
     assert card["decision_task"] == decision.ext_id
     [linked] = AgentTask.objects.filter(agent=world["eva"])
-    assert linked.status == "suggested" and linked.source_url.endswith("/agents/ada/projects/P1")
+    assert linked.status == "suggested" and linked.source_url.endswith(f"/projects/{project.handle}") and linked.project == project
     assert card["partners"][0]["agent"] == "eva"
     assert EngagementEvent.objects.get(kind="proposed").project == project
 

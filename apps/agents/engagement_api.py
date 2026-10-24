@@ -63,7 +63,7 @@ def record_engagement_view(request: HttpRequest, payload: EngagementViewIn) -> d
                            agent__workspace_id__in=visible_agent_workspaces(request)).first())
         if project is None:
             raise HttpError(404, f"project {payload.project} not found")
-        row = engagement.record("viewed", workspace=project.agent.workspace_id, surface=surface,
+        row = engagement.record("viewed", workspace=project.workspace_id, surface=surface,
                                 user=request.user, project=project, dedupe_day=True)
     else:
         workspace = _huddle_workspace(request, payload.huddle_id)

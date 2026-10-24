@@ -32,8 +32,8 @@ def project(tmp_path, monkeypatch, settings):
     dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=owner)
     connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=owner, parent=dimagi)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=owner)
-    p = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base", scope="workspace",
-                                    owner_workspace=connect, handle="givewell-kb", mcp_kind="kb",
+    p = AgentProject.objects.create(agent=eva, ext_id="P12", name="GiveWell Knowledge Base", 
+                                    workspace=connect, handle="givewell-kb", mcp_kind="kb",
                                     kb_key="k", kb_sha256="a" * 64)
     path = kb_fakes.build_kb(tmp_path / "kb.sqlite")
     monkeypatch.setattr(kb_store, "local_path", lambda proj: path)
@@ -63,8 +63,8 @@ def test_nearest_passages_by_meaning_filtered_by_type_and_date(project):
 
 def test_another_projects_vectors_never_answer(project):
     kb_vectors.sync(project)
-    other = AgentProject.objects.create(agent=project.agent, ext_id="P13", name="Other", scope="workspace",
-                                        owner_workspace=project.owner_workspace, handle="other-kb")
+    other = AgentProject.objects.create(agent=project.agent, ext_id="P13", name="Other", 
+                                        workspace=project.workspace, handle="other-kb")
     assert kb_vectors.search(other, "inoculation shortage") is None
 
 

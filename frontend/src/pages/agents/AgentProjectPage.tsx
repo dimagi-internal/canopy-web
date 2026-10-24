@@ -272,7 +272,7 @@ export function AgentProjectPage(): JSX.Element {
         <>
           <Section
             id="project-tasks"
-            title={detail.scope === 'workspace' ? 'The work' : `${who}'s work`}
+            title="The work"
             description={`What ${who} is doing on this project, open first. The ideas themselves are listed above.`}
           >
             {tasks.length === 0 ? (

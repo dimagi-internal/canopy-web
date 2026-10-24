@@ -86,11 +86,11 @@ def _client():
 
 
 def _prefix(project) -> str:
-    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/kb/"
+    return f"workspace-projects/{project.workspace_id}/{project.handle}/kb/"
 
 
 def _originals_prefix(project) -> str:
-    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/originals/"
+    return f"workspace-projects/{project.workspace_id}/{project.handle}/originals/"
 
 
 def _is_sha256(v: str) -> bool:
@@ -258,7 +258,7 @@ STEWARD_LINK_SECONDS = UPLOAD_TTL_SECONDS
 
 
 def _results_prefix(project) -> str:
-    return f"workspace-projects/{project.owner_workspace_id}/{project.handle}/results/"
+    return f"workspace-projects/{project.workspace_id}/{project.handle}/results/"
 
 
 def _store_prefix(project, store: str) -> str:
@@ -351,7 +351,7 @@ def local_path(project) -> Path:
     per instance. Older copies of the same project are removed."""
     if not project.kb_key or not project.kb_sha256:
         raise KbPublishError("this project has not published a knowledge base")
-    folder = _cache_root() / f"{project.owner_workspace_id}--{project.handle}"
+    folder = _cache_root() / f"{project.workspace_id}--{project.handle}"
     path = folder / f"{project.kb_sha256}.sqlite"
     if path.exists():
         return path

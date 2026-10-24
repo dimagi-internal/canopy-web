@@ -38,9 +38,9 @@ class ProjectCheckin(models.Model):
                                      related_name="checkins")
     channel_id = models.CharField(max_length=32, blank=True, default="")
     channel_name = models.CharField(max_length=128, blank=True, default="")
-    #: Agent slugs (≥1), always including `project.agent`. One → solo; more → a huddle
-    #: led by the project's agent, whose login must be able to RUN every other one.
-    agents = models.JSONField(default=list)
+    #: The agents taking part (≥1), always including `project.agent`. One → solo; more →
+    #: a huddle led by the project's agent, whose login must be able to RUN every other one.
+    agent_members = models.ManyToManyField("agents.Agent", blank=True, related_name="checkins")
     #: On `project.agent`: firing it ANNOUNCES a run (harness.schedule_turns), or —
     #: with no channel — queues the run's turn directly.
     schedule = models.OneToOneField("harness.AgentSchedule", null=True, blank=True,
@@ -71,12 +71,21 @@ class ProjectCheckin(models.Model):
         return self.project.agent
 
     @property
+    def agents(self) -> list[str]:
+        """Its agents' slugs, the project's lead agent first."""
+        if self.pk is None:
+            return []
+        lead = self.project.agent_slug
+        slugs = sorted(a.slug for a in self.agent_members.all())
+        return ([lead] if lead in slugs else []) + [s for s in slugs if s != lead]
+
+    @property
     def workspace_id(self) -> str:
-        return self.project.agent.workspace_id
+        return self.project.workspace_id
 
     @property
     def format(self) -> str:
-        return self.SOLO if len(self.agents or []) <= 1 else self.HUDDLE
+        return self.SOLO if len(self.agents) <= 1 else self.HUDDLE
 
     @property
     def has_channel(self) -> bool:

@@ -236,6 +236,7 @@ from apps.agents.credentials.oauth_api import oauth_router as google_oauth_route
 from apps.agents.credentials.oauth_api import router as agent_google_router  # noqa: E402
 from apps.agents.engagement_api import router as engagement_router  # noqa: E402
 from apps.agents.fleet_api import router as fleet_tasks_router  # noqa: E402
+from apps.agents.tasks_api import router as workspace_tasks_router  # noqa: E402
 from apps.agents.kb_api import router as kb_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
@@ -364,6 +365,10 @@ api.add_router("/vault", vault_keyset_router)  # a person's zero-knowledge vault
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the
 # per-agent filters across every agent the caller can see.
 api.add_router("", fleet_tasks_router)
+# One task by key, bulk edits, relations, Triage, labels, saved views, task
+# settings, a project's milestones and updates. After the lists: `/tasks/count/`
+# must not be read as a key.
+api.add_router("", workspace_tasks_router)
 api.add_router("", kb_router)
 api.add_router("/workspaces", workspaces_router)
 # Tenant-admin surface, same prefix and shape as members/invites (apps/tokens).

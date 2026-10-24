@@ -54,17 +54,17 @@ class Command(BaseCommand):
         members: dict[str, list] = {}
         matched = skipped = 0
         for task in tasks:
-            ws = task.agent.workspace_id
+            ws = task.workspace_id
             if ws not in members:
                 members[ws] = list(User.objects.filter(pk__in=wsvc.member_user_ids(ws)))
             who = (task.assigned or "").strip()
             user, why = self._resolve(who, members[ws], names=opts["names"])
             if user is None:
                 skipped += 1
-                self.stdout.write(f"  skip  {task.agent.slug} {task.ext_id}: {who!r} — {why}")
+                self.stdout.write(f"  skip  {task.key}: {who!r} — {why}")
                 continue
             matched += 1
-            self.stdout.write(f"  route {task.agent.slug} {task.ext_id}: {who!r} -> {user.email}")
+            self.stdout.write(f"  route {task.key}: {who!r} -> {user.email}")
             if opts["apply"]:
                 task.waiting_on_user = user
                 task.save(update_fields=["waiting_on_user", "updated_at"])

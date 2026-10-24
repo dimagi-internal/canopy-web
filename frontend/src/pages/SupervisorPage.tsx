@@ -183,14 +183,10 @@ export default function SupervisorPage(): JSX.Element {
     if (hit?.workspace) navigate(runnerHref(hit), { replace: true })
   }, [runnerParam, runners, navigate])
   const { workspaces } = useWorkspace()
-  // Dispatch / done need the agent's editor role (`agent.work` in its workspace);
+  // Nudge / done need the editor role (`agent.work` in the task's workspace);
   // approve, decline and reply are open to every viewer.
-  const workspaceOf = useMemo(
-    () => Object.fromEntries((agents ?? []).map((a) => [a.slug, a.workspace] as const)),
-    [agents],
-  )
   const canEditTask = (t: TaskOut): boolean =>
-    roleAllows(workspaces.find((w) => w.slug === workspaceOf[t.agent_slug])?.role, 'agent.work')
+    roleAllows(workspaces.find((w) => w.slug === t.workspace)?.role, 'agent.work')
 
   const screen = SCREENS.find((s) => s.id === tab)
   const badgeFor = (id: Screen): number => (id === 'waiting' ? totalWaiting : id === 'runners' ? alertCount : 0)
@@ -300,7 +296,7 @@ export default function SupervisorPage(): JSX.Element {
             tasks={waiting}
             canEdit={canEditTask}
             onChanged={reloadWaiting}
-            workspaceFor={(t) => workspaceOf[t.agent_slug] || undefined}
+            workspaceFor={(t) => t.workspace || undefined}
           />
         ))}
 
