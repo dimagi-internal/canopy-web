@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -34,7 +34,7 @@ const HEALTH: WorkspaceHealthOut = {
   agents: [agent('hal', { turns_30d: 6, done_30d: 4, failed_30d: 2, people_30d: 1,
     ran_on: [{ name: 'shayoni-win-cdp', kind: 'emdash', turns: 5 }, { name: 'cloud-ec2-2', kind: 'cloud', turns: 1 }] }),
     agent('eva', { can_fix: false, left: 1 }),
-    agent('ada', { left: 0, vault: { ...agent('ada').vault, state: 'canopy-web', in_1password: [] } })],
+    agent('ada', { left: 0, vault: { ...agent('ada').vault!, state: 'canopy-web', in_1password: [] } })],
   runners: [{ id: '00000000-0000-0000-0000-000000000001', name: 'laptop', kind: 'emdash', location: 'local', status: 'online',
     ready: true, ready_note: '', paused: false, host: 'h', last_heartbeat_at: '2026-10-17T00:00:00Z', workspace: 'dimagi',
     in_tree: true, owner_email: 'jj@x.org', flags: [], agent_count: 2, directed: false, code_current: false, machine: '', unit: '',
@@ -45,14 +45,27 @@ const HEALTH: WorkspaceHealthOut = {
   totals: { agents: 3, set_up: 1, needs_setup: 2, used_30d: 1, vault_canopy_web: 1, vault_moving: 2, vault_1password: 0, vault_none: 0, runners: 1, runners_online: 1 },
 }
 
+// The page reads the table without the checklists (`setup: false`), then each
+// agent's checklist and vault from `/health/setup`.
+const TABLE: WorkspaceHealthOut = {
+  ...HEALTH,
+  agents: HEALTH.agents.map((a) => ({ ...a, steps: null, vault: null, left: null })),
+  totals: { ...HEALTH.totals, set_up: null, needs_setup: null, vault_canopy_web: null, vault_moving: null,
+    vault_1password: null, vault_none: null },
+}
+const getWorkspaceHealth = vi.fn<(slug: string, opts?: { setup?: boolean }) => Promise<WorkspaceHealthOut>>(async () => TABLE)
+const getWorkspaceHealthSetup = vi.fn(async (_slug: string, names: readonly string[]) =>
+  HEALTH.agents.filter((a) => names.includes(a.slug))
+    .map((a) => ({ slug: a.slug, steps: a.steps!, vault: a.vault!, left: a.left! })))
 vi.mock('@/api/workspaces', async (orig) => ({
   ...(await orig<typeof import('@/api/workspaces')>()),
-  getWorkspaceHealth: vi.fn(async () => HEALTH),
+  getWorkspaceHealth: (slug: string, opts?: { setup?: boolean }) => getWorkspaceHealth(slug, opts),
+  getWorkspaceHealthSetup: (slug: string, names: readonly string[]) => getWorkspaceHealthSetup(slug, names),
 }))
 
 const { WorkspaceHealthPage, whoCanUse } = await import('./WorkspaceHealthPage')
 
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.clearAllMocks() })
 
 function renderPage() {
   render(
@@ -62,9 +75,45 @@ function renderPage() {
   )
 }
 
+/** The page, once every checklist is in. */
+async function renderLoaded() {
+  renderPage()
+  await screen.findByText('HAL')
+  await waitFor(() => expect(screen.queryAllByLabelText('loading')).toHaveLength(0))
+}
+
+describe('reading the checklists after the table', () => {
+  it('shows the table before any checklist is in, then fills each row and the totals', async () => {
+    let release = () => {}
+    getWorkspaceHealthSetup.mockImplementationOnce(async (_s, names) => {
+      await new Promise<void>((r) => { release = r })
+      return HEALTH.agents.filter((a) => names.includes(a.slug))
+        .map((a) => ({ slug: a.slug, steps: a.steps!, vault: a.vault!, left: a.left! }))
+    })
+    renderPage()
+    const hal = (await screen.findByText('HAL')).closest('tr')!
+    expect(getWorkspaceHealth).toHaveBeenCalledWith('dimagi', { setup: false })
+    expect(within(hal).getAllByLabelText('loading')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: /Fully set up/ }).textContent).toContain('…')
+    release()
+    await waitFor(() => expect(within(hal).getByLabelText('1 steps left')).toBeTruthy())
+    expect(screen.getByRole('button', { name: /Fully set up/ }).textContent).toContain('1')
+    expect(getWorkspaceHealthSetup).toHaveBeenCalledWith('dimagi', ['hal', 'eva', 'ada'])
+  })
+
+  it('says which rows could not be read, and still counts the rest', async () => {
+    getWorkspaceHealthSetup.mockRejectedValueOnce(new Error('boom'))
+    renderPage()
+    const hal = (await screen.findByText('HAL')).closest('tr')!
+    await waitFor(() => expect(within(hal).getAllByText('not loaded')).toHaveLength(2))
+    fireEvent.click(screen.getByText('HAL'))
+    expect(screen.getByText(/could not be read/)).toBeTruthy()
+  })
+})
+
 describe('WorkspaceHealthPage', () => {
   it('lists every agent in the tree and filters to the ones not on the canopy-web vault', async () => {
-    renderPage()
+    await renderLoaded()
     expect(await screen.findByText('HAL')).toBeTruthy()
     expect(screen.getByText('ADA')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Not on canopy-web vault' }))
@@ -84,7 +133,7 @@ describe('WorkspaceHealthPage', () => {
   })
 
   it('links the fix when the viewer may make it, and offers the owner an email when not', async () => {
-    renderPage()
+    await renderLoaded()
     fireEvent.click(await screen.findByText('HAL'))
     expect(screen.getByRole('link', { name: 'Fix vault' }).getAttribute('href')).toBe('/w/connect/agents/x/settings#credentials')
     expect(screen.getByText('in 1Password')).toBeTruthy()
@@ -112,7 +161,7 @@ describe('every figure opens its source', () => {
   })
 
   it('a tile filters the agents table to what it counts', async () => {
-    renderPage()
+    await renderLoaded()
     await screen.findByText('HAL')
     fireEvent.click(screen.getByRole('button', { name: /Fully set up/ }))
     expect(screen.getByTestId('tile-filter').textContent).toContain('Fully set up')

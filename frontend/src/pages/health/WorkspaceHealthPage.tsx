@@ -3,12 +3,15 @@ import { Link, useParams } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 
-import { getWorkspaceHealth, type AgentHealthOut, type TopologyRunnerOut, type WorkspaceHealthOut } from '@/api/workspaces'
+import {
+  getWorkspaceHealth, type AgentHealthOut, type AgentSetupHealthOut, type TopologyRunnerOut, type WorkspaceHealthOut,
+} from '@/api/workspaces'
 import { relativeAge } from '@/lib/relativeAge'
 import { SetupSteps, StatusIcon } from '@/components/agents/AgentSetupChecklist'
 import { AdminOnly, HealthViews } from './HealthViews'
 import { RunnersTable } from '@/components/runners/RunnersTable'
 import { useTreeRead } from './useTreeRead'
+import { useAgentSetup } from './useAgentSetup'
 import { scopedPath } from '../../lib/scopedLinks'
 
 // WORKSPACE HEALTH: what is not set up right, across this workspace and every one
@@ -16,14 +19,20 @@ import { scopedPath } from '../../lib/scopedLinks'
 // checklist and its vault state is THE vault verdict, both computed by the server
 // (`GET /api/workspaces/{slug}/health`), so this page and the agent's Settings
 // page cannot disagree. Facts and states only — no urgency ranking.
+//
+// The checklists cost a few dozen reads per agent, so the table is read without
+// them (`setup=false`) and shows at once; each row's Setup and Vault then fill in
+// as `useAgentSetup` reads them a few agents at a time.
 
-type Filter = 'all' | 'done' | 'used' | 'setup' | 'vault' | AgentHealthOut['vault']['state']
+type AgentVault = AgentSetupHealthOut['vault']
+
+type Filter = 'all' | 'done' | 'used' | 'setup' | 'vault' | AgentVault['state']
 
 const FILTER_LABEL: Partial<Record<Filter, string>> = {
   all: 'All', setup: 'Steps left', vault: 'Not on canopy-web vault',
 }
 
-const VAULT_LABEL: Record<AgentHealthOut['vault']['state'], { text: string; className: string }> = {
+const VAULT_LABEL: Record<AgentVault['state'], { text: string; className: string }> = {
   'canopy-web': { text: 'canopy-web', className: 'border-success/30 bg-success/10 text-success' },
   moving: { text: 'Moving', className: 'border-warning/30 bg-warning/10 text-warning' },
   '1password': { text: '1Password', className: 'border-border bg-muted text-foreground-secondary' },
@@ -32,19 +41,43 @@ const VAULT_LABEL: Record<AgentHealthOut['vault']['state'], { text: string; clas
 
 export function WorkspaceHealthPage(): JSX.Element {
   const { workspace: slug = '' } = useParams()
-  const { data, error, forbidden } = useTreeRead(() => getWorkspaceHealth(slug), slug)
+  const { data, error, forbidden } = useTreeRead(() => getWorkspaceHealth(slug, { setup: false }), slug)
+  const { setup, failed, done } = useAgentSetup(slug, data ? data.agents.map((a) => a.slug) : null, slug)
+  const health = useMemo(() => data && withSetup(data, setup, done), [data, setup, done])
   return (
     <div>
       <HealthViews title="Health" />
       {forbidden ? <AdminOnly what="workspace health" />
         : error ? <p className="text-[13px] text-destructive">{error}</p>
-          : !data ? <p className="text-[13px] text-muted-foreground">Loading…</p>
-            : <Health health={data} />}
+          : !health ? <p className="text-[13px] text-muted-foreground">Loading…</p>
+            : <Health health={health} failed={failed} />}
     </div>
   )
 }
 
-function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
+/** The table with each checklist read so far in its row, and the totals counted
+ *  from them once every one is in (null until then). */
+export function withSetup(health: WorkspaceHealthOut, setup: Record<string, AgentSetupHealthOut>,
+                          done: boolean): WorkspaceHealthOut {
+  const agents = health.agents.map((a) => (setup[a.slug] ? { ...a, ...setup[a.slug] } : a))
+  if (!done) return { ...health, agents }
+  const read = agents.filter((a) => a.left != null)
+  const vault = (state: string) => read.filter((a) => a.vault?.state === state).length
+  return {
+    ...health, agents,
+    totals: {
+      ...health.totals,
+      set_up: read.filter((a) => !a.left).length,
+      needs_setup: read.filter((a) => a.left).length,
+      vault_canopy_web: vault('canopy-web'),
+      vault_moving: vault('moving'),
+      vault_1password: vault('1password'),
+      vault_none: vault('none'),
+    },
+  }
+}
+
+function Health({ health, failed }: { health: WorkspaceHealthOut; failed: ReadonlySet<string> }): JSX.Element {
   const [filter, setFilter] = useState<Filter>('all')
   const [q, setQ] = useState('')
   const [open, setOpen] = useState<string | null>(null)
@@ -55,6 +88,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
       matches(a, filter)
       && (!needle || [a.name, a.slug, a.owner_email, a.workspace].some((s) => s.toLowerCase().includes(needle))))
   }, [health.agents, filter, q])
+  const order = health.agents.find((a) => a.steps)?.steps
   const now = new Date()
   // A tile filters the agents table to what it counts and brings it into view.
   const show = (f: Filter) => () => {
@@ -119,7 +153,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
           {!(filter in FILTER_LABEL) && (
             <button type="button" onClick={() => setFilter('all')} data-testid="tile-filter"
                     className="min-h-8 rounded-md border border-foreground/30 bg-muted px-2.5 text-[12px] text-foreground">
-              {filter === 'done' ? 'Fully set up' : filter === 'used' ? 'Used, 30 days' : `Vault: ${VAULT_LABEL[filter as AgentHealthOut['vault']['state']].text}`} ×
+              {filter === 'done' ? 'Fully set up' : filter === 'used' ? 'Used, 30 days' : `Vault: ${VAULT_LABEL[filter as AgentVault['state']].text}`} ×
             </button>
           )}
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter by name, owner, workspace"
@@ -127,7 +161,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                  className="ml-auto min-h-8 w-full rounded-md border border-border bg-card px-2.5 text-[12px] sm:w-64" />
         </div>
         <p className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-          {health.agents[0] && <span>Setup, in order: {health.agents[0].steps.map((st) => st.title).join(' · ')}.</span>}
+          {order && <span>Setup, in order: {order.map((st) => st.title).join(' · ')}.</span>}
           {(['done', 'todo', 'waiting', 'optional'] as const).map((st) => (
             <span key={st} className="inline-flex items-center gap-1"><StatusIcon status={st} />{st === 'todo' ? 'to do' : st}</span>
           ))}
@@ -168,12 +202,18 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                       <span className="ml-1 font-mono text-muted-foreground">{a.slug}</span>
                     </td>
                     <td>
-                      <span className="inline-flex items-center gap-0.5" aria-label={`${a.left} steps left`}>
-                        {a.steps.map((s) => <span key={s.key} title={`${s.title}: ${s.status}`}><StatusIcon status={s.status} /></span>)}
-                        <span className="ml-1 whitespace-nowrap tabular-nums text-muted-foreground">{a.left ? `${a.left} left` : 'done'}</span>
-                      </span>
+                      {a.steps ? (
+                        <span className="inline-flex items-center gap-0.5" aria-label={`${a.left} steps left`}>
+                          {a.steps.map((s) => <span key={s.key} title={`${s.title}: ${s.status}`}><StatusIcon status={s.status} /></span>)}
+                          <span className="ml-1 whitespace-nowrap tabular-nums text-muted-foreground">{a.left ? `${a.left} left` : 'done'}</span>
+                        </span>
+                      ) : <Pending failed={failed.has(a.slug)} />}
                     </td>
-                    <td><CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#credentials`)}><VaultBadge agent={a} /></CellLink></td>
+                    <td>
+                      {a.vault
+                        ? <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#credentials`)}><VaultBadge vault={a.vault} /></CellLink>
+                        : <Pending failed={failed.has(a.slug)} />}
+                    </td>
                     <td className="text-foreground-secondary">
                       {a.owner_email ? <a href={`mailto:${a.owner_email}`} onClick={stop} className="hover:underline">{a.owner_email}</a> : '—'}
                     </td>
@@ -219,7 +259,7 @@ function Health({ health }: { health: WorkspaceHealthOut }): JSX.Element {
                     </td>
                   </tr>
                   {open === a.slug && (
-                    <tr><td colSpan={17} className="bg-muted/30 p-3"><AgentDetail agent={a} /></td></tr>
+                    <tr><td colSpan={17} className="bg-muted/30 p-3"><AgentDetail agent={a} failed={failed.has(a.slug)} /></td></tr>
                   )}
                 </Fragment>
               ))}
@@ -246,11 +286,12 @@ export function whoCanUse(a: Pick<AgentHealthOut, 'has_interface' | 'capabilitie
 
 function matches(a: AgentHealthOut, f: Filter): boolean {
   if (f === 'all') return true
-  if (f === 'done') return a.left === 0
   if (f === 'used') return a.turns_30d > 0 || a.people_30d > 0
-  if (f === 'setup') return a.left > 0
-  if (f === 'vault') return a.vault.state === 'moving' || a.vault.state === '1password'
-  return a.vault.state === f
+  // A row whose checklist is not in yet matches no filter that reads it.
+  if (f === 'done') return a.left === 0
+  if (f === 'setup') return (a.left ?? 0) > 0
+  if (f === 'vault') return a.vault?.state === 'moving' || a.vault?.state === '1password'
+  return a.vault?.state === f
 }
 
 type RunnerRow = TopologyRunnerOut
@@ -287,18 +328,24 @@ function CellLink({ to, children }: { to: string; children: ReactNode }): JSX.El
   return <Link to={to} onClick={stop} className="hover:underline">{children}</Link>
 }
 
-function Tile({ label, value, hint, onClick }: { label: string; value: number; hint?: string; onClick: () => void }): JSX.Element {
+/** A row's Setup or Vault while its checklist is still being read. */
+function Pending({ failed }: { failed: boolean }): JSX.Element {
+  return failed
+    ? <span className="text-destructive" title="Its checklist could not be read; reload to try again">not loaded</span>
+    : <span className="text-muted-foreground" aria-label="loading">…</span>
+}
+
+function Tile({ label, value, hint, onClick }: { label: string; value: number | null | undefined; hint?: string; onClick: () => void }): JSX.Element {
   return (
     <button type="button" onClick={onClick}
             className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:border-foreground/30">
       <div className="text-[11px] text-muted-foreground">{label}{hint && <span> · {hint}</span>}</div>
-      <div className="text-lg font-semibold tabular-nums text-foreground">{value}</div>
+      <div className="text-lg font-semibold tabular-nums text-foreground">{value ?? <span className="text-muted-foreground" aria-label="loading">…</span>}</div>
     </button>
   )
 }
 
-function VaultBadge({ agent }: { agent: AgentHealthOut }): JSX.Element {
-  const v = agent.vault
+function VaultBadge({ vault: v }: { vault: AgentVault }): JSX.Element {
   const label = VAULT_LABEL[v.state]
   const extra = v.in_1password.length + v.missing.length
   return (
@@ -312,15 +359,22 @@ function VaultBadge({ agent }: { agent: AgentHealthOut }): JSX.Element {
 
 /** Mail the owner what is left, with the link to the agent's settings. */
 export function ownerMailto(agent: AgentHealthOut, origin: string): string {
-  const left = agent.steps.filter((s) => s.status === 'todo' || s.status === 'waiting')
+  const left = (agent.steps ?? []).filter((s) => s.status === 'todo' || s.status === 'waiting')
   const lines = left.map((s) => `- ${s.title}: ${s.detail}${s.href ? `\n  ${s.href.startsWith('http') ? s.href : origin + s.href}` : ''}`)
   const body = [`${agent.name} has ${left.length} setup step${left.length === 1 ? '' : 's'} left:`, '', ...lines, '',
     `Its settings: ${origin}/w/${agent.workspace}/agents/${agent.slug}/settings`].join('\n')
   return `mailto:${encodeURIComponent(agent.owner_email)}?subject=${encodeURIComponent(`Finish setting up ${agent.name}`)}&body=${encodeURIComponent(body)}`
 }
 
-function AgentDetail({ agent }: { agent: AgentHealthOut }): JSX.Element {
+function AgentDetail({ agent, failed }: { agent: AgentHealthOut; failed: boolean }): JSX.Element {
   const v = agent.vault
+  if (!agent.steps || !v) {
+    return (
+      <p className="text-[12px] text-muted-foreground">
+        {failed ? 'Its setup checklist could not be read; reload to try again.' : 'Reading its setup checklist…'}
+      </p>
+    )
+  }
   return (
     <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
       <div className="rounded-lg border border-border bg-card">
@@ -329,7 +383,7 @@ function AgentDetail({ agent }: { agent: AgentHealthOut }): JSX.Element {
             <span className="font-semibold text-foreground">Setup</span> — the same steps as its{' '}
             <Link to={scopedPath(agent.workspace, `/agents/${agent.slug}/settings`)} className="text-primary hover:underline">Settings page</Link>.
           </span>
-          {!agent.can_fix && agent.left > 0 && (
+          {!agent.can_fix && (agent.left ?? 0) > 0 && (
             agent.owner_email
               ? <a href={ownerMailto(agent, window.location.origin)} className="text-primary hover:underline" data-testid="send-to-owner">
                   Only its owner or an admin can fix this — email {agent.owner_email}
@@ -392,7 +446,7 @@ function RecentSessions({ agent }: { agent: AgentHealthOut }): JSX.Element {
   )
 }
 
-const REF_LABEL: Record<AgentHealthOut['vault']['refs'][number]['status'], string> = {
+const REF_LABEL: Record<AgentVault['refs'][number]['status'], string> = {
   stored: 'in canopy-web',
   literal: 'plain value in runtime.yaml',
   local: 'minted per machine',

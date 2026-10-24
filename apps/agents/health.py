@@ -43,14 +43,34 @@ def _shared_vault(ws: Workspace) -> dict:
     }
 
 
-def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict,
-              standings: access_rule.Standings, facts) -> dict:
-    """One agent's row. `standings` holds the viewer and `facts`
+def setup_row(agent: Agent, viewer, standings: access_rule.Standings, facts) -> dict:
+    """One agent's checklist and vault verdict: the costly part of its row (a few
+    dozen reads each), which the page asks for after the table is up
+    (`setup_rows`). `standings` holds the viewer and `facts`
     (`device_keys.serving_facts`) the fleet, each read once for every agent."""
-    can_fix = standings.is_admin(viewer, agent)
     vault = vault_health(agent, facts)
-    steps = setup_steps(agent, viewer_is_admin=can_fix, vault_state=vault, facts=facts)
-    left = [s for s in steps if s["status"] not in (DONE, OPTIONAL)]
+    steps = setup_steps(agent, viewer_is_admin=standings.is_admin(viewer, agent), vault_state=vault, facts=facts)
+    return {"slug": agent.slug, "vault": vault, "steps": steps,
+            "left": sum(1 for s in steps if s["status"] not in (DONE, OPTIONAL))}
+
+
+def setup_rows(agents: list[Agent], viewer, standings: access_rule.Standings | None = None) -> list[dict]:
+    standings = standings or access_rule.Standings([viewer], agents)
+    facts = device_keys.serving_facts(agents)
+    return [setup_row(a, viewer, standings, facts) for a in agents]
+
+
+def setup_of(root: Workspace, viewer, visible: Callable[[str], bool], slugs: set[str]) -> list[dict]:
+    """`setup_rows` of the named agents of the tree; any other slug is left out."""
+    named = [a for a in agents_in_tree(wsvc.subtree(root, visible), "owner", "workspace") if a.slug in slugs]
+    return setup_rows(named, viewer)
+
+
+def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: dict,
+              standings: access_rule.Standings, setup: dict | None) -> dict:
+    """One agent's row; `setup` is its `setup_row`, or None to leave the
+    checklist for a second read."""
+    can_fix = standings.is_admin(viewer, agent)
     last = last_turns.get(agent.slug) or {}
     c = counts.get(agent.pk) or {}
     return {
@@ -80,9 +100,9 @@ def agent_row(agent: Agent, viewer, last_turns: dict, counts: dict, sessions: di
         "failed_30d": last.get("failed", 0),
         "people_30d": last.get("people", 0),
         "ran_on": last.get("runners", []),
-        "vault": vault,
-        "steps": steps,
-        "left": len(left),
+        "vault": setup["vault"] if setup else None,
+        "steps": setup["steps"] if setup else None,
+        "left": setup["left"] if setup else None,
     }
 
 
@@ -142,18 +162,24 @@ def _sessions(agents: list[Agent], viewer) -> dict[int, dict]:
     return out
 
 
-def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True) -> dict:
+def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: True,
+          setup: bool = True) -> dict:
+    """The tree's health. `setup=False` leaves out each agent's checklist and
+    vault verdict and the totals counted from them (None): those cost a few dozen
+    reads per agent, so the page shows the rest first and asks `setup_rows` for
+    them a few agents at a time."""
     tree = wsvc.subtree(root, visible)
     agents = agents_in_tree(tree, "owner", "workspace")
 
     last_turns, counts = analytics.agent_turns([a.slug for a in agents], days=30), _counts(agents)
     sessions = _sessions(agents, viewer)
-    standings, facts = access_rule.Standings([viewer], agents), device_keys.serving_facts(agents)
-    rows = [agent_row(a, viewer, last_turns, counts, sessions, standings, facts) for a in agents]
+    standings = access_rule.Standings([viewer], agents)
+    setups = {r["slug"]: r for r in setup_rows(agents, viewer, standings)} if setup else {}
+    rows = [agent_row(a, viewer, last_turns, counts, sessions, standings, setups.get(a.slug)) for a in agents]
     per_ws: dict[str, int] = {}
     for r in rows:
         per_ws[r["workspace"]] = per_ws.get(r["workspace"], 0) + 1
-    states = [r["vault"]["state"] for r in rows]
+    states = [r["vault"]["state"] for r in rows if r["vault"]]
 
     runners = topology.build(root, visible, viewer)["runners"]
     return {
@@ -166,13 +192,15 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
         "runners": runners,
         "totals": {
             "agents": len(rows),
-            "set_up": sum(1 for r in rows if not r["left"]),
-            "needs_setup": sum(1 for r in rows if r["left"]),
             "used_30d": sum(1 for r in rows if r["turns_30d"] or r["people_30d"]),
-            "vault_canopy_web": states.count("canopy-web"),
-            "vault_moving": states.count("moving"),
-            "vault_1password": states.count("1password"),
-            "vault_none": states.count("none"),
+            **({
+                "set_up": sum(1 for r in rows if not r["left"]),
+                "needs_setup": sum(1 for r in rows if r["left"]),
+                "vault_canopy_web": states.count("canopy-web"),
+                "vault_moving": states.count("moving"),
+                "vault_1password": states.count("1password"),
+                "vault_none": states.count("none"),
+            } if setup else {}),
             "runners": len(runners),
             "runners_online": sum(1 for r in runners if r["status"] == "online"),
         },

@@ -101,3 +101,11 @@ same rule (`runner_serves_agent`, `runner_routes_agent`) answers each pair from
 it; the viewer's admin standing is one `access.Standings`. More runners cost no
 more queries (`test_health_reads_the_fleet_once_…`); each agent still costs a
 fixed few dozen for its own checklist steps.
+
+Because of that per-agent cost the page never waits for every checklist: it reads
+`/health?setup=false` (the table, with `steps`, `vault`, `left` and the totals
+counted from them null) and shows it, then `/health/setup?agents=…`
+(`health.setup_of`, at most 25 slugs, only agents of the tree) three agents per
+read, four reads in flight (`pages/health/useAgentSetup.ts`), each row filling
+as its read lands; the tiles counted from checklists show once all are in. A plain
+`/health` still answers everything in one read, for MCP callers.

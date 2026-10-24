@@ -578,10 +578,24 @@ class AgentHealthOut(StrictModel):
     failed_30d: int = 0
     people_30d: int = 0
     ran_on: list[AgentRunnerUseOut] = []
+    # Its checklist and vault verdict; null when read with `setup=false`
+    # (`AgentSetupHealthOut` carries them).
+    vault: AgentVaultHealthOut | None = None
+    steps: list[HealthStepOut] | None = None
+    # Steps neither done nor optional.
+    left: int | None = None
+
+
+class AgentSetupHealthOut(StrictModel):
+    slug: str
     vault: AgentVaultHealthOut
     steps: list[HealthStepOut]
     # Steps neither done nor optional.
     left: int
+
+
+class WorkspaceHealthSetupOut(StrictModel):
+    agents: list[AgentSetupHealthOut]
 
 
 class SharedVaultHealthOut(StrictModel):
@@ -601,14 +615,15 @@ class WorkspaceHealthNodeOut(StrictModel):
 
 class HealthTotalsOut(StrictModel):
     agents: int
-    set_up: int
-    needs_setup: int
+    # Counted from the checklists: null when read with `setup=false`.
+    set_up: int | None = None
+    needs_setup: int | None = None
     # Agents anyone used in the last 30 days (a turn, or a person's chat or message).
     used_30d: int = 0
-    vault_canopy_web: int
-    vault_moving: int
-    vault_1password: int
-    vault_none: int
+    vault_canopy_web: int | None = None
+    vault_moving: int | None = None
+    vault_1password: int | None = None
+    vault_none: int | None = None
     runners: int
     runners_online: int
 

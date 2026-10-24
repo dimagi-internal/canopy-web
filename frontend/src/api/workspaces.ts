@@ -449,12 +449,25 @@ export type WorkspaceHealthOut = components['schemas']['WorkspaceHealthOut']
 export type AgentHealthOut = components['schemas']['AgentHealthOut']
 export type WorkspaceHealthNodeOut = components['schemas']['WorkspaceHealthNodeOut']
 
-export async function getWorkspaceHealth(slug: string): Promise<WorkspaceHealthOut> {
+export type AgentSetupHealthOut = components['schemas']['AgentSetupHealthOut']
+
+/** The tree's health. `setup: false` leaves each agent's checklist and vault
+ *  state out (null), for `getWorkspaceHealthSetup` to fill in after. */
+export async function getWorkspaceHealth(slug: string, opts: { setup?: boolean } = {}): Promise<WorkspaceHealthOut> {
   const res = await apiV2.GET('/api/workspaces/{slug}/health', {
-    params: { path: { slug } },
+    params: { path: { slug }, query: opts.setup === false ? { setup: false } : {} },
   })
   ensureOk(res, 'Failed to load workspace health')
   return res.data as unknown as WorkspaceHealthOut
+}
+
+/** The checklist and vault state of some of the tree's agents (at most 25). */
+export async function getWorkspaceHealthSetup(slug: string, agents: readonly string[]): Promise<AgentSetupHealthOut[]> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/health/setup', {
+    params: { path: { slug }, query: { agents: agents.join(',') } },
+  })
+  ensureOk(res, 'Failed to load setup checklists')
+  return (res.data as unknown as { agents: AgentSetupHealthOut[] }).agents
 }
 
 export type WorkspaceNetworkOut = components['schemas']['WorkspaceNetworkOut']
