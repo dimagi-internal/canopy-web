@@ -276,3 +276,29 @@ export async function publishUpdate(
   })
   return typed(unwrap(res, 'publishUpdate'))
 }
+
+// ---- what a project serves to its workspace ------------------------------------
+
+export type ProjectService = Schemas['ProjectServiceOut']
+export type ProjectServiceKind = Schemas['ProjectServiceIn']['kind']
+
+export async function addProjectService(
+  workspace: string,
+  handle: string,
+  body: { kind: ProjectServiceKind; name: string; url: string; description?: string },
+): Promise<ProjectService> {
+  const res = await apiV2.POST('/api/workspace-projects/{workspace}/{handle}/services/', {
+    params: { path: { workspace, handle } },
+    body: { description: '', ...body },
+  })
+  return typed(unwrap(res, 'addProjectService'))
+}
+
+export async function removeProjectService(workspace: string, handle: string, id: number): Promise<void> {
+  ensureOk(
+    await apiV2.DELETE('/api/workspace-projects/{workspace}/{handle}/services/{service_id}', {
+      params: { path: { workspace, handle, service_id: id } },
+    }),
+    'removeProjectService',
+  )
+}

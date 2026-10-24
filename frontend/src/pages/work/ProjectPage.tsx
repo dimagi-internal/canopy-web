@@ -45,6 +45,7 @@ import { scopedPath } from '@/lib/scopedLinks'
 import { CheckinsPanel, CheckinTimeline } from '@/pages/agents/ProjectCheckins'
 import { ProjectOverview } from '@/pages/agents/ProjectOverview'
 import { ProjectKbLink, ProjectMcpInstall } from '@/pages/projects/WorkspaceProjects'
+import { ProjectServices } from '@/pages/work/ProjectServices'
 import { TASK_RESOURCE, useResource } from '@/widget/useResource'
 
 /** Open work only, unless "Show done and canceled" is on. */
@@ -147,6 +148,7 @@ export function ProjectPage(): JSX.Element {
 
       <UpdatesSection detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
       <ProjectWork detail={detail} workspace={workspace} handle={handle} address={address} onChanged={reload} />
+      <ProjectServices detail={detail} workspace={workspace} handle={handle} onChanged={reload} />
 
       {detail.proposal && (
         <Section id="project-proposal" title="Proposal" description="This project was proposed. Start it or decline it here.">
