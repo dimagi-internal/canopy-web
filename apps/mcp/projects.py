@@ -22,10 +22,9 @@ signs in for (`/api/mcp/`, RFC 9728) already covers it — MCP clients accept a
 protected resource that is a path prefix of the server URL.
 
 **Who may call it:** a member of the project's workspace or of its steward's —
-the same readers `GET /api/workspace-projects/<ws>/<handle>/` admits — and, for a
-KB with a Drive source, only its owner, its steward and the readers its owner named
-(`kb_drive.may_read`). Anyone else sees no tools and every call is refused, with the
-same answer as a project that does not exist.
+the same readers `GET /api/workspace-projects/<ws>/<handle>/` admits. Anyone else
+sees no tools and every call is refused, with the same answer as a project that
+does not exist.
 
 `whats_new` answers from the file's own history: its builder records only documents
 whose content changed.
@@ -69,7 +68,7 @@ def _current_user():
 
 def readable_project(user, workspace: str, handle: str):
     """The project, if `user` may read it and it serves something; else None."""
-    from apps.agents import kb_drive, services
+    from apps.agents import services
     from apps.workspaces import services as wsvc
 
     if user is None:
@@ -79,8 +78,6 @@ def readable_project(user, workspace: str, handle: str):
         return None
     readers = {project.workspace_id} | ({project.agent.workspace_id} if project.agent_id else set())
     if not (readers & wsvc.user_workspace_slugs(user)):
-        return None
-    if not kb_drive.may_read(user, project):  # a KB made from private Drive folders: its readers only
         return None
     return project
 

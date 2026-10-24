@@ -2,8 +2,7 @@
 builds one, #1971). Each version carries the curation state it was built from; a
 publish names the version it was made from and loses to one that landed first;
 whats_new reads the file's own history; rollback serves an earlier file and state; and
-a Drive source's file is opened and published only when its owner approved every
-document in it.
+a source is a curator's crawler only (no Drive-folder source).
 
 The steward's refresh is played here by hand: it builds, uploads the file (into the
 fake bucket) and publishes it.
@@ -14,13 +13,9 @@ import gzip
 import hashlib
 
 import pytest
-from django.contrib.auth.models import User
-from django.test import Client
 
-from apps.agents import kb_store
-from apps.agents.models import AgentProject, KbDriveFile, KbVersion
+from apps.agents.models import AgentProject, KbVersion
 from apps.mcp import projects as project_mcp
-from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures import kb as kb_fixtures
 
 pytestmark = pytest.mark.django_db
@@ -135,146 +130,18 @@ def test_only_the_newest_files_are_kept(world, s3, tmp_path, monkeypatch):
     assert r.status_code == 422 and "pruned" in r.json()["detail"]
 
 
-# ---- Drive sources ----
+# ---- sources ----
 
-ROOT = "root-folder-1"
-
-
-def _listing(**over):
-    """A synthetic folder: protocols, a raw-data subfolder, a patient list, one file
-    shared more narrowly than its folder."""
-    team = ["user:hal@dimagi-ai.com", "user:jj@dimagi.com"]
-    files = [
-        {"id": ROOT, "name": "Kangaroo care (synthetic)", "mime_type": "application/vnd.google-apps.folder",
-         "readers": team},
-        {"id": "f-proto", "parent": ROOT, "name": "KMC protocol", "mime_type": "application/vnd.google-apps.document",
-         "version": "7", "owner": "hal@dimagi-ai.com", "readers": team},
-        {"id": "d-raw", "parent": ROOT, "name": "Raw data", "mime_type": "application/vnd.google-apps.folder",
-         "readers": team},
-        {"id": "f-pl", "parent": "d-raw", "name": "Patient list.xlsx", "md5": "m1", "owner": "hal@dimagi-ai.com",
-         "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "readers": team},
-        {"id": "f-narrow", "parent": ROOT, "name": "Budget.pdf", "mime_type": "application/pdf", "md5": "m2",
-         "readers": ["user:hal@dimagi-ai.com"]},
-    ]
-    for f in over.pop("add", []):
-        files.append(f)
-    drop = set(over.pop("drop", []))
-    return [f for f in files if f["id"] not in drop]
-
-
-@pytest.fixture()
-def drive(world, s3):
-    project = AgentProject.objects.get(handle="givewell-kb")
-    project.owner_user = world["owner"]
-    project.save()
-    r = world["client"].post(f"{KB_URL}/sources", {"kind": "drive_folders", "name": "kmc",
-                                                   "config": {"folders": [ROOT]}}, content_type=J)
-    assert r.status_code == 200, r.content
-    return {"project": project, "source": r.json()["id"]}
-
-
-def _inventory(world, drive, files, client=None):
-    r = (client or world["client"]).post(f"{KB_URL}/sources/{drive['source']}/inventory",
-                                         {"files": files, "page_token": "tok"}, content_type=J)
-    assert r.status_code == 200, r.content
-    return r.json()
-
-
-def _decide(client, drive, *decisions):
-    return client.post(f"{KB_URL}/review/approvals", {"source": drive["source"], "files": list(decisions)},
-                       content_type=J)
-
-
-def test_the_inventory_reads_metadata_flags_names_and_skips_narrow_sharing(world, drive):
-    counts = _inventory(world, drive, _listing())
-    assert (counts["files"], counts["folders"], counts["skipped"]) == (3, 2, 1)
-    review = world["client"].get(f"{KB_URL}/review").json()
-    files = {f["file_id"]: f for f in review["sources"][0]["files"]}
-    assert files["f-pl"]["flags"] and any("Patient list" in f for f in files["f-pl"]["flags"])
-    assert any("Raw data" in f for f in files["f-pl"]["flags"]) and files["f-pl"]["path"] == "Kangaroo care (synthetic) / Raw data"
-    assert files["f-narrow"]["skip_reason"].startswith("shared more narrowly")
-    assert all(f["decision"] == "pending" for f in files.values()) and review["may_decide"] is True
-    # nothing is readable before the owner approves
-    assert world["client"].get(f"{KB_URL}/sources/{drive['source']}/files?readable=true").json() == []
-
-
-def test_only_the_owner_approves_and_a_folder_reaches_what_it_holds(world, drive):
-    _inventory(world, drive, _listing())
-    editor = User.objects.create_user("ed", "ed@dimagi.com", "pw")
-    WorkspaceMembership.objects.create(user=editor, workspace=world["connect"].parent, role=WorkspaceMembership.EDITOR)
-    ec = Client()
-    ec.force_login(editor)
-    assert ec.get(f"{KB_URL}/review").status_code == 404  # a Drive KB: not every member sees its files
-    kb_store.knowledge_base(drive["project"], create=True).kb_readers.add(editor)
-    assert ec.get(f"{KB_URL}/review").json()["may_decide"] is False
-    assert _decide(ec, drive, {"file_id": ROOT, "decision": "approved"}).status_code == 403
-
-    assert _decide(world["client"], drive, {"file_id": "f-pl", "decision": "excluded"}).status_code == 200
-    assert _decide(world["client"], drive, {"file_id": ROOT, "decision": "approved"}).status_code == 200
-    readable = world["client"].get(f"{KB_URL}/sources/{drive['source']}/files?readable=true").json()
-    assert sorted(f["file_id"] for f in readable) == ["f-proto"]  # excluded stays excluded; narrow is skipped
-
-
-def test_new_files_queue_unless_the_folder_auto_approves_and_deleted_ones_are_gone(world, drive):
-    _inventory(world, drive, _listing())
-    _decide(world["client"], drive, {"file_id": ROOT, "decision": "approved"})
-    new_doc = {"id": "f-new", "parent": ROOT, "name": "Follow-up schedule", "readers": ["user:hal@dimagi-ai.com",
-               "user:jj@dimagi.com"], "mime_type": "application/vnd.google-apps.document", "version": "1"}
-    counts = _inventory(world, drive, _listing(add=[new_doc], drop=["f-proto"]))
-    assert (counts["new"], counts["queued"], counts["gone"]) == (1, 1, 1)
-    files = {f["file_id"]: f for f in world["client"].get(f"{KB_URL}/review").json()["sources"][0]["files"]}
-    assert files["f-new"]["queued"] and files["f-new"]["decision"] == "pending"
-    assert files["f-proto"]["present"] is False and not files["f-proto"]["indexable"]
-
-    _decide(world["client"], drive, {"file_id": ROOT, "auto_approve": True})
-    later = dict(new_doc, id="f-later", name="Discharge checklist")
-    counts = _inventory(world, drive, _listing(add=[new_doc, later], drop=["f-proto"]))
-    assert counts["auto_approved"] == 1
-    flagged = dict(new_doc, id="f-consent", name="Consent forms scan")
-    _inventory(world, drive, _listing(add=[new_doc, later, flagged], drop=["f-proto"]))
-    assert KbDriveFile.objects.get(file_id="f-consent").decision == "pending"  # a flag is never auto-approved
-
-
-def test_a_held_spreadsheet_and_an_unapproved_file_cannot_be_published(world, drive, s3, tmp_path):
-    """canopy-web opens every file published to a Drive KB and vets each document in it
-    against its owner's approvals: a slip in a steward's pipeline cannot put an
-    unapproved file in, whatever the publish says."""
-    _inventory(world, drive, _listing())
-    _decide(world["client"], drive, {"file_id": ROOT, "decision": "approved"})
+def test_a_source_is_a_curators_crawler_and_a_drive_folder_source_is_refused(world):
+    """Agents publish curator bundles; there is no Drive-folder source for an owner to
+    review file by file."""
     c = world["client"]
-    hold = c.post(f"{KB_URL}/sources/{drive['source']}/files/f-pl/hold", {"headers": ["Mother name", "DOB"]},
-                  content_type=J)
-    assert hold.status_code == 200 and hold.json()["indexable"] is False
-    doc = {"id": "drive:f-proto", "type": "gdoc", "title": "KMC protocol", "url": "https://docs/x",
-           "text": "Skin to skin.", "sha256": "p", "meta": {"source": "drive", "drive": {"file_id": "f-proto"}}}
-    _full(world, s3, tmp_path, _bundle(tmp_path, "d1", [doc]))
-    held = {"id": "drive:f-pl", "type": "sheet", "title": "Patient list", "url": "https://docs/y", "text": "x",
-            "sha256": "q", "meta": {"source": "drive"}}
-    r = _full(world, s3, tmp_path, _bundle(tmp_path, "d2", [doc, held]), expect=422)
-    assert "1 Drive documents are not approved" in r.json()["detail"] and "drive:f-pl" in r.json()["detail"]
-    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_version.number == 1
-    _decide(c, drive, {"file_id": "f-pl", "release_hold": True})
-    _full(world, s3, tmp_path, _bundle(tmp_path, "d3", [doc, held]))
-    assert AgentProject.objects.get(handle="givewell-kb").knowledge_base.kb_version.number == 2
-
-
-def test_a_drive_kb_publish_that_is_not_a_knowledge_base_is_refused(world, drive, s3, tmp_path):
-    """Nothing to vet is nothing to serve."""
-    body = gzip.compress(b"not a database at all" * 100)
-    up = world["client"].post(f"{KB_URL}/upload", content_type=J).json()
-    s3.objects[up["key"]] = body
-    r = world["client"].post(f"{KB_URL}/publish", {"key": up["key"], "sha256": hashlib.sha256(body).hexdigest(),
-                                                   "base": None}, content_type=J)
-    assert r.status_code == 422 and "not a knowledge base" in r.json()["detail"]
-
-
-def test_a_drive_kb_answers_only_its_readers(world, drive, s3, tmp_path):
-    from apps.mcp.projects import readable_project
-
-    _full(world, s3, tmp_path, _bundle(tmp_path, "v1", ITEMS))
-    member = User.objects.create_user("m", "m@dimagi.com", "pw")
-    WorkspaceMembership.objects.create(user=member, workspace=world["connect"].parent, role=WorkspaceMembership.EDITOR)
-    assert readable_project(member, "connect", "givewell-kb") is None
-    assert readable_project(world["owner"], "connect", "givewell-kb") is not None
-    world["client"].post(f"{KB_URL}/readers", {"add": ["m@dimagi.com"]}, content_type=J)
-    assert readable_project(member, "connect", "givewell-kb") is not None
+    web = c.post(f"{KB_URL}/sources", {"kind": "web", "name": "givewell", "config": {"reads": "givewell.org"}},
+                 content_type=J)
+    assert web.status_code == 200, web.content
+    drive = c.post(f"{KB_URL}/sources", {"kind": "drive_folders", "name": "kmc", "config": {"folders": ["f1"]}},
+                   content_type=J)
+    assert drive.status_code == 422
+    assert [s["kind"] for s in c.get(f"{KB_URL}/sources").json()] == ["web"]
+    for gone in ("review", "readers", f"sources/{web.json()['id']}/files"):
+        assert c.get(f"{KB_URL}/{gone}").status_code in (404, 405)

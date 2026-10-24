@@ -1061,9 +1061,9 @@ class KbSettingsIn(StrictModel):
 
 
 class KbSourceIn(StrictModel):
-    kind: Literal["web", "drive_folders"]
+    kind: Literal["web"]
     name: str = Field(min_length=1, max_length=100)
-    #: web: what the crawler reads (notes); drive_folders: {"folders": [folder ids]}.
+    #: What the crawler reads (notes).
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1072,110 +1072,6 @@ class KbSourceOut(StrictModel):
     kind: str
     name: str
     config: dict[str, Any]
-    page_token: str = ""
-    inventoried_at: datetime | None = None
-
-
-class KbDriveListingIn(StrictModel):
-    """One file or folder as Drive's metadata shows it. Never its contents."""
-
-    id: str = Field(min_length=1, max_length=128)
-    parent: str = Field(default="", max_length=128)
-    name: str = Field(default="", max_length=500)
-    mime_type: str = Field(default="", max_length=200)
-    size: int | None = None
-    owner: str = Field(default="", max_length=254)
-    modified_time: str = Field(default="", max_length=40)
-    md5: str = Field(default="", max_length=64)
-    version: str = Field(default="", max_length=40)
-    web_url: str = Field(default="", max_length=500)
-    #: Who can open it: "user:<email>", "domain:<domain>", "anyone".
-    readers: list[str] = Field(default_factory=list, max_length=500)
-
-
-class KbInventoryIn(StrictModel):
-    files: list[KbDriveListingIn] = Field(max_length=50000)
-    #: The changes feed position after this listing.
-    page_token: str = Field(default="", max_length=200)
-
-
-class KbDriveFileOut(StrictModel):
-    file_id: str
-    parent_id: str
-    name: str
-    path: str
-    mime_type: str
-    is_folder: bool
-    size: int | None = None
-    owner: str
-    modified_time: str
-    md5: str
-    drive_version: str
-    web_url: str
-    readers: list[str]
-    skip_reason: str
-    flags: list[str]
-    decision: Literal["pending", "approved", "excluded"]
-    decided_by: str = ""
-    decided_at: datetime | None = None
-    auto_approve: bool
-    held_headers: list[str]
-    hold_released: bool
-    present: bool
-    first_seen_at: datetime
-    #: Pending, and appeared under an approved folder: the "new since approval" queue.
-    queued: bool = False
-    #: Its contents go into the index (approved, not skipped, not held).
-    indexable: bool = False
-
-
-class KbReviewSourceOut(KbSourceOut):
-    files: list[KbDriveFileOut] = Field(default_factory=list)
-
-
-class KbReviewOut(StrictModel):
-    """A KB's sources and, for a Drive source, its owner's review list."""
-
-    address: str
-    name: str
-    owner_email: str | None = None
-    #: The agent that keeps it current (and may always query it).
-    steward_slug: str
-    #: The caller is the project's owner: only they switch files on and off.
-    may_decide: bool
-    sources: list[KbReviewSourceOut]
-    #: Who may query it beside its owner and steward (a KB with a Drive source).
-    readers: list[str]
-    drive_replica: bool
-    version: int | None = None
-
-
-class KbApprovalIn(StrictModel):
-    file_id: str = Field(min_length=1, max_length=128)
-    decision: Literal["pending", "approved", "excluded"] | None = None
-    #: A folder's rule for files that appear in it later.
-    auto_approve: bool | None = None
-    #: Index a spreadsheet the header check held.
-    release_hold: bool = False
-
-
-class KbApprovalsIn(StrictModel):
-    source: int
-    files: list[KbApprovalIn] = Field(max_length=5000)
-
-
-class KbApprovalsOut(StrictModel):
-    #: Files and folders whose switch or rule this call changed (a folder's reach included).
-    changed: int
-
-
-class KbHoldIn(StrictModel):
-    headers: list[str] = Field(max_length=100)
-
-
-class KbReadersIn(StrictModel):
-    add: list[str] = Field(default_factory=list, max_length=100)
-    remove: list[str] = Field(default_factory=list, max_length=100)
 
 
 class KbOriginalIn(StrictModel):

@@ -13,9 +13,7 @@ rolls the state back with the file. A publish names the version it was made from
 the loser keeps every result it paid for.
 
 What changed is the file's own history (its `changes` table, which `whats_new` reads):
-the builder records only documents whose content changed. A Drive-sourced knowledge
-base's file is opened and every document in it checked against the owner's approvals
-(`kb_drive.check_ids`) before it is served.
+the builder records only documents whose content changed.
 
 Only the newest `KEEP_FILES` versions keep their kb.sqlite.gz (`prune`); older ones
 stay in the log and can no longer be rolled back to. A project with a Drive replica
@@ -23,15 +21,17 @@ stay in the log and can no longer be rolled back to. A project with a Drive repl
 """
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 import threading
 from pathlib import Path
 
+from django.conf import settings
 from django.db import close_old_connections, transaction
 from django.utils import timezone
 
-from . import kb_drive, kb_store
+from . import kb_store
 from .models import Agent, AgentProject, KbVersion
 
 log = logging.getLogger(__name__)
@@ -67,14 +67,12 @@ def _counts(changes: dict | None) -> dict:
 
 
 def publish_full(project, key: str, sha256: str, *, base: int | None, curation: str = "", published_by: str = "",
-                 changes: dict | None = None, check_ids=None):
+                 changes: dict | None = None):
     """The whole-file publish (`kb_store.publish`), recorded as a FULL version made from
     version `base` (None: the first). `curation` is the state it was built from, already
     in the results store. `changes` counts the documents whose content changed."""
     if curation and not kb_store.stored(project, "results", [curation]):
         raise kb_store.KbPublishError(f"curation state {curation[:12]} is not stored: upload it first")
-    if check_ids is not None:  # a Drive-sourced KB: every document in the file must be approved
-        check_ids(kb_store.item_ids(project, key))
     with transaction.atomic():
         project = AgentProject.objects.select_for_update().get(pk=project.pk)
         kb = kb_store.knowledge_base(project, lock=True)
@@ -141,6 +139,40 @@ def prune(project) -> list[str]:
     return gone
 
 
+class ReplicaError(RuntimeError):
+    """The Drive replica cannot be written (no folder, no service-account key)."""
+
+
+def write_replica(project, gz: Path) -> str:
+    """Write a version's kb.sqlite.gz into the project's Drive folder with canopy-web's
+    service account (the folder must be shared with it), replacing the last one."""
+    from google.oauth2 import service_account  # noqa: PLC0415 — the Google client loads only for a replica
+    from googleapiclient.discovery import build  # noqa: PLC0415 — the Google client loads only for a replica
+    from googleapiclient.http import MediaFileUpload  # noqa: PLC0415 — the Google client loads only for a replica
+
+    if not project.drive_folder_id:
+        raise ReplicaError("the project has no Drive folder")
+    raw = getattr(settings, "CANOPY_DRIVE_SA_KEY_JSON", "") or ""
+    if not raw:
+        raise ReplicaError("no CANOPY_DRIVE_SA_KEY_JSON on this deployment")
+    creds = service_account.Credentials.from_service_account_info(
+        json.loads(raw), scopes=["https://www.googleapis.com/auth/drive"])
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    media = MediaFileUpload(str(gz), mimetype="application/gzip", resumable=True)
+    made = drive.files().create(body={"name": "kb.sqlite.gz", "parents": [project.drive_folder_id]},
+                                media_body=media, fields="id", supportsAllDrives=True).execute()
+    kb = project.knowledge_base
+    previous = kb.kb_drive_replica_file_id
+    kb.kb_drive_replica_file_id = made["id"]
+    kb.save(update_fields=["kb_drive_replica_file_id"])
+    if previous:
+        try:
+            drive.files().delete(fileId=previous, supportsAllDrives=True).execute()
+        except Exception:  # noqa: BLE001 - a stale replica costs Drive space, not correctness
+            pass
+    return made["id"]
+
+
 def _replicate_later(project_pk: int, version_pk: int) -> None:
     """Copy a version's file into the project's Drive folder (`kb_drive_replica`, off by
     default), off the request: a stream from storage to Drive, never a build."""
@@ -156,7 +188,7 @@ def _replicate(project_pk: int, version_pk: int) -> None:
             with open(gz, "wb") as fh:
                 for chunk in iter(lambda: body.read(1 << 20), b""):
                     fh.write(chunk)
-            version.replica = f"drive:{kb_drive.write_replica(project, gz)}"
+            version.replica = f"drive:{write_replica(project, gz)}"
     except Exception as exc:  # noqa: BLE001 - the replica is a convenience; the version stands
         log.warning("kb replica for project %s failed: %s", project_pk, exc)
         version = KbVersion.objects.filter(pk=version_pk).first()

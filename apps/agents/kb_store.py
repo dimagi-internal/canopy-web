@@ -11,8 +11,6 @@ they call the tools.
 * **Publish** (`publish`) checks the object is there, under THIS project's
   prefix, then points the project at it (`point`). The previous object stays, as
   an earlier version's file (`kb_versions`, which prunes beyond the newest few).
-* **Check** (`item_ids`): the documents an uploaded file holds, read from the file
-  itself (a Drive source's publish is vetted against the owner's approvals with them).
 * **Read** (`open_kb`): each instance keeps the decompressed copy on local disk,
   keyed by the published object's sha256, so a new publish is picked up on the
   next call and an unchanged one is never fetched twice.
@@ -26,8 +24,7 @@ they call the tools.
   last one, so it can run on any machine and fetch only what it changes
   (`canopy_kb.curate`): step results (an extracted text, a card) gzipped under
   `results/<step key>`, immutable, and the curation states made of them, each named by
-  the version it built (`KbVersion.curation_sha`). Steward only: for a Drive source
-  they are its owner's text.
+  the version it built (`KbVersion.curation_sha`). Steward only.
 
 The bucket is `CANOPY_KB_BUCKET`, else the attachments bucket (same access: a
 bucket policy naming the task role). No bucket → `KbNotConfigured`, a clear 503,
@@ -39,7 +36,6 @@ import base64
 import gzip
 import hashlib
 import shutil
-import sqlite3
 import tempfile
 import threading
 import uuid
@@ -160,26 +156,6 @@ def delete_object(key: str) -> None:
         _client().delete_object(Bucket=_bucket(), Key=key)
     except Exception:  # noqa: BLE001 - a stray old object costs storage, not correctness
         pass
-
-
-def item_ids(project, key: str) -> list[str]:
-    """The ids of the documents in an uploaded kb.sqlite.gz (this project's, under its
-    prefix), read from the file: what a publish says it holds is never taken on trust."""
-    if not key.startswith(_prefix(project)):
-        raise KbPublishError("that upload is not this project's")
-    with tempfile.TemporaryDirectory(prefix="kb-check-") as td:
-        path = Path(td) / "kb.sqlite"
-        body = _client().get_object(Bucket=_bucket(), Key=key)["Body"]
-        with gzip.GzipFile(fileobj=body) as src, open(path, "wb") as dst:
-            shutil.copyfileobj(src, dst, 1 << 20)
-        try:
-            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            try:
-                return [r[0] for r in db.execute("SELECT id FROM items")]
-            finally:
-                db.close()
-        except sqlite3.DatabaseError as exc:
-            raise KbPublishError(f"the upload is not a knowledge base: {exc}") from exc
 
 
 # ---- originals ----

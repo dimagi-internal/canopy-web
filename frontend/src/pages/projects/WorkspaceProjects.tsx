@@ -20,7 +20,7 @@ export function WorkspaceProjectLine({ project }: { project: ProjectOut }): JSX.
   )
 }
 
-/** A link to a knowledge-base project's sources and its owner's review (`…/projects/:handle/kb`). */
+/** A link to a knowledge-base project's sources and version log (`…/projects/:handle/kb`). */
 export function ProjectKbLink({ project }: { project: ProjectOut }): JSX.Element | null {
   if (project.mcp_kind !== 'kb') return null
   // The address names the project's own workspace, which for a division's project
@@ -30,7 +30,7 @@ export function ProjectKbLink({ project }: { project: ProjectOut }): JSX.Element
   return (
     <p className="text-[12px] mt-2" data-testid="project-kb-link">
       <Link to={scopedPath(ws, `/projects/${encodeURIComponent(handle)}/kb`)} className="text-primary hover:underline">
-        Knowledge base sources &amp; review →
+        Knowledge base sources &amp; versions →
       </Link>
     </p>
   )
