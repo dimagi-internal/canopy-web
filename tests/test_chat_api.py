@@ -440,11 +440,21 @@ def test_send_refuses_a_server_only_origin(client):
     # schemas.Origin literal is what enforces it — not a second gate here.
     sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
                       content_type="application/json").json()["id"]
-    for bad in ("canopy_web_chat", "canopy_scheduler", "nonsense"):
+    # `email` / `slack` are channels canopy attests itself (`Turn.CHAT_SEND_ORIGINS`).
+    for bad in ("canopy_web_chat", "canopy_scheduler", "nonsense", "email", "slack"):
         r = client.post(f"/api/canopy-sessions/{sid}/send",
                         data={"text": "hi", "origin": bad},
                         content_type="application/json")
         assert r.status_code == 422, f"{bad}: {r.status_code} {r.content}"
+
+
+def test_send_normalizes_a_legacy_origin_to_api(client):
+    sid = client.post("/api/canopy-sessions/", data={"agent_slug": "echo"},
+                      content_type="application/json").json()["id"]
+    r = client.post(f"/api/canopy-sessions/{sid}/send", data={"text": "hi", "origin": "manual"},
+                    content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert Turn.objects.get(pk=r.json()["turn_id"]).origin == Turn.ORIGIN_API
 
 
 def test_send_client_id_over_100_chars_is_truncated(client):

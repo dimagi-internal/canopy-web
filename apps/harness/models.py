@@ -571,6 +571,10 @@ class Turn(models.Model):
     # NOT in TurnSpec.from_dict — server-authored dispatch specs (the schedule
     # nag) legitimately carry `canopy_scheduler`.
     POSTABLE_ORIGINS = {ORIGIN_API, ORIGIN_ACE_WEB, ORIGIN_EMAIL, ORIGIN_SLACK}
+    # What a caller may name on a CHAT send (a person's `SendIn`, a contact's
+    # `ContactSendIn`): `email` and `slack` are channels canopy attests itself, so a
+    # chat message calling itself one would borrow that channel's routing rule.
+    CHAT_SEND_ORIGINS = {ORIGIN_API, ORIGIN_ACE_WEB}
     # Retired values the live fleet may still be posting. Normalized (same mapping
     # migration 0030 applied to existing rows) rather than 422'd, so shipping this
     # does not break Echo/Ada mid-flight. Applied BOTH at the request boundary and

@@ -41,6 +41,18 @@ def test_server_only_origins_are_not_postable():
             TurnIn(agent_slug="echo", origin=server_only, idempotency_key="k")
 
 
+def test_the_input_schemas_agree_with_the_models_sets():
+    """One vocabulary: the Literals the request boundary checks are the model's sets."""
+    from typing import get_args
+
+    from apps.harness import schemas
+
+    assert set(schemas._POSTABLE_ORIGINS) == Turn.POSTABLE_ORIGINS
+    chat = {schemas.normalize_origin(v) for v in get_args(get_args(schemas.ChatSendOrigin)[0])}
+    assert chat == Turn.CHAT_SEND_ORIGINS
+    assert Turn.CHAT_SEND_ORIGINS < Turn.POSTABLE_ORIGINS
+
+
 def test_a_caller_may_post_a_source_value():
     assert TurnIn(agent_slug="echo", origin="ace_web", idempotency_key="k").origin == "ace_web"
 
