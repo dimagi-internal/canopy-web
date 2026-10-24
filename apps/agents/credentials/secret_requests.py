@@ -86,6 +86,14 @@ def live(req) -> bool:
     return req.status == req.OPEN and req.expires_at > timezone.now()
 
 
+def open_requests(agent):
+    """The agent's live requests (open, not yet expired), newest first."""
+
+    return list(AgentSecretRequest.objects
+                .filter(agent=agent, status=AgentSecretRequest.OPEN, expires_at__gt=timezone.now())
+                .select_related("agent", "fulfilled_by"))
+
+
 def has_value(agent, name: str) -> bool:
 
     return AgentCredential.objects.filter(agent=agent, name=name).exists()

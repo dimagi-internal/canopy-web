@@ -4615,7 +4615,13 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * This agent's open secret requests (never a value)
+         * @description The requests still waiting for an answer, newest first — what the agent's
+         *     Credentials page shows its admins, including a request made outside any of
+         *     its chats (`session_id` null), which no chat card carries.
+         */
+        readonly get: operations["list_agent_secret_requests"];
         readonly put?: never;
         /**
          * Ask a person for one of this agent's declared secrets
@@ -44012,6 +44018,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultMembersOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_secret_requests: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["SecretRequestOut"][];
                 };
             };
         };

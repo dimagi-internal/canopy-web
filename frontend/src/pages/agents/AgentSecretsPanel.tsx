@@ -16,6 +16,7 @@ import { EncryptedBadge, VaultEditor, type VaultEntry } from '@/components/vault
 import { AgentSecretsHomeSection } from '@/pages/agents/AgentSecretsHomeSection'
 import { AgentVaultSection } from '@/pages/agents/AgentVaultSection'
 import { CredentialReadHistory } from '@/pages/agents/CredentialReadHistory'
+import { OpenSecretRequests } from '@/pages/agents/OpenSecretRequests'
 import { sections } from '@/pages/agents/agentCredentials'
 import { GOG_TOKEN_REF } from '@/pages/agents/googleMint'
 import { revealZkValue, setZkValue, unlockVaultKey } from '@/vault/operations'
@@ -146,6 +147,8 @@ export function AgentSecretsPanel({
         onSource={setSource}
       />
       {!onCanopy && <AgentVaultSection slug={agent.slug} workspace={agent.workspace} />}
+
+      {canEdit && zk?.enabled && <OpenSecretRequests slug={agent.slug} onStored={reload} />}
 
       <section aria-labelledby="secrets-title" className="mt-6">
         <h3 id="secrets-title" className="mb-1 text-[13px] font-semibold text-foreground">Its secrets</h3>
