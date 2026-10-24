@@ -25,8 +25,6 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-import uuid
-from dataclasses import dataclass
 
 from django.db import transaction
 from django.db.models import Q
@@ -38,7 +36,7 @@ from apps.passkeys.models import Passkey, UserVaultKeyset
 
 from .. import services
 from ..models import Agent, AgentCredential, AgentVaultWrap, VaultKeyWrap
-from . import vault_alerts, vault_members
+from . import vault_alerts, vault_engine as engine, vault_members
 
 ZK_PREFIX = "zk1:"
 NONCE_LEN, TAG_LEN, KEY_LEN, SALT_LEN, POINT_LEN = 12, 16, 32, 16, 65
@@ -198,85 +196,8 @@ def eligible_members(agent) -> list:
                 .select_related("user"))
 
 
-@dataclass
-class _Target:
-    kind: str
-    device_key: object = None
-    user: object = None
-
-    @property
-    def key(self) -> tuple:
-        if self.kind == "device":
-            return ("device", self.device_key.pk)
-        if self.kind == "member":
-            return ("member", self.user.pk)
-        return ("recovery",)
-
-
 def _wrap_key(w) -> tuple:
-    if w.kind == "device":
-        return ("device", w.device_key_id)
-    if w.kind == "member":
-        return ("member", w.user_id)
-    return ("recovery",)
-
-
-def _parse_wraps(agent, kv: int, wraps: list, *, allow_recovery: bool) -> list:
-    """Validate `[{kind, target, wrap}]` and return unsaved AgentVaultWrap rows."""
-
-    devices = {str(k.pk): k for k in eligible_device_keys(agent)}
-    members = {str(k.user_id): k for k in eligible_members(agent)}
-    out, seen = [], set()
-    for i, item in enumerate(wraps):
-        what = f"wraps[{i}]"
-        kind, target, wrap = item.kind, item.target, item.wrap
-        if kind == "device":
-            try:
-                key_id = str(uuid.UUID(str(target)))
-            except ValueError as exc:
-                raise _shape(f"{what}: a device target is a device key id") from exc
-            key = devices.get(key_id)
-            if key is None:
-                raise ZkError(422, "zk_invalid_target",
-                              f"{what}: device key {key_id} is not an active device key with an ECDH "
-                              f"key on a runner {agent.slug} routes to, working for a member of "
-                              f"{agent.slug}'s vault")
-            row = AgentVaultWrap(agent=agent, kv=kv, kind=kind, device_key=key,
-                                 wrap=check_ecdh_wrap(wrap, what))
-        elif kind == "member":
-            ks = members.get(str(target))
-            if ks is None:
-                raise ZkError(422, "zk_invalid_target",
-                              f"{what}: user {target} is not a member of {agent.slug}'s vault "
-                              "with a vault key (Settings → Vault key)")
-            row = AgentVaultWrap(agent=agent, kv=kv, kind=kind, user=ks.user,
-                                 wrap=check_ecdh_wrap(wrap, what))
-        elif kind == "recovery":
-            if not allow_recovery:
-                raise ZkError(422, "zk_invalid_target",
-                              f"{what}: the recovery wrap is set only by enable or rotate")
-            if target not in (None, ""):
-                raise _shape(f"{what}: a recovery wrap has no target")
-            row = AgentVaultWrap(agent=agent, kv=kv, kind=kind, wrap=check_recovery_wrap(wrap, what))
-        else:
-            raise _shape(f"{what}: kind must be device, member or recovery")
-        k = _wrap_key(row)
-        if k in seen:
-            raise _shape(f"{what}: a second wrap for the same target")
-        seen.add(k)
-        out.append(row)
-    return out
-
-
-def _caller_can_open(rows: list, user) -> bool:
-    """A member wrap to the caller's own keyset, or a device wrap to a key on a
-    runner the caller OWNS (the canopy CLI enabling as its device)."""
-    for w in rows:
-        if w.kind == "member" and w.user_id == user.pk:
-            return True
-        if w.kind == "device" and w.device_key.runner.owner_id == user.pk:
-            return True
-    return False
+    return engine.wrap_key(w)
 
 
 def has_recovery_seal(user_id) -> bool:
@@ -286,84 +207,9 @@ def has_recovery_seal(user_id) -> bool:
     return bool(ks) and any(s.get("alg") == "recovery" for s in ks.seals)
 
 
-def _check_full_set(agent, rows: list, user) -> None:
-    # A way back if every passkey is lost: the agent's own recovery wrap, or —
-    # the default since #person-recovery — a member wrap to someone whose vault
-    # key carries their personal recovery seal.
-    recovery = [w for w in rows if w.kind == "recovery"]
-    if len(recovery) > 1:
-        raise ZkError(422, "zk_recovery_required", "at most one recovery wrap")
-    if not recovery and not any(w.kind == "member" and has_recovery_seal(w.user_id) for w in rows):
-        raise ZkError(422, "zk_recovery_required",
-                      "include a recovery wrap, or a member wrap to someone whose vault key "
-                      "has a recovery code")
-    if not _caller_can_open(rows, user):
-        raise ZkError(422, "zk_caller_wrap_required",
-                      "include a wrap you can open: a member wrap to your own vault key, or a device "
-                      "wrap to a device key on a runner you own — else nobody you trust holds "
-                      "the new vault key")
-
-
-def _parse_values(values: list, *, allow_sealed: bool = False) -> dict[str, str]:
-    """`allow_sealed`: a `zks1:` value (sealed to recipients, `zk_seal.py`) is
-    accepted too — never by enable/rotate, which must leave every value `zk1`."""
-    from .zk_seal import SEALED_PREFIX, check_sealed_value  # cycle: agents.zk_seal -> agents.zk  # noqa: PLC0415
-
-    out: dict[str, str] = {}
-    for i, v in enumerate(values):
-        name = (v.name or "").strip()
-        if not name:
-            raise _shape(f"values[{i}]: name is required")
-        if name in out:
-            raise _shape(f"values[{i}]: {name} appears twice")
-        if allow_sealed and isinstance(v.value_zk, str) and v.value_zk.startswith(SEALED_PREFIX):
-            out[name] = check_sealed_value(v.value_zk, name)
-        else:
-            out[name] = check_value_zk(v.value_zk, name)
-    return out
-
-
-def _require_coverage(agent, names) -> None:
-    """Every stored credential must be in the body: a value left behind would be
-    custodial plaintext (enable) or under a retired vault key (rotate)."""
-
-    missing = sorted(set(AgentCredential.objects.filter(agent=agent).values_list("name", flat=True))
-                     - set(names))
-    if missing:
-        raise ZkError(422, "zk_values_incomplete",
-                      "every stored credential must be included; missing: " + ", ".join(missing))
-
-
 def value_digest(value_zk: str) -> str:
     """What a compare-and-swap `expect` names: hex SHA-256 of the stored text."""
-    import hashlib
-
-    return hashlib.sha256(value_zk.encode()).hexdigest() if value_zk else ""
-
-
-def _check_expected(agent, values: list) -> None:
-    """Compare-and-swap for PUT /values (a settle): every value carrying
-    `expect` must still be what the caller read, under the agent row lock."""
-
-    want = {(v.name or "").strip(): v.expect for v in values if getattr(v, "expect", None) is not None}
-    if not want:
-        return
-    have = dict(AgentCredential.objects.filter(agent=agent, name__in=list(want))
-                .values_list("name", "value_zk"))
-    changed = sorted(n for n, e in want.items() if value_digest(have.get(n, "")) != e.strip().lower())
-    if changed:
-        raise ZkError(409, "zk_value_changed",
-                      "changed since you read it (re-read and try again): " + ", ".join(changed))
-
-
-def _write_values(agent, values: dict[str, str], kv: int, user) -> None:
-
-    by = user if getattr(user, "is_authenticated", False) else None
-    for name, value_zk in values.items():
-        AgentCredential.objects.update_or_create(
-            agent=agent, name=name,
-            defaults={"value_zk": value_zk, "kv": kv, "value_enc": "", "updated_by": by},
-        )
+    return engine.value_digest(value_zk)
 
 
 def _locked(agent):
@@ -376,115 +222,57 @@ def _require_enabled(agent) -> None:
         raise ZkError(409, "zk_not_enabled", f"{agent.slug} is not zero-knowledge")
 
 
-def _save_wraps(rows: list, user) -> None:
+def _store(agent) -> "engine.Store":
+    """The agent's vault, for the rules in `vault_engine`: its rows live on the agent."""
 
-    by = user if getattr(user, "is_authenticated", False) else None
-    for w in rows:
-        w.created_by = by
-    AgentVaultWrap.objects.bulk_create(rows)
-
-
-# ---- the writes -------------------------------------------------------------------
-
-def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
-    """Turn zero-knowledge on, atomically: the wraps, every value as ciphertext
-    (each stored value's custodial copy is wiped), then the flag."""
-
-    if kv != 1:
-        raise ZkError(422, "zk_kv_mismatch", "enable starts the vault key at kv 1")
-    with transaction.atomic():
-        agent = _locked(agent)
-        # kv 0 is "zero-knowledge from birth, no vault key yet" (`born_zk`):
-        # enabling it creates the first vault key, settling every sealed value.
-        if agent.zk_enabled and agent.zk_kv != 0:
-            raise ZkError(409, "zk_already_enabled", f"{agent.slug} is already zero-knowledge")
-        rows = _parse_wraps(agent, kv, wraps, allow_recovery=True)
-        # The CLI may enable as its device before the owner has a keyset; the
-        # owner's member wrap is then granted later (decision, 2026-10-16).
-        _check_full_set(agent, rows, user)
-        vals = _parse_values(values)
-        _require_coverage(agent, vals)
-        AgentVaultWrap.objects.filter(agent=agent).delete()
-        _save_wraps(rows, user)
-        _write_values(agent, vals, kv, user)
+    def save_kv(kv: int) -> None:
         agent.zk_enabled, agent.zk_kv = True, kv
         agent.save(update_fields=["zk_enabled", "zk_kv", "updated_at"])
 
+    return engine.Store(
+        label=agent.slug, kv=agent.zk_kv,
+        wrap_model=AgentVaultWrap, secret_model=AgentCredential, owner_kw={"agent": agent},
+        eligible_devices=lambda: eligible_device_keys(agent),
+        eligible_members=lambda: eligible_members(agent),
+        lock=lambda: _store(_locked(agent)), save_kv=save_kv,
+        require_enabled=lambda: _require_enabled(agent),
+        # A browser may seal a value to its recipients before the vault key exists.
+        accepts_sealed=True,
+        device_scope=f"on a runner {agent.slug} routes to, working for a member of {agent.slug}'s vault",
+        member_scope=f"{agent.slug}'s vault",
+        # Writing ciphertext wipes any custodial copy.
+        extra={"value_defaults": {"value_enc": ""}},
+    )
+
+
+# ---- the writes (the rules are vault_engine's, shared with a workspace vault) ----------
+
+def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
+    """Turn zero-knowledge on, atomically: the wraps, every value as ciphertext
+    (each stored value's custodial copy is wiped), then the flag. kv 0 is
+    "zero-knowledge from birth, no vault key yet" (`born_zk`): enabling it creates
+    the first vault key. The CLI may enable as its device before the owner has a
+    keyset; the owner's member wrap is then granted later (decision, 2026-10-16)."""
+    with transaction.atomic():
+        engine.enable(_store(agent), kv=kv, wraps=wraps, values=values, user=user,
+                      already=f"{agent.slug} is already zero-knowledge")
+
 
 def set_values(agent, *, kv: int, values: list, user) -> list[str]:
-    """Upsert ciphertext values at the current kv (non-clobbering)."""
-    with transaction.atomic():
-        agent = _locked(agent)
-        _require_enabled(agent)
-        if kv != agent.zk_kv:
-            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {agent.zk_kv}, not {kv}")
-        # A `zks1` value is legal here: a browser sealing to recipients before
-        # the vault key exists (kv 0), or one not yet settled.
-        vals = _parse_values(values, allow_sealed=True)
-        if agent.zk_kv == 0 and any(not v.startswith("zks1:") for v in vals.values()):
-            raise ZkError(409, "zk_no_vault_key",
-                          f"{agent.slug} has no vault key yet: seal values to its recipients (zks1), "
-                          "or create the vault key first")
-        _check_expected(agent, values)
-        _write_values(agent, vals, kv, user)
-    return sorted(vals)
+    """Upsert ciphertext values at the current kv (non-clobbering). A `zks1` value is
+    legal here: a browser sealing to recipients before the vault key exists (kv 0),
+    or one not yet settled."""
+    return engine.set_values(_store(agent), kv=kv, values=values, user=user)
 
 
 def add_wraps(agent, *, kv: int, wraps: list, user, only_new: bool = False) -> int:
-    """Grant: add (or replace) device/member wraps at the current kv. `only_new`
-    (a keeper) refuses a target that already holds a copy, checked under the
-    agent's row lock so two keepers racing make exactly one grant."""
-
-    with transaction.atomic():
-        agent = _locked(agent)
-        _require_enabled(agent)
-        if kv != agent.zk_kv:
-            raise ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {agent.zk_kv}, not {kv}")
-        if kv == 0:
-            raise ZkError(409, "zk_no_vault_key", f"{agent.slug} has no vault key yet to grant")
-        rows = _parse_wraps(agent, kv, wraps, allow_recovery=False)
-        for w in rows:
-            held = AgentVaultWrap.objects.filter(agent=agent, kv=kv, kind=w.kind, device_key=w.device_key,
-                                                 user=w.user)
-            if only_new and held.exists():
-                raise ZkError(409, "zk_not_pending",
-                              f"{w.kind} {w.device_key_id or w.user_id} already holds a copy — a keeper "
-                              "only adds copies, never replaces one")
-            held.delete()
-        _save_wraps(rows, user)
-    return len(rows)
+    """Grant: add (or replace) device/member wraps at the current kv (`only_new`: a keeper)."""
+    return engine.add_wraps(_store(agent), kv=kv, wraps=wraps, user=user, only_new=only_new)
 
 
 def rotate(agent, *, new_kv: int, wraps: list, values: list, user) -> None:
-    """A fresh vault key: replace every wrap and every value atomically. Every
-    target that holds a wrap now and still qualifies must get one at new_kv."""
-
-    with transaction.atomic():
-        agent = _locked(agent)
-        _require_enabled(agent)
-        if agent.zk_kv == 0:
-            raise ZkError(409, "zk_no_vault_key", f"{agent.slug} has no vault key yet: create it (enable)")
-        if new_kv != agent.zk_kv + 1:
-            raise ZkError(409, "zk_kv_mismatch",
-                          f"the vault key is at kv {agent.zk_kv}; rotate to kv {agent.zk_kv + 1}")
-        rows = _parse_wraps(agent, new_kv, wraps, allow_recovery=True)
-        _check_full_set(agent, rows, user)
-        given = {_wrap_key(w) for w in rows}
-        eligible = ({("device", k.pk) for k in eligible_device_keys(agent)}
-                    | {("member", k.user_id) for k in eligible_members(agent)})
-        current = {_wrap_key(w) for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv)
-                   if w.kind != "recovery"}
-        missing = sorted(str(k[1]) for k in (current & eligible) - given)
-        if missing:
-            raise ZkError(422, "zk_rewrap_required",
-                          "re-wrap for every remaining target; missing: " + ", ".join(missing))
-        vals = _parse_values(values)
-        _require_coverage(agent, vals)
-        AgentVaultWrap.objects.filter(agent=agent).delete()
-        _save_wraps(rows, user)
-        _write_values(agent, vals, new_kv, user)
-        agent.zk_kv = new_kv
-        agent.save(update_fields=["zk_kv", "updated_at"])
+    """A fresh vault key: replace every wrap and every value atomically."""
+    engine.rotate(_store(agent), new_kv=new_kv, wraps=wraps, values=values, user=user)
 
 
 def forget_device_wraps(device_key) -> int:
@@ -506,26 +294,10 @@ def forget_member_wraps(user) -> int:
 
 # ---- reads ----------------------------------------------------------------------------
 
-def _device_target(k) -> dict:
-    return {"kind": "device", "target": str(k.pk), "runner": str(k.runner_id),
-            "runner_name": k.runner.name, "label": k.label, "device_kind": k.kind,
-            "ecdh_jkt": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk, "ecdh_public_jwk": k.ecdh_public_jwk}
-
-
-def _member_target(ks) -> dict:
-    return {"kind": "member", "target": str(ks.user_id), "email": ks.user.email,
-            "public_jwk": ks.public_jwk}
-
-
 def pending_targets(agent) -> list[dict]:
     """Eligible principals with no wrap at the current kv: who a member should
     grant to next. Before enable, every eligible principal (what enable wraps to)."""
-
-    have = ({_wrap_key(w) for w in AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv)}
-            if agent.zk_enabled else set())
-    out = [_device_target(k) for k in eligible_device_keys(agent) if ("device", k.pk) not in have]
-    out += [_member_target(ks) for ks in eligible_members(agent) if ("member", ks.user_id) not in have]
-    return out
+    return engine.pending_targets(_store(agent), has_key=agent.zk_enabled)
 
 
 def copies(agent) -> tuple[set[int], list[str]]:
@@ -549,30 +321,11 @@ def state(agent, *, include_values: bool = False) -> dict:
     """Everything a member's client needs to grant, rotate or recover. Wraps
     are public data; values are ciphertext and only included on request."""
 
-    devices = {k.pk for k in eligible_device_keys(agent)}
-    members = {ks.user_id: ks for ks in eligible_members(agent)}
-    wraps = []
-    for w in (AgentVaultWrap.objects.filter(agent=agent)
-              .select_related("device_key__runner", "user", "created_by").order_by("kv", "kind", "id")):
-        row = {"kind": w.kind, "kv": w.kv, "wrap": w.wrap, "created_at": w.created_at,
-               "created_by_email": w.created_by.email if w.created_by_id else "",
-               "target": None, "label": "", "current": True}
-        if w.kind == "device":
-            k = w.device_key
-            row.update(target=str(k.pk), label=f"{k.runner.name} · {k.label or k.kind}",
-                       ecdh_jkt=k.ecdh_jkt, current=k.pk in devices, public_jwk=k.ecdh_public_jwk or None,
-                       ecdh_public_jwk=k.ecdh_public_jwk or None)
-        elif w.kind == "member":
-            ks = members.get(w.user_id)
-            row.update(target=str(w.user_id), label=w.user.email, current=ks is not None,
-                       public_jwk=ks.public_jwk if ks is not None else None)
-        wraps.append(row)
+    wraps = engine.wrap_rows(_store(agent))
     out = {
         "agent": agent.slug, "agent_id": str(agent.pk), "enabled": agent.zk_enabled,
         "kv": agent.zk_kv, "wraps": wraps, "pending": pending_targets(agent),
-        # A wrap whose holder no longer qualifies (key revoked, admin removed)
-        # still opens the vault key it was made for: only a rotation retires it.
-        "rotation_recommended": any(not w["current"] for w in wraps if w["kind"] != "recovery"),
+        "rotation_recommended": engine.rotation_recommended(wraps),
         "values": None,
         # Server-minted values sealed to recipients (`zks1`), waiting for a
         # vault-key holder to re-encrypt them as `zk1` — names only.

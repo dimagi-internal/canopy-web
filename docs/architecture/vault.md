@@ -42,7 +42,7 @@ Nothing deletes a copy of the vault key when someone stops being a member. Every
 
 "Holds a copy" is never itself a permission. A person who comes back opens the vault again with the copy they had. Copies are deleted only by the action that makes them useless: replacing a person's vault key or a machine's ECDH key (`zk.forget_member_wraps` / `forget_device_wraps`) or changing the vault key. A revoked device key is refused at every read. A copy made for someone who has since left still shows as not current (`rotation_recommended`), because it still opens the key it was made for.
 
-The vault key is **not** changed on removal: as in 1Password, the server stops serving the vault. "Change the key" (rotate), together with rotating the outside secrets, is the response when someone may have kept a copy.
+The vault key is **not** changed on removal: as in 1Password, the server stops serving the vault. "Change the key" (rotate), together with rotating the outside secrets, is the response when someone may have kept a copy — on an agent's vault page and a workspace vault's alike.
 
 ## Granting without a person
 
@@ -54,11 +54,13 @@ Approving a machine signs its ECDH key with the approver's own vault key (an end
 
 A workspace may keep any number of vaults (`Vault`, `kind=workspace`), always zero-knowledge, in the agent vault's formats with the vault's **binding id** (`vault:<uuid>`) where an agent's id goes in every AAD and HKDF info (`credentials/workspace_vaults.py`). Its secrets are `VaultSecret`, its key copies `VaultKeyWrap`.
 
+**One set of rules.** Both kinds of vault are written through `credentials/vault_engine.py`: who may be handed a copy, what making or replacing the key must carry (a way back, a copy the writer can open, every value re-encrypted, every holder still eligible re-wrapped), the key-version checks, and the state a client grants and rotates from. `zk.py` and `workspace_vaults.py` only say where their rows live and who is eligible (`engine.Store`), so a rule added to one kind of vault reaches the other.
+
 - **Members:** made with two links: the workspace's owners (`owner`) and `attached`, everyone with full access to an agent the vault serves (`member`). Direct members as for an agent vault.
 - **What it serves:** `VaultAttachment` rows, one agent or every agent in a workspace and below (the vault's own tree only). A moved agent keeps an attachment only inside that tree (`move._vault_attachments`).
 - **Who may hold its key:** a member with a vault key; a machine whose person is a member and which serves an attached agent, checked on every read as for an agent vault.
 - **Reading:** credential resolve returns `vaults`, the workspace vaults layered under the agent's own values (root workspace first, then vaults attached to the agent; a later layer wins, and the agent's own values win over all), each with this device's copy of its key, or `wrap: null` when it may not open it. The client decrypts and merges.
-- **Routes:** `GET|POST /api/workspaces/{slug}/vaults` (making one needs `own`), `/api/vaults/{id}` with `members`, `attachments` and `secrets/{name}`, and `/api/vaults/{id}/zk` (`enable`, `values`, `wraps`) in the agent vault's shapes. The keeper grants them through `…/vault-keeper/vaults/{id}/wraps`. A machine is vouched for there by its approver's endorsement for an attached agent.
+- **Routes:** `GET|POST /api/workspaces/{slug}/vaults` (making one needs `own`), `/api/vaults/{id}` with `members`, `attachments` and `secrets/{name}`, and `/api/vaults/{id}/zk` (`enable`, `values`, `wraps`, `rotate`) in the agent vault's shapes. Rotating one from its page needs the person's own recovery code, as making its key does. The keeper grants them through `…/vault-keeper/vaults/{id}/wraps`. A machine is vouched for there by its approver's endorsement for an attached agent.
 
 ## A runner's own vault
 

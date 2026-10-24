@@ -41,6 +41,7 @@ from .schemas import (
     VaultMemberIn,
     WorkspaceVaultOut,
     ZkEnableIn,
+    ZkRotateIn,
     ZkStateOut,
     ZkValuesIn,
     ZkValuesOut,
@@ -288,6 +289,27 @@ def enable_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, payload
     except ZkError as exc:
         raise _problem(exc) from exc
     v.refresh_from_db()
+    return ZkStateOut(**workspace_vaults.state(v))
+
+
+@router.post("/vaults/{vault_id}/zk/rotate", response=ZkStateOut,
+             summary="Rotate a workspace vault's key: replace every copy and value atomically")
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
+def rotate_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, payload: ZkRotateIn) -> ZkStateOut:
+    """As `POST /api/agents/{slug}/vault/zk/rotate`: `{new_kv: kv + 1, wraps, values}`.
+    Every member or machine holding a copy now that still qualifies must get one at
+    `new_kv` (422 `zk_rewrap_required` otherwise); one removed since is simply left
+    out. A way back and a copy the caller can open are required, and `values` must
+    cover every stored secret."""
+    v = _vault(request, vault_id, manage=True)
+    try:
+        workspace_vaults.rotate(v, new_kv=payload.new_kv, wraps=payload.wraps, values=payload.values,
+                                user=request.user)
+    except ZkError as exc:
+        raise _problem(exc) from exc
+    v.refresh_from_db()
+    # Every value is under the new key: a box serving from this vault reads it again.
+    vault_values_written(v, sorted(VaultSecret.objects.filter(vault=v).values_list("name", flat=True)))
     return ZkStateOut(**workspace_vaults.state(v))
 
 

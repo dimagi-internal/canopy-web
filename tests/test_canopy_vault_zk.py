@@ -31,6 +31,7 @@ from apps.agents.models import (
     AgentVaultWrap,
     Vault,
     VaultKeyWrap,
+    VaultSecret,
     ZeroKnowledgeValue,
 )
 from apps.agents.schemas import ZkWrapIn
@@ -1529,3 +1530,70 @@ def test_a_member_cannot_write_the_keepers_record(fleet):
     res = c.put(f"{ZK}/pins", content_type="application/json",
                 data={"kv": 1, "expected_version": 0, "value": _pins_value(fleet)})
     assert res.status_code == 403
+
+
+# ---- a workspace vault rotates as an agent's does (one engine: credentials/vault_engine.py) ----
+
+def _ws_rotate(fleet, vid, binding, wraps, plain, *, new_kv=2, vk):
+    values = [{"name": n, "value_zk": ref.encrypt_value(vk, binding, n, new_kv, v, os.urandom(12))}
+              for n, v in plain.items()]
+    return fleet.client.post(f"/api/vaults/{vid}/zk/rotate", content_type="application/json",
+                             data={"new_kv": new_kv, "wraps": wraps, "values": values})
+
+
+def test_a_workspace_vault_rotates_every_copy_and_value(fleet):
+    assert _enable(fleet).status_code == 200
+    plain = {"gog-oauth-client": "client-json"}
+    vid, binding, _vk = _ws_enabled(fleet, plain)
+    vk2 = os.urandom(32)
+    res = _ws_rotate(fleet, vid, binding, _ws_wraps(fleet, binding, vk2, kv=2), plain, vk=vk2)
+    assert res.status_code == 200, res.content
+    assert res.json()["kv"] == 2
+    assert set(VaultKeyWrap.objects.filter(vault_id=vid).values_list("kv", flat=True)) == {2}
+    assert set(VaultSecret.objects.filter(vault_id=vid).values_list("kv", flat=True)) == {2}
+    [layer] = _resolve(fleet).json()["vaults"]
+    got = ref.unwrap_ecdh_es(layer["wrap"], fleet.ecdh, ref.device_info(binding, 2, fleet.device.ecdh_jkt))
+    assert got == vk2
+    assert ref.decrypt_value(vk2, binding, "gog-oauth-client", 2, layer["values"]["gog-oauth-client"]) == "client-json"
+
+
+def test_a_workspace_vault_rotation_must_rewrap_everyone_still_eligible(fleet):
+    assert _enable(fleet).status_code == 200
+    plain = {"kindora": "shared-kin"}
+    vid, binding, _vk = _ws_enabled(fleet, plain)
+    vk2 = os.urandom(32)
+    mem, dev, rec = _ws_wraps(fleet, binding, vk2, kv=2)
+    res = _ws_rotate(fleet, vid, binding, [mem, rec], plain, vk=vk2)
+    assert res.status_code == 422 and res.json()["error"] == "zk_rewrap_required"
+    assert str(fleet.device.pk) in res.json()["detail"]
+    res = _ws_rotate(fleet, vid, binding, _ws_wraps(fleet, binding, vk2, kv=3), plain, new_kv=3, vk=vk2)
+    assert res.status_code == 409 and res.json()["error"] == "zk_kv_mismatch"
+    res = _ws_rotate(fleet, vid, binding, [mem, dev, rec], {}, vk=vk2)
+    assert res.status_code == 422 and res.json()["error"] == "zk_values_incomplete"
+
+
+def test_a_workspace_vault_rotation_leaves_out_a_revoked_machine(fleet):
+    assert _enable(fleet).status_code == 200
+    plain = {"kindora": "shared-kin"}
+    vid, binding, _vk = _ws_enabled(fleet, plain)
+    fleet.client.delete(f"/api/runner-device-keys/{fleet.device.pk}")
+    state = fleet.client.get(f"/api/vaults/{vid}/zk").json()
+    assert state["rotation_recommended"] is True
+    vk2 = os.urandom(32)
+    mem, _dev, rec = _ws_wraps(fleet, binding, vk2, kv=2)
+    res = _ws_rotate(fleet, vid, binding, [mem, rec], plain, vk=vk2)
+    assert res.status_code == 200, res.content
+    assert not VaultKeyWrap.objects.filter(vault_id=vid, kind="device").exists()
+    assert res.json()["rotation_recommended"] is False
+
+
+def test_a_browser_rotates_a_workspace_vault_only_after_a_passkey_step_up(fleet):
+    assert _enable(fleet).status_code == 200
+    plain = {"kindora": "shared-kin"}
+    vid, binding, _vk = _ws_enabled(fleet, plain)
+    c = Client()
+    c.force_login(fleet.user)
+    vk2 = os.urandom(32)
+    res = c.post(f"/api/vaults/{vid}/zk/rotate", content_type="application/json",
+                 data={"new_kv": 2, "wraps": _ws_wraps(fleet, binding, vk2, kv=2), "values": []})
+    assert res.status_code == 403 and res.json()["error"] == "step_up_required"
