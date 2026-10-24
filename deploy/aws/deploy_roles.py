@@ -115,6 +115,8 @@ APPS = {
         # task role reads them (the bucket policy's GetObject) to presign
         # downloads.
         "runner_releases": "labs-jj-canopy-web-attachments-858923557655/runner-releases/",
+        # The stack's own buckets, which drift detection reads (`DriftReadsOwnResources`).
+        "drift_buckets": ["labs-jj-canopy-web-attachments-858923557655"],
     },
     "ace-web": {
         "sub": "repo:dimagi-internal/ace-web:*",
@@ -157,7 +159,10 @@ def policy_for(app: str, cfg: dict) -> dict:
                 "cloudformation:DescribeStackEvents", "cloudformation:DescribeStackResource",
                 "cloudformation:DescribeStackResources", "cloudformation:GetTemplate",
                 "cloudformation:UpdateStack", "cloudformation:CreateStack",
-                "cloudformation:DetectStackDrift", "cloudformation:DescribeStackResourceDrifts",
+                # Detecting a stack's drift detects each resource's, which is its own action:
+                # without it DetectStackDrift is AccessDenied (the daily drift check, 2026-10).
+                "cloudformation:DetectStackDrift", "cloudformation:DetectStackResourceDrift",
+                "cloudformation:DescribeStackResourceDrifts",
                 "cloudformation:CreateUploadBucket",
             ],
             "Resource": [
@@ -406,6 +411,44 @@ def policy_for(app: str, cfg: dict) -> dict:
             "Sid": "DescribeLogGroupsTakesNoResource",
             "Effect": "Allow",
             "Action": "logs:DescribeLogGroups",
+            "Resource": "*",
+        })
+
+    if cfg.get("drift_buckets"):
+        # Drift detection (the daily Infra drift check) reads every property of every
+        # resource in the stack AS THIS ROLE. A property the role cannot read comes
+        # back null: the resource reads UNKNOWN, or as if its settings had been
+        # removed (the attachments bucket's encryption and public-access block,
+        # 2026-10). Read-only, on the stack's own resources.
+        st.append({
+            "Sid": "DriftReadsOwnResources",
+            "Effect": "Allow",
+            "Action": [
+                "ecr:DescribeRepositories", "ecr:GetLifecyclePolicy", "ecr:GetRepositoryPolicy",
+                "ecr:ListTagsForResource",
+                "logs:ListTagsForResource", "logs:ListTagsLogGroup", "logs:DescribeIndexPolicies",
+                "s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls",
+                "s3:GetEncryptionConfiguration", "s3:GetLifecycleConfiguration", "s3:GetBucketPolicy",
+                "s3:GetBucketTagging", "s3:GetBucketVersioning", "s3:GetBucketCORS", "s3:GetBucketLogging",
+                "s3:GetBucketNotification", "s3:GetBucketWebsite", "s3:GetBucketAcl",
+                "s3:GetAccelerateConfiguration", "s3:GetReplicationConfiguration",
+                "s3:GetBucketObjectLockConfiguration", "s3:GetIntelligentTieringConfiguration",
+                "s3:GetAnalyticsConfiguration", "s3:GetInventoryConfiguration",
+                "s3:GetMetricsConfiguration", "s3:GetBucketLocation", "s3:GetBucketAbac",
+                "s3:GetBucketMetadataConfiguration", "s3:GetBucketMetadataTableConfiguration",
+                "s3:ListTagsForResource",
+            ],
+            "Resource": ([f"arn:aws:ecr:{REGION}:{ACCT}:repository/{r}" for r in cfg["ecr"]]
+                         + [f"arn:aws:logs:{REGION}:{ACCT}:log-group:{g}" for g in cfg["log_groups"]]
+                         + [f"arn:aws:logs:{REGION}:{ACCT}:log-group:{g}:*" for g in cfg["log_groups"]]
+                         + [f"arn:aws:s3:::{b}" for b in cfg["drift_buckets"]]),
+        })
+        st.append({
+            "Sid": "DriftElbReadsTakeNoResource",
+            "Effect": "Allow",
+            "Action": ["elasticloadbalancing:DescribeRules", "elasticloadbalancing:DescribeListeners",
+                       "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeTargetGroupAttributes",
+                       "elasticloadbalancing:DescribeTargetHealth"],
             "Resource": "*",
         })
 

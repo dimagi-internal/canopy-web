@@ -131,6 +131,13 @@ def test_the_canopy_web_deploy_role_may_upload_runner_releases_and_nothing_more(
         "arn:aws:s3:::labs-jj-canopy-web-attachments-858923557655/runner-releases/*")
     s3 = [s for s in pol["Statement"]
           if any(a.startswith("s3:") for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"]))]
-    assert s3 == [stmt]
+    assert sorted(s["Sid"] for s in s3) == ["DriftReadsOwnResources", "UploadRunnerReleasesOnly"]
+    # Drift detection reads the bucket's own settings, on the bucket ARN: no object.
+    drift = next(s for s in s3 if s["Sid"] == "DriftReadsOwnResources")
+    assert all(a.startswith(("s3:GetBucket", "s3:Get", "s3:ListTagsForResource"))
+               for a in drift["Action"] if a.startswith("s3:"))
+    assert not {"s3:GetObject", "s3:DeleteObject", "s3:ListBucket"} & set(drift["Action"])
+    assert [r for r in drift["Resource"] if r.startswith("arn:aws:s3:")] == [
+        "arn:aws:s3:::labs-jj-canopy-web-attachments-858923557655"]
     for app in ("ace-web", "connect-labs"):
         assert "runner-releases" not in str(mod.policy_for(app, mod.APPS[app])), app

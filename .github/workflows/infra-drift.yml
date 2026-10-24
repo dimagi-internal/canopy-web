@@ -15,6 +15,9 @@ name: Infra drift
 # failed every night. Those grants are now in place:
 #
 #     cloudformation:DetectStackDrift            (stack-scoped)
+#     cloudformation:DetectStackResourceDrift    (stack-scoped) -- the stack's
+#       detection runs it per resource, as the caller; without it the stack's
+#       call is AccessDenied
 #     cloudformation:DescribeStackResourceDrifts (stack-scoped)
 #     cloudformation:DescribeStackDriftDetectionStatus  on "*" -- it takes a
 #       DETECTION ID, not a stack ARN, so a stack-scoped grant matches nothing

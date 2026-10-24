@@ -203,6 +203,9 @@ Resources:
       EnableKeyRotation: true
       Tags:
         - { Key: canopy-app, Value: canopy-web }
+        # Added to the live key outside the template (the account's `app` cost tag);
+        # declared so the template describes it and a deploy keeps it.
+        - { Key: app, Value: canopy-web }
       KeyPolicy:
         Version: "2012-10-17"
         Statement:

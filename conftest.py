@@ -131,6 +131,25 @@ def _runner_owners_use_canopy_everywhere(request):
 
 
 @pytest.fixture(autouse=True)
+def _migration_tests_leave_the_schema_whole(request):
+    """A migration test walks the graph back (`MigrationExecutor.migrate(BEFORE)`),
+    which also un-applies every later migration of OTHER apps that depends on the
+    one it targets, and walks forward only to its AFTER. Left there, the next test
+    on the same worker meets a database missing columns (`harness_turn has no
+    column named canopy_session_id`). So after each one, migrate back to the leaves."""
+    yield
+    if not request.node.get_closest_marker("needs_migrations"):
+        return
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    blocker = request.getfixturevalue("django_db_blocker")
+    with blocker.unblock():
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
+
+
+@pytest.fixture(autouse=True)
 def _no_live_plugin_json(monkeypatch):
     """No test reaches GitHub for a plugin.json name (apps/plugins/services.py):
     the agents API names each agent's plugin, so every agent list would. Here
