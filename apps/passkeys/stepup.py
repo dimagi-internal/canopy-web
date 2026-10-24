@@ -77,6 +77,25 @@ def require_browser(request: HttpRequest, what: str = "this") -> None:
         )
 
 
+NOT_A_PERSON = "not_a_person"
+
+
+def require_a_person(request: HttpRequest, what: str = "this") -> None:
+    """A passkey and a step-up are a PERSON's: an agent's own login and a system
+    account never register a passkey or step up, so no step-up-gated act (approving a
+    device key, writing a vault key or a secret) is ever theirs — an agent login with
+    a test vault key included (`apps/agents/credentials/login_test_key.py`)."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports passkeys
+
+    user = getattr(request, "user", None)
+    if user is not None and user.is_authenticated and not login_test_key.is_person(user):
+        raise ProblemError(
+            403, "Not a person", type_=TYPE_FORBIDDEN,
+            detail=f"{what} is for a person; an agent's login or a system account cannot.",
+            members={"error": NOT_A_PERSON},
+        )
+
+
 def mark_stepped_up(request: HttpRequest, *, now: datetime | None = None) -> datetime:
     """Record a successful passkey assertion on this session; returns the expiry."""
     until = (now or timezone.now()) + timedelta(seconds=STEP_UP_SECONDS)
@@ -111,6 +130,7 @@ def require_recent_step_up(request: HttpRequest) -> None:
     """Pass when this browser session confirmed a passkey in the last five
     minutes; else raise `StepUpRequired` (or a plain 403 for a machine caller)."""
     require_browser(request)
+    require_a_person(request, "a passkey confirmation")
     if step_up_until(request) is not None:
         return
     from apps.passkeys.models import Passkey

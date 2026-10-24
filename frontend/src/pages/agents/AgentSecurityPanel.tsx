@@ -5,6 +5,7 @@ import type { ZkStateOut } from '@/api/vault'
 import { AgentCredentialAlertsSection } from '@/pages/agents/AgentCredentialAlertsSection'
 import { AgentDeviceKeysSection } from '@/pages/agents/AgentDeviceKeysSection'
 import { AgentPatRotationSection } from '@/pages/agents/AgentPatRotationSection'
+import { AgentTestVaultKeySection } from '@/pages/agents/AgentTestVaultKeySection'
 import { AgentVaultMembersSection } from '@/pages/agents/AgentVaultMembersSection'
 import { AgentZkSection } from '@/pages/agents/AgentZkSection'
 
@@ -43,6 +44,7 @@ export function AgentSecurityPanel({
       />
       <AgentVaultMembersSection slug={agent.slug} />
       {!zk?.enabled && <AgentPatRotationSection slug={agent.slug} canEdit={canEdit} />}
+      <AgentTestVaultKeySection slug={agent.slug} canEdit={canEdit} />
       {!canEdit && (
         <p className="text-[12px] text-muted-foreground">
           Only {agent.name ?? agent.slug}&rsquo;s admins can see who and what can open its secrets.

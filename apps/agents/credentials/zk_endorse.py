@@ -90,6 +90,11 @@ def add(agent, *, user, items: list) -> int:
 
     if len(items) > MAX_ENDORSEMENTS:
         raise _shape(f"at most {MAX_ENDORSEMENTS} endorsements")
+    # Only a person vouches: an agent login's test vault key (`login_test_key`) or a
+    # system account never endorses a key to read anything.
+    if vault_members.not_a_person([user.pk]):
+        raise ZkError(403, "not_a_person",
+                      "an agent's login or a system account is not a person, and vouches for no key")
     ks = UserVaultKeyset.objects.filter(user=user).first()
     if ks is None:
         raise ZkError(409, "zk_no_keyset", "set up your vault key first (Settings → Vault key)")

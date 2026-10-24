@@ -21,6 +21,7 @@ from ninja.errors import HttpError
 from ninja.files import UploadedFile
 
 from apps.agents import services as agent_services
+from apps.agents.credentials import login_test_key
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.pagination import clamp_limit
@@ -1456,7 +1457,9 @@ def _participants(session: Session) -> list[dict]:
     # Who in a sensitive conversation cannot read it yet, for its people to give a copy.
     keyless = (conversation_keys.without_current_copy(session, [p.user_id for p in rows])
                if sensitivity.is_sensitive(session) else set())
-    return [{**serializers.participant_dto(p), "needs_key": p.user_id in keyless} for p in rows]
+    test_keys = login_test_key.logins_with_test_key([p.user_id for p in rows])
+    return [{**serializers.participant_dto(p), "needs_key": p.user_id in keyless,
+             "test_key": p.user_id in test_keys} for p in rows]
 
 
 @router.get("/{session_id}/participants", response=list[ParticipantOut],
@@ -1487,10 +1490,13 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
     if target.pk == session.created_by_id:
         raise HttpError(409, "that person owns this chat")
     with transaction.atomic():
-        if sensitivity.is_sensitive(session):
-            _store_wrap(request, session, target, payload.wrap)
+        # In it first, then their copy of the key: a copy goes only to someone in the
+        # conversation (an agent login's test key is held to that, `add_wrap`). A
+        # refused wrap rolls the add back.
         SessionParticipant.objects.update_or_create(
             session=session, user=target, defaults={"role": payload.role})
+        if sensitivity.is_sensitive(session):
+            _store_wrap(request, session, target, payload.wrap)
         # Their request to be added, if they asked, is answered by this.
         join_requests.settle_on_add(session, target, by=request.user)
     return _participants(session)
@@ -1540,7 +1546,7 @@ def participant_recipient(request: HttpRequest, session_id: uuid.UUID, email: st
                            detail=f"{target.email} has no vault key yet, so they cannot read a "
                                   "sensitive conversation; ask them to set one up first",
                            members={"error": "no_vault_key"})
-    return {**found, "email": target.email}
+    return {**found, "email": target.email, "test_key": not login_test_key.is_person(target)}
 
 
 @router.post("/{session_id}/key-copies", response=list[ParticipantOut],

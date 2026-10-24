@@ -223,7 +223,6 @@
 "apps/oauth_server/api.py" = ["PLC0415"]  # 2
 "apps/oauth_server/views.py" = ["PLC0415"]  # 5
 "apps/passkeys/api.py" = ["PLC0415"]  # 1
-"apps/passkeys/api_vault.py" = ["PLC0415"]  # 1
 "apps/passkeys/services.py" = ["PLC0415"]  # 13
 "apps/passkeys/stepup.py" = ["PLC0415"]  # 2
 "apps/passkeys/testing.py" = ["PLC0415"]  # 6

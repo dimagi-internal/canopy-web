@@ -391,8 +391,19 @@ def device_wrap_missing(agent, request, device_key) -> None:
 def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
     """Create or extend the caller's keyset. Changing the PUBLIC key is a new
     identity: it needs `replace`, and drops every member wrap to the old one
-    (those agents then list the person as pending)."""
+    (those agents then list the person as pending).
 
+    A login that is not a person writes one only as an agent's TEST vault key
+    (`login_test_key.check_keyset_write`): first key only, passphrase seals only."""
+    from . import login_test_key  # cycle: login_test_key -> zk (disable)  # noqa: PLC0415
+
+    def _test_key_check(exists: bool) -> None:
+        try:
+            login_test_key.check_keyset_write(user, seals=seals or [], exists=exists)
+        except login_test_key.NotAPerson as exc:
+            raise ZkError(exc.status, exc.code, str(exc)) from exc
+
+    _test_key_check(UserVaultKeyset.objects.filter(user=user).exists())
     try:
         jwk = device_keys.normalize_public_jwk(public_jwk)
     except device_keys.KeyError_ as exc:
@@ -421,6 +432,7 @@ def put_keyset(user, *, public_jwk: dict, seals: list, replace: bool = False):
         checked.append(seal)
     with transaction.atomic():
         ks = UserVaultKeyset.objects.select_for_update().filter(user=user).first()
+        _test_key_check(ks is not None)  # again under the lock: two first writes make one key
         if ks is not None and ks.public_jwk != jwk:
             if not replace:
                 raise ZkError(409, "zk_keyset_exists",

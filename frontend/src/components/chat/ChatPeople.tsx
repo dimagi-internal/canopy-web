@@ -149,9 +149,12 @@ export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRo
       role: p.role,
       options: SHARE_ROLES,
       editable: isOwner && !isChatOwner,
-      why: p.needs_key
-        ? (isChatOwner ? "owns the chat · needs a fresh copy of its key" : "needs the key to read it")
-        : isChatOwner ? "owns the chat" : null,
+      why: [
+        p.needs_key
+          ? (isChatOwner ? "owns the chat · needs a fresh copy of its key" : "needs the key to read it")
+          : isChatOwner ? "owns the chat" : null,
+        p.test_key ? "agent test key" : null,
+      ].filter(Boolean).join(" · ") || null,
       onRoleChange: async (next) => setPeople(await addParticipant(sessionId, p.email, next as "editor" | "viewer")),
       onRemove:
         isOwner && !isChatOwner ? async () => setPeople(await removeParticipant(sessionId, p.user_id)) : undefined,

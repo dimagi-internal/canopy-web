@@ -73,9 +73,17 @@ def wrap_info(conversation, user_id) -> str:
 
 
 def _keyset(user):
+    """`user`'s vault key, as a conversation's key may be wrapped to it: a person's, or
+    an agent login's TEST vault key while its agent has the switch on
+    (`login_test_key.may_hold_vault_key`). Any other login's key is not one."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports this app
+
     if user is None or not getattr(user, "is_authenticated", False):
         return None
-    return UserVaultKeyset.objects.filter(user_id=user.pk).first()
+    keyset = UserVaultKeyset.objects.filter(user_id=user.pk).first()
+    if keyset is None or not login_test_key.may_hold_vault_key(user):
+        return None
+    return keyset
 
 
 def can_hold(*, user=None, contact=None) -> bool:
@@ -379,8 +387,16 @@ def add_wrap(session: Session, user, wrap, *, recipient_jkt: str, by) -> Session
     a copy for an OLDER vault key is provably stale (its `recipient_jkt` names a key
     they no longer have) and is replaced; a current one that does not open is set
     aside by its holder first (`set_aside_my_copy`)."""
+    from apps.agents.credentials import login_test_key  # noqa: PLC0415 — agents imports this app
+    from apps.harness import sensitivity  # noqa: PLC0415 — harness's gate reads this module lazily
+
     if key_of(session) is None:
         raise WrapRefused("this conversation has no key to share")
+    # An agent login's test vault key receives a copy only of a conversation that
+    # login is itself in — never one it was merely named to.
+    if not login_test_key.is_person(user) and not sensitivity.is_conversation_person(session, user=user):
+        raise WrapRefused(f"{getattr(user, 'email', 'that login')} is an agent's login and is not in "
+                          "this conversation; its test vault key holds only its own conversations")
     keyset = _keyset(user)
     if keyset is None:
         raise WrapRefused(f"{getattr(user, 'email', 'they')} has no vault key yet, so they cannot "

@@ -36,6 +36,7 @@ const ANCHORS: Record<string, SettingsTab> = {
   'cred-zk': 'security',
   'cred-device-keys': 'security',
   'cred-pat-rotation': 'security',
+  'cred-test-vault-key': 'security',
   'cred-alerts': 'security',
 }
 
