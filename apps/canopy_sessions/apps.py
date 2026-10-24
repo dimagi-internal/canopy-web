@@ -16,6 +16,8 @@ class CanopySessionsConfig(AppConfig):
         ticks.register("canopy_sessions.purge_expired_secrets", _purge_expired_secrets, 60)
         # A transfer whose source never answers goes on without its snapshot.
         ticks.register("canopy_sessions.settle_handoffs", _settle_handoffs, 30)
+        # A private conversation's page no turn ever ends for is forgotten after a while.
+        ticks.register("canopy_sessions.forget_idle_sensitive_pages", _forget_idle_sensitive_pages, 60)
 
 
 def _purge_expired_secrets() -> None:
@@ -28,3 +30,9 @@ def _settle_handoffs() -> None:
     from .handoff import settle_overdue  # noqa: PLC0415 — models: the app registry is not ready at module load
 
     settle_overdue()
+
+
+def _forget_idle_sensitive_pages() -> None:
+    from .page_state import forget_idle_sensitive_pages  # noqa: PLC0415 — models: the app registry is not ready at module load
+
+    forget_idle_sensitive_pages()
