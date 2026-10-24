@@ -10,7 +10,10 @@ vocabulary. This file only holds the declarations to the code:
    passing, is a review question, not a string);
 3. every write a plain member (a VIEWER) can make says why (``viewer_write=``),
    and nothing else does;
-4. every write is a setting (audited) or names its kind, and no read is either.
+4. every write is a setting (audited) or names its kind, and no read is either;
+5. every route whose request or response carries a secret-named field says
+   whether a browser must pass a passkey step-up (``step_up=True``) or why not
+   (``step_up="<reason>"``), and the declaration matches the view's code.
 
 What it cannot check is that the labels are TRUE — that needs reading
 the view, which is the reviewer's job when the decorator is added. It makes
@@ -18,7 +21,11 @@ sure the decorator is added.
 """
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import sys
+import textwrap
 
 import pytest
 
@@ -38,15 +45,20 @@ def _schema_operations() -> dict[str, str]:
     return ops
 
 
-def declared_gates() -> dict[str, route_gates.Gate | None]:
-    """operationId -> the gate its view declares (None when it declares none)."""
+def _views() -> dict:
+    """operationId -> its view function."""
     api.get_openapi_schema()  # binds the routers
-    out: dict[str, route_gates.Gate | None] = {}
+    out = {}
     for bound in api._get_bound_routers():
         for path_view in bound.path_operations.values():
             for op in path_view.operations:
-                out[op.operation_id or api.get_openapi_operation_id(op)] = route_gates.gate_of(op.view_func)
+                out[op.operation_id or api.get_openapi_operation_id(op)] = op.view_func
     return out
+
+
+def declared_gates() -> dict[str, route_gates.Gate | None]:
+    """operationId -> the gate its view declares (None when it declares none)."""
+    return {op: route_gates.gate_of(view) for op, view in _views().items()}
 
 
 @pytest.fixture(scope="module")
@@ -105,6 +117,94 @@ def test_every_write_says_whether_it_is_a_setting(operations, gates):
     assert not reads, f"setting= / kind= on routes that are not writes: {reads}"
     bad = {op: g.kind for op, g in gates.items() if g and g.kind and g.kind not in route_gates.WRITE_KINDS}
     assert not bad, f"kinds outside WRITE_KINDS: {bad}"
+
+
+#: Field names that carry a secret in a request or a response. A route with one of
+#: these says whether it steps up. Names only a NAME of a secret (`secret_name`,
+#: `runtime_secrets`), a share link (`share_token`) or a page cursor are not here.
+SECRET_FIELDS = frozenset({
+    "token", "secret", "service_key", "refresh_token", "api_key", "password", "owner_token",
+    "access_token", "mcp_token", "github_token", "op_sa_token", "shared_op_sa_token",
+    "webhook_secret", "value_zk", "values",
+})
+
+#: Same-module helpers that ask for the step-up, and the keyword that turns it on
+#: (None: always). `_vault(request, id, manage=True)` steps up; `_vault(request, id)` does not.
+STEP_UP_HELPERS = {"_zk_admin": None, "_agent_vault": "manage", "_vault": "manage"}
+
+
+def _secret_carrying(schema: dict) -> dict[str, list[str]]:
+    """operationId -> the secret-named fields its request or response carries."""
+    comps = schema.get("components", {}).get("schemas", {})
+
+    def names(node, seen, depth=0) -> set[str]:
+        if not isinstance(node, dict) or depth > 6:
+            return set()
+        if "$ref" in node:
+            ref = node["$ref"].rsplit("/", 1)[-1]
+            return set() if ref in seen else names(comps.get(ref, {}), seen | {ref}, depth + 1)
+        out: set[str] = set()
+        for key in ("anyOf", "oneOf", "allOf"):
+            for sub in node.get(key, []):
+                out |= names(sub, seen, depth + 1)
+        for sub in (node.get("items"), node.get("additionalProperties")):
+            out |= names(sub, seen, depth + 1)
+        for name, sub in (node.get("properties") or {}).items():
+            out |= {name} | names(sub, seen, depth + 1)
+        return out
+
+    found: dict[str, list[str]] = {}
+    for item in schema["paths"].values():
+        for op in item.values():
+            bodies = list(op.get("requestBody", {}).get("content", {}).values())
+            for response in op.get("responses", {}).values():
+                bodies += list((response.get("content") or {}).values())
+            fields = set().union(*(names(b.get("schema", {}), frozenset()) for b in bodies)) if bodies else set()
+            if fields & SECRET_FIELDS:
+                found[op["operationId"]] = sorted(fields & SECRET_FIELDS)
+    return found
+
+
+def _steps_up(view) -> bool:
+    """Whether the view's own body asks for the step-up, directly or through a
+    STEP_UP_HELPERS call that turns it on. Read from the source, so a call made
+    only in a branch still counts — the declaration says the route CAN ask."""
+    fn = inspect.unwrap(view)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+        if name == "require_recent_step_up":
+            return True
+        if name in STEP_UP_HELPERS and getattr(sys.modules[fn.__module__], name, None) is not None:
+            keyword = STEP_UP_HELPERS[name]
+            if keyword is None or any(k.arg == keyword and getattr(k.value, "value", None) is True
+                                      for k in node.keywords):
+                return True
+    return False
+
+
+def test_every_route_carrying_a_secret_says_whether_it_steps_up(gates):
+    """A browser action that reveals or changes a secret needs a passkey step-up
+    (`apps/passkeys/stepup.py`). Each route calls it by hand, so a new one could
+    forget — this makes its author decide, in the diff, at the route."""
+    schema = json.loads(json.dumps(api.get_openapi_schema(), default=str))
+    undecided = {op: fields for op, fields in _secret_carrying(schema).items() if gates[op].step_up is None}
+    assert not undecided, (
+        "These routes carry a secret but don't say whether a browser must step up. Give each "
+        "@gate(..., step_up=True) and call apps.passkeys.stepup.require_recent_step_up(request) "
+        "after its own 404/403 checks, or @gate(..., step_up=\"<why not>\"): " + repr(undecided))
+
+
+def test_a_route_steps_up_exactly_when_it_says_so(gates):
+    views = _views()
+    said_not_done = sorted(op for op, g in gates.items() if g.step_up is True and not _steps_up(views[op]))
+    assert not said_not_done, (
+        f"@gate(step_up=True) on routes whose view never calls require_recent_step_up: {said_not_done}")
+    done_not_said = sorted(op for op, g in gates.items() if g.step_up is not True and _steps_up(views[op]))
+    assert not done_not_said, (
+        f"These views ask for a passkey step-up; give their @gate step_up=True: {done_not_said}")
 
 
 def _mcp_tools() -> dict:

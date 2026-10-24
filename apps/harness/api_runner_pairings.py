@@ -193,7 +193,7 @@ def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
              summary="The box claims its approved pairing (no token)")
 # anonymous door: the pairing's key + the approval's one-time secret; the
 # runner is the approver's, and only while they still hold agent.work there
-@gate("paired-key", kind="runner-protocol")
+@gate("paired-key", kind="runner-protocol", step_up="runner protocol")
 def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: RunnerPairingClaimIn):
     """Carry a DPoP proof (bound to this URL) by the pairing's key. 202
     `waiting` until a person approves; then, with the `secret` the approval
@@ -324,7 +324,7 @@ def _refuse_finished(pairing: RunnerPairing) -> None:
 # a laptop box asking to be paired, a person saying yes or no (passkey-gated;
 # recorded as runner.pairing.approved), and the box claiming what was approved
 # (runner.paired) — a new runner row, like pair_runner_by_role, not a changed setting
-@gate("agent.work", kind="action")
+@gate("agent.work", kind="action", step_up=True)
 def approve_runner_pairing(request: HttpRequest, user_code: str, payload: RunnerPairingApproveIn):
     """Make the box your runner, named `name`, in `workspace` (one where you may
     run work). Only from a browser after a fresh passkey touch; a token is

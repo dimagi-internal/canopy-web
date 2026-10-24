@@ -23,6 +23,7 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 from apps.capabilities import aws, services
 from apps.capabilities.models import CapabilityLease, CapabilitySlotData
 from apps.events.models import Event, SettingChange
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member
 
@@ -58,6 +59,7 @@ def pool(tenancy, monkeypatch):
 
 
 def _put(c, slot="worker-1", **body):
+    grant_step_up(c)   # a browser writing a slot's secret steps up; a token is left alone
     return _json(c, "put", f"{SLOTS}/{slot}", body)
 
 
@@ -125,9 +127,18 @@ def test_an_ec2_capability_has_no_slots(tenancy, world):
     c = _as(tenancy["owner"])
     assert _publish(c, MANIFEST, POOL).status_code == 200
     base = "/api/agents/ace/capabilities/android-emulator/slots"
+    grant_step_up(c)
     assert _json(c, "put", f"{base}/worker-1", {"public": {"a": "b"}}).status_code == 422
     assert c.get(base).status_code == 422
     assert c.delete(f"{base}/worker-1").status_code == 422
+
+
+def test_a_browser_writes_a_slot_secret_only_after_a_passkey_step_up(tenancy, pool):
+    c = _as(tenancy["owner"])
+    r = _json(c, "put", f"{SLOTS}/worker-1", {"secret": {"pin": PIN}})
+    assert r.status_code == 403 and r.json()["error"] == "step_up_required"
+    assert not CapabilitySlotData.objects.exists()
+    assert _json(_pat(tenancy["owner"]), "put", f"{SLOTS}/worker-1", {"secret": {"pin": PIN}}).status_code == 200
 
 
 def test_bad_values_are_refused_without_echoing_them(pool):

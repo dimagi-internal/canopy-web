@@ -66,7 +66,7 @@ def _proven_key(request: HttpRequest) -> RunnerDeviceKey:
              summary="Exchange a runner's device-key proof for its API token")
 # anonymous door; an ACTIVE key's proof is the authority
 # a box trading its approved device key's proof for an hour-long runner token
-@gate("device-proof", kind="ephemeral-credential")
+@gate("device-proof", kind="ephemeral-credential", step_up="runner protocol")
 def create_runner_session(request: HttpRequest, payload: RunnerSessionIn):
     """Prove an approved device key (`X-Canopy-Aws-Proof` or `DPoP`, bound to
     this URL) and get a runner token: `Authorization: Bearer` for the runner

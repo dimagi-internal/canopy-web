@@ -34,11 +34,19 @@ visible in the diff, beside the code it describes::
   audit exists to close;
 * ``viewer_write="<reason>"`` on a write whose labels include plain ``member``:
   a write a viewer can make is a decision, never a default.
+* ``step_up=True`` on a route that asks a browser caller for a fresh passkey
+  step-up (``apps.passkeys.stepup.require_recent_step_up``) before it reveals or
+  changes a secret, or ``step_up="<reason>"`` on one that carries a secret and
+  does not. A route whose request or response carries a secret-named field must
+  say which; the view still makes the call itself, after its own 404/403 checks,
+  and decides there whether a token is refused or allowed.
 
 What `tests/test_every_route_declares_its_gate.py` checks: every operationId in
 the schema carries a gate; every label is in `VOCABULARY`; every member-level
 write has its ``viewer_write`` reason and nothing else does; every write is a
-setting or names its kind, and no read is either. What it cannot check is that
+setting or names its kind, and no read is either; every route carrying a
+secret-named field says whether it steps up, and one that says it does calls the
+step-up. What it cannot check is that
 a label is TRUE — record what the view ENFORCES TODAY, not what it should,
 having read the view and the helper it calls. A gate that looks wrong is
 recorded as it is and fixed in the code; the declaration changes with the fix.
@@ -158,18 +166,22 @@ class Gate:
     setting: bool = False
     kind: str | None = None
     viewer_write: str | None = None
+    step_up: bool | str | None = None
 
 
 GATE_ATTR = "_canopy_gate"
 
 
-def gate(*labels: str, setting: bool = False, kind: str | None = None, viewer_write: str | None = None):
+def gate(*labels: str, setting: bool = False, kind: str | None = None, viewer_write: str | None = None,
+         step_up: bool | str | None = None):
     """Declare a route's gate on its view: ``@gate("agent.work", setting=True)``.
 
     ``labels`` are from VOCABULARY. A write is either ``setting=True`` (the
     settings audit records every call) or names its ``kind`` from WRITE_KINDS.
     A write a plain ``member`` (a viewer) can make carries ``viewer_write=`` with
-    the reason. Put it directly above the ``def``; it only marks the function.
+    the reason. ``step_up=True`` says a browser caller must pass a passkey
+    step-up; ``step_up="<reason>"`` says why a route carrying a secret does not.
+    Put it directly above the ``def``; it only marks the function.
     """
     unknown = [label for label in labels if label not in VOCABULARY]
     if not labels or unknown:
@@ -180,7 +192,9 @@ def gate(*labels: str, setting: bool = False, kind: str | None = None, viewer_wr
         raise ValueError(f"@gate: kind {kind!r} is not in route_gates.WRITE_KINDS")
     if viewer_write is not None and not viewer_write.strip():
         raise ValueError("@gate: viewer_write needs its reason")
-    declared = Gate(tuple(labels), setting, kind, viewer_write)
+    if step_up is False or (isinstance(step_up, str) and not step_up.strip()):
+        raise ValueError("@gate: step_up is True, or the reason a route carrying a secret has none")
+    declared = Gate(tuple(labels), setting, kind, viewer_write, step_up)
 
     def mark(view):
         setattr(view, GATE_ATTR, declared)

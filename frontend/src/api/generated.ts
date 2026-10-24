@@ -962,7 +962,8 @@ export interface paths {
         /**
          * Let canopy manage the Slack app's slash commands (owner)
          * @description Takes the REFRESH token of a Slack app configuration token, then syncs
-         *     the app's slash commands to the agents that are on for Slack.
+         *     the app's slash commands to the agents that are on for Slack. A browser needs
+         *     a fresh passkey step-up (403 `step_up_required` otherwise); a token may call it.
          */
         readonly put: operations["set_config_token"];
         readonly post?: never;
@@ -4795,7 +4796,8 @@ export interface paths {
          *
          *     Checked before it is stored: GitHub must accept it, and it must be able to
          *     open a pull request on the agent's own repo. A token that fails is refused
-         *     with the reason, never saved.
+         *     with the reason, never saved. A browser needs a fresh passkey step-up
+         *     (403 `step_up_required` otherwise); a token may call it.
          */
         readonly put: operations["set_agent_github"];
         readonly post?: never;
@@ -5697,7 +5699,8 @@ export interface paths {
          *     section left out is untouched. `secret` is encrypted at rest and only ever
          *     delivered on the lease read of the user holding a ready lease on this slot;
          *     the response is the MASKED state. 422 unless the capability is a `pool` and
-         *     declares `slot`. For a workspace admin, or the agent's own login.
+         *     declares `slot`. For a workspace admin, or the agent's own login; a browser
+         *     needs a fresh passkey step-up (403 `step_up_required` otherwise).
          */
         readonly put: operations["set_capability_slot_data"];
         readonly post?: never;

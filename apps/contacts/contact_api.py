@@ -146,7 +146,8 @@ _STATUS = {
 
 @contact_token_router.post("/contact-token", response=ContactTokenOut, auth=None,
                            summary="Exchange a signed assertion for a contact token")
-@gate("host", kind="ephemeral-credential")  # auth=None; site-signed assertion (+ optional ID-JAG)
+# auth=None; site-signed assertion (+ optional ID-JAG)
+@gate("host", kind="ephemeral-credential", step_up="a contact token; no browser session")
 def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactTokenOut:
     """A connected site vouches for one of its visitors, and gets them a session.
 

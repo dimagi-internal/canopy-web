@@ -332,7 +332,7 @@ def get_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerC
 
 @router.get("/runners/{runner_id}/credential/resolve", response=RunnerCredentialResolveOut,
             summary="This runner's Claude credentials from its vault, as ciphertext (the box, with its device key)")
-@gate("runner")  # + the box's own runner token and a device proof of a key on it
+@gate("runner", step_up="runner protocol")  # + the box's own runner token and a device proof of a key on it
 def resolve_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> RunnerCredentialResolveOut:
     """Each vault serving this runner, with THIS device's copy of its key (`wrap: null`
     when it holds none) and the `zk1:` values the runner's credential list names
@@ -349,7 +349,7 @@ def resolve_runner_credential(request: HttpRequest, runner_id: uuid.UUID) -> Run
 
 @router.put("/runners/{runner_id}/vault/values", response=RunnerVaultValuesOut,
             summary="The box seals its own credentials into its vault")
-@gate("runner", kind="runner-protocol")  # + the box's own runner token and a device proof
+@gate("runner", kind="runner-protocol", step_up="runner protocol")  # + the box's own runner token and a device proof
 def put_runner_vault_values(request: HttpRequest, runner_id: uuid.UUID,
                             payload: RunnerVaultValuesIn) -> RunnerVaultValuesOut:
     """`{vault_id, kv, values: [{name, value_zk}]}` — `zk1:` ciphertext the box made with
@@ -394,7 +394,7 @@ def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
 
 @router.post("/runners/{runner_id}/vault", response=RunnerVaultOut,
              summary="Give a cloud runner its own vault for its Claude credentials")
-@gate("runner-admin", setting=True)  # browser: + step-up; token allowed
+@gate("runner-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def create_runner_vault(request: HttpRequest, runner_id: uuid.UUID) -> RunnerVaultOut:
     """The runner's own workspace vault (`<runner> Claude credentials`): its owner
     manages it, the workspace's owners too, and it is attached to this runner — the box
@@ -414,7 +414,8 @@ def create_runner_vault(request: HttpRequest, runner_id: uuid.UUID) -> RunnerVau
 @router.post("/runners/{runner_id}/turns/{turn_id}/github-token",
              response=TurnGitHubTokenOut,
              summary="One claimed turn's GitHub credential (its agent owner's)")
-@gate("runner", "runner-holds-agent", kind="runner-protocol")  # turn must be claimed by this box
+# turn must be claimed by this box
+@gate("runner", "runner-holds-agent", kind="runner-protocol", step_up="runner protocol")
 def turn_github_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID):
     """The GitHub token and git identity for ONE turn this runner is executing:
     the turn's agent owner's token for that agent. canopy decides whose — the
@@ -670,7 +671,7 @@ def post_runner_mint_entry(request: HttpRequest, runner_id: uuid.UUID, payload: 
 
 @router.post("/runners/{runner_id}/mint/result", response=RunnerMintOut,
              summary="The runner reports the outcome of a sign-in")
-@gate("runner", kind="runner-protocol")
+@gate("runner", kind="runner-protocol", step_up="runner protocol")
 def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
                             payload: RunnerMintResultIn):
     """How the sign-in ended. A `box` login stays on the box (`logged_in`); a `token`
@@ -883,7 +884,7 @@ def unenroll_runner_workspace(request: HttpRequest, runner_id: uuid.UUID, worksp
 
 @router.put("/runners/{runner_id}/flags", response=RunnerOut,
             summary="Declare what this runner's owner vouches for")
-@gate("runner-admin", setting=True)
+@gate("runner-admin", setting=True, step_up=True)
 def set_runner_flags(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerFlagsIn):
     """Replace the runner's declared flags. `sensitive_data`: this box is set up for
     sensitive data (a ZDR API key for Claude, a locked harness, egress limited to an
@@ -1037,7 +1038,7 @@ def set_runner_only_agents(request: HttpRequest, runner_id: uuid.UUID, payload: 
 
 @router.put("/runners/{runner_id}/egress", response=RunnerOut,
             summary="Lock this runner's egress to an allowlist of hosts")
-@gate("runner-admin", setting=True)
+@gate("runner-admin", setting=True, step_up=True)
 def set_runner_egress(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerEgressIn):
     """Set the runner's egress lock: `locked` (its units reach the network only
     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
@@ -1619,7 +1620,7 @@ def _missing_sessions(runner) -> MissingSessionsOut:
 
 
 @router.post("/runners/{runner_id}/claim", response={200: ClaimedTurnOut, 204: None})
-@gate("runner", kind="runner-protocol")
+@gate("runner", kind="runner-protocol", step_up="runner protocol")
 def claim_turn(request: HttpRequest, runner_id: uuid.UUID, paused: str = ""):
     """Claim the next eligible turn. `paused` is an optional comma-separated list of
     agent slugs the caller has locally paused (per-agent pause) — the server skips

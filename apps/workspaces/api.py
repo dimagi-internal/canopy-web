@@ -679,7 +679,7 @@ def remove_system_sender(request: HttpRequest, slug: str, account_id: int, sende
 
 # ---- invites ----
 @router.post("/{slug}/invites/", response={201: InviteOut}, summary="Invite by email (admin or owner)",)
-@gate("members.manage", setting=True)
+@gate("members.manage", setting=True, step_up="an invite link")
 def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> Status:
     """Creates the invite and emails its link to the address. `email_status`
     says whether the email went out; the link in `token` works either way.
@@ -694,7 +694,7 @@ def create_invite(request: HttpRequest, slug: str, payload: InviteCreateIn) -> S
 
 
 @router.get("/{slug}/invites/", response=list[InviteOut], summary="List invites (member-only)",)
-@gate("member")  # tokens only to members.manage
+@gate("member", step_up="an invite link")  # tokens only to members.manage
 def list_invites(request: HttpRequest, slug: str) -> list[InviteOut]:
     """Every member sees who has been invited; only an owner gets each invite's
     `token` (it is empty for everyone else)."""
@@ -729,7 +729,7 @@ def revoke_invite(request: HttpRequest, slug: str, invite_id: int):
 
 @router.post("/{slug}/invites/{invite_id}/reissue", response=InviteOut,
              summary="Send a fresh link for an invite (admin or owner)")
-@gate("members.manage", setting=True)
+@gate("members.manage", setting=True, step_up="an invite link")
 def reissue_invite(request: HttpRequest, slug: str, invite_id: int) -> InviteOut:
     """New token and a fresh expiry for an invite nobody has accepted or
     revoked — including one that has expired — emailed to the invited address.

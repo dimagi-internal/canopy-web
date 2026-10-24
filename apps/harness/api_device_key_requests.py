@@ -93,7 +93,7 @@ def _holds_key(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[dict, 
              auth=None, summary="A runner with a revoked token asks for a (pending) device key")
 # stranded box: lands pending, owner told
 # a stranded box (revoked token) asking for a key: lands `pending`, like the above
-@gate("owner-token-and-key", kind="runner-protocol")
+@gate("owner-token-and-key", kind="runner-protocol", step_up="runner protocol")
 def request_runner_device_key(request: HttpRequest, payload: RunnerDeviceKeyRequestIn):
     """Prove a token of the runner's owner (revoked within 30 days is fine) and the
     key being registered; get a PENDING key and its `approve_url`. The owner is

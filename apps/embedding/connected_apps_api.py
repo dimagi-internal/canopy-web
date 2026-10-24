@@ -258,7 +258,7 @@ def list_connected_apps(request: HttpRequest, slug: str) -> list[ConnectedAppOut
 
 @connected_apps_router.post("/{slug}/connected-apps", response={201: ConnectedAppOut},
                             summary="Connect a site")
-@gate("own", setting=True)
+@gate("own", setting=True, step_up=True)
 def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
     """Register a site in this workspace. Needs a person at a browser who just
     confirmed with their passkey (403 `step_up_required` otherwise); a token is
@@ -286,7 +286,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
 
 @connected_apps_router.patch("/{slug}/connected-apps/{int:app_id}", response=ConnectedAppOut,
                              summary="Change what a connected site may do")
-@gate("own", setting=True)
+@gate("own", setting=True, step_up=True)
 def update_connected_app(request: HttpRequest, slug: str, app_id: int,
                          payload: UpdateIn) -> ConnectedAppOut:
     """Change what a connected site may do. A change to what it may sign — its
