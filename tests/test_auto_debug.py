@@ -15,6 +15,7 @@ from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.attention.models import Alert, AlertEvent
 from apps.events.models import Event
 from apps.harness import auto_debug, services
 from apps.harness import claim
@@ -99,8 +100,16 @@ def test_a_failed_turn_triggers_the_debugger_with_a_self_contained_prompt(ada, w
     body = "\n".join(rest)
     for fact in (str(failed.pk), "Agent: ace", "Runner: haldimagi-mbp-cdp", "Origin: slack",
                  "c-ace-slack-4795", "Occurrences: 1", NOT_RECEIVED.format(task="c-ace-slack-4795"),
-                 f"/api/harness/turns/{failed.pk}", f"/w/{ws.slug}/agents/ace/turns"):
+                 f"/w/{ws.slug}/agents/ace/turns", "do NOT call get_turn / read_turn_events"):
         assert fact in body, fact
+    # 7 of 10 debug turns (2026-10-15..23) opened with get_turn on the failed turn.
+    assert f"/api/harness/turns/{failed.pk}" not in body
+
+    # Alert first: the failure IS an alert, held by the debugger — and silent.
+    alert = Alert.objects.get(kind="turn_failure", subject_key=f"investigation:{inv.pk}")
+    assert alert.status == Alert.OPEN and alert.handler_agent_id == ada.pk and alert.handler_user_id is None
+    assert debug.origin_ref["alert"] == alert.pk and f"It is alert {alert.pk}, assigned to you" in body
+    assert not alert.events.filter(kind=AlertEvent.NOTIFIED).exists()
 
 
 def test_the_same_failure_on_other_agents_and_sessions_only_counts(ada, ws, runner):
@@ -255,26 +264,213 @@ def test_finish_turn_still_finishes_when_the_hook_raises(ada, ws, runner):
 # ---- recurrence after a fix -----------------------------------------------------------
 
 
-def test_a_failure_that_comes_back_after_resolve_escalates_once(ada, ws, runner):
+def _alert(inv):
+    return Alert.objects.get(kind="turn_failure", subject_key=f"investigation:{inv.pk}")
+
+
+def _notified(inv) -> list[list[int]]:
+    """Who each `notified` event on the investigation's alert reached."""
+    return [e.payload["to"] for e in _alert(inv).events.filter(kind=AlertEvent.NOTIFIED)]
+
+
+FIX = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432"
+
+
+def test_a_clean_fix_closes_the_alert_and_tells_nobody(ada, ws, runner, django_capture_on_commit_callbacks):
+    """Jonathan, 2026-10-23: "in a clean alert -> ada fix -> resolved, I don't
+    want to be notified at all". Failure (b)."""
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(_agent(ws, "ace"), runner, "boom")
+        inv = FailureInvestigation.objects.get()
+        auto_debug.resolve(inv, note="the probe misread a usage cap", pr="https://github.com/x/y/pull/1",
+                           merged=True)
+    alert = _alert(inv)
+    assert alert.status == Alert.RESOLVED and _notified(inv) == []
+    resolved = alert.events.get(kind=AlertEvent.RESOLVED)
+    assert resolved.payload["cause"] == "the probe misread a usage cap"
+    assert resolved.payload["pr"] == "https://github.com/x/y/pull/1" and resolved.payload["merged"] is True
+    assert resolved.payload["deploy"] == "no runner fix named"
+
+
+def test_a_failure_that_comes_back_after_resolve_goes_to_a_person_with_no_turn(
+        ada, ws, runner, django_capture_on_commit_callbacks):
+    """Investigation 10 (2026-10-22): resolved, came back 47 seconds later, and a
+    second debug turn ran two minutes after the first. Failure (a)."""
+    ace = _agent(ws, "ace")
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+        inv = FailureInvestigation.objects.get()
+        auto_debug.resolve(inv, note="restarted emdash")
+        _finish_debug_turns()
+        _fail(ace, runner, "boom")
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.ESCALATED and inv.handler_id == ada.owner_id
+    assert "restarted emdash" in inv.ask
+    assert _debug_turns().count() == 1
+    alert = _alert(inv)
+    assert alert.status == Alert.OPEN and alert.handler_user_id == ada.owner_id and alert.handler_agent_id is None
+    assert _notified(inv) == [[ada.owner_id]]
+
+    # further recurrences only count — no turn, no second notification
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.ESCALATED and inv.occurrences == 3
+    assert _debug_turns().count() == 1 and _notified(inv) == [[ada.owner_id]]
+
+
+def _code(runner, sha, committed):
+    Runner.objects.filter(pk=runner.pk).update(code_sha=sha, code_committed_at=int(committed.timestamp()))
+    runner.refresh_from_db()
+
+
+def test_a_recurrence_on_a_runner_without_the_fix_only_counts(ada, ws, runner, django_capture_on_commit_callbacks):
+    """#1488, #1504, #1527 and #1965 were resolved "merged, NOT yet deployed", and
+    investigation 2's 10-23 recurrence on runner code without the fix was counted
+    as "the fix did not hold". Failure (c)."""
+    fixed_at = timezone.now() - dt.timedelta(hours=1)
+    _code(runner, "1111111aaaa", fixed_at - dt.timedelta(days=2))   # older than the fix
+    ace = _agent(ws, "ace")
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+        inv = FailureInvestigation.objects.get()
+        auto_debug.resolve(inv, note="handle the dialog", fix_commit=FIX, fix_committed_at=fixed_at,
+                           pr="#1965", merged=True)
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.PENDING_DEPLOY
+    alert = _alert(inv)
+    assert alert.status == Alert.OPEN and alert.handler_agent_id == ada.pk   # quiet, still the agent's
+    assert alert.title.startswith("Fix pending deploy on haldimagi-mbp-cdp")
+
+    _finish_debug_turns()
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.PENDING_DEPLOY and inv.occurrences == 2
+    assert _debug_turns().count() == 1 and _notified(inv) == []
+
+    # The box updates past the fix: the alert closes on the tick, by itself, silently.
+    _code(runner, "2222222bbbb", fixed_at + dt.timedelta(minutes=5))
+    from apps.harness import alerts_turn_failure
+
+    alerts_turn_failure.reconcile(timezone.now())
+    inv.refresh_from_db()
+    alert.refresh_from_db()
+    assert inv.status == FailureInvestigation.RESOLVED and alert.status == Alert.RESOLVED
+    assert alert.events.get(kind=AlertEvent.RESOLVED).payload["deploy"] == "live on every runner it hit"
+    assert _notified(inv) == []
+
+
+def test_a_recurrence_on_a_runner_that_runs_the_fix_reopens_it_for_a_person(
+        ada, ws, runner, django_capture_on_commit_callbacks):
+    fixed_at = timezone.now() - dt.timedelta(hours=1)
+    _code(runner, FIX, fixed_at)
+    ace = _agent(ws, "ace")
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+        inv = FailureInvestigation.objects.get()
+        auto_debug.resolve(inv, note="handle the dialog", fix_commit=FIX[:10], fix_committed_at=fixed_at)
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.RESOLVED and _alert(inv).status == Alert.RESOLVED
+
+    _finish_debug_turns()
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(ace, runner, "boom")
+    inv.refresh_from_db()
+    alert = _alert(inv)
+    assert inv.status == FailureInvestigation.ESCALATED and "the fix did not hold" in inv.ask
+    assert alert.status == Alert.OPEN and alert.handler_user_id == ada.owner_id   # the SAME alert, reopened
+    assert Alert.objects.filter(kind="turn_failure").count() == 1
+    assert _debug_turns().count() == 1 and _notified(inv) == [[ada.owner_id]]
+
+
+def test_the_debugger_hands_off_and_can_no_longer_resolve(ada, ws, runner, django_capture_on_commit_callbacks):
+    ada_login = a_user("ada@dimagi-ai.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=ada_login, role=WorkspaceMembership.EDITOR)
+    Agent.objects.filter(pk=ada.pk).update(user=ada_login)
+    with django_capture_on_commit_callbacks(execute=True):
+        _fail(_agent(ws, "ace"), runner, "boom")
+    inv = FailureInvestigation.objects.get()
+    c = _client(ada_login)
+    base = f"/api/harness/failure-investigations/{inv.pk}"
+
+    with django_capture_on_commit_callbacks(execute=True):
+        r = c.post(f"{base}/hand-off", data={"ask": "Sign Claude back in on cloud-ec2-2."},
+                   content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert r.json()["status"] == "escalated" and r.json()["ask"] == "Sign Claude back in on cloud-ec2-2."
+    alert = _alert(inv)
+    assert alert.status == Alert.OPEN and alert.handler_user_id == ada.owner_id
+    assigned = alert.events.filter(kind=AlertEvent.ASSIGNED).order_by("at", "pk")
+    assert [e.payload["agent"] for e in assigned] == ["ada", None]
+    assert assigned.last().payload["ask"] == "Sign Claude back in on cloud-ec2-2."
+    assert _notified(inv) == [[ada.owner_id]]
+
+    # The escalation loop: resolve was the debugger's only verb, and resolving
+    # "needs Jonathan" cleared the alert and re-armed the next escalation.
+    r = c.post(f"{base}/resolve", data={"note": "handed off"}, content_type="application/json")
+    assert r.status_code == 409, r.content
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.ESCALATED and _alert(inv).status == Alert.OPEN
+
+    # A person may close it.
+    r = _client(ada.owner).post(f"{base}/resolve", data={"note": "signed back in"},
+                                content_type="application/json")
+    assert r.status_code == 200, r.content
+    assert _alert(inv).status == Alert.RESOLVED
+
+
+def test_a_hand_off_to_someone_who_cannot_handle_it_is_refused(ada, ws, runner):
+    _fail(_agent(ws, "ace"), runner, "boom")
+    inv = FailureInvestigation.objects.get()
+    editor = a_user("editor@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=ws, user=editor, role=WorkspaceMembership.EDITOR)
+    r = _client(ada.owner).post(f"/api/harness/failure-investigations/{inv.pk}/hand-off",
+                                data={"ask": "look", "to": "editor@dimagi.com"},
+                                content_type="application/json")
+    assert r.status_code == 400, r.content
+    inv.refresh_from_db()
+    assert inv.status == FailureInvestigation.OPEN
+
+
+def test_no_two_debug_turns_for_one_failure_inside_30_minutes(ada, ws, runner):
+    """A held failure that already had a debug turn minutes ago waits it out."""
     ace = _agent(ws, "ace")
     _fail(ace, runner, "boom")
     inv = FailureInvestigation.objects.get()
-    auto_debug.resolve(inv, note="restarted emdash")
+    FailureInvestigation.objects.filter(pk=inv.pk).update(status=FailureInvestigation.HELD)
     _finish_debug_turns()
-
     _fail(ace, runner, "boom")
     inv.refresh_from_db()
-    assert inv.status == FailureInvestigation.ESCALATED
-    esc = _debug_turns().last()
-    assert esc.idempotency_key == f"auto-debug:{inv.pk}:2"
-    assert "ESCALATION" in esc.prompt and "the fix did not hold" in esc.prompt
-    assert "restarted emdash" in esc.prompt and esc.origin_ref["escalation"] is True
+    assert inv.status == FailureInvestigation.HELD and _debug_turns().count() == 1
 
-    # further recurrences only count
+    _debug_turns().update(created_at=timezone.now() - dt.timedelta(minutes=31))
     _fail(ace, runner, "boom")
     inv.refresh_from_db()
-    assert inv.status == FailureInvestigation.ESCALATED and inv.occurrences == 3
-    assert _debug_turns().count() == 2
+    assert inv.status == FailureInvestigation.OPEN and _debug_turns().count() == 2
+
+
+def test_the_prompt_carries_the_runner_state_but_nothing_a_person_typed(ada, ws, runner):
+    """Runner state decided 5 of 6 non-delivery causes (2026-10-15..23): a signed-out
+    login probe on cloud-ec2-2 (investigations 5, 10), a usage cap read as auth (9),
+    the code sha for every deploy question. None of it was in the prompt."""
+    from apps.harness.models import RunnerLogin
+
+    Runner.objects.filter(pk=runner.pk).update(
+        code_sha="abc1234def", ready=False, ready_note="Not logged in · Please run /login",
+        paused=True, paused_note="jonathan's private reason", unpause_at=timezone.now() + dt.timedelta(hours=2))
+    RunnerLogin.objects.create(runner=runner, key="default", kind=RunnerLogin.LOGIN, signed_in=False,
+                               account="someone@dimagi.com", reported_at=timezone.now())
+    with override_settings(RUNNER_CODE_SHA="fff9999eee"):
+        _fail(_agent(ws, "ace"), runner, "boom")
+    prompt = _debug_turns().get().prompt
+    for fact in ("The failing runner", "ready=False (Not logged in · Please run /login)",
+                 "paused: True until", "Code: abc1234def (expected fff9999eee; current: NO",
+                 "Claude login default (login): signed_in=False"):
+        assert fact in prompt, fact
+    assert "private reason" not in prompt and "someone@dimagi.com" not in prompt
+    snap = FailureInvestigation.objects.get().evidence
+    assert snap["code_current"] is False and snap["logins"][0]["signed_in"] is False
 
 
 # ---- the caps ---------------------------------------------------------------------------
@@ -445,6 +641,7 @@ def test_the_prompt_carries_the_delivery_evidence_but_not_the_words(ada, ws, run
          "reason": "composer_not_visible"},
         {"status": "delivery_screen", "task": "s-9", "attempt": 1,
          "screen_tail": "a secret on screen"},
+        {"status": "undelivered", "task": "s-9", "reason": "composer_not_visible", "landed": "no"},
         {"status": "reused_session", "task": "s-9"},
     ], start=1):
         TurnEvent.objects.create(turn=turn, seq=seq, kind="status", payload=payload)
@@ -456,3 +653,5 @@ def test_the_prompt_carries_the_delivery_evidence_but_not_the_words(ada, ws, run
     assert "withheld here: line" in prompt and "withheld here: screen_tail" in prompt
     assert "my private words" not in prompt and "a secret on screen" not in prompt
     assert "reused_session" not in prompt
+    # The runner's own verdict, so the debugger never needs the transcript.
+    assert "landed: no" in prompt and auto_debug.landed(turn) == "no"

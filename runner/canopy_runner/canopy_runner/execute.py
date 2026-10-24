@@ -473,7 +473,7 @@ def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
     is visible on the turn instead of looking exactly like a delivered one."""
     if verifier is None:
         _post_events_best_effort(client, turn_id, [{"kind": "status",
-            "payload": {"status": "delivery_unverified", "task": task}}])
+            "payload": {"status": "delivery_unverified", "task": task, "landed": "unknown"}}])
         return ""
     verdict = delivery.confirm(verifier, prompt)
     if verdict == delivery.CONFIRMED:
@@ -482,7 +482,7 @@ def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
         logger.warning("delivery on '%s' (turn=%s): a prompt landed but did not match the "
                        "message text — treating as delivered", task, turn_id)
         _post_events_best_effort(client, turn_id, [{"kind": "status",
-            "payload": {"status": "delivery_unmatched", "task": task}}])
+            "payload": {"status": "delivery_unmatched", "task": task, "landed": "yes"}}])
         return ""
     delivered, reason = _recover_delivery(client, turn_id, task, verifier, prompt,
                                           port=port, project=project)
@@ -491,8 +491,13 @@ def _undelivered(client, turn_id: str, task: str, verifier, prompt: str, *,
     logger.warning("UNDELIVERED turn=%s task=%s: sent, but nothing reached the transcript "
                    "within %.0fs, and recovery could not deliver it", turn_id, task,
                    delivery.CONFIRM_TIMEOUT)
+    # `landed` is this runner's verdict for the debugger, so it never has to read
+    # the transcript (7 of 10 debug turns, 2026-10-15..23, opened by trying, and a
+    # chat turn's 404s by design). "no": the transcript was read throughout and the
+    # message never reached it. "unknown": the session could not be read at all.
     _post_events_best_effort(client, turn_id, [{"kind": "status",
         "payload": {"status": "undelivered", "task": task, "reason": reason,
+                    "landed": "unknown" if reason == "unreadable" else "no",
                     "waited_seconds": delivery.CONFIRM_TIMEOUT}}])
     return reason
 
@@ -640,7 +645,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
         if _landed(verifier, prompt):
             # The original arrived late — the 20s window was simply too short.
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
-                "status": "delivery_late", "task": task, "attempt": attempt}}])
+                "status": "delivery_late", "task": task, "attempt": attempt, "landed": "yes"}}])
             return True, ""
         try:
             state = cdp_control.read_composer(task, port=port, project=project)
@@ -660,7 +665,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
             idle = _await_idle(verifier, prompt, task, port=port, project=project)
             if idle == "landed":
                 _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
-                    "status": "delivery_late", "task": task, "attempt": attempt}}])
+                    "status": "delivery_late", "task": task, "attempt": attempt, "landed": "yes"}}])
                 return True, ""
             if idle is None:
                 reason = "session_busy_timeout"
@@ -681,7 +686,8 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
             return False, reason
         if action == delivery.SEEN:
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
-                "status": "delivery_seen_on_screen", "task": task, "attempt": attempt}}])
+                "status": "delivery_seen_on_screen", "task": task, "attempt": attempt,
+                "landed": "yes"}}])
             return True, ""
         try:
             if action == delivery.SUBMIT:
@@ -691,7 +697,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                 # record that arrived while we read the screen is the original.
                 if _landed(verifier, prompt):
                     _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
-                        "status": "delivery_late", "task": task, "attempt": attempt}}])
+                        "status": "delivery_late", "task": task, "attempt": attempt, "landed": "yes"}}])
                     return True, ""
                 res = cdp_control.open_and_send(task, prompt, port=port, project=project)
                 if res.get("action") != "sent":
@@ -715,7 +721,7 @@ def _recover_delivery(client, turn_id: str, task: str, verifier, prompt: str, *,
                         task, turn_id, action, attempt, verdict)
             _post_events_best_effort(client, turn_id, [{"kind": "status", "payload": {
                 "status": "delivery_recovered", "task": task, "attempt": attempt,
-                "action": action, "verdict": verdict}}])
+                "action": action, "verdict": verdict, "landed": "yes"}}])
             return True, ""
     return False, "retries_exhausted"
 

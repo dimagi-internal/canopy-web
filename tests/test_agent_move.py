@@ -274,6 +274,8 @@ _NOT_THE_AGENTS = {
     "events.Activity": "an analytics fact, counted in the workspace it happened in; telemetry stays there",
     "events.SessionUsage": "what a Claude session spent, counted in the workspace it ran in; telemetry stays there",
     "mail.MailDomain": "`agent_addresses` is a domain switch, not an agent; its routes move (mail.MailRoute)",
+    "attention.Alert": "`handler_agent` is who is WORKING the alert, not whose it is; it lives in its "
+                       "subject's workspace, and its source re-raises it there",
 }
 
 
