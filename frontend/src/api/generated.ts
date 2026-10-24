@@ -34180,7 +34180,7 @@ export interface components {
             /** Placement */
             readonly placement?: string | null;
             /** Origin */
-            readonly origin?: ("api" | "ace_web" | "email" | "slack") | null;
+            readonly origin?: ("api" | "ace_web") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
             /**
              * Clear Prompt

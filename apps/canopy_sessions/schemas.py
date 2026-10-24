@@ -9,7 +9,7 @@ import uuid
 from ninja import Schema
 from pydantic import AliasChoices, Field, field_validator
 
-from apps.harness.schemas import Origin, ParentIn, TurnOut, normalize_origin
+from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_origin
 
 
 class ConversationKeyWrapIn(Schema):
@@ -65,11 +65,11 @@ class SendIn(Schema):
     placement: str | None = None
     # What KIND of work this send is, for source-aware routing (spec 2026-07-27).
     # None = the default `canopy_web_chat` (a human typing in the web UI), which
-    # a caller cannot spell for itself: `Origin` admits only the POSTABLE values,
+    # a caller cannot spell for itself: `ChatSendOrigin` admits only `api` and `ace_web`,
     # so the server-only sources keep exactly one producer each. ace-web sets
     # `ace_web` here — without it, a delegated run enqueues as `canopy_web_chat`
     # and an `ace_web` routing rule has nothing to match.
-    origin: Origin | None = None
+    origin: ChatSendOrigin | None = None
     # What this send was made from (ParentIn); recorded on the turn it enqueues.
     parent: ParentIn | None = None
     # "Clear & send": if the session's prompt already holds unsent text, the
@@ -78,7 +78,7 @@ class SendIn(Schema):
     # runner as `origin_ref["clear_prompt"]`.
     clear_prompt: bool = False
 
-    _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
+    _norm_origin = field_validator("origin")(staticmethod(chat_send_origin))
 
 
 class PlaceIn(Schema):
