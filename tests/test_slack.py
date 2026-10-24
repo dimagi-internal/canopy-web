@@ -198,6 +198,16 @@ def test_member_matched_by_email_is_linked_without_a_click(slack, installation, 
     assert turn.chat_session.created_by == alice and turn.chat_session.contact is None
 
 
+def test_an_unverified_account_email_is_not_linked(slack, installation, hal, ws):
+    """`User.email` is a free field: an account that merely says alice@ is not
+    alice (contacts.services.user_for_verified_email, as on every door)."""
+    claimant = a_user("alice@dimagi.com")
+    wsvc.ensure_member(ws, claimant, WorkspaceMembership.EDITOR)
+    mention("hal hello")
+    assert not SlackUserLink.objects.exists()
+    _is_contact_turn(Turn.objects.get())
+
+
 def _is_contact_turn(turn) -> Contact:
     session = turn.chat_session
     assert session.created_by is None and session.contact is not None
@@ -297,7 +307,10 @@ def test_a_slack_connect_visitor_is_never_linked_by_email(slack, installation, h
 
 
 def test_an_ambiguous_email_is_not_linked(slack, installation, hal, alice):
-    a_user("ALICE@dimagi.com")          # a second account, same address
+    from allauth.account.models import EmailAddress
+
+    other = a_user("ALICE@dimagi.com")  # a second account, same address, also verified
+    EmailAddress.objects.create(user=other, email=other.email, verified=True, primary=True)
     mention("hal hello")
     _is_contact_turn(Turn.objects.get())
     assert not SlackUserLink.objects.exists()
