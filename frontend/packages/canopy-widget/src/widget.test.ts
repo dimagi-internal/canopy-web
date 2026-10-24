@@ -1303,3 +1303,55 @@ describe('expanding the panel', () => {
     expect(widget.isExpanded()).toBe(false)
   })
 })
+
+describe('the conversation open in the panel', () => {
+  const ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
+
+  it('openSession waits for the frame, then asks it to open that conversation', async () => {
+    const { widget, sent, fromFrame, root } = widgetHarness()
+    widget.openSession(ID)
+    expect((root.querySelector('.panel') as HTMLElement).dataset.open).toBe('true')
+    expect(sent('open-session')).toHaveLength(0)
+
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    expect(sent('open-session').map((p) => p.message.id)).toEqual([ID])
+    expect(sent('open-session')[0].targetOrigin).toBe(CANOPY)
+
+    widget.openSession(ID)
+    expect(sent('open-session')).toHaveLength(2)
+  })
+
+  it('ignores an id that is not a canopy session id', async () => {
+    const { widget, sent, fromFrame } = widgetHarness()
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    widget.openSession('../../api/me')
+    widget.openSession('')
+    expect(sent('open-session')).toHaveLength(0)
+  })
+
+  it('reports what the frame says is open: the id, where it began, private — nothing else', async () => {
+    const onSession = vi.fn()
+    const { widget, fromFrame } = widgetHarness({ onSession })
+    expect(widget.currentSession()).toBeNull()
+
+    await fromFrame({
+      source: SOURCE, type: 'session',
+      session: { id: ID, resource: 'labs-data-space://7', private: true, title: 'leaked words' },
+    })
+    expect(onSession).toHaveBeenLastCalledWith({ id: ID, resource: 'labs-data-space://7', private: true })
+    expect(widget.currentSession()).toEqual({ id: ID, resource: 'labs-data-space://7', private: true })
+
+    await fromFrame({ source: SOURCE, type: 'session', session: null })
+    expect(onSession).toHaveBeenLastCalledWith(null)
+    expect(widget.currentSession()).toBeNull()
+  })
+
+  it('drops a malformed report, and one from anywhere but its own frame', async () => {
+    const onSession = vi.fn()
+    const { fromFrame } = widgetHarness({ onSession })
+    await fromFrame({ source: SOURCE, type: 'session', session: { id: 'nope' } })
+    await fromFrame({ source: SOURCE, type: 'session', session: { id: ID } }, { origin: 'https://evil.example' })
+    await fromFrame({ source: SOURCE, type: 'session', session: { id: ID } }, { source: {} })
+    expect(onSession).not.toHaveBeenCalled()
+  })
+})

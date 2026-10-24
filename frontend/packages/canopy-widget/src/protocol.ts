@@ -67,6 +67,29 @@ export type FrameMessage =
   /** The user pressed the docked rail's snap control: reserve its width in the
    *  page, or float over it again. Answered with `display`, like `expand`. */
   | { source: typeof SOURCE; type: 'snap'; snapped: boolean }
+  /** The conversation open in the panel changed: one was started or opened, or
+   *  the panel went back to its start screen (`null`). A POINTER, never content —
+   *  see `PanelSession`. */
+  | { source: typeof SOURCE; type: 'session'; session: PanelSession | null }
+
+/**
+ * The conversation the panel has open, as the frame reports it to the host page.
+ *
+ * Exactly these three facts and nothing it said: no title, no opening words, no
+ * messages. A private conversation's words are sealed to its people, and the
+ * page around the panel is not one of them — so the host learns that a
+ * conversation is open and where it began, which is enough to keep a pointer to
+ * it (`openSession` brings it back), and nothing a pointer could leak.
+ */
+export interface PanelSession {
+  /** canopy's id for the conversation. */
+  id: string
+  /** The page it was STARTED on: the `resource` its page first declared, as canopy
+   *  recorded it (`origin_resource`), "" if none. Not where it is open now. */
+  resource: string
+  /** A private (sensitive) conversation: readable only by its people. */
+  private: boolean
+}
 
 /** host → frame */
 export type HostMessage =
@@ -118,6 +141,10 @@ export type HostMessage =
    *  as "Explain this answer". The frame starts a conversation with this text as
    *  the visitor's first message, so it is shown to them exactly as sent. */
   | { source: typeof SOURCE; type: 'ask'; text: string }
+  /** Open this conversation in the panel (`widget.openSession`). The frame reads
+   *  it AS THE VISITOR, so canopy's session ACL decides: one they are not in shows
+   *  them canopy's own answer (a private one: ask to be added), never its words. */
+  | { source: typeof SOURCE; type: 'open-session'; id: string }
 
 /** Longest question a host may send. A button's question is a sentence; this
  *  stops a page pasting a document into somebody's conversation. */
@@ -132,6 +159,7 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
   // that issues those, so seeing one means something is impersonating it.
   return [
     'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize', 'expand', 'snap',
+    'session',
   ].includes(m.type)
 }
 
@@ -140,6 +168,26 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
  *
  *  A relative base (`/canopy`, the same-origin deployment) resolves against the
  *  current page, which is correct: the frame really is same-origin then. */
+/** A canopy session id: a UUID. The host's `openSession` and the frame's report
+ *  both hold to it, so neither end passes on something that is not one. */
+export function isSessionId(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+/** A frame's `session` report, checked: the three fields `PanelSession` names and
+ *  nothing else, or `null`. Anything malformed is `undefined` (drop the message). */
+export function panelSessionOf(value: unknown): PanelSession | null | undefined {
+  if (value === null) return null
+  if (typeof value !== 'object' || value === undefined) return undefined
+  const v = value as Record<string, unknown>
+  if (!isSessionId(v.id)) return undefined
+  return {
+    id: v.id,
+    resource: typeof v.resource === 'string' ? v.resource.slice(0, 500) : '',
+    private: v.private === true,
+  }
+}
+
 export function originOf(baseUrl: string, pageOrigin: string): string {
   return new URL(baseUrl, pageOrigin).origin
 }

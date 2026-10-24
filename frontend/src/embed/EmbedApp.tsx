@@ -28,7 +28,8 @@ import { contactHcp, embedMemorySource } from './sessionMemory'
 import { PRIVATE_LABEL, PrivateMark } from '@/components/chat/privateConversation'
 import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
 import { addPerson, type PeopleApi } from '@/components/chat/ChatPeople'
-import type { JoinRequest } from '@/api/chat'
+import type { ChatSessionDetail, JoinRequest } from '@/api/chat'
+import { PrivateInterstitial, type InterstitialApi } from '@/components/chat/PrivateConversationGate'
 import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from '@/pages/chat/useAttachments'
 import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
 import { formDataSafeFetch, panelAttachmentApi, panelSealedFilesApi } from './panelFiles'
@@ -60,6 +61,16 @@ type Phase =
    *  send carried, so the echo can be matched against the server's queued-turn
    *  projection instead of rendering twice — see `QueuedRows.hideClientIds`. */
   | { kind: 'chatting'; sessionId: string; firstMessage: string; firstMessageClientId: string; agent: EmbedAgent }
+  /** The page asked to open a conversation by id (`widget.openSession`), and the
+   *  panel is reading it AS THE VISITOR to learn whether they may. `agent` is the
+   *  one to go back to. */
+  | { kind: 'opening'; sessionId: string; agent: EmbedAgent | null }
+  /** It is private and the visitor is not in it: canopy's own interstitial, which
+   *  offers to ask its people to add them. */
+  | { kind: 'private'; session: ChatSessionDetail; agent: EmbedAgent }
+  /** canopy would not give it to them (or it is with an agent this site does not
+   *  offer). Said once, with nothing about it. */
+  | { kind: 'unavailable'; agent: EmbedAgent | null }
 
 interface EmbedAgent {
   slug: string
@@ -220,6 +231,9 @@ export function EmbedApp({ link, app }: Props) {
   principalRef.current = principal
   const initRef = useRef<HostInit | null>(null)
   initRef.current = init
+  /** The agents this site offers this visitor — the only ones a conversation
+   *  opened by id may be with. */
+  const agentsRef = useRef<EmbedAgent[]>([])
   const clientRef = useRef<CanopyClient | null>(null)
   /** Captured once per session, at open — a snapshot, not a subscription (v2
    *  spec §8). Held so the first send can carry it to the agent. */
@@ -281,6 +295,7 @@ export function EmbedApp({ link, app }: Props) {
         if (cancelled) return
         setPrincipal(who)
         const agents = who.agents as EmbedAgent[]
+        agentsRef.current = agents
 
         if (agents.length === 0) {
           setPhase({
@@ -429,6 +444,50 @@ export function EmbedApp({ link, app }: Props) {
     [client, link],
   )
 
+  // A conversation the PAGE asked to open (`widget.openSession`) — a pointer it
+  // kept. Read as the visitor, through the frame's own token, so canopy's session
+  // ACL (and its narrowing to this site's agents) decides; the page is told only
+  // what the panel then opens (`reportSession`), never why it could not.
+  const [openRequest, setOpenRequest] = useState<string | null>(null)
+  useEffect(() => link.onOpenSession(setOpenRequest), [link])
+  const settled = phase.kind !== 'connecting' && phase.kind !== 'failed'
+  useEffect(() => {
+    if (openRequest === null || !settled) return
+    const id = openRequest
+    setOpenRequest(null)
+    const back = 'agent' in phase ? phase.agent : null
+    if (phase.kind === 'chatting' && phase.sessionId === id) return
+    const isContact = principalRef.current?.kind === 'contact'
+    setPhase({ kind: 'opening', sessionId: id, agent: back })
+    void client.rest
+      .json<ChatSessionDetail>(sessionBase(isContact, id))
+      .then((detail) => {
+        const agent = agentsRef.current.find((a) => a.slug === detail.agent_slug)
+        if (!agent) {
+          setPhase({ kind: 'unavailable', agent: back })
+        } else if (detail.sensitive && detail.you_are_in_it === false) {
+          setPhase({ kind: 'private', session: detail, agent })
+        } else {
+          setPhase({ kind: 'chatting', sessionId: id, firstMessage: '', firstMessageClientId: '', agent })
+        }
+      })
+      .catch(() => setPhase({ kind: 'unavailable', agent: back }))
+  }, [openRequest, settled, phase, client])
+
+  // No conversation open: the page is told so. (An open one is reported by
+  // `EmbedChat`, once canopy has said where it began.)
+  useEffect(() => {
+    if (phase.kind === 'ready' || phase.kind === 'choosing' || phase.kind === 'private' ||
+        phase.kind === 'unavailable') {
+      link.reportSession(null)
+    }
+  }, [phase.kind, link])
+
+  const interstitialApi = useMemo<InterstitialApi>(() => ({
+    getSession: (id) => client.rest.json<ChatSessionDetail>(sessionBase(false, id)),
+    askToJoin: (id) => client.rest.json<JoinRequest>(`${sessionBase(false, id)}/join-requests`, { method: 'POST' }),
+  }), [client])
+
   // A question the PAGE asked for the visitor (`widget.ask`, e.g. "Explain this
   // answer"). It starts a new conversation as soon as one can start — at once
   // if the agent is known, after the visitor picks one if there are several —
@@ -501,6 +560,46 @@ export function EmbedApp({ link, app }: Props) {
             ) : null}
           </button>
         ))}
+      </div>
+    )
+  }
+
+  if (phase.kind === 'opening') {
+    return <Centered>Opening the conversation&hellip;</Centered>
+  }
+
+  if (phase.kind === 'unavailable' || phase.kind === 'private') {
+    const agent = phase.agent
+    const toStart = () =>
+      setPhase(agent ? { kind: 'ready', agent } : { kind: 'choosing', agents: agentsRef.current })
+    return (
+      <div className="flex h-full flex-col">
+        <header className="flex items-center justify-between border-b border-border px-3 py-2">
+          <button type="button" onClick={toStart} aria-label="All conversations"
+            className="rounded px-1 text-[12px] text-muted-foreground hover:text-foreground">
+            ‹ {agent?.name ?? 'Back'}
+          </button>
+          <button type="button" onClick={() => link.requestClose()} aria-label="Close" className={HEADER_ICON}>
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {phase.kind === 'private' ? (
+            <PrivateInterstitial
+              session={phase.session}
+              api={interstitialApi}
+              agentName={phase.agent.name}
+              onOpen={() => setPhase({
+                kind: 'chatting', sessionId: phase.session.id, firstMessage: '', firstMessageClientId: '',
+                agent: phase.agent,
+              })}
+            />
+          ) : (
+            <p className="p-6 text-center text-sm text-muted-foreground" data-testid="session-unavailable">
+              This conversation is not one you can open here.
+            </p>
+          )}
+        </div>
       </div>
     )
   }
@@ -984,10 +1083,17 @@ function EmbedChat({
   useEffect(() => {
     if (isContact) return
     let live = true
-    void client.rest.json<{ sealed_key?: SealedKey | null; sensitive?: boolean; my_role?: string | null }>(
+    void client.rest.json<{
+      sealed_key?: SealedKey | null; sensitive?: boolean; my_role?: string | null; origin_resource?: string
+    }>(
       `/api/canopy-sessions/${encodeURIComponent(sessionId)}`)
       .then((d) => {
         if (!live) return
+        // The page around the panel learns which conversation is open and where it
+        // began — canopy's record of it, not the page's — and nothing it said.
+        link.reportSession({
+          id: sessionId, resource: d.origin_resource ?? '', private: Boolean(d.sensitive || d.sealed_key),
+        })
         setSealedKey(d.sealed_key ?? null)
         setMyRole(d.my_role ?? null)
         setSensitive(Boolean(d.sensitive || d.sealed_key))
@@ -996,7 +1102,19 @@ function EmbedChat({
     return () => {
       live = false
     }
-  }, [client, sessionId, isContact, sealedRows])
+  }, [client, sessionId, isContact, sealedRows, link])
+  // A contact's conversation is never private (a contact holds no key); its report
+  // comes from the contact door.
+  useEffect(() => {
+    if (!isContact) return
+    let live = true
+    void client.rest.json<{ origin_resource?: string }>(sessionBase(true, sessionId))
+      .then((d) => live && link.reportSession({ id: sessionId, resource: d.origin_resource ?? '', private: false }))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [client, sessionId, isContact, link])
   const unlocker = useUnlockPrompt()
   const unlockVault = useCallback(async () => {
     if (!sealedKey?.keyset) throw new Error('Set up your vault key in canopy (Settings → Vault key) to read this.')

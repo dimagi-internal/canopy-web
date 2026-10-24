@@ -474,6 +474,9 @@ class SessionOut(Schema):
     #: Who started it, by name ("" when a runner or an agent did): a list shows a
     #: private conversation by this, since it keeps no title. Not content.
     started_by_name: str = ""
+    #: The page it was started on: the `resource` its page first declared, set once
+    #: (`Session.origin_resource`). "" when it was not started on a page that names one.
+    origin_resource: str = ""
     # The supervisor feed's two fields, filled only when the list is asked for
     # them (`?reply=true`) — every other list caller would pay for text it never
     # shows. The agent's most recent reply, WHOLE — sent only when it is the

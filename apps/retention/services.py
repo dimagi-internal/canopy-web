@@ -406,7 +406,7 @@ def _purge_chat(session_id, rule, cutoff, tally, *, now, apply) -> bool:
         if newest_expired is not None:
             fields["retention_floor_index"] = max(locked.retention_floor_index, newest_expired + 1)
         if closes:
-            fields.update(title="", page_state={}, page_actions_available=[],
+            fields.update(title="", page_state={}, origin_resource="", page_actions_available=[],
                           status=Session.ARCHIVED, finish_push_due_at=None)
         Session.objects.filter(pk=session_id).update(**fields)
         messages.delete()

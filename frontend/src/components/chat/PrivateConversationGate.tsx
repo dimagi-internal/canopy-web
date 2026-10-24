@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Lock } from 'lucide-react'
 
 import { getAgent } from '@/api/agents'
-import { askToJoin, getSession, type ChatSessionDetail } from '@/api/chat'
+import { askToJoin, getSession, type ChatSessionDetail, type JoinRequest } from '@/api/chat'
 import { Button } from 'canopy-ui/ui'
 import { knownNotPrivate } from '@/pages/chat/sessionCache'
 
@@ -99,8 +99,24 @@ export function PrivateConversationGate({ sessionId, children }: { sessionId: st
 export const ANSWER_POLL_MS = 10_000
 export const ANSWER_POLL_MAX_MS = 5 * 60_000
 
-export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionDetail; onOpen: () => void }) {
-  const agentName = useAgentName(session.agent_slug ?? null)
+/** How the interstitial reads and asks. The chat page's own API client by default;
+ *  the embedded panel passes its frame's (a token, not canopy's cookie). */
+export interface InterstitialApi {
+  getSession: (id: string) => Promise<ChatSessionDetail>
+  askToJoin: (id: string) => Promise<JoinRequest>
+}
+
+const PAGE_API: InterstitialApi = { getSession: (id) => getSession(id), askToJoin }
+
+export function PrivateInterstitial({ session, onOpen, api = PAGE_API, agentName: knownAgentName }: {
+  session: ChatSessionDetail
+  onOpen: () => void
+  api?: InterstitialApi
+  /** The agent's name when the caller already knows it (the panel does); else it is read. */
+  agentName?: string
+}) {
+  const readName = useAgentName(knownAgentName === undefined ? (session.agent_slug ?? null) : null)
+  const agentName = knownAgentName ?? readName
   const starter = (session.started_by_name ?? '').trim()
   const canAsk = Boolean(session.created_by)
   const [asked, setAsked] = useState(session.your_join_request ?? '')
@@ -118,7 +134,7 @@ export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionD
     let wait = ANSWER_POLL_MS
     let timer = 0
     const poll = () => {
-      getSession(session.id)
+      api.getSession(session.id)
         .then((s) => {
           if (!live) return
           if (s.you_are_in_it) setInIt(true)
@@ -141,13 +157,13 @@ export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionD
       live = false
       window.clearTimeout(timer)
     }
-  }, [session.id, inIt, gone, asked])
+  }, [session.id, inIt, gone, asked, api])
 
   const ask = async () => {
     setBusy(true)
     setError('')
     try {
-      setAsked((await askToJoin(session.id)).status)
+      setAsked((await api.askToJoin(session.id)).status)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send the request.')
     } finally {

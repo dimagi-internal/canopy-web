@@ -412,3 +412,46 @@ describe('a question the page asks', () => {
     expect(seen).toEqual([])
   })
 })
+
+describe('the conversation open in the panel', () => {
+  const ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
+
+  it('hands a request to open a conversation to the first listener, held until then', async () => {
+    const { link, fromHost } = harness()
+    await fromHost({ source: SOURCE, type: 'open-session', id: ID })
+    const heard: string[] = []
+    link.onOpenSession((id) => heard.push(id))
+    expect(heard).toEqual([ID])
+    await fromHost({ source: SOURCE, type: 'open-session', id: ID })
+    expect(heard).toEqual([ID, ID])
+  })
+
+  it('drops an id that is not a session id, and one from an origin the server did not name', async () => {
+    const { link, fromHost } = harness()
+    const heard: string[] = []
+    link.onOpenSession((id) => heard.push(id))
+    await fromHost({ source: SOURCE, type: 'open-session', id: '../me' })
+    await fromHost({ source: SOURCE, type: 'open-session', id: ID }, 'https://evil.example')
+    expect(heard).toEqual([])
+  })
+
+  it('reports exactly three fields to the host origin, and only when they change', async () => {
+    const { link, sent, fromHost } = harness()
+    // Before the host has spoken there is nobody to tell.
+    link.reportSession(null)
+    expect(sent('session')).toHaveLength(0)
+    await fromHost({ source: SOURCE, type: 'theme', theme: {} })
+
+    const extra = { id: ID, resource: 'labs-data-space://7', private: true, title: 'never sent' }
+    link.reportSession(extra)
+    link.reportSession({ ...extra })
+    expect(sent('session')).toHaveLength(1)
+    expect(sent('session')[0].message.session).toEqual({ id: ID, resource: 'labs-data-space://7', private: true })
+    expect(sent('session')[0].targetOrigin).toBe(HOST)
+
+    link.reportSession(null)
+    expect(sent('session').map((p) => p.message.session)).toEqual([
+      { id: ID, resource: 'labs-data-space://7', private: true }, null,
+    ])
+  })
+})

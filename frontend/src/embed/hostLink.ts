@@ -26,9 +26,15 @@
 // copy of `ActionSpec` or `SOURCE` drifting from the loader's. Type-only for
 // ActionSpec, and the loader module has no dependencies, so importing it pulls
 // nothing extra into the frame's bundle.
-import { MAX_ASK_CHARS, SOURCE, type ActionSpec } from '../../packages/canopy-widget/src/protocol'
+import {
+  MAX_ASK_CHARS,
+  SOURCE,
+  isSessionId,
+  type ActionSpec,
+  type PanelSession,
+} from '../../packages/canopy-widget/src/protocol'
 
-export type { ActionSpec }
+export type { ActionSpec, PanelSession }
 
 export interface EmbedBootstrap {
   app: string
@@ -84,6 +90,14 @@ export interface HostLink {
    *  that arrives before anything listens is held and handed to the first
    *  listener, so a question sent at panel boot is not lost. */
   onAsk(listener: (text: string) => void): () => void
+  /** The page asked to open a conversation by id (`widget.openSession`). Held for
+   *  the first listener, like `onAsk`. Only a well-formed session id gets here;
+   *  whether the visitor may read it is canopy's to say, when the panel reads it. */
+  onOpenSession(listener: (id: string) => void): () => void
+  /** Tell the host which conversation is open now (`null`: none). Its id, where
+   *  it began and whether it is private — never anything it said. Repeating the
+   *  same report sends nothing. */
+  reportSession(session: PanelSession | null): void
   /** Tell the host that a resource its page is showing has changed. */
   invalidate(resource: string): void
   /** Ask the host to close the panel (our own close button). */
@@ -133,6 +147,11 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
   const actionListeners = new Set<(specs: ActionSpec[]) => void>()
   const askListeners = new Set<(text: string) => void>()
   let heldAsk: string | null = null
+  const openListeners = new Set<(id: string) => void>()
+  let heldOpen: string | null = null
+  // The last report, so a re-render that reports the same thing stays quiet.
+  // `undefined` until the first report, so the first `null` is still sent.
+  let reported: string | undefined
   // `null` until the host speaks, deliberately distinct from `{}`: a host that
   // never pushes must not be read as one declaring an empty screen.
   let latestState: Record<string, unknown> | null = null
@@ -261,6 +280,12 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
       case 'theme':
         themeListeners.forEach((l) => l(data.theme))
         return
+      case 'open-session': {
+        if (!isSessionId(data.id)) return
+        if (openListeners.size) openListeners.forEach((l) => l(data.id as string))
+        else heldOpen = data.id
+        return
+      }
       case 'ask': {
         const text = typeof data.text === 'string' ? data.text.trim().slice(0, MAX_ASK_CHARS) : ''
         if (!text) return
@@ -297,6 +322,25 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
         listener(text)
       }
       return () => askListeners.delete(listener)
+    },
+    onOpenSession(listener) {
+      openListeners.add(listener)
+      if (heldOpen !== null) {
+        const id = heldOpen
+        heldOpen = null
+        listener(id)
+      }
+      return () => openListeners.delete(listener)
+    },
+    reportSession(session) {
+      // Exactly the three fields, whatever the caller's object carried.
+      const out = session ? { id: session.id, resource: session.resource, private: session.private } : null
+      const key = JSON.stringify(out)
+      if (key === reported) return
+      // Nothing to tell before the host has spoken; the next report says it.
+      if (!hostOrigin) return
+      reported = key
+      send({ type: 'session', session: out })
     },
     pageState: () => latestState,
     onPageStateChanged(listener) {

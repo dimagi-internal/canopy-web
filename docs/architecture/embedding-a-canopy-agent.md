@@ -517,14 +517,15 @@ no launcher to reopen it with.
 
 **Other options:** `theme` (above); `agent: 'labs-helper'` skips the picker; `metadata: {…}`
 stamps opaque data on sessions the widget creates; `onInvalidate(resource)` is
-called when data your page shows has changed (§5a); `dismissible`, `storage`,
+called when data your page shows has changed (§5a); `onSession(session)` is
+called when the conversation open in the panel changes (§5e); `dismissible`, `storage`,
 `csrfCookieName`, `csrfToken` as above; `onResize`, `snappable`, `snapTarget` (below); plus `width`, `title`, `open: true`.
 
 The returned object has `open()`, `close()`, `toggle()`, `isOpen()`,
 `dismiss()`, `isDismissed()`, `expand()`, `collapse()`, `isExpanded()`,
 `snap()`, `unsnap()`, `isSnapped()`,
 `setPageState()`, `registerAction()`, `unregisterAction()`, `setTheme()`,
-`setLauncherVisible()`, `ask()`, `destroy()`, and the older `provideContext()` (§5).
+`setLauncherVisible()`, `ask()`, `openSession()`, `currentSession()` (§5e), `destroy()`, and the older `provideContext()` (§5).
 
 ### A bigger panel for data work
 
@@ -857,6 +858,61 @@ origin of `ISSUER`, else the address canopy fetched it from), `jwks_url`
 `canopy_sdk.django.views.site_document` at `/.well-known/canopy-site.json` as well,
 so your address alone finds it. Details: `sdk/python/README.md` § The site agents
 API and the site's needs.
+
+---
+
+## 5e. Keeping a pointer to a conversation, and opening it again
+
+A page can keep a **pointer** to a conversation had in its panel and bring it back
+later — a "saved conversations" list beside a shared workspace, say. It never gets
+the conversation itself.
+
+```js
+const widget = CanopyWidget.init({
+  /* … */
+  onSession(session) {
+    // { id, resource, private } — or null when the panel is on its start screen
+    saveButton.disabled = !session || session.resource !== 'labs-data-space://7'
+  },
+})
+
+widget.currentSession()        // the last report, or null
+widget.openSession(savedId)    // open the panel on that conversation
+```
+
+**What the page is told** (`onSession`, `currentSession()`), and nothing else:
+
+- `id` — canopy's session id;
+- `resource` — the page the conversation was **started** on: the `resource` its page
+  first declared with `setPageState`, as canopy recorded it (`origin_resource` on the
+  session; query and fragment cut off; never changed afterwards). `""` if it was not
+  started on a page that names a resource. Use it to keep a page's pointers to the
+  conversations begun on that page;
+- `private` — it is a private (sensitive) conversation.
+
+No title, no opening words, no messages: a private conversation's words are sealed to
+its people (canopy itself cannot read them), and your page is not one of them. Name a
+saved pointer with words your user types, not with anything from the conversation.
+
+**`openSession(id)`** opens the panel and asks the frame to open that conversation.
+The frame reads it **as the visitor**, through the panel's own token, so canopy's
+session ACL decides — exactly as if they had opened it from canopy's chat list:
+
+- one they may read opens, and the page hears `onSession` for it;
+- a private one they can see but are not in shows canopy's own interstitial, which
+  lets them ask its people to add them (the request carries nothing it said);
+- anything else — not theirs, gone, with an agent your site does not offer — shows
+  "This conversation is not one you can open here".
+
+The page learns which of these happened only from whether `onSession` reports it.
+A pointer grants nothing: whoever holds one can open only what canopy would already
+let them read. An id that is not a canopy session id (a UUID) is ignored; called
+before the panel has loaded, the request waits.
+
+`resource` comes from the visitor's own browser — the page declared it, and the frame
+relays canopy's record of it. It is not a signed attestation: treat a pointer saved
+from it as the person's own write, checked by your own rules for who may write there.
+Older widgets have neither call; feature-detect `typeof widget.openSession === 'function'`.
 
 ---
 

@@ -111,8 +111,25 @@ def set_page_state(session: Session, state: dict) -> dict:
     # meaning apart from the state it stamps, and a separate column invites the
     # two to be written apart and disagree.
     session.page_state = {**state, "version": version}
-    session.save(update_fields=["page_state", "updated_at"])
+    fields = ["page_state", "updated_at"]
+    # The first resource a conversation declares is where it was started — kept,
+    # unlike the state itself (see `Session.origin_resource`).
+    origin = origin_of(state)
+    if origin and not session.origin_resource:
+        session.origin_resource = origin
+        fields.append("origin_resource")
+    session.save(update_fields=fields)
     return dict(session.page_state)
+
+
+def origin_of(state: dict) -> str:
+    """The page identity in a declaration: its `resource`, cut at any query or
+    fragment (a filter can name a person; the page's identity cannot), capped.
+    "" when the page names no resource."""
+    resource = state.get("resource") if isinstance(state, dict) else None
+    if not isinstance(resource, str):
+        return ""
+    return resource.split("?", 1)[0].split("#", 1)[0].strip()[:500]
 
 
 def clear_page_state(session: Session) -> None:

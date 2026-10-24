@@ -33,6 +33,8 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     onPageStateChanged: () => () => undefined,
     onThemeChanged: () => () => undefined,
     onAsk: () => () => undefined,
+    onOpenSession: () => () => undefined,
+    reportSession: () => undefined,
     invalidate: () => undefined,
     requestClose: () => undefined,
     requestHeight: () => undefined,

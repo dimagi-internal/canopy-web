@@ -17442,6 +17442,11 @@ export interface components {
             readonly metadata: {
                 readonly [key: string]: unknown;
             };
+            /**
+             * Origin Resource
+             * @default
+             */
+            readonly origin_resource: string;
         };
         /** ContactSessionCreateIn */
         readonly ContactSessionCreateIn: {
@@ -34353,6 +34358,11 @@ export interface components {
              */
             readonly started_by_name: string;
             /**
+             * Origin Resource
+             * @default
+             */
+            readonly origin_resource: string;
+            /**
              * Last Reply
              * @default
              */
@@ -35162,6 +35172,11 @@ export interface components {
              * @default
              */
             readonly started_by_name: string;
+            /**
+             * Origin Resource
+             * @default
+             */
+            readonly origin_resource: string;
             /**
              * Last Reply
              * @default

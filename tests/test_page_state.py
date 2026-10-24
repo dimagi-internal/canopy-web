@@ -244,3 +244,42 @@ def test_the_tool_stays_out_of_the_namespace_reserved_for_host_actions():
 
     static = {t.name for t in asyncio.run(mcp._list_tools())}
     assert not any(n.startswith(page_tools.TOOL_PREFIX) for n in static)
+
+
+# --- where the conversation was started ---------------------------------------
+
+
+def test_the_first_resource_declared_is_kept_as_where_the_conversation_began():
+    """`origin_resource` is provenance, not the view: set by the first declaration
+    that names a resource, never moved by a later one, and served on the session so
+    a host can ask whether this conversation was begun on its page."""
+    _user, session, c = _ctx()
+
+    assert _put(c, session, {"surface": "no resource yet"}).status_code == 200
+    session.refresh_from_db()
+    assert session.origin_resource == ""
+
+    assert _put(c, session, {"resource": "labs-data-space://12?filter=Ada#row"}).status_code == 200
+    assert _put(c, session, {"resource": "labs-data-space://99"}).status_code == 200
+    session.refresh_from_db()
+    # Cut at the query: a filter can name a person, the page's identity cannot.
+    assert session.origin_resource == "labs-data-space://12"
+    assert session.page_state["resource"] == "labs-data-space://99"
+    assert c.get(f"/api/canopy-sessions/{session.id}").json()["origin_resource"] == "labs-data-space://12"
+
+
+def test_forgetting_the_page_keeps_where_it_began():
+    """A sensitive conversation's page state is forgotten when its turn ends; the
+    page it was started on is not view content, and stays."""
+    _user, session, c = _ctx()
+    _put(c, session, {"resource": "labs-data-space://12"})
+    Session.objects.filter(pk=session.pk).update(page_state={})
+    session.refresh_from_db()
+    assert session.origin_resource == "labs-data-space://12"
+
+
+def test_origin_of_reads_only_a_string_resource():
+    assert page_state.origin_of({"resource": 12}) == ""
+    assert page_state.origin_of({}) == ""
+    assert page_state.origin_of({"resource": " x://a?b "}) == "x://a"
+    assert len(page_state.origin_of({"resource": "x://" + "a" * 900})) == 500
