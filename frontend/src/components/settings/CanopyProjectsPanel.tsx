@@ -70,7 +70,7 @@ export function CanopyProjectsPanel() {
   return (
     <div id="canopy-projects" className="rounded-xl border border-border bg-card p-5 space-y-3" data-testid="settings-canopy-projects">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">Canopy projects</h2>
+        <h2 className="text-sm font-semibold text-foreground">Opted-in repos</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           The repos you use canopy in. Every other repo on your machines stays plain Claude Code:
           canopy sends no work there and mirrors no sessions, transcripts or usage from it. An

@@ -183,8 +183,8 @@ export default function SupervisorPage(): JSX.Element {
     if (hit?.workspace) navigate(runnerHref(hit), { replace: true })
   }, [runnerParam, runners, navigate])
   const { workspaces } = useWorkspace()
-  // Nudge / done need the editor role (`agent.work` in the task's workspace);
-  // approve, decline and reply are open to every viewer.
+  // Changing a task's fields in place needs the editor role (`agent.work` in
+  // its workspace); deciding it (in the peek) is the server's call per task.
   const canEditTask = (t: TaskOut): boolean =>
     roleAllows(workspaces.find((w) => w.slug === t.workspace)?.role, 'agent.work')
 
@@ -285,7 +285,7 @@ export default function SupervisorPage(): JSX.Element {
       )}
 
       {/* Waiting on you — the fleet's tasks with an open ask or parked on you,
-          actionable in place. */}
+          as the shared task table; a title opens the task beside it. */}
       {tab === 'waiting' &&
         (errs.waiting ? (
           <BandError message={errs.waiting} />
@@ -296,7 +296,6 @@ export default function SupervisorPage(): JSX.Element {
             tasks={waiting}
             canEdit={canEditTask}
             onChanged={reloadWaiting}
-            workspaceFor={(t) => t.workspace || undefined}
           />
         ))}
 

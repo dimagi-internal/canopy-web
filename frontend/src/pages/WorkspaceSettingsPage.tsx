@@ -39,6 +39,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { segment: 'email', label: 'Email' },
   { segment: 'connected-apps', label: 'Connected sites' },
   { segment: 'secrets', label: 'Secrets' },
+  { segment: 'tasks', label: 'Tasks' },
   { segment: 'retention', label: 'Retention' },
   { segment: 'admission-rules', label: 'Admission rules' },
   { segment: 'topology', label: 'Topology' },

@@ -82,8 +82,13 @@ export async function updateTask(key: string, body: TaskPatch): Promise<Task> {
   return typed(unwrap(res, 'updateTask'))
 }
 
-export async function actOn(key: string, action: TaskActionName, comment = ''): Promise<ActResult> {
-  const res = await apiV2.POST('/api/tasks/{key}/actions', { params: { path: { key } }, body: { action, comment } })
+/** `workspace` pins the call where the page names none (Home, the Supervisor). */
+export async function actOn(key: string, action: TaskActionName, comment = '', workspace?: string): Promise<ActResult> {
+  const res = await apiV2.POST('/api/tasks/{key}/actions', {
+    params: { path: { key } },
+    body: { action, comment },
+    ...pin(workspace),
+  })
   return typed(unwrap(res, 'actOn'))
 }
 
