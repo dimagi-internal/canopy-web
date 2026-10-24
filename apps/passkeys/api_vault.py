@@ -77,7 +77,7 @@ def get_vault_keyset(request: HttpRequest) -> VaultKeysetOut:
 @router.put("/keyset", response=VaultKeysetOut, summary="Set up or extend my vault key (browser + passkey)")
 # browser session + passkey step-up only
 # the person's zero-knowledge vault key
-@gate("self", setting=True)
+@gate("self", setting=True, step_up=True)
 def put_vault_keyset(request: HttpRequest, payload: VaultKeysetIn) -> VaultKeysetOut:
     """`{public_jwk, seals, replace}`. `seals` replaces the stored list; each
     must name one of the caller's passkeys. A different `public_jwk` from the

@@ -24,6 +24,7 @@ from apps.contacts import services as contacts_services
 from apps.contacts.models import Contact
 from apps.events.models import Event
 from apps.harness.models import Turn
+from apps.passkeys.testing import grant_step_up
 from apps.slack import services
 from apps.slack.models import SlackInstallation, SlackUserLink
 from apps.workspaces import services as wsvc
@@ -1878,6 +1879,7 @@ def test_nothing_is_relayed_this_way_while_a_turn_is_running(bound, slack, djang
 def managed(slack, installation, owner_client, ws):
     installation.app_id = "A_CANOPY"
     installation.save()
+    grant_step_up(owner_client)   # handing canopy a Slack token is a secret write
     resp = owner_client.put(f"/api/slack-config/{ws.slug}/config-token", {"refresh_token": "xoxe-pasted"},
                             content_type="application/json")
     assert resp.status_code == 200, resp.content
@@ -2067,6 +2069,16 @@ def test_only_an_owner_hands_canopy_the_config_token(slack, installation, alice,
     resp = _link_client(alice).put(f"/api/slack-config/{ws.slug}/config-token",
                                    {"refresh_token": "xoxe-x"}, content_type="application/json")
     assert resp.status_code == 403 and not slack.said("tooling.tokens.rotate")
+
+
+def test_a_browser_hands_canopy_the_config_token_only_after_a_passkey_step_up(
+        slack, installation, owner_client, ws):
+    installation.app_id = "A_CANOPY"
+    installation.save()
+    resp = owner_client.put(f"/api/slack-config/{ws.slug}/config-token",
+                            {"refresh_token": "xoxe-x"}, content_type="application/json")
+    assert resp.status_code == 403 and resp.json()["error"] == "step_up_required"
+    assert not slack.said("tooling.tokens.rotate")
 
 
 def test_the_config_read_never_returns_a_token(slack, installation, managed, alice, ws):

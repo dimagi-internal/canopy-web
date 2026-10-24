@@ -355,7 +355,7 @@ def _inspect(token: str, full: str, slug: str):
              summary="Can a new agent's scaffold be pushed into this repository with this token?")
 # editor in the target ws; reads GitHub with the caller's own token
 # POST only to keep a token out of the URL; writes nothing
-@gate("agent.work", kind="action")
+@gate("agent.work", kind="action", step_up="the caller's own token, used once, never stored")
 def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheckOut:
     """Reads only, and stores nothing. `ready` means empty and the token can see it,
     `update` means it already holds this agent's scaffold (or only GitHub's starter
@@ -381,7 +381,7 @@ def check_scaffold_repo(request: HttpRequest, payload: RepoCheckIn) -> RepoCheck
              summary="Push a new agent's scaffold into an empty repository")
 # editor in target ws; re-pushing a taken slug needs its admin
 # pushes code into the caller's own repo; registering is upsert_agent (a setting)
-@gate("agent.work", "agent-admin", kind="content")
+@gate("agent.work", "agent-admin", kind="content", step_up="the caller's own token, used once, never stored")
 def scaffold_agent(request: HttpRequest, payload: AgentScaffoldIn) -> Status:
     """Stamps the agent with the same factory `/canopy:create-agent` uses and pushes it into
     an empty repository you created (or adds just the missing files to one that already
@@ -497,7 +497,8 @@ def mint_agent_canopy_token(request: HttpRequest, slug: str, payload: AgentCanop
 # above, nothing here can land in a transcript or a page.
 @router.post("/{slug}/canopy-login", response={201: AgentCanopyLoginOut},
              summary="Give the agent its canopy login, stored in its Canopy vault")
-@gate("agent-admin", setting=True)  # The same mint, stored sealed and never returned. Browser: + passkey step-up.
+# The same mint, stored sealed and never returned. Browser: + passkey step-up.
+@gate("agent-admin", setting=True, step_up=True)
 def give_agent_canopy_login(request: HttpRequest, slug: str, payload: AgentCanopyTokenIn) -> Status:
     """Mint the agent's own canopy token, store it as its `canopy-pat` sealed to the
     people and machines that may read the agent, and turn on automatic rotation. Only
@@ -917,7 +918,7 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
 
 @router.patch("/{slug}/credential-source", response=AgentDetailOut,
               summary="Set where an agent's secrets resolve from (1password | canopy-web)")
-@gate("agent-admin", setting=True)
+@gate("agent-admin", setting=True, step_up=True)
 def set_credential_source(request: HttpRequest, slug: str,
                           payload: CredentialSourceIn) -> AgentDetailOut:
     """Choose the backend `canopy cred` resolves this agent's secrets from

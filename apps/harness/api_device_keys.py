@@ -271,7 +271,7 @@ def list_runner_device_keys(request: HttpRequest, runner: uuid.UUID | None = Non
 
 @router.post("/{key_id}/approve", response=RunnerDeviceKeyOut,
              summary="Approve a pending device key (browser session + passkey step-up)")
-@gate("runner-admin", setting=True)  # browser + passkey step-up; private runner: owner only
+@gate("runner-admin", setting=True, step_up=True)  # browser + passkey step-up; private runner: owner only
 def approve_runner_device_key(request: HttpRequest, key_id: uuid.UUID):
     """`pending` → `active`, and its ECDH key approved with it; on an active key
     whose new ECDH key waits, approves just that. A revoked key cannot be

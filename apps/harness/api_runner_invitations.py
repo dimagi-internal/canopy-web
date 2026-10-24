@@ -220,7 +220,7 @@ def get_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
 # a new cloud box's pairing invitation: asking for it, and its creator saying
 # yes (passkey-gated). Recorded as activity (runner.invited / .approved); the
 # runner it lets pair is a new row, not a changed setting.
-@gate("self", kind="action")
+@gate("self", kind="action", step_up=True)
 def approve_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
     """Let the invited box pair: it will be your runner, in the invitation's
     workspace, signing in with its instance role. Only the invitation's creator,

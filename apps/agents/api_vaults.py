@@ -127,7 +127,7 @@ def get_shared_vault(request: HttpRequest, slug: str) -> SharedVaultOut:
 
 @router.put("/workspaces/{slug}/shared-vault", response=SharedVaultOut,
             summary="Set the shared vault + its service-account token (write-only)")
-@gate("own", setting=True)
+@gate("own", setting=True, step_up=True)
 def set_shared_vault(request: HttpRequest, slug: str, payload: SharedVaultIn) -> SharedVaultOut:
     """The key here must be scoped to the SHARED vault and nothing else.
 
@@ -179,7 +179,7 @@ def get_workspace_vault(request: HttpRequest, vault_id: uuid.UUID) -> WorkspaceV
 
 
 @router.post("/vaults/{vault_id}/members", response=WorkspaceVaultOut, summary="Add a person to a vault by name")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def add_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, payload: VaultMemberIn):
     """`{email, role}` — a direct membership. The person must be in the vault's workspace."""
     v = _vault(request, vault_id, manage=True)
@@ -196,7 +196,7 @@ def add_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, payloa
 
 @router.delete("/vaults/{vault_id}/members/{user_id}", response=WorkspaceVaultOut,
                summary="Remove a person's direct membership of a vault")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, user_id: int):
     """Only the DIRECT membership; a person who is then no longer a member is
     refused the vault at once — canopy-web hands them, and their machines, no
@@ -211,7 +211,7 @@ def remove_workspace_vault_member(request: HttpRequest, vault_id: uuid.UUID, use
 
 @router.post("/vaults/{vault_id}/attachments", response=WorkspaceVaultOut,
              summary="Serve an agent, every agent in a workspace and below, or a cloud runner from a vault")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def attach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, payload: VaultAttachIn):
     """`{agent}`, `{workspace}` (the vault's own workspace or one below it) or `{runner}`:
     a cloud runner whose Claude credentials the vault then holds. A runner needs the
@@ -244,7 +244,7 @@ def _administered_runner(request: HttpRequest, runner_id: str) -> Runner:
 
 @router.delete("/vaults/{vault_id}/attachments/{attachment_id}", response=WorkspaceVaultOut,
                summary="Stop serving an agent or a workspace from a vault")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def detach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, attachment_id: int):
     v = _vault(request, vault_id, manage=True)
     workspace_vaults.detach(v, attachment_id)
@@ -254,7 +254,7 @@ def detach_workspace_vault(request: HttpRequest, vault_id: uuid.UUID, attachment
 # ---- one vault: zero-knowledge (the agent vault's shapes) ----------------------------------
 
 @router.get("/vaults/{vault_id}/zk", response=ZkStateOut, summary="A workspace vault's zero-knowledge state")
-@gate("vault-admin")
+@gate("vault-admin", step_up="zk1: ciphertext only, which canopy-web cannot open")
 def get_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, values: bool = False) -> ZkStateOut:
     """As `GET /api/agents/{slug}/vault/zk`: kv, wraps, pending targets, and with
     `?values=true` the `zk1:` ciphertexts. `agent_id` is the vault's binding id."""
@@ -266,7 +266,7 @@ def get_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, values: bo
 
 @router.put("/vaults/{vault_id}/zk/pins", response=VaultKeeperPinsOut,
             summary="Record the keys a vault owner or admin just granted to, for the keepers")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def put_workspace_vault_pins(request: HttpRequest, vault_id: uuid.UUID,
                              payload: VaultKeeperPinsIn) -> VaultKeeperPinsOut:
     """As `PUT /api/agents/{slug}/vault/zk/pins`, for a workspace vault."""
@@ -279,7 +279,7 @@ def put_workspace_vault_pins(request: HttpRequest, vault_id: uuid.UUID,
 
 
 @router.post("/vaults/{vault_id}/zk/enable", response=ZkStateOut, summary="Make a workspace vault's first key")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def enable_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, payload: ZkEnableIn) -> ZkStateOut:
     """`{kv: 1, wraps, values}` — a wrap the caller can open and a way back are required."""
     v = _vault(request, vault_id, manage=True)
@@ -292,7 +292,7 @@ def enable_workspace_vault_zk(request: HttpRequest, vault_id: uuid.UUID, payload
 
 
 @router.put("/vaults/{vault_id}/zk/values", response=ZkValuesOut, summary="Set a workspace vault's values")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def set_workspace_vault_values(request: HttpRequest, vault_id: uuid.UUID, payload: ZkValuesIn) -> ZkValuesOut:
     """Non-clobbering upsert of `zk1:` ciphertext at the current kv."""
     v = _vault(request, vault_id, manage=True)
@@ -307,7 +307,7 @@ def set_workspace_vault_values(request: HttpRequest, vault_id: uuid.UUID, payloa
 
 
 @router.post("/vaults/{vault_id}/zk/wraps", response=ZkStateOut, summary="Grant copies of a workspace vault's key")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def add_workspace_vault_wraps(request: HttpRequest, vault_id: uuid.UUID, payload: ZkWrapsIn) -> ZkStateOut:
     """`{kv, wraps}` to pending members and machines (see the vault's `pending`)."""
     v = _vault(request, vault_id, manage=True)
@@ -320,7 +320,7 @@ def add_workspace_vault_wraps(request: HttpRequest, vault_id: uuid.UUID, payload
 
 @router.delete("/vaults/{vault_id}/secrets/{name}", response=WorkspaceVaultOut,
                summary="Delete one secret from a workspace vault")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def delete_workspace_vault_secret(request: HttpRequest, vault_id: uuid.UUID, name: str):
     v = _vault(request, vault_id, manage=True)
     workspace_vaults.remove_secret(v, name)

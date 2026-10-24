@@ -32,8 +32,10 @@ from apps.common.encryption import decrypt_secret
 from apps.harness import services
 from apps.harness import drills
 from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.passkeys.testing import grant_step_up
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
+from apps.tokens.models import PersonalToken
 from apps.workspaces.testing import a_workspace
 
 pytestmark = pytest.mark.django_db
@@ -100,6 +102,7 @@ def agent(owner):
 def _client(user):
     c = Client()
     c.force_login(user)
+    grant_step_up(c)   # lending a token is a secret write: a browser steps up
     return c
 
 
@@ -201,6 +204,28 @@ def test_the_route_says_whether_the_caller_may_lend(agent, owner, github):
                          content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json()["lent_by_email"] == "ada@dimagi-ai.com"
+
+
+def test_a_browser_lends_a_token_only_after_a_passkey_step_up(agent, owner, github):
+    """Lending replaces the identity every turn of the agent pushes as: a browser
+    steps up first, after the check that it may lend at all. A token may lend."""
+    c = Client()
+    c.force_login(owner)
+    r = c.put("/api/agents/echo/github", {"token": "github_pat_olive"}, content_type="application/json")
+    assert r.status_code == 403 and r.json()["error"] == "step_up_required"
+    assert not AgentDelegation.objects.exists()
+
+    stranger = User.objects.create_user("eve", "eve@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, stranger, WorkspaceMembership.EDITOR)
+    c = Client()
+    c.force_login(stranger)
+    r = c.put("/api/agents/echo/github", {"token": "github_pat_eve"}, content_type="application/json")
+    assert r.status_code == 422 and "owner or an admin" in r.content.decode()   # not a passkey prompt
+
+    raw, _ = PersonalToken.create_for_user(user=owner, label="cli")
+    r = Client().put("/api/agents/echo/github", {"token": "github_pat_olive"},
+                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 200, r.content
 
 
 def test_the_route_refuses_with_githubs_reason_and_never_echoes_the_token(agent, owner, github):

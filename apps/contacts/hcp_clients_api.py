@@ -107,7 +107,8 @@ def hcp_list_clients(request: HttpRequest):
 
 @router.post("/clients", response={201: HcpClientCreatedOut}, operation_id="hcp_registerClient",
              summary="HCP service: register a client")
-@gate("superuser", setting=True)  # puts its name before every person it asks
+# puts its name before every person it asks
+@gate("superuser", setting=True, step_up="a new webhook secret, shown once to its creator")
 def hcp_register_client(request: HttpRequest, payload: HcpClientIn):
     """Register an application. Returns its client_id, and its webhook secret
     once if a webhook URL is given. Superusers only."""
@@ -124,7 +125,7 @@ def hcp_register_client(request: HttpRequest, payload: HcpClientIn):
 
 @router.patch("/clients/{client_id}", response=HcpClientCreatedOut, operation_id="hcp_updateClient",
               summary="HCP service: change or disable a client")
-@gate("superuser", setting=True)
+@gate("superuser", setting=True, step_up="a new webhook secret, shown once to its creator")
 def hcp_update_client(request: HttpRequest, client_id: str, payload: HcpClientPatch):
     """Change a client's registration, disable or re-enable it, or rotate its
     webhook secret (returned once). Narrowing allowed_scopes does not change grants

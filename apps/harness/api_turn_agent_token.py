@@ -27,7 +27,7 @@ router = Router(tags=["harness"])
 @router.post("/{runner_id}/turns/{turn_id}/agent-token", response=TurnAgentTokenOut,
              summary="A login as the turn's agent, for one turn this runner holds")
 # only the box's own runner token (a PAT is 403), turn claimed by it and executing
-@gate("runner", "runner-holds-agent", kind="runner-protocol")
+@gate("runner", "runner-holds-agent", kind="runner-protocol", step_up="runner protocol")
 def turn_agent_token(request: HttpRequest, runner_id: uuid.UUID, turn_id: uuid.UUID, scope: str = "turn"):
     """A canopy login as the turn's agent, for ONE turn this runner is executing:
     expires within 12 hours and is revoked when the turn stops executing here. On a

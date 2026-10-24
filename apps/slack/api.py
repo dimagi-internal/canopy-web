@@ -14,6 +14,7 @@ from ninja.errors import HttpError
 from apps.agents.models import Agent
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
+from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
@@ -125,12 +126,15 @@ def get_config(request: HttpRequest, workspace: str) -> dict:
 
 @router.put("/{workspace}/config-token", response=SlackSyncOut,
             summary="Let canopy manage the Slack app's slash commands (owner)")
-@gate("own", setting=True)
+@gate("own", setting=True, step_up=True)
 def set_config_token(request: HttpRequest, workspace: str, payload: SlackConfigTokenIn) -> dict:
     """Takes the REFRESH token of a Slack app configuration token, then syncs
-    the app's slash commands to the agents that are on for Slack."""
+    the app's slash commands to the agents that are on for Slack. A browser needs
+    a fresh passkey step-up (403 `step_up_required` otherwise); a token may call it."""
     ws = workspace_for(request.user, workspace, perms.OWN)
     inst = _installation_or_409(ws)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     try:
         commands.set_config_token(inst, payload.refresh_token, user=request.user)
     except Exception as e:  # noqa: BLE001

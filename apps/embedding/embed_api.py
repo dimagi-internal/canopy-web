@@ -162,7 +162,7 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
 
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
-@gate("self", kind="ephemeral-credential")
+@gate("self", kind="ephemeral-credential", step_up="the caller's own embed token")
 def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     """The host-side token endpoint every embedder needs — for the host that is
     canopy itself.

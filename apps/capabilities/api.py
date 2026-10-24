@@ -38,6 +38,7 @@ from apps.agents.gates import agent_for_read, agent_for_work
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
+from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
@@ -288,16 +289,19 @@ def list_capability_slot_data(request: HttpRequest, slug: str, name: str) -> Cap
 
 @agents_router.put("/{slug}/capabilities/{name}/slots/{slot}", response=CapabilitySlotDataOut,
                    summary="Set a pool slot's data (per-key upsert; secret half write-only)")
-@gate("integrations", "agent-login", setting=True)  # a slot's credentials
+@gate("integrations", "agent-login", setting=True, step_up=True)  # a slot's credentials
 def set_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: str,
                              payload: CapabilitySlotDataIn) -> CapabilitySlotDataOut:
     """Per key: a string writes it, null deletes it, a key left out is kept; a
     section left out is untouched. `secret` is encrypted at rest and only ever
     delivered on the lease read of the user holding a ready lease on this slot;
     the response is the MASKED state. 422 unless the capability is a `pool` and
-    declares `slot`. For a workspace admin, or the agent's own login."""
+    declares `slot`. For a workspace admin, or the agent's own login; a browser
+    needs a fresh passkey step-up (403 `step_up_required` otherwise)."""
     cap = _declared(request, slug, name)
     _slot_writer(request, cap)
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     try:
         row, before = slot_data.put(cap, slot, public=payload.public, secret=payload.secret, by=request.user)
     except services.CapabilityError as e:

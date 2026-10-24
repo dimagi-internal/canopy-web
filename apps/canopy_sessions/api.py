@@ -2327,7 +2327,7 @@ def _secret_out(row) -> dict:
 
 @router.post("/{session_id}/secrets", response={201: SessionSecretOut},
              summary="Share a secret with this chat (write-only)")
-@gate("session-acl", kind="conversation")  # write
+@gate("session-acl", kind="conversation", step_up="a chat's own short-lived secret, from its composer")  # write
 def share_secret(request: HttpRequest, session_id: uuid.UUID, payload: SessionSecretIn):
     """Stores the value encrypted. Posts NOTHING into the chat: the person just
     refers to it by name, and the session finds it with `canopy secret list`."""

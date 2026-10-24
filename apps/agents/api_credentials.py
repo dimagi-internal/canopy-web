@@ -100,7 +100,7 @@ router = Router(auth=session_auth, tags=["agents"])
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
             summary="Set named secrets for an agent (write-only)")
-@gate("agent-admin", setting=True)
+@gate("agent-admin", setting=True, step_up=True)
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
     """Upsert. Non-clobbering: a ref absent from the body is untouched.
 
@@ -158,7 +158,7 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
             response={200: AgentCredentialsResolveOut, 401: DeviceProofRequiredOut,
                       409: ZkWrapMissingOut},
             summary="PLAINTEXT — a runner stages this agent's secrets")
-@gate("runner-holds-agent", "agent-admin", "license")  # bearer only
+@gate("runner-holds-agent", "agent-admin", "license", step_up="runner protocol")  # bearer only
 def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None = None):
     """The one route that returns values, and it is not for a browser.
 
@@ -254,7 +254,7 @@ def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
 
 @router.put("/{slug}/vault", response=AgentVaultOut,
             summary="Set the vault + its service-account token (write-only)")
-@gate("agent-admin", setting=True)
+@gate("agent-admin", setting=True, step_up=True)
 def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
     """The key is scoped to ONE agent's vault by design.
 
@@ -301,7 +301,7 @@ def _zk_state(agent, *, include_values: bool = False) -> ZkStateOut:
             summary="Zero-knowledge state: kv, wraps, and who still needs one")
 # zero-knowledge vault (apps/agents/credentials/zk.py): browser writes need a passkey step-up
 # wraps are public; ?values= ciphertext, read-logged
-@gate("agent-admin")
+@gate("agent-admin", step_up="zk1: ciphertext only, which canopy-web cannot open")
 def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) -> ZkStateOut:
     """`pending` lists active device keys (with an ECDH key) on runners this
     agent's resolve accepts, and current agent admins with a vault key, that
@@ -323,7 +323,7 @@ def get_agent_zk_state(request: HttpRequest, slug: str, values: bool = False) ->
 
 @router.post("/{slug}/vault/zk/enable", response=ZkStateOut,
              summary="Turn on zero-knowledge: wraps + every value as ciphertext, atomically")
-@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkStateOut:
     """`{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
     Needs exactly one `recovery` wrap and a wrap the caller can open (their
@@ -342,7 +342,7 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
 
 @router.put("/{slug}/vault/zk/values", response=ZkValuesOut,
             summary="Set zero-knowledge values (ciphertext) at the current kv")
-@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) -> ZkValuesOut:
     """Non-clobbering upsert of `{name, value_zk}`. A `kv` other than the
     current one is 409 `zk_kv_mismatch` (the vault key was rotated)."""
@@ -357,7 +357,7 @@ def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) ->
 
 @router.post("/{slug}/vault/zk/wraps", response=ZkStateOut,
              summary="Grant: wrap the vault key to pending devices or admins")
-@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> ZkStateOut:
     """`{kv, wraps: [{kind: device|member, target, wrap}]}`. A device target is
     an ACTIVE key with an ECDH key on a runner this agent routes to, working for
@@ -375,7 +375,7 @@ def add_agent_zk_wraps(request: HttpRequest, slug: str, payload: ZkWrapsIn) -> Z
 
 @router.put("/{slug}/vault/zk/pins", response=VaultKeeperPinsOut,
             summary="Record the keys a vault owner or admin just granted to, for the keepers")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def put_agent_zk_pins(request: HttpRequest, slug: str, payload: VaultKeeperPinsIn) -> VaultKeeperPinsOut:
     """`{kv, expected_version, value}`: the keepers' record, re-encrypted under the
     vault key with the people the caller just granted to. Granting someone is how an
@@ -392,7 +392,7 @@ def put_agent_zk_pins(request: HttpRequest, slug: str, payload: VaultKeeperPinsI
 
 @router.post("/{slug}/vault/zk/rotate", response=ZkStateOut,
              summary="Rotate the vault key: replace every wrap and value atomically")
-@gate("agent-admin", "vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("agent-admin", "vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def rotate_agent_zk(request: HttpRequest, slug: str, payload: ZkRotateIn) -> ZkStateOut:
     """`{new_kv: kv + 1, wraps, values}`. Every target holding a wrap now that
     still qualifies must get one at `new_kv` (422 `zk_rewrap_required`
@@ -465,7 +465,7 @@ def get_agent_vault_members(request: HttpRequest, slug: str) -> VaultMembersOut:
 
 @router.post("/{slug}/vault/members", response=VaultMembersOut,
              summary="Add a person to the agent's vault by name")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMemberIn) -> VaultMembersOut:
     """`{email, role}` — a direct membership, kept whatever happens to the
     agent's access list. The person must be a member of the agent's workspace."""
@@ -484,7 +484,7 @@ def add_agent_vault_member(request: HttpRequest, slug: str, payload: VaultMember
 
 @router.delete("/{slug}/vault/members/{user_id}", response=VaultMembersOut,
                summary="Remove a person's direct membership of the agent's vault")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> VaultMembersOut:
     """Removes only the DIRECT membership. Membership through a link stays until
     the person leaves the linked set (e.g. loses full access to the agent). A
@@ -501,7 +501,7 @@ def remove_agent_vault_member(request: HttpRequest, slug: str, user_id: int) -> 
 
 @router.put("/{slug}/vault/agent-link", response=VaultMembersOut,
             summary="Link the agent's vault to the agent's access list, or unlink it")
-@gate("vault-admin", setting=True)  # browser: + step-up; token allowed
+@gate("vault-admin", setting=True, step_up=True)  # browser: + step-up; token allowed
 def set_agent_vault_link(request: HttpRequest, slug: str, payload: VaultAgentLinkIn) -> VaultMembersOut:
     """`{linked, role}`. Linked, everyone with full access to the agent is a
     member: its owner as `owner`, its admins as `admin`, everyone else as `role`.
@@ -586,7 +586,7 @@ def get_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.U
 
 @router.put("/{slug}/secret-requests/{request_id}/value", response=SecretRequestOut,
             summary="Answer a secret request with a value sealed in the browser (zks1)")
-@gate("agent-admin", "secret-request", setting=True)  # zks1 only; browser: + step-up
+@gate("agent-admin", "secret-request", setting=True, step_up=True)  # zks1 only; browser: + step-up
 def fulfil_agent_secret_request(request: HttpRequest, slug: str, request_id: uuid.UUID,
                                 payload: SecretRequestValueIn) -> SecretRequestOut:
     """`value_zk` must be `zks1:` — sealed to the agent's readers before it left
@@ -634,7 +634,7 @@ def get_agent_zk_recipients(request: HttpRequest, slug: str,
 
 @router.post("/{slug}/vault/zk/endorsements", response=ZkEndorsementsOut,
              summary="Vouch, with your own vault key, that keys may read this agent")
-@gate("agent-admin", "vault-admin", setting=True)  # own vault key's signatures; browser: + step-up
+@gate("agent-admin", "vault-admin", setting=True, step_up=True)  # own vault key's signatures; browser: + step-up
 def add_agent_zk_endorsements(request: HttpRequest, slug: str, payload: ZkEndorsementsIn) -> ZkEndorsementsOut:
     """`{endorsements: [{kind, target, key_jkt, by_jkt, sig}]}` — each a zk-v1
     §7 signature by YOUR vault key over a CURRENT recipient's current key. The
@@ -739,15 +739,20 @@ def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
 
 @router.put("/{slug}/github", response=AgentGitHubOut,
             summary="Lend this agent your GitHub identity (owner or admin, write-only)")
-@gate("agent-owner", setting=True)  # strictly the agent's own owner (delegations.set_github)
+@gate("agent-owner", setting=True, step_up=True)  # strictly the agent's own owner (delegations.set_github)
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
     """Store the caller's fine-grained GitHub token for this agent — its owner's,
     or an admin's (used while the owner has lent none).
 
     Checked before it is stored: GitHub must accept it, and it must be able to
     open a pull request on the agent's own repo. A token that fails is refused
-    with the reason, never saved."""
+    with the reason, never saved. A browser needs a fresh passkey step-up
+    (403 `step_up_required` otherwise); a token may call it."""
     agent = agent_for_read(request, slug)
+    if not agent.is_admin(request.user):   # before the step-up, as delegations.set_github says it
+        raise HttpError(422, f"only {agent.slug}'s owner or an admin can lend it their GitHub identity")
+    if stepup.is_browser(request):
+        stepup.require_recent_step_up(request)
     try:
         delegations.set_github(agent, request.user, payload.token)
     except delegations.DelegationError as exc:
@@ -935,7 +940,7 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
 
 @router.post("/{slug}/pat-rotation/rotate", response=PatRotationOut,
              summary="Rotate this agent's canopy-pat now")
-@gate("agent-admin", setting=True)  # browser: + passkey step-up; token allowed
+@gate("agent-admin", setting=True, step_up=True)  # browser: + passkey step-up; token allowed
 def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
     """The same rotation the schedule does, now, whether or not rotation is on:
     a new token in `canopy-pat`, the old one valid for 24 h then revoked. It
@@ -957,7 +962,7 @@ def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
              summary="PLAINTEXT — show one stored value to an admin who just confirmed a passkey")
 # browser session + passkey step-up only (apps/passkeys)
 # reads one value; changes no configuration (recorded as an event)
-@gate("agent-admin", kind="action")
+@gate("agent-admin", kind="action", step_up=True)
 def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: str, name: str):
     """Owner/agent admin, at a browser, with a passkey step-up in the last five
     minutes (403 `step_up_required` otherwise). Returns the value once and

@@ -60,7 +60,7 @@ def list_passkeys(request: HttpRequest) -> list[PasskeyOut]:
              summary="Start registering a passkey for this device")
 # a SECOND passkey also needs a fresh step-up
 # passkeys: a ceremony's challenge, and the five-minute step-up it earns
-@gate("self", kind="ephemeral-credential")
+@gate("self", kind="ephemeral-credential", step_up=True)
 def begin_passkey_registration(request: HttpRequest, upgrade: bool = False) -> PasskeyOptionsOut:
     """Returns the options for navigator.credentials.create(). Browser session
     only; adding a SECOND passkey needs a fresh step-up with the first.
@@ -93,7 +93,7 @@ def finish_passkey_registration(request: HttpRequest, payload: PasskeyRegisterIn
 @router.delete("/{int:passkey_id}", response={204: None}, summary="Delete one of my passkeys")
 # + a fresh step-up
 # the second factor a step-up asks for
-@gate("self", setting=True)
+@gate("self", setting=True, step_up=True)
 def delete_passkey(request: HttpRequest, passkey_id: int) -> Status:
     stepup.require_recent_step_up(request)
     passkey = Passkey.objects.filter(pk=passkey_id, user=request.user).first()
