@@ -1128,20 +1128,27 @@ be in its context. Your ACL and your audit apply to every read.
 
 | | ordinary conversation | sensitive conversation |
 |---|---|---|
-| the call | `tool_use_id`, `is_error` | `tool_use_id`, `is_error`, `status`, `withheld: true` |
+| the call | `tool_use_id`, `is_error` | `tool_use_id`, `is_error`, `status` (one of a short list: `completed`, `failed`, …), `withheld: true` |
 | your text | the first 8,000 characters (a row's display text) | nothing |
 | `structuredContent` | inside that text, when your tool's answer is short enough | nothing |
 | each link | `{type, uri, name, mimeType}`, kept whole | `{type, uri, mimeType}` with `name` set to the URI's **scheme** |
 
-A link is kept only when it is a well-formed `resource_link` with a URI of at most **256
-characters**, under a **URI scheme your `site.json` declares** in `site.resource_schemes`;
-at most **10** per result. Its `description`, `_meta` and `annotations` are never kept,
-and in a sensitive conversation neither is its `name`: those links rest in plaintext, so
-nothing in them may be data — make the URI an opaque id (`labs-result://Zk3…`), never a
-query, a name or a filter. A link is pulled out of your result **before** the text is
-cut, so a long answer still reaches its card. Declare your own scheme (`labs-result`),
-never `http(s)`, `data`, `ui` or `file`; canopy reads the declaration live from your
-signed document, with no owner step.
+A link is kept only when **your own tool returned it** — `site_call` to your site, or
+one of your tools a runner reached directly — never from another tool's output (link-shaped
+JSON a shell or a file read prints is the agent's words, and goes). It must be a
+well-formed `resource_link` whose URI is **`<scheme>://<id>`**: a **URI scheme your
+`site.json` declares** in `site.resource_schemes`, then a url-safe id (`A–Z a–z 0–9 _ -`)
+and nothing else — no path, query or fragment. Declare the exact length of your ids in
+`site.resource_id_lengths` (`{"labs-result": 24}` for `secrets.token_urlsafe(18)`) and
+canopy keeps nothing longer or shorter; undeclared, an id may be up to 64 characters. Its
+`mimeType` must be one of `application/json`, `text/csv`, `text/plain`, `text/markdown`,
+`image/png`, `image/jpeg`, `application/pdf`. At most **10** per result. Its
+`description`, `_meta` and `annotations` are never kept, and in a sensitive conversation
+neither is its `name`: those links rest in plaintext, so nothing in them may be data —
+make the id opaque (`labs-result://Zk3…`), never a query, a name or a filter. A link is
+pulled out of your result **before** the text is cut, so a long answer still reaches its
+card. Declare your own scheme (`labs-result`), never `http(s)`, `data`, `ui` or `file`;
+canopy reads the declaration live from your signed document, with no owner step.
 
 The agent gets your answer through `site_call` as `{site, tool, is_error, links,
 content, structured}`: your links first, then the rest, with MCP's text copy of
@@ -1211,10 +1218,12 @@ def result(rid: str, page: str = "1", page_size: str = "100"):
 `current_subject()` is whoever the MCP request acts for (on a delegated request, the
 visitor's `sub`). Expire results on your own schedule. Then **declare the scheme** in
 your signed `site.json`'s `site.resource_schemes` — with the Python SDK
-(`dimagi-canopy` ≥ 0.19) that is `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]`,
-or `site_document(..., site={"resource_schemes": ["labs-result"]})` without Django; from
-0.21 a bad entry fails the Django system check `canopy_host.E011` at startup, since it
-would make the whole `site.json` malformed.
+(`dimagi-canopy` ≥ 0.19) that is `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]`
+and, from 0.22, `CANOPY_HOST["RESOURCE_ID_LENGTHS"] = {"labs-result": 24}`, or
+`site_document(..., site={"resource_schemes": ["labs-result"], "resource_id_lengths":
+{"labs-result": 24}})` without Django; from 0.21 a bad entry fails the Django system check
+`canopy_host.E011` at startup (0.22: a length that is not 16–64, or names an undeclared
+scheme, too), since it would make the whole `site.json` malformed.
 [SDK README § Host-held results](../../sdk/python/README.md#host-held-results-return-facts--a-link).
 
 **Live updates.** A View may `resources/subscribe` to a link. canopy holds the

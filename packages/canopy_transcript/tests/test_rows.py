@@ -399,4 +399,7 @@ def test_links_are_bounded_and_a_plain_result_has_none():
     many = [{**_LINK, "uri": f"labs-result://{i}"} for i in range(30)]
     assert len(tool_result_links(many)) == 10
     assert tool_result_links([{**_LINK, "uri": "x:" + "y" * 3000}]) == []
+    # The SDK's URI bound: 256 characters, no more.
+    assert tool_result_links([{**_LINK, "uri": "labs-result://" + "y" * 242}])
+    assert tool_result_links([{**_LINK, "uri": "labs-result://" + "y" * 243}]) == []
     assert "resource_links" not in _result_row("just text")["content"]

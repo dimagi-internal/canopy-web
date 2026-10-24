@@ -25,7 +25,8 @@ It is a compact JWS signed with the site's key (``kid`` in its JWKS), ``typ``
               "jwks_url": "https://labs.connect.dimagi.com/labs/canopy/jwks.json",
               "issuer": "https://labs.connect.dimagi.com",
               "mcp_resource": "https://labs.connect.dimagi.com/mcp/",
-              "resource_schemes": ["labs-result"]}}
+              "resource_schemes": ["labs-result"],
+              "resource_id_lengths": {"labs-result": 24}}}
 
 ``site`` (optional) is the site's own facts — the values canopy's Connected
 sites form otherwise has someone type: the origins that frame the panel, where
@@ -40,7 +41,10 @@ it from ``CANOPY_HOST["RESOURCE_SCHEMES"]``). Unlike the rest of the block canop
 reads it LIVE, with no owner adopting it: it widens nothing — it is the list of
 addresses canopy will keep from this site's own tool results (in a sensitive
 conversation, the only thing it keeps), and a link under any other scheme is
-dropped.
+dropped. ``site.resource_id_lengths`` (optional, SDK 0.22+; ``RESOURCE_ID_LENGTHS``)
+says how long a scheme's result ids are: canopy then keeps a link under it only as
+``<scheme>://`` and exactly that many url-safe characters. Without it an id may be up
+to ``resources.MAX_ID_LENGTH`` of them.
 
 canopy finds the document beside the site's registered JWKS, or — knowing only
 the site's address — at ``WELL_KNOWN_PATH`` on its origin (mount
@@ -160,9 +164,34 @@ def _site(value) -> dict:
            "issuer": _url(value.get("issuer"), "site.issuer"),
            "mcp_resource": _url(value.get("mcp_resource"), "site.mcp_resource"),
            "resource_schemes": _schemes(value.get("resource_schemes"))}
-    if not out["resource_schemes"]:
-        del out["resource_schemes"]
+    out["resource_id_lengths"] = _id_lengths(value.get("resource_id_lengths"), out["resource_schemes"])
+    for key in ("resource_schemes", "resource_id_lengths"):
+        if not out[key]:
+            del out[key]
     return out if any(out.values()) else {}
+
+
+def _id_lengths(value, schemes: list[str]) -> dict[str, int]:
+    """``site.resource_id_lengths``: ``{scheme: n}`` — this scheme's result ids are exactly
+    ``n`` url-safe characters (``canopy_sdk.resources.id_of``). Each scheme must be one of
+    ``resource_schemes``."""
+    from .resources import ResourceError, check_id_length, check_scheme
+
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SiteDocumentError("malformed", "site.resource_id_lengths must map a scheme to a length")
+    out = {}
+    try:
+        for scheme, length in value.items():
+            scheme = check_scheme(scheme)
+            if scheme not in schemes:
+                raise SiteDocumentError("malformed", f"site.resource_id_lengths: {scheme!r} is not "
+                                                     "one of site.resource_schemes")
+            out[scheme] = check_id_length(length)
+    except ResourceError as exc:
+        raise SiteDocumentError("malformed", f"site.resource_id_lengths: {exc.message}") from exc
+    return dict(sorted(out.items()))
 
 
 def _schemes(value) -> list[str]:
@@ -179,7 +208,8 @@ def _schemes(value) -> list[str]:
 
 
 #: The keys of ``site``, in order.
-SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource", "resource_schemes")
+SITE_FACTS: tuple[str, ...] = ("origins", "jwks_url", "issuer", "mcp_resource", "resource_schemes",
+                               "resource_id_lengths")
 
 
 def _normalize(claims: Mapping) -> dict:
@@ -213,7 +243,7 @@ def site_document(site_name: str, *, pages: Sequence[Mapping] = (), sensitive_da
     """The payload, validated: ``pages`` as ``[{key, title, scopes}]``,
     ``sensitive_data`` as ``{"requires": {"handles_sensitive", "runner_flag"}}``, ``uses`` as
     ``{"agents", "sensitive_data_agents", "version"}``, ``site`` as ``{"origins",
-    "jwks_url", "issuer", "mcp_resource", "resource_schemes"}`` (each optional; left out
+    "jwks_url", "issuer", "mcp_resource", "resource_schemes", "resource_id_lengths"}`` (each optional; left out
     when empty)."""
     name = str(site_name or "").strip()
     if not name:
@@ -247,6 +277,13 @@ class SiteFacts:
     mcp_resource: str = ""
     #: The URI schemes of the results this site's tools link to (``canopy_sdk.resources``).
     resource_schemes: tuple[str, ...] = ()
+    #: ``((scheme, n), ...)``: the exact length of a scheme's result ids, where declared.
+    resource_id_lengths: tuple[tuple[str, int], ...] = ()
+
+    def resource_policy(self) -> dict[str, int | None]:
+        """``{scheme: declared id length or None}``, as ``resources.validate_link`` takes it."""
+        lengths = dict(self.resource_id_lengths)
+        return {scheme: lengths.get(scheme) for scheme in self.resource_schemes}
 
 
 @dataclass(frozen=True)
@@ -282,7 +319,9 @@ class SiteNeeds:
             uses_version=body["uses"]["version"],
             site=(SiteFacts(origins=tuple(body["site"]["origins"]), jwks_url=body["site"]["jwks_url"],
                             issuer=body["site"]["issuer"], mcp_resource=body["site"]["mcp_resource"],
-                            resource_schemes=tuple(body["site"].get("resource_schemes") or ()))
+                            resource_schemes=tuple(body["site"].get("resource_schemes") or ()),
+                            resource_id_lengths=tuple(
+                                (body["site"].get("resource_id_lengths") or {}).items()))
                   if body.get("site") else None),
             claims=dict(claims))
 

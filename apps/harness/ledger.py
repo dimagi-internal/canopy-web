@@ -33,7 +33,8 @@ def append_events(turn: Turn, events: list[dict]) -> int:
         # 2026-10-22-sensitive-data-agents §4): the row keeps which call and
         # whether it failed, and so does the live frame built from it.
         session = turn.chat_session if turn.chat_session_id else None
-        events = [{**e, "payload": sensitivity.strip_result(e.get("payload"), session=session)}
+        calls = sensitivity.calls_in(events, kind_key="kind", use="tool_start", payload_key="payload")
+        events = [{**e, "payload": sensitivity.strip_result(e.get("payload"), session=session, calls=calls)}
                   if e.get("kind") in sensitivity.RESULT_KINDS else e for e in events]
     with transaction.atomic():
         # Lock the turn row first so concurrent appenders to the same turn

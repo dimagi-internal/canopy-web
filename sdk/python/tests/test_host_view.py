@@ -204,3 +204,31 @@ def test_rpc_digest_covers_the_call_not_its_envelope():
     assert contract.rpc_digest_of_body(body) == contract.rpc_digest("tools/call", call)
     assert contract.rpc_of_body(body) == ("tools/call", call)
     assert contract.rpc_digest_of_body(b"") is None and contract.rpc_digest_of_body(b"[1]") is None
+
+
+def test_a_read_digest_is_unambiguous_and_never_raises():
+    def d(uri):
+        return contract.rpc_digest("resources/read", {"uri": uri})
+
+    # A value holding '&' is not a second pair; a value holding '=' is not a key.
+    assert d(URI + "?a=%26b%3D1") != d(URI + "?a=&b=1")
+    assert d(URI + "?a%3Db=c") != d(URI + "?a=b%3Dc")
+    # Bytes that are not UTF-8 stay distinct; escaping that only re-spells a character does not matter.
+    assert d(URI + "?a=%ff") != d(URI + "?a=%fe")
+    assert d(URI + "?a=%C3%A9") == d(URI + "?a=é") and d(URI + "?a=%41") == d(URI + "?a=A")
+    # A lone surrogate is hashed, not raised on, and meets nothing else.
+    assert d(URI + "?a=\ud800") != d(URI + "?a=%ED%A0%80")
+    assert contract.rpc_digest("tools/call", {"name": "t", "arguments": {"q": "\ud800"}})
+
+
+def test_a_verifier_accepts_the_digest_canopy_signed_before_0_22():
+    """For one deploy window: a host on 0.22 verifies a canopy that has not moved yet."""
+    read = ("resources/read", {"uri": URI + "?a=%26b"})
+    legacy = contract._legacy_rpc_digest(*read)
+    assert legacy != contract.rpc_digest(*read)
+    assert contract.rpc_matches(legacy, *read) and contract.rpc_matches(contract.rpc_digest(*read), *read)
+    assert not contract.rpc_matches(legacy, "resources/read", {"uri": URI + "?a=c"})
+    assert not contract.rpc_matches("", *read)
+    # The forms agree wherever a query needs no escaping, a Labs page read among them.
+    page = ("resources/read", {"uri": URI + "?page=2&page_size=100"})
+    assert contract._legacy_rpc_digest(*page) == contract.rpc_digest(*page)

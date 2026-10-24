@@ -428,6 +428,9 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
         # A sensitive conversation keeps which call and whether it failed, never
         # the result (spec 2026-10-22-sensitive-data-agents §4).
         withhold = sensitivity.seals(locked)
+        # Which tool each call in this batch is, so a result whose call has not been
+        # stored yet is still placed (a sensitive row keeps links only from the site's own).
+        calls = sensitivity.calls_in(rows) if withhold else {}
         vouched = _vouched_markers(locked, rows)
         pool = _MatchPool(locked) if attribute else None
         for row in rows:
@@ -507,7 +510,8 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                 # and a tool's result is not kept at all (`sensitivity.seal`).
                 sealed_text = scrub_nul(text)
                 text, content, sealed = sensitivity.seal(
-                    locked, index, role, sealed_text, storage_content(scrub_nul(content), sealed_text))
+                    locked, index, role, sealed_text, storage_content(scrub_nul(content), sealed_text),
+                    calls=calls)
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
             prepared.append((index, role, text, content, author, turn_hex, sealed))

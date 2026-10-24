@@ -144,8 +144,7 @@ def verify_view(request, *, config, client_keys, replay_store, uri: str, subject
         raise ViewRefused("wrong_person", "the statement is for another person")
     if not same_resource(str(claims.get("uri") or ""), uri):
         raise ViewRefused("wrong_resource", "the statement is for another resource")
-    if rpc is not None and not constant_time_equal(str(claims.get("rpc") or ""),
-                                                   contract.rpc_digest(*rpc)):
+    if rpc is not None and not contract.rpc_matches(claims.get("rpc"), *rpc):
         raise ViewRefused("wrong_request", "the statement is for a different request")
     if not str(claims.get("session") or ""):
         raise ViewRefused("missing_claim", "the statement names no conversation")

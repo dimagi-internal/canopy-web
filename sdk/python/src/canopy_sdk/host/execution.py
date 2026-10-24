@@ -187,8 +187,7 @@ def verify_execution(request, *, config, client_keys, replay_store, jkt: str | N
     if "ath" in claims and (not token or not constant_time_equal(str(claims["ath"]),
                                                                   contract.ath(token))):
         raise ExecutionRefused("unbound", "the statement is for a different access token")
-    if rpc is not None and not constant_time_equal(str(claims.get("rpc") or ""),
-                                                   contract.rpc_digest(*rpc)):
+    if rpc is not None and not contract.rpc_matches(claims.get("rpc"), *rpc):
         raise ExecutionRefused("wrong_request", "the statement is for a different request")
 
     try:

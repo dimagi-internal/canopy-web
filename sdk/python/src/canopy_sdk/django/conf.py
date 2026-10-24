@@ -55,6 +55,9 @@
         # result the host keeps, in its own MCP server). Declared in site.json's
         # site.resource_schemes; canopy keeps a link only under a declared scheme.
         "RESOURCE_SCHEMES": [],     # e.g. ["labs-result"]
+        # site.resource_id_lengths: the exact length of a scheme's result ids, so canopy
+        # keeps a link under it only as <scheme>:// plus that many url-safe characters.
+        "RESOURCE_ID_LENGTHS": {},  # e.g. {"labs-result": 24}
         # Where the panel mints. Default: reverse("canopy_host:panel_token").
         "PANEL_TOKEN_URL": "",       # a literal URL, or
         "PANEL_TOKEN_URL_NAME": "",  # a URL name of the host's own, reversed per request
@@ -278,6 +281,13 @@ def resource_schemes() -> list[str]:
     value = raw().get("RESOURCE_SCHEMES") or []
     value = [value] if isinstance(value, str) else list(value)
     return list(dict.fromkeys(str(s) for s in value if s))
+
+
+def resource_id_lengths() -> dict:
+    """``RESOURCE_ID_LENGTHS`` as declared (``{scheme: length}``); checked by
+    ``canopy_host.E011`` at startup and again when ``site.json`` is built."""
+    value = raw().get("RESOURCE_ID_LENGTHS") or {}
+    return dict(value) if isinstance(value, Mapping) else value
 
 
 def panel_options() -> dict:

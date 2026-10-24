@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.21.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.22.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.21.0/dimagi_canopy-0.21.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.22.0/dimagi_canopy-0.22.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -46,7 +46,7 @@ library, address-pinned.
 | `canopy_sdk.consumer` | canopy | `verify_visitor_assertion`, `check_id_jag`, `ClientCredentials`, `client_assertion`, `execution_statement`, `view_statement`, `dpop_proof`, `request_token`, `parse_token_response`, `redeem_id_jag` |
 | `canopy_sdk.site_agents` | both sides | the site agents API: `fetch_site_agents` → `SiteAgents` (`agent(slug)`, `site_settings_url`, `SiteAgent` + `problem_links` of `AgentProblem`, `AgentCapability`, `RunnerFlag`), `SiteAgentsError` (`code`, `status`), `request_assertion`, `verify_site_agents`; canopy's `verify_request`, `sign_site_agents`, `content_version` |
 | `canopy_sdk.site` | both sides | the site's needs (`site.json`): `site_document`, `sign_site_document`; canopy's `verify_site_document` → `SiteNeeds` (`site`: `SiteFacts`), `site_document_url`, `WELL_KNOWN_PATH` |
-| `canopy_sdk.resources` | both sides | links to results a host keeps: `resource_link`, `validate_link(s)`, `check_scheme`, `RESERVED_SCHEMES`; "it changed": `notify_updated`, `updated_notification`, canopy's `verify_updated_notification`, `UPDATED_PATH`; see [Host-held results](#host-held-results-return-facts--a-link) |
+| `canopy_sdk.resources` | both sides | links to results a host keeps: `resource_link`, `validate_link(s)`, `check_scheme`, `check_id_length`, `id_of`, `RESERVED_SCHEMES`, `MIME_TYPES`; "it changed": `notify_updated`, `updated_notification`, canopy's `verify_updated_notification`, `UPDATED_PATH`; see [Host-held results](#host-held-results-return-facts--a-link) |
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
 | `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
@@ -536,14 +536,18 @@ things canopy needs:
   declares (`site.resource_schemes`, read live — no owner step):
   `CANOPY_HOST["RESOURCE_SCHEMES"] = ["labs-result"]` on Django, or
   `site_document(..., site={"resource_schemes": [...]})` without it. Never `http(s)`,
-  `data`, `ui`, `file`… (`check_scheme`, `RESERVED_SCHEMES`). On Django a bad entry
-  fails the system check `canopy_host.E011` at startup: one would make the whole
+  `data`, `ui`, `file`… (`check_scheme`, `RESERVED_SCHEMES`). Declare how long your ids
+  are too (0.22+): `CANOPY_HOST["RESOURCE_ID_LENGTHS"] = {"labs-result": 24}`
+  (`site.resource_id_lengths`; 16–64, `check_id_length`). On Django a bad entry in
+  either fails the system check `canopy_host.E011` at startup: one would make the whole
   `site.json` malformed.
 * **Keep the link an address.** canopy keeps `{type, uri, name, mimeType}` of a link
   (`validate_link`), never its `description`, `_meta` or `annotations`; in a
-  sensitive conversation, where links rest in plaintext, not its `name` either. A URI
-  is at most `MAX_URI_LENGTH` (256) characters and a result keeps at most `MAX_LINKS`
-  (10): make the URI an opaque id, never a query or a filter.
+  sensitive conversation, where links rest in plaintext, not its `name` either, and
+  only links your own tools returned. A URI is `<scheme>://<id>` with a url-safe id
+  (`id_of`: exactly your declared length, else at most `MAX_ID_LENGTH`, 64) — no path,
+  query or fragment —, its `mimeType` one of `MIME_TYPES`, and a result keeps at most
+  `MAX_LINKS` (10): make the id opaque, never a query or a filter.
 * **Relay "it changed".** A View may `resources/subscribe` to a link; canopy holds the
   subscription. When a result changes, tell canopy:
   `canopy_sdk.resources.notify_updated(canopy_url, site_name, site_key, [uri, ...],
@@ -814,9 +818,12 @@ except ViewRefused as exc:                       # no_statement, agent_call, wro
 
 **Both statements name the request they ride.** `rpc` = `contract.rpc_digest(method,
 params)` of the JSON-RPC request (for `tools/call` the tool name and arguments, for
-`resources/read` the URI, query sorted). Pass `rpc=(method, params)` to `verify_execution`
-/ `verify_view` and a statement lifted from one call cannot ride another on the same
-token (`wrong_request`).
+`resources/read` the URI, its query pairs decoded, sorted and re-encoded with `urlencode`,
+so `%26` never hashes like `&`; a malformed string is hashed, never raised on). Pass
+`rpc=(method, params)` to `verify_execution` / `verify_view` and a statement lifted from
+one call cannot ride another on the same token (`wrong_request`). For one deploy window
+(0.22) the verifiers also accept a `resources/read` digest in the pre-0.22 form
+(`contract.rpc_matches`); the two forms agree on every URI whose query needs no escaping.
 
 If you release more to a person's View than to an agent, release it on a verified
 `View` only. **No statement means refused**, not "the person is looking": anything that

@@ -10,8 +10,10 @@ from the host, as the person, with ``resources/read``.
 Both halves live here so canopy and every host read ONE definition:
 
 * the link: ``resource_link`` builds one; ``validate_link`` is canopy's check of
-  one a host returned (its shape, its bounds, and a URI scheme the host declared in
-  its ``site.json`` — ``canopy_sdk.site``'s ``site.resource_schemes``);
+  one a host returned (its shape — ``<scheme>://<id>``, a url-safe id —, its bounds, a
+  ``mimeType`` from ``MIME_TYPES``, and a URI scheme the host declared in its
+  ``site.json`` — ``canopy_sdk.site``'s ``site.resource_schemes``, with the exact id
+  length in ``site.resource_id_lengths`` when it declares one);
 * the scheme: ``check_scheme`` — a host's own scheme (``labs-result``), never one a
   browser or another protocol already means something by (``https``, ``data``…);
 * "it changed": a host signs ``updated_notification`` with its own key (the one at
@@ -49,6 +51,21 @@ RESERVED_SCHEMES = frozenset({
 MAX_URI_LENGTH = 256
 MAX_NAME_LENGTH = 200
 MAX_MIME_TYPE_LENGTH = 100
+#: A result's id, the whole of what follows ``<scheme>://``: url-safe characters only
+#: (``secrets.token_urlsafe``'s alphabet), no path, query or fragment.
+_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+#: The longest id when the host declares no length of its own.
+MAX_ID_LENGTH = 64
+#: The bounds on a length a host declares (``RESOURCE_ID_LENGTHS``): long enough to be
+#: unguessable (16 url-safe characters is 96 bits), short enough to carry nothing else.
+MIN_DECLARED_ID_LENGTH = 16
+MAX_DECLARED_ID_LENGTH = 64
+#: The media types a link canopy keeps may name. A ``mimeType`` is a label for the
+#: View, not a place for words: anything else and the link is not kept.
+MIME_TYPES = frozenset({
+    "application/json", "application/pdf", "image/jpeg", "image/png", "text/csv",
+    "text/markdown", "text/plain",
+})
 #: The longest ``description`` the builder takes. canopy never keeps one.
 MAX_DESCRIPTION_LENGTH = 500
 #: The most links canopy keeps from one tool result.
@@ -90,6 +107,42 @@ def check_scheme(scheme: str) -> str:
     return value
 
 
+def check_id_length(value) -> int:
+    """``value`` as a declared id length, else ``ResourceError``: a whole number from
+    ``MIN_DECLARED_ID_LENGTH`` to ``MAX_DECLARED_ID_LENGTH``."""
+    if isinstance(value, bool) or not isinstance(value, int) or not (
+            MIN_DECLARED_ID_LENGTH <= value <= MAX_DECLARED_ID_LENGTH):
+        raise ResourceError("bad_id_length", f"{value!r} is not an id length (a whole number from "
+                                             f"{MIN_DECLARED_ID_LENGTH} to {MAX_DECLARED_ID_LENGTH})")
+    return value
+
+
+def id_of(uri: str, scheme: str, length: int | None = None) -> str | None:
+    """The result id of ``uri`` — everything after ``<scheme>://`` — when it is one: url-safe
+    characters only, exactly ``length`` of them when the host declared a length, else at
+    most ``MAX_ID_LENGTH``. None otherwise (a path, a query, anything that could carry
+    more than an address)."""
+    prefix = f"{scheme}://"
+    if not str(uri or "").lower().startswith(prefix):
+        return None
+    rid = uri[len(prefix):]
+    if not _ID.match(rid):
+        return None
+    if length is not None:
+        return rid if len(rid) == length else None
+    return rid if len(rid) <= MAX_ID_LENGTH else None
+
+
+def _policy(schemes) -> dict[str, int | None] | None:
+    """``schemes`` as ``{scheme: declared id length or None}``; None when not given."""
+    if schemes is None:
+        return None
+    if isinstance(schemes, Mapping):
+        return {str(k).lower(): (v if isinstance(v, int) and not isinstance(v, bool) else None)
+                for k, v in schemes.items()}
+    return {str(s).lower(): None for s in schemes}
+
+
 def scheme_of(uri: str) -> str:
     """The scheme of ``uri`` (lower case), or ``""``."""
     head, sep, _ = str(uri or "").partition(":")
@@ -110,7 +163,8 @@ def resource_link(uri: str, name: str, *, mime_type: str = "application/json",
     link = {"type": RESOURCE_LINK, "uri": uri, "name": name, "mimeType": mime_type}
     checked = validate_link(link, schemes=None)
     if checked is None:
-        raise ResourceError("bad_link", f"{uri!r} is not a link canopy keeps (scheme, length, name)")
+        raise ResourceError("bad_link", f"{uri!r} is not a link canopy keeps (<scheme>://<url-safe id>, "
+                                        f"a name, a mimeType from MIME_TYPES)")
     description = _bounded(description, MAX_DESCRIPTION_LENGTH)
     if description:
         checked["description"] = description
@@ -124,13 +178,16 @@ def _bounded(value, limit: int) -> str | None:
     return value if value and len(value) <= limit and not any(ord(c) < 32 for c in value) else None
 
 
-def validate_link(block, schemes: Iterable[str] | None, *, keep_name: bool = True) -> dict | None:
+def validate_link(block, schemes: Iterable[str] | Mapping[str, int | None] | None, *,
+                  keep_name: bool = True) -> dict | None:
     """``block`` as canopy keeps it, or None when it is not a link canopy keeps.
 
-    It must be a ``resource_link`` with a ``uri`` (no whitespace or control
-    characters, at most ``MAX_URI_LENGTH``) under a scheme in ``schemes`` (the
-    host's declared list; None skips that check — the host's own builder) and never
-    a reserved one, a ``name`` and a ``mimeType`` within their bounds. What canopy
+    It must be a ``resource_link`` whose ``uri`` is ``<scheme>://<id>`` (``id_of``: url-safe
+    characters only, no path or query) under a scheme in ``schemes`` and never a reserved
+    one; ``schemes`` is the host's declared list, or ``{scheme: id length}`` when the host
+    declared the exact length of its ids (``site.resource_id_lengths``); None skips the
+    scheme check — the host's own builder. Its ``name`` must be within bounds and its
+    ``mimeType`` one of ``MIME_TYPES``. What canopy
     keeps is ``{type, uri, name, mimeType}`` and nothing else: an address, never data
     (a ``description``, ``_meta`` or ``annotations`` could carry anything).
     ``keep_name=False`` — a sensitive conversation, where the link is kept in
@@ -146,20 +203,24 @@ def validate_link(block, schemes: Iterable[str] | None, *, keep_name: bool = Tru
     scheme = scheme_of(uri)
     if not scheme or scheme in RESERVED_SCHEMES:
         return None
-    if schemes is not None and scheme not in {str(s).lower() for s in schemes}:
+    policy = _policy(schemes)
+    if policy is not None and scheme not in policy:
+        return None
+    if id_of(uri, scheme, (policy or {}).get(scheme)) is None:
         return None
     name = _bounded(block.get("name"), MAX_NAME_LENGTH)
     mime = _bounded(block.get("mimeType", block.get("mime_type")), MAX_MIME_TYPE_LENGTH)
-    if name is None or mime is None or "/" not in mime:
+    if name is None or mime is None or mime.lower() not in MIME_TYPES:
         return None
+    mime = mime.lower()
     return {"type": RESOURCE_LINK, "uri": uri, "name": name if keep_name else scheme, "mimeType": mime}
 
 
-def validate_links(blocks: Iterable, schemes: Iterable[str] | None, *,
+def validate_links(blocks: Iterable, schemes: Iterable[str] | Mapping[str, int | None] | None, *,
                    keep_name: bool = True) -> list[dict]:
     """Every link in ``blocks`` canopy keeps (``validate_link``), de-duplicated by URI,
     at most ``MAX_LINKS``."""
-    schemes = None if schemes is None else frozenset(str(s).lower() for s in schemes)
+    schemes = _policy(schemes)
     out: list[dict] = []
     seen: set[str] = set()
     for block in blocks or ():

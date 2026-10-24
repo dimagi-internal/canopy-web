@@ -149,7 +149,9 @@ def site_facts(request, config) -> dict:
     * ``issuer`` / ``mcp_resource`` — ``ISSUER`` / ``RESOURCE`` (blank while the
       grant is off);
     * ``resource_schemes`` — ``RESOURCE_SCHEMES``: the schemes of the links this
-      site's tools return, which canopy keeps.
+      site's tools return, which canopy keeps;
+    * ``resource_id_lengths`` — ``RESOURCE_ID_LENGTHS``: the exact length of each
+      scheme's result ids, so canopy keeps nothing longer.
     """
     overrides = conf.site_facts_overrides()
     base = _origin_of(config.issuer) or _origin_of(request.build_absolute_uri("/"))
@@ -163,7 +165,8 @@ def site_facts(request, config) -> dict:
     return {"origins": overrides["origins"] or ([base] if base else []), "jwks_url": jwks_url,
             "issuer": config.issuer if config.grant_enabled else "",
             "mcp_resource": config.resource if config.grant_enabled else "",
-            "resource_schemes": conf.resource_schemes()}
+            "resource_schemes": conf.resource_schemes(),
+            "resource_id_lengths": conf.resource_id_lengths()}
 
 
 @require_GET

@@ -669,6 +669,24 @@ def test_site_json_declares_the_hosts_link_schemes_and_nothing_else_derives_one(
     got = site_mod.verify_site_document(response.content.decode(), [host.host_key.public_key()],
                                         site_name="connect-labs")
     assert got.site.resource_schemes == ("labs-result", "labs-draft")
+    assert got.site.resource_policy() == {"labs-result": None, "labs-draft": None}
+
+
+def test_site_json_declares_how_long_a_schemes_ids_are(host):
+    from canopy_sdk import site as site_mod
+
+    cfg = {**conf.raw(), "RESOURCE_SCHEMES": ["labs-result", "labs-draft"],
+           "RESOURCE_ID_LENGTHS": {"labs-result": 24}}
+    with override_settings(CANOPY_HOST=cfg):
+        response = Client().get("/canopy/site.json")
+    got = site_mod.verify_site_document(response.content.decode(), [host.host_key.public_key()],
+                                        site_name="connect-labs")
+    assert got.site.resource_policy() == {"labs-result": 24, "labs-draft": None}
+    # A document naming a length for a scheme it does not declare, or a loose one, is malformed.
+    for bad in ({"labs-other": 24}, {"labs-result": 8}, {"labs-result": "24"}, ["labs-result"]):
+        with pytest.raises(site_mod.SiteDocumentError):
+            site_mod.site_document("connect-labs", site={"resource_schemes": ["labs-result"],
+                                                         "resource_id_lengths": bad})
 
 
 def test_kept_results_are_not_the_sdks(host):
@@ -690,4 +708,17 @@ def test_a_bad_resource_scheme_fails_the_hosts_system_check(host):
             errors = [e for e in checks.run_checks() if e.id == "canopy_host.E011"]
         assert len(errors) == 1 and repr(bad[-1]) in errors[0].msg
     with override_settings(CANOPY_HOST={**conf.raw(), "RESOURCE_SCHEMES": ["labs-result"]}):
+        assert not [e for e in checks.run_checks() if e.id.startswith("canopy_host.")]
+
+
+def test_a_bad_resource_id_length_fails_the_hosts_system_check(host):
+    from django.core import checks
+
+    for bad in ({"labs-draft": 24}, {"labs-result": 12}, {"labs-result": "24"}, ["labs-result"]):
+        cfg = {**conf.raw(), "RESOURCE_SCHEMES": ["labs-result"], "RESOURCE_ID_LENGTHS": bad}
+        with override_settings(CANOPY_HOST=cfg):
+            errors = [e for e in checks.run_checks() if e.id == "canopy_host.E011"]
+        assert len(errors) == 1, (bad, errors)
+    cfg = {**conf.raw(), "RESOURCE_SCHEMES": ["labs-result"], "RESOURCE_ID_LENGTHS": {"labs-result": 24}}
+    with override_settings(CANOPY_HOST=cfg):
         assert not [e for e in checks.run_checks() if e.id.startswith("canopy_host.")]
