@@ -128,10 +128,12 @@ def knowledge_base(project, *, create: bool = False, lock: bool = False):
     `create` makes it on first publish; `lock` reads it for update."""
     from .models import ProjectService  # cycle: agents.models -> agents.kb_store  # noqa: PLC0415
 
-    qs = ProjectService.objects.filter(project=project, kind=ProjectService.KB)
+    qs = ProjectService.objects.filter(project=project, kind=ProjectService.KB).select_related("kb_version")
     if lock:
-        qs = qs.select_for_update()
-    kb = qs.select_related("kb_version").first()
+        # Only this row: PostgreSQL refuses FOR UPDATE on the nullable side of the
+        # kb_version outer join.
+        qs = qs.select_for_update(of=("self",))
+    kb = qs.first()
     if kb is None and create:
         kb, _ = ProjectService.objects.get_or_create(project=project, kind=ProjectService.KB, name="kb",
                                                      defaults={"description": project.outcome or ""})
