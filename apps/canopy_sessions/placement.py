@@ -363,7 +363,10 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
             metadata={
                 FORK_KEY: {"session_key": binding.session_key, "records": records,
                            "from_session": str(session.id),
-                           "worktree_of": worktree_of(session)},
+                           "worktree_of": worktree_of(session),
+                           # Copied rows move down by `offset`; their sealed envelopes keep
+                           # the index they were sealed at (`conversation_keys.index_offsets`).
+                           **_index_offsets(session, offset)},
                 # The fork's first turn must reach the box holding the transcript.
                 "requested_runner_id": str(binding.runner_id),
                 # Its history is a cut of a transcript, whatever the executor.
@@ -391,6 +394,13 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         conversation_keys.copy_key(session, fork)
         session_activity.rebuild(Session.objects.select_for_update().get(pk=fork.pk))
     return fork
+
+
+def _index_offsets(source, offset: int) -> dict:
+    earlier = conversation_keys.index_offsets(source)
+    if earlier is None:
+        return {}
+    return {"index_offsets": sorted({int(offset), *(int(offset) + d for d in earlier)})}
 
 
 def worktree_of(session) -> str:

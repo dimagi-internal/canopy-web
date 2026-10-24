@@ -79,10 +79,12 @@ export function SealedConversationBanner({
 
 /** An MCP Apps host whose Views get a sensitive conversation's call input decrypted
  *  here (`tool_input_sealed`), since the server sends it sealed. Without the key the
- *  View gets what the server sent: no input. */
-export function sealedAppHost(host: AppHost, key: () => ConversationKey | null): AppHost {
+ *  View gets what the server sent: no input — and `opened` (whether the key is open
+ *  now) is the host's `inputRevision`, so every View loads again once it is. */
+export function sealedAppHost(host: AppHost, key: () => ConversationKey | null, opened = false): AppHost {
   return {
     ...host,
+    inputRevision: opened ? 'open' : 'locked',
     load: async (callId) => {
       const res = (await host.load(callId)) as AppViewResource & {
         tool_input_sealed?: string | null; tool_input_path?: string
@@ -90,7 +92,7 @@ export function sealedAppHost(host: AppHost, key: () => ConversationKey | null):
       const k = key()
       if (!res.tool_input_sealed || !k) return res
       try {
-        const words = await openSealed(res.tool_input_sealed, k)
+        const words = await openSealed(res.tool_input_sealed, k, { role: 'tool_use' })
         const input = (words.content.input ?? {}) as Record<string, unknown>
         const args = res.tool_input_path === 'gateway' ? (input.arguments ?? {}) : input
         return { ...res, tool_input: args as Record<string, unknown> }

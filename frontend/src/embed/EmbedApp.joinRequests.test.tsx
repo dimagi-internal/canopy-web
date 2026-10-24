@@ -20,6 +20,13 @@ vi.mock('@/vault/sealedChat', async (orig) => ({
   wrapForRecipient: vi.fn(async () => ({ alg: 'ECDH-ES', epk: {}, n: 'n', ct: 'ct', recipient_jkt: 'jkt-ada' })),
 }))
 
+// The recipient's key is one this browser already trusts (the trust rule itself is
+// proven in ChatPeople.sealed.test.tsx).
+vi.mock('@/vault/trust', async (orig) => ({
+  ...(await orig<typeof import('@/vault/trust')>()),
+  trustPerson: vi.fn(async () => ({ status: 'pinned', jkt: 'jkt-ada' })),
+}))
+
 const { EmbedApp } = await import('./EmbedApp')
 
 const AGENTS = [{ slug: 'hal', name: 'Hal', description: '', avatar_url: '', workspace: 'connect' }]

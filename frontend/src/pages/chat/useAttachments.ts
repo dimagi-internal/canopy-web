@@ -3,10 +3,16 @@ import type { PendingAttachment } from 'canopy-ui/chat'
 
 import { deleteAttachment, uploadAttachment } from '@/api/chat'
 
+/** Why a private conversation takes no file: it would be its words, kept where canopy
+ *  could read them, and the agent's box holds no key to open a sealed one. The server
+ *  refuses the upload too (422). */
+export const PRIVATE_NO_FILES = "Files can't be attached to a private conversation yet — paste the part that matters as text."
+
 /** A chat's staged attachments. Uploaded eagerly on pick/paste/drop so the file
  *  is on the server before you press send — sending then sweeps up whatever the
- *  session is holding, which is why no ids need to cross the WebSocket. */
-export function useAttachments(sessionId: string) {
+ *  session is holding, which is why no ids need to cross the WebSocket. In a private
+ *  conversation (`refuse`) a picked file is shown refused, with why, and never sent. */
+export function useAttachments(sessionId: string, refuse?: string) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
 
   // Uploads go one at a time: the server hands files to the runner in upload
@@ -18,6 +24,10 @@ export function useAttachments(sessionId: string) {
         // Optimistic chip keyed on a temp id, swapped for the server's id on
         // success. Without it a large paste looks like nothing happened.
         const tempId = `pending:${file.name}:${Date.now()}:${Math.random()}`
+        if (refuse) {
+          setAttachments((prev) => [...prev, { id: tempId, filename: file.name, uploading: false, error: refuse }])
+          continue
+        }
         setAttachments((prev) => [...prev, { id: tempId, filename: file.name, uploading: true }])
         uploads.current = uploads.current.then(() => uploadAttachment(sessionId, file)
           .then((saved) =>
@@ -36,7 +46,7 @@ export function useAttachments(sessionId: string) {
           ))
       }
     },
-    [sessionId],
+    [sessionId, refuse],
   )
 
   const remove = useCallback((attachmentId: string) => {

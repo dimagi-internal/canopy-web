@@ -19,7 +19,7 @@
  * Thumbprints are recomputed here; the server's `key_jkt` is never trusted.
  */
 import type { ZkEndorsementOut, ZkRecipientOut, ZkRecipientsOut } from '@/api/vault'
-import { jkt, verifyEndorsement, type Recipient } from './zk'
+import { jkt, publicJwkOfScalar, verifyEndorsement, type Recipient } from './zk'
 
 type Jwk = { x?: string; y?: string }
 
@@ -145,4 +145,62 @@ export function changedKey(a: Assessment): Endorser | undefined {
 /** People whose endorsements the writer has not decided about yet. */
 export function newEndorsers(a: Assessment): Endorser[] {
   return a.endorsers.filter((e) => e.status === 'new')
+}
+
+// ---- a person's vault key, one at a time (a private conversation) ----------------------
+//
+// Adding someone to a private conversation wraps its key to THEIR vault key, which
+// the server names (`GET …/participants/recipient`). The same rule as above, for one
+// person and no endorsements: wrap only to a key this browser already trusts for them
+// (pinned), or one the adder accepts NOW having seen its fingerprint (first contact,
+// then pinned). A pinned person whose key changed stops the add until the adder has
+// confirmed the new key with them.
+
+export type PersonStatus = 'self' | 'pinned' | 'new' | 'changed' | 'bad'
+
+export interface PersonVerdict {
+  status: PersonStatus
+  /** The key's thumbprint, recomputed here. */
+  jkt: string
+  /** For `changed`: the thumbprint pinned before. */
+  was?: string
+}
+
+/** How far this browser trusts `recipient`'s vault key. `bad`: the key does not match the
+ *  thumbprint the server sent with it. */
+export async function trustPerson(recipient: { user_id: number | string; public_jwk: Jwk | Record<string, unknown>; jkt: string },
+                                  opts: { self?: Self | null; pins?: Pins } = {}): Promise<PersonVerdict> {
+  const real = await jkt(recipient.public_jwk as Jwk)
+  if (real !== recipient.jkt) return { status: 'bad', jkt: real }
+  const by = String(recipient.user_id)
+  if (opts.self && opts.self.userId === by) {
+    const mine = await jkt(opts.self.publicJwk)
+    return mine === real ? { status: 'self', jkt: real } : { status: 'changed', jkt: real, was: mine }
+  }
+  const pin = (opts.pins ?? loadPins())[by]
+  if (!pin) return { status: 'new', jkt: real }
+  return pin.jkt === real ? { status: 'pinned', jkt: real } : { status: 'changed', jkt: real, was: pin.jkt }
+}
+
+/** Remember the person's key as trusted in this browser (they accepted its fingerprint). */
+export function pinPerson(userId: number | string, thumb: string, email: string): void {
+  savePins([{ by: String(userId), jkt: thumb, email }])
+}
+
+/** Your own key, as you just opened it with your passkey or passphrase: pinned, so a key
+ *  the server later names as yours is checked against it (`checkSelf`). The public half
+ *  is recomputed from the private scalar when the flow opened it, so the pin is the key
+ *  you hold, whatever the server said it was. */
+export async function rememberSelf(userId: string, publicJwk: Jwk, scalar?: Uint8Array): Promise<void> {
+  const thumb = await jkt(scalar ? await publicJwkOfScalar(scalar) : publicJwk)
+  const was = loadPins()[userId]
+  if (!was || was.jkt !== thumb) savePins([{ by: userId, jkt: thumb, email: was?.email ?? '' }])
+}
+
+/** Whether `thumb` is the vault key this browser last opened as yours: `new` when it never
+ *  has, `changed` when it opened a different one. */
+export function checkSelf(userId: string, thumb: string): 'pinned' | 'new' | 'changed' {
+  const pin = loadPins()[userId]
+  if (!pin) return 'new'
+  return pin.jkt === thumb ? 'pinned' : 'changed'
 }

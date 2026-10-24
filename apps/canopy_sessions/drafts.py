@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from . import presence
@@ -18,9 +19,9 @@ from .models import Draft, Session
 PEER_DRAFT_FRESH = dt.timedelta(minutes=10)
 
 
-#: How a sensitive conversation's draft is stored: its body encrypted
-#: (`apps/common/encryption.py`) behind this marker, so a database read, a backup
-#: or a shell sees nothing of what a person is typing (`harness.sensitivity`).
+#: What a draft stored before sensitive conversations kept drafts local began with: a
+#: body under the field key. Such a body is read as nothing — canopy-web does not
+#: decrypt it — and a sensitive conversation stores no draft at all (`update_draft`).
 SEALED_PREFIX = "sealed:"
 
 
@@ -33,26 +34,17 @@ def _sensitive(session: Session) -> bool:
     return sensitivity.is_sensitive(fresh if fresh is not None else session)
 
 
-def _stored(session: Session, body: str) -> str:
-    if not body or not _sensitive(session):
-        return body
-    from apps.common.encryption import encrypt_secret  # noqa: PLC0415 — reads settings
-
-    return SEALED_PREFIX + encrypt_secret(body)
-
-
 def body_of(draft: Draft | None) -> str:
     """A draft's words. Callers that hand them to someone first ask whether that
     reader may have them (the socket's `reads_content`, `serializers.draft_dto`)."""
     raw = (draft.body if draft is not None else "") or ""
-    if not raw.startswith(SEALED_PREFIX):
-        return raw
-    from apps.common.encryption import decrypt_secret  # noqa: PLC0415 — reads settings
+    return "" if raw.startswith(SEALED_PREFIX) else raw
 
-    try:
-        return decrypt_secret(raw[len(SEALED_PREFIX):])
-    except Exception:  # noqa: BLE001 — a body no key opens reads as nothing
-        return ""
+
+def forget_words(session: Session) -> int:
+    """Empty every draft in `session`: it became sensitive, and from now on what its
+    people type stays in their browsers until they send it."""
+    return Draft.objects.filter(session=session).exclude(body="").update(body="", version=F("version") + 1)
 
 
 class DraftVersionMismatch(Exception):
@@ -67,20 +59,25 @@ def draft_for(session: Session, user) -> Draft:
     return draft
 
 
-def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft:
-    """The version-guarded keystroke path. In a sensitive conversation the body
-    is stored encrypted (`_stored`); `body_of` reads it back. Deliberately has no `visibility`
+def update_draft(session: Session, *, user, expected_version: int, body: str) -> Draft | None:
+    """The version-guarded keystroke path. None, storing nothing, in a SENSITIVE
+    conversation: a draft there stays in the person's browser until they send it (the
+    composer sends its text with `chat.send`), so canopy-web never holds words it could
+    read back — and the keystrokes are not relayed to anyone. Deliberately has no `visibility`
     parameter any more (canopy-ui#… "hidden->live->hidden" regression): the
     mode used to ride this frame, so a stale keystroke echo — one that lost a
     race against a mode change — could silently downgrade it server-side, and
     the version check that protects BODY conflicts has nothing to do with a
     choice the user makes independently of typing. See `set_visibility`,
     which applies the mode unconditionally, on its own idempotent frame."""
+    if _sensitive(session):
+        forget_words(session)
+        return None
     with transaction.atomic():
         draft = Draft.objects.select_for_update().get(pk=draft_for(session, user).pk)
         if expected_version != draft.version:
             raise DraftVersionMismatch(draft.version, body_of(draft))
-        draft.body = _stored(session, body)
+        draft.body = body
         draft.version += 1
         draft.save(update_fields=["body", "version", "updated_at"])
     return draft

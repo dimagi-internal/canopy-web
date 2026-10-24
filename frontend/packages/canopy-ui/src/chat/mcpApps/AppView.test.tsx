@@ -199,3 +199,32 @@ describe("AppView resource subscriptions", () => {
     expect(posted.filter((m) => m.method === "notifications/resources/updated")).toHaveLength(1);
   });
 });
+
+describe("AppView inputRevision", () => {
+  it("loads the View again, into a fresh frame, when what it loads changes (a private input unlocked)", async () => {
+    const res = resource();
+    const load = vi.fn(async () => res);
+    const base = { ...host(res), load } as AppHost;
+    const view = (rev: string) => (
+      <AppHostContext.Provider value={{ ...base, inputRevision: rev }}>
+        <MessageList messages={[use, result]} />
+      </AppHostContext.Provider>
+    );
+    const { rerender } = render(view("locked"));
+    await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
+    const before = screen.getByTitle("Labs: workflow_run_action");
+    expect(load).toHaveBeenCalledTimes(1);
+    load.mockResolvedValue(resource({ tool_input: { q: "Amina" } }));
+    rerender(view("open"));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTitle("Labs: workflow_run_action")).toBeTruthy());
+    expect(screen.getByTitle("Labs: workflow_run_action")).not.toBe(before);
+    // A host whose size alone changes does not reload it.
+    rerender(
+      <AppHostContext.Provider value={{ ...base, inputRevision: "open", maxWidth: 400 }}>
+        <MessageList messages={[use, result]} />
+      </AppHostContext.Provider>,
+    );
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+});

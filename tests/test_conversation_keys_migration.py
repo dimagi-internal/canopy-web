@@ -56,7 +56,7 @@ def test_legacy_rows_are_resealed_to_their_conversation_and_wrapped_to_the_start
     scalar = unwrap(wrap.wrap, priv, conversation_keys.wrap_info(key.conversation, starter.pk))
     conv = ec.derive_private_key(int.from_bytes(scalar, "big"), ec.SECP256R1())
     body = json.loads(ecdh_es.unb64u(sealed[len(conversation_keys.PREFIX):]))
-    assert body["i"] == 3 and json.loads(unwrap(body, conv, conversation_keys.message_info(body["c"], 3))) == WORDS
+    assert body["i"] == 3 and json.loads(unwrap(body, conv, conversation_keys.message_info(body["c"], 3, body.get("r")))) == WORDS
     # The starter with no vault key: left under the field key, with no key made.
     assert not conversation_keys.is_envelope(Message.objects.get(session_id=stuck.pk).sealed)
     assert not new.get_model("canopy_sessions", "SessionKey").objects.filter(session_id=stuck.pk).exists()

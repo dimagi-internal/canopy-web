@@ -73,7 +73,9 @@ def test_fork_keeps_the_clicked_turn_and_drops_what_follows():
     assert fork.agent_id == s.agent_id and fork.workspace_id == s.workspace_id
     assert list(fork.messages.values_list("turn_index", flat=True)) == [0, S, 2 * S, 3 * S, 3 * S + 1]
     assert fork.metadata[session_placement.FORK_KEY] == {"session_key": "src-sid", "records": 4,
-                                            "from_session": str(s.id), "worktree_of": str(s.id)}
+                                            "from_session": str(s.id), "worktree_of": str(s.id),
+                                            # Its rows keep the index they were sealed at.
+                                            "index_offsets": [0]}
     assert fork.metadata["requested_runner_id"] == str(runner.id)
     # The source is untouched.
     assert s.messages.count() == len(ROWS)

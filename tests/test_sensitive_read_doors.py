@@ -267,10 +267,21 @@ def test_a_token_socket_closes_when_its_conversation_becomes_sensitive(w):
                             then=lambda: services.add_runner_requirements(s, {"sensitive_data"}))
 
 
+def _give_copy(w, peer):
+    from apps.canopy_sessions import conversation_keys
+    from tests.fixtures.sensitive import rewrap_for, vault_key
+
+    vault_key(peer)
+    wrap = rewrap_for(w["hot"], w["user"], w["key"], peer)
+    conversation_keys.add_wrap(w["hot"], peer, {k: v for k, v in wrap.items() if k != "recipient_jkt"},
+                               recipient_jkt=wrap["recipient_jkt"], by=w["user"])
+
+
 def test_a_removed_participants_socket_closes(w):
     peer = User.objects.create_user("peer", "peer@dimagi.com", "pw")
     WorkspaceMembership.objects.create(user=peer, workspace=w["ws"], role=WorkspaceMembership.EDITOR)
     SessionParticipant.objects.create(session=w["hot"], user=peer, role=SessionParticipant.VIEWER)
+    _give_copy(w, peer)
     assert _socket(w["hot"], peer)
 
     def remove():

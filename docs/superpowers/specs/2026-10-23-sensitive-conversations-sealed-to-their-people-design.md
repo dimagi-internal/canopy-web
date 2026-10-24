@@ -52,8 +52,14 @@ nothing here.
 
 ## 2. A key per conversation, wrapped to each of its people (removes reason 1)
 
-- **The conversation keypair.** When a session becomes sensitive (its requirements
-  gain `sensitive_data`), canopy-web makes a P-256 ECDH keypair for it. The public
+- **The conversation keypair, made in the starter's browser.** A chat started from
+  canopy's own chat surfaces carries a P-256 ECDH keypair the starter's browser made,
+  its private half wrapped there to the starter's vault key (checked against the key
+  that browser last opened as theirs); canopy-web keeps it even while the chat is
+  ordinary and seals to it if it becomes sensitive, so it never sees the private half.
+- **Where no browser is there** (a session made sensitive from Slack, MCP, a host's
+  grant, or one created with no key): when its requirements gain `sensitive_data`,
+  canopy-web makes a P-256 ECDH keypair for it. The public
   key is stored on the session (`SessionKey.public_jwk`). The private key is
   immediately **wrapped** (ECDH-ES + HKDF + AES-GCM, the vault's existing
   `wrapEcdhEs` construction, info `canopy-chat/v1/wrap|<session>|<user>`) to the
@@ -63,7 +69,9 @@ nothing here.
 - **Messages are sealed to the conversation's public key.** Each stored message's
   words (`Message.sealed`) are an ECIES envelope: a fresh ephemeral ECDH key, HKDF to
   an AES-256-GCM key, the payload `{plaintext, content}` encrypted with associated
-  data `canopy-chat/v1/message|<session>|<turn_index>`. canopy-web holds only the
+  data `canopy-chat/v1/message|<session>|<turn_index>|<role>` (the role named as `r`
+  too); the browser opens a row only at the index and as the speaker its envelope names
+  (a fork's copied rows at a recorded offset). canopy-web holds only the
   public key, so it can **write** every new message (the person's send, the agent's
   transcript rows) and can **read none**. This is the write-only path: no shared
   symmetric key ever sits on the server.
@@ -76,8 +84,14 @@ nothing here.
 - **Multiplayer.** One keypair per conversation, wrapped once per person (no
   re-encryption of messages). Adding a participant to a sensitive conversation is a
   browser action by someone already in it: their browser unwraps the private key and
-  wraps it to the new person's vault public key; the server stores the new wrap
-  (`SessionKeyWrap`). Removing someone deletes their wrap. (Rotation on removal is
+  wraps it to the new person's vault public key — only once that key is one the browser
+  trusts for them (pinned, or its fingerprint accepted now: the ZK vault's rule) — and
+  the server stores the new wrap (`SessionKeyWrap`). Someone given the conversation
+  before it became sensitive, or whose vault key changed, is listed as needing the key;
+  anyone in it gives them a copy the same way, and until then the live socket (whose
+  frames carry the words) turns them away. Replacing your own vault key re-wraps every
+  copy you hold to the new key while the old one is unlocked. Removing someone deletes
+  their wrap. (Rotation on removal is
   not in scope: a removed person could have kept what they read.)
 - **Who may start one.** Only a canopy user with a vault keyset. A contact (no
   canopy account) cannot start or hold a sensitive conversation for now: refused
@@ -86,9 +100,13 @@ nothing here.
 - **What canopy-web keeps able to read:** the metadata columns (kind, tool names,
   argument names, ids, sizes, hashes), turn status, the ledger (already metadata) and
   logs — everything troubleshooting needs.
+- **What a sensitive conversation does not take.** A file (refused at upload: the agent
+  reads it on its box, which holds no key to the conversation, so it could only be kept
+  readable), and a draft on the server (the composer keeps it in the browser and sends
+  the text with the send).
 - **Server-side consumers of the words, after this:**
   - MCP Apps: a View's `tool_input` is decrypted in the browser and handed to the
-    View by the client; the server derives which View a call has from the metadata
+    View by the client (which loads the View again once the key opens); the server derives which View a call has from the metadata
     columns (tool name, host tool) only.
   - Fork: copies ciphertext and wraps as they are (same conversation).
   - Export, share, Slack, reviews, search: already refused or metadata-only.

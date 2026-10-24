@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.db import IntegrityError, transaction
@@ -59,8 +60,12 @@ class CannotHold(ValueError):
         super().__init__(NEEDS_VAULT_KEY.format(url=links.public_url("/settings#vault-key")))
 
 
-def message_info(conversation, index: int) -> str:
-    return f"canopy-chat/v1/message|{conversation}|{index}"
+def message_info(conversation, index: int, role: str | None = None) -> str:
+    """The HKDF info and AES-GCM associated data of one message's envelope. Since the
+    role is bound too (`r` in the envelope), a stored row cannot be served as another
+    speaker's; an envelope without `r` predates that and binds conversation and index."""
+    base = f"canopy-chat/v1/message|{conversation}|{index}"
+    return f"{base}|{role}" if role else base
 
 
 def wrap_info(conversation, user_id) -> str:
@@ -94,21 +99,27 @@ def key_of(session: Session) -> SessionKey | None:
     return key
 
 
-def ensure_key(session: Session, *, starter=None) -> SessionKey | None:
+def ensure_key(session: Session, *, starter=None, offered: dict | None = None) -> SessionKey | None:
     """The conversation's key, made now if it has none. Idempotent; never raises for a
     missing vault key (the send door refuses, `require_key`).
 
     * already keyed → that key;
     * it carries on a conversation that has one (`parent_session`: a fork, a successor,
       a branch) → the same key pair and the same people's wraps (`copy_key`);
-    * otherwise a new pair, wrapped to its starter (`created_by`, else `starter`, the
-      person whose act made it sensitive) when they have a vault key; None when not."""
+    * a key pair its starter's BROWSER made (`offered`, checked by `check_offer`) →
+      that one: canopy-web never sees its private half;
+    * otherwise — no browser was there: a conversation made sensitive mid-turn, from
+      Slack, by a host's grant — a new pair made here, wrapped to its starter
+      (`created_by`, else `starter`, the person whose act made it sensitive) when they
+      have a vault key; None when not."""
     key = key_of(session)
     if key is not None:
         return key
     parent = Session.objects.filter(pk=session.parent_session_id).first() if session.parent_session_id else None
     if parent is not None and key_of(parent) is not None:
         return copy_key(parent, session)
+    if offered is not None:
+        return _store_offer(session, offered)
     person = session.created_by if session.created_by_id else starter
     keyset = _keyset(person)
     if keyset is None:
@@ -144,6 +155,56 @@ def require_key(session: Session, *, user=None, contact=None) -> SessionKey:
     return key
 
 
+def check_offer(user, offered) -> dict:
+    """A conversation key pair made in `user`'s browser (`SessionCreateIn.conversation_key`):
+    its public half, and its private half wrapped there to `user`'s CURRENT vault key.
+    The server cannot open the wrap; it checks the public key is a P-256 point, the wrap
+    is the shape and length of a wrapped scalar, and `recipient_jkt` names `user`'s
+    vault key. Returns the cleaned offer, or raises WrapRefused."""
+    keyset = _keyset(user)
+    if keyset is None:
+        raise WrapRefused("you have no vault key to hold a conversation key")
+    if not isinstance(offered, dict):
+        raise WrapRefused("a conversation key is {public_jwk, wrap, recipient_jkt}")
+    jwk = offered.get("public_jwk")
+    try:
+        public = ecdh_es.jwk_of(ecdh_es.public_key(jwk if isinstance(jwk, dict) else {}))
+    except (ValueError, TypeError):
+        raise WrapRefused("public_jwk is not a P-256 public key") from None
+    if offered.get("recipient_jkt") != ecdh_es.jkt(keyset.public_jwk):
+        raise WrapRefused("that key is not wrapped to your current vault key; reload and try again")
+    try:
+        wrap = ecdh_es.check_wrap(offered.get("wrap"), plaintext_len=32)
+    except ecdh_es.ShapeError as exc:
+        raise WrapRefused(f"not a conversation key wrap: {exc}") from None
+    try:
+        conversation = uuid.UUID(str(offered.get("conversation")))
+    except ValueError:
+        raise WrapRefused("conversation must be a UUID") from None
+    return {"conversation": conversation, "public_jwk": public, "wrap": wrap,
+            "recipient_jkt": offered["recipient_jkt"], "user_id": user.pk}
+
+
+def _store_offer(session: Session, offer: dict) -> SessionKey | None:
+    """Keep a browser-made key pair (`check_offer`) as the conversation's key. Kept even
+    for a conversation not sensitive yet: if it becomes so later, its words are sealed to
+    this key, not to one canopy-web made."""
+    if offer.get("user_id") != session.created_by_id:
+        log.warning("session %s: a conversation key offered by someone other than its starter", session.pk)
+        return None
+    try:
+        with transaction.atomic():
+            key = SessionKey.objects.create(session=session, conversation=offer["conversation"],
+                                            public_jwk=offer["public_jwk"])
+            SessionKeyWrap.objects.create(session=session, user_id=session.created_by_id,
+                                          recipient_jkt=offer["recipient_jkt"], wrap=offer["wrap"])
+    except IntegrityError:
+        key = SessionKey.objects.filter(session_id=session.pk).first()
+    if key is not None:
+        session._conversation_key = key
+    return key
+
+
 def copy_key(source: Session, target: Session) -> SessionKey | None:
     """`target` carries `source`'s conversation on (a fork): the same key pair, bound to
     the same conversation, and every wrap `source` has. Whatever key `target` was given
@@ -164,7 +225,7 @@ def copy_key(source: Session, target: Session) -> SessionKey | None:
     return copied
 
 
-def seal_words(session: Session, index: int, words: dict) -> str | None:
+def seal_words(session: Session, index: int, words: dict, role: str | None = None) -> str | None:
     """`words` sealed to the conversation's public key at `index`, or None when the
     conversation has no key (its starter has no vault key): then nothing of the words
     is kept, rather than kept where canopy-web could read them."""
@@ -173,13 +234,14 @@ def seal_words(session: Session, index: int, words: dict) -> str | None:
         log.warning("sensitive session %s has no conversation key; its words at %s are not kept",
                     session.pk, index)
         return None
-    return envelope(key.conversation, key.public_jwk, index, words)
+    return envelope(key.conversation, key.public_jwk, index, words, role=role)
 
 
-def envelope(conversation, public_jwk: dict, index: int, words: dict, **pinned) -> str:
+def envelope(conversation, public_jwk: dict, index: int, words: dict, *, role: str | None = None,
+             **pinned) -> str:
     body = json.dumps(words, sort_keys=True, separators=(",", ":")).encode()
-    sealed = ecdh_es.wrap(body, public_jwk, message_info(conversation, index), **pinned)
-    out = {"c": str(conversation), "i": int(index), **sealed}
+    sealed = ecdh_es.wrap(body, public_jwk, message_info(conversation, index, role), **pinned)
+    out = {"c": str(conversation), "i": int(index), **({"r": role} if role else {}), **sealed}
     return PREFIX + ecdh_es.b64u(json.dumps(out, separators=(",", ":")).encode())
 
 
@@ -239,7 +301,23 @@ def reader_key(session: Session, user) -> dict | None:
         "current": current,
         "keyset": _keyset_out(user, keyset) if keyset else None,
         "needs_migration": needs_migration(session),
+        "index_offsets": index_offsets(session),
     }
+
+
+def index_offsets(session: Session) -> list[int] | None:
+    """How far rows here may sit below the index their envelopes were sealed at. A fork
+    renumbers the rows it copies (`placement.fork_at`) while each envelope keeps its own
+    `i`, so a reader accepts `i == turn_index + d` for d in [0, *these]. [] for a
+    conversation that is not a fork; None for a fork made before forks recorded it (the
+    browser then checks only the conversation an envelope names)."""
+    fork = (session.metadata or {}).get("fork")
+    if not isinstance(fork, dict):
+        return []
+    value = fork.get("index_offsets")
+    if not isinstance(value, list) or not all(isinstance(v, int) for v in value):
+        return None
+    return value
 
 
 def _keyset_out(user, keyset) -> dict:
@@ -289,6 +367,81 @@ def has_current_wrap(session: Session, user) -> bool:
         session=session, user_id=user.pk, recipient_jkt=ecdh_es.jkt(keyset.public_jwk)).exists()
 
 
+def holds_copy(session: Session, user) -> bool:
+    """Whether `user` was given a copy of the conversation's key (current or not). The
+    live socket carries a sensitive conversation's words, so it admits only someone who
+    holds one (`sensitivity.hears_live`): a participant added before the conversation
+    became sensitive has none until someone in it wraps them one. True for a
+    conversation with no key: nothing is sealed, so there is nothing to hold."""
+    if key_of(session) is None:
+        return True
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    return SessionKeyWrap.objects.filter(session=session, user_id=user.pk).exists()
+
+
+def without_current_copy(session: Session, user_ids) -> set:
+    """Which of `user_ids` hold no copy of the key for their CURRENT vault key: someone
+    added before it became sensitive, or whose vault key changed since. One read for
+    the people list (`ParticipantOut.needs_key`). Empty for a conversation with no key."""
+    if key_of(session) is None:
+        return set()
+    ids = set(user_ids)
+    current = {k.user_id: ecdh_es.jkt(k.public_jwk)
+               for k in UserVaultKeyset.objects.filter(user_id__in=ids)}
+    held = {w.user_id: w.recipient_jkt for w in SessionKeyWrap.objects.filter(session=session, user_id__in=ids)}
+    return {uid for uid in ids if uid not in current or held.get(uid) != current[uid]}
+
+
+def my_copies(user) -> list[dict]:
+    """Every conversation key `user` holds a copy of, for their browser to re-wrap
+    before they replace their vault key (`PUT /my-keys` after). What is said is never
+    here: a wrap, the conversation's public key, and enough to name it to its owner
+    (the agent, when it started)."""
+    rows = (SessionKeyWrap.objects.filter(user_id=user.pk)
+            .select_related("session", "session__agent"))
+    out = []
+    for w in rows:
+        key = SessionKey.objects.filter(session_id=w.session_id).first()
+        if key is None:
+            continue
+        agent = w.session.agent
+        out.append({
+            "session_id": str(w.session_id), "conversation": str(key.conversation),
+            "public_jwk": key.public_jwk, "wrap": w.wrap, "recipient_jkt": w.recipient_jkt,
+            "agent_name": (agent.name if agent is not None else "") or "",
+            "workspace": w.session.workspace_id or "",
+            "started_at": w.session.created_at,
+        })
+    return out
+
+
+def replace_my_copies(user, copies: list[dict]) -> int:
+    """Store `copies` — `{session_id, wrap, recipient_jkt}`, each re-wrapped in the
+    person's browser to their NEW vault key — over the copies they already hold. Only
+    a copy they hold is replaced (this never puts them in a conversation), and only to
+    their current vault key. Returns how many were stored; raises WrapRefused on the
+    first bad one, storing none."""
+    keyset = _keyset(user)
+    if keyset is None:
+        raise WrapRefused("you have no vault key")
+    want = ecdh_es.jkt(keyset.public_jwk)
+    clean = []
+    for i, c in enumerate(copies):
+        if c.get("recipient_jkt") != want:
+            raise WrapRefused(f"copies[{i}] is not for your current vault key")
+        try:
+            clean.append((str(c.get("session_id")), ecdh_es.check_wrap(c.get("wrap"), plaintext_len=32)))
+        except ecdh_es.ShapeError as exc:
+            raise WrapRefused(f"copies[{i}]: not a conversation key wrap: {exc}") from None
+    n = 0
+    with transaction.atomic():
+        for session_id, wrap in clean:
+            n += SessionKeyWrap.objects.filter(session_id=session_id, user_id=user.pk).update(
+                wrap=wrap, recipient_jkt=want, created_by=user)
+    return n
+
+
 def drop_wrap(session: Session, user_id) -> None:
     SessionKeyWrap.objects.filter(session=session, user_id=user_id).delete()
 
@@ -332,14 +485,14 @@ def reseal_legacy(*, Session=Session, Message=Message, SessionKey=SessionKey,
                 recipient_jkt=ecdh_es.jkt(keyset.public_jwk),
                 wrap=ecdh_es.wrap(scalar, keyset.public_jwk, wrap_info(session_id, session.created_by_id)))
             del scalar
-        for m in legacy.filter(session_id=session_id).only("pk", "turn_index", "sealed"):
+        for m in legacy.filter(session_id=session_id).only("pk", "turn_index", "role", "sealed"):
             try:
                 words = json.loads(decrypt_secret(m.sealed))
             except Exception:  # noqa: BLE001 — a row no key opens is kept as it is
                 log_to.warning("message %s in %s does not open under the field key", m.pk, session_id)
                 continue
             Message.objects.filter(pk=m.pk).update(
-                sealed=envelope(key.conversation, key.public_jwk, m.turn_index, words))
+                sealed=envelope(key.conversation, key.public_jwk, m.turn_index, words, role=m.role))
             done["rows"] += 1
         done["sessions"] += 1
     return done
@@ -378,5 +531,8 @@ def vectors() -> dict:
             "wrap": ecdh_es.wrap(scalar, person_jwk, wrap_info(conversation, user_id),
                                  _ephemeral=e_wrap, _nonce=nonce_wrap),
             "sealed": envelope(conversation, conv_jwk, index, words, _ephemeral=e_msg, _nonce=nonce_msg),
+            "message_info_with_role": message_info(conversation, index, "assistant"),
+            "sealed_with_role": envelope(conversation, conv_jwk, index, words, role="assistant",
+                                         _ephemeral=e_msg, _nonce=nonce_msg),
         },
     }

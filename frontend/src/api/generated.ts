@@ -11795,6 +11795,60 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/my-vault-key": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * My vault public key, to wrap a new chat's key to
+         * @description Your vault key's PUBLIC half and its thumbprint, for your browser to wrap a new
+         *     conversation's key to before it starts one (`SessionCreateIn.conversation_key`) —
+         *     also from the embedded panel, which has no browser session to read
+         *     `/api/vault/keyset` with. 404 when you have none.
+         */
+        readonly get: operations["my_vault_key"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/my-keys": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The private chats whose key I hold a copy of
+         * @description Before you replace your vault key: every sensitive conversation you hold a copy
+         *     of the key to (a wrap only your vault key opens — never what was said), so your
+         *     browser can re-wrap each to the new key while the old one is open, and name them
+         *     to you. Store the re-wrapped copies with `PUT /my-keys` once the new key is set.
+         *     Canopy's own signed-in page only.
+         */
+        readonly get: operations["my_key_copies"];
+        /**
+         * Store my private chats' keys, re-wrapped to my new vault key
+         * @description After `PUT /api/vault/keyset` with `replace`: your copies of your conversations'
+         *     keys, each re-wrapped in your browser to your NEW vault key. Replaces only copies
+         *     you already hold, and only to your current vault key; 422 (storing none) when one
+         *     is not.
+         */
+        readonly put: operations["put_my_key_copies"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/transfer-requests": {
         readonly parameters: {
             readonly query?: never;
@@ -12263,6 +12317,31 @@ export interface paths {
         readonly get: operations["participant_recipient"];
         readonly put?: never;
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/canopy-sessions/{session_id}/key-copies": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give someone in a private chat their copy of its key
+         * @description For someone ALREADY in a sensitive conversation who cannot read it: given it
+         *     before it became sensitive, or whose vault key changed since (its starter
+         *     included). Your browser opens your copy of the key and wraps it to their current
+         *     vault key (`GET /{id}/participants/recipient`); canopy-web stores the wrap. Anyone
+         *     in the conversation who holds a current copy may give one. It puts nobody in it:
+         *     404 when they are not in it.
+         */
+        readonly post: operations["give_key_copy"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -32798,6 +32877,46 @@ export interface components {
              */
             readonly shared: boolean;
         };
+        /**
+         * ConversationKeyIn
+         * @description A key pair for this conversation, made in your browser: its public half, and its
+         *     private half wrapped to YOUR current vault key (info `canopy-chat/v1/wrap|<conversation>|<your
+         *     user id>`). If the conversation is, or later becomes, sensitive its words are sealed
+         *     to this key, and canopy-web never sees the private half. Sent by canopy's own chat
+         *     surfaces; leave it out otherwise.
+         */
+        readonly ConversationKeyIn: {
+            /**
+             * Conversation
+             * Format: uuid
+             */
+            readonly conversation: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            readonly wrap: components["schemas"]["ConversationKeyWrapIn"];
+            /** Recipient Jkt */
+            readonly recipient_jkt: string;
+        };
+        /**
+         * ConversationKeyWrapIn
+         * @description A conversation key's private half wrapped to a vault key: `{alg: "ecdh-es", epk,
+         *     n, ct}`.
+         */
+        readonly ConversationKeyWrapIn: {
+            /**
+             * Alg
+             * @constant
+             */
+            readonly alg: "ecdh-es";
+            /** Epk */
+            readonly epk: string;
+            /** N */
+            readonly n: string;
+            /** Ct */
+            readonly ct: string;
+        };
         /** SessionCreateIn */
         readonly SessionCreateIn: {
             /** Agent Slug */
@@ -32822,6 +32941,7 @@ export interface components {
             /** Runner Id */
             readonly runner_id?: string | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
+            readonly conversation_key?: components["schemas"]["ConversationKeyIn"] | null;
         };
         /**
          * SessionSearchPageOut
@@ -32931,6 +33051,78 @@ export interface components {
              * @default 5
              */
             readonly sample: number;
+        };
+        /**
+         * MyVaultKeyOut
+         * @description Your vault key's public half (`GET /my-vault-key`).
+         */
+        readonly MyVaultKeyOut: {
+            /** User Id */
+            readonly user_id: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Jkt */
+            readonly jkt: string;
+        };
+        /**
+         * MyKeyCopyOut
+         * @description One sensitive conversation whose key you hold a copy of: what your browser needs
+         *     to re-wrap it to a new vault key, and enough to name it to you.
+         */
+        readonly MyKeyCopyOut: {
+            /** Session Id */
+            readonly session_id: string;
+            /** Conversation */
+            readonly conversation: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Wrap */
+            readonly wrap: {
+                readonly [key: string]: unknown;
+            };
+            /** Recipient Jkt */
+            readonly recipient_jkt: string;
+            /**
+             * Agent Name
+             * @default
+             */
+            readonly agent_name: string;
+            /**
+             * Workspace
+             * @default
+             */
+            readonly workspace: string;
+            /** Started At */
+            readonly started_at?: string | null;
+        };
+        /** MyKeyCopiesOut */
+        readonly MyKeyCopiesOut: {
+            /** Stored */
+            readonly stored: number;
+        };
+        /**
+         * MyKeyCopiesIn
+         * @description Your copies of your conversations' keys, re-wrapped in your browser to the vault
+         *     key you just set up (`PUT /api/vault/keyset` with `replace`).
+         */
+        readonly MyKeyCopiesIn: {
+            /** Copies */
+            readonly copies: readonly components["schemas"]["MyKeyCopyIn"][];
+        };
+        /** MyKeyCopyIn */
+        readonly MyKeyCopyIn: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            readonly session_id: string;
+            readonly wrap: components["schemas"]["ConversationKeyWrapIn"];
+            /** Recipient Jkt */
+            readonly recipient_jkt: string;
         };
         /**
          * HandoffOut
@@ -33242,6 +33434,11 @@ export interface components {
              * @default false
              */
             readonly needs_migration: boolean;
+            /**
+             * Index Offsets
+             * @default []
+             */
+            readonly index_offsets: readonly number[] | null;
         };
         /**
          * SealedKeyWrapOut
@@ -33687,6 +33884,11 @@ export interface components {
             readonly role: string;
             /** Joined At */
             readonly joined_at?: string | null;
+            /**
+             * Needs Key
+             * @default false
+             */
+            readonly needs_key: boolean;
         };
         /**
          * ParticipantAddIn
@@ -33743,6 +33945,17 @@ export interface components {
             };
             /** Jkt */
             readonly jkt: string;
+        };
+        /**
+         * KeyCopyIn
+         * @description Someone already in a sensitive conversation, given their copy of its key from your
+         *     browser: `wrap` is the key wrapped to their current vault key
+         *     (`GET /{id}/participants/recipient`).
+         */
+        readonly KeyCopyIn: {
+            /** User Id */
+            readonly user_id: number;
+            readonly wrap: components["schemas"]["SealedKeyWrapIn"];
         };
         /** SendOut */
         readonly SendOut: {
@@ -50645,6 +50858,70 @@ export interface operations {
             };
         };
     };
+    readonly my_vault_key: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MyVaultKeyOut"];
+                };
+            };
+        };
+    };
+    readonly my_key_copies: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MyKeyCopyOut"][];
+                };
+            };
+        };
+    };
+    readonly put_my_key_copies: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MyKeyCopiesIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MyKeyCopiesOut"];
+                };
+            };
+        };
+    };
     readonly list_transfer_requests: {
         readonly parameters: {
             readonly query?: {
@@ -51137,6 +51414,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ParticipantRecipientOut"];
+                };
+            };
+        };
+    };
+    readonly give_key_copy: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["KeyCopyIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
                 };
             };
         };

@@ -88,8 +88,10 @@ export function PrivateConversationGate({ sessionId, children }: { sessionId: st
   )
 }
 
-/** How often a waiting request re-reads whether it was answered. */
+/** How soon a waiting request first re-reads whether it was answered; each read that
+ *  finds it still waiting doubles the wait, up to `ANSWER_POLL_MAX_MS`. */
 export const ANSWER_POLL_MS = 10_000
+export const ANSWER_POLL_MAX_MS = 5 * 60_000
 
 export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionDetail; onOpen: () => void }) {
   const agentName = useAgentName(session.agent_slug ?? null)
@@ -99,21 +101,41 @@ export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionD
   const [inIt, setInIt] = useState(Boolean(session.you_are_in_it))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [gone, setGone] = useState(false)
 
   // The requester is not on the conversation's socket (it is its people's alone),
-  // so the answer is read, not pushed.
+  // so the answer is read, not pushed — less often the longer it waits, and not at all
+  // once the conversation is out of reach (403/404: removed, or never theirs to see).
   useEffect(() => {
-    if (inIt || asked !== 'pending') return
-    const timer = window.setInterval(() => {
+    if (inIt || gone || asked !== 'pending') return
+    let live = true
+    let wait = ANSWER_POLL_MS
+    let timer = 0
+    const poll = () => {
       getSession(session.id)
         .then((s) => {
+          if (!live) return
           if (s.you_are_in_it) setInIt(true)
-          else setAsked(s.your_join_request ?? '')
+          else if ((s.your_join_request ?? '') !== 'pending') setAsked(s.your_join_request ?? '')
+          else schedule()
         })
-        .catch(() => undefined)
-    }, ANSWER_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [session.id, inIt, asked])
+        .catch((e: unknown) => {
+          if (!live) return
+          const status = (e as { status?: number } | null)?.status
+          if (status === 403 || status === 404) setGone(true)
+          else schedule()
+        })
+    }
+    const schedule = () => {
+      timer = window.setTimeout(poll, wait)
+      wait = Math.min(wait * 2, ANSWER_POLL_MAX_MS)
+    }
+    schedule()
+    return () => {
+      live = false
+      window.clearTimeout(timer)
+    }
+  }, [session.id, inIt, gone, asked])
 
   const ask = async () => {
     setBusy(true)
@@ -150,7 +172,11 @@ export function PrivateInterstitial({ session, onOpen }: { session: ChatSessionD
             <p className="mt-2 text-foreground-secondary" data-testid="private-interstitial-text">
               This is a private conversation. Only the people in it can read it.
             </p>
-            {asked === 'pending' ? (
+            {gone ? (
+              <p className="mt-3 text-muted-foreground" data-testid="private-gone">
+                This conversation is no longer one you can ask to join.
+              </p>
+            ) : asked === 'pending' ? (
               <p className="mt-3 text-muted-foreground" data-testid="private-asked">
                 Asked{starter ? ` ${starter}` : ''} to add you. You can open it once they do.
               </p>

@@ -12,7 +12,8 @@ import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
 import { unlockLocally } from '@/vault/localUnlock'
-import type { SealedKey } from '@/vault/sealedChat'
+import { newConversationKey, type MyVaultKey, type SealedKey } from '@/vault/sealedChat'
+import { usePersonTrust } from '@/vault/PersonTrustPrompt'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { useSealedConversation } from '@/vault/useSealedConversation'
 import { menuBlocksComposer } from '@/pages/chatPageLogic'
@@ -196,6 +197,20 @@ async function declarePage(
  *  has to pick. Derived in one place because the two paths diverging per
  *  call-site is what left contacts silently without page state.
  */
+/** `{conversation_key}` for a new chat: a key pair made in this frame, wrapped to the
+ *  visitor's own vault key (`GET …/my-vault-key`, which the frame's token may read) —
+ *  or nothing when they have no vault key or this browser does not recognise it as
+ *  theirs, and canopy makes one only if the chat turns private with no browser there. */
+async function offeredKey(client: CanopyClient, workspace: string): Promise<{ conversation_key?: unknown }> {
+  try {
+    const mine = await client.rest.json<MyVaultKey>(
+      `/api/w/${encodeURIComponent(workspace)}/canopy-sessions/my-vault-key`)
+    return { conversation_key: await newConversationKey(mine) }
+  } catch {
+    return {}
+  }
+}
+
 function sessionBase(isContact: boolean, sid: string): string {
   const id = encodeURIComponent(sid)
   return isContact ? `/api/contact/sessions/${id}` : `/api/canopy-sessions/${id}`
@@ -373,6 +388,9 @@ export function EmbedApp({ link, app }: Props) {
               body: JSON.stringify({
                 agent_slug: agent.slug,
                 title: '',
+                // The conversation's key, made in this frame: if it is (a sensitive
+                // site's) or becomes private, canopy never sees its private half.
+                ...await offeredKey(client, agent.workspace),
                 // `embed_app` is NOT sent: canopy stamps it server-side from the
                 // delegated token, and anything we sent under that key would be
                 // discarded (apps/canopy_sessions/api.py).
@@ -933,9 +951,14 @@ function EmbedChat({
     },
     [client, sessionId, contextPreamble, isContact],
   )
+  // Unknown (null) until the session is read: memory's switches wait for it.
+  const [sensitive, setSensitive] = useState<boolean | null>(null)
   const socket = useSessionSocket({
     sessionId, wsUrl, onUnknownEvent, protocol: 'ag-ui',
     sendOverHttp: isContact ? sendOverHttp : undefined,
+    // A private conversation's draft stays in this frame until it is sent (and until
+    // the panel knows, it is treated as one).
+    localDrafts: sensitive !== false,
   })
   const menu = socket.state.menu ?? null
   // Agent memory for this conversation — the chat page's own toggles, through
@@ -957,8 +980,6 @@ function EmbedChat({
   // keyset the conversation carries (`sealed_key.keyset`), since the frame has no
   // browser session for the vault's own routes. A contact holds no key, ever.
   const [sealedKey, setSealedKey] = useState<SealedKey | null>(null)
-  // Unknown (null) until the session is read: memory's switches wait for it.
-  const [sensitive, setSensitive] = useState<boolean | null>(null)
   // Its owner answers a request to join (`can_share`); its other people see it.
   const [myRole, setMyRole] = useState<string | null>(null)
   const sealedRows = socket.state.messages.some((m) => typeof m.sealed === 'string')
@@ -985,6 +1006,9 @@ function EmbedChat({
   }, [sealedKey, unlocker.prompt])
   const sealed = useSealedConversation(sealedKey, socket.state.messages, unlockVault)
   const keyRef = sealed.keyRef
+  // Before its key is wrapped to someone new to this browser: their fingerprint, checked.
+  const personTrust = usePersonTrust()
+  const keyOpen = Boolean(sealed.key)
   // Someone asking to join: the panel adds them itself — the same re-wrap canopy's
   // chat page does (unlock from the keyset, open the conversation key, wrap it to
   // them, `POST participants`), through the frame's own token.
@@ -997,14 +1021,17 @@ function EmbedChat({
       addParticipant: (id, email, role, wrap) => client.rest.json(
         `/api/canopy-sessions/${encodeURIComponent(id)}/participants`,
         { method: 'POST', body: JSON.stringify(wrap ? { email, role, wrap } : { email, role }) }),
+      giveKeyCopy: (id, userId, wrap) => client.rest.json(
+        `/api/canopy-sessions/${encodeURIComponent(id)}/key-copies`,
+        { method: 'POST', body: JSON.stringify({ user_id: userId, wrap }) }),
     }
     return {
       list: () => client.rest.json<JoinRequest[]>(`${base}/join-requests`),
-      add: (email) => addPerson(sessionId, email, 'editor', unlockVault, people),
+      add: (email) => addPerson(sessionId, email, 'editor', unlockVault, people, personTrust.confirm),
       decline: (requestId) => client.rest.json(
         `/api/canopy-sessions/join-requests/${encodeURIComponent(requestId)}/decline`, { method: 'POST' }),
     }
-  }, [client, sessionId, unlockVault])
+  }, [client, sessionId, unlockVault, personTrust.confirm])
   // How this person's vault key opens here, for the banner's words; and whether this
   // frame may use a passkey at all (Chrome says, through its permissions policy).
   const unlockMethod = (sealedKey?.keyset?.seals ?? []).some((x) => (x as { alg?: string }).alg === 'prf')
@@ -1017,8 +1044,8 @@ function EmbedChat({
   )
   const appHost = useMemo(
     () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates),
-                        () => keyRef.current),
-    [client, sessionId, isContact, expanded, keyRef, appUpdates])
+                        () => keyRef.current, keyOpen),
+    [client, sessionId, isContact, expanded, keyRef, appUpdates, keyOpen])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -1180,7 +1207,7 @@ function EmbedChat({
       />
       {sensitive && !isContact && (
         <JoinRequests sessionId={sessionId} actions={joinActions} live={liveJoinRequests}
-          canDecide={myRole === 'owner'} />
+          canDecide={myRole === 'owner'} unlockElement={personTrust.element} />
       )}
       <div className="min-h-0 flex-1">
         <ChatPanel

@@ -67,6 +67,9 @@ export function AppView({ app }: { app: AppRef }) {
   const hostRef = useRef(host);
   hostRef.current = host;
   const hasHost = !!host;
+  // What `load` returns changed (a private conversation's input became readable):
+  // load again, into a fresh frame, so the View boots with it.
+  const revision = host?.inputRevision;
   const bridgeRef = useRef<AppBridge | null>(null);
 
   useEffect(() => {
@@ -74,6 +77,9 @@ export function AppView({ app }: { app: AppRef }) {
     if (!host) return;
     let live = true;
     let attempt = 0;
+    // A reload starts from no View: the old frame and its bridge go, and the new
+    // resource mounts a fresh frame its own bridge binds to.
+    setRes(null);
     const load = () => {
       host.load(app.tool_call_id).then(
         (r) => {
@@ -96,7 +102,7 @@ export function AppView({ app }: { app: AppRef }) {
     return () => {
       live = false;
     };
-  }, [hasHost, app.tool_call_id]);
+  }, [hasHost, app.tool_call_id, revision]);
 
   const src = useMemo(() => {
     if (!res) return "";
@@ -250,6 +256,7 @@ export function AppView({ app }: { app: AppRef }) {
             </p>
           )}
           <iframe
+            key={String(revision ?? "")}
             ref={frame}
             title={`${label}: ${app.tool}`}
             src={src}
