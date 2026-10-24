@@ -7,8 +7,8 @@ A capability says `data: sensitive` on the published interface. That is accepted
 * **when it is structurally true** (`structural_refusals`, asked by
   `interface.parse`): the capability reaches its host through canopy's gateway
   (`sites:` is required), and its tools may be only the gateway's site tools
-  (`site_tools`, `site_call`, `site_read`), `current_page`, `who_is_asking` and
-  read-only local tools — no shell, no
+  (`site_tools`, `site_call`, `site_read`), `current_page`, `who_is_asking`, the
+  page's own actions (`page_*`) and read-only local tools — no shell, no
   writes, nothing that leaves the box (Drive, email, memory, Slack, the web).
   Anything else is a 422 naming it;
 * **from the agent's owner or an admin** (`publish_interface`), from the browser or
@@ -34,6 +34,7 @@ What it buys, and what reads it:
 from __future__ import annotations
 
 import copy
+import fnmatch
 import re
 
 import yaml
@@ -48,11 +49,23 @@ READ_ONLY_LOCAL = frozenset({"Read", "Grep", "Glob", "Skill", "ToolSearch", "Tod
 #: (`harness.caller_tokens.resolve`, `mcp.turn_scope`).
 SENSITIVE_CANOPY_TOOLS = frozenset({"current_page", "who_is_asking", "site_tools", "site_call",
                                     "site_read"})
+#: The actions the conversation's own page declares (`apps/mcp/page_tools.py`), as a
+#: glob over canopy's tool names. Each runs in the person's open tab, as them, and
+#: its arguments and answer travel only between the turn and that tab — the
+#: conversation's own people (`page_tools.PageActionTool`) — so a sensitive turn may
+#: hold them: they put nothing anywhere the conversation's people are not.
+PAGE_TOOL_GLOB = "page_*"
 #: Those tools as interface patterns name them (any MCP server prefix ending in
 #: `canopy-web__`).
 _CANOPY_TOOL = re.compile(
     r"^mcp__(?:\*|[A-Za-z0-9_.-]*?)canopy-web__(?:"
-    + "|".join(sorted(SENSITIVE_CANOPY_TOOLS)) + r")$")
+    + "|".join(sorted(SENSITIVE_CANOPY_TOOLS)) + r"|page_\*)$")
+
+
+def sensitive_tool(name: str) -> bool:
+    """Whether a sensitive turn may reach canopy's tool `name` at all: one of
+    `SENSITIVE_CANOPY_TOOLS`, or one of its page's own actions."""
+    return name in SENSITIVE_CANOPY_TOOLS or fnmatch.fnmatchcase(name, PAGE_TOOL_GLOB)
 
 
 def structural_refusals(name: str, cap: dict) -> list[str]:
@@ -66,7 +79,8 @@ def structural_refusals(name: str, cap: dict) -> list[str]:
            if t not in READ_ONLY_LOCAL and not _CANOPY_TOOL.match(t)]
     if bad:
         out.append(f"{name}: a `data: sensitive` capability may hold only the gateway's site tools, "
-                   f"current_page, who_is_asking and {', '.join(sorted(READ_ONLY_LOCAL))}; "
+                   f"current_page, who_is_asking, the page's own actions (page_*) and "
+                   f"{', '.join(sorted(READ_ONLY_LOCAL))}; "
                    f"refused: {', '.join(bad)}")
     if cap.get("bash"):
         out.append(f"{name}: a `data: sensitive` capability may run no shell (`bash:` must be empty)")

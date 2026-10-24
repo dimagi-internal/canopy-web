@@ -65,10 +65,11 @@ ran as the AGENT. A site capability instead names a registered Connected site:
 
 A conversation held on that site (its server-owned `embed_app`) selects the
 capability, and its confined profile gains canopy's gateway tools (`site_tools`,
-`site_call`, `site_read`) automatically. Through them the agent calls the host's tools AS THE
-VISITOR, with a grant the host issued for the page they are on — so what one
-turn may call is what the HOST grants: its scopes for that page and its ACL for
-that person (`apps/host_grants/host_gateway.py`). canopy holds no list of the host's
+`site_call`, `site_read`) and the page's own actions (`page_*`) automatically.
+Through the gateway the agent calls the host's tools AS THE VISITOR, with a grant
+the host issued for the page they are on — so what one turn may call is what the
+HOST grants: its scopes for that page and its ACL for that person
+(`apps/host_grants/host_gateway.py`). canopy holds no list of the host's
 tools. `ceiling:` is an optional narrowing on the owner's word (keep an agent off
 part of a site); absent, canopy adds none. It can never widen what the host
 granted. The page's `backing_tool` tells the agent where to read the rows on
@@ -127,6 +128,12 @@ ASK = "ask"
 #: that names `sites:` (apps/mcp/tools/site.py).
 GATEWAY_TOOLS = ("mcp__*canopy-web__site_tools", "mcp__*canopy-web__site_call",
                  "mcp__*canopy-web__site_read")
+
+#: The actions the conversation's own page declares (`apps/mcp/page_tools.py`), also
+#: added to every capability that names `sites:`: a site conversation is held on a
+#: page, and what that page offers is part of the door. Each runs in the visitor's
+#: own tab, as them; a confined turn reaches only its own conversation's page.
+PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 
 #: `Turn.capability` for a turn in the agent's FULL profile. Empty so that every
 #: turn predating this reads as "full", which is what it was.
@@ -587,5 +594,8 @@ def profile(agent, capability: str) -> dict | None:
         # the gateway is part of the profile by construction — an owner cannot
         # publish a site door and forget the one tool that opens it. The host's
         # own MCP server is not added: a visitor turn does not call it directly.
-        out["tools"] = list(dict.fromkeys([*(out.get("tools") or []), *GATEWAY_TOOLS]))
+        # The page's own actions likewise: they are the page's, not the host's
+        # (`site_call` refuses them by name and points here).
+        out["tools"] = list(dict.fromkeys([*(out.get("tools") or []), *GATEWAY_TOOLS,
+                                           *PAGE_TOOLS]))
     return out

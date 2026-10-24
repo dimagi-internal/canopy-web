@@ -1008,6 +1008,13 @@ page changed.
 - **Two tabs declaring the same action** expose one tool — the newest wins, and
   the chosen session is named in the tool description so a wrong guess is
   visible rather than silent.
+- **A confined agent sees only its own conversation's page.** A visitor's
+  conversation runs the agent in a capability with `sites:`, and that profile gets
+  the `page_*` tools automatically — in a sensitive conversation too, since an
+  action runs in that person's tab and its answer goes only to the turn. They are
+  canopy's tools, not your MCP server's: an agent that sends `page_showQuery`
+  through `site_call` is refused with the name of the tool to call instead, and
+  your server never sees it.
 
 ## 8. Reference: how access control resolves
 

@@ -326,6 +326,14 @@ describe("AppView title and summary", () => {
     expect(humanTool("mcp__connect_labs__data_query")).toBe("Data query");
   });
 
+  it("names a sensitive conversation's View by its tool, not the link's stored placeholder", () => {
+    // canopy keeps a sensitive result's link with its URI's scheme as its name.
+    const kept = { type: "resource_link", uri: "labs-result://r1", name: "labs-result" };
+    expect(appTitle({ content: [kept], _meta: { "canopy/withheld": true } }, "data_query"))
+      .toBe("Data query");
+    expect(appTitle({ content: [kept] }, "data_query")).toBe("Data query");
+  });
+
   it("summarises rows × columns, the time, and a cut-off only the default cap made", () => {
     const sc = { row_count: 500, columns: ["a", "b", "c"], elapsed_ms: 1200, truncated: true,
                  row_cap: { limit: 500, source: "default" } };

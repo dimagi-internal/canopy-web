@@ -70,6 +70,29 @@ def _attached_sessions(user):
             if sensitivity.reads_content(session, chat_surface=False, user=user)]
 
 
+def conversation_sessions(turn_ids: list[str]) -> list:
+    """The conversation a confined caller token names, when it declares actions.
+
+    A confined turn's session presents its caller token, not a chat key, and its
+    tools run as the CALLER — a visitor who may have no canopy account, so the user
+    path matches nothing (and for a member would offer every tab they have open).
+    The token already names its conversation, minted by canopy for this turn: that
+    is the page it acts on, and nothing else (as `current_page._pages_of_turns`).
+    """
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import Turn
+
+    ids = {sid for sid in Turn.objects.filter(pk__in=turn_ids)
+           .values_list("chat_session_id", flat=True) if sid}
+    return list(Session.objects.filter(pk__in=ids).exclude(page_actions_available=[])
+                .order_by("-created_at"))
+
+
+def declared_tool_names(turn_ids: list[str]) -> set[str]:
+    """The `page_*` names a confined token's own conversation offers right now."""
+    return {name for name, _session, _spec in _specs_of(conversation_sessions(turn_ids))}
+
+
 def page_tool_specs(user) -> list[tuple]:
     """`(tool_name, session, spec)` for everything this user's pages offer.
 
@@ -127,11 +150,10 @@ class PageActionTool(Tool):
                 raise page_actions.PageActionError("no_page", "that page is no longer open")
             # Asked again at the call, not only at the listing: a conversation can turn
             # sensitive in between, and then only the turn running in it — the request
-            # carrying its chat key — may act on its page.
-            if sensitivity.is_sensitive(session):
-                chat = _current_chat()
-                if chat is None or chat.pk != session.pk:
-                    raise page_actions.PageActionError("refused", sensitivity.NOT_IN_IT_PAGE)
+            # carrying its chat key, or its own confined caller token — may act on
+            # its page.
+            if sensitivity.is_sensitive(session) and not _is_own_conversation(session):
+                raise page_actions.PageActionError("refused", sensitivity.NOT_IN_IT_PAGE)
             return page_actions.request_action(
                 session=session,
                 name=self.action_name,
@@ -190,11 +212,34 @@ class PageActionProvider(Provider):
         if chat is not None:
             specs = _specs_of([chat])
             return [to_mcp_tool(name, session, spec) for name, session, spec in specs]
+        # A confined caller token names its own conversation: that page, only.
+        turn_ids = _caller_turn_ids()
+        if turn_ids is not None:
+            sessions = await sync_to_async(conversation_sessions, thread_sensitive=True)(turn_ids)
+            return [to_mcp_tool(name, session, spec) for name, session, spec in _specs_of(sessions)]
         user = await sync_to_async(_current_user, thread_sensitive=True)()
         if user is None:
             return []
         specs = await sync_to_async(page_tool_specs, thread_sensitive=True)(user)
         return [to_mcp_tool(name, session, spec) for name, session, spec in specs]
+
+
+def _caller_turn_ids() -> list[str] | None:
+    from apps.mcp.turn_scope import caller_turn_ids
+
+    return caller_turn_ids()
+
+
+def _is_own_conversation(session) -> bool:
+    """Whether this request is the turn running in `session`: its chat key, or a
+    confined caller token whose conversation it is."""
+    chat = _current_chat()
+    if chat is not None:
+        return chat.pk == session.pk
+    from apps.harness.models import Turn
+
+    turn_ids = _caller_turn_ids()
+    return bool(turn_ids) and Turn.objects.filter(pk__in=turn_ids, chat_session=session).exists()
 
 
 def _current_chat():
