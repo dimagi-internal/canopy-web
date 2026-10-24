@@ -62,8 +62,23 @@ def parse_heartbeat_frame(frame: dict) -> HeartbeatIn:
     return HeartbeatIn.model_validate(good)
 
 
-def heartbeat(runner: Runner, payload: HeartbeatIn) -> Runner:
-    """Record one beat — THE call both channels make."""
+def data_mode_trusted(runner: Runner, *, device_key: bool) -> bool:
+    """Whether a beat's `data_mode` may stand. A sensitive-data box's report is half of
+    what routing relies on (`runner_requirements.in_force`), and the other half is a
+    declaration its own admin makes — so the report must come from something that
+    admin cannot simply type: a cloud box (whose mode its stack sets, not a person)
+    signed in as itself with its device key. A laptop's report, or any beat sent with
+    a person's token, is not believed."""
+    return bool(device_key) and runner.kind == Runner.CLOUD
+
+
+def heartbeat(runner: Runner, payload: HeartbeatIn, *, device_key: bool = False) -> Runner:
+    """Record one beat — THE call both channels make.
+
+    `device_key`: this beat was signed in with the runner's OWN credential, a
+    `RunnerAccessToken` its approved device key bought — not a person's token. A
+    data mode is believed only from such a beat of a CLOUD runner
+    (`data_mode_trusted`); from anything else it is recorded as none."""
     if payload.host and payload.host != runner.host:
         runner.host = payload.host
         runner.save(update_fields=["host"])
@@ -82,8 +97,9 @@ def heartbeat(runner: Runner, payload: HeartbeatIn) -> Runner:
         profiles=payload.profiles,
         envelope=payload.envelope,
         midturn=payload.midturn,
-        data_mode=payload.data_mode,
-        data_mode_hash=payload.data_mode_hash,
+        data_mode=payload.data_mode if data_mode_trusted(runner, device_key=device_key) else "",
+        data_mode_hash=(payload.data_mode_hash
+                        if data_mode_trusted(runner, device_key=device_key) else ""),
         health=payload.health.model_dump() if payload.health is not None else None,
         mailboxes_readable=payload.mailboxes_readable,
         agents_unprepared=payload.agents_unprepared,

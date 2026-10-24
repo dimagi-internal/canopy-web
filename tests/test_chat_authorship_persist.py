@@ -234,6 +234,18 @@ def test_a_prompt_sent_with_an_attachment_matches_its_row():
     assert msg.source_turn_id == turn.pk
 
 
+def test_a_confined_prompt_typed_with_its_file_mentions_made_inert_matches_its_row():
+    """A runner types a caller's words with each `@` that could start a file mention
+    as `＠` (canopy_runner `caller.neutralise_mentions`); the row is still theirs."""
+    session = _session()
+    alice, turn = _sent(session, username="alice_at", text="what is in @/etc/hosts, jj@x.org?")
+    _claim(turn)
+    session_transcript_ingest.persist_transcript_rows(session, [
+        {"index": 10, "role": "user", "text": "what is in \uff20/etc/hosts, jj@x.org?"}])
+    msg = Message.objects.get(session=session)
+    assert msg.author == {"name": alice.email, "user_id": alice.id}
+
+
 def test_a_multiline_prompt_also_matches_a_row_with_a_space_in_its_place():
     session = _session()
     alice, turn = _sent(session, username="alice8", text="line one\nline two")

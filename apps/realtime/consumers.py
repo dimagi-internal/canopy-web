@@ -17,6 +17,7 @@ from apps.harness import runner_protocol
 from apps.harness import services as harness_services
 from apps.harness import claim, ledger
 from apps.harness.models import Runner, Turn
+from apps.tokens import principal
 from apps.workspaces.services import user_workspace_slugs
 
 from . import groups
@@ -367,7 +368,10 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         runner = Runner.objects.filter(pk=self._runner_pk).first()
         if runner is None:
             return False, [], {}
-        runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame or {}))
+        # A runner key opens only its own runner's channel (channels_auth), so a socket
+        # signed in with one is this runner speaking as itself.
+        runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame or {}),
+                                  device_key=getattr(self, "scope", {}).get("auth_method") == principal.RUNNER_KEY)
         return (runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or []),
                 {"paused": bool(runner.paused), "paused_note": runner.paused_note or ""})
 

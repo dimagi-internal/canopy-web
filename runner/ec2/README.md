@@ -670,10 +670,15 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   settings document that denies Bash, file writes, the web, subagents and scheduling,
   allows only read tools and canopy-web's MCP, and disables bypass and auto mode. The read
   tools reach only the turn's own working directory, its own sessions' oversized tool
-  output and its own caller envelope; every Claude transcript on the box, the
-  kept-conversation records, other turns' envelopes, profiles, chat keys and tokens, the
-  runner's state and the per-turn env root are denied by name (rules govern tool calls
-  only, so Claude Code still writes and resumes its own transcript). ACP
+  output (the settings are rewritten as each session the turn opens starts) and its own
+  caller envelope; every Claude transcript on the box, the kept-conversation records,
+  profiles, chat keys and tokens, the runner's state, the per-turn env root, `/proc` and
+  browser profiles are denied, and every other session's directory and every other turn's
+  envelope are denied by pattern (every name but the turn's own, so one made later is
+  covered too). Rules govern tool calls and `@` file mentions, not Claude Code's own
+  files, so it still writes and resumes its own transcript. A caller's words reach the
+  prompt with every `@` that could start a file mention turned into `＠`: Claude Code
+  reads an `@/path` into the prompt with no tool call, past the allow list. ACP
   is not used. Telemetry, error reporting, non-essential model calls and the canopy
   plugin's fleet auto-update are off. Only confined turns run, each with its own
   permission layer (a turn whose layer cannot be built is not run).
@@ -699,10 +704,13 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   at start); never while a turn runs in it, nor when a turn kept a newer session while
   canopy-web was being asked. A 401, 403 or 404 to that ask (a retired box) forgets every
   kept conversation, as does a retired runner's start and the box's own shutdown
-  (`systemctl is-system-running` says `stopping`; a plain restart, an update, keeps them).
+  (`systemctl is-system-running` says `stopping`; a plain restart, an update, keeps them):
+  the stop handler only sets flags, the turns in flight get `STOP_DRAIN_SECONDS` (60) to
+  finish and keep nothing new, then every kept conversation goes.
   A confined chat turn's rows also ship while it runs (a live tail with a last tick at
-  the end), and the turn-end ship sends, in chunks and with retries, only what the tail
-  and the resumed session's earlier turns did not. At start the box also sweeps whatever a
+  the end), and the turn-end ship sends, in chunks and with retries, what comes after the
+  records canopy-web says it holds (the claim's `transcript_held`), so an earlier turn's
+  failed ship is sent again. At start the box also sweeps whatever a
   crashed turn left (envelopes, profiles, every transcript but a kept conversation's).
 - **No transcript leaves the box** except a confined turn's turn-end rows, which
   canopy-web seals: no live stream, no backfill, and the usage report carries token
@@ -714,7 +722,8 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   holding reports `ready: false`.
 - **It says so.** Every heartbeat carries `data_mode` and a config hash (which covers
   the egress setting); canopy counts a person's `sensitive_data` declaration only while
-  the box reports `sensitive_data`.
+  the box reports `sensitive_data`, and believes the report only from a cloud box signed
+  in with its device key (never a person's token, never a laptop).
 - **Dedicated.** canopy-web lets a sensitive-data box hold only agents with a
   `data: sensitive` capability (`runner_requirements.is_sensitive_data_box`).
 - **Fails closed.** Any other non-empty `RUNNER_DATA_MODE` (a typo, the retired `zdr`)

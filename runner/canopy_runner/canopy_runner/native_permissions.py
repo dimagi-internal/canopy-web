@@ -69,6 +69,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import shlex
 
 logger = logging.getLogger(__name__)
@@ -106,10 +107,17 @@ WRITE_TOOLS = ("Write", "Edit", "NotebookEdit")
 #: (the CLI writes and resumes its own without a tool call; a session's oversized tool
 #: output, saved beside its transcript, stays readable) and the per-turn state other
 #: sessions keep under ~/.canopy: the conversations a sensitive-data box keeps, chat
-#: keys, scoped and agent tokens. Not `~/.canopy/caller/**` whole: the session's OWN
-#: envelope lives there, and a deny would beat the allow that lets it read it — the
-#: other envelopes are outside every allow rule, and `profile_guard` lets a session
-#: read its own envelope alone.
+#: keys, scoped and agent tokens, every process's command line and environment
+#: (`/proc`), and browser profiles. The other conversations' sessions and the other
+#: turns' caller envelopes are denied by PATTERN beside these (`reach_denies`): every
+#: name but the session's own, so a directory or envelope made after the rules were
+#: written is covered too.
+#:
+#: Denies matter even where an allow list scopes the read tools: Claude Code expands
+#: an `@path` in a prompt into the file's contents before the model runs, with no
+#: tool call, and that read honours deny rules but not the allow list. A caller's
+#: words are neutralised before they reach a prompt (`caller.neutralise_mentions`);
+#: these are what holds if one ever is not.
 SENSITIVE_PATHS = (
     "~/.ssh/**", "~/.aws/**", "~/.gnupg/**", "~/.config/gh/**", "~/.config/op/**",
     "~/.docker/**", "~/.netrc", "~/.claude.json", "~/.claude/canopy/**",
@@ -117,7 +125,204 @@ SENSITIVE_PATHS = (
     "~/.claude/projects/**/*.jsonl", "~/.claude/history.jsonl", "~/.claude/.credentials.json",
     "~/.canopy/kept-conversations/**", "~/.canopy/chat/**", "~/.canopy/scoped/**",
     "~/.canopy/agent-token/**", "~/.canopy/delegated/**", "~/.canopy/device-key/**",
+    "/proc/**",
+    # Browser profiles (cookies, saved logins, sessions): gstack's headless browser,
+    # and Chrome, Chromium and the other common browsers, on macOS and Linux.
+    "~/.gstack/**",
+    "~/Library/Application Support/Google/**", "~/Library/Application Support/Chromium/**",
+    "~/Library/Application Support/BraveSoftware/**",
+    "~/Library/Application Support/Microsoft Edge/**", "~/Library/Application Support/Arc/**",
+    "~/Library/Application Support/Firefox/**",
+    "~/.config/google-chrome/**", "~/.config/google-chrome-beta/**",
+    "~/.config/google-chrome-unstable/**", "~/.config/chromium/**",
+    "~/.config/BraveSoftware/**", "~/.config/microsoft-edge/**", "~/.mozilla/**",
+    "~/snap/chromium/**", "~/.var/app/com.google.Chrome/**",
+    "~/.var/app/org.chromium.Chromium/**",
 )
+
+#: Where Claude Code keeps every session's transcript and sidecar (`<sid>/tool-results/`),
+#: and where the runner leaves each turn's caller envelope, on a laptop.
+CLAUDE_PROJECTS = "~/.claude/projects"
+CALLER_DIR = "~/.canopy/caller"
+
+#: The names the complement patterns can keep (`complement_globs`): a Claude project
+#: directory, a session id, a caller envelope. Anything else is kept by nothing.
+_KEEPABLE = re.compile(r"[A-Za-z0-9._-]+")
+#: Claude Code's project-directory name: every character but [A-Za-z0-9] becomes '-',
+#: and a name over 200 characters is cut there and given a hash we do not compute.
+_PROJECT_NAME_MAX = 200
+
+
+def _glob_class(exclude) -> str:
+    """A glob character class matching any one character but `/` and `exclude` (in
+    either case: Claude Code matches paths case-insensitively on macOS, so `[#-b]`
+    there matches `c` through `C`). Ranges only — a backslash escape inside a class
+    breaks the whole rule (measured on Claude Code 2.1.310, as is all of this), while
+    a range with `[`, `]` or `^` inside it works. Covers U+0001-U+FFFF, the UTF-16
+    surrogates included, which is how a character outside the BMP is matched."""
+    skip = {c for e in exclude for c in (e, e.lower(), e.upper())} | {"/"}
+    parts: list[tuple[int, int]] = []
+    start = prev = None
+    for cp in range(0x01, 0x10000):
+        if chr(cp) in skip:
+            if start is not None:
+                parts.append((start, prev))
+                start = None
+            continue
+        if start is None:
+            start = cp
+        prev = cp
+    if start is not None:
+        parts.append((start, prev))
+    return "[" + "".join(chr(a) if a == b else f"{chr(a)}-{chr(b)}" for a, b in parts) + "]"
+
+
+def complement_globs(names=(), prefixes=()) -> list[str]:
+    """Glob patterns for ONE path component that, together, match every name except
+    each of `names` and anything starting with one of `prefixes`.
+
+    Claude Code's deny rules beat its allow rules, and it has no negated pattern
+    (`!(x)`, `[!x]` and `[^x]` are all taken literally), so "everything in this
+    directory but mine" is spelled as a trie of positive classes: at each character
+    of a kept name, every other character. A pattern that matches a directory
+    covers everything under it. A name differing from a kept one ONLY in letter case
+    is not matched (see `_glob_class`); Claude Code and the runner make every name
+    these guard, never a caller. Raises ValueError for a name with a character
+    outside `_KEEPABLE`: the caller then denies the directory whole."""
+    root: dict = {"c": {}, "end": False, "open": False}
+    for name, is_prefix in [(n, False) for n in names] + [(p, True) for p in prefixes]:
+        if not _KEEPABLE.fullmatch(name or ""):
+            raise ValueError(f"cannot keep {name!r} by pattern")
+        node = root
+        for ch in name:
+            node = node["c"].setdefault(ch, {"c": {}, "end": False, "open": False})
+        node["open" if is_prefix else "end"] = True
+    out: list[str] = []
+
+    def walk(node: dict, prefix: str) -> None:
+        if node["open"]:
+            return
+        out.append(prefix + _glob_class(set(node["c"])) + "*")
+        if prefix and not node["end"]:
+            out.append(prefix)
+        for ch in sorted(node["c"]):
+            walk(node["c"][ch], prefix + ch)
+
+    walk(root, "")
+    return out
+
+
+def _ascii_fold(cp_lo: int, cp_hi: int) -> str:
+    """The other-case ASCII letters of the ASCII letters in [cp_lo, cp_hi], as a class
+    body: what a case-blind JavaScript regex (`i`, no `u`) adds to the range."""
+    return "".join(re.escape(chr(c).swapcase()) for c in range(max(cp_lo, 0x41), min(cp_hi, 0x7A) + 1)
+                   if chr(c).isascii() and chr(c).isalpha())
+
+
+def _glob_regex(glob: str) -> str:
+    """One rule's pattern as a Python regex with JavaScript's case-blind matching:
+    an ASCII letter matches either case, nothing else is folded."""
+    out, i = [], 0
+    while i < len(glob):
+        ch = glob[i]
+        if glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif ch == "*":
+            out.append("[^/]*")
+            i += 1
+        elif ch == "?":
+            out.append("[^/]")
+            i += 1
+        elif ch == "[" and "]" in glob[i + 1:]:
+            end = glob.index("]", i + 1)
+            body, j, cls = glob[i + 1:end], 0, []
+            while j < len(body):
+                lo = hi = body[j]
+                if j + 2 < len(body) and body[j + 1] == "-":
+                    hi, j = body[j + 2], j + 3
+                else:
+                    j += 1
+                cls.append(f"{re.escape(lo)}-{re.escape(hi)}{_ascii_fold(ord(lo), ord(hi))}")
+            out.append("(?!/)[" + "".join(cls) + "]")
+            i = end + 1
+        elif ch.isascii() and ch.isalpha():
+            out.append(f"[{ch.lower()}{ch.upper()}]")
+            i += 1
+        else:
+            out.append(re.escape(ch))
+            i += 1
+    return "".join(out)
+
+
+def denied_by(rules, path: str, *, tool: str = "Read", home: str | None = None) -> list[str]:
+    """The `tool(...)` rules in `rules` that match `path` — Claude Code's matching AS
+    MEASURED (2.1.310, macOS): `//` anchors an absolute path and `~/` the home, `*`
+    stays inside one path component and `**` does not, a class is a positive set of
+    characters and ranges, ASCII letters match either case, and a rule that matches a
+    directory matches everything under it. A model for tests and for asking "what
+    would this deny?"; Claude Code itself decides."""
+    home = home or str(_home())
+    # As JavaScript sees it: a character outside the BMP is two UTF-16 surrogates.
+    path = "".join(c if ord(c) <= 0xFFFF else
+                   chr(0xD800 + ((ord(c) - 0x10000) >> 10)) + chr(0xDC00 + ((ord(c) - 0x10000) & 0x3FF))
+                   for c in path)
+    hits = []
+    for rule in rules:
+        m = re.fullmatch(rf"{re.escape(tool)}\((.*)\)", rule, re.S)
+        if not m:
+            continue
+        pat = m.group(1)
+        pat = pat[1:] if pat.startswith("//") else (home + pat[1:] if pat.startswith("~/") else pat)
+        rx = re.compile(_glob_regex(pat), re.S)
+        parts = path.split("/")
+        if any(rx.fullmatch("/".join(parts[:n])) for n in range(2, len(parts) + 1)):
+            hits.append(rule)
+    return hits
+
+
+def project_dir_name(cwd: str) -> str:
+    """The name of `cwd`'s directory under Claude's `projects/`."""
+    return re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
+
+
+def deny_all_but(tool: str, root: str, *, names=(), prefixes=()) -> list[str]:
+    """`tool(...)` rules denying everything in `root` but `names` (and names starting
+    with a prefix in `prefixes`), by pattern. A name that cannot be kept by pattern
+    keeps nothing: the directory is denied whole."""
+    try:
+        pats = complement_globs(names, prefixes)
+    except ValueError:
+        pats = ["**"]
+    return [_path_rule(tool, f"{root.rstrip('/')}/{p}") for p in pats]
+
+
+def reach_denies(tool: str, *, cwd: str, caller_path: str | None = None,
+                 sessions=None, claude_projects: str = CLAUDE_PROJECTS,
+                 caller_dir: str = CALLER_DIR) -> list[str]:
+    """What a confined session may never open beside its own: every other directory's
+    sessions under `claude_projects`, every session of its own directory but
+    `sessions` (when the caller knows them; None keeps the whole directory, which on
+    a laptop is the session's own cx- worktree), and every caller envelope but its
+    own `caller_path` (none: all of them). By pattern, never a snapshot of what is
+    there now (`deny_all_but`)."""
+    name = project_dir_name(cwd) if cwd else ""
+    if not name:
+        rules = [_path_rule(tool, f"{claude_projects.rstrip('/')}/**")]
+    elif len(name) > _PROJECT_NAME_MAX:
+        rules = deny_all_but(tool, claude_projects, prefixes=[name[:_PROJECT_NAME_MAX] + "-"])
+    else:
+        rules = deny_all_but(tool, claude_projects, names=[name])
+        if sessions is not None:
+            rules += deny_all_but(tool, f"{claude_projects.rstrip('/')}/{name}",
+                                  names=[s for s in sessions if s])
+    own = os.path.basename(caller_path) if caller_path else ""
+    if own and os.path.realpath(os.path.dirname(os.path.expanduser(caller_path))) == \
+            os.path.realpath(os.path.expanduser(caller_dir)):
+        rules += deny_all_but(tool, caller_dir, names=[own])
+    else:
+        rules.append(_path_rule(tool, f"{caller_dir.rstrip('/')}/**"))
+    return rules
 
 
 def _home() -> pathlib.Path:
@@ -237,8 +442,12 @@ def _path_rule(tool: str, path: str) -> str:
 
 
 def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
-                 thread_id: str = "", servers: set[str] | None = None) -> dict:
-    """The `permissions` block for a confined session. Pure."""
+                 thread_id: str = "", servers: set[str] | None = None,
+                 sessions=None, claude_projects: str = CLAUDE_PROJECTS,
+                 caller_dir: str = CALLER_DIR) -> dict:
+    """The `permissions` block for a confined session. Pure (`reach_denies` reads
+    nothing but the worktree's real path). `sessions`, `claude_projects` and
+    `caller_dir` are `reach_denies`'s."""
     cap = cap or {}
     tools = [str(t) for t in cap.get("tools") or []]
     bash = [str(b) for b in cap.get("bash") or []]
@@ -286,11 +495,16 @@ def settings_for(cap: dict, *, worktree: str, caller_path: str | None = None,
     elif writers:
         deny += [t for t in writers if t not in deny]
 
-    # Credential stores, taken away from whatever path tool remains.
+    # Credential stores, and every other session's and turn's files, taken away from
+    # whatever path tool remains.
+    reach = dict(cwd=cwd, caller_path=caller_path, sessions=sessions,
+                 claude_projects=claude_projects, caller_dir=caller_dir)
     if all(rp.startswith("{cwd}") for rp in read_paths):
         deny += [_path_rule("Read", p) for p in SENSITIVE_PATHS]
+        deny += reach_denies("Read", **reach)
     if all(wp.startswith("{cwd}") for wp in write_paths):
         deny += [_path_rule("Edit", p) for p in SENSITIVE_PATHS]
+        deny += reach_denies("Edit", **reach)
 
     mcp_pats = [t for t in tools if t.startswith("mcp") or t == "*"]
     if not mcp_pats:
@@ -364,7 +578,9 @@ def write_worktree_settings(worktree: str, permissions: dict, *, capability: str
 
 def confine_worktree(cap: dict, worktree: str, *, caller_path: str | None = None,
                      thread_id: str = "", home: pathlib.Path | None = None) -> pathlib.Path:
-    """Compute and write the native layer for one confined worktree. Raises OSError."""
+    """Compute and write the native layer for one confined worktree. Raises OSError.
+    The session's own Claude sessions are not known here (emdash starts them), so
+    its whole project directory stays its own (`reach_denies`, sessions=None)."""
     names = mcp_server_names(home=home, worktree=worktree)
     perms = settings_for(cap, worktree=worktree, caller_path=caller_path, thread_id=thread_id,
                          servers=set(names))
@@ -373,11 +589,13 @@ def confine_worktree(cap: dict, worktree: str, *, caller_path: str | None = None
 
 
 def cli_settings(cap: dict, *, cwd: str, caller_path: str | None = None, thread_id: str = "",
-                 home: pathlib.Path | None = None) -> dict:
+                 home: pathlib.Path | None = None, sessions=None,
+                 claude_projects: str = CLAUDE_PROJECTS, caller_dir: str = CALLER_DIR) -> dict:
     """The same rules as a `--settings` document, for a runner that spawns claude itself."""
     names = mcp_server_names(home=home, worktree=cwd)
     perms = settings_for(cap, worktree=cwd, caller_path=caller_path, thread_id=thread_id,
-                         servers=set(names))
+                         servers=set(names), sessions=sessions,
+                         claude_projects=claude_projects, caller_dir=caller_dir)
     doc = {"permissions": perms}
     stop = servers_to_stop(cap, names)
     if stop:

@@ -1072,9 +1072,14 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     target = agent_slug or project  # the emdash project to drive
     thread_key = _thread_key(turn)
     prompt = turn.get("prompt") or ""
+    if caller.capability(turn) is not None:
+        # A caller's words never reach Claude Code with a live file mention: it
+        # would read the file into the prompt with no tool call to confine.
+        prompt = caller.neutralise_mentions(prompt)
     prompt = prompt_with_attachments(prompt, *fetch_attachments(client, runner_id, turn))
     # The envelope lands on disk for `who_is_asking` and the agent's skills; the
-    # prompt itself is the person's words and stays exactly as they wrote it.
+    # prompt itself is the person's words and stays as they wrote it (a caller's,
+    # with its file mentions made inert).
     envelope = caller.write_caller_file(turn)
 
     plan = client.resolve_session(
@@ -1316,6 +1321,9 @@ def execute_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None) -> 
     except caller.ProfileError as exc:
         client.fail_turn(turn_id, f"a caller's turn was not run: {exc}")
         return f"failed:{turn_id}"
+    if caller.capability(turn) is not None:
+        # Whatever of the caller's reaches the prompt, with no live file mention.
+        work_prompt = caller.neutralise_mentions(work_prompt)
     # Who asked, as data beside the turn — never in the prompt body (see caller.py).
     envelope = caller.write_caller_file(turn)
     work_prompt = caller.with_caller_flag(work_prompt, envelope)

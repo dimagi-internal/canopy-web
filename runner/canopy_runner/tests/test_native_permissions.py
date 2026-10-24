@@ -79,14 +79,18 @@ def test_credential_stores_are_denied_to_the_path_tools():
 
 
 def test_other_sessions_words_are_denied_to_the_path_tools():
-    """Every transcript on the box and the per-turn state other sessions keep — but
-    not the caller directory whole, where this session's own envelope lives."""
+    """Every transcript on the box and the per-turn state other sessions keep — and
+    the caller directory whole, for a session that has no envelope of its own
+    there; one that has keeps exactly its own (`test_reach_denies.py`)."""
     deny = _perms()["deny"]
     for rule in ("Read(~/.claude/projects/**/*.jsonl)", "Read(~/.canopy/kept-conversations/**)",
                  "Read(~/.canopy/chat/**)", "Read(~/.canopy/scoped/**)",
-                 "Read(~/.canopy/agent-token/**)"):
+                 "Read(~/.canopy/agent-token/**)", "Read(//proc/**)", "Read(~/.gstack/**)",
+                 "Read(~/Library/Application Support/Google/**)", "Read(~/.config/chromium/**)",
+                 "Read(~/.canopy/caller/**)"):
         assert rule in deny, rule
-    assert "Read(~/.canopy/caller/**)" not in deny
+    own = os.path.expanduser("~/.canopy/caller/0c0ffee0-1111-2222-3333-444455556666.json")
+    assert "Read(~/.canopy/caller/**)" not in _perms(caller_path=own)["deny"]
 
 
 def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
@@ -126,7 +130,7 @@ def test_no_write_path_rule_is_ever_emitted(cap):
 def test_credential_stores_are_denied_to_every_file_writing_tool_as_edit_rules():
     deny = _perms(ACE_ASK)["deny"]
     for p in np.SENSITIVE_PATHS:
-        assert f"Edit({p})" in deny and f"Read({p})" in deny
+        assert np._path_rule("Edit", p) in deny and np._path_rule("Read", p) in deny
 
 
 def test_writes_land_only_in_write_paths_not_everywhere_reads_reach(tmp_path):

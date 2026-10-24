@@ -33,6 +33,26 @@ logger = logging.getLogger(__name__)
 CALLER_ROOT = pathlib.Path.home() / ".canopy" / "caller"
 KEEP_SECONDS = 7 * 24 * 3600
 
+#: An `@` Claude Code could read as a file mention: one not inside a word (an email
+#: address's `@` follows its local part, and stays). A superset of where Claude Code
+#: looks for one (2.1.310: at the start of a whitespace-separated token, or after one
+#: of `。、？！`; `@"quoted path"` the same).
+_MENTION_AT = re.compile(r"(?<![A-Za-z0-9._%+\-])@")
+#: What it becomes: the fullwidth commercial at, Claude Code's own escape for an `@`
+#: it must not expand. It reads the same to the model.
+MENTION_ESCAPE = "＠"
+
+
+def neutralise_mentions(text: str) -> str:
+    """A caller's words with every `@` that could be a file mention made inert.
+
+    Claude Code expands `@/path` in a prompt into the file's contents before the
+    model runs: no tool call is made, so neither `profile_guard` nor the allow list
+    sees it, and only a deny rule stops it. A confined session's prompt is someone
+    else's text, so it never reaches the CLI with one live (measured on 2.1.310:
+    `＠/path` and `x@/path` attach nothing, `@/path` and `@"/path"` do)."""
+    return _MENTION_AT.sub(MENTION_ESCAPE, text or "")
+
 #: A turn id is a UUID; anything else is refused rather than joined onto a path.
 _TURN_ID = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 
