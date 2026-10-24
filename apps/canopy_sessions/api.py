@@ -13,7 +13,6 @@ import uuid
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Max
 from django.http import Http404, HttpRequest
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -329,7 +328,7 @@ def _session_or_404(request: HttpRequest, session_id: uuid.UUID, *, write: bool 
     session = get_object_or_404(
         readable_sessions(request)
         .select_related("agent", "created_by", "runner_binding", "runner_binding__runner")
-        .annotate(_last_msg_at=Max("messages__created_at")),
+        .annotate(_last_msg_at=transcript_read.last_message_at()),
         pk=session_id,
     )
     if write and not access.can_write(request.user, session):

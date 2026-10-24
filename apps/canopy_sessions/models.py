@@ -234,6 +234,8 @@ class Message(models.Model):
                 fields=["session", "turn_index"], name="message_index_unique_per_session"
             )
         ]
+        # A session's newest message, one probe each (`transcript_read.last_message_at`).
+        indexes = [models.Index(fields=["session", "-created_at"], name="message_session_created_idx")]
 
     def __str__(self) -> str:  # pragma: no cover
         return f"msg:{self.session_id.hex[:8]}:{self.turn_index}:{self.role}"

@@ -73,7 +73,7 @@
 "apps/canopy_sessions/signals.py" = ["PLC0415"]  # 7
 "apps/canopy_sessions/status_feed.py" = ["PLC0415"]  # 7
 "apps/canopy_sessions/transcript_ingest.py" = ["PLC0415"]  # 9
-"apps/canopy_sessions/transcript_read.py" = ["PLC0415"]  # 8
+"apps/canopy_sessions/transcript_read.py" = ["PLC0415"]  # 7
 "apps/capabilities/apps.py" = ["PLC0415"]  # 2
 "apps/capabilities/aws.py" = ["PLC0415"]  # 7
 "apps/capabilities/management/commands/capability_sweep.py" = ["PLC0415"]  # 1
