@@ -118,10 +118,12 @@ nothing here.
     any copy not fetched. Never served to a person, MCP, a PAT or another box; no log
     line names it.
   - *On the box* it lands in the turn's own directory (`<cwd>/.canopy-attachments/<turn>/`,
-    owner-only), readable by that turn alone (a Read rule in its locked settings, the same
-    path in profile_guard's profile), and goes when the turn ends with the rest of its
+    owner-only), readable by that turn alone (a Read rule in its locked settings, and the
+    profile's `attachment_dirs`, Read alone, in profile_guard), and goes when the turn ends with the rest of its
     per-turn state. What the agent read of it survives only in the kept session's
     transcript, which lives no longer than the kept conversation.
+  - *Where a person attaches one:* canopy's chat page, or the embedded panel's frame
+    (its delegated token, same-origin as the keyset is served); never a site's backend.
   - *The people's copy is sealed in the uploader's browser* to the conversation's public
     key with the message construction (ECDH-ES + HKDF-SHA256 + AES-256-GCM), bound to the
     conversation, the attachment id and the uploader: the name, type and size as a `cf1:`

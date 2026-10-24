@@ -5335,7 +5335,7 @@ def _attachment_name(name: str) -> str:
 
 #: Where a PRIVATE conversation's files land for one turn: inside the turn's own working
 #: directory, under `.canopy-attachments/<turn id>/`, readable by that turn alone
-#: (`sensitive_data_settings(attachment_dir=…)`, `_confine(read_dirs=…)`) and deleted
+#: (`sensitive_data_settings(attachment_dir=…)`, the profile's `attachment_dirs`) and deleted
 #: when it ends with the rest of its per-turn state (`_sensitive_data_forget_turn`).
 SENSITIVE_ATTACHMENT_DIRNAME = ".canopy-attachments"
 
@@ -10077,16 +10077,9 @@ def _write_private_atomic(path: pathlib.Path, doc: dict) -> None:
     os.replace(tmp, path)
 
 
-def _with_read_dirs(cap: dict | None, read_dirs) -> dict | None:
-    """`cap` with Read granted inside each of `read_dirs` too (profile_guard checks Read
-    against `read_paths`): a private conversation's files, put in the turn's own
-    directory for it to read. Nothing else changes."""
-    dirs = [f"{os.path.realpath(str(d))}/**" for d in read_dirs or ()]
-    if not dirs or cap is None:
-        return cap
-    tools = list(cap.get("tools") or [])
-    return {**cap, "tools": tools if "Read" in tools else [*tools, "Read"],
-            "read_paths": [*(cap.get("read_paths") or []), *dirs]}
+#: The profile_guard version that honours `attachment_dirs` (canopy 0.2.781): Read of a
+#: file inside the turn's own attachment directory, and nothing wider.
+ATTACHMENT_DIRS_GUARD_VERSION = 4
 
 
 def _confine(turn: dict, read_dirs=()) -> tuple[dict, str]:
@@ -10094,15 +10087,18 @@ def _confine(turn: dict, read_dirs=()) -> tuple[dict, str]:
     the env points the session at its profile; the envelope is what the agent's
     `answer-caller` skill reads first (`--caller <path>`), and the profile names
     it so the guard allows reading exactly that one file. `read_dirs` are where a
-    private conversation's files for this turn were put (`_with_read_dirs`)."""
+    private conversation's files for this turn were put: named as the profile's
+    `attachment_dirs`, which the guard lets Read open and nothing else — the
+    capability's own tools and read_paths are unchanged."""
     turn_id = str(turn["id"])
-    cap = _with_read_dirs(_capability(turn), read_dirs)
+    cap = _capability(turn)
     caller_path = CALLER_ROOT / f"{turn_id}.json"
     doc = {"version": PROFILE_DOC_VERSION, "turn_id": turn_id, "capability": cap,
            "caller_path": str(caller_path),
            "thread_id": str(((turn.get("caller_context") or {}).get("conversation") or {})
                             .get("thread_id") or "") or None,
            "mcp_token": turn.get("mcp_token") or None,
+           **({"attachment_dirs": [os.path.realpath(str(d)) for d in read_dirs]} if read_dirs else {}),
            }
     path = PROFILE_ROOT / f"cloud-{turn_id}.json"
     try:
@@ -10393,7 +10389,13 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             try:
                 prompt = _confined_prompt(turn)
                 attachment_paths: list[pathlib.Path] = []
-                if conversation and cwd is not None:
+                if conversation and cwd is not None and profiles_supported() < ATTACHMENT_DIRS_GUARD_VERSION:
+                    # The installed guard cannot let the turn read them without widening
+                    # its capability, so they are not fetched: named as not available.
+                    refs = [r for r in (turn.get("origin_ref") or {}).get("attachments") or [] if r.get("id")]
+                    prompt = _neutralise_mentions(_with_attachments(
+                        prompt, [], [f"attachment {n}" for n in range(1, len(refs) + 1)]))
+                elif conversation and cwd is not None:
                     # A private conversation's files are its people's words, sent for
                     # this turn: fetched into its own directory, readable by it alone,
                     # gone when it ends (`_sensitive_data_forget_turn`).

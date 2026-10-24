@@ -17,12 +17,27 @@ export interface PrivateFiles {
   userId: number | string
 }
 
+/** How the composer reaches canopy for files: canopy's own chat page uses its signed-in
+ *  routes (the default); the embedded panel passes its frame's delegated-token client. */
+export interface AttachmentApi {
+  upload(sessionId: string, file: File): Promise<Attachment>
+  uploadSealed(attachmentId: string, sealedName: string, blob: Uint8Array): Promise<void>
+  remove(attachmentId: string): Promise<void>
+}
+
+export const pageAttachmentApi: AttachmentApi = {
+  upload: uploadAttachment,
+  uploadSealed: uploadSealedCopy,
+  remove: deleteAttachment,
+}
+
 /** Seal `file` (already uploaded as `saved`) to the conversation and store that copy. */
-export async function storeSealedCopy(saved: Attachment, file: File, privateFiles: PrivateFiles): Promise<void> {
+export async function storeSealedCopy(saved: Attachment, file: File, privateFiles: PrivateFiles,
+                                      api: AttachmentApi = pageAttachmentApi): Promise<void> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const { sealedName, blob } = await sealAttachment(privateFiles.target,
     { id: String(saved.id), uploadedBy: privateFiles.userId }, { name: file.name, type: file.type, bytes })
-  await uploadSealedCopy(String(saved.id), sealedName, blob)
+  await api.uploadSealed(String(saved.id), sealedName, blob)
 }
 
 /** A chat's staged attachments. Uploaded eagerly on pick/paste/drop so the file
@@ -34,7 +49,8 @@ export async function storeSealedCopy(saved: Attachment, file: File, privateFile
  *  the server sends only a file whose sealed copy it holds. A file that cannot be
  *  sealed is discarded and the chip says why. `refuse` shows a picked file refused,
  *  with why, and sends nothing. */
-export function useAttachments(sessionId: string, refuse?: string, privateFiles?: PrivateFiles | null) {
+export function useAttachments(sessionId: string, refuse?: string, privateFiles?: PrivateFiles | null,
+                               api: AttachmentApi = pageAttachmentApi) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
 
   // Uploads go one at a time: the server hands files to the runner in upload
@@ -54,8 +70,8 @@ export function useAttachments(sessionId: string, refuse?: string, privateFiles?
         uploads.current = uploads.current.then(async () => {
           let saved: Attachment | null = null
           try {
-            saved = await uploadAttachment(sessionId, file)
-            if (privateFiles) await storeSealedCopy(saved, file, privateFiles)
+            saved = await api.upload(sessionId, file)
+            if (privateFiles) await storeSealedCopy(saved, file, privateFiles, api)
             const done = saved
             // A private file's row holds no name: the chip keeps the one this browser picked.
             setAttachments((prev) =>
@@ -64,7 +80,7 @@ export function useAttachments(sessionId: string, refuse?: string, privateFiles?
           } catch (err: unknown) {
             // A private file whose sealed copy did not land is not sent: forget the
             // agent's copy now rather than wait for the sweep.
-            if (saved && privateFiles) void deleteAttachment(String(saved.id)).catch(() => undefined)
+            if (saved && privateFiles) void api.remove(String(saved.id)).catch(() => undefined)
             setAttachments((prev) =>
               prev.map((a) =>
                 a.id === tempId
@@ -76,7 +92,7 @@ export function useAttachments(sessionId: string, refuse?: string, privateFiles?
         })
       }
     },
-    [sessionId, refuse, privateFiles],
+    [sessionId, refuse, privateFiles, api],
   )
 
   const remove = useCallback((attachmentId: string) => {
@@ -84,11 +100,11 @@ export function useAttachments(sessionId: string, refuse?: string, privateFiles?
     // A failed upload has no server row (its id is still the temp one), so only
     // ask the server to forget the ones it actually knows about.
     if (!attachmentId.startsWith('pending:')) {
-      deleteAttachment(attachmentId).catch(() => {
+      api.remove(attachmentId).catch(() => {
         /* the chip is already gone from the UI; a stray row is swept server-side */
       })
     }
-  }, [])
+  }, [api])
 
   // The server consumes whatever the session is holding, so the chips are spent
   // the moment we send — leaving them would imply they ride along again.

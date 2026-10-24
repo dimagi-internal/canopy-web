@@ -19,7 +19,17 @@ function sizeLabel(bucket: number): string {
  * re-read whenever `refresh` changes (a new line of the person's arrived). Empty for an
  * ordinary conversation.
  */
-export function useSealedAttachments(sessionId: string, enabled: boolean, refresh: unknown): SealedAttachment[] {
+/** How the history reaches canopy for sealed files: canopy's own chat page uses its
+ *  signed-in routes (the default); the embedded panel passes its frame's client. */
+export interface SealedFilesApi {
+  list(sessionId: string): Promise<SealedAttachment[]>
+  fetch(attachmentId: string): Promise<Uint8Array>
+}
+
+export const pageSealedFilesApi: SealedFilesApi = { list: listSealedAttachments, fetch: fetchSealedAttachment }
+
+export function useSealedAttachments(sessionId: string, enabled: boolean, refresh: unknown,
+                                     api: SealedFilesApi = pageSealedFilesApi): SealedAttachment[] {
   const [files, setFiles] = useState<SealedAttachment[]>([])
   useEffect(() => {
     if (!enabled || !sessionId) {
@@ -27,17 +37,18 @@ export function useSealedAttachments(sessionId: string, enabled: boolean, refres
       return
     }
     let live = true
-    listSealedAttachments(sessionId).then((rows) => live && setFiles(rows)).catch(() => undefined)
+    api.list(sessionId).then((rows) => live && setFiles(rows)).catch(() => undefined)
     return () => {
       live = false
     }
-  }, [sessionId, enabled, refresh])
+  }, [sessionId, enabled, refresh, api])
   return files
 }
 
 /** The canopy-ui host that shows each line's sealed files under it, by `turn_index`. */
 export function sealedAttachmentHost(files: SealedAttachment[], conversationKey: ConversationKey | null,
-                                     onUnlock: () => void): AttachmentHost | undefined {
+                                     onUnlock: () => void,
+                                     api: SealedFilesApi = pageSealedFilesApi): AttachmentHost | undefined {
   if (!files.length) return undefined
   const byIndex = new Map<number, SealedAttachment[]>()
   for (const f of files) {
@@ -47,29 +58,33 @@ export function sealedAttachmentHost(files: SealedAttachment[], conversationKey:
   return {
     render: (m: Message) => {
       const mine = byIndex.get(m.turn_index)
-      return mine?.length ? <SealedAttachments files={mine} conversationKey={conversationKey} onUnlock={onUnlock} /> : null
+      return mine?.length
+        ? <SealedAttachments files={mine} conversationKey={conversationKey} onUnlock={onUnlock} api={api} />
+        : null
     },
   }
 }
 
-export function SealedAttachments({ files, conversationKey, onUnlock }: {
+export function SealedAttachments({ files, conversationKey, onUnlock, api = pageSealedFilesApi }: {
   files: SealedAttachment[]
   conversationKey: ConversationKey | null
   onUnlock: () => void
+  api?: SealedFilesApi
 }) {
   return (
     <ul className="mt-1.5 flex flex-col gap-1" data-testid="sealed-attachments">
       {files.map((f) => (
-        <SealedFile key={f.id} file={f} conversationKey={conversationKey} onUnlock={onUnlock} />
+        <SealedFile key={f.id} file={f} conversationKey={conversationKey} onUnlock={onUnlock} api={api} />
       ))}
     </ul>
   )
 }
 
-function SealedFile({ file, conversationKey, onUnlock }: {
+function SealedFile({ file, conversationKey, onUnlock, api }: {
   file: SealedAttachment
   conversationKey: ConversationKey | null
   onUnlock: () => void
+  api: SealedFilesApi
 }) {
   const place = useMemo(() => ({ id: String(file.id), uploadedBy: file.uploaded_by ?? '' }), [file.id, file.uploaded_by])
   const [meta, setMeta] = useState<FileMeta | null>(null)
@@ -98,7 +113,7 @@ function SealedFile({ file, conversationKey, onUnlock }: {
     if (!conversationKey || !meta) return null
     setBusy(true)
     try {
-      const bytes = await openSealedBlob(await fetchSealedAttachment(String(file.id)), conversationKey, place, meta)
+      const bytes = await openSealedBlob(await api.fetch(String(file.id)), conversationKey, place, meta)
       return new Blob([bytes], { type: meta.type || 'application/octet-stream' })
     } catch {
       setError('This file could not be opened with your key.')
@@ -106,7 +121,7 @@ function SealedFile({ file, conversationKey, onUnlock }: {
     } finally {
       setBusy(false)
     }
-  }, [conversationKey, meta, file.id, place])
+  }, [conversationKey, meta, file.id, place, api])
 
   const download = useCallback(async () => {
     const blob = await open()
