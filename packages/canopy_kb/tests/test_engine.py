@@ -156,3 +156,44 @@ def test_the_vertex_engine_reads_the_model_from_the_steps_meta(monkeypatch):
     with Curation(MemoryStore()) as cur:
         got = steps.cards(cur, step, todo, engine=engine.Vertex())
     assert list(got.values()) == [CARD] and asked == [(step.meta["model"], {"max_tokens": 2048})]
+
+
+def _reader(kind, body, page_selector=None, title_suffix=""):
+    """A reader that dies (as an out-of-memory kill does) on the file that says so."""
+    import os
+    if body == b"huge":
+        os._exit(9)
+    return {"text": body.decode()}
+
+
+class _Fetch:
+    def __init__(self, bodies):
+        self.bodies = bodies
+
+    def prefetch(self, rows):
+        pass
+
+    def body(self, r):
+        return self.bodies[r["url"]]
+
+    def forget_bodies(self):
+        pass
+
+
+def test_a_reader_that_dies_loses_only_its_own_file_and_the_run_goes_on(monkeypatch):
+    import multiprocessing
+    if multiprocessing.get_start_method() != "fork":
+        pytest.skip("the stub reader reaches the pool's processes by fork")
+    from canopy_kb.prep import extract as _extract
+    monkeypatch.setattr(_extract, "extract_bytes", _reader)
+    bodies = {f"https://x/{n}": f"text {n}".encode() for n in range(6)}
+    bodies["https://x/huge"] = b"huge"
+    rows = [{"url": u, "sha256": u} for u in bodies]
+    step = steps.reader("pdf")
+    with Curation(MemoryStore()) as cur:
+        got = steps.extract(cur, _Fetch(bodies), [(r, step) for r in rows], workers=3)
+    assert sorted(v["text"] for v in got.values()) == [f"text {n}" for n in range(6)]
+
+
+def test_the_reader_pool_fits_the_machine():
+    assert 1 <= steps.reader_workers() <= 8
