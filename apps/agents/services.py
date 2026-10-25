@@ -1749,6 +1749,23 @@ def declared_credential_names(agent) -> set[str]:
     return names
 
 
+def declare_credential_names(agent, names) -> list[str]:
+    """Add `names` to the agent's declared refs (`runtime_secrets`); return the
+    ones that were new.
+
+    Called when the agent's owner or an admin stores a value: someone who may
+    write the list anyway is not widening anything by naming a secret, and a
+    stored-but-undeclared value is one the agent's scoped reads never get —
+    the Credentials page showed it "not declared" with no way to fix it there."""
+    current = [str(n) for n in (agent.runtime_secrets or [])]
+    known = set(current) | {str(n) for n in (agent.runtime_sources or {})}
+    added = sorted({str(n).strip() for n in names if str(n).strip()} - known)
+    if added:
+        agent.runtime_secrets = current + added
+        agent.save(update_fields=["runtime_secrets"])
+    return added
+
+
 def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, str]:
     """PLAINTEXT. The only path that returns values, and only to a runner.
 

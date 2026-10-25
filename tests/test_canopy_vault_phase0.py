@@ -23,6 +23,7 @@ from django.core.management import call_command
 from django.test import Client
 from django.utils import timezone
 
+from apps.agents import services
 from apps.agents.models import Agent, AgentCredential, AgentCredentialRead
 from apps.common import kms_envelope
 from apps.common.encryption import encrypt_secret
@@ -178,10 +179,11 @@ def test_unscoped_resolve_is_unchanged(fleet):
 
 
 def test_refs_returns_only_named_and_declared(fleet):
-    _put(fleet["client"], {"canopy-pat": "a", "gog-token": "b", "undeclared": "c",
-                           "nova-api-key": "n"})
+    _put(fleet["client"], {"canopy-pat": "a", "gog-token": "b", "nova-api-key": "n"})
+    # Stored without the API (which declares what an admin stores): an orphan.
+    services.set_agent_credentials(Agent.objects.get(slug="eva"), {"undeclared": "c"})
     body = _resolve(fleet, "?refs=canopy-pat,undeclared,nova-api-key").json()
-    # `undeclared` is stored but not in runtime.yaml: never handed out by name.
+    # `undeclared` is stored but not declared: never handed out by name.
     # `nova-api-key` is declared through runtime_sources.
     assert body["values"] == {"canopy-pat": "a", "nova-api-key": "n"}
     # Secret extras ride along only when named.
