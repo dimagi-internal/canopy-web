@@ -938,6 +938,11 @@ def test_an_approved_key_that_came_to_serve_an_agent_since_offers_give_access(fl
     assert rows[str(fleet.device.pk)]["zk_pending_agents"] == []  # already wrapped
     on_agent = {r["id"]: r for r in fleet.client.get("/api/agents/eva/device-keys").json()}
     assert on_agent[str(key.pk)]["zk_pending_agents"] == ["eva"]
+    # The agent's setup step links straight to that machine's row, where one touch lets it in.
+    from apps.agents.setup import _vault
+    step = _vault(_agent(fleet), "/w/x/agents/eva/settings")
+    assert step["href"] == f"/settings?device_key={key.pk}#your-machines"
+    assert step["action"] == f"Let {key.runner.name} in"
 
 
 def test_approving_a_key_covers_a_born_agent_whose_sealed_values_it_cannot_read(fleet):

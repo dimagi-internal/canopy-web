@@ -26,7 +26,7 @@ from . import mailbox
 from .credentials import delegations, zk_seal
 from .credentials.oauth_api import GOG_TOKEN_REF
 from .credentials.pat_rotation import CANOPY_PAT_REF
-from .credentials.vault_health import vault_health
+from .credentials.vault_health import machine_keys_waiting, vault_health
 from .models import Agent, AgentBootstrapReport, AgentCredential
 from .services import bootstrap_reports
 
@@ -213,11 +213,18 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
                      "one here so its runners can read it.",
                      href=f"{settings}#credentials", action="Add the missing secrets")
     if vh["machines_waiting"]:
+        # Straight to the waiting machine's own row under Your machines, which lets it
+        # in with one passkey touch; several go to that list.
+        keys = machine_keys_waiting(agent, facts)
         names = ", ".join(vh["machines_waiting"])
+        one = len(keys) == 1
         return _step("vault", title, WAITING,
-                     f"Its secrets are in canopy-web, but {names} cannot open them yet. One of its "
-                     "admins lets each machine in with a passkey touch.",
-                     href="/settings#your-agents", action="Give access")
+                     f"{names} {'runs' if one else 'run'} {agent.name} but cannot open its secrets yet. "
+                     f"Letting {'it' if one else 'each'} in hands it a copy of {agent.name}'s vault key: "
+                     "one passkey touch, by you or another of its admins.",
+                     href=(f"/settings?device_key={next(iter(keys.values()))}#your-machines" if one
+                           else "/settings#your-machines"),
+                     action=f"Let {names} in" if one else "Let them in")
     return _step("vault", title, DONE,
                  f"All {vh['declared']} declared secrets are in canopy-web." if vh["declared"] else
                  "It reads secrets from canopy-web and declares none.",
