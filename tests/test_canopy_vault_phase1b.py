@@ -632,3 +632,20 @@ def test_nobody_else_may_use_the_own_rotation(fleet, agent_login):
 
 def test_the_own_rotation_needs_a_reason(fleet, agent_login):
     assert _rotate_own(agent_login["raw"], reason="oops").status_code == 422
+
+
+def test_self_rotation_retires_the_token_it_was_called_with_when_none_is_known(fleet, agent_login):
+    """Production, 2026-10-24: Hal's vault is zero-knowledge and had never rotated, so
+    nothing named its current token — the self-rotation minted a new one and left the
+    LEAKED one live. The token the agent called with is the leaked one: retire it."""
+    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "unreadable-sealed-value"}},
+                        content_type="application/json")
+    res = _rotate_own(agent_login["raw"])
+    assert res.status_code == 200, res.content
+    assert res.json()["old_token_revoked_after"] is not None
+    old = PersonalToken.objects.get(pk=agent_login["token"].pk)
+    assert old.expires_at is not None and old.expires_at - timezone.now() <= pat_rotation.OVERLAP
+    assert AgentPatRotation.objects.get().old_token_id == old.pk
+    # And the overlap's end revokes it like any rotation.
+    assert pat_rotation.tick(now=timezone.now() + dt.timedelta(hours=25))["revoked"] == 1
+    assert PersonalToken.objects.get(pk=old.pk).revoked_at is not None
