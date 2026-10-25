@@ -312,6 +312,8 @@ def test_as_dict_is_flat_json_native_and_carries_the_derived_questions():
         "held_until": None,
         "claimed_at": None,
         "last_progress_at": None,
+        "midturn": False,
+        "midturn_blocked": None,
         "settled": False,
         "stuck": True,
     }

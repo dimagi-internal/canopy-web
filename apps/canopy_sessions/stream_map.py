@@ -78,6 +78,11 @@ def turn_event_to_frames(evt: dict, resolve_message_id: Callable[[int], str]) ->
             done["api_error"] = str(payload["api_error"])
             if payload.get("signed_out"):
                 done["signed_out"] = True
+        # How full the context window was for this call (`canopy_transcript.
+        # record_window`), as the stored row carries it — the chat's meter reads
+        # the newest row that has it, live or from history.
+        if isinstance(payload.get("usage"), dict):
+            done["usage"] = payload["usage"]
         return [
             {"event": "chat.stream_start", "data": {"message_id": mid, "turn_index": seq}},
             {"event": "chat.stream_complete", "data": done},

@@ -360,6 +360,33 @@ def test_record_usage_reads_one_model_call():
     assert record_usage(synthetic) == {} and record_usage({"type": "user", "message": {}}) == {}
 
 
+def test_an_assistant_call_says_how_full_the_window_was_on_its_last_row():
+    """input + both cache counts is the prompt the call sent — the window's fill.
+    One per call, on the record's last row (a tool call here), so a reader takes
+    the newest row carrying it."""
+    usage = {"input_tokens": 5, "output_tokens": 70, "cache_read_input_tokens": 120_000,
+             "cache_creation_input_tokens": 4_000}
+    rec = {"type": "assistant", "message": {
+        "model": "claude-opus-5-5", "usage": usage, "stop_reason": "tool_use",
+        "content": [{"type": "text", "text": "looking"},
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}
+    rows = ct.rows_for_record(rec)
+    assert "usage" not in rows[0]["content"]
+    assert rows[-1]["content"]["usage"] == {"context_tokens": 124_005, "model": "claude-opus-5-5"}
+    # It rides the wire payload, so live frames and stored rows both carry it.
+    assert ct.row_payload({**rows[-1], "index": 0})["usage"]["context_tokens"] == 124_005
+
+
+def test_a_subagent_or_synthetic_call_says_nothing_about_the_window():
+    usage = {"input_tokens": 5, "cache_read_input_tokens": 9_000}
+    side = {"type": "assistant", "isSidechain": True,
+            "message": {"model": "m", "usage": usage, "content": "x"}}
+    synthetic = {"type": "assistant", "message": {"model": "<synthetic>", "usage": usage, "content": "x"}}
+    assert ct.record_window(side) == {} and ct.record_window(synthetic) == {}
+    assert "usage" not in ct.rows_for_record(side)[0]["content"]
+    assert ct.record_window({"type": "assistant", "message": {"content": "x"}}) == {}
+
+
 # --- resource links survive the cut -------------------------------------------------
 
 import json as _json

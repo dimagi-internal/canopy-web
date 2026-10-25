@@ -82,6 +82,34 @@
   },
   {
     "canopy": {
+      "event": "chat.stream_complete",
+      "data": {
+        "message_id": "m3",
+        "plaintext": "done",
+        "usage": {
+          "context_tokens": 124005,
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    "agui": [
+      {
+        "type": "TEXT_MESSAGE_END",
+        "metadata": {
+          "canopy": {
+            "plaintext": "done",
+            "usage": {
+              "context_tokens": 124005,
+              "model": "claude-opus-5-5"
+            }
+          }
+        },
+        "messageId": "m3"
+      }
+    ]
+  },
+  {
+    "canopy": {
       "event": "chat.user_message",
       "data": {
         "message_id": "u1",

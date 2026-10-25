@@ -27,7 +27,7 @@
  * standard.
  */
 
-import type { MessageAppRef, MessageAuthor, MessageSecretRequestRef, SessionMenu, WsEvent } from "./protocol";
+import type { ContextUsage, MessageAppRef, MessageAuthor, MessageSecretRequestRef, SessionMenu, WsEvent } from "./protocol";
 
 /** Where canopy's own fields ride. Mirrors `agui.METADATA_KEY`. */
 export const METADATA_KEY = "canopy";
@@ -108,6 +108,7 @@ export function fromAgui(frame: AguiFrame): WsEvent[] {
             plaintext: str(m.plaintext),
             ...(m.api_error ? { api_error: str(m.api_error) } : {}),
             ...(m.signed_out ? { signed_out: true } : {}),
+            ...(m.usage && typeof m.usage === "object" ? { usage: m.usage as ContextUsage } : {}),
           },
         },
       ];

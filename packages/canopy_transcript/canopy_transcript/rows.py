@@ -315,7 +315,35 @@ def rows_for_record(rec: dict) -> list[dict]:
         for row in rows:
             if row["role"] == "user":
                 row["content"] = {**row["content"], "record": flags}
+    if kind == "assistant" and rows:
+        # How full the context window was for this call, on the record's LAST
+        # row only (one per model call, however many blocks it wrote) — so the
+        # chat can say "62% context" from the newest row that carries it.
+        window = record_window(rec)
+        if window:
+            rows[-1]["content"] = {**rows[-1]["content"], "usage": window}
     return rows
+
+
+def record_window(rec: dict) -> dict:
+    """How much context one main-conversation model call carried, as
+    {"context_tokens", "model"}, or {} when the record cannot say.
+
+    `context_tokens` is the PROMPT the call sent — `input_tokens` plus both
+    cache counts (`cache_read_input_tokens`, `cache_creation_input_tokens`),
+    which is what fills the window; the call's own output is not in it yet. A
+    subagent's call (`isSidechain`) runs in a context of its own and says
+    nothing about this one; Claude Code's `<synthetic>` notices made no call.
+    Built on `record_usage`, the one reader of `message.usage`."""
+    if rec.get("isSidechain"):
+        return {}
+    used = record_usage(rec)
+    if not used:
+        return {}
+    tokens = used["input_tokens"] + used["cache_read_tokens"] + used["cache_creation_tokens"]
+    if tokens <= 0:
+        return {}
+    return {"context_tokens": tokens, "model": used["model"]}
 
 
 def _rows_for_record(kind: str, rec: dict) -> list[dict]:

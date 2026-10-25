@@ -40,7 +40,7 @@ export function QueuedRows({
               >
                 {mine ? "You" : q.author?.name ?? "Someone"}
               </span>
-              <span>{q.state === "queued" ? "queued" : "sending to agent…"}</span>
+              <span data-testid="queued-state">{queuedLabel(q.state)}</span>
               {mine && q.state === "queued" && onCancel && (
                 <button type="button" onClick={() => onCancel(q.turn_id)}
                         data-testid="queued-cancel"
@@ -55,4 +55,12 @@ export function QueuedRows({
       })}
     </div>
   );
+}
+
+/** What has happened to a send so far. `midturn` is a follow-up typed into the
+ *  agent's running turn: delivered, not waiting — the agent reads it mid-turn. */
+export function queuedLabel(state: QueuedMessage["state"]): string {
+  if (state === "queued") return "queued";
+  if (state === "midturn") return "delivered into the current turn";
+  return "sending to agent…";
 }

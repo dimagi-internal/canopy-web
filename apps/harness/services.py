@@ -447,7 +447,7 @@ def heartbeat(
     projects: list[str] | None = None, profiles: int = 0,
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
     envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
-    data_mode: str = "", data_mode_hash: str = "",
+    data_mode: str = "", data_mode_hash: str = "", claude_model: str = "",
 ) -> Runner:
     """A runner's liveness and what it reports, nothing else: the beat renews the
     leases of the turns it holds and answers with the stops it owes. Periodic
@@ -539,6 +539,13 @@ def heartbeat(
     # the same reply twice, so it must never be handed one.
     if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
         runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # The model the box's sessions start on (`opus[1m]`), for the chat's context
+    # meter: a display hint, never a routing input. Same contract, absent = "".
+    model = (claude_model or "")[:64]
+    if (runner.capabilities.get("claude_model") or "") != model:
+        runner.capabilities = {**runner.capabilities, "claude_model": model}
         if "capabilities" not in fields:
             fields.append("capabilities")
     # The box's data mode and its config hash (`runner_requirements.in_force`):
