@@ -128,6 +128,39 @@ def list_agents(request: HttpRequest, limit: int = 100) -> Page[AgentOut]:
         update={"plugin": _plugin_out(a, refs)}))
 
 
+#: How sure canopy must be of a person before an agent's register makes THEM the owner:
+#: signed in, or on their own token / private runner — never a weaker claim.
+_OWNER_ASSURANCES = ("session", "pat", "private-runner-key")
+
+
+def _creating_owner(request: HttpRequest, home):
+    """Who owns an agent this request creates: the caller — unless the caller is an
+    AGENT's own login registering it from inside one of its live turns, when it is the
+    person who asked for that turn. Ada creating an agent for Jonathan made Ada the
+    owner (2026-10-25), and he had to transfer it by hand.
+
+    The parent turn (`X-Canopy-Parent-Turn`, which the canopy CLI sends) is checked, not
+    taken on trust: it must be live, belong to the caller's own agent, and have been
+    asked by a person canopy verified who may create agents in `home`. Anything short of
+    that leaves the caller the owner, as before."""
+    from apps.contacts.hcp.sensitive import _context_turn
+    from apps.harness import initiator
+    from apps.harness.models import Turn
+
+    caller = request.user
+    slug = initiator._agent_login_of(caller)
+    turn = _context_turn() if slug else None
+    if (turn is None or turn.agent_id is None or turn.agent.slug != slug
+            or turn.status not in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
+            or turn.initiator_kind != initiator.USER or turn.initiator_user_id is None
+            or turn.initiator_assurance not in _OWNER_ASSURANCES):
+        return caller
+    person = turn.initiator_user
+    if not perms.role_allows(wsvc.member_role(person, home), perms.AGENT_WORK):
+        return caller
+    return person
+
+
 @router.post("/", response={201: AgentOut}, summary="Create or update an agent (upsert by slug)",)
 @gate("agent.work", "agent-admin", setting=True)  # editor in target ws; a MOVE also needs agent admin
 def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
@@ -218,11 +251,12 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
             )
 
     # Whoever registers a NEW agent owns it — from the create wizard and from a terminal's
-    # `/canopy:create-agent` alike. An ownerless agent cannot be lent a GitHub identity
+    # `/canopy:create-agent` alike; from inside an agent's turn, the person who asked for
+    # it (`_creating_owner`). An ownerless agent cannot be lent a GitHub identity
     # (`delegations.set_github` is for its owner and admins) and no box may hold it unless a workspace
     # owner pairs one, so leaving it unset left every new agent stuck until someone ran
     # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
-    agent = services.upsert_agent(payload, workspace=home, owner=request.user)
+    agent = services.upsert_agent(payload, workspace=home, owner=_creating_owner(request, home))
     if existing is None or (payload.repo_url is not None and payload.repo_url != existing.repo_url):
         # A cloud box only learns of an agent (or its new repo) by re-running its
         # bootstrap; ask the ones that will take its turns to do that now.

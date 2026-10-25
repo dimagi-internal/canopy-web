@@ -583,3 +583,61 @@ def test_the_runner_step_is_only_for_running_on_its_own(editor, ws):
     AgentBootstrapReport.objects.create(agent=agent, runner_name="olive-cloud")
     done = next(s for s in setup_steps(agent) if s["key"] == "runner")
     assert done["status"] == "done" and "canopy agent use" not in done["detail"]
+
+
+# ---- registering from inside an agent's turn --------------------------------------
+
+def _agent_turn(ws, asker, *, status="running", assurance="session", agent_slug="ada"):
+    """A live turn of agent `agent_slug` (with its own canopy login), asked by `asker`."""
+    import uuid
+
+    from apps.harness.models import Turn
+
+    login = a_member(ws, email=f"{agent_slug}@dimagi-ai.com", role=WorkspaceMembership.EDITOR)
+    conductor = Agent.objects.create(slug=agent_slug, name=agent_slug, workspace=ws, owner=asker, user=login)
+    turn = Turn.objects.create(agent=conductor, origin=Turn.ORIGIN_CANOPY_WEB_CHAT, prompt="make an agent",
+                               idempotency_key=uuid.uuid4().hex, status=status,
+                               initiator_kind="user", initiator_user=asker, initiator_assurance=assurance)
+    return login, turn
+
+
+def _register_from(login, turn, slug="trellis"):
+    c = Client(HTTP_X_CANOPY_PARENT_TURN=str(turn.pk))
+    c.force_login(login)
+    return c.post("/api/agents/", {"slug": slug, "name": slug.title(), "workspace": "scouts"},
+                  content_type="application/json")
+
+
+def test_an_agent_registering_from_a_persons_turn_makes_that_person_the_owner(editor, ws):
+    login, turn = _agent_turn(ws, editor)
+    assert _register_from(login, turn).status_code == 201
+    assert Agent.objects.get(slug="trellis").owner == editor
+
+
+@pytest.mark.parametrize("status,assurance", [("done", "session"), ("running", "host_signed")])
+def test_a_finished_turn_or_a_weak_claim_leaves_the_agent_the_owner(editor, ws, status, assurance):
+    login, turn = _agent_turn(ws, editor, status=status, assurance=assurance)
+    assert _register_from(login, turn).status_code == 201
+    assert Agent.objects.get(slug="trellis").owner == login
+
+
+def test_another_agents_turn_is_not_borrowed(editor, ws):
+    _, turn = _agent_turn(ws, editor, agent_slug="ada")
+    impostor = a_member(ws, email="hal@dimagi-ai.com", role=WorkspaceMembership.EDITOR)
+    Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=editor, user=impostor)
+    assert _register_from(impostor, turn).status_code == 201
+    assert Agent.objects.get(slug="trellis").owner == impostor
+
+
+def test_an_asker_who_could_not_create_it_there_is_not_made_owner(ws):
+    viewer = a_member(ws, email="v@dimagi.com", role=WorkspaceMembership.VIEWER)
+    login, turn = _agent_turn(ws, viewer)
+    assert _register_from(login, turn).status_code == 201
+    assert Agent.objects.get(slug="trellis").owner == login
+
+
+def test_a_person_sending_a_parent_header_still_owns_what_they_create(editor, ws):
+    other = a_member(ws, email="x@dimagi.com", role=WorkspaceMembership.EDITOR)
+    _, turn = _agent_turn(ws, other)
+    assert _register_from(editor, turn).status_code == 201
+    assert Agent.objects.get(slug="trellis").owner == editor
