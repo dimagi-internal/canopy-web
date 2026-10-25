@@ -9,11 +9,13 @@ import {
 } from '@/api/vault'
 import { endorseReaders, sealAndStore, stepUpAndUnlock, unlockVaultKey, type Unlocked } from '@/vault/operations'
 import { assess, changedKey, loadPins, newEndorsers, savePins, type Assessment, type Endorser } from '@/vault/trust'
+import { isPasskeyRefusal, PASSKEY_NOT_COMPLETED } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 import { fingerprint } from '@/vault/zk'
 
 /**
- * Give an agent a secret — one password field, sealed in THIS browser.
+ * Give an agent a secret — one field (pasted, or loaded from a file), sealed in
+ * THIS browser.
  *
  * Spec: docs/superpowers/specs/2026-10-19-give-an-agent-a-secret-design.md.
  * The value is sealed (`zks1`) to the agent's readers before anything leaves
@@ -24,6 +26,12 @@ import { fingerprint } from '@/vault/zk'
  * With `requestId` it answers an agent's request (the chat card); without, it
  * is an admin adding a declared secret (the setup checklist).
  */
+// A credential file is a few KB; anything far larger is the wrong file.
+const MAX_UPLOAD_BYTES = 64 * 1024
+
+const describe = (e: unknown, fallback: string) =>
+  isPasskeyRefusal(e) ? PASSKEY_NOT_COMPLETED : e instanceof Error ? e.message : fallback
+
 export function SecretSealCard({ slug, name, requestId, onStored }: {
   slug: string
   name: string
@@ -64,7 +72,7 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
       if (requestId) setReq(await getSecretRequest(slug, requestId))
       onStored?.(name)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not store the value')
+      setError(describe(e, 'Could not store the value'))
       setPhase('idle')
     }
   }, [value, slug, name, requestId, onStored])
@@ -110,9 +118,21 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
       setData(d)
       await decide(d, self)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not check who can read this agent')
+      setError(describe(e, 'Could not check who can read this agent'))
       setPhase('idle')
     }
+  }
+
+  // A key file (a PEM, a service-account JSON) fills the field; Seal and store
+  // sends it, so the passkey check still starts from a click.
+  const load = async (file: File | undefined) => {
+    if (!file) return
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(`${file.name} is larger than ${MAX_UPLOAD_BYTES / 1024} KB — not a credential file?`)
+      return
+    }
+    setError('')
+    setValue((await file.text()).replace(/\r?\n$/, ''))
   }
 
   const trust = async (people: Endorser[]) => {
@@ -126,7 +146,7 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
       setMe(self)
       if (data) await decide(data, self)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not unlock your vault key')
+      setError(describe(e, 'Could not unlock your vault key'))
     }
   }
 
@@ -143,7 +163,7 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
       setData(d)
       await decide(d, me)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not confirm these machines')
+      setError(describe(e, 'Could not confirm these machines'))
     }
   }
 
@@ -183,23 +203,44 @@ export function SecretSealCard({ slug, name, requestId, onStored }: {
       ) : (
         // Not a <form>: the card is also mounted inside other forms (Share secret).
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`Seal ${name}`}>
-          <input
-            type="password"
+          {/* Plain, multi-line text: a PEM keeps its line breaks and you can see what
+              you pasted. ⌘/Ctrl+Enter seals. */}
+          <textarea
             autoComplete="off"
+            spellCheck={false}
             aria-label={`Value for ${name}`}
             data-testid="secret-seal-value"
             value={value}
+            rows={value.includes('\n') ? Math.min(12, value.split('\n').length) : 1}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault()
                 void start()
               }
             }}
             disabled={phase !== 'idle'}
-            placeholder={`Paste ${name}`}
-            className="min-h-11 w-full flex-1 rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0 sm:w-64"
+            placeholder={`Paste ${name}, or Upload file`}
+            className="min-h-11 w-full flex-1 resize-y rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0 sm:w-64"
           />
+          <label
+            title="Load the contents of a file from your computer (e.g. a PEM), then Seal and store"
+            className={`inline-flex min-h-11 cursor-pointer items-center rounded-md border border-input px-3 py-1 text-[12px] sm:min-h-0 ${phase !== 'idle' ? 'pointer-events-none opacity-40' : ''}`}
+          >
+            Upload file
+            <input
+              type="file"
+              className="sr-only"
+              disabled={phase !== 'idle'}
+              aria-label={`Upload a file as the value of ${name}`}
+              data-testid="secret-seal-upload"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = ''
+                void load(file)
+              }}
+            />
+          </label>
           <button
             type="button"
             onClick={() => void start()}
