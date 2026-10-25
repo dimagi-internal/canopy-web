@@ -1888,6 +1888,19 @@ class PatRotationOut(StrictModel):
     history: list[PatRotationEventOut] = []
 
 
+class OwnPatRotateIn(StrictModel):
+    reason: str = Field(min_length=10, max_length=400,
+                        description="What happened: where the token went, or why you think it is exposed.")
+
+
+class OwnPatRotateOut(StrictModel):
+    """The rotation the agent just triggered on its own login. Never a token."""
+
+    rotated_at: dt.datetime
+    old_token_revoked_after: dt.datetime | None = None
+    detail: str
+
+
 class DeviceBindingIn(StrictModel):
     """Require a device proof on resolve (only meaningful with credential_source
     canopy-web). Owner/admin only, like CredentialSourceIn."""
