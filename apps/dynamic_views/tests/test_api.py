@@ -84,6 +84,33 @@ def test_a_viewer_reads_but_cannot_write(world):
     assert v.delete(f"/api/dynamic-views/{view_id}").status_code == 403
 
 
+def test_a_project_lead_who_is_only_a_viewer_edits_that_projects_views(world):
+    # Project views exist for the people running the project, who are often not
+    # workspace editors. Edit rights on the project are enough — for that project only.
+    world["project"].owner_user = world["viewer"]
+    world["project"].save(update_fields=["owner_user"])
+    AgentProject.objects.create(workspace=world["ws"], handle="elsewhere", name="Elsewhere")
+    v = _client(world["viewer"])
+
+    r = _create(v, project="unga-2026", title="UNGA board")
+    assert r.status_code == 201, r.content
+    view_id = r.json()["id"]
+    assert v.patch(f"/api/dynamic-views/{view_id}", {"title": "UNGA"}, content_type=J).json()["version"] == 2
+    assert v.post(f"/api/dynamic-views/{view_id}/rollback", {"version": 1}, content_type=J).status_code == 200
+
+    assert _create(v).status_code == 403  # a workspace view
+    assert _create(v, project="elsewhere").status_code == 403  # a project they do not lead
+    # Moving the view out of their project needs rights where it lands.
+    assert v.patch(f"/api/dynamic-views/{view_id}", {"project": ""}, content_type=J).status_code == 403
+    assert v.patch(f"/api/dynamic-views/{view_id}", {"project": "elsewhere"}, content_type=J).status_code == 403
+    assert DynamicView.objects.get(pk=view_id).project_id == world["project"].pk
+
+    editors_view = _create(_client(world["editor"])).json()["id"]
+    assert v.patch(f"/api/dynamic-views/{editors_view}", {"title": "x"}, content_type=J).status_code == 403
+
+    assert v.delete(f"/api/dynamic-views/{view_id}").status_code == 204
+
+
 def test_another_workspace_cannot_see_or_touch_it(world):
     view_id = _create(_client(world["editor"])).json()["id"]
     o = _client(world["outsider"])
