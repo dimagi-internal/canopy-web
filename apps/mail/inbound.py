@@ -31,10 +31,10 @@ class Transient(Exception):  # noqa: N818 - carries the outcomes of a notificati
         self.outcomes = outcomes
 
 
-def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str:
+def deliver_agent(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
     from . import agent_mail
 
-    return agent_mail.deliver(route, parsed, raw_key, verdicts=verdicts)
+    return agent_mail.deliver(route, parsed, raw_key, verdicts=verdicts, raw_size=raw_size)
 
 
 def deliver_forward(route, parsed, raw: bytes, recipient: str) -> str:
@@ -84,7 +84,7 @@ def _route_one(rcpt: str, parsed, raw: bytes, key: str, verdicts: dict) -> str:
     if route is None:
         return kind
     if kind == MailRoute.AGENT:
-        return deliver_agent(route, parsed, key, verdicts=verdicts)
+        return deliver_agent(route, parsed, key, verdicts=verdicts, raw_size=len(raw))
     return deliver_forward(route, parsed, raw, rcpt)
 
 

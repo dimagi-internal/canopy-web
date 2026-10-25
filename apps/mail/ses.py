@@ -159,6 +159,19 @@ def put_object(key: str, data: bytes, content_type: str) -> None:
                      ContentType=content_type or "application/octet-stream")
 
 
+def delete_objects(keys: list[str]) -> None:
+    """Delete objects from the mail bucket, 1000 per call (S3's limit). Raises on a key
+    S3 reports it could not delete."""
+    _guard()
+    keys = [k for k in dict.fromkeys(keys) if k]
+    for i in range(0, len(keys), 1000):
+        out = _s3().delete_objects(Bucket=settings.MAIL_INBOUND_BUCKET, Delete={
+            "Objects": [{"Key": k} for k in keys[i:i + 1000]], "Quiet": True})
+        if out.get("Errors"):
+            first = out["Errors"][0]
+            raise RuntimeError(f"S3 refused {len(out['Errors'])} delete(s): {first.get('Code')}")
+
+
 def _disposition(filename: str) -> str:
     """Content-Disposition for a download. `filename` comes from inbound mail, so it is
     attacker-controlled: the ASCII fallback drops anything that could break out of the

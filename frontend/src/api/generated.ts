@@ -16034,6 +16034,16 @@ export interface components {
              * @default false
              */
             readonly can_route: boolean;
+            /**
+             * Used Bytes
+             * @default 0
+             */
+            readonly used_bytes: number;
+            /**
+             * Cap Bytes
+             * @default 0
+             */
+            readonly cap_bytes: number;
         };
         /** AgentMailboxIn */
         readonly AgentMailboxIn: {
@@ -16050,6 +16060,11 @@ export interface components {
             readonly size: number;
             /** Url */
             readonly url: string;
+            /**
+             * Kept
+             * @default true
+             */
+            readonly kept: boolean;
         };
         /** MailMessageOut */
         readonly MailMessageOut: {

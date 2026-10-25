@@ -104,6 +104,9 @@ class MailAttachmentOut(Schema):
     content_type: str
     size: int
     url: str
+    kept: bool = True
+    """False: over the per-message attachment limit, so only its name, type and size were kept
+    (`url` is "")."""
 
 
 class MailMessageOut(Schema):
@@ -200,6 +203,10 @@ class AgentMailboxOut(Schema):
     """The canopy-hosted domains this agent's workspace may give it an address on."""
     can_route: bool = False
     """Whether the caller may create the mailbox route (workspace admin or owner)."""
+    used_bytes: int = 0
+    """Bytes the hosted address's mailbox holds (in and out), 0 unless `kind` is hosted."""
+    cap_bytes: int = 0
+    """The most one mailbox may hold before its oldest mail is evicted; 0 = no cap."""
 
 
 class AgentMailboxIn(Schema):

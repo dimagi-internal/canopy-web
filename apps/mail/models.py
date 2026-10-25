@@ -182,6 +182,9 @@ class MailMessage(models.Model):
     text = models.TextField(blank=True, default="")
     html = models.TextField(blank=True, default="")
     raw_key = models.CharField(max_length=512, blank=True, default="")
+    size_bytes = models.PositiveBigIntegerField(default=0)
+    """What this copy holds against its mailbox's cap (apps/mail/storage.py): text + html
+    (UTF-8) + its attachments + the raw MIME object, set when it is stored."""
     verdicts = models.JSONField(default=dict, blank=True)
     """SES receipt verdicts of an inbound message, lowercase name → status
     (spf, dkim, dmarc, spam, virus: PASS | FAIL | GRAY | PROCESSING_FAILED | DISABLED)."""
@@ -195,6 +198,7 @@ class MailMessage(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["workspace", "mailbox", "message_id"], name="mail_message_unique_id"),
         ]
+        indexes = [models.Index(fields=["workspace", "mailbox", "created_at"], name="mail_message_mailbox_age")]
 
     def save(self, *args, **kwargs):
         if self.workspace_id is None and self.thread_id:
@@ -209,7 +213,11 @@ class MailAttachment(models.Model):
     filename = models.CharField(max_length=255, blank=True, default="")
     content_type = models.CharField(max_length=255, blank=True, default="")
     size = models.PositiveIntegerField(default=0)
-    s3_key = models.CharField(max_length=512)
+    s3_key = models.CharField(max_length=512, blank=True, default="")
+    """"" when the content was not kept (`kept` False)."""
+    kept = models.BooleanField(default=True)
+    """False when the message's attachments were over MAIL_MAX_ATTACHMENT_BYTES and this one's
+    content was dropped: its name, type and size stay, the bytes were never stored."""
 
 
 class MailForwardLog(models.Model):

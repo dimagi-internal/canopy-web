@@ -819,6 +819,12 @@ MAIL_DMARC_LOCAL_PART = "dmarc"
 # A domain still pending DNS after this many days no longer holds its name: adding it
 # again (from any workspace) releases the stale row and its SES identity first.
 MAIL_PENDING_DOMAIN_TTL_DAYS = env.int("MAIL_PENDING_DOMAIN_TTL_DAYS", default=7)
+# Bytes one agent mailbox (workspace + address) may hold, in and out. Past it the oldest
+# mail is evicted after each delivery (apps/mail/storage.py). 0 turns the cap off.
+MAIL_MAILBOX_CAP_BYTES = env.int("MAIL_MAILBOX_CAP_BYTES", default=100 * 1024 * 1024)
+# Bytes of attachments one inbound agent message may keep. Past it the attachments that do
+# not fit are recorded (name, type, size) but their content is not stored. 0 = no limit.
+MAIL_MAX_ATTACHMENT_BYTES = env.int("MAIL_MAX_ATTACHMENT_BYTES", default=10 * 1024 * 1024)
 # Platform domains (and their subdomains) no workspace may register: their SES identities
 # belong to Dimagi/AWS, and a tenant must never be able to alter or delete them.
 MAIL_RESERVED_DOMAINS = env.list(
