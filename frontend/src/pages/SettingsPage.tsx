@@ -14,6 +14,7 @@ import { useMemoryVisible } from '@/auth/memoryRollout'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
 import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
+import { SessionReviewersPanel } from '@/components/settings/SessionReviewersPanel'
 import { runnerHref } from '@/lib/scopedLinks'
 
 export function SettingsPage() {
@@ -113,6 +114,8 @@ export function SettingsPage() {
           </div>
         </div>
       </div>
+
+      <SessionReviewersPanel />
 
       <GitHubPanel />
 

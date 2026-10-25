@@ -849,6 +849,9 @@ class PersonAuditEvent(models.Model):
         # let go, and each time it looked (`page.viewed`, at most one per
         # `viewers.LOOK_WINDOW`).
         "viewer.granted", "viewer.revoked", "page.viewed",
+        # An agent the person let review their sessions (`SessionReviewGrant`,
+        # `session_reviewers.py`): let in, and let go.
+        "sessionReviewer.granted", "sessionReviewer.revoked",
     )
     USER, AGENT, SYSTEM = "user", "agent", "system"
 

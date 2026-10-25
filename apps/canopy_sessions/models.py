@@ -248,6 +248,33 @@ class Message(models.Model):
         return f"msg:{self.session_id.hex[:8]}:{self.turn_index}:{self.role}"
 
 
+class SessionReviewGrant(models.Model):
+    """A person's consent that ONE agent may read their sessions, to review them
+    (a coach). The fifth leg of `access.visible_session_q`, scoped to that agent's
+    own login (`Agent.user`) and this person's sessions, never a sensitive one.
+
+    Only the person makes or ends it (`apps/contacts/session_reviewers.py`, from
+    `/api/people/me/session-reviewers/`), each act on their audit. Revoking sets
+    `revoked_at` and the leg drops the agent's next read; nothing revives a revoked
+    row but a new grant. Read-only: it never lets the agent write, share or send
+    into a conversation (`access.role_for` gives it a viewer at most)."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="session_review_grants")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE,
+                              related_name="session_review_grants")
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "canopy_sessions_review_grant"
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["agent", "revoked_at"])]
+        constraints = [models.UniqueConstraint(fields=["user", "agent"],
+                                               condition=models.Q(revoked_at__isnull=True),
+                                               name="session_review_grant_one_live")]
+
+
 class SessionParticipant(models.Model):
     """Durable membership + role in a session (SP3 multiplayer). Presence — who is
     here *right now* — is ephemeral and lives in the cache (apps/canopy_sessions/presence.py);

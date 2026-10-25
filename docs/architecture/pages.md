@@ -594,7 +594,12 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/beta-requests`** (+ `/:requestId`) — requests for access to Canopy from
   the public site; only their reviewer or a superuser sees them.
 - **`/new-workspace`** — the first-run page with the create-workspace form; a
-  member also gets a link to creating an agent in their active workspace.
+  member also gets a link to creating an agent in their active workspace. A
+  workspace that holds the coach (`COACHING_AGENT_SLUG`) shows an unticked "Have
+  <coach> coach me" checkbox beside its request button; ticked on a request that
+  is approved at once, it grants that agent a session review (tenancy.md § The
+  chat-session ACL); on a pending one it grants nothing and points to the switch
+  on account settings (`/settings`, "Who can review your sessions").
 - **`/invite/:token`** — accept an invite. Outside `/w/` because an invitee has
   no membership yet. Previews pre-auth (masked email, workspace, role —
   `GET /api/workspaces/invites/{token}/preview`); accepting needs a login.

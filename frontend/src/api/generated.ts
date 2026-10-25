@@ -12442,7 +12442,9 @@ export interface paths {
          *     `pr` (a PR it created or asked to merge — N, owner/name#N or a URL),
          *     `since` / `until` (last activity in [since, until)), `runner` (the runner it
          *     is on, by id or name — `?runner=<name>&state=active` is every open session on
-         *     a box, what `POST /transfer-all` moves). To reach EVERY session
+         *     a box, what `POST /transfer-all` moves), `of_user` (one person's own sessions,
+         *     by canopy user id: the chats they started and the runner sessions on their own
+         *     boxes — how a coach lists the sessions of someone who let it review them). To reach EVERY session
          *     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
          */
         readonly get: operations["canopy_sessions_list_sessions"];
@@ -14581,6 +14583,77 @@ export interface paths {
          *     Anyone else gets an empty list.
          */
         readonly get: operations["list_shared_pages"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/session-reviewers/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The agents you let review your sessions
+         * @description Which agents may read your sessions to review them, which you could let
+         *     in (the agents of workspaces you belong to), and the coach canopy offers
+         *     you, if any. Only you see this.
+         */
+        readonly get: operations["list_my_session_reviewers"];
+        readonly put?: never;
+        /**
+         * Let an agent review your sessions, read-only
+         * @description Your act: the agent's own login may then read the chats you started and
+         *     the runner sessions on your own boxes, to review them — never a sensitive
+         *     conversation, and it can change, send or share nothing. On your audit.
+         *     Only you can do this, and only for an agent of a workspace you are in.
+         */
+        readonly post: operations["add_my_session_reviewer"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/me/session-reviewers/{agent_slug}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop an agent reviewing your sessions
+         * @description At once: its next read of your sessions is "not found". Only you can do this.
+         */
+        readonly delete: operations["remove_my_session_reviewer"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/session-reviewers/granted-to-me/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The people who let this agent review their sessions
+         * @description For an agent's own login: who let it review their sessions. List one
+         *     person's with `GET /api/canopy-sessions/?of_user=<user_id>`. Anyone else
+         *     gets an empty list.
+         */
+        readonly get: operations["list_session_granters"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -38298,6 +38371,87 @@ export interface components {
             /** Pages */
             readonly pages: readonly components["schemas"]["SharedPageOut"][];
         };
+        /** CoachOfferOut */
+        readonly CoachOfferOut: {
+            /**
+             * Agent
+             * @description The coaching agent's slug (the COACHING_AGENT_SLUG setting).
+             */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Workspace
+             * @description The workspace the coach is in.
+             */
+            readonly workspace: string;
+            /**
+             * Member
+             * @description Whether you are in that workspace yet (you can turn it on only then).
+             */
+            readonly member: boolean;
+            /**
+             * On
+             * @description Whether it may review your sessions now.
+             */
+            readonly on: boolean;
+        };
+        /** SessionReviewerOut */
+        readonly SessionReviewerOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+        };
+        /** SessionReviewersOut */
+        readonly SessionReviewersOut: {
+            /** Reviewers */
+            readonly reviewers: readonly components["schemas"]["SessionReviewerOut"][];
+            /**
+             * Agents
+             * @description Agents you could let review your sessions.
+             */
+            readonly agents: readonly components["schemas"]["ViewerChoiceOut"][];
+            /** @description The coach canopy offers, when there is one you can reach. */
+            readonly coach?: components["schemas"]["CoachOfferOut"] | null;
+        };
+        /** SessionReviewerIn */
+        readonly SessionReviewerIn: {
+            /**
+             * Agent
+             * @description The slug of an agent in a workspace you belong to.
+             */
+            readonly agent: string;
+        };
+        /** SessionGranterOut */
+        readonly SessionGranterOut: {
+            /**
+             * User Id
+             * @description Their canopy user id: `GET /api/canopy-sessions/?of_user=<id>` lists their sessions.
+             */
+            readonly user_id: number;
+            /** Username */
+            readonly username: string;
+            /** Email */
+            readonly email: string;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+        };
+        /** SessionGrantersOut */
+        readonly SessionGrantersOut: {
+            /** People */
+            readonly people: readonly components["schemas"]["SessionGranterOut"][];
+        };
         /** MemoryPageOut */
         readonly MemoryPageOut: {
             readonly me: components["schemas"]["PersonMeOut"];
@@ -54914,6 +55068,7 @@ export interface operations {
                 readonly since?: string | null;
                 readonly until?: string | null;
                 readonly runner?: string;
+                readonly of_user?: number | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -57442,6 +57597,92 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SharedPagesOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_session_reviewers: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewersOut"];
+                };
+            };
+        };
+    };
+    readonly add_my_session_reviewer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SessionReviewerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewersOut"];
+                };
+            };
+        };
+    };
+    readonly remove_my_session_reviewer: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly agent_slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionReviewersOut"];
+                };
+            };
+        };
+    };
+    readonly list_session_granters: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionGrantersOut"];
                 };
             };
         };

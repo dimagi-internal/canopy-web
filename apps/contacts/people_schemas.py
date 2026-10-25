@@ -455,6 +455,43 @@ class MemoryViewersOut(StrictModel):
     agents: list[ViewerChoiceOut] = Field(description="Agents you could let in.")
 
 
+class SessionReviewerIn(StrictModel):
+    agent: str = Field(description="The slug of an agent in a workspace you belong to.")
+
+
+class SessionReviewerOut(StrictModel):
+    agent: str
+    name: str
+    granted_at: dt.datetime
+
+
+class CoachOfferOut(StrictModel):
+    agent: str = Field(description="The coaching agent's slug (the COACHING_AGENT_SLUG setting).")
+    name: str
+    workspace: str = Field(description="The workspace the coach is in.")
+    member: bool = Field(description="Whether you are in that workspace yet (you can turn it on only then).")
+    on: bool = Field(description="Whether it may review your sessions now.")
+
+
+class SessionReviewersOut(StrictModel):
+    reviewers: list[SessionReviewerOut]
+    agents: list[ViewerChoiceOut] = Field(description="Agents you could let review your sessions.")
+    coach: CoachOfferOut | None = Field(
+        None, description="The coach canopy offers, when there is one you can reach.")
+
+
+class SessionGranterOut(StrictModel):
+    user_id: int = Field(description="Their canopy user id: `GET /api/canopy-sessions/?of_user=<id>` lists their sessions.")
+    username: str
+    email: str
+    display_name: str
+    granted_at: dt.datetime
+
+
+class SessionGrantersOut(StrictModel):
+    people: list[SessionGranterOut]
+
+
 class SharedPageOut(StrictModel):
     person_id: int
     display_name: str

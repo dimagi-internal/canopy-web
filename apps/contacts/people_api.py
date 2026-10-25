@@ -31,7 +31,7 @@ from apps.embedding import defaults as agent_defaults
 from apps.workspaces import services as wsvc
 from apps.tokens import kinds
 
-from . import hcp, people
+from . import hcp, people, session_reviewers, viewers
 from . import services as contact_services
 from .models import MemoryCollection, Person, PersonAccess, PersonAddress, PersonFact, PersonGrant
 from .people_schemas import (
@@ -63,8 +63,11 @@ from .people_schemas import (
     SearchHistoryOut,
     SearchPreviewIn,
     SearchPreviewOut,
+    SessionGrantersOut,
     SessionMemoryIn,
     SessionMemoryOut,
+    SessionReviewerIn,
+    SessionReviewersOut,
     SharedPagesOut,
     WorkspaceAddressesOut,
 )
@@ -972,6 +975,72 @@ def list_shared_pages(request: HttpRequest) -> dict:
     return {"pages": [{"person_id": v.person_id, "display_name": people.display_name(v.person),
                        "granted_at": v.granted_at, "href": f"/people/{v.person_id}/page"}
                       for v in viewers.shared_with(agent)]}
+
+
+def _session_reviewers(person: Person, user) -> dict:
+    live = list(session_reviewers.live(user))
+    taken = {g.agent_id for g in live}
+    return {"reviewers": [{"agent": g.agent.slug, "name": g.agent.name or g.agent.slug,
+                           "granted_at": g.created_at} for g in live],
+            "agents": [{"slug": a.slug, "name": a.name or a.slug}
+                       for a in _pickable_agents(user) if a.pk not in taken],
+            "coach": session_reviewers.coach_offer(user, wsvc.user_workspace_slugs(user))}
+
+
+@router.get("/me/session-reviewers/", response=SessionReviewersOut,
+            summary="The agents you let review your sessions")
+# Letting an agent review your sessions, read-only (apps/contacts/session_reviewers.py):
+# choosing who is the person's own act; canopy_sessions.access (leg 5) enforces it.
+@gate("self")
+def list_my_session_reviewers(request: HttpRequest) -> dict:
+    """Which agents may read your sessions to review them, which you could let
+    in (the agents of workspaces you belong to), and the coach canopy offers
+    you, if any. Only you see this."""
+    return _session_reviewers(_the_person_themself(request), request.user)
+
+
+@router.post("/me/session-reviewers/", response=SessionReviewersOut,
+             summary="Let an agent review your sessions, read-only")
+@gate("self", setting=True)  # who may read your sessions
+def add_my_session_reviewer(request: HttpRequest, payload: SessionReviewerIn) -> dict:
+    """Your act: the agent's own login may then read the chats you started and
+    the runner sessions on your own boxes, to review them — never a sensitive
+    conversation, and it can change, send or share nothing. On your audit.
+    Only you can do this, and only for an agent of a workspace you are in."""
+    person = _the_person_themself(request)
+    agent = _pickable_agents(request.user).filter(slug=payload.agent.strip()).first()
+    if agent is None:
+        raise _not_found("Agent not found")
+    session_reviewers.grant(person, agent, user=request.user)
+    return _session_reviewers(person, request.user)
+
+
+@router.delete("/me/session-reviewers/{agent_slug}/", response=SessionReviewersOut,
+               summary="Stop an agent reviewing your sessions")
+@gate("self", setting=True)  # who may read your sessions
+def remove_my_session_reviewer(request: HttpRequest, agent_slug: str) -> dict:
+    """At once: its next read of your sessions is "not found". Only you can do this."""
+    person = _the_person_themself(request)
+    agent = session_reviewers.agent_named(agent_slug)
+    if agent is None or not session_reviewers.revoke(person, agent, user=request.user):
+        raise _not_found("That agent cannot review your sessions")
+    return _session_reviewers(person, request.user)
+
+
+@router.get("/session-reviewers/granted-to-me/", response=SessionGrantersOut,
+            summary="The people who let this agent review their sessions")
+@gate("authenticated")  # empty unless the caller is an agent's own login
+def list_session_granters(request: HttpRequest) -> dict:
+    """For an agent's own login: who let it review their sessions. List one
+    person's with `GET /api/canopy-sessions/?of_user=<user_id>`. Anyone else
+    gets an empty list."""
+    agent = viewers.viewing_agent(request)
+    if agent is None:
+        return {"people": []}
+    return {"people": [{"user_id": g.user_id, "username": g.user.username, "email": g.user.email or "",
+                        "display_name": g.user.get_full_name() or g.user.username,
+                        "granted_at": g.created_at}
+                       for g in session_reviewers.granted_to(agent)]}
 
 
 def _page_of(request: HttpRequest, person_id: int) -> Person:
