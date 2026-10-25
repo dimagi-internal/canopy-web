@@ -14133,6 +14133,58 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/{person_id}/addresses/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every other way one workspace holds to reach a person
+         * @description The labelled emails and phones `?workspace=` holds for this person
+         *     (work, personal …), beyond the address that identifies them. Members of
+         *     that workspace, an agent's login included — these are declared by the
+         *     person or an admin, not learned — and the read is logged where the person
+         *     can see it.
+         */
+        readonly get: operations["list_person_addresses"];
+        readonly put?: never;
+        /**
+         * Add a way to reach a person
+         * @description Add a labelled email or phone (`kind` email | phone, `label` such as
+         *     work or personal) that `workspace` holds for this person. The person
+         *     themself or an admin of that workspace; anyone else, an agent's login
+         *     included, is 403. The same kind and value again relabels it.
+         */
+        readonly post: operations["add_person_address"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/people/{person_id}/addresses/{address_id}/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove a way to reach a person
+         * @description The person themself or an admin of the workspace that holds it;
+         *     anyone else: 404.
+         */
+        readonly delete: operations["remove_person_address"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/{person_id}/facts/": {
         readonly parameters: {
             readonly query?: never;
@@ -36923,6 +36975,36 @@ export interface components {
             readonly turn_id?: string | null;
         };
         /**
+         * PersonAddressOut
+         * @description One more way to reach a person, as one workspace knows it.
+         */
+        readonly PersonAddressOut: {
+            /** Id */
+            readonly id: number;
+            /**
+             * Kind
+             * @description email | phone.
+             */
+            readonly kind: string;
+            /**
+             * Label
+             * @description What it is for: work, personal, school …
+             */
+            readonly label: string;
+            /** Value */
+            readonly value: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Added By
+             * @description The email of who added it.
+             * @default
+             */
+            readonly added_by: string;
+            /** Created At */
+            readonly created_at?: string | null;
+        };
+        /**
          * PersonFactDetailOut
          * @description A fact as its subject sees it on their own page: where and who.
          */
@@ -37053,6 +37135,11 @@ export interface components {
             readonly memory_paused: boolean;
             /** Facts */
             readonly facts?: readonly components["schemas"]["PersonFactDetailOut"][];
+            /**
+             * Addresses
+             * @description Every other way a workspace holds to reach you.
+             */
+            readonly addresses?: readonly components["schemas"]["PersonAddressOut"][];
             /** Accesses */
             readonly accesses?: readonly components["schemas"]["PersonAccessOut"][];
         };
@@ -37366,6 +37453,38 @@ export interface components {
             readonly workspace: string;
             /** Projects */
             readonly projects: readonly components["schemas"]["PersonProjectOut"][];
+        };
+        /** PersonAddressesOut */
+        readonly PersonAddressesOut: {
+            /** Person */
+            readonly person: number;
+            /** Workspace */
+            readonly workspace: string;
+            /** Addresses */
+            readonly addresses?: readonly components["schemas"]["PersonAddressOut"][];
+        };
+        /** PersonAddressIn */
+        readonly PersonAddressIn: {
+            /**
+             * Workspace
+             * @description The workspace slug it is known in (default: the /api/w/{ws}/ one).
+             */
+            readonly workspace?: string | null;
+            /**
+             * Kind
+             * @description email | phone — anything else is a 400.
+             */
+            readonly kind: string;
+            /**
+             * Label
+             * @description What it is for, 1–40 characters: work, personal, school …
+             */
+            readonly label: string;
+            /**
+             * Value
+             * @description The address or number. The same kind and value again relabels it.
+             */
+            readonly value: string;
         };
         /** PersonFactCreatedOut */
         readonly PersonFactCreatedOut: {
@@ -56414,6 +56533,77 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["PersonProjectsOut"];
                 };
+            };
+        };
+    };
+    readonly list_person_addresses: {
+        readonly parameters: {
+            readonly query?: {
+                readonly workspace?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonAddressesOut"];
+                };
+            };
+        };
+    };
+    readonly add_person_address: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PersonAddressIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PersonAddressOut"];
+                };
+            };
+        };
+    };
+    readonly remove_person_address: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly person_id: number;
+                readonly address_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -696,6 +696,54 @@ class PersonAccess(models.Model):
         indexes = [models.Index(fields=["person", "created_at"])]
 
 
+class PersonAddress(models.Model):
+    """One more way to reach a person, as one workspace knows it: a labelled
+    email or phone ("work", "personal") beyond the address that identifies them.
+
+    `Person.email` is an IDENTITY — the key a correspondent is matched on — so
+    it is one address and stays one. Someone's work email is not who they are;
+    it is where a workspace's agents should reach them for some things (invite
+    Gina's work address to the family calendar). Putting it on the identity
+    would let a second address join two people; here it joins nothing.
+
+    **Per workspace, like a fact.** The same person may give one household their
+    work address and keep it from their employer's tenant, so a row is only
+    ever read in its own workspace (and only for someone it deals with,
+    `people.known_in`). **Declared, never learned:** written by the person
+    themself or an admin of that workspace — never by an agent's login — so it
+    is directory data the workspace's agents may read, not agent memory, and
+    it does not wait on the person's memory switches. Every read is logged as
+    a `PersonAccess`, and the person sees every row in `GET /api/people/me/`.
+    """
+
+    EMAIL, PHONE = "email", "phone"
+    KIND_CHOICES = [(EMAIL, "Email"), (PHONE, "Phone")]
+
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="addresses")
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="person_addresses")
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES)
+    #: What it is for, in the workspace's words: "work", "personal", "school".
+    label = models.CharField(max_length=40)
+    value = models.CharField(max_length=254)
+    added_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="person_addresses_added")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contact_person_addresses"
+        ordering = ["kind", "label", "pk"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(kind__in=["email", "phone"]),
+                                   name="person_address_kind_known"),
+            models.UniqueConstraint(fields=["person", "workspace", "kind", "value"],
+                                    name="person_address_once_per_workspace"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.person_id}@{self.workspace_id} {self.label} {self.kind}"
+
+
 # --- HCP v1 grants and the person's audit log (apps/contacts/hcp/) -------------
 
 
