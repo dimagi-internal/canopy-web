@@ -76,14 +76,12 @@ class PersonOut(PersonRefOut):
 
 
 class PersonAddressOut(StrictModel):
-    """One more way to reach a person, as one workspace knows it."""
+    """One more way to reach a person — theirs, across every workspace."""
 
     id: int
     kind: str = Field(description="email | phone.")
     label: str = Field(description="What it is for: work, personal, school …")
     value: str
-    workspace: str
-    added_by: str = Field(default="", description="The email of who added it.")
     created_at: str | None = None
 
 
@@ -93,9 +91,23 @@ class PersonAddressesOut(StrictModel):
     addresses: list[PersonAddressOut] = Field(default_factory=list)
 
 
+class MemberAddressesOut(StrictModel):
+    """One person in the workspace, and every other way to reach them."""
+
+    person_id: int
+    user_id: int
+    email: str = Field(description="The address that identifies them (their login).")
+    display_name: str = ""
+    may_edit: bool = Field(description="Is this the caller? Only a person changes their own addresses.")
+    addresses: list[PersonAddressOut] = Field(default_factory=list)
+
+
+class WorkspaceAddressesOut(StrictModel):
+    workspace: str
+    people: list[MemberAddressesOut] = Field(default_factory=list)
+
+
 class PersonAddressIn(StrictModel):
-    workspace: str | None = Field(
-        default=None, description="The workspace slug it is known in (default: the /api/w/{ws}/ one).")
     kind: str = Field(description="email | phone — anything else is a 400.")
     label: str = Field(description="What it is for, 1–40 characters: work, personal, school …")
     value: str = Field(description="The address or number. The same kind and value again relabels it.")
@@ -299,7 +311,7 @@ class PersonMeOut(PersonRefOut):
                                 "still holds some of yours: you can see, download and delete it.")
     facts: list[PersonFactDetailOut] = Field(default_factory=list)
     addresses: list[PersonAddressOut] = Field(
-        default_factory=list, description="Every other way a workspace holds to reach you.")
+        default_factory=list, description="Every other way you can be reached — yours to change.")
     accesses: list[PersonAccessOut] = Field(default_factory=list)
 
 

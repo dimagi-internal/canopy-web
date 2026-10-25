@@ -79,6 +79,31 @@ export async function retractFact(personId: number, factId: number): Promise<voi
   ensureOk(res, 'Failed to retract that fact')
 }
 
+// --- More ways to reach a person (PersonAddress) ------------------------------
+
+export type PersonAddress = components['schemas']['PersonAddressOut']
+export type AddressKind = 'email' | 'phone'
+
+/** Your own contact details — yours across every workspace. */
+export async function listMyAddresses(): Promise<PersonAddress[]> {
+  return [...((await getMyPerson()).addresses ?? [])]
+}
+
+/** Add one of yours; only you change your own. The same kind and value again
+ *  relabels it. Rejects with the server's reason (not an email, …). */
+export async function addMyAddress(body: { kind: AddressKind; label: string; value: string }): Promise<PersonAddress> {
+  const res = await apiV2.POST('/api/people/me/addresses/', { body })
+  const data = unwrap(res, 'Failed to add that address')
+  return data as PersonAddress
+}
+
+export async function removeMyAddress(addressId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/people/me/addresses/{address_id}/', {
+    params: { path: { address_id: addressId } },
+  })
+  ensureOk(res, 'Failed to remove that address')
+}
+
 // --- HCP v1 (apps/contacts/hcp_api.py): the person's grants and audit log ------
 
 /** One client's access to what canopy knows about you (HCP 4.1.5). */

@@ -28,8 +28,6 @@ from django.db import transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
-from apps.workspaces import permissions as perms
-
 from .models import Contact, Person, PersonAccess, PersonAddress, PersonFact
 
 logger = logging.getLogger(__name__)
@@ -363,20 +361,16 @@ LABEL_MAX = 40
 _PHONE_CHARS = set("0123456789+-(). ")
 
 
-def may_edit_addresses(user, person: Person, workspace_slug: str) -> bool:
-    """The person themself, or an admin of that workspace — never an agent's
-    login: an address is declared by people, so agents can trust what they read."""
-    if not getattr(user, "is_authenticated", False) or agent_of_login(user) is not None:
-        return False
-    if person.user_id and person.user_id == user.pk:
-        return True
-    return perms.can(user, workspace_slug, perms.MEMBERS_MANAGE)
+def may_edit_addresses(user, person: Person) -> bool:
+    """Only the person themself — their contact details are their own, like
+    their name. Never a workspace admin, never an agent's login."""
+    return (getattr(user, "is_authenticated", False) and agent_of_login(user) is None
+            and bool(person.user_id) and person.user_id == user.pk)
 
 
-def add_address(*, person: Person, workspace, kind: str, label: str, value: str,
-                by) -> PersonAddress:
-    """Store one labelled email or phone for `person` in `workspace`. Adding
-    the same kind and value again relabels it rather than duplicating it."""
+def add_address(*, person: Person, kind: str, label: str, value: str) -> PersonAddress:
+    """Store one labelled email or phone for `person`. Adding the same kind and
+    value again relabels it rather than duplicating it."""
     kind = (kind or "").strip().lower()
     label = " ".join((label or "").split()).lower()
     value = (value or "").strip()
@@ -393,19 +387,16 @@ def add_address(*, person: Person, workspace, kind: str, label: str, value: str,
     elif not value or set(value) - _PHONE_CHARS or sum(c.isdigit() for c in value) < 5:
         raise AddressError("value is not a phone number")
     row, _ = PersonAddress.objects.update_or_create(
-        person=person, workspace=workspace, kind=kind, value=value,
-        defaults={"label": label, "added_by": by if getattr(by, "is_authenticated", False) else None})
+        person=person, kind=kind, value=value, defaults={"label": label})
     return row
 
 
-def addresses_in(person: Person, workspace_slug: str):
-    return PersonAddress.objects.filter(person=person, workspace_id=workspace_slug)
+def addresses_of(person: Person):
+    return PersonAddress.objects.filter(person=person)
 
 
 def address_dict(row: PersonAddress) -> dict:
     return {"id": row.pk, "kind": row.kind, "label": row.label, "value": row.value,
-            "workspace": row.workspace_id,
-            "added_by": row.added_by.email if row.added_by_id else "",
             "created_at": row.created_at.isoformat() if row.created_at else None}
 
 

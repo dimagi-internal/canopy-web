@@ -7,6 +7,7 @@ import { getPresencePreference, setPresencePreference } from '@/api/presence'
 import { notifyPresencePreferenceChanged } from '@/presence/events'
 import { TokensPanel } from '@/components/settings/TokensPanel'
 import { SecurityCard } from '@/components/settings/SecurityCard'
+import { ContactDetailsPanel } from '@/components/settings/ContactDetailsPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
@@ -58,7 +59,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Your account: the runners you administer, the repos you use canopy in, presence, security, GitHub, connected apps and access tokens.
+          Your account: your contact details, the runners you administer, the repos you use canopy in, presence, security, GitHub, connected apps and access tokens.
         </p>
         {memoryVisible && (
           <p className="mt-1 text-xs">
@@ -74,6 +75,8 @@ export function SettingsPage() {
       <SecurityCard machines={<DeviceKeysPanel />} />
 
       <div className="gap-5 lg:columns-2 [&>*]:mb-5 [&>*]:break-inside-avoid">
+      <ContactDetailsPanel />
+
       <RunnersPanel />
 
       <CanopyProjectsPanel />
