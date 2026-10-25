@@ -23,6 +23,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 #   apps/capabilities/aws.py           ec2/ssm/s3/cloudformation on capability
 #                                      stacks -> each stack's BrokerPolicy
 #                                      (BrokerRoleName=canopy-web-task-role)
+#   apps/harness/fleets.py             autoscaling SetDesiredCapacity/SetInstanceProtection
+#                                      on one fleet's group, Describe* -> each fleet
+#                                      stack's ScalerPolicy (runner/ec2/fleet.cfn.yaml)
 #   ECS Exec (EnableExecuteCommand)    ssmmessages -> EcsExec here
 #   apps/contacts/embeddings.py        bedrock InvokeModel on embedding models
 #                                      -> memory-embeddings here

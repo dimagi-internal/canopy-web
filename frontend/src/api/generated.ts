@@ -8346,6 +8346,100 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runner-fleets/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your runner fleets
+         * @description Every fleet you own, with its live members and where the scaler has each.
+         */
+        readonly get: operations["list_runner_fleets"];
+        readonly put?: never;
+        /**
+         * Ask for a runner fleet (approved by you, with a passkey)
+         * @description A fleet of interchangeable cloud runners: the instances of one EC2 Auto
+         *     Scaling group (`group_name`) signing with one instance role (`role_arn`),
+         *     whose ECDH key is the fleet's KMS key (`ecdh_public_jwk`). Returns the
+         *     invitation to approve at `approve_url`, once, with a passkey; after that every
+         *     instance the group starts joins on its own as your runner in `workspace`, and
+         *     canopy-web keeps the group between `min_members` and `max_members` by the work
+         *     waiting for it. Asking again before approving replaces what you asked.
+         */
+        readonly post: operations["create_runner_fleet"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-fleets/{fleet_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A runner fleet and its members
+         * @description The fleet, its bounds, its credential set and its live members.
+         */
+        readonly get: operations["get_runner_fleet"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-fleets/{fleet_id}/size": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Set the bounds a fleet scales between
+         * @description `min_members` stay in service however quiet it is (at least one: inbox
+         *     polling and scheduled work need a box); the scaler never runs more than
+         *     `max_members`. Takes effect on the scaler's next tick.
+         */
+        readonly put: operations["set_runner_fleet_size"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-fleets/{fleet_id}/retire": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Retire a runner fleet
+         * @description No instance joins any more and canopy-web stops sizing its group. Members
+         *     already running keep their work until their instances go (`fleet.sh down`
+         *     sets the group to zero); each is retired then, and its chats move.
+         */
+        readonly post: operations["retire_runner_fleet"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/pair-by-role": {
         readonly parameters: {
             readonly query?: never;
@@ -30257,6 +30351,77 @@ export interface components {
             /** Workspace */
             readonly workspace: string;
         };
+        /** RunnerFleetMemberOut */
+        readonly RunnerFleetMemberOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Instance Id */
+            readonly instance_id: string;
+            /** Power */
+            readonly power: string;
+            /** Live Status */
+            readonly live_status: string;
+        };
+        /**
+         * RunnerFleetOut
+         * @description A runner fleet: one EC2 Auto Scaling group whose instances join as its
+         *     members once its owner approved it, and whose size canopy-web sets from the
+         *     work waiting for it.
+         */
+        readonly RunnerFleetOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Status */
+            readonly status: string;
+            /** Role Arn */
+            readonly role_arn: string;
+            /** Region */
+            readonly region: string;
+            /** Group Name */
+            readonly group_name: string;
+            /** Min Members */
+            readonly min_members: number;
+            /** Max Members */
+            readonly max_members: number;
+            /** Member Turns */
+            readonly member_turns: number;
+            /**
+             * Credential Set Id
+             * Format: uuid
+             */
+            readonly credential_set_id: string;
+            /** Credential Vault Id */
+            readonly credential_vault_id?: string | null;
+            /**
+             * Has Ecdh Key
+             * @default false
+             */
+            readonly has_ecdh_key: boolean;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /**
+             * Owner Email
+             * @default
+             */
+            readonly owner_email: string;
+            /**
+             * Members
+             * @default []
+             */
+            readonly members: readonly components["schemas"]["RunnerFleetMemberOut"][];
+        };
         /**
          * RunnerInvitationOut
          * @description A pairing invitation and where it stands. `approve_url` is the page where
@@ -30316,6 +30481,7 @@ export interface components {
              * @default []
              */
             readonly units: readonly components["schemas"]["RunnerInvitationUnitOut"][];
+            readonly fleet?: components["schemas"]["RunnerFleetOut"] | null;
         };
         /**
          * RunnerInvitationUnitOut
@@ -30398,6 +30564,52 @@ export interface components {
             readonly ecdh_public_jwk?: {
                 readonly [key: string]: unknown;
             } | null;
+        };
+        /**
+         * RunnerFleetIn
+         * @description A new fleet (or the same pending one, asked again): `fleet.sh up` sends it
+         *     once its stack exists. Nothing joins until its creator approves it.
+         */
+        readonly RunnerFleetIn: {
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Role Arn */
+            readonly role_arn: string;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Region
+             * @default us-east-1
+             */
+            readonly region: string;
+            /** Group Name */
+            readonly group_name: string;
+            /**
+             * Min Members
+             * @default 1
+             */
+            readonly min_members: number;
+            /**
+             * Max Members
+             * @default 4
+             */
+            readonly max_members: number;
+            /**
+             * Member Turns
+             * @default 2
+             */
+            readonly member_turns: number;
+        };
+        /** RunnerFleetSizeIn */
+        readonly RunnerFleetSizeIn: {
+            /** Min Members */
+            readonly min_members: number;
+            /** Max Members */
+            readonly max_members: number;
         };
         /**
          * RunnerPairByRoleOut
@@ -31293,6 +31505,23 @@ export interface components {
              * @default false
              */
             readonly egress_forced: boolean;
+            /**
+             * Fleet Name
+             * @default
+             */
+            readonly fleet_name: string;
+            /**
+             * Instance Id
+             * @default
+             */
+            readonly instance_id: string;
+            /**
+             * Power
+             * @default on
+             */
+            readonly power: string;
+            /** Power Changed At */
+            readonly power_changed_at?: string | null;
             /**
              * Roots
              * @default []
@@ -49533,6 +49762,120 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+        };
+    };
+    readonly list_runner_fleets: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerFleetOut"][];
+                };
+            };
+        };
+    };
+    readonly create_runner_fleet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerFleetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerInvitationOut"];
+                };
+            };
+        };
+    };
+    readonly get_runner_fleet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly fleet_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerFleetOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_fleet_size: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly fleet_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerFleetSizeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerFleetOut"];
+                };
+            };
+        };
+    };
+    readonly retire_runner_fleet: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly fleet_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerFleetOut"];
                 };
             };
         };

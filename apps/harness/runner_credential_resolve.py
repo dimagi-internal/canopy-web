@@ -24,7 +24,8 @@ from apps.agents.credentials import workspace_vaults
 from apps.events import services as events
 
 from . import aws_iam_proof, device_keys
-from .models import RunnerCredentialRead, RunnerDeviceKey, RunnerLogin
+from . import runners as harness_runners
+from .models import RunnerCredentialRead, RunnerDeviceKey
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def device_key_for(request: HttpRequest, runner):
     aws = request.META.get(aws_iam_proof.PROOF_HEADER, "")
     if aws:
         try:
-            key = aws_iam_proof.known_key(aws_iam_proof.verify(aws, request))
+            key = aws_iam_proof.known_key(aws_iam_proof.verify_caller(aws, request))
         except aws_iam_proof.AwsProofError as exc:
             return None, f"AWS IAM proof refused: {exc}"
     elif request.META.get("HTTP_DPOP"):
@@ -66,8 +67,7 @@ def device_key_for(request: HttpRequest, runner):
 
 def wanted_names(runner) -> set[str]:
     """The secret names the runner's credential list uses: one per token or API key."""
-    return {e.vault_secret_name for e in RunnerLogin.objects.filter(runner=runner)
-            if e.vault_secret_name}
+    return {e.vault_secret_name for e in harness_runners._entries(runner) if e.vault_secret_name}
 
 
 def _box_key(request: HttpRequest, runner):

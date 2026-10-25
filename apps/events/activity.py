@@ -39,8 +39,12 @@ RUNNER_PAIRING_APPROVED = "runner.pairing.approved"
 #: A cloud runner's device key was replaced by its box re-pairing (a replaced
 #: instance, or a box adopted into isolation units).
 RUNNER_REKEYED = "runner.rekeyed"
+#: canopy-web changed a runner fleet's size (`apps/harness/fleets.py`): `from` and
+#: `to` are the group's desired capacity, so the series is how many members ran.
+RUNNER_FLEET_SCALED = "runner.fleet.scaled"
 KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTING_CHANGED, MCP_CALL,
-         RUNNER_INVITED, RUNNER_INVITATION_APPROVED, RUNNER_PAIRED, RUNNER_PAIRING_APPROVED, RUNNER_REKEYED)
+         RUNNER_INVITED, RUNNER_INVITATION_APPROVED, RUNNER_PAIRED, RUNNER_PAIRING_APPROVED, RUNNER_REKEYED,
+         RUNNER_FLEET_SCALED)
 
 
 def _actor_kind(actor, agent=None) -> str:

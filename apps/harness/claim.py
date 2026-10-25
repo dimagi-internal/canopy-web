@@ -342,6 +342,10 @@ def turn_reach(turn: Turn) -> Reach:
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
     online = [r for r in covering if r.live_status == Runner.ONLINE]
     live = [r for r in online if not r.signed_out]
+    # A fleet member that is in the warm pool (or coming into service) is on its
+    # way: the scaler grows the fleet for this turn (`fleets.tick`), so it is a
+    # taker, not "offline".
+    live += [r for r in covering if r.wakeable and r not in live]
     if live:
         return Reach(LIVE, live, behind=blocking_turn(turn))
     if online:
@@ -490,7 +494,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     ids = {t.id for t in queued}
     defaults, priorities = _assignment_rows_for_turns(queued)
 
-    reachable = [r for r in runners if r.live_status in (Runner.ONLINE, Runner.DEGRADED)]
+    reachable = [r for r in runners if r.live_status in (Runner.ONLINE, Runner.DEGRADED) or r.wakeable]
     claimable_now = set().union(*_coverage(ids, reachable, defaults, priorities).values())
     # Would ANY paired runner take it if it were up? Separates "misconfigured" from
     # "temporarily unreachable" — the difference between "fix the routing matrix"
@@ -643,6 +647,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # turn stays QUEUED and lands on unpause (only a readiness drill expires:
     # `expire_stale_drills`).
     if runner.live_status != Runner.ONLINE:
+        return None
+    # A fleet member takes work only while in service: one the scaler is draining
+    # (`fleets.py`) stays idle until it is scaled in on the next tick, and one
+    # going into the warm pool would be stopped under the turn.
+    if runner.fleet_id is not None and runner.power != Runner.POWER_ON:
         return None
     # A box whose Claude login is gone runs nothing: every turn it took would come
     # back as the CLI's "Not logged in" (2026-10-22, acedimagi-mbp-cdp answered

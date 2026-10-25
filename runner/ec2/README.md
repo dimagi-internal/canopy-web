@@ -31,6 +31,7 @@ wire.
 - `secrets.sh` — put/update this runner's secrets in Secrets Manager (values read from a file/stdin, never shell history).
 - `up.sh` — preflight every one-time prerequisite, publish the seed, `cloudformation deploy` (updates via a reviewed change set); pulls the private key from SSM for SSH; invites a new box to pair (prints the approve link) and waits for it.
 - `wire.sh` — operator-side: stage the fresh runner's credential bundle, wait for the box to prove one credential works, retire its predecessor, swap agent assignments onto it, optionally drill it. `--standby` instead adds it as a DISABLED row and touches nothing else; `--test` stages credentials, waits for the proof and stops. Run this after `up.sh`.
+- `fleet.cfn.yaml`, `fleet_template.py`, `fleet.sh` — a runner FLEET: an Auto Scaling group with a warm pool whose members join on AWS's word under one passkey approval and whose size canopy-web sets (see "Runner fleets").
 - `down.sh` — delete the stack, remove the SSH key, retire the runner row (dropping every route to it); `--keep-runner` for a recycle, `--purge-secrets` to also remove the shared secrets.
 
 `*.pem` and the rendered template are gitignored.
@@ -965,6 +966,41 @@ git log -1 --format='{"sha": "%H", "committed_at": %ct, "ref": "retrofit"}' \
 Get step 1 right or skip it entirely — a WRONG sha is worse than none. An absent
 stamp reads `unknown` and does nothing; a stamp claiming a sha this box is not
 running would either suppress a real update or trigger a needless one.
+
+## Runner fleets: capacity that scales itself
+
+A fleet is an Auto Scaling group of interchangeable runners that canopy-web grows and
+shrinks with the work waiting (`docs/architecture/runners.md` § Runner fleets; spec
+`docs/superpowers/specs/2026-10-24-runner-fleets-design.md`). Members keep nothing the
+fleet needs:
+- their identity is their instance, proven to AWS;
+- their vault key is the fleet's KMS key;
+- their Claude credentials are the fleet's credential set;
+- a member that goes away has its chats moved to another.
+
+```bash
+aws sso login --profile labs
+./fleet.sh up --name dimagi --workspace dimagi --instance-type m7i.xlarge --min 1 --max 4 --warm 1
+#   → approve: <link>   one passkey touch, once for the whole fleet
+# once its first member has joined: open that member's Credentials tab,
+#   Make its key (one passkey touch), then + Token for each Claude account
+# route work to it: add the members to the workspace runner order / agents' runners
+./fleet.sh up --name dimagi --max 6     # later: update the stack and the bounds; asks nothing
+./fleet.sh down --name dimagi           # retire, empty the group (chats move), delete both stacks
+```
+
+- **What `up` builds.** Stack `canopy-fleet-<name>` (`fleet.cfn.yaml`). `fleet_template.py` renders it with `runner.cfn.yaml`'s own cloud-init, so a member is built exactly as a single box is. The stack holds:
+  - the role, which trusts EC2 only;
+  - a launch template;
+  - the group, with new members protected from scale-in and a `canopy-ready` launch lifecycle hook;
+  - a warm pool (`Stopped`, `ReuseOnScaleIn`);
+  - `ScalerPolicy`, which lets canopy-web's task role set this group's desired capacity and protection, nothing else.
+
+  The KMS ECDH key is a separate stack, `canopy-fleet-<name>-ecdh` (`ecdh-kms.cfn.yaml`). `up` also publishes the first-boot seed, as `up.sh` does.
+- **Warm pool or from scratch.** A warm-pool instance has already bootstrapped and stopped. It comes into service in a minute or two, and a member that is scaled in goes back there with its clones and caches. `--warm 0` builds every member from scratch, which takes as long as its first bootstrap (up to ~40 min). Either way, the lifecycle hook holds the instance until `cloud_runner.py --fleet-ready` (root, every minute) sees that every unit has bootstrapped this boot. So nothing is stopped half-installed or put in service early.
+- **Turns per member** come from the instance type's RAM (one per 1.5 GiB) and are given to canopy-web, so the scaler knows what one more member absorbs.
+- **Knobs** (canopy-web settings): `RUNNER_WAKE_AFTER_S` (60), `RUNNER_IDLE_STOP_S` (1800), `RUNNER_FAILOVER_AFTER_S` (180), `RUNNER_SCALER_TICK_S` (30; 0 = off).
+- A member is reached through SSM (`aws ssm start-session --target <instance>`). Its security group has no ingress.
 
 ## Notes
 - **Ephemeral by design.** A box's Claude logins are its credential bundle on

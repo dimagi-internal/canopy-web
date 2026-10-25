@@ -230,6 +230,8 @@ STREAM_IDLE_POLL_SECONDS = float(os.environ.get("STREAM_IDLE_POLL_SECONDS", "15"
 # apps/harness/services.py) or a long turn gets swept LOST mid-execution.
 LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
+#: When this unit last finished a bootstrap (unix seconds), beside its state file.
+BOOTSTRAPPED_MARKER = STATE_FILE.with_name(".canopy-bootstrapped-at")
 
 # Where this runner's bytes live, and the two files the auto-updater
 # (runner/ec2/update_runner.sh, spec 2026-07-30) shares with it:
@@ -2660,6 +2662,25 @@ AccuracySec=10s
 [Install]
 WantedBy=timers.target
 """,
+    # Root, every minute, on a FLEET member only (`fleet_ready_main`): complete the
+    # group's launch lifecycle hook once every unit has bootstrapped this boot.
+    "canopy-fleet-ready.service": f"""[Unit]
+Description=Canopy fleet member: tell the group this box is ready
+After=network-online.target canopy-units.service
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 {RUNNER_PY} --fleet-ready
+""",
+    "canopy-fleet-ready.timer": """[Unit]
+Description=Tell the fleet's group when this box has bootstrapped
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+[Install]
+WantedBy=timers.target
+""",
     # One runner per unit, as that unit's user. No sudo, no instance role (IMDS is
     # root's), its own /tmp.
     "canopy-runner@.service": f"""[Unit]
@@ -2808,7 +2829,66 @@ def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None,
     services = [f"canopy-runner@{u['id']}.service" for u in units]
     run(["systemctl", "enable", "--now", "canopy-kms-broker.service", "canopy-pair.service",
          "canopy-runner-update.timer", "canopy-egress-sync.timer", *services], capture_output=True)
+    if read_env_file(BOX_ENV_FILE).get("RUNNER_FLEET_GROUP"):
+        run(["systemctl", "enable", "--now", "canopy-fleet-ready.timer"], capture_output=True)
     return services
+
+
+#: Written once the group has been told this boot (`/run` is emptied at every boot).
+FLEET_READY_DONE = pathlib.Path(os.environ.get("CANOPY_FLEET_READY_DONE", "/run/canopy-fleet-ready"))
+
+
+def _boot_time() -> float:
+    try:
+        for line in pathlib.Path("/proc/stat").read_text().splitlines():
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return 0.0
+
+
+def fleet_ready_main(*, run=subprocess.run, imds=None, boot_time=None) -> int:
+    """ROOT, every minute on a FLEET member (`RUNNER_FLEET_GROUP` in box.env; spec
+    2026-10-24-runner-fleets-design.md): once every unit has finished a bootstrap
+    since this boot, complete the group's launch lifecycle hook. Until then AWS
+    holds the instance where it is — a member warming up is not stopped into the
+    warm pool half-installed, and one leaving the pool is not put in service before
+    it can take work. Once per boot; a hook that is not waiting (the hook timed out
+    and AWS continued, or the box restarted) counts as done."""
+    box = read_env_file(BOX_ENV_FILE)
+    group, hook = box.get("RUNNER_FLEET_GROUP", ""), box.get("RUNNER_FLEET_HOOK", "")
+    if not group or not hook or FLEET_READY_DONE.exists():
+        return 0
+    boot = _boot_time() if boot_time is None else boot_time
+    units = load_units().get("units") or []
+    if not units:
+        return 0
+    for u in units:
+        try:
+            at = float((pathlib.Path(u["home"]) / ".canopy-bootstrapped-at").read_text().strip())
+        except (OSError, ValueError, KeyError):
+            return 0  # not bootstrapped yet: ask again next minute
+        if at < boot:
+            return 0  # a bootstrap from before this boot: wait for this one
+    get = imds or _imds
+    try:
+        token = get("/latest/api/token", put=True, headers={"X-aws-ec2-metadata-token-ttl-seconds": "300"})
+        instance = get("/latest/meta-data/instance-id", token=token).strip()
+        region = get("/latest/meta-data/placement/region", token=token).strip()
+    except Exception as exc:  # noqa: BLE001 — IMDS hiccup: next minute
+        _log(f"fleet-ready: could not read IMDS: {exc}")
+        return 0
+    res = run(["aws", "--region", region, "autoscaling", "complete-lifecycle-action",
+               "--lifecycle-hook-name", hook, "--auto-scaling-group-name", group,
+               "--instance-id", instance, "--lifecycle-action-result", "CONTINUE"],
+              capture_output=True, text=True)
+    if res.returncode == 0 or "No active Lifecycle Action" in (res.stderr or ""):
+        FLEET_READY_DONE.write_text(f"{time.time():.0f}\n")
+        _log(f"fleet-ready: told {group} that {instance} is ready")
+    else:
+        _log(f"fleet-ready: complete-lifecycle-action failed: {(res.stderr or '').strip()[:300]}")
+    return 0
 
 
 def _wait_for_unit_state() -> str:
@@ -6436,6 +6516,12 @@ def bootstrap_agent_fleet() -> None:
         # Stamped however it went: this is "a bootstrap was ATTEMPTED at", which
         # is what discharges a refresh request. The checks say how it went.
         _BOOTSTRAPPED_AT = time.time()
+        # And on disk, for root's `--fleet-ready`: a fleet member is put in service
+        # (or into its warm pool) only once every unit has bootstrapped this boot.
+        try:
+            BOOTSTRAPPED_MARKER.write_text(f"{_BOOTSTRAPPED_AT:.0f}\n")
+        except OSError as exc:
+            _log(f"could not write {BOOTSTRAPPED_MARKER}: {exc}")
         # The bootstrap may have installed a newer canopy CLI (the off-disk gate).
         _forget_cli_version()
         # Versions may have just moved (bootstrap updates Claude Code and the
@@ -11146,6 +11232,11 @@ if __name__ == "__main__":
             print("--egress-sync runs as root", file=sys.stderr)
             sys.exit(2)
         sys.exit(egress_sync_main())
+    if sys.argv[1:2] == ["--fleet-ready"]:
+        if os.geteuid() != 0:
+            print("--fleet-ready runs as root", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(fleet_ready_main())
     if sys.argv[1:2] in (["--install-units"], ["--setup-units"], ["--pair-units"]):
         sys.exit(_units_cli(sys.argv[1:]))
     signal.signal(signal.SIGTERM, _handle_stop)

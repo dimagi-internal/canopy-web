@@ -19,6 +19,7 @@ from .models import (
     Runner,
     RunnerAdmin,
     RunnerCredential,
+    RunnerCredentialSet,
     RunnerEnrollment,
     RunnerFlag,
     RunnerLogin,
@@ -56,17 +57,44 @@ LAST_FALLBACK_REFUSAL = (
 VALUE_KINDS = (RunnerLogin.TOKEN, RunnerLogin.API_KEY)
 
 
+def list_owner(runner) -> dict:
+    """Whose credential list `runner` reads, as filter/create kwargs: its credential
+    set's (every member of a fleet reads its fleet's, `RunnerCredentialSet`), else
+    its own."""
+    if runner.credential_set_id:
+        return {"credential_set_id": runner.credential_set_id}
+    return {"runner": runner}
+
+
+def list_readers(runner) -> list:
+    """Every runner reading `runner`'s list: the live runners on its set, or itself."""
+    if not runner.credential_set_id:
+        return [runner]
+    return list(Runner.objects.filter(credential_set_id=runner.credential_set_id)
+                .exclude(status=Runner.RETIRED))
+
+
 def _entries(runner, kind: str | None = None):
-    qs = RunnerLogin.objects.filter(runner=runner).order_by("position", "created_at")
+    qs = RunnerLogin.objects.filter(**list_owner(runner)).order_by("position", "created_at")
     return qs.filter(kind=kind) if kind else qs
 
 
+def _lock_list(runner) -> None:
+    """Serialize changes to `runner`'s list: its set's row, or its own."""
+    if runner.credential_set_id:
+        RunnerCredentialSet.objects.select_for_update().filter(pk=runner.credential_set_id).first()
+    else:
+        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+
+
 def _touch(runner, by=None) -> None:
-    """Move the bundle's stamp: a box that sees it move proves its credentials again."""
-    cred, _ = RunnerCredential.objects.get_or_create(runner=runner)
-    if by is not None:
-        cred.updated_by = by
-    cred.save()
+    """Move the bundle's stamp: a box that sees it move proves its credentials again.
+    Every runner reading the list sees it move: a set's change reaches each member."""
+    for r in list_readers(runner):
+        cred, _ = RunnerCredential.objects.get_or_create(runner=r)
+        if by is not None:
+            cred.updated_by = by
+        cred.save()
 
 
 def _renumber(runner) -> None:
@@ -98,14 +126,17 @@ def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: st
     if not _ENTRY_KEY.fullmatch(key) or _entries(runner).filter(key=key).exists():
         raise CredentialRefused(f"{key!r} is not a free entry key")
     with transaction.atomic():
-        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        _lock_list(runner)
         last = _entries(runner).order_by("-position").first()
         entry = RunnerLogin.objects.create(
-            runner=runner, key=key, kind=kind, created_by=by, name=(name or "").strip()[:200],
+            **list_owner(runner), key=key, kind=kind, created_by=by, name=(name or "").strip()[:200],
             position=(last.position + 1) if last else 0)
         _touch(runner, by)
     return entry
 
+
+SET_LOGIN_REFUSAL = ("this runner reads its fleet's credential set, which holds tokens and API keys only: "
+                     "a full login's refresh token rotates, so it cannot be shared")
 
 #: An entry key: what `add_runner_credential` makes, and all a box may name.
 _ENTRY_KEY = re.compile(r"[0-9a-f]{8}")
@@ -158,7 +189,7 @@ def remove_runner_credential(runner, key: str, *, by=None) -> bool:
     key forgotten, the next time the box re-reads its credentials — within a few
     minutes. Refused when it is the last token or API key."""
     with transaction.atomic():
-        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        _lock_list(runner)
         if not _entries(runner).filter(key=key).exists():
             return False
         if _would_leave_no_fallback(runner, {key}):
@@ -242,9 +273,14 @@ def _forget_vault_secrets(runner, names: list[str]) -> None:
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — cycle: it imports this module
     from apps.agents.models import VaultSecret  # noqa: PLC0415 — with the module above
 
+    mine = list_owner(runner)
     for v in workspace_vaults.runner_vaults(runner):
-        others = {e.vault_secret_name for e in RunnerLogin.objects.filter(
-            runner__in=[r for r in workspace_vaults.serving_runners(v) if r.pk != runner.pk])}
+        # Any OTHER list a runner the vault serves reads (the runners on one set
+        # read one list, so they are not "others" to each other).
+        others: set[str] = set()
+        for r in workspace_vaults.serving_runners(v):
+            if list_owner(r) != mine:
+                others |= {e.vault_secret_name for e in _entries(r)}
         VaultSecret.objects.filter(vault=v, name__in=[n for n in names if n not in others]).delete()
 
 
@@ -303,7 +339,7 @@ def swap_runner_logins(runner, *, updated_by=None):
     What a box from before the list asks for when its second token ran a turn
     its first could not (`_promote_working_subscription`)."""
     with transaction.atomic():
-        Runner.objects.select_for_update().filter(pk=runner.pk).first()
+        _lock_list(runner)
         first, second = _nth_token(runner, 0), _nth_token(runner, 1)
         if first is None or second is None:
             return getattr(runner, "credential", None)
@@ -320,7 +356,12 @@ def add_runner_login(runner, *, by=None):
     The row exists from the start rather than on success: a sign-in that is
     abandoned leaves a row saying "not signed in", with Sign in and Remove next
     to it, instead of a login that silently never appeared.
+
+    Refused for a runner on a credential set (a fleet member): a login's refresh
+    token rotates, so it cannot be shared, and it would be state on one box.
     """
+    if runner.credential_set_id:
+        raise CredentialRefused(SET_LOGIN_REFUSAL)
 
     with transaction.atomic():
         Runner.objects.select_for_update().filter(pk=runner.pk).first()
@@ -356,6 +397,10 @@ def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = F
     list has never held — one signed in before there was a list, or by hand on
     the box. It goes FIRST, where that login always was.
     """
+    if runner.credential_set_id:
+        # A member reads its set's tokens and keys; a login found on its disk is
+        # not one of them, and is never adopted onto the shared list.
+        return
     now = timezone.now()
     with transaction.atomic():
         Runner.objects.select_for_update().filter(pk=runner.pk).first()

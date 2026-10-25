@@ -44,11 +44,12 @@ from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import aws_iam_proof, device_key_notify, device_keys, unit_pairing
+from . import aws_iam_proof, device_key_notify, device_keys, fleets, unit_pairing
 from .api_device_keys import ECDH_STORES
-from .models import Runner, RunnerDeviceKey, RunnerInvitation
+from .models import Runner, RunnerDeviceKey, RunnerFleet, RunnerInvitation
 from .runners import set_runner_machine
 from .schemas import (
+    RunnerFleetOut,
     RunnerInvitationCheckOut,
     RunnerInvitationIn,
     RunnerInvitationOut,
@@ -87,6 +88,21 @@ def invitation_out(invitation: RunnerInvitation) -> RunnerInvitationOut:
             name=u["name"], workspace=u["workspace"], kind=u.get("kind") or "tree",
             slug=u.get("slug") or "", has_ecdh_key=bool(u.get("ecdh_public_jwk")),
             runner_id=u.get("runner_id") or None) for u in units],
+        fleet=fleet_out(invitation.fleet) if invitation.fleet_id else None,
+    )
+
+
+def fleet_out(fleet) -> RunnerFleetOut:
+    members = list(fleet.members.exclude(status=Runner.RETIRED).order_by("name"))
+    return RunnerFleetOut(
+        id=fleet.pk, name=fleet.name, workspace=fleet.workspace_id, status=fleet.status,
+        role_arn=fleet.role_arn, region=fleet.region, group_name=fleet.group_name,
+        min_members=fleet.min_members, max_members=fleet.max_members, member_turns=fleet.member_turns,
+        credential_set_id=fleet.credential_set_id, credential_vault_id=fleet.credential_set.vault_id,
+        has_ecdh_key=bool(fleet.ecdh_public_jwk), approved_at=fleet.approved_at,
+        owner_email=fleet.owner.email or "",
+        members=[{"id": m.pk, "name": m.name, "instance_id": m.instance_id, "power": m.power,
+                  "live_status": m.live_status} for m in members],
     )
 
 
@@ -182,6 +198,9 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
         except device_keys.KeyError_ as exc:
             raise HttpError(422, f"ecdh_public_jwk: {exc}") from exc
     jkt = aws_iam_proof.role_jkt(role_arn)
+    if fleets.fleet_of_role(role_arn) is not None:
+        # A fleet's role is no one box's identity: its instances join the fleet.
+        raise HttpError(422, f"role_arn: {role_arn} is a runner fleet's role")
     units = _invited_units(request, payload)
     try:
         with transaction.atomic():
@@ -231,6 +250,8 @@ def approve_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
     # into the fleet as you. 403 `step_up_required` → the SPA asks for the
     # passkey and retries; a token gets a plain 403 it cannot answer.
     stepup.require_recent_step_up(request)
+    if invitation.fleet_id and invitation.fleet.status != RunnerFleet.PENDING:
+        return invitation_out(invitation)  # approving an approved fleet again is a no-op
     if invitation.status == RunnerInvitation.CONSUMED:
         raise HttpError(409, "this invitation has already been used")
     if invitation.status == RunnerInvitation.EXPIRED:
@@ -240,7 +261,13 @@ def approve_runner_invitation(request: HttpRequest, invitation_id: uuid.UUID):
         invitation.save(update_fields=["approved_at", "approved_by"])
         activity.emit(activity.RUNNER_INVITATION_APPROVED, workspace=invitation.workspace_id,
                       actor=request.user, surface="runner", ref=str(invitation.pk),
-                      meta={"name": invitation.name, "role_arn": invitation.role_arn})
+                      meta={"name": invitation.name, "role_arn": invitation.role_arn,
+                            **({"fleet": invitation.fleet.name} if invitation.fleet_id else {})})
+    if invitation.fleet_id:
+        # A fleet's approval is the whole of it: the fleet is active, and every
+        # instance its group starts joins on AWS's word from now on.
+        fleets.approve(invitation, request.user)
+        invitation.refresh_from_db()
     return invitation_out(invitation)
 
 
@@ -299,9 +326,23 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     from .api import declared_capabilities
 
     try:
-        role_arn = aws_iam_proof.verify(payload.proof, request)
+        caller = aws_iam_proof.verify_caller(payload.proof, request)
     except aws_iam_proof.AwsProofError as exc:
         raise _refuse_pairing(f"proof: {exc}") from exc
+    role_arn = aws_iam_proof.canonical_role_arn(caller)
+    fleet = fleets.fleet_of_role(role_arn)
+    if fleet is not None:
+        # An instance of a fleet's group: it joins on AWS's word that it is the
+        # group's, under the fleet a person approved (`fleets.join`).
+        if payload.units:
+            raise _refuse_pairing(f"{role_arn} is fleet {fleet.name}'s role; a member is one runner")
+        joined = fleets.join(fleet=fleet, caller_arn=caller, name=payload.name, host=payload.host,
+                             capabilities=payload.capabilities, ecdh_public_jwk=payload.ecdh_public_jwk,
+                             ecdh_store=payload.ecdh_store, refuse=_refuse_pairing)
+        if joined.status == "waiting":
+            return Status(202, RunnerPairByRoleOut(status="waiting"))
+        code, status = (201, "paired") if joined.status == "joined" else (200, "reattached")
+        return Status(code, RunnerPairByRoleOut(status=status, runner_id=joined.runner.pk))
     if payload.units:
         # A box of isolation units: every unit, one runner each, in one call.
         return unit_pairing.pair_units(request, payload, role_arn, refuse=_refuse_pairing,

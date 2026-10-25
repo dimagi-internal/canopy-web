@@ -1,0 +1,243 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# A runner FLEET (spec docs/superpowers/specs/2026-10-24-runner-fleets-design.md):
+# an EC2 Auto Scaling group of interchangeable canopy cloud runners, a warm pool of
+# stopped, already-bootstrapped instances beside it, and the grant that lets
+# canopy-web size THIS group and nothing else. canopy-web — not a CPU alarm —
+# decides how many members run (apps/harness/fleets.py), from the work waiting.
+#
+# Not deployed as is: `fleet.sh up` renders it first (fleet_template.py), putting
+# runner.cfn.yaml's own cloud-init in the launch template's UserData, so a member is
+# built exactly as a single box is. Its ECDH key is the ecdh-kms.cfn.yaml stack
+# beside this one (`<stack>-ecdh`), which only this role may derive with.
+Description: >-
+  A canopy runner fleet: an Auto Scaling group of cloud runners with a warm pool,
+  whose size canopy-web sets from the work waiting for it.
+
+Parameters:
+  FleetName:
+    Type: String
+    AllowedPattern: '^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$'
+    Description: The fleet's name in canopy-web, and the prefix of every member's runner name.
+  InstanceType:
+    Type: String
+    Default: m7i.xlarge
+    Description: >
+      16 GB: ten turns at once (cloud_runner.py runs one per 1.5 GiB). fleet.sh tells
+      canopy-web the same number, so the scaler knows what one more member absorbs.
+  Ami:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+  VolumeSize:
+    Type: Number
+    Default: 60
+    MinValue: 20
+  MinMembers:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: Members in service however quiet it is (the group's MinSize).
+  MaxMembers:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    Description: The most members canopy-web may run (the group's MaxSize).
+  WarmPoolSize:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: >
+      Stopped, already-bootstrapped instances kept ready beside the group. A member
+      leaves the pool in a minute or two; one built from scratch takes as long as its
+      first bootstrap. 0 builds every new member from scratch.
+  CanopyTaskRoleName:
+    Type: String
+    Default: canopy-web-task-role
+    Description: canopy-web's own task role, which this stack lets size the group.
+  CanopyBaseUrl:
+    Type: String
+    Default: https://canopy.dimagi.com
+  RunnerWorkspace:
+    Type: String
+    Default: dimagi
+  RunnerProjects:
+    Type: String
+    Default: canopy-web
+  RunnerAgents:
+    Type: String
+    Default: ''
+  RunnerSessions:
+    Type: String
+    AllowedValues: ['0', '1']
+    Default: '1'
+  RunnerExecutor:
+    Type: String
+    AllowedValues: ['cli', 'acp']
+    Default: 'acp'
+  AgentSlugs:
+    Type: String
+    Default: 'ace,ada,echo,eva,hal'
+  RunnerEgress:
+    Type: String
+    AllowedValues: ['', 'locked']
+    Default: ''
+  RunnerEgressAllow:
+    Type: String
+    Default: ''
+  # A fleet member is one runner (no isolation units) and never a sensitive-data box
+  # (a sealed conversation's key is wrapped to people, not to a fleet). Fixed, so the
+  # shared cloud-init reads the same names it reads on a single box.
+  RunnerUnits:
+    Type: String
+    AllowedValues: ['']
+    Default: ''
+  RunnerDataMode:
+    Type: String
+    AllowedValues: ['']
+    Default: ''
+  RunnerSeedSecret:
+    Type: String
+    Default: canopy/cloud-runner/runner-seed
+
+Resources:
+  # No ingress at all: a member is reached through SSM, never SSH.
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'canopy runner fleet ${FleetName} (no ingress; SSM only)'
+      Tags:
+        - { Key: Name, Value: !Sub 'canopy-fleet-${FleetName}' }
+        - { Key: purpose, Value: canopy-cloud-runner }
+
+  # The members' one role. It trusts EC2 and nothing else, so the session name STS
+  # reports for it is always an instance id EC2 set — what canopy-web's join reads
+  # as "which member". Named, so canopy-web can be told it before the group exists.
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'canopy-fleet-${FleetName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: read-runner-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:canopy/cloud-runner/*'
+        # `cloud_runner.py --fleet-ready`: a member says it has bootstrapped. Its own
+        # group only.
+        - PolicyName: complete-own-lifecycle-hook
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: autoscaling:CompleteLifecycleAction
+                Resource: !Sub 'arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/canopy-fleet-${FleetName}'
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref RunnerRole ]
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'canopy-fleet-${FleetName}'
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !Ref Ami
+        IamInstanceProfile: { Arn: !GetAtt InstanceProfile.Arn }
+        SecurityGroupIds: [ !Ref SecurityGroup ]
+        MetadataOptions: { HttpTokens: required, HttpEndpoint: enabled, HttpPutResponseHopLimit: 1 }
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs: { VolumeSize: !Ref VolumeSize, VolumeType: gp3, DeleteOnTermination: true }
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: Name, Value: !Sub 'canopy-fleet-${FleetName}' }
+              - { Key: purpose, Value: canopy-cloud-runner }
+              - { Key: 'canopy:fleet', Value: !Ref FleetName }
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              __RUNNER_USER_DATA__
+            - GroupName: !Sub 'canopy-fleet-${FleetName}'
+              LifecycleHookName: canopy-ready
+
+  # canopy-web sets the desired capacity; the template never does (a DesiredCapacity
+  # here would reset the fleet on every stack update). Every new member is
+  # protected from scale-in: AWS never chooses which member to stop — canopy-web
+  # lifts the protection of the one idle member it drained (fleets._shrink).
+  Group:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub 'canopy-fleet-${FleetName}'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinMembers
+      MaxSize: !Ref MaxMembers
+      AvailabilityZones: !GetAZs ''
+      HealthCheckType: EC2
+      NewInstancesProtectedFromScaleIn: true
+      # A member is held where it is until it has bootstrapped (`--fleet-ready`
+      # completes this): one warming up is stopped into the pool only once ready,
+      # and one leaving the pool goes in service only once it can take work. An
+      # hour, then AWS continues anyway.
+      LifecycleHookSpecificationList:
+        - LifecycleHookName: canopy-ready
+          LifecycleTransition: autoscaling:EC2_INSTANCE_LAUNCHING
+          HeartbeatTimeout: 3600
+          DefaultResult: CONTINUE
+      Tags:
+        - { Key: 'canopy:fleet', Value: !Ref FleetName, PropagateAtLaunch: true }
+
+  # The instances "left around to start up": stopped, already bootstrapped, their
+  # disks kept. A member canopy-web scales in comes back here (ReuseOnScaleIn), so
+  # the next one up keeps its clones and caches.
+  WarmPool:
+    Type: AWS::AutoScaling::WarmPool
+    Properties:
+      AutoScalingGroupName: !Ref Group
+      PoolState: Stopped
+      MinSize: !Ref WarmPoolSize
+      InstanceReusePolicy: { ReuseOnScaleIn: true }
+
+  # What canopy-web may do to THIS group: set its desired capacity and its members'
+  # scale-in protection. It never launches, terminates or reconfigures anything
+  # itself, and no other group is in reach.
+  ScalerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: !Sub 'canopy-web sizes runner fleet ${FleetName}'
+      Roles: [ !Ref CanopyTaskRoleName ]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: SizeThisFleet
+            Effect: Allow
+            Action: [ autoscaling:SetDesiredCapacity, autoscaling:SetInstanceProtection ]
+            Resource: !Sub 'arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/canopy-fleet-${FleetName}'
+          # Reads take no resource-level condition; they change nothing.
+          - Sid: ReadFleets
+            Effect: Allow
+            Action: [ autoscaling:DescribeAutoScalingGroups, autoscaling:DescribeAutoScalingInstances,
+                      autoscaling:DescribeWarmPool, ec2:DescribeInstances ]
+            Resource: '*'
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt RunnerRole.Arn
+  GroupName:
+    Value: !Ref Group
+  LifecycleHookName:
+    Value: canopy-ready

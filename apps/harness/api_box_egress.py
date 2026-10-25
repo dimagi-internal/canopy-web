@@ -38,12 +38,12 @@ def box_egress(request: HttpRequest, payload: BoxEgressIn):
     `allow`, the hosts beyond the box's base set. Root applies it on top of the box's
     own setting, never below it. Any bad proof: one uniform 401."""
     try:
-        role_arn = aws_iam_proof.verify(payload.proof, request)
+        caller = aws_iam_proof.verify_caller(payload.proof, request)
     except aws_iam_proof.AwsProofError as exc:
         logger.info("box-egress refused: %s", exc)
         raise ProblemError(401, "Refused", type_=TYPE_AUTH,
                            detail="no valid instance-role proof for this URL") from exc
-    machine = aws_iam_proof.canonical_role_arn(role_arn)
+    machine = aws_iam_proof.caller_machine(caller)
     runners = (Runner.objects.filter(machine_id=machine, kind=Runner.CLOUD)
                .exclude(status=Runner.RETIRED).prefetch_related("declared_flags").order_by("name"))
     out = []

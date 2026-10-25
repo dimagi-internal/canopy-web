@@ -36,7 +36,7 @@ from apps.events import audit
 from apps.passkeys import stepup
 
 from . import device_key_notify, device_keys
-from .models import Runner, RunnerAdmin, RunnerDeviceKey
+from .models import Runner, RunnerAdmin, RunnerDeviceKey, RunnerFleet
 from .runners import can_administer_runner, may_trust_device_keys, set_runner_machine
 from .schemas import DeviceKeyAgentOut, RunnerDeviceKeyCreatedOut, RunnerDeviceKeyIn, RunnerDeviceKeyOut
 
@@ -238,6 +238,9 @@ def verified_role(request: HttpRequest, payload: RunnerDeviceKeyIn) -> tuple[str
         raise HttpError(422, f"proof: {exc}") from exc
     if proven != claimed:
         raise HttpError(422, f"the proof was signed by {proven}, not {claimed}")
+    if RunnerFleet.objects.filter(role_jkt=aws_iam_proof.role_jkt(claimed)).exists():
+        # A fleet's role is nobody's key: each member joins as its own instance.
+        raise HttpError(422, f"{claimed} is a runner fleet's role; its instances join by pair-by-role")
     return claimed, aws_iam_proof.role_jkt(claimed)
 
 

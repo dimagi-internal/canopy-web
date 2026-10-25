@@ -129,7 +129,7 @@ def _box_read(monkeypatch, role=ROLE, fail=False):
         if fail:
             raise aws_iam_proof.AwsProofError("bad signature")
         return role
-    monkeypatch.setattr(aws_iam_proof, "verify", verify)
+    monkeypatch.setattr(aws_iam_proof, "verify_caller", verify)
     return Client().post("/api/harness/runners/box-egress", data={"proof": "p"},
                          content_type="application/json")
 
