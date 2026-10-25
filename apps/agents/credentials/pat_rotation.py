@@ -141,7 +141,7 @@ def _current_token(agent):
                                          revoked_at__isnull=True).first())
 
 
-def rotate(agent, *, trigger: str = "scheduler", actor=None):
+def rotate(agent, *, trigger: str = "scheduler", actor=None, presented_token_id=None):
     """Rotate now. Returns the AgentPatRotation row (status `rotated`), or raises
     RotationRefused after recording a `failed` row."""
 
@@ -153,7 +153,8 @@ def rotate(agent, *, trigger: str = "scheduler", actor=None):
         refusal = enable_refusal(agent, agent.pat_rotation_enabled_by if trigger == "scheduler"
                                  else actor)
         if refusal is None:
-            row = _rotate_locked(agent, now=now, trigger=trigger, actor=actor)
+            row = _rotate_locked(agent, now=now, trigger=trigger, actor=actor,
+                                 presented_token_id=presented_token_id)
     if refusal is not None:
         row = AgentPatRotation.objects.create(agent=agent, status=AgentPatRotation.FAILED,
                                               trigger=trigger, detail=str(refusal)[:500], actor=actor)
@@ -163,10 +164,18 @@ def rotate(agent, *, trigger: str = "scheduler", actor=None):
     return row
 
 
-def _rotate_locked(agent, *, now, trigger: str, actor):
+def _rotate_locked(agent, *, now, trigger: str, actor, presented_token_id=None):
     """The rotation itself, inside `rotate`'s transaction (agent row locked)."""
 
     old = _current_token(agent)
+    if old is None and presented_token_id is not None:
+        # The agent's own login rotating a token it LEAKED, on an agent whose stored
+        # value canopy-web cannot read (zero-knowledge) and has never rotated: nothing
+        # names the current token, so retire the one the agent called with — that is
+        # the leaked one. Without this, a first self-rotation minted a new token and
+        # left the leaked one live (Hal, 2026-10-24: "nothing revoked").
+        old = PersonalToken.objects.filter(pk=presented_token_id, user_id=agent.user_id,
+                                           revoked_at__isnull=True).first()
     raw, new = PersonalToken.create_for_user(
         user=agent.user, label=f"{agent.slug} agent (rotated {now:%Y-%m-%d})"[:100], ttl_days=0)
     services.set_agent_credentials(agent, {CANOPY_PAT_REF: raw}, user=actor, minted=True)

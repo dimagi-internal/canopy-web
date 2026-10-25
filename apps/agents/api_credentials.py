@@ -992,7 +992,9 @@ def rotate_own_pat(request: HttpRequest, slug: str, payload: OwnPatRotateIn) -> 
     if not agent.is_own_login(request.user):
         raise HttpError(403, "only the agent's own login may rotate its own token; an admin uses /pat-rotation/rotate")
     try:
-        row = pat_rotation.rotate(agent, trigger="self", actor=request.user)
+        cred = getattr(request, "auth_credential", None) or {}
+        row = pat_rotation.rotate(agent, trigger="self", actor=request.user,
+                                  presented_token_id=cred.get("id") if cred.get("type") == "pat" else None)
     except pat_rotation.RotationRefused as exc:
         raise HttpError(exc.status, str(exc)) from exc
     row.detail = f"{row.detail}. Self-requested: {payload.reason}"[:500]
