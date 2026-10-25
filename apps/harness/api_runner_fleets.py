@@ -26,7 +26,7 @@ from apps.events import audit as events_audit
 
 from . import aws_iam_proof, device_key_notify, device_keys, fleets
 from .api_runner_invitations import _may_invite_into, approve_url, fleet_out, invitation_out
-from .models import RunnerFleet
+from .models import RunnerCredentialSet, RunnerFleet
 from .schemas import RunnerFleetIn, RunnerFleetOut, RunnerFleetSizeIn, RunnerInvitationOut
 
 router = Router(auth=session_auth, tags=["harness"])
@@ -57,12 +57,18 @@ def create_runner_fleet(request: HttpRequest, payload: RunnerFleetIn):
     slug = _may_invite_into(request, payload.workspace)
     if payload.min_members > payload.max_members:
         raise HttpError(422, "min_members must not be more than max_members")
+    cset = None
+    if payload.credential_set is not None:
+        # Someone else's set is "not found", as their fleet is.
+        cset = RunnerCredentialSet.objects.filter(pk=payload.credential_set, owner=request.user).first()
+        if cset is None:
+            raise HttpError(404, "credential set not found")
     try:
         invitation = fleets.create(
             user=request.user, name=payload.name, workspace=slug, role_arn=payload.role_arn,
             ecdh_public_jwk=payload.ecdh_public_jwk, region=payload.region, group_name=payload.group_name,
             min_members=payload.min_members, max_members=payload.max_members,
-            member_turns=payload.member_turns)
+            member_turns=payload.member_turns, credential_set=cset)
     except (fleets.FleetRefused, aws_iam_proof.AwsProofError, device_keys.KeyError_) as exc:
         raise HttpError(422, str(exc)) from exc
     activity.emit(activity.RUNNER_INVITED, workspace=slug, actor=request.user, surface="runner",

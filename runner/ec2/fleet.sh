@@ -6,6 +6,7 @@
 #   aws sso login --profile labs
 #   ./fleet.sh up   --name dimagi --workspace dimagi [--instance-type m7i.xlarge]
 #                   [--min 1] [--max 4] [--warm 1] [--agents ace,eva] [--projects canopy-web]
+#                   [--credential-set "jj credentials"]
 #   ./fleet.sh down --name dimagi
 #
 # `up` builds (or updates) the stack canopy-fleet-<name> and its -ecdh key stack,
@@ -13,6 +14,10 @@
 # link: one passkey touch, once, ever. From then on every instance the group starts
 # joins by itself — AWS vouches for it — and canopy-web sizes the group. Re-running
 # `up` on an approved fleet updates the stack and the bounds; it asks nothing.
+#
+# `--credential-set`: the members read one of your existing credential sets (by name or
+# id) — a list other runners of yours already read, in this workspace tree or another;
+# without it the fleet gets a new set of its own. Only asked when the fleet is created.
 #
 # `down` retires the fleet in canopy-web (nothing joins, the scaler lets go), empties
 # the group (each member's chats move as it goes), then deletes both stacks. The KMS
@@ -28,10 +33,10 @@ AWS=(aws --profile "$PROFILE" --region "$REGION")
 BASE_URL="${CANOPY_BASE_URL:-https://canopy.dimagi.com}"
 TOKEN_FILE="$HOME/.claude/canopy/workbench-token"
 CMD="${1:-}"; shift || true
-NAME="" WORKSPACE="" INSTANCE_TYPE="" MIN=1 MAX=4 WARM=1 AGENTS="" PROJECTS="" APPROVE_MINUTES=30
+NAME="" WORKSPACE="" INSTANCE_TYPE="" MIN=1 MAX=4 WARM=1 AGENTS="" PROJECTS="" APPROVE_MINUTES=30 CREDENTIAL_SET=""
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-2}"
 }
 die() { echo "!! $*" >&2; exit 1; }
@@ -47,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --agents) AGENTS="$2"; shift 2 ;;
     --projects) PROJECTS="$2"; shift 2 ;;
     --approve-minutes) APPROVE_MINUTES="$2"; shift 2 ;;
+    --credential-set) CREDENTIAL_SET="$2"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) die "unknown option $1 (see --help)" ;;
   esac
@@ -173,8 +179,18 @@ if [[ -n "$FLEET_ID" ]]; then
   exit 0
 fi
 
+SET_ID=""
+if [[ -n "$CREDENTIAL_SET" ]]; then
+  canopy GET /api/harness/runner-credential-sets/ > "$TMPC/sets.json"
+  [[ "$(cat "$TMPC/code")" == "200" ]] || die "could not list your credential sets (HTTP $(cat "$TMPC/code"))"
+  SET_ID=$(WANT="$CREDENTIAL_SET" python3 -c 'import json,os,sys
+want = os.environ["WANT"]
+print(next((s["id"] for s in json.load(open(sys.argv[1])) if want in (s["id"], s["name"])), ""))' "$TMPC/sets.json")
+  [[ -n "$SET_ID" ]] || die "no credential set of yours is called '$CREDENTIAL_SET'"
+fi
+
 BODY=$(NAME="$NAME" WS="$WORKSPACE" ROLE="$ROLE_ARN" DER="$ECDH_DER" REGION="$REGION" GROUP="$STACK" \
-       MIN="$MIN" MAX="$MAX" TURNS="$MEMBER_TURNS" python3 - <<'PY'
+       MIN="$MIN" MAX="$MAX" TURNS="$MEMBER_TURNS" SET_ID="$SET_ID" python3 - <<'PY'
 import base64, json, os
 der = base64.b64decode(os.environ["DER"].strip())
 # A P-256 SubjectPublicKeyInfo ends in the uncompressed point 04 || X || Y (as up.sh).
@@ -186,6 +202,7 @@ print(json.dumps({
     "region": os.environ["REGION"], "group_name": os.environ["GROUP"],
     "min_members": int(os.environ["MIN"]), "max_members": int(os.environ["MAX"]),
     "member_turns": int(os.environ["TURNS"]),
+    "credential_set": os.environ["SET_ID"] or None,
 }))
 PY
 )
@@ -207,6 +224,7 @@ done
   || die "the fleet was not approved within ${APPROVE_MINUTES} min — approve it at $APPROVE_URL; its members join as soon as you do"
 echo "==> UP. fleet $NAME ($FLEET_ID), $MIN–$MAX members of $INSTANCE_TYPE, $MEMBER_TURNS turns each"
 echo "    next, once its first member has joined (a few minutes):"
-echo "      its Credentials tab: Make its key (one passkey touch), then + Token for each Claude account —"
+echo "      its Credentials tab: Make its key (one passkey touch), then + Token for each Claude account"
+echo "      (on a shared set: Get a token on each entry with no value in this tree yet) —"
 echo "      every member reads that one list, and every later member is given the key by canopy-web."
 echo "      route agents to it: add its members' fleet to the workspace runner order or an agent's runners."

@@ -321,7 +321,7 @@ def test_a_new_member_is_given_the_fleets_copy_of_the_vault_key(org, sts, aws):
     aws.add(I1)
     one = Runner.objects.get(pk=_join(sts, I1).json()["runner_id"])
     fleet.refresh_from_db()
-    vault = fleet.credential_set.vault
+    vault = fleet.credential_set.vaults.get()
     # The set's vault is made with the first member, and serves it.
     assert vault is not None and [r.pk for r in workspace_vaults.serving_runners(vault)] == [one.pk]
     # The owner's browser grants the first member (a person, once per fleet)…

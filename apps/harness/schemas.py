@@ -1827,6 +1827,8 @@ class RunnerCredentialStatusOut(Schema):
     logins: list[RunnerLoginOut] = []
     #: The vaults that hold this runner's tokens and API keys, oldest first.
     vaults: list[RunnerVaultOut] = []
+    #: The credential set whose list this is, when the runner reads one.
+    credential_set: RunnerCredentialSetOut | None = None
     updated_at: dt.datetime | None = None
 
 
@@ -2389,6 +2391,50 @@ class RunnerFleetMemberOut(Schema):
     live_status: str
 
 
+class RunnerCredentialSetRunnerOut(Schema):
+    id: uuid.UUID
+    name: str
+    workspace: str | None = None
+
+
+class RunnerCredentialSetVaultOut(Schema):
+    """The set's vault for one workspace tree: its values for the runners in that tree."""
+
+    vault_id: str
+    name: str
+    workspace: str
+    #: The root of the tree it serves.
+    root: str
+    #: Its key version; 0 = no key yet.
+    kv: int = 0
+    #: The list's entries (`vault_secret`) with no value in this vault yet.
+    missing: list[str] = []
+
+
+class RunnerCredentialSetOut(Schema):
+    """A credential set: one ordered list of Claude credentials that every runner on
+    it reads, with a vault per workspace tree for the values."""
+
+    id: uuid.UUID
+    name: str
+    workspace: str
+    runners: list[RunnerCredentialSetRunnerOut] = []
+    vaults: list[RunnerCredentialSetVaultOut] = []
+
+
+class RunnerCredentialSetIn(Schema):
+    """Share a cloud runner's own credential list as a new set."""
+
+    runner: uuid.UUID
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class RunnerCredentialSetChoiceIn(Schema):
+    """Which set a runner reads: a set's id, or null for its own list again."""
+
+    credential_set: uuid.UUID | None = None
+
+
 class RunnerFleetOut(Schema):
     """A runner fleet: one EC2 Auto Scaling group whose instances join as its
     members once its owner approved it, and whose size canopy-web sets from the
@@ -2429,6 +2475,9 @@ class RunnerFleetIn(Schema):
     min_members: int = Field(1, ge=1, le=50)
     max_members: int = Field(4, ge=1, le=50)
     member_turns: int = Field(2, ge=1, le=32)
+    #: One of your credential sets for the members to read (other runners may read it
+    #: too, in this tree or another); omitted, the fleet gets a new one.
+    credential_set: uuid.UUID | None = None
 
 
 class RunnerFleetSizeIn(Schema):
@@ -2719,3 +2768,7 @@ class ProjectOptInIn(Schema):
 
     everything: bool = False
     projects: list[str] = []
+
+
+# Declared before the set schemas it names.
+RunnerCredentialStatusOut.model_rebuild()

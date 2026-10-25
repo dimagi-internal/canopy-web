@@ -44,7 +44,7 @@ from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import aws_iam_proof, device_key_notify, device_keys, fleets, unit_pairing
+from . import aws_iam_proof, credential_sets, device_key_notify, device_keys, fleets, unit_pairing
 from .api_device_keys import ECDH_STORES
 from .models import Runner, RunnerDeviceKey, RunnerFleet, RunnerInvitation
 from .runners import set_runner_machine
@@ -98,7 +98,8 @@ def fleet_out(fleet) -> RunnerFleetOut:
         id=fleet.pk, name=fleet.name, workspace=fleet.workspace_id, status=fleet.status,
         role_arn=fleet.role_arn, region=fleet.region, group_name=fleet.group_name,
         min_members=fleet.min_members, max_members=fleet.max_members, member_turns=fleet.member_turns,
-        credential_set_id=fleet.credential_set_id, credential_vault_id=fleet.credential_set.vault_id,
+        credential_set_id=fleet.credential_set_id,
+        credential_vault_id=getattr(credential_sets.vault_in_tree(fleet.credential_set, fleet.workspace_id), "pk", None),
         has_ecdh_key=bool(fleet.ecdh_public_jwk), approved_at=fleet.approved_at,
         owner_email=fleet.owner.email or "",
         members=[{"id": m.pk, "name": m.name, "instance_id": m.instance_id, "power": m.power,

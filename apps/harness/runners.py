@@ -97,6 +97,10 @@ def _touch(runner, by=None) -> None:
         cred.save()
 
 
+#: For a change that moves a runner onto or off a list (`credential_sets`).
+touch_list = _touch
+
+
 def _renumber(runner) -> None:
     for i, entry in enumerate(_entries(runner)):
         if entry.position != i:
@@ -135,7 +139,7 @@ def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: st
     return entry
 
 
-SET_LOGIN_REFUSAL = ("this runner reads its fleet's credential set, which holds tokens and API keys only: "
+SET_LOGIN_REFUSAL = ("this runner reads a credential set, which holds tokens and API keys only: "
                      "a full login's refresh token rotates, so it cannot be shared")
 
 #: An entry key: what `add_runner_credential` makes, and all a box may name.
@@ -266,15 +270,19 @@ def vault_values_written(vault, names) -> None:
 
 
 def _forget_vault_secrets(runner, names: list[str]) -> None:
-    """Delete these secrets from every vault serving `runner`, unless another runner
-    that vault serves still lists one (a shared vault keeps what anyone uses)."""
+    """Delete these secrets from every vault serving `runner` (every vault of its set),
+    unless another runner that vault serves still lists one (a shared vault keeps what
+    anyone uses)."""
     if not names:
         return
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — cycle: it imports this module
     from apps.agents.models import VaultSecret  # noqa: PLC0415 — with the module above
 
     mine = list_owner(runner)
-    for v in workspace_vaults.runner_vaults(runner):
+    # A set's entry has a value in each tree's vault, not only this runner's.
+    vaults = (list(runner.credential_set.vaults.all()) if runner.credential_set_id
+              else workspace_vaults.runner_vaults(runner))
+    for v in vaults:
         # Any OTHER list a runner the vault serves reads (the runners on one set
         # read one list, so they are not "others" to each other).
         others: set[str] = set()
@@ -303,6 +311,8 @@ def runner_credential_status(runner) -> dict:
     not secrets, so they ride along."""
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — cycle: it imports this module
 
+    from . import credential_sets  # noqa: PLC0415 — cycle: it imports this module
+
     entries = list(_entries(runner))
     slots = _first_values(runner)
     cred = getattr(runner, "credential", None)
@@ -316,6 +326,7 @@ def runner_credential_status(runner) -> dict:
                          "vault_secret": e.vault_secret_name,
                          "reported_at": e.reported_at} for e in entries],
         "vaults": [{"vault_id": str(v.pk), "name": v.name, "kv": v.kv} for v in vaults],
+        "credential_set": credential_sets.summary(runner.credential_set) if runner.credential_set_id else None,
         "logins": [{"key": e.key, "account": e.account, "signed_in": e.signed_in,
                     "reported_at": e.reported_at} for e in entries if e.kind == RunnerLogin.LOGIN],
         "has_claude_token": _held(slots["claude_token"], held),

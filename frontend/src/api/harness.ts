@@ -266,6 +266,32 @@ export async function createRunnerVault(runnerId: string): Promise<RunnerVault> 
   return unwrap(res, 'createRunnerVault') as unknown as RunnerVault
 }
 
+/** A credential set: one list several cloud runners read, with a vault per workspace tree. */
+export type RunnerCredentialSet = components['schemas']['RunnerCredentialSetOut']
+
+/** The credential sets you own. */
+export async function listRunnerCredentialSets(): Promise<RunnerCredentialSet[]> {
+  const res = await apiV2.GET('/api/harness/runner-credential-sets/')
+  return unwrap(res, 'listRunnerCredentialSets') as unknown as RunnerCredentialSet[]
+}
+
+/** Share a runner's own list as a new set: its entries and vault move onto it. */
+export async function shareRunnerCredentials(runnerId: string, name: string): Promise<RunnerCredentialSet> {
+  const res = await apiV2.POST('/api/harness/runner-credential-sets/', {
+    body: { runner: runnerId, name },
+  })
+  return unwrap(res, 'shareRunnerCredentials') as unknown as RunnerCredentialSet
+}
+
+/** Which set a runner reads: a set's id, or null for its own list again. */
+export async function setRunnerCredentialSet(runnerId: string, setId: string | null): Promise<CredentialStatus> {
+  const res = await apiV2.PUT('/api/harness/runner-credential-sets/runners/{runner_id}', {
+    params: { path: { runner_id: runnerId } },
+    body: { credential_set: setId },
+  })
+  return unwrap(res, 'setRunnerCredentialSet') as unknown as CredentialStatus
+}
+
 /** A token or API key whose value the caller seals into the runner's vault: the entry
  *  comes back with the name to seal it under, and holds no value on canopy-web. */
 export async function addVaultedRunnerCredential(

@@ -31,7 +31,7 @@ from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, egress, routing, runner_credential_resolve, runner_projects, sensitivity, services
+from . import claim, credential_sets, egress, routing, runner_credential_resolve, runner_projects, sensitivity, services
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -182,6 +182,18 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
     return Status(201, _with_roots(request, runner))
 
 
+def _list_admin_or_404(request: HttpRequest, runner_id: uuid.UUID) -> Runner:
+    """`runner_admin_or_404`, for a route that changes the runner's credential list —
+    which, for a runner on a credential set, is every runner on the set: then only the
+    set's owner changes it, since administering one of its runners administers none of
+    the others."""
+    runner = runner_admin_or_404(request, runner_id)
+    if runner.credential_set_id and runner.credential_set.owner_id != request.user.pk:
+        raise HttpError(403, f"{runner.name} reads the shared list {runner.credential_set.name}; "
+                             "only its owner changes it")
+    return runner
+
+
 # The fixed path is declared before `/credentials/{key}`, which would match it.
 @router.put("/runners/{runner_id}/credentials/order", response=RunnerCredentialStatusOut,
             summary="Set the order a runner tries its Claude credentials in")
@@ -189,7 +201,7 @@ def pair_runner(request: HttpRequest, payload: RunnerIn):
 def order_runner_credentials(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginOrderIn):
     """`keys` is every credential on the runner, first to last. The runner uses
     the first that works."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     try:
         harness_runners.order_runner_credentials(runner, payload.keys, by=request.user)
     except harness_runners.LoginOrderRefused as exc:
@@ -204,7 +216,7 @@ def update_runner_credential(request: HttpRequest, runner_id: uuid.UUID, key: st
                              payload: RunnerCredentialPatchIn):
     """Only its name: a new value is sealed into the runner's vault (in the browser,
     or by the box after a sign-in), never sent here."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     if not harness_runners.update_runner_credential(runner, key, name=payload.name, by=request.user):
         raise HttpError(404, "no such token or API key on this runner")
     return harness_runners.runner_credential_status(runner)
@@ -217,7 +229,7 @@ def remove_runner_credential(request: HttpRequest, runner_id: uuid.UUID, key: st
     """A login is signed out on the box, a token or key forgotten, the next time
     the runner re-reads its credentials — within a few minutes. Refused for the
     runner's last token or API key."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     try:
         removed = harness_runners.remove_runner_credential(runner, key, by=request.user)
     except harness_runners.CredentialRefused as exc:
@@ -233,7 +245,7 @@ def remove_runner_credential(request: HttpRequest, runner_id: uuid.UUID, key: st
 def swap_runner_logins(request: HttpRequest, runner_id: uuid.UUID):
     """What a runner from before the credential list asks for when its second
     token ran a turn its first could not."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     harness_runners.swap_runner_logins(runner, updated_by=request.user)
     return harness_runners.runner_credential_status(runner)
 
@@ -259,7 +271,7 @@ def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
 @gate("runner-admin", setting=True)
 def order_runner_logins(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerLoginOrderIn):
     """The old name for `PUT /credentials/order`: every credential, first to last."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     try:
         harness_runners.order_runner_logins(runner, payload.keys)
     except harness_runners.LoginOrderRefused as exc:
@@ -296,7 +308,7 @@ def report_slash_commands(request: HttpRequest, runner_id: uuid.UUID, payload: S
 def remove_runner_login(request: HttpRequest, runner_id: uuid.UUID, key: str):
     """The runner signs the login out on the box the next time it re-reads its
     credentials, within a few minutes."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     try:
         removed = harness_runners.remove_runner_credential(runner, key, by=request.user)
     except harness_runners.CredentialRefused as exc:
@@ -384,7 +396,7 @@ def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
     """The entry, at the end of the list, with no value here: the caller (a browser
     holding the vault's key) then seals the value under `secret_name` with
     `PUT /api/vaults/{vault_id}/zk/values`. 422 when the runner has no vault with a key."""
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     try:
         entry = harness_runners.add_runner_credential(runner, kind=payload.kind, name=payload.name,
                                                       by=request.user)
@@ -408,7 +420,9 @@ def create_runner_vault(request: HttpRequest, runner_id: uuid.UUID) -> RunnerVau
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     try:
-        v = workspace_vaults.create_for_runner(runner, by=request.user)
+        # A runner on a credential set is served by the set's vault for its tree.
+        v = (credential_sets.attach_member(runner.credential_set, runner, by=request.user)
+             if runner.credential_set_id else workspace_vaults.create_for_runner(runner, by=request.user))
     except ZkError as exc:
         raise zk_problem(exc) from exc
     return RunnerVaultOut(vault_id=str(v.pk), name=v.name, kv=v.kv)
@@ -583,7 +597,7 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
       good for a year with nothing to renew. `primary`/`secondary` are the old
       fixed slots: the first and second token.
     """
-    runner = runner_admin_or_404(request, runner_id)
+    runner = _list_admin_or_404(request, runner_id)
     slot = payload.slot if payload else "box"
     login_key = (payload.login_key if payload else "") if slot in ("box", "token") else ""
     kind = "login" if slot == "box" else "token"

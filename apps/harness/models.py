@@ -150,7 +150,8 @@ class Runner(models.Model):
     #: A member's EC2 instance id (`i-…`): its identity, with the fleet's role.
     instance_id = models.CharField(max_length=32, blank=True, default="")
     #: The one credential list this runner reads instead of its own
-    #: (`RunnerCredentialSet`): every member of a fleet reads its fleet's.
+    #: (`RunnerCredentialSet`): every member of a fleet reads its fleet's, and any
+    #: other cloud runner of the set's owner may join one (`credential_sets.join`).
     credential_set = models.ForeignKey("RunnerCredentialSet", on_delete=models.SET_NULL,
                                        null=True, blank=True, related_name="runners")
     # Where the fleet scaler has a member, not whether it heartbeats: `live_status`
@@ -2281,17 +2282,19 @@ PAIRING_APPROVAL_GRACE = dt.timedelta(minutes=10)
 
 
 class RunnerCredentialSet(models.Model):
-    """One ordered list of Claude credentials that several runners read as their own:
-    every member of a fleet (`RunnerFleet.credential_set`), however many there are
-    and however often they come and go.
+    """One ordered list of Claude credentials that several cloud runners read as their
+    own: every member of a fleet (`RunnerFleet.credential_set`), however many there are
+    and however often they come and go, and any other cloud runner of the set's owner
+    that joins it (`apps/harness/credential_sets.py`).
 
     The entries are `RunnerLogin` rows on the set (tokens and API keys only — a full
     login's refresh token rotates, so it cannot be shared and would be state on one
-    box). Their values live in `vault`, sealed as any runner credential is
-    (docs/architecture/vault.md § A runner's own vault); the runners on the set are
-    attached to it, so a member opens them with its own device key. Usage caps are
-    per Claude account: members on one token share one cap, so a set holds tokens
-    from several accounts.
+    box). Their VALUES live in the set's vaults, ONE PER WORKSPACE TREE its runners are
+    in: a vault never serves two isolation boundaries (docs/architecture/vault.md § A
+    runner's own vault), so the list is shared across trees and the values are not —
+    each tree's vault holds its own copy, sealed by a person or a box of that tree.
+    Usage caps are per Claude account: runners on one token share one cap, so a set
+    holds tokens from several accounts.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -2299,10 +2302,10 @@ class RunnerCredentialSet(models.Model):
     workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
                                   related_name="runner_credential_sets")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
-    #: Where the entries' values are sealed. Made with the set's first member
-    #: (`fleets.join`), which a vault needs to be attached to.
-    vault = models.ForeignKey("agents.Vault", on_delete=models.SET_NULL, null=True, blank=True,
-                              related_name="+")
+    #: Where the entries' values are sealed: at most one vault per workspace tree, each
+    #: made (or adopted) with the set's first runner in that tree
+    #: (`credential_sets.attach_member`), which a vault for runners needs to be attached to.
+    vaults = models.ManyToManyField("agents.Vault", related_name="+", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
