@@ -148,7 +148,7 @@ def rotate(agent, *, trigger: str = "scheduler", actor=None):
     now = timezone.now()
     refusal = None
     with transaction.atomic():
-        agent = Agent.objects.select_for_update().select_related("user", "workspace").get(pk=agent.pk)
+        agent = Agent.objects.select_for_update(of=("self",)).select_related("user", "workspace").get(pk=agent.pk)
         # The background job acts on the standing of whoever opted the agent in.
         refusal = enable_refusal(agent, agent.pat_rotation_enabled_by if trigger == "scheduler"
                                  else actor)

@@ -190,7 +190,7 @@ def move(agent, dest: Workspace, *, by) -> Plan:
 
     try:
         with transaction.atomic():
-            locked = Agent.objects.select_for_update().select_related("workspace").get(pk=agent.pk)
+            locked = Agent.objects.select_for_update(of=("self",)).select_related("workspace").get(pk=agent.pk)
             if locked.workspace_id == dest.slug:
                 raise MoveError(f"{agent.slug} is already in '{dest.slug}'", status=422)
             p = Plan(agent=locked, source=locked.workspace, dest=dest, by=by)

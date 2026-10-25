@@ -114,7 +114,7 @@ def _approve(req: WorkspaceAccessRequest, *, by, role: str, auto: bool = False) 
     if role not in APPROVABLE_ROLES:
         raise AccessRequestError("invalid_role")
     with transaction.atomic():
-        locked = WorkspaceAccessRequest.objects.select_for_update().select_related(
+        locked = WorkspaceAccessRequest.objects.select_for_update(of=("self",)).select_related(
             "workspace", "user").get(pk=req.pk)
         if locked.status != WorkspaceAccessRequest.PENDING:
             raise AccessRequestError("not_pending")
@@ -142,7 +142,7 @@ def deny_access_request(*, request: WorkspaceAccessRequest, by, reason: str = ""
     """Deny. Creates nothing; the person may ask again later. Tells them,
     with `reason` if one was given, best-effort."""
     with transaction.atomic():
-        req = WorkspaceAccessRequest.objects.select_for_update().select_related(
+        req = WorkspaceAccessRequest.objects.select_for_update(of=("self",)).select_related(
             "workspace", "user").get(pk=request.pk)
         if req.status != WorkspaceAccessRequest.PENDING:
             raise AccessRequestError("not_pending")

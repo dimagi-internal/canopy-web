@@ -210,7 +210,7 @@ def propose(agent: Agent, *, name: str, outcome: str, why: str, plan: list[str],
     owner = services.resolve_project_owner(agent, owner_email) if owner_email else None
     now = timezone.now()
 
-    project = (AgentProject.objects.select_for_update().select_related("agent")
+    project = (AgentProject.objects.select_for_update(of=("self",)).select_related("agent")
                .filter(agent=agent, status=AgentProject.PROPOSED, name__iexact=name).first())
     created = project is None
     if created:
@@ -625,7 +625,7 @@ def propose_task(project: AgentProject, *, title: str, why: str, done_when: str,
     now = timezone.now()
     huddle_id = _huddle_of(source_url) or (run.huddle_id if run is not None else "")
 
-    task = (AgentTask.objects.select_for_update().select_related("agent", "project")
+    task = (AgentTask.objects.select_for_update(of=("self",)).select_related("agent", "project")
             .filter(project=project, origin_ref__kind=CHECKIN_PROPOSAL, status=AgentTask.SUGGESTED,
                     title__iexact=title).first())
     created = task is None

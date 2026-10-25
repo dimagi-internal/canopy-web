@@ -175,7 +175,7 @@ def store_pins(vault: Vault, *, kv: int, expected_version: int, value: str) -> d
     grants someone: that grant is the confirmation of the key it granted to."""
     zk.check_value_zk(value, PINS_NAME)
     with transaction.atomic():
-        v = Vault.objects.select_for_update().select_related("agent").get(pk=vault.pk)
+        v = Vault.objects.select_for_update(of=("self",)).select_related("agent").get(pk=vault.pk)
         if kv != _current_kv(v):
             raise zk.ZkError(409, "zk_kv_mismatch", f"the vault key is at kv {_current_kv(v)}, not {kv}")
         if expected_version != v.keeper_pins_version:
