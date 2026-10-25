@@ -558,6 +558,8 @@ function ChatPageInner({
           secretRequestHost={secretRequestHost}
           // A private conversation's files, sealed: opened here with the conversation key.
           attachmentHost={attachmentHost}
+          // The runner's model setting (opus[1m]) sizes the context meter's window.
+          runnerModel={meta?.runner_model}
           slashCommands={slashCommands}
           emptyState={emptyState}
           historySlot={historySlot}

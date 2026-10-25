@@ -31,6 +31,7 @@ exactly when the runner dies — which is the one case it has to get right.
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -153,6 +154,14 @@ class TurnStatus:
     #: token was revoked, so every report it made was refused).
     claimed_at: datetime | None = None
     last_progress_at: datetime | None = None
+    #: For WORKING: would a follow-up sent NOW be typed into the running turn
+    #: (`routing.may_ride`, canopy-web#1153) rather than wait for it to end?
+    #: `midturn_blocked` says why not, when it would not: "runner" (the box
+    #: holding the turn does not deliver mid-turn — the cloud runner), "dialog"
+    #: (the agent is on a question; a follow-up waits for the answer) or
+    #: "confined" (a caller's turn runs in a session of its own).
+    midturn: bool = False
+    midturn_blocked: str | None = None
 
     def quiet_since(self, now: datetime) -> datetime | None:
         """When anything last came back from a WORKING turn, if that was at least
@@ -200,6 +209,8 @@ class TurnStatus:
             "held_until": self.held_until.isoformat() if self.held_until else None,
             "claimed_at": self.claimed_at.isoformat() if self.claimed_at else None,
             "last_progress_at": self.last_progress_at.isoformat() if self.last_progress_at else None,
+            "midturn": self.midturn,
+            "midturn_blocked": self.midturn_blocked,
             "settled": self.settled,
             "stuck": self.stuck,
         }
@@ -384,8 +395,33 @@ def resolve(turn: Turn) -> TurnStatus:
     menu = False
     if turn.chat_session_id:
         menu = pending_menu(turn.chat_session) is not None
-    return derive(turn, reach=reach, cloud=cloud, menu_pending=menu,
-                  progress_at=progress_at(turn))
+    status = derive(turn, reach=reach, cloud=cloud, menu_pending=menu,
+                    progress_at=progress_at(turn))
+    if status.state != WORKING:
+        return status
+    rides, blocked = midturn_of(turn, menu_pending=menu)
+    return dataclasses.replace(status, midturn=rides, midturn_blocked=blocked)
+
+
+def midturn_of(turn: Turn, *, menu_pending: bool) -> tuple[bool, str | None]:
+    """(would a follow-up sent now ride the running turn, why not) for a WORKING
+    turn — the composer's question, asked of the conversation's running turn.
+
+    `routing.may_ride`'s own conditions, holder-side: the queued turn does not
+    exist yet, so the ones about IT (pinned elsewhere, an earlier delivery that
+    failed) cannot be asked, and a send almost never has them."""
+    from . import routing  # noqa: PLC0415 — routing imports canopy_sessions, which imports this module
+
+    holder =turn.rides_turn if turn.rides_turn_id else turn
+    if holder is None or holder.status not in (Turn.CLAIMED, Turn.RUNNING) or not turn.chat_session_id:
+        return False, None
+    if holder.capability:
+        return False, "confined"
+    if not routing.delivers_midturn(holder.claimed_by):
+        return False, "runner"
+    if menu_pending or routing._dialog_up(turn.chat_session_id):
+        return False, "dialog"
+    return True, None
 
 
 def progress_at(turn: Turn) -> datetime | None:

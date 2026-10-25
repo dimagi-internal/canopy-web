@@ -618,6 +618,11 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
+    # The Claude model this box's sessions start on, as its settings name it
+    # (`opus[1m]`): the only place the 1M-window `[1m]` is written down — the
+    # transcript records the bare API id. The chat's context meter sizes the
+    # window from it. Absent (older code, the cloud runner) means "".
+    claude_model: str = ""
     # The box's data mode (`RUNNER_DATA_MODE`; "sensitive_data" = one ZDR API key, a
     # locked profile on every turn). A person's `sensitive_data` declaration counts
     # only while this says "sensitive_data" (`runner_requirements.in_force`). Absent = "".

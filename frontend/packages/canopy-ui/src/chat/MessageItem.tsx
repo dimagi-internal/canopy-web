@@ -5,6 +5,7 @@ import type { Message, MessageAuthor } from "./protocol";
 import { isMine } from "./identity";
 import { authorColor } from "./personColor";
 import { ToolCallPair } from "./ToolCallPair";
+import { CompactionDivider } from "./CompactionDivider";
 import { AppView } from "./mcpApps/AppView";
 import { useAppHost } from "./mcpApps/context";
 import { useSecretRequestHost } from "./secretRequest";
@@ -175,13 +176,15 @@ export function MessageItem({
   // pasting a wall of text.
   if (isCompactionSummary(message)) {
     return (
-      <SystemSeedRow
-        message={message}
-        forceOpen={forceToolOpen}
-        renderMarkdown={renderMarkdown}
-        label="Context compacted"
-        testId="compaction-summary-row"
-      />
+      <CompactionDivider>
+        <SystemSeedRow
+          message={message}
+          forceOpen={forceToolOpen}
+          renderMarkdown={renderMarkdown}
+          label="Summary of earlier messages"
+          testId="compaction-summary-row"
+        />
+      </CompactionDivider>
     );
   }
 

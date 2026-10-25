@@ -12,7 +12,8 @@ import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
 import type { SlashCommand } from "./slashCommands";
 import { type DraftStorage } from "./drafts";
-import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
+import { agentHasFloor as computeAgentHasFloor, composerPlaceholder, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
+import { ContextMeter } from "./ContextMeter";
 import { useStickyBottom } from "./useStickyBottom";
 import { useNow } from "./useNow";
 import { FindBar } from "./FindBar";
@@ -77,6 +78,9 @@ export interface ChatPanelProps {
   attachmentHost?: AttachmentHost;
   /** Commands the composer offers when a message starts with `/`. */
   slashCommands?: readonly SlashCommand[];
+  /** The bound runner's Claude model setting (`opus[1m]`), which sizes the
+   *  context meter's window. Omit and the window is inferred or "unknown". */
+  runnerModel?: string | null;
 }
 
 /**
@@ -114,6 +118,7 @@ export function ChatPanel({
   secretRequestHost,
   attachmentHost,
   slashCommands,
+  runnerModel,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -228,7 +233,7 @@ export function ChatPanel({
     () =>
       new Set(
         (state.queued ?? [])
-          .filter((q) => q.state === "queued" && q.client_id)
+          .filter((q) => (q.state === "queued" || q.state === "midturn") && q.client_id)
           .map((q) => q.client_id),
       ),
     [state.queued],
@@ -319,7 +324,8 @@ export function ChatPanel({
         >
           <Search className="h-3.5 w-3.5" />
         </button>
-        <div>
+        <div className="flex items-center gap-3">
+          <ContextMeter messages={state.messages} runnerModel={runnerModel} />
           <PresenceChips
             participants={state.participants}
             presenceUserIds={state.presence_user_ids}
@@ -403,13 +409,9 @@ export function ChatPanel({
         // in tools had a bubble saying it was working and no way to stop it.
         isStreaming={inFlightMessage != null || awaitingReply || agentHasFloor}
         streamingMessageId={inFlightMessage?.id ?? null}
-        // "After the current reply" is false while nothing is running: the ask
-        // ahead is stuck, so a new message waits behind it.
-        waitingPlaceholder={
-          status?.stuck && !status.menu_pending && !status.settled
-            ? "Type a message — it waits in the queue behind the one above"
-            : null
-        }
+        // What happens to a message sent now: typed into the running turn,
+        // or waiting — and behind what (`composerPlaceholder`).
+        waitingPlaceholder={composerPlaceholder(status)}
         onUpdate={onUpdateDraft}
         onSend={onSend}
         onStop={onStop}

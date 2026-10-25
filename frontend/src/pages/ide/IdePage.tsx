@@ -90,7 +90,7 @@ export function IdePage() {
     note,
     setNote,
     closing,
-    setClosing,
+    trackClose,
     refresh,
     live,
   } = useIdeData(state)
@@ -329,8 +329,8 @@ export function IdePage() {
             setNote({ text: message, error: true })
             return
           }
-          if (r.closing) setClosing((prev) => ({ ...prev, [s.id]: Date.now() }))
-          setNote({ text: r.closing ? `Deleting “${label(s)}” on ${s.runner_name}…` : `Deleted “${label(s)}”`, error: false })
+          if (r.closing) trackClose(s.id, `Deleting “${label(s)}” on ${s.runner_name ?? 'its runner'}…`, `Deleted “${label(s)}”`)
+          else setNote({ text: `Deleted “${label(s)}”`, error: false })
           if (s.id === id && !r.closing) navigate('/ide', { replace: true })
           break
         }

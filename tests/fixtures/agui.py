@@ -20,6 +20,10 @@ ROUND_TRIP_FRAMES = [
     {"event": "chat.stream_complete",
      "data": {"message_id": "m2", "plaintext": "Not logged in · Please run /login",
               "api_error": "api_error", "signed_out": True}},
+    # How full the context window was for the call — the chat's meter reads it.
+    {"event": "chat.stream_complete",
+     "data": {"message_id": "m3", "plaintext": "done",
+              "usage": {"context_tokens": 124005, "model": "claude-opus-5-5"}}},
     {"event": "chat.user_message",
      "data": {"message_id": "u1", "turn_index": 3, "plaintext": "hi there",
               "author": {"name": "Jon", "user_id": 7}}},

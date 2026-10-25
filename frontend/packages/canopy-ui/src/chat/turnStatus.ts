@@ -254,3 +254,31 @@ export function turnNotice(
       return null;
   }
 }
+
+/**
+ * The composer's placeholder while the agent has the floor, or null for the
+ * kit's default ("sent after the current reply").
+ *
+ * Says what will actually happen to the next message, from the server's
+ * answer (`turn_status.midturn`): on a laptop runner a follow-up is typed into
+ * the running session and the agent reads it mid-turn (canopy-web#1153);
+ * elsewhere it waits, and the reason it waits decides the words.
+ */
+export function composerPlaceholder(status?: TurnStatus | null): string | null {
+  if (!status) return null;
+  // "After the current reply" is false while nothing is running: the ask
+  // ahead is stuck, so a new message waits behind it.
+  if (status.stuck && !status.menu_pending && !status.settled) {
+    return "Type a message — it waits in the queue behind the one above";
+  }
+  if (status.state !== "working") return null;
+  if (status.midturn) return "Message the agent — it reads this mid-turn";
+  switch (status.midturn_blocked) {
+    case "dialog":
+      return "Type a message — it is sent once the question above is answered";
+    case "runner":
+      return `Type a message — ${status.claimed_by ?? "this runner"} can't take one mid-turn, so it is sent after the current reply`;
+    default:
+      return null;
+  }
+}

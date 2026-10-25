@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TurnStatus } from "./protocol";
-import { agentHasFloor, pendingLabel, turnNotice } from "./turnStatus";
+import { agentHasFloor, composerPlaceholder, pendingLabel, turnNotice } from "./turnStatus";
 
 /** A status in the shape the server actually sends (`TurnStatus.as_dict`). */
 function status(over: Partial<TurnStatus> = {}): TurnStatus {
@@ -278,5 +278,31 @@ describe("turnNotice, when a working turn goes quiet", () => {
   it("reads hours as hours", () => {
     expect(turnNotice(working(), { now: at(65) })?.text).toBe(
       "cloud-ec2-2 took this 1h 5m ago and nothing has come back from it since.");
+  });
+});
+
+describe("composerPlaceholder — what happens to a message sent now", () => {
+  it("says the agent reads it mid-turn when it will be typed into the running turn", () => {
+    expect(composerPlaceholder(status({ midturn: true }))).toBe(
+      "Message the agent — it reads this mid-turn",
+    );
+  });
+  it("names the runner that cannot take one mid-turn", () => {
+    expect(composerPlaceholder(status({ claimed_by: "cloud-ec2-2", midturn: false, midturn_blocked: "runner" })))
+      .toBe("Type a message — cloud-ec2-2 can't take one mid-turn, so it is sent after the current reply");
+  });
+  it("waits for a question the agent is on", () => {
+    expect(composerPlaceholder(status({ menu_pending: true, stuck: true, midturn_blocked: "dialog" })))
+      .toBe("Type a message — it is sent once the question above is answered");
+  });
+  it("falls back to the kit default for a confined turn, an older server, or a turn not yet claimed", () => {
+    expect(composerPlaceholder(status({ midturn_blocked: "confined" }))).toBeNull();
+    expect(composerPlaceholder(status())).toBeNull();
+    expect(composerPlaceholder(status({ state: "picking_up" }))).toBeNull();
+    expect(composerPlaceholder(null)).toBeNull();
+  });
+  it("says it waits in the queue behind a stuck ask", () => {
+    expect(composerPlaceholder(status({ state: "waiting_runner", stuck: true })))
+      .toBe("Type a message — it waits in the queue behind the one above");
   });
 });

@@ -442,6 +442,10 @@ class SessionOut(Schema):
     # (`Runner.signed_out`): it takes no turns, and `runner_online` alone reads
     # it as fine.
     runner_signed_out: bool = False
+    # The model the bound runner's sessions start on, as its settings name it
+    # (`opus[1m]`, from its heartbeat) — what the chat sizes the context window
+    # by. "" when unbound, or the box does not report it.
+    runner_model: str = ""
     session_key: str = ""
     #: Moved onto `runner_name` and not reported there yet (`staleness.TRANSFER_WINDOW`):
     #: listed, but nothing to drive until the new box picks it up.

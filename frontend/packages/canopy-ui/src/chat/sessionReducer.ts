@@ -274,9 +274,11 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
                 ...m,
                 plaintext: frame.data.plaintext,
                 status: "complete" as const,
-                ...(frame.data.api_error
-                  ? { content: { ...m.content, api_error: frame.data.api_error,
-                                 ...(frame.data.signed_out ? { signed_out: true } : {}) } }
+                ...(frame.data.api_error || frame.data.usage
+                  ? { content: { ...m.content,
+                                 ...(frame.data.api_error ? { api_error: frame.data.api_error } : {}),
+                                 ...(frame.data.signed_out ? { signed_out: true } : {}),
+                                 ...(frame.data.usage ? { usage: frame.data.usage } : {}) } }
                   : {}),
               }
             : m,
