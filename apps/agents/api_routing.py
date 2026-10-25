@@ -177,6 +177,7 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
             for i, r in enumerate(inh.runners)
         ],
         missing_repo=[r.name for r in inh.missing_repo],
+        missing_repo_ids=[r.pk for r in inh.missing_repo],
         cannot_hold=[r.name for r in inh.cannot_hold],
         directed=[r.name for r in inh.directed],
         repo_url=agent.repo_url or "",

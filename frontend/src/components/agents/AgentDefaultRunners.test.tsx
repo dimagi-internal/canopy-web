@@ -12,6 +12,9 @@ import type { AgentDefaultOrderOut } from '@/api/agents'
 const getAgentDefaultOrder = vi.fn<(slug: string, ws?: string) => Promise<AgentDefaultOrderOut>>()
 const putAgentRunners = vi.fn()
 vi.mock('@/api/agents', () => ({ getAgentDefaultOrder, putAgentRunners }))
+const listRunnerProjects = vi.fn(() => Promise.resolve({ projects: [] as string[], requests: [] as unknown[], can_add: false }))
+const addRunnerProject = vi.fn()
+vi.mock('@/api/harness', () => ({ listRunnerProjects, addRunnerProject, deleteRunnerProjectRequest: vi.fn() }))
 vi.mock('@/components/agents/RunnerAssignments', () => ({ RunnerAssignments: () => <div>own-runners</div> }))
 
 const { AgentDefaultRunners } = await import('./AgentDefaultRunners')
@@ -37,7 +40,7 @@ describe('AgentDefaultRunners', () => {
   it('shows the order it follows, and the laptop it skips for want of the repo', async () => {
     getAgentDefaultOrder.mockResolvedValue({
       own: false, workspace: 'dimagi', runners: [runner('hal-mbp-cdp', 0), runner('cloud-ec2-1', 1)],
-      missing_repo: ['jj-mbp-cdp'], cannot_hold: [], directed: [], repo_url: 'https://github.com/dimagi-internal/jarvis',
+      missing_repo: ['jj-mbp-cdp'], missing_repo_ids: ['r-jj'], cannot_hold: [], directed: [], repo_url: 'https://github.com/dimagi-internal/jarvis',
     })
     renderIt()
     await screen.findByTestId('default-runners-follows')
@@ -49,10 +52,28 @@ describe('AgentDefaultRunners', () => {
     )
   })
 
+  it('asks the laptop to add the repo itself, and shows the ask', async () => {
+    getAgentDefaultOrder.mockResolvedValue({
+      own: false, workspace: 'dimagi', runners: [], missing_repo: ['jj-mbp-cdp'], missing_repo_ids: ['r-jj'],
+      cannot_hold: [], directed: [], repo_url: 'https://github.com/dimagi-internal/jarvis',
+    })
+    const pending = { id: 'q1', runner_id: 'r-jj', name: 'jarvis', repo_url: 'https://github.com/dimagi-internal/jarvis',
+      agent: 'jarvis', status: 'pending', detail: '', requested_at: '2026-10-24T00:00:00Z' }
+    listRunnerProjects
+      .mockResolvedValueOnce({ projects: ['hal'], requests: [], can_add: true })
+      .mockResolvedValue({ projects: ['hal'], requests: [pending], can_add: true })
+    addRunnerProject.mockResolvedValue(pending)
+    renderIt()
+    fireEvent.click(await screen.findByTestId('default-runners-get-repo'))
+    fireEvent.click(await screen.findByTestId('add-agent-repo-go-r-jj'))
+    await waitFor(() => expect(addRunnerProject).toHaveBeenCalledWith('r-jj', { agent: 'jarvis' }))
+    expect((await screen.findByTestId('runner-project-status-jarvis')).textContent).toBe('adding…')
+  })
+
   it('names a directed-only box in the order as skipped', async () => {
     getAgentDefaultOrder.mockResolvedValue({
       own: false, workspace: 'dimagi', runners: [runner('cloud-ec2-2', 0)],
-      missing_repo: [], cannot_hold: [], directed: ['cloud-ec2-test'], repo_url: '',
+      missing_repo: [], missing_repo_ids: [], cannot_hold: [], directed: ['cloud-ec2-test'], repo_url: '',
     })
     renderIt()
     expect((await screen.findByTestId('default-runners-directed')).textContent).toContain('cloud-ec2-test')
@@ -60,7 +81,7 @@ describe('AgentDefaultRunners', () => {
 
   it('"Give it its own" copies the followed order onto the agent', async () => {
     getAgentDefaultOrder.mockResolvedValue({
-      own: false, workspace: 'dimagi', runners: [runner('hal-mbp-cdp', 0)], missing_repo: [], cannot_hold: [], directed: [], repo_url: '',
+      own: false, workspace: 'dimagi', runners: [runner('hal-mbp-cdp', 0)], missing_repo: [], missing_repo_ids: [], cannot_hold: [], directed: [], repo_url: '',
     })
     putAgentRunners.mockResolvedValue([])
     renderIt()
@@ -71,7 +92,7 @@ describe('AgentDefaultRunners', () => {
   })
 
   it('an agent with its own runners can go back to following, after a confirm', async () => {
-    getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: 'dimagi', runners: [], missing_repo: [], cannot_hold: [], directed: [], repo_url: '' })
+    getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: 'dimagi', runners: [], missing_repo: [], missing_repo_ids: [], cannot_hold: [], directed: [], repo_url: '' })
     putAgentRunners.mockResolvedValue([])
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderIt()

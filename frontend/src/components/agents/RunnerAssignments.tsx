@@ -207,14 +207,14 @@ export function RunnerAssignments({
 
   // A laptop runs an agent in the emdash project named after its slug and
   // reports the projects it has; one without it can never take this work.
-  const [needsRepo, setNeedsRepo] = useState<string | null>(null)
+  const [needsRepo, setNeedsRepo] = useState<{ id: string; name: string } | null>(null)
   const add = (id: string) => {
     const prev = rowsRef.current
     setMenuOpen(false)
     void commit(nextRowsForAdd(prev, id), prev)
     const r = fleet.find((x) => x.id === id)
     const projects = ((r?.capabilities ?? {}) as { projects?: string[] }).projects ?? []
-    if (r && repoUrl !== undefined && r.kind === 'emdash' && !projects.includes(agentSlug)) setNeedsRepo(r.name)
+    if (r && repoUrl !== undefined && r.kind === 'emdash' && !projects.includes(agentSlug)) setNeedsRepo({ id: r.id, name: r.name })
   }
 
   if (rows === null) {
@@ -341,7 +341,8 @@ export function RunnerAssignments({
           agentSlug={agentSlug}
           agentName={agentName ?? agentSlug}
           repoUrl={repoUrl}
-          runners={needsRepo ? [needsRepo] : []}
+          runners={needsRepo ? [needsRepo.name] : []}
+          runnerIds={needsRepo ? [needsRepo.id] : []}
         />
       )}
     </div>

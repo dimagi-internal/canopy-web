@@ -71,7 +71,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`runners/:runnerId/:tab`** — a runner's one page (`pages/runner/`): Overview
   (status, facts, alerts, health, readiness checks), Credentials (a cloud box's
   Claude logins, tokens and API keys and its vault — only for its administrators),
-  Routing (workspaces it serves, agents it takes, each agent's routing), Access
+  Routing (workspaces it serves, agents it takes, a laptop's repos — add one, see runners.md § Adding a repo to a laptop — each agent's routing), Access
   (administrators, private), Settings (pause, sessions, flags, egress, runtime,
   retire). Reads `GET /api/harness/runners/{id}/`; a link naming another workspace
   forwards to the runner's own. `/supervisor?tab=runners&runner=<id>` (old mail and
@@ -534,7 +534,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   emdash projects (repos and agents, by the row's `emdash_project`) with every
   session you can see, each row showing reported state (running / input /
   idle), runner, mode and time since last activity; the open session is
-  `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`).
+  `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`). **Add repo** (beside New session) asks one of your laptops to add a repo as an emdash project.
   Objective by design: every filter is an on/off toggle (each runner, state,
   mode, archived), kept in `localStorage`, and nothing is ranked or labelled
   "stuck"; the foot of the list says how many sessions the filters hide, with

@@ -586,6 +586,13 @@ class Client:
             body["session_key"] = emdash_task_id
         self._call("POST", f"/turns/{turn_id}/finish", body)
 
+    def report_project_result(self, runner_id: str, request_id: str, ok: bool, detail: str = "") -> dict:
+        """How adding one repo as an emdash project went (add_project.py). A 404 means
+        the ask was withdrawn meanwhile."""
+        _, payload = self._call("POST", f"/runners/{runner_id}/projects/{request_id}/result",
+                                {"ok": bool(ok), "detail": (detail or "")[:2000]})
+        return payload or {}
+
     def fail_turn(self, turn_id: str, note: str) -> None:
         self._call("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
 

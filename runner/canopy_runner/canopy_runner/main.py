@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import chat_bridge, chat_pump, close, desktop, emdash, hooks, inbox_due, mailbox_probe, sessions
 from . import activity, private_runner, refresh, session_interrupt, slash_commands, streams, usage_report
-from . import transfer
+from . import add_project, transfer
 from . import __version__, provenance
 from .cancel import CANCELLED_TURNS
 from .client import Client, ClientError
@@ -668,6 +668,12 @@ def run_once(cfg: Config, client: Client) -> str:
     # Refresh on the runner's page: update this account's plugins and the canopy CLI
     # in the background; the healthy heartbeat reports when it finished. See refresh.
     _step("refresh", refresh.observe, me)
+
+    # "Add a repo" on canopy-web: clone it here and make it an emdash project, so
+    # this box's next report carries it and routing stops skipping it for that
+    # agent. The emdash step waits for a healthy CDP; the clone does not. See
+    # add_project.
+    _step("add projects", add_project.observe, me, cfg, client, healthy=healthy)
 
     # Before the reports: an in-flight reply is the freshest thing on this box, and
     # finishing a turn here frees the session for the next message. Runs even while

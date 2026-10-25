@@ -33,6 +33,7 @@ import { closeResultMessage } from '@/components/chat/closeAction'
 import { SessionContextMenu, type IdeAction } from './SessionContextMenu'
 import { scopedPath } from '@/lib/scopedLinks'
 import { SessionInfoPanel } from '@/components/chat/SessionInfoPanel'
+import { AddRepoToRunnerDialog } from '@/components/supervisor/AddRepoToRunnerDialog'
 import { useCloseReview } from './useCloseReview'
 import { IdeTree, MODE_LABEL, STATE_LABEL, StateDot, sessionLabel } from './SessionTree'
 import { LIST_LIMIT, POLL_MS, useIdeData } from './useIdeData'
@@ -156,6 +157,8 @@ export function IdePage() {
   const [renamingId, setRenamingId] = useState<string | null>(null)
   // The session whose Session info dialog is open (the row menu's "Session info…").
   const [infoId, setInfoId] = useState<string | null>(null)
+  // "Add repo": ask one of your laptops to clone a repo and add it to emdash.
+  const [addRepo, setAddRepo] = useState(false)
   useEffect(() => {
     if (justCreated && id !== justCreated) setJustCreated(null)
   }, [id, justCreated])
@@ -390,11 +393,20 @@ export function IdePage() {
             capped
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => setAddRepo(true)}
+          title="Add a repo to one of your laptop runners, as an emdash project"
+          data-testid="ide-add-repo"
+          className="ml-auto h-6 shrink-0 rounded border border-border px-1.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          Add repo
+        </button>
         <NewChatMenu
           agents={agents}
           runners={runners}
           label="New session"
-          className="ml-auto h-6 shrink-0 px-1.5 text-[12px]"
+          className="h-6 shrink-0 px-1.5 text-[12px]"
           onError={(message) => setNote({ text: message, error: true })}
           onCreated={onCreated}
         />
@@ -601,6 +613,9 @@ export function IdePage() {
           onAction={(a) => void runAction(menu.session, a)}
           onDismiss={dismissMenu}
         />
+      )}
+      {addRepo && (
+        <AddRepoToRunnerDialog open onClose={() => setAddRepo(false)} runners={runners} agents={agents} />
       )}
       <Dialog open={infoId !== null} onOpenChange={(open: boolean) => !open && setInfoId(null)}>
         <DialogContent className="w-[calc(100%-2rem)] max-w-2xl bg-card">

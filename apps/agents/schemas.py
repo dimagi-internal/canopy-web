@@ -274,6 +274,9 @@ class AgentDefaultOrderOut(StrictModel):
     workspace: str | None = None
     runners: list[AgentRunnerOut] = []
     missing_repo: list[str] = []
+    # The same laptops as `missing_repo`, by id, in the same order — what
+    # `POST /api/harness/runners/{id}/projects` takes to add the repo there.
+    missing_repo_ids: list[uuid.UUID] = []
     cannot_hold: list[str] = []
     directed: list[str] = []
     repo_url: str = ""

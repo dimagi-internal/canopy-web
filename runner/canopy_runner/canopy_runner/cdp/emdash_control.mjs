@@ -21,6 +21,9 @@
 //   composer {task, project}          -> {ok, found, text, typed, screen, running} READ-ONLY look at
 //                                        the task's composer and rendered frame, for the runner's
 //                                        delivery recovery (execute._recover_delivery) — never types.
+//   add-project {name, path}          -> {ok, action:"submitted"} makes the git checkout at
+//                                        `path` the emdash project `name` via the Add Project
+//                                        dialog (the runner verifies it against emdash's DB).
 //   close-task {task, project}        -> {ok, action:"deleted"|"absent"} DELETES the task
 //                                        from emdash (delete is the designed close behaviour).
 //                                        Verifies it is gone before reporting success; "absent"
@@ -764,6 +767,130 @@ try {
       out({ ok: true, action: 'deleted' });
     }
 
+  } else if (command === 'add-project') {
+    // Make the local git checkout at `path` the emdash project `name`, through
+    // emdash's own Add Project dialog ("Pick Directory" mode) — emdash validates
+    // the directory is a git repo and registers it; we never write its DB. The
+    // runner clones the repo itself first (its own git credentials) and checks
+    // emdash's DB for the row afterwards: a dialog that closed is not a project.
+    //
+    // The dialog's Directory field is a BUTTON that opens the native folder
+    // picker (`openSelectDirectoryDialog`), which CDP cannot drive. Its React
+    // props carry the field's `onPathChange` — the very callback the picker
+    // calls with the chosen folder — so the path is handed to it directly,
+    // reached through the button's React fiber. Everything after that is
+    // emdash's normal flow: its path inspection enables Create, and Create runs
+    // its own createProject. Read out of emdash 1.2.8's bundle (DirectoryField,
+    // AddProjectModal) and checked live 2026-10-24: the path lands in the field,
+    // the name placeholder becomes the folder's basename, Create enables.
+    //
+    // Output: {ok, action:"submitted", name, path}. Never leaves the dialog up:
+    // any failure after it opened closes it, so a human is not left looking at
+    // a half-filled Add Project.
+    const { name, path } = args;
+    if (!name || !path) fail('add-project needs {name, path}');
+    const openDialog = () => page.evaluate(() => !!document.querySelector('[role=dialog]'));
+    if (await openDialog()) {
+      fail('BUSY: a dialog is already open in emdash (a person is probably using it) — not adding a project now');
+    }
+    if (!await clickLabel('Add Project')) {
+      fail('no "Add Project" control in the emdash sidebar — emdash\'s UI may have changed');
+    }
+    const closeDialog = () => page.evaluate(() => {
+      const dlg = document.querySelector('[role=dialog]');
+      if (!dlg) return;
+      const close = [...dlg.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === 'Close');
+      if (close) close.click();
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    const bail = async (msg) => { await closeDialog(); fail(msg); };
+    try {
+      await page.waitForFunction(() => {
+        const d = document.querySelector('[role=dialog]');
+        return !!d && /Add Project/.test(d.textContent || '');
+      }, null, { polling: 250, timeout: 10000 });
+    } catch {
+      await bail('the Add Project dialog never rendered');
+    }
+    // "Pick Directory" is the dialog's default mode from this button; click it
+    // anyway so a remembered other mode cannot route the path elsewhere.
+    await page.evaluate(() => {
+      const dlg = document.querySelector('[role=dialog]');
+      const card = [...dlg.querySelectorAll('button,[role=button],[class*=card]')]
+        .find(e => (e.textContent || '').trim() === 'Pick Directory');
+      if (card) card.click();
+    });
+    await page.waitForTimeout(300);
+    const injected = await page.evaluate((p) => {
+      const dlg = document.querySelector('[role=dialog]');
+      if (!dlg) return 'no-dialog';
+      const propOf = (el, prop) => {
+        const key = Object.keys(el).find(k => k.startsWith('__reactFiber$'));
+        let f = key ? el[key] : null;
+        for (let i = 0; f && i < 40; i++, f = f.return) {
+          const mp = f.memoizedProps;
+          if (mp && typeof mp[prop] === 'function') return mp[prop];
+        }
+        return null;
+      };
+      for (const btn of dlg.querySelectorAll('button')) {
+        const onPathChange = propOf(btn, 'onPathChange');
+        if (onPathChange) { onPathChange(p); return 'ok'; }
+      }
+      return 'no-field';
+    }, path);
+    if (injected !== 'ok') {
+      await bail(`could not set the Add Project directory (${injected}) — emdash's dialog may have changed`);
+    }
+    await page.waitForTimeout(400);
+    // The project NAME is the dialog's bare text input (placeholder: the
+    // folder's basename). Set it explicitly: an agent's project must be named
+    // exactly its slug, whatever the folder is called.
+    const named = await page.evaluate((n) => {
+      const dlg = document.querySelector('[role=dialog]');
+      const input = dlg && [...dlg.querySelectorAll('input')].find(i => (i.type === 'text' || !i.type));
+      if (!input) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(input, n);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return input.value === n;
+    }, name);
+    if (!named) await bail('could not set the project name in the Add Project dialog');
+    // Create enables once emdash has inspected the path (a git repo, not already
+    // registered). Its own error text, when it shows one, is the reason.
+    // The submit is the dialog button whose letters read exactly "Create" (its
+    // text is "Create⌘⏎"), the same exact match `create` uses for New Task.
+    try {
+      await page.waitForFunction(() => {
+        const dlg = document.querySelector('[role=dialog]');
+        const b = dlg && [...dlg.querySelectorAll('button')]
+          .find(x => (x.textContent || '').replace(/[^A-Za-z]/g, '') === 'Create');
+        return !!b && !b.disabled;
+      }, null, { polling: 250, timeout: 15000 });
+    } catch {
+      const said = await page.evaluate(() => {
+        const dlg = document.querySelector('[role=dialog]');
+        return dlg ? (dlg.textContent || '').replace(/\s+/g, ' ').slice(0, 300) : '';
+      });
+      await bail(`emdash would not accept ${path} as a project (Create stayed disabled): ${said}`);
+    }
+    await page.evaluate(() => {
+      const dlg = document.querySelector('[role=dialog]');
+      const b = dlg && [...dlg.querySelectorAll('button')]
+        .find(x => (x.textContent || '').replace(/[^A-Za-z]/g, '') === 'Create');
+      if (b) { window.__canopyAddProjectDialog = dlg; b.click(); }
+    });
+    try {
+      await page.waitForFunction(() => {
+        const d = window.__canopyAddProjectDialog;
+        return !d || !d.isConnected || d.hasAttribute('data-closed') || d.getClientRects().length === 0;
+      }, null, { polling: 250, timeout: 20000 });
+    } catch {
+      await bail('clicked Create but the Add Project dialog is still open — the project was not added');
+    }
+    out({ ok: true, action: 'submitted', name, path });
+
   } else if (command === 'composer') {
     // READ-ONLY: what is in this task's composer, and what is on its screen. The
     // runner asks after a send it could not confirm in the transcript, to decide
@@ -944,6 +1071,7 @@ try {
         terminal_input:    (term && term.querySelector('.xterm-helper-textarea'))
                              || document.querySelector('textarea[aria-label="Terminal input"]') ? 1 : 0,
         claude_tabs:       claudeTabs.length,
+        add_project_button: labels.filter(t => t === 'Add Project').length,
       };
     })(); })()`);
     out({ ok: true, ...data });

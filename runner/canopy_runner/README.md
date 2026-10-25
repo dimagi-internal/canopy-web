@@ -87,6 +87,27 @@ How a Claude CLI session is driven (`desktop.py` + `headless.py`):
   running daemon reports the change on its next tick. A follow-up on a thread
   still held by an emdash session needs emdash, and fails while it is closed.
 
+## Adding a repo from canopy-web (emdash runtime)
+
+An agent runs on this laptop only once emdash holds a project named after it.
+Nobody has to make that project by hand at this Mac: a person asks on canopy-web
+("Get it there…" → *Add it there now* where a laptop lacks an agent's repo, the
+runner page's Routing → Repos, or *Add repo* on `/ide`), and the ask arrives on the
+heartbeat reply as `add_projects`. `add_project.py` then:
+
+1. reports it added if emdash's DB already has a project by that name;
+2. `git clone`s the repo into `~/emdash/repositories/<name>` (else
+   `~/emdash-projects/<name>`) in the background, with this account's own git
+   credentials and no prompt (a private repo this account cannot read fails with
+   git's words); a folder already there is used only if its `origin` is the same repo;
+3. opens it in emdash's **Add Project → Pick Directory** dialog over CDP
+   (`cdp/emdash_control.mjs add-project`), named exactly as asked — waiting while a
+   person has a dialog open;
+4. checks emdash's DB holds the project, and reports the outcome to canopy-web.
+
+It never writes emdash's DB, and a failure marks only that ask failed — never this
+runner not-ready. Not used by a `claude-cli` runner (`project_paths` above).
+
 ## Layout
 
 `main.py` is the LOOP and the CLI. Every subsystem it drives owns its own module,
@@ -104,6 +125,7 @@ so "where does X live" has exactly one answer:
 | `menu.py` | parsing a dialog off the rendered screen (pure) |
 | `cdp_control.py` + `cdp/` | driving emdash over CDP (Python wrapper + Node sidecar) |
 | `emdash.py` | the two READ-ONLY emdash DB queries |
+| `add_project.py` | adding a repo canopy-web asked for: clone it, add it in emdash's UI, verify, report |
 | `transcript.py` / `tail.py` | resolving and incrementally reading transcripts |
 | `inbox.py` / `schedules.py` | the email and cron turn producers |
 | `provenance.py` / `update.py` / `_build_info.py` | what code this box runs, and whether to update |

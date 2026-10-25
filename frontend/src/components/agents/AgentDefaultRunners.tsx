@@ -28,7 +28,7 @@ export function AgentDefaultRunners({
   const [state, setState] = useState<AgentDefaultOrderOut | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [repoFor, setRepoFor] = useState<string[] | null>(null)
+  const [repoFor, setRepoFor] = useState<{ names: string[]; ids: string[] } | null>(null)
 
   const load = useCallback(
     () =>
@@ -149,7 +149,7 @@ export function AgentDefaultRunners({
           {agentSlug} repo.{' '}
           <button
             type="button"
-            onClick={() => setRepoFor([...(state.missing_repo ?? [])])}
+            onClick={() => setRepoFor({ names: [...(state.missing_repo ?? [])], ids: [...(state.missing_repo_ids ?? [])] })}
             className="text-primary hover:underline"
             data-testid="default-runners-get-repo"
           >
@@ -174,7 +174,8 @@ export function AgentDefaultRunners({
         agentSlug={agentSlug}
         agentName={agentName}
         repoUrl={state.repo_url ?? ''}
-        runners={repoFor ?? []}
+        runners={repoFor?.names ?? []}
+        runnerIds={repoFor?.ids ?? []}
       />
     </div>
   )

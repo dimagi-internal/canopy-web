@@ -31,7 +31,7 @@ from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, egress, routing, runner_credential_resolve, sensitivity, services
+from . import claim, egress, routing, runner_credential_resolve, runner_projects, sensitivity, services
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -1520,6 +1520,10 @@ def runner_heartbeat(request: HttpRequest, runner_id: uuid.UUID, payload: Heartb
         runner, payload, device_key=rtok is not None and rtok.runner_id == runner.pk)
     beat.key_waiting_url = waiting_approval_url(runner)
     beat.report_projects_wanted = report_projects(beat)
+    # The repos a person asked this laptop to add (`runner_projects.owed`), after
+    # discharging any its report just showed it holds.
+    if runner_projects.can_add_projects(beat):
+        beat.add_projects_wanted = runner_projects.owed(beat)
     return beat
 
 

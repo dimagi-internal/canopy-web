@@ -333,8 +333,10 @@ def _runner(agent: Agent, settings: str, viewer_is_admin: bool = False, facts=No
                     href=f"{settings}#running", action="See routing")
     why = []
     if inherited and inherited.missing_repo:
+        # A laptop can add the repo itself when asked (Routing → "Get it there…",
+        # `runner_projects`), so the step says where to ask rather than "go clone it".
         why.append(f"{', '.join(r.name for r in inherited.missing_repo)} does not have its repo "
-                   "checked out yet")
+                   "as an emdash project yet — add it there from Routing (Get it there…)")
     if inherited and inherited.cannot_hold:
         why.append(f"{', '.join(r.name for r in inherited.cannot_hold)} belongs to someone who is "
                    "not one of its admins")

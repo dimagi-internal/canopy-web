@@ -11,6 +11,7 @@ import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
 import { RunnerOnlyAgents } from '@/components/supervisor/RunnerOnlyAgents'
 import { RunnerPause } from '@/components/supervisor/RunnerPause'
 import { RunnerPrivate } from '@/components/supervisor/RunnerPrivate'
+import { RunnerProjects } from '@/components/supervisor/RunnerProjects'
 import { RunnerSessions } from '@/components/supervisor/RunnerSessions'
 import { RunnerWorkspaces } from '@/components/supervisor/RunnerWorkspaces'
 import type { RunnerOutletContext } from './RunnerPage'
@@ -61,6 +62,11 @@ export function RunnerRoutingTab({ runner, agents, onChanged }: RunnerOutletCont
             <RunnerOnlyAgents runner={runner} onChange={onChanged} />
             <RunnerDirected runner={runner} onChange={onChanged} />
           </div>
+        </Section>
+      )}
+      {runner.kind === 'emdash' && (
+        <Section id="projects" title="Repos (emdash projects)">
+          <RunnerProjects runnerId={runner.id} agents={agents} />
         </Section>
       )}
       {/* Per agent, expandable: there is no cheap query for "agents that route to
