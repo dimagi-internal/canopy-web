@@ -89,6 +89,9 @@ interface Props {
   /** Commands to offer when the message starts with `/`. Omit (or pass none)
    *  and `/` is just a character. */
   slashCommands?: readonly SlashCommand[];
+  /** Replace what is in the box with `text` and focus it, once per `seq`
+   *  ("Edit and resend"). */
+  prefill?: { text: string; seq: number } | null;
 }
 
 /** What the composer types where a file goes: "[Image #2]", "[File #3]". */
@@ -117,6 +120,7 @@ export function SendBox({
   typingVisibility,
   onTypingVisibilityChange,
   slashCommands,
+  prefill,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -224,6 +228,20 @@ export function SendBox({
     persist(value);
     onUpdate(value);
   };
+
+  // "Edit and resend": a line put back in the box, to edit and send again. Each
+  // `seq` is one request, so the same text can be put back twice.
+  const prefillSeq = prefill?.seq;
+  useEffect(() => {
+    if (prefill == null) return;
+    handleChange(prefill.text);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      el?.focus();
+      el?.setSelectionRange(prefill.text.length, prefill.text.length);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillSeq]);
 
   // The `/` menu: open while the message is `/` plus a partial name. Esc closes
   // it for the text on screen; typing anything reopens it.

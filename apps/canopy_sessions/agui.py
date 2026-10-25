@@ -265,7 +265,7 @@ def project(frame: dict, *, thread_id: str, run_id: str = "") -> list[E.BaseEven
                 type=E.EventType.TEXT_MESSAGE_END,
                 message_id=str(data.get("message_id") or ""),
                 metadata=_meta(plaintext=data.get("plaintext"), api_error=data.get("api_error"),
-                               signed_out=data.get("signed_out")),
+                               signed_out=data.get("signed_out"), usage=data.get("usage")),
             )
         ]
 

@@ -143,6 +143,22 @@ describe("multiplayer composer", () => {
     expect(screen.getAllByText("second")).toHaveLength(1);
   });
 
+  it("shows my follow-up as delivered into the running turn, once", () => {
+    const mine = {
+      id: "transient:1", turn_index: 1, role: "user" as const,
+      content: { text: "skip the checks", client_id: "c1" }, plaintext: "skip the checks",
+      status: "complete" as const, error_detail: null, started_at: null,
+      completed_at: null, created_at: "",
+    };
+    render(<ChatPanel {...props} state={state({
+      messages: [mine],
+      queued: [{ turn_id: "t1", client_id: "c1", author: { name: "Alice A", user_id: 1 }, text: "skip the checks", sent_at: "", state: "midturn" }],
+    })} />);
+    expect(screen.getByTestId("queued-state").textContent).toBe("delivered into the current turn");
+    expect(screen.queryByText("queued")).toBeNull();
+    expect(screen.getAllByText("skip the checks")).toHaveLength(1);
+  });
+
   it("keeps my bubble for a send already on its way to the agent", () => {
     const mine = {
       id: "transient:1", turn_index: 1, role: "user" as const,

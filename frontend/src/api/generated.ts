@@ -32470,6 +32470,11 @@ export interface components {
              */
             readonly midturn: number;
             /**
+             * Claude Model
+             * @default
+             */
+            readonly claude_model: string;
+            /**
              * Data Mode
              * @default
              */
@@ -35158,6 +35163,11 @@ export interface components {
              */
             readonly runner_signed_out: boolean;
             /**
+             * Runner Model
+             * @default
+             */
+            readonly runner_model: string;
+            /**
              * Session Key
              * @default
              */
@@ -35972,6 +35982,11 @@ export interface components {
              * @default false
              */
             readonly runner_signed_out: boolean;
+            /**
+             * Runner Model
+             * @default
+             */
+            readonly runner_model: string;
             /**
              * Session Key
              * @default

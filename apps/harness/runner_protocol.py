@@ -97,6 +97,7 @@ def heartbeat(runner: Runner, payload: HeartbeatIn, *, device_key: bool = False)
         profiles=payload.profiles,
         envelope=payload.envelope,
         midturn=payload.midturn,
+        claude_model=payload.claude_model,
         data_mode=payload.data_mode if data_mode_trusted(runner, device_key=device_key) else "",
         data_mode_hash=(payload.data_mode_hash
                         if data_mode_trusted(runner, device_key=device_key) else ""),

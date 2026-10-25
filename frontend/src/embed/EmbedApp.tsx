@@ -26,6 +26,7 @@ import { resolvePrincipal, type Principal } from './principal'
 import { ContactMemory } from './ContactMemory'
 import { contactHcp, embedMemorySource } from './sessionMemory'
 import { PRIVATE_LABEL, PrivateMark } from '@/components/chat/privateConversation'
+import { agentLabel, conversationFacts, pageLabel } from './conversationLabels'
 import { JoinRequests, joinRequestsFrame, type JoinRequestActions } from '@/components/chat/JoinRequests'
 import { addPerson, type PeopleApi } from '@/components/chat/ChatPeople'
 import type { ChatSessionDetail, JoinRequest } from '@/api/chat'
@@ -70,7 +71,7 @@ type Phase =
   | { kind: 'private'; session: ChatSessionDetail; agent: EmbedAgent }
   /** canopy would not give it to them (or it is with an agent this site does not
    *  offer). Said once, with nothing about it. */
-  | { kind: 'unavailable'; agent: EmbedAgent | null }
+  | { kind: 'unavailable'; agent: EmbedAgent | null; reason?: string }
 
 interface EmbedAgent {
   slug: string
@@ -294,7 +295,9 @@ export function EmbedApp({ link, app }: Props) {
         const who = await resolvePrincipal((path) => client.rest.json(path))
         if (cancelled) return
         setPrincipal(who)
-        const agents = who.agents as EmbedAgent[]
+        // Named once, here, for every place the panel says who it is: an agent
+        // registered with its slug as its name reads as a word, not an id.
+        const agents = (who.agents as EmbedAgent[]).map((a) => ({ ...a, name: agentLabel(a) }))
         agentsRef.current = agents
 
         if (agents.length === 0) {
@@ -448,15 +451,22 @@ export function EmbedApp({ link, app }: Props) {
   // kept. Read as the visitor, through the frame's own token, so canopy's session
   // ACL (and its narrowing to this site's agents) decides; the page is told only
   // what the panel then opens (`reportSession`), never why it could not.
-  const [openRequest, setOpenRequest] = useState<string | null>(null)
-  useEffect(() => link.onOpenSession(setOpenRequest), [link])
+  //
+  // EVERY way into a conversation comes through here — the page's
+  // `openSession`, a row of the start screen's list, and a chat whose socket
+  // canopy turned away — so none of them hands an id straight to a socket that
+  // may refuse it. A list row used to: it went to the chat directly, and a
+  // conversation the visitor could not read showed a chat that said
+  // "Reconnecting…" over "Nothing here yet", forever.
+  const [openRequest, setOpenRequest] = useState<{ id: string; refused?: string } | null>(null)
+  useEffect(() => link.onOpenSession((id) => setOpenRequest({ id })), [link])
   const settled = phase.kind !== 'connecting' && phase.kind !== 'failed'
   useEffect(() => {
     if (openRequest === null || !settled) return
-    const id = openRequest
+    const { id, refused } = openRequest
     setOpenRequest(null)
     const back = 'agent' in phase ? phase.agent : null
-    if (phase.kind === 'chatting' && phase.sessionId === id) return
+    if (refused === undefined && phase.kind === 'chatting' && phase.sessionId === id) return
     const isContact = principalRef.current?.kind === 'contact'
     setPhase({ kind: 'opening', sessionId: id, agent: back })
     void client.rest
@@ -467,11 +477,15 @@ export function EmbedApp({ link, app }: Props) {
           setPhase({ kind: 'unavailable', agent: back })
         } else if (detail.sensitive && detail.you_are_in_it === false) {
           setPhase({ kind: 'private', session: detail, agent })
+        } else if (refused !== undefined) {
+          // canopy would list it but not open it live (e.g. a private one whose
+          // key this person was never given): said, with canopy's reason, once.
+          setPhase({ kind: 'unavailable', agent, reason: refused })
         } else {
           setPhase({ kind: 'chatting', sessionId: id, firstMessage: '', firstMessageClientId: '', agent })
         }
       })
-      .catch(() => setPhase({ kind: 'unavailable', agent: back }))
+      .catch(() => setPhase({ kind: 'unavailable', agent: back, reason: refused }))
   }, [openRequest, settled, phase, client])
 
   // No conversation open: the page is told so. (An open one is reported by
@@ -595,9 +609,18 @@ export function EmbedApp({ link, app }: Props) {
               })}
             />
           ) : (
-            <p className="p-6 text-center text-sm text-muted-foreground" data-testid="session-unavailable">
-              This conversation is not one you can open here.
-            </p>
+            <div className="space-y-2 p-6 text-center" data-testid="session-unavailable">
+              <p className="text-sm text-foreground">This conversation isn&rsquo;t available here.</p>
+              <p className="text-[12px] text-muted-foreground">
+                {phase.reason
+                  ? phase.reason.charAt(0).toUpperCase() + phase.reason.slice(1)
+                  : 'It may be someone else\u2019s, with an agent this page does not offer, or no longer there.'}
+              </p>
+              <button type="button" onClick={toStart}
+                className="rounded px-2 py-1 text-[12px] text-primary hover:bg-muted">
+                Start a new conversation
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -615,10 +638,9 @@ export function EmbedApp({ link, app }: Props) {
         client={client}
         isContact={principal?.kind === 'contact'}
         onStart={(text) => startConversation(phase.agent, text)}
-        onOpen={(sessionId) =>
-          setPhase({ kind: 'chatting', sessionId, firstMessage: '', firstMessageClientId: '', agent: phase.agent })
-        }
+        onOpen={(sessionId) => setOpenRequest({ id: sessionId })}
         onClose={() => link.requestClose()}
+        link={link}
         headerControls={
           <>
             <SnapButton link={link} snappable={snappable} />
@@ -637,6 +659,7 @@ export function EmbedApp({ link, app }: Props) {
       firstMessageClientId={phase.firstMessageClientId}
       agent={phase.agent}
       onBack={() => setPhase({ kind: 'ready', agent: phase.agent })}
+      onRefused={(reason) => setOpenRequest({ id: phase.sessionId, refused: reason })}
       client={client}
       link={link}
       contextPreamble={pendingContext}
@@ -662,6 +685,7 @@ function EmbedStart({
   onStart,
   onOpen,
   onClose,
+  link,
   initialBody,
   initialError,
   headerControls,
@@ -672,6 +696,8 @@ function EmbedStart({
   onStart: (text: string) => Promise<void>
   onOpen: (sessionId: string) => void
   onClose: () => void
+  /** The page around the panel: what it is about, for the visitor to see. */
+  link: HostLink
   /** A question the page asked that could not be sent: shown, not dropped. */
   initialBody?: string
   initialError?: string
@@ -679,6 +705,9 @@ function EmbedStart({
   headerControls?: React.ReactNode
 }) {
   const { rows: history, putAway } = useEarlierChats(client, agent, isContact)
+  const page = usePageState(link)
+  const here = typeof page?.resource === 'string' ? page.resource : ''
+  const pageName = pageLabel(page)
   const [body, setBody] = useState(initialBody ?? '')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(initialError ?? null)
@@ -719,6 +748,7 @@ function EmbedStart({
           </button>
         </span>
       </header>
+      <AskingAbout pageName={pageName} />
 
       {history.length > 0 ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -739,7 +769,6 @@ function EmbedStart({
                   data-session-id={s.id}
                   className="min-w-0 flex-1 px-3 py-2 text-left"
                 >
-                  <span className="block text-[11px] text-muted-foreground">{whenLabel(s.at)}</span>
                   {/* What you first asked — the name you would recognise. The
                       session's title is canopy's, and means nothing here. */}
                   <span className="block truncate text-sm text-foreground">
@@ -752,6 +781,12 @@ function EmbedStart({
                       s.opening || 'Conversation'
                     )}
                   </span>
+                  {/* What tells one apart from the next: when and where it
+                      began. Metadata only — a private one keeps no words to be
+                      named by, and canopy could not read them if it did. */}
+                  <span className="block truncate text-[11px] text-muted-foreground" data-testid="conversation-facts">
+                    {conversationFacts({ startedAt: s.startedAt, origin: s.origin }, here)}
+                  </span>
                 </button>
                 {/* Archives it, so it is not offered here again. Nothing is
                     deleted — canopy's own chat list still has it. */}
@@ -759,7 +794,7 @@ function EmbedStart({
                   type="button"
                   onClick={() => putAway(s.id)}
                   aria-label="Remove from this list"
-                  title="Remove from this list"
+                  title="Hide from this list (the conversation stays in canopy)"
                   className="shrink-0 px-3 text-muted-foreground hover:text-foreground"
                 >
                   ×
@@ -771,7 +806,7 @@ function EmbedStart({
       ) : (
         <div className="grid min-h-0 flex-1 place-items-center p-6">
           <p className="max-w-xs text-center text-sm text-muted-foreground">
-            Ask {agent.name} about this page.
+            Ask {agent.name} about {pageName || 'this page'}.
           </p>
         </div>
       )}
@@ -809,7 +844,12 @@ interface EarlierChat {
   opening: string
   /** A private (sensitive) conversation: listed by what it is, never by its words. */
   private?: boolean
+  /** Newest activity, which orders the list. */
   at: string
+  /** When it began (`created_at`) — metadata, shown to tell rows apart. */
+  startedAt: string
+  /** The page it began on (`origin_resource`), "" when none named one. */
+  origin: string
 }
 
 /** How far back the start screen offers an earlier conversation. Older ones
@@ -846,6 +886,10 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
             (r) =>
               r.agent_slug === agent.slug &&
               typeof r.id === 'string' &&
+              // Someone else's private conversation is listed to a co-tenant by
+              // what it is, so they may ask to join — but this list is YOUR
+              // earlier conversations, and that one is not one of them.
+              r.you_are_in_it !== false &&
               // A private conversation keeps no words to be named by; it is
               // listed as what it is.
               (r.sensitive === true || (typeof r.opening === 'string' && r.opening.trim() !== '')),
@@ -855,6 +899,8 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
             opening: typeof r.opening === 'string' ? r.opening : '',
             private: r.sensitive === true,
             at: String(r.last_activity_at ?? r.created_at ?? ''),
+            startedAt: String(r.created_at ?? ''),
+            origin: typeof r.origin_resource === 'string' ? r.origin_resource : '',
           }))
           .filter((r) => Date.parse(r.at) >= since)
           .sort((a, b) => b.at.localeCompare(a.at))
@@ -888,12 +934,23 @@ function useEarlierChats(client: CanopyClient, agent: EmbedAgent, isContact: boo
   return { rows, putAway }
 }
 
-function whenLabel(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return ''
-  return new Date(t).toLocaleString(undefined, {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-  })
+/** What the host page last declared it is showing, kept current. */
+function usePageState(link: HostLink): Record<string, unknown> | null {
+  const [state, setState] = useState(() => link.pageState())
+  useEffect(() => link.onPageStateChanged(setState), [link])
+  return state
+}
+
+/** One line under the header saying which page the agent is told about — the
+ *  page the host declares, which canopy hands the agent with every turn. Nothing
+ *  when the host declares none, since then the agent is told nothing either. */
+function AskingAbout({ pageName }: { pageName: string }) {
+  if (!pageName) return null
+  return (
+    <p className="truncate border-b border-border px-3 py-1 text-[11px] text-muted-foreground" data-testid="asking-about">
+      Asking about <span className="text-foreground">{pageName}</span>
+    </p>
+  )
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -928,6 +985,7 @@ function EmbedChat({
   firstMessageClientId,
   agent,
   onBack,
+  onRefused,
   client,
   link,
   contextPreamble,
@@ -948,6 +1006,9 @@ function EmbedChat({
   agent: EmbedAgent
   /** Back to the start screen: a new question, or another earlier chat. */
   onBack: () => void
+  /** canopy turned the live connection away for good — with its reason, if it
+   *  gave one. The panel then says so instead of drawing a chat that cannot load. */
+  onRefused: (reason: string) => void
   client: CanopyClient
   link: HostLink
   contextPreamble: React.MutableRefObject<string | null>
@@ -1061,6 +1122,14 @@ function EmbedChat({
     localDrafts: sensitive !== false,
   })
   const menu = socket.state.menu ?? null
+  const refusedReason = socket.refused?.reason
+  const toldRefused = useRef(false)
+  useEffect(() => {
+    if (refusedReason === undefined || toldRefused.current) return
+    toldRefused.current = true
+    onRefused(refusedReason)
+  }, [refusedReason, onRefused])
+  const pageName = pageLabel(usePageState(link))
   // Agent memory for this conversation — the chat page's own toggles, through
   // the frame's client. A contact has no canopy account to own the setting, so
   // nothing is asked for them (sessionMemory.ts says who may change it).
@@ -1331,6 +1400,7 @@ function EmbedChat({
           </button>
         </span>
       </header>
+      <AskingAbout pageName={pageName} />
       {sensitive && <PrivateConversationNote />}
       <SealedConversationBanner
         state={sealed.state}

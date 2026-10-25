@@ -125,4 +125,41 @@ describe('useIdeData', () => {
     await act(async () => { await result.current.refresh() })
     expect(result.current.note).toEqual({ text: 'Deleted', error: false })
   })
+
+  it('replaces "Deleting…" with "Deleted" once the runner retires the row', async () => {
+    const { result } = renderHook(() => useIdeData('active'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.trackClose('s1', 'Deleting “IDE” on jj-mbp-cdp…', 'Deleted “IDE”'))
+    expect(result.current.note?.text).toBe('Deleting “IDE” on jj-mbp-cdp…')
+    expect(Object.keys(result.current.closing)).toEqual(['s1'])
+    // Still listed: the line keeps saying it is in hand.
+    await act(async () => { await result.current.refresh() })
+    expect(result.current.note?.text).toBe('Deleting “IDE” on jj-mbp-cdp…')
+    // The runner's report retires it: the line says so, and nothing is pending.
+    chat.listSessions.mockResolvedValue([])
+    await act(async () => { await result.current.refresh() })
+    expect(result.current.note).toEqual({ text: 'Deleted “IDE”', error: false })
+    expect(result.current.closing).toEqual({})
+  })
+
+  it('a delete the runner never confirms turns "Deleting…" into an error, not a standing line', async () => {
+    const { result } = renderHook(() => useIdeData('active'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    act(() => result.current.trackClose('s1', 'Deleting “IDE” on jj-mbp-cdp…', 'Deleted “IDE”'))
+    vi.setSystemTime(Date.now() + 46_000)
+    await act(async () => { await result.current.refresh() })
+    expect(result.current.note).toEqual({ text: UNCONFIRMED_DELETE, error: true })
+    expect(result.current.closing).toEqual({})
+  })
+
+  it('a different line written since is left alone when the delete lands', async () => {
+    const { result } = renderHook(() => useIdeData('active'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.trackClose('s1', 'Deleting…', 'Deleted “IDE”'))
+    act(() => result.current.setNote({ text: 'Archived “other”', error: false }))
+    chat.listSessions.mockResolvedValue([])
+    await act(async () => { await result.current.refresh() })
+    expect(result.current.note).toEqual({ text: 'Archived “other”', error: false })
+  })
 })

@@ -18,7 +18,10 @@ export const LIST_LIMIT = 500
 export const DOORBELL_MIN_MS = 3_000
 export const UNCONFIRMED_DELETE = 'A delete was not confirmed by its runner — try again, or delete it in emdash.'
 
-export type IdeNote = { text: string; error: boolean }
+/** A status line. `closing` ties it to a delete relayed to a runner: the line
+ *  is replaced with `doneText` when the row leaves the listing, or with
+ *  UNCONFIRMED_DELETE when the runner never confirms — it never stands. */
+export type IdeNote = { text: string; error: boolean; closing?: { id: string; doneText: string } }
 
 /** What /ide shows: every session (active, or all with archived), the runners,
  *  your agents (for "New session"), and a clock for the row ages.
@@ -61,6 +64,10 @@ export function useIdeData(state: 'all' | 'active') {
         if (Object.keys(closingRef.current).length) {
           const settled = settleClosing(closingRef.current, s.value, Date.now())
           setClosing(settled.pending)
+          if (settled.done.length) {
+            const done = new Set(settled.done)
+            setNote((n) => (n?.closing && done.has(n.closing.id) ? { text: n.closing.doneText, error: false } : n))
+          }
           if (settled.stuck.length || settled.failed.length) {
             for (const sid of [...settled.stuck, ...settled.failed]) unconfirmed.current.add(sid)
             setNote({ text: UNCONFIRMED_DELETE, error: true })
@@ -81,6 +88,15 @@ export function useIdeData(state: 'all' | 'active') {
       setLoading(false)
     })
   }, [state])
+
+  /** A delete the runner has been asked to carry out: mark the row, say so,
+   *  and let the next listing that no longer has it say it is done. */
+  const trackClose = useCallback((sessionId: string, pendingText: string, doneText: string) => {
+    const since = Date.now()
+    closingRef.current = { ...closingRef.current, [sessionId]: since }
+    setClosing((prev) => ({ ...prev, [sessionId]: since }))
+    setNote({ text: pendingText, error: false, closing: { id: sessionId, doneText } })
+  }, [])
 
   usePolled(refresh, { ms: POLL_MS, deps: [refresh], refreshOnFocus: true })
 
@@ -125,6 +141,7 @@ export function useIdeData(state: 'all' | 'active') {
     setNote,
     closing,
     setClosing,
+    trackClose,
     refresh,
     live,
   }

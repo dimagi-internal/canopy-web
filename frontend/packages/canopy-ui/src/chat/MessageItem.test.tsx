@@ -24,7 +24,11 @@ describe("MessageItem — a compaction summary", () => {
     const row = screen.getByTestId("compaction-summary-row");
     expect(row.tagName).toBe("DETAILS");
     expect(row.hasAttribute("open")).toBe(false);
-    expect(row.textContent).toContain("Context compacted");
+    expect(row.textContent).toContain("Summary of earlier messages");
+    // A rule across the transcript says where it happened.
+    expect(screen.getByTestId("compaction-divider").textContent).toContain(
+      "Context compacted — earlier messages summarised",
+    );
   });
 
   it("leaves an ordinary typed line as a bubble", () => {

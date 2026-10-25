@@ -6,6 +6,7 @@
 
 // Protocol types
 export type {
+  ContextUsage,
   Message,
   MessageAuthor,
   MessageAppRef,
@@ -48,6 +49,7 @@ export { useStickyBottom } from "./useStickyBottom";
 // placement banner) rather than inventing a second vocabulary for it.
 export {
   agentHasFloor,
+  composerPlaceholder,
   pendingLabel,
   turnNotice,
   type TurnNotice,
@@ -104,7 +106,8 @@ export {
 } from "./pairToolMessages";
 
 // Presentational components
-export { ChatPanel, type ChatPanelProps } from "./ChatPanel";
+export { ChatPanel, editTarget, type ChatPanelProps } from "./ChatPanel";
+export { toolCopyText, type MessageActionsHost } from "./messageActions";
 export { MenuPrompt, type MenuPromptProps } from "./MenuPrompt";
 export { MessageList } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
@@ -154,3 +157,15 @@ export { AppBridge, PROTOCOL_VERSION as MCP_APPS_PROTOCOL_VERSION, type AppBridg
 // The AG-UI projection's inverse. Exported so a consumer can translate a stream
 // it obtained some other way — and so the round-trip test can reach it.
 export { fromAgui, resetAguiState, CUSTOM_PREFIX, METADATA_KEY } from "./agui";
+
+// Context window meter + compaction marker
+export { ContextMeter } from "./ContextMeter";
+export { CompactionDivider } from "./CompactionDivider";
+export {
+  readContext,
+  contextWindow,
+  contextLabel,
+  DEFAULT_WINDOW,
+  LONG_WINDOW,
+  type ContextReading,
+} from "./contextUsage";

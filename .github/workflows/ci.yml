@@ -452,8 +452,7 @@ jobs:
     name: Backend pytest (migrations)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Each test replays the whole graph (~2 min): seven of them ran 11-15 min and
-    # began timing out at 15.
+    # It runs 11-15 min; at 15 a slow box cancels it and the queue ejects the PR.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

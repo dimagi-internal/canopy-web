@@ -245,3 +245,77 @@ def test_a_rider_whose_keystrokes_went_out_is_never_requeued():
     harness.finish_turn(rider, status=Turn.FAILED, result_note="couldn't confirm delivery")
     rider.refresh_from_db()
     assert rider.status == Turn.FAILED
+
+
+# --- what the composer says (the session's turn status) ----------------------
+
+
+def test_the_status_of_a_running_turn_says_a_follow_up_would_ride():
+    """The composer's placeholder reads this: "it reads this mid-turn"."""
+    _user, _ws, _agent, session, runner = _ctx()
+    first = Turn.objects.get(pk=_running(session, runner).pk)
+    status = ts.resolve(first).as_dict()
+    assert status["state"] == ts.WORKING
+    assert status["midturn"] is True and status["midturn_blocked"] is None
+
+
+def test_a_rider_reports_the_same_answer_as_the_turn_it_rides():
+    """Once a rider is the session's latest turn, the status is the rider's —
+    and a second follow-up rides the same running turn."""
+    _user, _ws, _agent, session, runner = _ctx()
+    _running(session, runner)
+    _send(session, "k2", "skip the PR checks")
+    rider = claim.claim_next_turn(runner)
+    assert rider.rides_turn_id is not None
+    assert ts.resolve(rider).midturn is True
+
+
+def test_the_status_says_why_a_follow_up_would_wait():
+    from apps.canopy_sessions.models import RunnerBinding
+
+    # A box that does not deliver mid-turn (the cloud runner).
+    _user, _ws, _agent, session, runner = _ctx(midturn=False)
+    first = Turn.objects.get(pk=_running(session, runner).pk)
+    assert (ts.resolve(first).midturn, ts.resolve(first).midturn_blocked) == (False, "runner")
+
+    # A dialog on the screen: it waits for the answer.
+    Runner.objects.filter(pk=runner.pk).update(capabilities={"sessions": True, "midturn": 1})
+    binding, _ = RunnerBinding.objects.get_or_create(session=session, defaults={"runner": runner})
+    binding.pending_question = {"question": "Proceed?", "options": [{"label": "Yes"}]}
+    binding.save(update_fields=["pending_question"])
+    first = Turn.objects.get(pk=first.pk)
+    assert ts.resolve(first).midturn_blocked == "dialog"
+
+    # A caller's confined turn runs in a session of its own.
+    binding.pending_question = None
+    binding.save(update_fields=["pending_question"])
+    Turn.objects.filter(pk=first.pk).update(capability="ask")
+    assert ts.resolve(Turn.objects.get(pk=first.pk)).midturn_blocked == "confined"
+
+
+def test_a_settled_turn_says_nothing_about_riding():
+    _user, _ws, _agent, session, runner = _ctx()
+    first = _running(session, runner)
+    Turn.objects.filter(pk=first.pk).update(status=Turn.DONE, finished_at=timezone.now())
+    status = ts.resolve(Turn.objects.get(pk=first.pk))
+    assert (status.midturn, status.midturn_blocked) == (False, None)
+
+
+def test_a_claimed_rider_is_listed_as_in_the_turn_not_queued():
+    """The queue row says it went into the agent's current turn rather than
+    "queued", until the transcript row carrying it lands."""
+    from apps.canopy_sessions import send as session_send
+    from apps.canopy_sessions import services as chat
+
+    user, _ws, _agent, session, runner = _ctx()
+    session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata"])
+    _m, first = session_send.send_message(session=session, text="go", user=user, client_id="c1")
+    assert claim.claim_next_turn(runner) == first
+    session_send.send_message(session=session, text="skip the checks", user=user, client_id="c2")
+    states = {q["text"]: q["state"] for q in session_send.queued_messages(session)}
+    assert states["skip the checks"] == "queued"
+    assert claim.claim_next_turn(runner).rides_turn_id == first.pk
+    states = {q["text"]: q["state"] for q in session_send.queued_messages(session)}
+    assert states["skip the checks"] == "midturn"
+    assert states["go"] == "delivering"

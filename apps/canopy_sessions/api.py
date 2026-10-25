@@ -235,6 +235,10 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
         "runner_signed_out": bool(runner and runner.signed_out),
+        # The model its runner's sessions start on (`opus[1m]`), as the box
+        # reports it: how the chat's context meter sizes the window, since the
+        # transcript never records the `[1m]`. "" when unbound or unreported.
+        "runner_model": str((runner.capabilities or {}).get("claude_model") or "") if runner else "",
         "session_key": binding.session_key if binding else "",
         "transferring": staleness.is_transferring(binding),
         # Is this session blocked on a human? A bool on the LIST (the menu

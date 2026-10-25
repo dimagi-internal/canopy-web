@@ -118,6 +118,15 @@ export interface PeerDraft {
   typing?: boolean;
 }
 
+/** How full the context window was for one model call (the transcript's
+ *  `message.usage`: input plus both cache counts), carried on the row the call
+ *  wrote last as `content.usage` (`canopy_transcript.record_window`). */
+export interface ContextUsage {
+  context_tokens: number;
+  /** The model id as the transcript records it (e.g. `claude-opus-5-5`). */
+  model: string;
+}
+
 /** A send that landed on the server but hasn't reached the agent's turn yet
  *  — the server-derived queue, replacing whatever a client used to infer
  *  locally from its own optimistic sends. */
@@ -127,7 +136,10 @@ export interface QueuedMessage {
   author: MessageAuthor | null;
   text: string;
   sent_at: string;
-  state: "queued" | "delivering";
+  /** `queued`: waiting for a runner. `delivering`: a runner took it as the
+   *  next turn. `midturn`: typed into the agent's RUNNING turn, which reads it
+   *  mid-turn (`Turn.rides_turn`). An older server never sends `midturn`. */
+  state: "queued" | "delivering" | "midturn";
 }
 
 export interface Participant {
@@ -263,6 +275,15 @@ export interface TurnStatus {
    *  older server. */
   claimed_at?: string | null;
   last_progress_at?: string | null;
+  /** For `working`: a follow-up sent now is typed INTO the running turn (the
+   *  agent reads it mid-turn) rather than waiting for it to end. Absent on an
+   *  older server. */
+  midturn?: boolean;
+  /** For `working`, when it would not: why — `runner` (the box holding the
+   *  turn does not deliver mid-turn, e.g. a cloud runner), `dialog` (the agent
+   *  is on a question; it waits for the answer) or `confined` (a caller's
+   *  turn runs in a session of its own). A string, for an older client. */
+  midturn_blocked?: string | null;
   /** Nothing more will happen without someone asking for it. */
   settled: boolean;
   /** Nothing is moving and only a person can change that. The one question a
@@ -418,7 +439,11 @@ export type WsEvent =
       event: "chat.stream_complete";
       /** `api_error`: the row is Claude Code's own error notice, not a reply;
        *  `signed_out`: that notice says the box's Claude login is gone. */
-      data: { message_id: string; plaintext: string; api_error?: string; signed_out?: boolean };
+      data: {
+        message_id: string; plaintext: string; api_error?: string; signed_out?: boolean;
+        /** How full the context window was for this model call. */
+        usage?: ContextUsage;
+      };
     }
   | { event: "chat.stream_error"; data: { message_id: string; detail: string } }
   | { event: "chat.stream_cancelled"; data: { message_id: string | null; partial_len: number } }

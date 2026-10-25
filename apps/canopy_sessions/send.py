@@ -427,7 +427,10 @@ def queued_messages(session: Session) -> list[dict]:
             "author": author,
             "text": t.prompt or "",
             "sent_at": t.created_at.isoformat(),
-            "state": "queued" if t.status == Turn.QUEUED else "delivering",
+            # "midturn": claimed to ride the running turn (`Turn.rides_turn`) —
+            # typed into the live session, where the agent reads it mid-turn.
+            "state": ("queued" if t.status == Turn.QUEUED
+                      else "midturn" if t.rides_turn_id else "delivering"),
         })
     return out
 
