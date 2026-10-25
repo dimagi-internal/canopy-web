@@ -276,6 +276,20 @@ export function ChatPanel({
           ),
     [state.messages, waitingClientIds],
   );
+  // The list folds its LAST turn unless that turn is live. A send of yours drawn
+  // in the queue is not in the list, so its last turn is the previous one, and
+  // `liveTurn` (true from the moment you press send) unfolded that turn's whole
+  // work, then folded it back when a runner took the send. The page shrank by
+  // that much at once and could paint blank until scrolled. With your send in
+  // the queue, the previous turn is live only if it is itself still running.
+  const sendInQueue = shownMessages.length !== state.messages.length;
+  const listLiveTurn = sendInQueue
+    ? state.activity === "working" ||
+      state.activity === "blocked" ||
+      Boolean(status?.menu_pending) ||
+      (status?.state === "queued_behind" && status.behind !== "agent") ||
+      state.messages.some((m) => m.role !== "user" && (m.status === "streaming" || m.status === "pending"))
+    : liveTurn;
 
   // Every other send of yours already renders in the transcript (as a
   // "pending" user row keyed by client_id) the instant you press send, so a
@@ -423,7 +437,7 @@ export function ChatPanel({
             pendingStartedAt={pendingWorking ? status?.claimed_at ?? null : null}
             onStopTurn={canStop ? stopTurn : undefined}
             stopping={state.stopState === "requested"}
-            liveTurn={liveTurn}
+            liveTurn={listLiveTurn}
             currentUserId={currentUserId}
             currentContactId={currentContactId}
             cancellable={cancellable}
