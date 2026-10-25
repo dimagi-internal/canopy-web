@@ -50,8 +50,8 @@ vi.mock('@/api/workspaces', () => ({
 
 vi.mock('@/api/people', () => ({
   listWorkspaceAddresses: vi.fn(() => Promise.resolve([])),
-  addPersonAddress: vi.fn(),
-  removePersonAddress: vi.fn(),
+  addMyAddress: vi.fn(),
+  removeMyAddress: vi.fn(),
 }))
 
 let mockRole: string | undefined = 'owner'

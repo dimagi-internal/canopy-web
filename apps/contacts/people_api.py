@@ -180,9 +180,7 @@ def _me_payload(person: Person) -> dict:
         for a in PersonAccess.objects.filter(person=person)
         .select_related("reader_agent", "reader_user").order_by("-created_at", "-pk")[:ME_ACCESSES]
     ]
-    addresses = [people.address_dict(a) for a in
-                 PersonAddress.objects.filter(person=person).select_related("added_by")
-                 .order_by("workspace_id", "kind", "label", "pk")]
+    addresses = [people.address_dict(a) for a in people.addresses_of(person)]
     return {**_ref(person), **_memory(person), "facts": facts, "addresses": addresses,
             "accesses": accesses}
 
@@ -212,6 +210,33 @@ def _the_person_themself(request: HttpRequest) -> Person:
     if person is None:
         raise _not_found()
     return person
+
+
+@router.post("/me/addresses/", response={201: PersonAddressOut},
+             summary="Add a way to reach you")
+@gate("self", kind="person-data")  # only the person: never an agent's login, a caller token or a system account
+def add_my_address(request: HttpRequest, payload: PersonAddressIn):
+    """Add a labelled email or phone of yours (`kind` email | phone, `label`
+    such as work or personal). Everyone who shares a workspace with you, and
+    its agents, can read it. The same kind and value again relabels it."""
+    person = _the_person_themself(request)
+    try:
+        row = people.add_address(person=person, kind=payload.kind, label=payload.label,
+                                 value=payload.value)
+    except people.AddressError as exc:
+        raise _bad(str(exc)) from None
+    return 201, people.address_dict(row)
+
+
+@router.delete("/me/addresses/{address_id}/", response={204: None},
+               summary="Remove a way to reach you")
+@gate("self", kind="person-data")  # only the person; someone else's row is 404
+def remove_my_address(request: HttpRequest, address_id: int):
+    person = _the_person_themself(request)
+    deleted, _ = PersonAddress.objects.filter(pk=address_id, person=person).delete()
+    if not deleted:
+        raise _not_found("Address not found")
+    return 204, None
 
 
 @router.put("/me/agent-memory/", response=AgentMemoryOut,
@@ -373,20 +398,19 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
 
 
 @router.get("/addresses/", response=WorkspaceAddressesOut,
-            summary="Every member's other addresses in one workspace")
+            summary="Every member's other addresses, as one workspace sees them")
 @gate("member")  # every human member of `?workspace=`; each person whose addresses are returned gets a logged read
 def list_workspace_addresses(request: HttpRequest, workspace: str | None = None) -> dict:
     """Every person in `?workspace=` (its human members, not agents or system
-    accounts) with the labelled emails and phones it holds for them, and
-    whether the caller may change each. What the members page shows. Members
-    of that workspace only."""
+    accounts) with their labelled emails and phones, and `may_edit` — true
+    only on your own row: a person changes their own contact details, at
+    `POST /api/people/me/addresses/`. Members of that workspace only."""
     ws = _workspace(request, workspace)
     reader_agent = people.agent_of_login(request.user)
     users = [m.user for m in wsvc.effective_memberships(ws) if people.is_human_account(m.user)]
     persons = {u.pk: contact_services.person_for(user=u) for u in users}
     held: dict[int, list] = {}
-    for row in (PersonAddress.objects.filter(workspace=ws, person__in=[p for p in persons.values() if p])
-                .select_related("added_by")):
+    for row in PersonAddress.objects.filter(person__in=[p for p in persons.values() if p]):
         held.setdefault(row.person_id, []).append(row)
     out = []
     for u in sorted(users, key=lambda u: u.email.lower()):
@@ -399,7 +423,7 @@ def list_workspace_addresses(request: HttpRequest, workspace: str | None = None)
                               reader_user=request.user, reader_agent=reader_agent)
         out.append({"person_id": person.pk, "user_id": u.pk, "email": u.email,
                     "display_name": people.display_name(person),
-                    "may_edit": people.may_edit_addresses(request.user, person, ws.pk),
+                    "may_edit": people.may_edit_addresses(request.user, person),
                     "addresses": [people.address_dict(a) for a in rows]})
     return {"workspace": ws.pk, "people": out}
 
@@ -465,56 +489,19 @@ def list_person_projects(request: HttpRequest, person_id: int, workspace: str | 
 
 
 @router.get("/{person_id}/addresses/", response=PersonAddressesOut,
-            summary="Every other way one workspace holds to reach a person")
+            summary="Every other way to reach a person")
 @gate("member")  # same gate as get_person (known_in), agents included; read logged
 def list_person_addresses(request: HttpRequest, person_id: int, workspace: str | None = None) -> dict:
-    """The labelled emails and phones `?workspace=` holds for this person
-    (work, personal …), beyond the address that identifies them. Members of
-    that workspace, an agent's login included — these are declared by the
-    person or an admin, not learned — and the read is logged where the person
-    can see it."""
+    """The person's labelled emails and phones (work, personal …), beyond
+    the address that identifies them. Anyone who shares `?workspace=` with
+    them, an agent's login included — the person declared these, an agent did
+    not learn them — and the read is logged where the person can see it."""
     ws = _workspace(request, workspace)
     person = _person_in(person_id, ws)
     people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
                       reader_user=request.user, reader_agent=people.agent_of_login(request.user))
-    rows = people.addresses_in(person, ws.pk).select_related("added_by")
     return {"person": person.pk, "workspace": ws.pk,
-            "addresses": [people.address_dict(a) for a in rows]}
-
-
-@router.post("/{person_id}/addresses/", response={201: PersonAddressOut},
-             summary="Add a way to reach a person")
-@gate("self", "members.manage", kind="person-data")  # the person themself or a workspace admin; never an agent's login
-def add_person_address(request: HttpRequest, person_id: int, payload: PersonAddressIn):
-    """Add a labelled email or phone (`kind` email | phone, `label` such as
-    work or personal) that `workspace` holds for this person. The person
-    themself or an admin of that workspace; anyone else, an agent's login
-    included, is 403. The same kind and value again relabels it."""
-    ws = _workspace(request, payload.workspace)
-    person = _person_in(person_id, ws)
-    if not people.may_edit_addresses(request.user, person, ws.pk):
-        raise ProblemError(403, "Only the person or a workspace admin adds their addresses",
-                           type_=TYPE_FORBIDDEN)
-    try:
-        row = people.add_address(person=person, workspace=ws, kind=payload.kind,
-                                 label=payload.label, value=payload.value, by=request.user)
-    except people.AddressError as exc:
-        raise _bad(str(exc)) from None
-    return 201, people.address_dict(row)
-
-
-@router.delete("/{person_id}/addresses/{address_id}/", response={204: None},
-               summary="Remove a way to reach a person")
-@gate("self", "members.manage", kind="person-data")  # the person themself or an admin of the row's workspace
-def remove_person_address(request: HttpRequest, person_id: int, address_id: int):
-    """The person themself or an admin of the workspace that holds it;
-    anyone else: 404."""
-    row = (PersonAddress.objects.select_related("person")
-           .filter(pk=address_id, person_id=person_id).first())
-    if row is None or not people.may_edit_addresses(request.user, row.person, row.workspace_id):
-        raise _not_found("Address not found")
-    row.delete()
-    return 204, None
+            "addresses": [people.address_dict(a) for a in people.addresses_of(person)]}
 
 
 @router.post("/{person_id}/facts/", response={201: PersonFactCreatedOut},

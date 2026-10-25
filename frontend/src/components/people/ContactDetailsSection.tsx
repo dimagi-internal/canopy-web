@@ -1,24 +1,101 @@
 import { useEffect, useState, type FormEvent, type JSX } from 'react'
+import { Link } from 'react-router-dom'
 import { Button, Input } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
 import {
-  addPersonAddress,
+  addMyAddress,
   listWorkspaceAddresses,
-  removePersonAddress,
+  removeMyAddress,
   type AddressKind,
   type MemberAddresses,
+  type PersonAddress,
 } from '@/api/people'
 
-// More ways to reach each member (apps/contacts/models.py `PersonAddress`): a
+// More ways to reach a person (apps/contacts/models.py `PersonAddress`): a
 // labelled email or phone beside the login that identifies them — Gina's work
-// email, say — which this workspace's agents read when they act (invite her
-// work address to the family calendar). The person or a workspace admin adds
-// them; an agent never does.
+// email, say — which agents read when they act (invite her work address to the
+// family calendar). They belong to the person's ACCOUNT, not a workspace, and
+// only the person changes them: here on their own card, or in account settings.
 
 function errorText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback
 }
 
+/** One person's addresses; a Remove on each when they are yours. */
+export function AddressList({
+  addresses,
+  who,
+  onRemove,
+}: {
+  addresses: PersonAddress[]
+  who: string
+  onRemove?: (id: number) => void
+}): JSX.Element {
+  if (addresses.length === 0) return <p className="mt-2 text-[12px] text-muted-foreground">No other addresses.</p>
+  return (
+    <ul className="mt-2 flex list-none flex-col gap-1 p-0">
+      {addresses.map((a) => (
+        <li key={a.id} className="flex items-center gap-2 text-[12px]">
+          <span className="w-20 shrink-0 capitalize text-muted-foreground">{a.label}</span>
+          <code className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5 text-foreground">{a.value}</code>
+          <span className="text-muted-foreground">{a.kind}</span>
+          {onRemove && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              aria-label={`Remove ${a.label} ${a.kind} for ${who}`}
+              onClick={() => onRemove(a.id)}
+            >
+              Remove
+            </Button>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Your own addresses, editable: the list, Remove, and the add form. Used on
+ *  your card on a members page and in account settings. */
+export function MyAddressesEditor({
+  addresses,
+  who,
+  onChange,
+}: {
+  addresses: PersonAddress[]
+  who: string
+  onChange: (next: PersonAddress[]) => void
+}): JSX.Element {
+  const [error, setError] = useState<string | null>(null)
+
+  async function remove(id: number) {
+    setError(null)
+    try {
+      await removeMyAddress(id)
+      onChange(addresses.filter((a) => a.id !== id))
+    } catch (e) {
+      setError(errorText(e, 'Failed to remove that address'))
+    }
+  }
+
+  return (
+    <>
+      {error && <div className="mt-2 text-[12px] text-destructive">{error}</div>}
+      <AddressList addresses={addresses} who={who} onRemove={(id) => void remove(id)} />
+      <AddAddressForm
+        who={who}
+        onAdd={async (kind, label, value) => {
+          const row = await addMyAddress({ kind, label, value })
+          onChange([...addresses.filter((a) => a.id !== row.id), row])
+        }}
+      />
+    </>
+  )
+}
+
+/** Settings → Members: every member's contact details; you edit only your own. */
 export function ContactDetailsSection({ slug }: { slug: string }): JSX.Element {
   const [people, setPeople] = useState<MemberAddresses[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,27 +118,18 @@ export function ContactDetailsSection({ slug }: { slug: string }): JSX.Element {
     }
   }, [slug])
 
-  function replace(next: MemberAddresses) {
-    setPeople((prev) => (prev ?? []).map((p) => (p.person_id === next.person_id ? next : p)))
-  }
-
-  async function remove(p: MemberAddresses, addressId: number) {
-    setError(null)
-    try {
-      await removePersonAddress(p.person_id, addressId)
-      replace({ ...p, addresses: p.addresses.filter((a) => a.id !== addressId) })
-    } catch (e) {
-      setError(errorText(e, 'Failed to remove that address'))
-    }
+  function replace(personId: number, addresses: PersonAddress[]) {
+    setPeople((prev) => (prev ?? []).map((p) => (p.person_id === personId ? { ...p, addresses } : p)))
   }
 
   return (
     <div className="mb-8" data-testid="contact-details">
       <WorkbenchSubHeader title="Contact details" count={people?.length} />
       <p className="mb-3 text-[12px] text-muted-foreground">
-        Other ways to reach each person: a work email, a phone. This workspace’s agents use them when they act
-        (inviting someone’s work address to a calendar event). Each person, or an admin, adds their own. Agents
-        only read them, and every read shows on the person’s own page.
+        Other ways to reach each person, such as a work email or a phone. Agents use them when they act, for example to
+        invite someone’s work address to a calendar event. Each person keeps their own: add yours on your card here or
+        in <Link to="/settings" className="text-primary underline-offset-2 hover:underline">your account settings</Link>.
+        They follow you into every workspace you’re in.
       </p>
       {error && <div className="mb-3 text-sm text-destructive">{error}</div>}
       {people === null ? (
@@ -75,40 +143,12 @@ export function ContactDetailsSection({ slug }: { slug: string }): JSX.Element {
                 {p.display_name && p.display_name !== p.email && (
                   <span className="text-[12px] text-muted-foreground">{p.email}</span>
                 )}
+                {p.may_edit && <span className="text-[11px] text-muted-foreground">(you)</span>}
               </div>
-              {p.addresses.length === 0 ? (
-                <p className="mt-2 text-[12px] text-muted-foreground">No other addresses.</p>
+              {p.may_edit ? (
+                <MyAddressesEditor addresses={p.addresses} who={p.email} onChange={(next) => replace(p.person_id, next)} />
               ) : (
-                <ul className="mt-2 flex list-none flex-col gap-1 p-0">
-                  {p.addresses.map((a) => (
-                    <li key={a.id} className="flex items-center gap-2 text-[12px]">
-                      <span className="w-20 shrink-0 capitalize text-muted-foreground">{a.label}</span>
-                      <code className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5 text-foreground">{a.value}</code>
-                      <span className="text-muted-foreground">{a.kind}</span>
-                      {p.may_edit && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="ml-auto"
-                          aria-label={`Remove ${a.label} ${a.kind} for ${p.email}`}
-                          onClick={() => void remove(p, a.id)}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {p.may_edit && (
-                <AddAddressForm
-                  who={p.email}
-                  onAdd={async (kind, label, value) => {
-                    const row = await addPersonAddress(p.person_id, { workspace: slug, kind, label, value })
-                    replace({ ...p, addresses: [...p.addresses.filter((a) => a.id !== row.id), row] })
-                  }}
-                />
+                <AddressList addresses={p.addresses} who={p.email} />
               )}
             </li>
           ))}

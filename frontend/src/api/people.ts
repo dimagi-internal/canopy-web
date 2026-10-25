@@ -88,8 +88,8 @@ export type MemberAddresses = Omit<components['schemas']['MemberAddressesOut'], 
 }
 export type AddressKind = 'email' | 'phone'
 
-/** Every human member of a workspace with the labelled emails and phones it
- *  holds for them (work, personal …), and whether you may change each. */
+/** Every human member of a workspace with their labelled emails and phones
+ *  (work, personal …); `may_edit` is true only on your own. */
 export async function listWorkspaceAddresses(workspace: string): Promise<MemberAddresses[]> {
   const res = await apiV2.GET('/api/people/addresses/', { params: { query: { workspace } } })
   const data = unwrap(res, 'Failed to load contact details')
@@ -99,23 +99,22 @@ export async function listWorkspaceAddresses(workspace: string): Promise<MemberA
   }))
 }
 
-/** Add one — the person themself or a workspace admin. The same kind and value
- *  again relabels it. Rejects with the server's reason (bad address, not allowed). */
-export async function addPersonAddress(
-  personId: number,
-  body: { workspace: string; kind: AddressKind; label: string; value: string },
-): Promise<PersonAddress> {
-  const res = await apiV2.POST('/api/people/{person_id}/addresses/', {
-    params: { path: { person_id: personId } },
-    body,
-  })
+/** Your own contact details — yours across every workspace. */
+export async function listMyAddresses(): Promise<PersonAddress[]> {
+  return [...((await getMyPerson()).addresses ?? [])]
+}
+
+/** Add one of yours; only you change your own. The same kind and value again
+ *  relabels it. Rejects with the server's reason (not an email, …). */
+export async function addMyAddress(body: { kind: AddressKind; label: string; value: string }): Promise<PersonAddress> {
+  const res = await apiV2.POST('/api/people/me/addresses/', { body })
   const data = unwrap(res, 'Failed to add that address')
   return data as PersonAddress
 }
 
-export async function removePersonAddress(personId: number, addressId: number): Promise<void> {
-  const res = await apiV2.DELETE('/api/people/{person_id}/addresses/{address_id}/', {
-    params: { path: { person_id: personId, address_id: addressId } },
+export async function removeMyAddress(addressId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/people/me/addresses/{address_id}/', {
+    params: { path: { address_id: addressId } },
   })
   ensureOk(res, 'Failed to remove that address')
 }
