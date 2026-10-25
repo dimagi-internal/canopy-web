@@ -93,6 +93,22 @@ class PersonAddressesOut(StrictModel):
     addresses: list[PersonAddressOut] = Field(default_factory=list)
 
 
+class MemberAddressesOut(StrictModel):
+    """One person in the workspace, and every other way it holds to reach them."""
+
+    person_id: int
+    user_id: int
+    email: str = Field(description="The address that identifies them (their login).")
+    display_name: str = ""
+    may_edit: bool = Field(description="May the caller add or remove this person's addresses?")
+    addresses: list[PersonAddressOut] = Field(default_factory=list)
+
+
+class WorkspaceAddressesOut(StrictModel):
+    workspace: str
+    people: list[MemberAddressesOut] = Field(default_factory=list)
+
+
 class PersonAddressIn(StrictModel):
     workspace: str | None = Field(
         default=None, description="The workspace slug it is known in (default: the /api/w/{ws}/ one).")

@@ -114,3 +114,21 @@ def test_the_person_sees_every_row_in_their_own_read(home):
 def test_an_address_is_never_an_identity(home):
     _add(_client(home["owner"]), home["person"])
     assert people.by_email("gina@employer.org") is None
+
+
+def test_the_members_page_read_lists_each_person_and_who_may_edit(home):
+    _add(_client(home["owner"]), home["person"])
+    r = _client(home["kid"]).get("/api/people/addresses/?workspace=family")
+    assert r.status_code == 200, r.content
+    rows = {p["email"]: p for p in r.json()["people"]}
+    # Humans only: the agent's login is not a person on this page.
+    assert set(rows) == {"jj@dimagi.com", "gina@dimagi.com", "kid@dimagi.com"}
+    assert [a["value"] for a in rows["gina@dimagi.com"]["addresses"]] == ["gina@employer.org"]
+    # A plain member edits only their own; the owner edits everyone.
+    assert {e for e, p in rows.items() if p["may_edit"]} == {"kid@dimagi.com"}
+    r = _client(home["owner"]).get("/api/people/addresses/?workspace=family")
+    assert all(p["may_edit"] for p in r.json()["people"])
+    assert PersonAccess.objects.filter(person=home["person"], reader_user=home["kid"]).exists()
+    # Someone outside the workspace learns nothing.
+    stranger = User.objects.create_user("x", "x@else.org", "pw")
+    assert _client(stranger).get("/api/people/addresses/?workspace=family").status_code == 404

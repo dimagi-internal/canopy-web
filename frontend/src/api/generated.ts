@@ -14069,6 +14069,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/addresses/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Every member's other addresses in one workspace
+         * @description Every person in `?workspace=` (its human members, not agents or system
+         *     accounts) with the labelled emails and phones it holds for them, and
+         *     whether the caller may change each. What the members page shows. Members
+         *     of that workspace only.
+         */
+        readonly get: operations["list_workspace_addresses"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/lookup/": {
         readonly parameters: {
             readonly query?: never;
@@ -37314,6 +37337,40 @@ export interface components {
             /** Agents */
             readonly agents: readonly components["schemas"]["AgentCoverageOut"][];
         };
+        /**
+         * MemberAddressesOut
+         * @description One person in the workspace, and every other way it holds to reach them.
+         */
+        readonly MemberAddressesOut: {
+            /** Person Id */
+            readonly person_id: number;
+            /** User Id */
+            readonly user_id: number;
+            /**
+             * Email
+             * @description The address that identifies them (their login).
+             */
+            readonly email: string;
+            /**
+             * Display Name
+             * @default
+             */
+            readonly display_name: string;
+            /**
+             * May Edit
+             * @description May the caller add or remove this person's addresses?
+             */
+            readonly may_edit: boolean;
+            /** Addresses */
+            readonly addresses?: readonly components["schemas"]["PersonAddressOut"][];
+        };
+        /** WorkspaceAddressesOut */
+        readonly WorkspaceAddressesOut: {
+            /** Workspace */
+            readonly workspace: string;
+            /** People */
+            readonly people?: readonly components["schemas"]["MemberAddressesOut"][];
+        };
         /** PersonRefOut */
         readonly PersonRefOut: {
             /** Id */
@@ -56461,6 +56518,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PeopleCoverageOut"];
+                };
+            };
+        };
+    };
+    readonly list_workspace_addresses: {
+        readonly parameters: {
+            readonly query?: {
+                readonly workspace?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["WorkspaceAddressesOut"];
                 };
             };
         };

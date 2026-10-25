@@ -48,6 +48,12 @@ vi.mock('@/api/workspaces', () => ({
   WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
+vi.mock('@/api/people', () => ({
+  listWorkspaceAddresses: vi.fn(() => Promise.resolve([])),
+  addPersonAddress: vi.fn(),
+  removePersonAddress: vi.fn(),
+}))
+
 let mockRole: string | undefined = 'owner'
 const mockRefresh = vi.fn<() => Promise<void>>()
 vi.mock('@/workspace/WorkspaceProvider', () => ({

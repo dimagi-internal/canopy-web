@@ -79,6 +79,47 @@ export async function retractFact(personId: number, factId: number): Promise<voi
   ensureOk(res, 'Failed to retract that fact')
 }
 
+// --- More ways to reach a person (PersonAddress) ------------------------------
+
+export type PersonAddress = components['schemas']['PersonAddressOut']
+/** A member with their addresses, always a list (the schema's default). */
+export type MemberAddresses = Omit<components['schemas']['MemberAddressesOut'], 'addresses'> & {
+  addresses: PersonAddress[]
+}
+export type AddressKind = 'email' | 'phone'
+
+/** Every human member of a workspace with the labelled emails and phones it
+ *  holds for them (work, personal …), and whether you may change each. */
+export async function listWorkspaceAddresses(workspace: string): Promise<MemberAddresses[]> {
+  const res = await apiV2.GET('/api/people/addresses/', { params: { query: { workspace } } })
+  const data = unwrap(res, 'Failed to load contact details')
+  return ((data as components['schemas']['WorkspaceAddressesOut']).people ?? []).map((p) => ({
+    ...p,
+    addresses: [...(p.addresses ?? [])],
+  }))
+}
+
+/** Add one — the person themself or a workspace admin. The same kind and value
+ *  again relabels it. Rejects with the server's reason (bad address, not allowed). */
+export async function addPersonAddress(
+  personId: number,
+  body: { workspace: string; kind: AddressKind; label: string; value: string },
+): Promise<PersonAddress> {
+  const res = await apiV2.POST('/api/people/{person_id}/addresses/', {
+    params: { path: { person_id: personId } },
+    body,
+  })
+  const data = unwrap(res, 'Failed to add that address')
+  return data as PersonAddress
+}
+
+export async function removePersonAddress(personId: number, addressId: number): Promise<void> {
+  const res = await apiV2.DELETE('/api/people/{person_id}/addresses/{address_id}/', {
+    params: { path: { person_id: personId, address_id: addressId } },
+  })
+  ensureOk(res, 'Failed to remove that address')
+}
+
 // --- HCP v1 (apps/contacts/hcp_api.py): the person's grants and audit log ------
 
 /** One client's access to what canopy knows about you (HCP 4.1.5). */

@@ -62,6 +62,7 @@ from .people_schemas import (
     SessionMemoryIn,
     SessionMemoryOut,
     SharedPagesOut,
+    WorkspaceAddressesOut,
 )
 
 router = Router(auth=session_auth, tags=["people"])
@@ -369,6 +370,38 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
     if not (coverage.MIN_DAYS <= days <= coverage.MAX_DAYS):
         raise _bad(f"days is {coverage.MIN_DAYS}–{coverage.MAX_DAYS}")
     return coverage.workspace_coverage(ws.pk, days=days, agents=agents)
+
+
+@router.get("/addresses/", response=WorkspaceAddressesOut,
+            summary="Every member's other addresses in one workspace")
+@gate("member")  # every human member of `?workspace=`; each person whose addresses are returned gets a logged read
+def list_workspace_addresses(request: HttpRequest, workspace: str | None = None) -> dict:
+    """Every person in `?workspace=` (its human members, not agents or system
+    accounts) with the labelled emails and phones it holds for them, and
+    whether the caller may change each. What the members page shows. Members
+    of that workspace only."""
+    ws = _workspace(request, workspace)
+    reader_agent = people.agent_of_login(request.user)
+    users = [m.user for m in wsvc.effective_memberships(ws) if people.is_human_account(m.user)]
+    persons = {u.pk: contact_services.person_for(user=u) for u in users}
+    held: dict[int, list] = {}
+    for row in (PersonAddress.objects.filter(workspace=ws, person__in=[p for p in persons.values() if p])
+                .select_related("added_by")):
+        held.setdefault(row.person_id, []).append(row)
+    out = []
+    for u in sorted(users, key=lambda u: u.email.lower()):
+        person = persons.get(u.pk)
+        if person is None:
+            continue
+        rows = held.get(person.pk, [])
+        if rows:
+            people.log_access(person, via=PersonAccess.VIA_API, workspace_slug=ws.pk,
+                              reader_user=request.user, reader_agent=reader_agent)
+        out.append({"person_id": person.pk, "user_id": u.pk, "email": u.email,
+                    "display_name": people.display_name(person),
+                    "may_edit": people.may_edit_addresses(request.user, person, ws.pk),
+                    "addresses": [people.address_dict(a) for a in rows]})
+    return {"workspace": ws.pk, "people": out}
 
 
 @router.get("/lookup/", response=PersonRefOut, summary="Find a person by email")
