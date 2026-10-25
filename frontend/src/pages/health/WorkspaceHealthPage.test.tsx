@@ -170,8 +170,8 @@ describe('every figure opens its source', () => {
   })
 
   it('links a row’s settings, turns and workspace to where each is set', async () => {
-    renderPage()
-    await screen.findByText('HAL')
+    // The Setup and Vault cells hold links too, and fill after the table.
+    await renderLoaded()
     const row = screen.getByText('HAL').closest('tr')!
     const hrefs = [...row.querySelectorAll('a')].map((a) => a.getAttribute('href'))
     expect(hrefs).toEqual(expect.arrayContaining([
