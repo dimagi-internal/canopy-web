@@ -270,6 +270,7 @@ from apps.harness.api_project_opt_in import router as project_opt_in_router  # n
 from apps.harness.api_runner_invitations import pair_router as runner_pair_by_role_router  # noqa: E402
 from apps.harness.api_box_egress import box_egress_router  # noqa: E402
 from apps.harness.api_runner_invitations import router as runner_invitations_router  # noqa: E402
+from apps.harness.api_runner_fleets import router as runner_fleets_router  # noqa: E402
 from apps.harness.api_runner_pairings import router as runner_pairings_router  # noqa: E402
 from apps.harness.api_runner_releases import router as runner_releases_router  # noqa: E402
 from apps.harness.api_runner_sessions import router as runner_sessions_router  # noqa: E402
@@ -384,6 +385,7 @@ api.add_router("/share", session_share_router)
 # Before the harness router: its `/runners/{runner_id}` would shadow
 # `/runners/pair-by-role`.
 api.add_router("/harness/runner-invitations", runner_invitations_router)
+api.add_router("/harness/runner-fleets", runner_fleets_router)
 api.add_router("/harness/runners/pair-by-role", runner_pair_by_role_router)
 api.add_router("/harness/runners/box-egress", box_egress_router)
 # A laptop box pairs by browser, and its installers and updates (spec

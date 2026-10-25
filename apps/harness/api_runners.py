@@ -246,7 +246,10 @@ def add_runner_login(request: HttpRequest, runner_id: uuid.UUID):
     the sign-in on its next poll (see `get_runner_mint`); the login reads
     "not signed in" until it finishes."""
     runner = runner_admin_or_404(request, runner_id)
-    harness_runners.add_runner_login(runner, by=request.user)
+    try:
+        harness_runners.add_runner_login(runner, by=request.user)
+    except harness_runners.CredentialRefused as exc:
+        raise HttpError(409, str(exc)) from exc
     return harness_runners.runner_credential_status(runner)
 
 
@@ -584,7 +587,9 @@ def start_runner_mint(request: HttpRequest, runner_id: uuid.UUID,
     slot = payload.slot if payload else "box"
     login_key = (payload.login_key if payload else "") if slot in ("box", "token") else ""
     kind = "login" if slot == "box" else "token"
-    if login_key and not runner.logins.filter(key=login_key, kind=kind).exists():
+    if slot == "box" and runner.credential_set_id:
+        raise HttpError(409, harness_runners.SET_LOGIN_REFUSAL)
+    if login_key and not harness_runners._entries(runner).filter(key=login_key, kind=kind).exists():
         raise HttpError(404, f"no such {kind} on this runner")
     return harness_runners.start_runner_mint(runner, requested_by=request.user, slot=slot,
                                       login_key=login_key)

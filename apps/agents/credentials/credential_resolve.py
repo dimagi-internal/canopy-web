@@ -180,7 +180,7 @@ def device_key_from_proof(request: HttpRequest, agent):
     aws = request.META.get(aws_iam_proof.PROOF_HEADER, "")
     if aws:
         try:
-            role = aws_iam_proof.verify(aws, request)
+            role = aws_iam_proof.verify_caller(aws, request)
         except aws_iam_proof.AwsProofError as exc:
             logger.info("aws iam proof refused for %s: %s", agent.slug, exc)
             return None, f"AWS IAM proof refused: {exc}", None
@@ -190,7 +190,7 @@ def device_key_from_proof(request: HttpRequest, agent):
         known = aws_iam_proof.known_key(role)
         if known is not None:
             return None, f"{known.runner.name} does not run {agent.slug}", known.runner
-        return None, f"no approved device key for {role}", None
+        return None, f"no approved device key for {aws_iam_proof.canonical_role_arn(role)}", None
     if not request.META.get("HTTP_DPOP"):
         return None, "no device proof", None
     try:

@@ -41,6 +41,7 @@ from .models import Runner, RunnerLogin
 from .routing import agents_routed_to
 from .runners import (
     CredentialRefused,
+    _entries,
     _first_values,
     _would_leave_no_fallback,
     can_administer_runner,
@@ -123,7 +124,7 @@ def entry_for(runner, slot: str):
         return _first_values(runner)["claude_api_key"]
     for prefix, kind in (("token:", RunnerLogin.TOKEN), ("api-key:", RunnerLogin.API_KEY)):
         if slot.startswith(prefix):
-            return RunnerLogin.objects.filter(runner=runner, kind=kind, key=slot[len(prefix):]).first()
+            return _entries(runner).filter(kind=kind, key=slot[len(prefix):]).first()
     return None
 
 

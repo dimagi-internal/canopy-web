@@ -78,6 +78,9 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
   }
   if (!inv) return <div className="h-32 max-w-2xl animate-pulse rounded-lg bg-muted" />
   const units = inv.units ?? []
+  // A FLEET's invitation (`apps/harness/fleets.py`): approving it lets every
+  // instance of one Auto Scaling group join, and is used up by the approval.
+  const fleet = inv.fleet ?? null
   const pairedRunnerId = inv.runner_id ?? units.find((u) => u.runner_id)?.runner_id ?? null
 
   async function approve() {
@@ -96,10 +99,24 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
   return (
     <div className="max-w-2xl space-y-4">
       <section className="rounded-lg border border-border bg-card p-5" aria-label="The invitation">
-        <h1 className="text-sm font-semibold text-foreground">Approve a new cloud runner</h1>
+        <h1 className="text-sm font-semibold text-foreground">
+          {fleet ? 'Approve a runner fleet' : 'Approve a new cloud runner'}
+        </h1>
         <dl className="mt-3 grid gap-1 text-[13px] text-foreground-secondary sm:grid-cols-[8rem_1fr]">
-          <dt className="font-medium text-foreground">Runner</dt>
+          <dt className="font-medium text-foreground">{fleet ? 'Fleet' : 'Runner'}</dt>
           <dd className="m-0 font-mono">{inv.name}</dd>
+          {fleet && (
+            <>
+              <dt className="font-medium text-foreground">Group</dt>
+              <dd className="m-0 break-all font-mono">
+                {fleet.group_name} ({fleet.region})
+              </dd>
+              <dt className="font-medium text-foreground">Members</dt>
+              <dd className="m-0" data-testid="invitation-fleet-size">
+                {fleet.min_members}–{fleet.max_members}, {fleet.member_turns} turns each
+              </dd>
+            </>
+          )}
           <dt className="font-medium text-foreground">Workspace</dt>
           <dd className="m-0">{inv.workspace}</dd>
           <dt className="font-medium text-foreground">Instance role</dt>
@@ -112,7 +129,7 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
           <dd className="m-0">{new Date(inv.expires_at).toLocaleString()}</dd>
           <dt className="font-medium text-foreground">Status</dt>
           <dd className="m-0" data-testid="invitation-status">
-            {inv.status}: {STATUS_TEXT[inv.status]}
+            {inv.status}: {fleet && inv.status === 'consumed' ? 'Approved: the fleet is active.' : STATUS_TEXT[inv.status]}
           </dd>
         </dl>
         {inv.directed && (
@@ -121,7 +138,14 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
             work. Its runner page can turn that off.
           </p>
         )}
-        {units.length > 0 ? (
+        {fleet ? (
+          <p className="mt-3 text-[12px] text-muted-foreground" data-testid="invitation-fleet">
+            Approving is the only approval this fleet ever needs: from then on every instance AWS says belongs to its
+            group joins as your runner in {inv.workspace}, signing in as that instance, and canopy-web keeps between{' '}
+            {fleet.min_members} and {fleet.max_members} of them running by the work waiting. They share one credential
+            set and one key for reading zero-knowledge secrets.
+          </p>
+        ) : units.length > 0 ? (
           <>
             <table className="mt-4 w-full text-left text-[13px]" aria-label="Units">
               <thead className="text-[12px] text-muted-foreground">
@@ -163,7 +187,13 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
           Approved. Waiting for the box to pair; this page updates when it does.
         </p>
       )}
-      {inv.status === 'consumed' && (
+      {inv.status === 'consumed' && fleet && (
+        <p role="status" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground">
+          Fleet {inv.name} is active. Once its first member has joined, open that member&apos;s page and give the fleet
+          its Claude credentials: every member reads them.
+        </p>
+      )}
+      {inv.status === 'consumed' && !fleet && (
         <p role="status" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-foreground">
           Paired: {inv.name} is your runner now.
           {pairedRunnerId && (

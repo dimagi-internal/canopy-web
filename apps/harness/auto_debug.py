@@ -90,6 +90,7 @@ from apps.agents.models import Agent
 from apps.attention import alerts
 from apps.attention.models import Alert
 
+from . import runners as harness_runners
 from .models import FailureInvestigation, Runner, RunnerDrill, Turn
 
 logger = logging.getLogger(__name__)
@@ -566,7 +567,7 @@ def runner_snapshot(runner, now=None) -> dict:
     logins = [
         {"key": lg.key, "kind": lg.kind, "signed_in": lg.signed_in,
          "reported_at": _iso(lg.reported_at)}
-        for lg in runner.logins.all()
+        for lg in harness_runners._entries(runner)
     ]
     checks = [
         f"{c.get('name')}={c.get('status')}"

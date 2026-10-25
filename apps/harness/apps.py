@@ -17,7 +17,8 @@ class HarnessConfig(AppConfig):
         # the queue sweeps and scheduled unpauses (sweeps.py), and the schedule clock.
         from apps.common import ticks
 
-        from . import schedule_clock, sweeps
+        from . import fleets, schedule_clock, sweeps
 
         sweeps.register()
+        fleets.register()
         ticks.register("harness.schedule_clock", schedule_clock.run, schedule_clock.interval_s, dedupe=False)

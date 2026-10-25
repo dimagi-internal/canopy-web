@@ -140,6 +140,28 @@ class Runner(models.Model):
     # /unpause and /pause-without-`until` both cancel it.
     unpause_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    # A FLEET member (`apps/harness/fleets.py`): one instance of an EC2 Auto Scaling
+    # group a person approved once, joined on AWS's word that the instance is the
+    # group's, never by a passkey per box. Interchangeable: canopy-web grows and
+    # shrinks the group, and a member's chats move to another member when it goes.
+    # NULL for every other runner.
+    fleet = models.ForeignKey("RunnerFleet", on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name="members")
+    #: A member's EC2 instance id (`i-…`): its identity, with the fleet's role.
+    instance_id = models.CharField(max_length=32, blank=True, default="")
+    #: The one credential list this runner reads instead of its own
+    #: (`RunnerCredentialSet`): every member of a fleet reads its fleet's.
+    credential_set = models.ForeignKey("RunnerCredentialSet", on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name="runners")
+    # Where the fleet scaler has a member, not whether it heartbeats: `live_status`
+    # still answers that. ON (in service), DRAINING (idle, claims refused, scaled
+    # in on the next tick if still idle), STOPPED (in the group's warm pool),
+    # WAKING (coming into service). Always ON for a runner that is not a member.
+    POWER_ON, POWER_DRAINING, POWER_STOPPED, POWER_WAKING = "on", "draining", "stopped", "waking"
+    POWER_CHOICES = [(POWER_ON, "On"), (POWER_DRAINING, "Draining"),
+                     (POWER_STOPPED, "Stopped"), (POWER_WAKING, "Waking")]
+    power = models.CharField(max_length=10, choices=POWER_CHOICES, default=POWER_ON)
+    power_changed_at = models.DateTimeField(null=True, blank=True)
     # When this runner last posted a WHOLESALE open-session report. OBSERVED, never
     # typed — the same discipline `capabilities["projects"]` follows, and for the same
     # reason: it is a fact about what a box does, and a hand-declared version of it
@@ -476,6 +498,20 @@ class Runner(models.Model):
         """Can this runner take work RIGHT NOW — online (fresh heartbeat) AND
         self-reported ready. The cascade's availability probe (spec 2026-07-24)."""
         return self.live_status == Runner.ONLINE and self.ready
+
+    @property
+    def wakeable(self) -> bool:
+        """A fleet member that is not up but that the scaler brings into service for
+        work (`fleets.tick`): its fleet active, it not paused, retired or signed out.
+        Every reader of "will a runner take this?" (`claim.turn_reach`, the
+        unclaimable report) counts it as on its way, so work for a fleet whose
+        members are in its warm pool is neither refused by an admission rule nor
+        reported stuck while one starts."""
+        if self.fleet_id is None or self.paused or self.status == self.RETIRED or self.signed_out:
+            return False
+        if self.fleet.status != RunnerFleet.ACTIVE:
+            return False
+        return self.power != self.POWER_ON or self.live_status != self.ONLINE
 
     @property
     def signed_out(self) -> bool:
@@ -1291,7 +1327,12 @@ class RunnerLogin(models.Model):
     API_KEY = "api_key"
     KIND_CHOICES = [(LOGIN, "login"), (TOKEN, "token"), (API_KEY, "API key")]
 
-    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="logins")
+    #: Whose list this entry is on: ONE runner's, or a credential set's (which every
+    #: runner on the set reads as its own, `runners.list_owner`). Exactly one.
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="logins",
+                               null=True, blank=True)
+    credential_set = models.ForeignKey("RunnerCredentialSet", on_delete=models.CASCADE,
+                                       related_name="entries", null=True, blank=True)
     #: Names the entry (and a login's directory on the box). Short, opaque, never reused.
     key = models.CharField(max_length=32)
     # db_default as well: code from before the list, still serving mid-deploy,
@@ -1313,10 +1354,15 @@ class RunnerLogin(models.Model):
         ordering = ["position", "created_at"]
         constraints = [
             models.UniqueConstraint(fields=["runner", "key"], name="uniq_runner_login_key"),
+            models.UniqueConstraint(fields=["credential_set", "key"], name="uniq_credential_set_entry_key"),
+            models.CheckConstraint(
+                condition=(models.Q(runner__isnull=False, credential_set__isnull=True)
+                           | models.Q(runner__isnull=True, credential_set__isnull=False)),
+                name="runner_login_one_list"),
         ]
 
     def __str__(self) -> str:
-        return f"login:{self.runner_id}:{self.key}"
+        return f"login:{self.runner_id or self.credential_set_id}:{self.key}"
 
     #: The vault secret that holds a token's or API key's value, by kind. Derived
     #: from `key`, so an entry and its secret can never name different things.
@@ -2195,6 +2241,10 @@ class RunnerInvitation(models.Model):
     consumed_at = models.DateTimeField(null=True, blank=True)
     runner = models.ForeignKey(Runner, on_delete=models.SET_NULL, null=True, blank=True,
                                related_name="+")
+    #: A FLEET's invitation (`fleets.py`): approving it activates the fleet, and it
+    #: is used up by that approval — its members join on AWS's word, never on it.
+    fleet = models.ForeignKey("RunnerFleet", on_delete=models.CASCADE, null=True, blank=True,
+                              related_name="invitations")
 
     class Meta:
         ordering = ["-created_at"]
@@ -2228,6 +2278,90 @@ class RunnerInvitation(models.Model):
 PAIRING_TTL = dt.timedelta(minutes=15)
 #: Added to `expires_at` on approval, so a slow claim after a late approval works.
 PAIRING_APPROVAL_GRACE = dt.timedelta(minutes=10)
+
+
+class RunnerCredentialSet(models.Model):
+    """One ordered list of Claude credentials that several runners read as their own:
+    every member of a fleet (`RunnerFleet.credential_set`), however many there are
+    and however often they come and go.
+
+    The entries are `RunnerLogin` rows on the set (tokens and API keys only — a full
+    login's refresh token rotates, so it cannot be shared and would be state on one
+    box). Their values live in `vault`, sealed as any runner credential is
+    (docs/architecture/vault.md § A runner's own vault); the runners on the set are
+    attached to it, so a member opens them with its own device key. Usage caps are
+    per Claude account: members on one token share one cap, so a set holds tokens
+    from several accounts.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="runner_credential_sets")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    #: Where the entries' values are sealed. Made with the set's first member
+    #: (`fleets.join`), which a vault needs to be attached to.
+    vault = models.ForeignKey("agents.Vault", on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"credential-set:{self.name}"
+
+
+class RunnerFleet(models.Model):
+    """A set of interchangeable cloud runners: the instances of ONE EC2 Auto Scaling
+    group, which canopy-web grows and shrinks with the work waiting for it
+    (`apps/harness/fleets.py`; spec 2026-10-24-runner-fleets-design.md).
+
+    A person approves the fleet ONCE, from a browser behind a passkey (its
+    `RunnerInvitation`); no token can. After that an instance joins on its own when
+    AWS says it is the fleet's: STS that it signs as `assumed-role/<role>/<i-…>`,
+    EC2 that the instance carries the group's reserved `aws:autoscaling:groupName`
+    tag. Each member is its own runner with its own device key (role + instance id);
+    all of them open vaults with the fleet's one KMS ECDH key, which only the role
+    can use, and read the fleet's credential set.
+    """
+
+    PENDING, ACTIVE, RETIRED = "pending", "active", "retired"
+    STATUS_CHOICES = [(PENDING, "Waiting for approval"), (ACTIVE, "Active"), (RETIRED, "Retired")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: A slug, and the prefix of every member's name (`<name>-<instance id>`).
+    name = models.CharField(max_length=40, unique=True)
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.CASCADE,
+                                  related_name="runner_fleets")
+    #: Its creator, who approves it and owns every member.
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    #: The members' instance role, canonical (`aws_iam_proof.canonical_role_arn`).
+    role_arn = models.CharField(max_length=300)
+    role_jkt = models.CharField(max_length=64, unique=True)
+    #: The fleet's ECDH public key (its KMS key), approved with the fleet.
+    ecdh_public_jwk = models.JSONField(default=dict, blank=True)
+    region = models.CharField(max_length=32)
+    group_name = models.CharField(max_length=255)
+    min_members = models.PositiveSmallIntegerField(default=1)
+    max_members = models.PositiveSmallIntegerField(default=4)
+    #: Turns one member runs at once — how many waiting turns one more member absorbs.
+    member_turns = models.PositiveSmallIntegerField(default=2)
+    credential_set = models.ForeignKey(RunnerCredentialSet, on_delete=models.PROTECT, related_name="fleets")
+    #: The fleet's own copy of each vault key wrapped to its ECDH key,
+    #: `{vault_id: {"kv": n, "wrap": …}}`: what a new member is given (`fleets.join`).
+    #: Ciphertext for a key only the fleet's role can use; canopy-web opens none of it.
+    vault_wraps = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"fleet:{self.name}"
 
 
 class RunnerPairing(models.Model):

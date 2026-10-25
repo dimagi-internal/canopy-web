@@ -98,8 +98,10 @@ Vocabulary (closed — add to it deliberately, never in passing):
   creates a PENDING key (``apps/harness/api_device_key_requests.py``).
 * ``invited-role`` — no session or token: an EC2 instance role's signed STS call
   bound to this request, matched to a pairing invitation its creator APPROVED
-  behind a passkey (or to that role's existing, approved runner of the same name)
-  (``apps/harness/api_runner_invitations.py``).
+  behind a passkey (or to that role's existing, approved runner of the same name),
+  or — for a runner fleet's role — to the fleet its creator approved behind a
+  passkey, with EC2 saying the signing instance is that fleet's group's
+  (``apps/harness/api_runner_invitations.py``, ``apps/harness/fleets.py``).
 * ``paired-key`` — no session or token: a DPoP proof by the box's own device key,
   bound to this request; opening a pairing makes nothing but the pairing, and
   claiming one also needs the one-time secret a person's passkey-gated approval

@@ -50,7 +50,7 @@ def _proven_key(request: HttpRequest) -> RunnerDeviceKey:
     aws = request.META.get(aws_iam_proof.PROOF_HEADER, "")
     try:
         if aws:
-            key = aws_iam_proof.known_key(aws_iam_proof.verify(aws, request))
+            key = aws_iam_proof.known_key(aws_iam_proof.verify_caller(aws, request))
         elif request.META.get(device_keys.PROOF_HEADER):
             key = device_keys.known_key(device_keys.verify_proof(request))
         else:

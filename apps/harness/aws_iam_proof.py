@@ -43,7 +43,7 @@ from xml.etree import ElementTree
 from django.core.cache import cache
 
 from . import device_keys
-from .models import RunnerDeviceKey
+from .models import RunnerDeviceKey, RunnerFleet
 
 PROOF_HEADER = "HTTP_X_CANOPY_AWS_PROOF"
 #: The one STS endpoint a proof is ever sent to. Pinned: a client-chosen URL
@@ -85,6 +85,28 @@ def canonical_role_arn(arn: str) -> str:
 def role_jkt(role_arn: str) -> str:
     """The `jkt` of an aws-iam key: sha256 hex of its canonical role ARN."""
     return hashlib.sha256(canonical_role_arn(role_arn).encode()).hexdigest()
+
+
+#: An EC2 instance id — what STS names an instance profile's session.
+INSTANCE_ID = re.compile(r"^i-[0-9a-f]{8,17}$")
+
+
+def member_jkt(role_arn: str, instance_id: str) -> str:
+    """The `jkt` of a FLEET member's aws-iam key: its role AND its instance
+    (`fleets.py`). Every member signs with the one role, so the role alone would
+    make them one machine; the instance id STS returns as the session name is
+    what tells them apart."""
+    return hashlib.sha256(f"{canonical_role_arn(role_arn)}/{instance_id}".encode()).hexdigest()
+
+
+def session_name(arn: str) -> str:
+    """The session name of an STS assumed-role ARN (for an EC2 instance profile,
+    the instance id), or "" for anything else."""
+    m = _ASSUMED_ROLE_SESSION.match((arn or "").strip())
+    return m.group(1) if m else ""
+
+
+_ASSUMED_ROLE_SESSION = re.compile(r"^arn:aws:sts::\d{12}:assumed-role/[\w+=,.@-]{1,64}/([\w+=,.@-]{1,64})$")
 
 
 def _decode(raw: str) -> dict:
@@ -200,6 +222,13 @@ def verify(raw: str, request, *, now: float | None = None) -> str:
 
     Raises AwsProofError with the reason; never returns for a proof that did
     not verify."""
+    return canonical_role_arn(verify_caller(raw, request, now=now))
+
+
+def verify_caller(raw: str, request, *, now: float | None = None) -> str:
+    """`verify`, returning the signer's ARN exactly as STS named it — for an EC2
+    box `arn:aws:sts::<acct>:assumed-role/<role>/<instance id>`, which `known_key`
+    needs to tell one fleet member from another."""
     obj = _decode(raw)
     _check_url(obj)
     headers = _headers(obj)
@@ -227,21 +256,45 @@ def verify(raw: str, request, *, now: float | None = None) -> str:
     sig = hashlib.sha256(_signature(authorization).encode()).hexdigest()
     if not cache.add(f"aws-proof:{sig}", 1, timeout=device_keys.JTI_TTL_SECONDS):
         raise AwsProofError("the proof has already been used")
-    return canonical_role_arn(_call_sts(headers, body))
+    arn = _call_sts(headers, body)
+    canonical_role_arn(arn)  # refuses an IAM user or a federated session
+    return arn
 
 
-def known_key(role_arn: str):
-    """The ACTIVE aws-iam device key for this role, whichever agents it serves."""
+def caller_jkt(caller_arn: str) -> str:
+    """The `jkt` a verified caller signs in as: a fleet member's (role + instance)
+    when its role is a fleet's, else the role's own. A fleet's role on its own is
+    nobody — no key carries its plain `role_jkt` (`fleets.py` refuses one)."""
+    role = canonical_role_arn(caller_arn)
+    instance = session_name(caller_arn)
+    if instance and RunnerFleet.objects.filter(role_jkt=role_jkt(role)).exists():
+        return member_jkt(role, instance)
+    return role_jkt(role)
+
+
+def caller_machine(caller_arn: str) -> str:
+    """`Runner.machine_id` for a verified caller: a fleet member's role and
+    instance (each member is its own machine), else the canonical role."""
+    role = canonical_role_arn(caller_arn)
+    instance = session_name(caller_arn)
+    if instance and RunnerFleet.objects.filter(role_jkt=role_jkt(role)).exists():
+        return f"{role}/{instance}"
+    return role
+
+
+def known_key(caller_arn: str):
+    """The ACTIVE aws-iam device key for this verified caller (`verify_caller`),
+    whichever agents it serves. Given a plain role ARN, the role's own key."""
     return (RunnerDeviceKey.objects.select_related("runner")
-            .filter(jkt=role_jkt(role_arn), kind=RunnerDeviceKey.AWS_IAM,
+            .filter(jkt=caller_jkt(caller_arn), kind=RunnerDeviceKey.AWS_IAM,
                     status=RunnerDeviceKey.ACTIVE).first())
 
 
-def active_key_for_agent(agent, role_arn: str):
-    """The ACTIVE aws-iam device key for this role, if its runner serves `agent`."""
+def active_key_for_agent(agent, caller_arn: str):
+    """The ACTIVE aws-iam device key for this caller, if its runner serves `agent`."""
     from django.utils import timezone
 
-    key = known_key(role_arn)
+    key = known_key(caller_arn)
     if key is None or not device_keys.runner_serves_agent(key.runner, agent):
         return None
     RunnerDeviceKey.objects.filter(pk=key.pk).update(last_used_at=timezone.now())

@@ -32,6 +32,9 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     egress_locked: false,
     egress_allow: [],
     egress_forced: false,
+    fleet_name: '',
+    instance_id: '',
+    power: 'on',
     roots: ['dimagi'], spans_trees: false,
     ...overrides,
   }

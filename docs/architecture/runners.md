@@ -484,7 +484,9 @@ Tests set `TICK_BASE_S = 0` and call a job's function directly.
   a chat bound to a `RunnerBinding` claims only on that runner; if it is gone the
   turn waits for the person to place it (chat banner) — no automatic failover,
   because continuing elsewhere starts a fresh emdash session without the
-  conversation's context.
+  conversation's context. The one exception is a **fleet member**: members are
+  interchangeable by design, so the fleet scaler moves a chat off a gone member
+  (§ Runner fleets).
 - **Edit rights:** `agent.work` on the agent plus administering every runner the
   write ADDS (`_runners_for_routing`); the added runner must also be able to hold
   the agent. `auto` on any rule is for agent admins (`access.md` → "Turn mode").
@@ -940,6 +942,7 @@ inconclusive probe is still mailed. Tests:
 - **Pairing a cloud box by invitation** (`apps/harness/api_runner_invitations.py`). `runner/ec2/up.sh`, with the operator's own workbench token, creates a `RunnerInvitation` once the stack's instance role exists: `{name, workspace, role_arn, ecdh_public_jwk}` (the `<stack>-ecdh` KMS public key), in a workspace where the operator has `agent.work`. It lasts an hour, and one live invitation exists per (role, name): your own new one replaces yours, and someone else's live one is never replaced (409). The approve link is printed, mailed and pushed to the creator. **Only the creator approves it**, from a browser behind a passkey step-up (`stepup.require_recent_step_up`); a token gets 403, so neither `up.sh` nor the box can approve its own pairing. The box (no state file, no `CANOPY_TOKEN`) calls `POST /api/harness/runners/pair-by-role` with an instance-role proof bound to that URL (`aws_iam_proof.verify`): waiting → 202; approved → one transaction creates the `Runner` (owner = creator, `workspace` = the invitation's, enrolled there by `Runner.save`), its `aws-iam` `RunnerDeviceKey` already ACTIVE (and the invitation's ECDH key approved with it), and marks the invitation consumed. The creator must still have `agent.work` there at that moment. Every other answer (no invitation, expired, used, another name, another ECDH key, a bad or replayed proof) is one uniform 401 that creates nothing. The box then signs in at `POST /api/runner-sessions/` as any keyless box does.
 - **A replaced instance re-attaches.** The role is the box's identity (`jkt` = sha256 of the role ARN), and `up.sh --allow-instance-change` keeps the stack's role. So `pair-by-role` from a role with an ACTIVE key on a non-retired runner of the same name returns 200 with that runner's id; no invitation is needed or used, and `wire.sh` has no predecessor to retire. A role whose runner was retired needs a new invitation from that runner's owner; the old key row is replaced, so `jkt` stays unique. A key for the role on another owner's runner (live, revoked or retired) is never erased, and a pending or revoked key on a live runner is never replaced either: a revocation is undone by its owner, not by re-inviting. Each is the uniform 401.
 - A box of isolation units pairs every unit in one call (`units` on the invitation and on `pair-by-role`; see "Units on the box" above).
+- **A fleet member joins with no invitation of its own.** When the proven role is a fleet's, `pair-by-role` is `fleets.join`: the fleet's one passkey approval plus AWS's word that the instance is the fleet group's (§ Runner fleets). Its key is role + instance, so sign-in (`aws_iam_proof.verify_caller` → `known_key`) tells members apart.
 - Cloud runner: `runner/ec2/cloud_runner.py::_bearer` signs its instance-role proof itself; an isolation unit runs `canopy vault runner-session` with its own software key. Laptop runner: `runner/canopy_runner/canopy_runner/runner_token.py::RunnerCredential` runs `canopy vault runner-session` when the canopy CLI is installed, else signs the proof itself (`device_proof.py`, the same key files and formats as canopy's `orchestrator/device_key.py`: `se.key` through `canopy-device-key`, the TPM key `canopy-device-key`, or `sw.pem`), shared by its REST client and wake socket. Both renew 10 min before expiry, retry a 401 once with a fresh token, and fall back to the PAT only while no approved key can get one.
 
 ## The runner software
@@ -957,6 +960,77 @@ A runner is an installed package, never a checkout, and updates itself to what i
 **Code provenance.** `code_sha` is the last commit touching that runner kind's own source paths, not repo HEAD — laptop: the runner package and its scripts, the menu-bar app, the device key, brand assets and the in-repo `canopy_cron`/`canopy_transcript` packages; cloud: `cloud_runner.py`, `bootstrap_agents.sh`, `update_runner.sh`, `kms_broker.py`, `canopy_transcript` and `canopy_acp` (both lists in `.github/workflows/deploy-labs.yml`). The server holds `RUNNER_CODE_SHA` / `RUNNER_CLOUD_CODE_SHA` (computed by the deploy workflow, `fetch-depth: 0`); `RunnerOut.expected_code_sha` serves the one matching the row's `kind`, and `/supervisor` alerts only when both sides are non-empty and differ (empty = unknown).
 
 **The cloud runner** (`runner/ec2/cloud_runner.py`) polls claim every 15s and drains the queue, executes via `claude -p` (or ACP with `RUNNER_EXECUTOR=acp`, default off), declares repos via `RUNNER_PROJECTS`, and runs the stream/backfill contract on a 3s clock. A cloud box learns of an agent only by bootstrapping, so registering one (or changing its repo) requests a refresh on the cloud boxes that will take its turns (`apps/agents/setup.py::request_setup`); until that box posts the agent's bootstrap report, the agent's setup checklist shows its runner step as waiting. And if a turn for an agent the box has no clone of arrives first, the box bootstraps before running it (`cloud_runner._ensure_agent_clone`, once per agent per `LAZY_BOOTSTRAP_RETRY`) rather than running it in a bare scratch dir. `bootstrap_agents.sh` does the box's half (tooling, gog's file keyring, the canopy plugin + CLI) and then runs `canopy agent prepare --runner` per agent (clones `dimagi-internal/<slug>` into `/opt/agents`, env, plugins, Gmail, a readiness report); it runs from `main()` after the credential is staged and is not `set -e`, so one agent's failure does not stop the rest. Spec: `docs/superpowers/specs/2026-07-25-cloud-agent-bootstrap-design.md`.
+
+## Runner fleets (`apps/harness/fleets.py`)
+
+Cloud capacity grows with a **fleet**: one EC2 Auto Scaling group of interchangeable
+cloud runners, whose size canopy-web sets from the work waiting for it. Spec:
+`docs/superpowers/specs/2026-10-24-runner-fleets-design.md`. Building one: `runner/ec2/fleet.sh`
+(README § Runner fleets).
+
+- **One approval, then AWS vouches.** A fleet (`RunnerFleet`) is approved once, by its
+  creator, from a browser behind a passkey: its `RunnerInvitation` on the usual approve
+  page, used up by the approval. No token can approve it. After that, an instance
+  joins on its own at `pair-by-role` when STS says it signs as
+  `assumed-role/<the fleet's role>/<i-…>` and EC2 says that instance is pending or
+  running with the reserved tag `aws:autoscaling:groupName = <the fleet's group>`. The
+  role trusts only EC2, so the session name is an instance id EC2 set, and no caller
+  can set an `aws:` tag. The fleet must be active and its owner must still have
+  `agent.work` there. Any refusal is the uniform 401.
+- **A member is its own runner.** Its name is `<fleet>-<instance id>`. Its device key
+  is role + instance (`aws_iam_proof.member_jkt`; sign-in reads the instance from
+  `verify_caller`). Its `machine_id` is `<role>/<instance>`. One member cannot sign in
+  as another, and the role on its own signs in as nobody. A fleet's role is never one
+  box's identity: an invitation, a fleet and a device-key enrollment each refuse a role
+  the other uses.
+- **One KMS key per fleet, so new members need no person.** Every member's ECDH key is
+  the fleet's KMS key (`ecdh-kms.cfn.yaml`), which only the role can derive with. The
+  first member is granted the credential set's vault key by its owner (Make its key /
+  grant, once per fleet). From then on canopy-web keeps the fleet's copy
+  (`RunnerFleet.vault_wraps`, refreshed each tick) and gives it to each new member
+  (`_give_wraps`). The copy is ciphertext for the same public key; a wrap binds vault,
+  key version and the ECDH key thumbprint, so it opens on any member and canopy-web
+  opens none of it.
+- **A credential set is the fleet's one list** (`RunnerCredentialSet`, entries are
+  `RunnerLogin` rows on the set). A member reads it as its own (`runners.list_owner`).
+  An edit from any member's Credentials tab edits the set, and every member's stamp
+  moves. Tokens and API keys only: a full login is refused (409), because its refresh
+  token rotates and cannot be shared. Usage caps are per Claude account, so N members
+  on one token share one cap.
+- **The scaler** (`tick`, the off-request clock, `RUNNER_SCALER_TICK_S` 30 s, 0 = off).
+  Each tick, per fleet:
+  1. Read the group and its warm pool. `Runner.power` follows each instance's state:
+     `InService` → `on`, `Pending` → `waking`, `Warmed:*` → `stopped`. A member whose
+     instance left the group is retired, and a turn it was running is queued again as
+     itself (`requeue_lost`, at most twice).
+  2. **Fail over** before measuring demand. A chat bound to a member that is gone
+     (retired, or unreachable and out of service or silent `RUNNER_FAILOVER_AFTER_S`,
+     3 min) with a turn waiting moves to the live member with the most room
+     (`send.move_queued_turns`, as the fleet's owner). A member that still answers is
+     never moved off, because its handoff would still be packing.
+  3. **Grow** for turns the fleet could claim (the claim's `_coverage` plus the tenant
+     gate) that have waited past `RUNNER_WAKE_AFTER_S` (60 s) and are not behind their
+     agent's or session's current turn. It adds `ceil(starving / member_turns)` members,
+     less what members coming up already absorb, up to `max_members`.
+  4. **Shrink** by one member per tick, never while anything waits, never below
+     `min_members`. A member idle `RUNNER_IDLE_STOP_S` (30 min) goes `draining`; **the
+     claim refuses a member that is not `on`**. Next tick, if it is still idle, its
+     scale-in protection is lifted and the desired capacity lowered by one, so AWS
+     scales in that one instance, back into the warm pool. Every member is otherwise
+     protected, so AWS never picks a busy one.
+  5. Each size change is a `runner.fleet.scaled` fact.
+
+  A retired fleet is still ticked while it has members: they are retired and their
+  chats move as their instances go.
+- **Readers.** A member in the warm pool or coming up, not paused or signed out, of an
+  active fleet, is `Runner.wakeable`: `turn_reach` counts it as a LIVE taker and the
+  unclaimable report as reachable.
+- **Keep `min_members` ≥ 1**: the Gmail doorbell and inbox pollers run on a box (every
+  member polls; the server dedupes mail turns per thread). **Capacity per member** is
+  `MAX_CONCURRENT_TURNS` = RAM / 1.5 GiB (an m7i.xlarge runs 10); `fleet.sh` tells
+  canopy-web the same number (`member_turns`).
+- **Out of scope:** sensitive-data boxes and boxes of isolation units are single named
+  boxes (`up.sh`). A fleet is one workspace-tree unit.
 
 ## Runner readiness (the not-ready marker)
 

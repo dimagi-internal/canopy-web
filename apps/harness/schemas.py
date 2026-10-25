@@ -380,6 +380,13 @@ class RunnerOut(Schema):
     egress_locked: bool = False
     egress_allow: list[str] = []
     egress_forced: bool = False
+    # A fleet member (`apps/harness/fleets.py`): its fleet's name and its EC2
+    # instance ("" for any other runner), and where the scaler has it — on /
+    # draining / stopped (in the warm pool) / waking.
+    fleet_name: str = ""
+    instance_id: str = ""
+    power: str = "on"
+    power_changed_at: dt.datetime | None = None
 
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
@@ -412,6 +419,11 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_directed(obj) -> bool:
         return obj.directed_only()
+
+    @staticmethod
+    def resolve_fleet_name(obj) -> str:
+        # Only a member reads its fleet (one query each); every other runner is "".
+        return obj.fleet.name if getattr(obj, "fleet_id", None) else ""
 
     @staticmethod
     def resolve_only_agents(obj) -> list[str]:
@@ -2363,6 +2375,62 @@ class RunnerInvitationCheckOut(Schema):
     workspace: str
 
 
+class RunnerFleetMemberOut(Schema):
+    id: uuid.UUID
+    name: str
+    instance_id: str
+    #: Where the scaler has it: on / draining / stopped (warm pool) / waking.
+    power: str
+    live_status: str
+
+
+class RunnerFleetOut(Schema):
+    """A runner fleet: one EC2 Auto Scaling group whose instances join as its
+    members once its owner approved it, and whose size canopy-web sets from the
+    work waiting for it."""
+
+    id: uuid.UUID
+    name: str
+    workspace: str
+    #: pending (waiting for its owner's approval) / active / retired.
+    status: str
+    role_arn: str
+    region: str
+    group_name: str
+    min_members: int
+    max_members: int
+    #: Turns one member runs at once.
+    member_turns: int
+    #: The credential set every member reads, and the vault its values are in
+    #: (made with the first member).
+    credential_set_id: uuid.UUID
+    credential_vault_id: uuid.UUID | None = None
+    has_ecdh_key: bool = False
+    approved_at: dt.datetime | None = None
+    owner_email: str = ""
+    members: list[RunnerFleetMemberOut] = []
+
+
+class RunnerFleetIn(Schema):
+    """A new fleet (or the same pending one, asked again): `fleet.sh up` sends it
+    once its stack exists. Nothing joins until its creator approves it."""
+
+    name: str = Field(..., pattern=r"^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$")
+    workspace: str
+    role_arn: str
+    ecdh_public_jwk: dict | None = None
+    region: str = Field("us-east-1", pattern=r"^[a-z]{2}(-[a-z]+)+-\d$")
+    group_name: str = Field(..., pattern=r"^[A-Za-z0-9_+=,.@/-]+$", max_length=255)
+    min_members: int = Field(1, ge=1, le=50)
+    max_members: int = Field(4, ge=1, le=50)
+    member_turns: int = Field(2, ge=1, le=32)
+
+
+class RunnerFleetSizeIn(Schema):
+    min_members: int = Field(..., ge=1, le=50)
+    max_members: int = Field(..., ge=1, le=50)
+
+
 class RunnerInvitationOut(Schema):
     """A pairing invitation and where it stands. `approve_url` is the page where
     its creator approves it with a passkey; `runner_id` is set once the box has
@@ -2385,6 +2453,9 @@ class RunnerInvitationOut(Schema):
     runner_id: uuid.UUID | None = None
     #: The units the box pairs as, one runner each; empty for a one-runner box.
     units: list[RunnerInvitationUnitOut] = []
+    #: A FLEET's invitation: what approving it lets join (`fleets.py`). Approving
+    #: uses the invitation up; the fleet's instances then join on their own.
+    fleet: RunnerFleetOut | None = None
 
 
 class RunnerPairUnitIn(Schema):
