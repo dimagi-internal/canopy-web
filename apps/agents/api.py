@@ -54,7 +54,8 @@ from .gates import (
     agent_for_work,
     listed_agent_workspaces,
 )
-from .interface import InterfaceError, domain_warnings, parse
+from .interface import (InterfaceError, access_summary, default_interface, domain_warnings, is_default,
+                        parse, validate)
 from .models import (
     AgentAdmin,
     AgentCredentialRead,
@@ -72,6 +73,7 @@ from .schemas import (
     AgentIn,
     AgentInterfaceIn,
     AgentInterfaceOut,
+    AgentInterfaceValidateOut,
     AgentLicenseOut,
     AgentLicenseRevokeIn,
     AgentMoveIn,
@@ -573,14 +575,18 @@ def _admin_rows(agent) -> list[dict]:
 
 
 def _interface_out(agent) -> dict:
-
+    """An agent always has an interface; a row that somehow holds none (`{}`) reads as the default."""
     by = agent.interface_published_by
-    iface = agent.interface or {}
+    iface = agent.interface or default_interface()
     return {"interface": iface, "source": agent.interface_source or "",
+            # The same model as YAML, for the Advanced view and the CLI, when no
+            # hand-written source was kept.
+            "yaml": agent.interface_source or yaml.safe_dump(iface, sort_keys=False),
+            "is_default": is_default(iface), "summary": access_summary(iface),
             "published_at": agent.interface_published_at,
             "published_by_email": by.email if by is not None else None,
             # Computed AFTER any save, cached and time-boxed: it never blocks one.
-            "warnings": domain_warnings(iface, agent.workspace_id) if iface else []}
+            "warnings": domain_warnings(iface, agent.workspace_id) if not is_default(iface) else []}
 
 
 @router.get("/{slug}/interface", response=AgentInterfaceOut,
@@ -593,6 +599,29 @@ def get_interface(request: HttpRequest, slug: str):
 # Owner-or-admin, not the editor tier the skill catalog uses: the interface is
 # a SECURITY POLICY — it decides what people outside the agent's admins can make
 # it do — so loosening it is the same kind of act as handing over its keys.
+@router.post("/{slug}/interface/validate", response=AgentInterfaceValidateOut,
+             summary="Check a draft interface with the server's parser, without saving it")
+@gate("agent-admin", kind="action")
+def validate_interface(request: HttpRequest, slug: str, payload: AgentInterfaceIn):
+    agent = agent_for_admin(request, slug)
+    if (payload.source is None) == (payload.interface is None):
+        raise HttpError(422, "send exactly one of `source` (YAML) or `interface` (a mapping)")
+    doc = payload.interface
+    if payload.source is not None:
+        try:
+            doc = yaml.safe_load(payload.source) or {}
+        except yaml.YAMLError as exc:
+            return {"errors": [{"path": "", "message": f"not valid YAML: {exc}"}],
+                    "summary": [], "warnings": []}
+    errors = validate(doc)
+    if errors:
+        return {"errors": errors, "summary": [], "warnings": []}
+    parsed = parse(doc)
+    return {"errors": [], "summary": access_summary(parsed), "interface": parsed,
+            "yaml": payload.source if payload.source is not None else yaml.safe_dump(parsed, sort_keys=False),
+            "warnings": domain_warnings(parsed, agent.workspace_id)}
+
+
 @router.put("/{slug}/interface", response=AgentInterfaceOut,
             summary="Save the agent's declared interface (YAML source, or a parsed mapping)")
 @gate("agent-admin", setting=True)
@@ -671,17 +700,13 @@ def set_capability_sensitive(request: HttpRequest, slug: str, name: str,
 
 
 @router.delete("/{slug}/interface", response=AgentInterfaceOut,
-               summary="Unpublish the declared interface: only the agent's admins and its workspace's editors can reach it")
+               summary="Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it")
 @gate("agent-admin", setting=True)
-def unpublish_interface(request: HttpRequest, slug: str):
+def reset_interface(request: HttpRequest, slug: str):
+    # Never "no interface": every agent has one, and this is the one that changes
+    # nobody's access but takes away what the owner had added.
     agent = agent_for_admin(request, slug)
-    agent.interface = {}
-    agent.interface_source = ""
-    agent.interface_published_at = None
-    agent.interface_published_by = None
-    agent.save(update_fields=["interface", "interface_source", "interface_published_at",
-                              "interface_published_by", "updated_at"])
-    return _interface_out(agent)
+    return _save_interface(request, agent, default_interface(), "")
 
 
 @router.get("/{slug}/admins", response=list[AgentAdminOut],
@@ -706,7 +731,7 @@ def agent_access(request: HttpRequest, slug: str):
     return {
         "members": access.roster(agent),
         "outsiders": access.outsiders(agent),
-        "interface_published": bool(iface.get("capabilities") or iface.get("full")),
+        "interface_published": not is_default(iface),
         "slack_enabled": agent.slack_enabled,
     }
 

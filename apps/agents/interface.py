@@ -75,7 +75,8 @@ part of a site); absent, canopy adds none. It can never widen what the host
 granted. The page's `backing_tool` tells the agent where to read the rows on
 screen; it is not a filter (until 2026-09-29 it was).
 
-**Default deny.** An agent that has published no interface is reachable by its
+**Default deny.** Every agent HAS an interface; until its owner changes it, it is the default
+(`default_interface()`: no `full:` rule, no capability). An agent that has published nothing is reachable by its
 admins and its workspace's editors (full profile, manual only) and by nobody
 else: a viewer member, a contact or an unidentified caller is refused (viewers
 since 2026-10-04). Until 2026-09-26 it ran EVERY turn full, which made the
@@ -111,12 +112,11 @@ from __future__ import annotations
 
 import re
 
+from apps.agents.interface_default import VERSION, default_interface  # noqa: F401  (re-exported)
 from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.domain_proof import proof
 from apps.harness import initiator as who
 from apps.harness.caller_context import is_verified
-
-VERSION = 1
 
 #: The fallback door for a free-form channel (email, chat, Slack, a widget on a
 #: page that declared nothing). Named capabilities are for callers that ask for
@@ -161,7 +161,21 @@ _MAX_PATTERN = 300
 
 
 class InterfaceError(ValueError):
-    pass
+    """A refused interface. `path` says which field it is about (`full`,
+    `ask.tools`, `ask`), so a form can show the message next to that field; it is
+    read off the message's leading `where:`/`where ` when the raiser gave none."""
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message)
+        self.path = path if path is not None else _path_of(message)
+
+
+_PATH = re.compile(r"^(?P<path>full|[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)*)(?::|\s)")
+
+
+def _path_of(message: str) -> str:
+    m = _PATH.match(message)
+    return m["path"] if m else ""
 
 
 def _strings(value, field: str, cap: str) -> list[str]:
@@ -471,6 +485,96 @@ def published(iface: dict) -> bool:
     """Whether the agent has declared anything. An interface with neither a
     `full:` rule nor a capability says nothing, and is treated as none."""
     return bool(iface.get("capabilities") or iface.get("full"))
+
+
+#: THE default interface (`default_interface`, from `interface_default.py`), which every agent
+#: has until its owner changes it: no
+#: `full:` rule, no capability, `callers_default: none`. It says out loud what
+#: "nothing published" used to mean by absence — the owner, the admins and the
+#: workspace's editors reach the agent, and nobody else — so `published` reads it
+#: as none and `access.decide` behaves exactly as it did for an empty `{}`.
+def is_default(iface: dict | None) -> bool:
+    """Whether this interface is the default (or empty, which reads the same)."""
+    return not published(iface or {})
+
+
+def validate(doc) -> list[dict]:
+    """Every problem with a draft, as `[{path, message}]` — [] when `parse` accepts it.
+
+    `parse` stops at the first fault; a form wants one per field, so the top level,
+    `full:` and each capability are parsed on their own. The server's parser stays the
+    only judge: this never decides what is valid, it only asks `parse` more than once.
+    """
+    errors: list[dict] = []
+
+    def attempt(piece, path: str = ""):
+        try:
+            parse(piece)
+        except InterfaceError as exc:
+            errors.append({"path": exc.path or path, "message": str(exc)})
+
+    if not isinstance(doc, dict):
+        attempt(doc)
+        return errors
+    attempt({k: v for k, v in doc.items() if k != "capabilities"})
+    caps = doc.get("capabilities") or {}
+    if not isinstance(caps, dict):
+        attempt({"capabilities": caps}, "capabilities")
+        return errors
+    if len(caps) > 50:
+        attempt({"capabilities": caps}, "capabilities")
+    for name, cap in caps.items():
+        attempt({"capabilities": {name: cap}}, str(name))
+    return errors
+
+
+_BASE_WORDS = {"member": "workspace members", "contact": "contacts", "unknown": "unidentified callers"}
+
+
+def describe_caller(rule: str) -> str:
+    """A caller class in plain English: `contact@dimagi.com:verified` → "Verified
+    contacts at dimagi.com". An unparseable rule is shown as written."""
+    m = _CALLER.match(rule)
+    if not m:
+        return rule
+    words = _BASE_WORDS[m["base"]]
+    if m["verified"]:
+        words = "verified " + words
+    if m["domain"]:
+        words += f" at {m['domain']}"
+    return words[0].upper() + words[1:]
+
+
+def access_summary(iface: dict) -> list[dict]:
+    """One line per caller class: `[{who, reaches, rule}]` — what each can reach.
+
+    Always opens with the people no interface is needed for, then every rule the
+    interface names (a `full:` rule reaches everything; otherwise the capabilities
+    that list it), and ends with who is refused. Computed here so the page and the
+    CLI say the same thing and the English lives beside the rule it describes.
+    """
+    iface = iface or {}
+    out = [{"who": "Owner and admins", "reaches": "everything", "rule": None},
+           {"who": "Workspace editors", "reaches": "everything (every turn they start needs an admin's go-ahead)",
+            "rule": None}]
+    reach: dict[str, list[str]] = {}
+    for rule in iface.get("full") or []:
+        reach.setdefault(rule, [])
+    for name, cap in (iface.get("capabilities") or {}).items():
+        for rule in cap.get("callers") or []:
+            reach.setdefault(rule, []).append(name)
+    full = set(iface.get("full") or [])
+
+    def order(rule: str):
+        m = _CALLER.match(rule)
+        base = ("member", "contact", "unknown").index(m["base"]) if m else 9
+        return (base, bool(m and m["domain"]) is False, rule)
+
+    for rule in sorted(reach, key=order):
+        reaches = "everything" if rule in full else ", ".join(reach[rule])
+        out.append({"who": describe_caller(rule), "reaches": reaches, "rule": rule})
+    out.append({"who": "Everyone else", "reaches": "refused", "rule": None})
+    return out
 
 
 #: Who reaches an agent that has published NO interface: its admins and canopy

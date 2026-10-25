@@ -138,6 +138,13 @@ canopy-web, never a repo file) says what it offers people who are not its admins
   `contact` (known, not a member), `unknown` (nobody established who); narrowed by
   `@domain.tld` (exactly that domain) and `:verified` (THIS message is verified).
 * `callers_default` is always `none`.
+* **The default interface** (`interface.default_interface()`): no `full:` rule, no capability,
+  `callers_default: none`. **Every agent has an interface** — a new agent is created with the
+  default (a field default on `Agent.interface`), `GET /interface` never returns `{}`, and
+  "unpublish" is now **reset to default**. The default behaves exactly as an absent interface
+  always did (rows 1, 4 and 5 below): the owner, admins and editors, and nobody else. The page
+  edits it as a form (Settings → Channels → Callers) with the YAML under "Advanced"; a draft is
+  checked by `POST /interface/validate`, which asks `interface.parse` per field.
 
 ## The rule (the decision table)
 
@@ -577,7 +584,7 @@ tool; and beside every delivered prompt — the runner leaves
 `caller_context` UserPromptSubmit hook adds a summary next to the person's words
 (cloud: `CANOPY_CALLER`).
 
-* **Default deny.** No published interface means only the agent's admins and its
+* **Default deny.** The default interface (nothing published) means only the agent's admins and its
   workspace's editors (manual) reach it; every viewer, contact or unidentified
   caller is refused (rows 5 and 7). The interface is live state on canopy-web —
   never a file in the agent's repo; owner-or-admin edit it on the agent. It

@@ -657,11 +657,43 @@ class CapabilitySensitiveIn(StrictModel):
     handles_sensitive: bool
 
 
+class InterfaceSummaryLineOut(StrictModel):
+    # "Dimagi members" / "ask": one caller class and what it reaches.
+    who: str
+    reaches: str
+    # The caller class as written in the interface; None for the fixed lines.
+    rule: str | None = None
+
+
+class InterfaceProblemOut(StrictModel):
+    # The field the parser's message is about: `full`, a capability name, or
+    # `<capability>.<field>`; "" when it is about the whole document.
+    path: str
+    message: str
+
+
+class AgentInterfaceValidateOut(StrictModel):
+    errors: list[InterfaceProblemOut]
+    # When the draft is valid: its access summary, the parsed model (what the form
+    # edits) and the same model as YAML (what the Advanced view edits) — so the form
+    # and the YAML switch without a YAML library in the browser.
+    summary: list[InterfaceSummaryLineOut] = []
+    interface: dict | None = None
+    yaml: str = ""
+    warnings: list[str] = []
+
+
 class AgentInterfaceOut(StrictModel):
-    # Empty when nothing is published: every turn runs in the full profile.
+    # Never empty: an agent without a declared interface has the default one.
     interface: dict
     # The YAML as last saved; "" when it was published as a parsed mapping.
     source: str = ""
+    # `source` when there is one, else the interface rendered as YAML.
+    yaml: str = ""
+    # True while the interface is the default: owner, admins and editors only.
+    is_default: bool = True
+    # One line per caller class saying what it reaches.
+    summary: list[InterfaceSummaryLineOut] = []
     published_at: dt.datetime | None = None
     published_by_email: str | None = None
     # Rules that cannot work as written, e.g. `member@<domain>` for a domain whose

@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setStepUpHandler } from '@/auth/stepUp'
 
+import ACE from './aceInterface.fixture.json'
+
 // The API client builds a `Request` from a path; node's needs an absolute URL,
 // a browser's does not. Resolve it against the page, as a browser would.
 vi.hoisted(() => {
@@ -18,19 +20,22 @@ vi.hoisted(() => {
 const getAgentInterface = vi.fn()
 const getAgentInterfaceHistory = vi.fn()
 const saveAgentInterface = vi.fn()
-const unpublishAgentInterface = vi.fn()
+const saveAgentInterfaceModel = vi.fn()
+const validateAgentInterface = vi.fn()
+const resetAgentInterface = vi.fn()
 const setCapabilitySensitive = vi.fn()
 vi.mock('@/api/agents', async (orig) => ({
   ...(await orig<typeof import('@/api/agents')>()),
   getAgentInterface: (...a: unknown[]) => getAgentInterface(...a),
   getAgentInterfaceHistory: (...a: unknown[]) => getAgentInterfaceHistory(...a),
   saveAgentInterface: (...a: unknown[]) => saveAgentInterface(...a),
-  unpublishAgentInterface: (...a: unknown[]) => unpublishAgentInterface(...a),
+  saveAgentInterfaceModel: (...a: unknown[]) => saveAgentInterfaceModel(...a),
+  validateAgentInterface: (...a: unknown[]) => validateAgentInterface(...a),
+  resetAgentInterface: (...a: unknown[]) => resetAgentInterface(...a),
   setCapabilitySensitive: (...a: unknown[]) => setCapabilitySensitive(...a),
 }))
 
-const { AgentInterfaceView, declaresSensitive } = await import('./AgentInterfaceView')
-const realApi = await vi.importActual<typeof import('@/api/agents')>('@/api/agents')
+const { AgentInterfaceView } = await import('./AgentInterfaceView')
 
 const PUBLISHED = {
   interface: {
@@ -41,6 +46,14 @@ const PUBLISHED = {
     } },
   },
   source: 'full: [contact@dimagi.com:verified]\n# comment kept\n',
+  yaml: 'full: [contact@dimagi.com:verified]\n# comment kept\n',
+  is_default: false,
+  summary: [
+    { who: 'Owner and admins', reaches: 'everything', rule: null },
+    { who: 'Verified contacts at dimagi.com', reaches: 'everything', rule: 'contact@dimagi.com:verified' },
+    { who: 'Contacts', reaches: 'ask', rule: 'contact' },
+    { who: 'Everyone else', reaches: 'refused', rule: null },
+  ],
   published_at: '2026-09-21T12:00:00Z', published_by_email: 'op@dimagi.com',
 }
 
@@ -51,6 +64,20 @@ const SENSITIVE_SOURCE = `capabilities:
     data: sensitive   # vouched
     tools: [Read]
 `
+const DEFAULT = {
+  interface: { version: 1, full: [], capabilities: {}, callers_default: 'none' },
+  source: '', yaml: '', is_default: true, published_at: null, published_by_email: null,
+  summary: [
+    { who: 'Owner and admins', reaches: 'everything', rule: null },
+    { who: 'Everyone else', reaches: 'refused', rule: null },
+  ],
+}
+// The server's parser, as the form meets it: valid drafts come back with their model and YAML.
+const accepts = (draft: { interface?: unknown; source?: string }) => ({
+  errors: [], summary: [{ who: 'Owner and admins', reaches: 'everything', rule: null }],
+  interface: draft.interface ?? {}, yaml: draft.source ?? 'yaml: of the draft\n', warnings: [],
+})
+
 const SENSITIVE_ON = {
   interface: { capabilities: { data: { callers: ['contact'], sites: ['connect-labs'], data: 'sensitive', tools: ['Read'] } } },
   source: SENSITIVE_SOURCE, published_at: '2026-10-22T09:00:00Z', published_by_email: 'jj@dimagi.com',
@@ -63,6 +90,7 @@ const change = (id: number, operation: string, body: unknown, via = 'ui') => ({
 
 beforeEach(() => {
   getAgentInterfaceHistory.mockResolvedValue([])
+  validateAgentInterface.mockImplementation(async (_slug: string, draft: { interface?: unknown; source?: string }) => accepts(draft))
 })
 
 afterEach(() => {
@@ -73,20 +101,26 @@ afterEach(() => {
 })
 
 describe('AgentInterfaceView', () => {
-  it('says plainly when nothing is published, and offers no edit to a non-admin', async () => {
-    getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null })
-    render(<AgentInterfaceView agentSlug="ace" />)
-    expect((await screen.findByTestId('interface-none')).textContent).toMatch(/No outside callers. Only workspace members can use/)
-    expect(screen.queryByRole('button', { name: /Set up|Edit/ })).toBeNull()
+  it('says "Owner and admins only (default)" for an agent on the default, and offers no edit to a non-admin', async () => {
+    getAgentInterface.mockResolvedValue(DEFAULT)
+    render(<AgentInterfaceView agentSlug="echo" agentName="Echo" />)
+    expect((await screen.findByTestId('interface-default')).textContent).toMatch(/Owner and admins only \(default\)/)
+    expect(screen.queryByRole('button', { name: /Add rules|Edit/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Reset/ })).toBeNull()
   })
 
-  it('shows domain-wide access, each capability and its inputs, and no MCP tool', async () => {
+  it('shows the access summary first, then each capability and its inputs, and no MCP tool', async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
     render(<AgentInterfaceView agentSlug="ace" />)
-    expect((await screen.findByTestId('interface-full')).textContent).toContain('contact@dimagi.com:verified')
+    const lines = (await screen.findAllByTestId('summary-line')).map((l) => l.textContent)
+    expect(lines).toEqual([
+      'Owner and admins: everything',
+      'Verified contacts at dimagi.com: everything',
+      'Contacts: ask',
+      'Everyone else: refused',
+    ])
     const row = screen.getByTestId('interface-capability')
     expect(row.textContent).toContain('Inputs: opportunity_id: integer')
-    // Agents are not tools on canopy's MCP: you install the agent's plugin.
     expect(row.textContent).not.toContain('ace__ask')
     expect(row.textContent).toContain('canopy email read --repo . {thread_id}')
   })
@@ -98,72 +132,115 @@ describe('AgentInterfaceView', () => {
     expect((await screen.findByTestId('interface-warning')).textContent).toBe(warning)
   })
 
-  it('shows no warning when there is none', async () => {
-    getAgentInterface.mockResolvedValue(PUBLISHED)
-    render(<AgentInterfaceView agentSlug="ace" />)
-    await screen.findByTestId('interface-full')
-    expect(screen.queryByTestId('interface-warning')).toBeNull()
+  it('an admin adds an ask door for colleagues in the form and saves the model', async () => {
+    getAgentInterface.mockResolvedValue(DEFAULT)
+    saveAgentInterfaceModel.mockImplementation(async (_s: string, m: unknown) => ({ ...PUBLISHED, interface: m }))
+    render(<AgentInterfaceView agentSlug="echo" canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add rules' }))
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Add an ask door for colleagues' }))
+    expect((await screen.findAllByTestId('capability-card')).length).toBe(1)
+    expect(screen.getByTestId('caller-preview').textContent).toBe('Workspace members can use ask.')
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveAgentInterfaceModel).toHaveBeenCalled())
+    const sent = saveAgentInterfaceModel.mock.calls[0][1]
+    expect(sent.capabilities.ask.callers).toEqual(['member'])
+    expect(sent.full).toEqual([])
+    expect(await screen.findByTestId('access-summary')).toBeTruthy()
   })
 
-  it('an admin edits the YAML as saved — comments included — and sees it saved', async () => {
+  it('builds a whole-agent rule from pickers and previews it in plain English', async () => {
+    getAgentInterface.mockResolvedValue(DEFAULT)
+    render(<AgentInterfaceView agentSlug="echo" canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add rules' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add who' }))
+    fireEvent.change(screen.getByLabelText('Whole-agent rule class 1'), { target: { value: 'contact' } })
+    fireEvent.change(screen.getByLabelText('Whole-agent rule domain 1'), { target: { value: 'Dimagi.com' } })
+    fireEvent.click(screen.getByLabelText('Whole-agent rule verified 1'))
+    expect(screen.getByTestId('caller-preview').textContent).toBe(
+      'Verified contacts at dimagi.com get everything its admins get.',
+    )
+    await waitFor(() =>
+      expect(validateAgentInterface).toHaveBeenLastCalledWith('echo', expect.objectContaining({
+        interface: expect.objectContaining({ full: ['contact@dimagi.com:verified'] }),
+      })))
+  })
+
+  it("shows the server parser's reason next to the field it is about, and will not save", async () => {
     getAgentInterface.mockResolvedValue(PUBLISHED)
-    saveAgentInterface.mockResolvedValue({ ...PUBLISHED, source: 'full: [contact@dimagi-ai.com:verified]\n' })
+    validateAgentInterface.mockResolvedValue({
+      errors: [{ path: 'ask.tools', message: 'ask.tools entries must be non-empty strings' }],
+      summary: [], interface: null, yaml: '', warnings: [],
+    })
     render(<AgentInterfaceView agentSlug="ace" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
-    const box = screen.getByLabelText('Interface (YAML)') as HTMLTextAreaElement
-    expect(box.value).toContain('# comment kept')
-    fireEvent.change(box, { target: { value: 'full: [contact@dimagi-ai.com:verified]\n' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('ace', 'full: [contact@dimagi-ai.com:verified]\n'))
-    expect(await screen.findByTestId('interface-full')).toBeTruthy()
+    const tools = await screen.findByLabelText('ask tools')
+    fireEvent.change(tools, { target: { value: 'Read\nGrep' } })
+    const err = await screen.findByTestId('field-error')
+    expect(err.textContent).toMatch(/ask.tools entries must be non-empty/)
+    expect(tools.closest('label')?.contains(err)).toBe(true)
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it("shows the server's reason when the YAML is refused, and keeps the draft", async () => {
-    getAgentInterface.mockResolvedValue(PUBLISHED)
-    saveAgentInterface.mockRejectedValue(new Error("full: 'everyone' is not a caller class"))
+  it("ACE's published interface survives load → save in the form unchanged", async () => {
+    getAgentInterface.mockResolvedValue({ ...DEFAULT, interface: ACE, is_default: false })
+    saveAgentInterfaceModel.mockImplementation(async (_s: string, m: unknown) => ({ ...DEFAULT, interface: m, is_default: false }))
     render(<AgentInterfaceView agentSlug="ace" canEdit />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
-    fireEvent.change(screen.getByLabelText('Interface (YAML)'), { target: { value: 'full: [everyone]' } })
+    expect((await screen.findAllByTestId('capability-card')).length).toBe(3)
+    // Touch a field and put it back: the form has now round-tripped every card.
+    const tools = screen.getByLabelText('canopy tools') as HTMLTextAreaElement
+    const before = tools.value
+    fireEvent.change(tools, { target: { value: `${before}\nExtra` } })
+    fireEvent.change(tools, { target: { value: before } })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect((await screen.findByRole('alert')).textContent).toMatch(/not a caller class/)
-    expect((screen.getByLabelText('Interface (YAML)') as HTMLTextAreaElement).value).toBe('full: [everyone]')
+    await waitFor(() => expect(saveAgentInterfaceModel).toHaveBeenCalled())
+    expect(saveAgentInterfaceModel.mock.calls[0][1]).toEqual(ACE)
   })
-})
 
-describe('declaresSensitive', () => {
-  it('sees data: sensitive in block or flow form, never in a comment', () => {
-    expect(declaresSensitive(SENSITIVE_SOURCE)).toBe(true)
-    expect(declaresSensitive('capabilities: {data: {sites: [x], data: sensitive}}')).toBe(true)
-    expect(declaresSensitive('{"capabilities": {"data": {"data": "sensitive"}}}')).toBe(true)
-    expect(declaresSensitive('capabilities:\n  ask:\n    # data: sensitive later\n    callers: [member]\n')).toBe(false)
-    expect(declaresSensitive('capabilities:\n  data:\n    sites: [x]\n')).toBe(false)
+  it('moves between the form and the YAML through the server, and saves the YAML as written', async () => {
+    getAgentInterface.mockResolvedValue(PUBLISHED)
+    saveAgentInterface.mockResolvedValue({ ...PUBLISHED, source: 'full: [member]\n' })
+    render(<AgentInterfaceView agentSlug="ace" canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Advanced: YAML' }))
+    const box = (await screen.findByLabelText('Interface (YAML)')) as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'full: [member]\n' } })
+    await waitFor(() => expect(validateAgentInterface).toHaveBeenLastCalledWith('ace', { source: 'full: [member]\n' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('ace', 'full: [member]\n'))
+  })
+
+  it('"Reset to default" replaces unpublish and returns the default', async () => {
+    getAgentInterface.mockResolvedValue(PUBLISHED)
+    resetAgentInterface.mockResolvedValue(DEFAULT)
+    render(<AgentInterfaceView agentSlug="ace" agentName="ACE" canEdit />)
+    expect(screen.queryByRole('button', { name: /Unpublish/ })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset to default' }))
+    expect((await screen.findByTestId('interface-default')).textContent).toMatch(/Owner and admins only \(default\)/)
   })
 })
 
 describe('AgentInterfaceView — the sensitive-data setting', () => {
-  it('says what turning it on vouches for, and saves it without a passkey', async () => {
-    getAgentInterface.mockResolvedValue({ interface: {}, source: '', published_at: null, published_by_email: null })
-    // The real client: one PUT, no passkey prompt.
-    saveAgentInterface.mockImplementation(realApi.saveAgentInterface)
-    const bodies: unknown[] = []
-    vi.stubGlobal('fetch', vi.fn(async (r: Request) => {
-      bodies.push(await r.clone().json())
-      return new Response(JSON.stringify(SENSITIVE_ON), { status: 200, headers: { 'Content-Type': 'application/json' } })
-    }))
-    const prompt = vi.fn().mockResolvedValue(undefined)
-    setStepUpHandler(prompt)
-
+  it('the form checkbox says what turning it on vouches for', async () => {
+    getAgentInterface.mockResolvedValue(DEFAULT)
     render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Set up' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add rules' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add a connect-labs site capability' }))
     expect(screen.queryByTestId('sensitive-on')).toBeNull()
-    fireEvent.change(screen.getByLabelText('Interface (YAML)'), { target: { value: SENSITIVE_SOURCE } })
+    fireEvent.click(await screen.findByLabelText('connect handles sensitive data'))
     expect((await screen.findByTestId('sensitive-on')).textContent).toMatch(/you vouch that it reads a host's data only/)
-    expect(screen.queryByLabelText(/Commit/)).toBeNull()
+  })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save and turn on sensitive data' }))
-    expect((await screen.findByTestId('handles-sensitive')).textContent).toBe('Handles sensitive data')
-    expect(prompt).not.toHaveBeenCalled()
-    expect(bodies).toEqual([{ source: SENSITIVE_SOURCE }])
+  it('unchecking it says saving turns sensitive data off', async () => {
+    getAgentInterface.mockResolvedValue(SENSITIVE_ON)
+    render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(await screen.findByLabelText('data handles sensitive data'))
+    expect((await screen.findByTestId('sensitive-off')).textContent).toMatch(/turns it off for data/)
   })
 
   it('marks each capability that handles sensitive data in the table', async () => {
@@ -178,31 +255,17 @@ describe('AgentInterfaceView — the sensitive-data setting', () => {
     expect(byName.ask).not.toContain('Handles sensitive data')
   })
 
-  it('turns it off by taking data: sensitive out and saving — the same save, said plainly', async () => {
-    getAgentInterface.mockResolvedValue(SENSITIVE_ON)
-    saveAgentInterface.mockResolvedValue({ ...SENSITIVE_ON, interface: { capabilities: { data: { callers: ['contact'], sites: ['connect-labs'], tools: ['Read'] } } } })
-    render(<AgentInterfaceView agentSlug="labsdata" canEdit />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Turn off sensitive data' }))
-    const box = screen.getByLabelText('Interface (YAML)') as HTMLTextAreaElement
-    expect(declaresSensitive(box.value)).toBe(false)
-    expect(box.value).toContain('sites: [connect-labs]')
-    expect(screen.getByTestId('sensitive-off').textContent).toMatch(/turns sensitive data off for data/)
-    fireEvent.click(screen.getByRole('button', { name: 'Save and turn off sensitive data' }))
-    await waitFor(() => expect(saveAgentInterface).toHaveBeenCalledWith('labsdata', box.value))
-    await waitFor(() => expect(screen.queryByTestId('handles-sensitive')).toBeNull())
-  })
-
   it('shows the audited history: who, through what, and whether sensitive data was on after', async () => {
     getAgentInterface.mockResolvedValue(SENSITIVE_ON)
     getAgentInterfaceHistory.mockResolvedValue([
-      change(3, 'unpublish_interface', {}),
+      change(3, 'reset_interface', {}),
       change(2, 'publish_interface', { source: SENSITIVE_SOURCE }),
       change(1, 'publish_interface', { source: 'capabilities:\n  ask:\n    callers: [member]\n' }, 'mcp'),
     ])
     render(<AgentInterfaceView agentSlug="labsdata" />)
     const rows = await screen.findAllByTestId('interface-change')
     expect(rows.map((r) => r.lastElementChild?.textContent)).toEqual(['off', 'on', 'off'])
-    expect(rows[0].textContent).toContain('Unpublished')
+    expect(rows[0].textContent).toContain('Reset to default')
     expect(rows[2].textContent).toContain('mcp')
     expect(getAgentInterfaceHistory).toHaveBeenCalledWith('labsdata')
   })
