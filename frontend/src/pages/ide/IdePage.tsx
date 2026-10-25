@@ -374,7 +374,7 @@ export function IdePage() {
               data-testid={`ide-state-${k}`}
               title={`${filters.states[k] ? 'Hide' : 'Show'} ${STATE_LABEL[k]} sessions`}
               className={clsx(
-                'inline-flex items-center gap-1 rounded px-1 py-0.5 text-[11px] tabular-nums hover:bg-muted',
+                'inline-flex items-center gap-1 whitespace-nowrap rounded px-1 py-0.5 text-[11px] tabular-nums hover:bg-muted',
                 filters.states[k]
                   ? 'text-foreground-secondary'
                   : 'text-muted-foreground line-through decoration-muted-foreground/50',
@@ -393,20 +393,11 @@ export function IdePage() {
             capped
           </span>
         )}
-        <button
-          type="button"
-          onClick={() => setAddRepo(true)}
-          title="Add a repo to one of your laptop runners, as an emdash project"
-          data-testid="ide-add-repo"
-          className="ml-auto h-6 shrink-0 rounded border border-border px-1.5 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          Add repo
-        </button>
         <NewChatMenu
           agents={agents}
           runners={runners}
           label="New session"
-          className="h-6 shrink-0 px-1.5 text-[12px]"
+          className="ml-auto h-6 shrink-0 px-1.5 text-[12px]"
           onError={(message) => setNote({ text: message, error: true })}
           onCreated={onCreated}
         />
@@ -504,6 +495,16 @@ export function IdePage() {
             <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            {/* Here rather than in the header row: a second button there squeezed
+                the state counts under it on a narrow rail. */}
+            <DropdownMenuItem
+              className="text-[12px]"
+              onClick={() => setAddRepo(true)}
+              title="Add a repo to one of your laptop runners, as an emdash project"
+              data-testid="ide-add-repo"
+            >
+              Add repo…
+            </DropdownMenuItem>
             <DropdownMenuItem className="text-[12px]" onClick={() => setAllCollapsed(!allCollapsed)}>
               {allCollapsed ? 'Expand all projects' : 'Collapse all projects'}
             </DropdownMenuItem>

@@ -537,7 +537,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   emdash projects (repos and agents, by the row's `emdash_project`) with every
   session you can see, each row showing reported state (running / input /
   idle), runner, mode and time since last activity; the open session is
-  `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`). **Add repo** (beside New session) asks one of your laptops to add a repo as an emdash project.
+  `ChatPage` on the right (`onLeave` keeps a close or a move inside `/ide`). **Add repo** (in the tree's ⋯ menu) asks one of your laptops to add a repo as an emdash project.
   Objective by design: every filter is an on/off toggle (each runner, state,
   mode, archived), kept in `localStorage`, and nothing is ranked or labelled
   "stuck"; the foot of the list says how many sessions the filters hide, with
