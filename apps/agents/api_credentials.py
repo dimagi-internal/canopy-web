@@ -124,6 +124,8 @@ def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredent
         raise zk_problem(exc) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc
+    # Storing a value is declaring it: the caller is the agent's owner or admin.
+    services.declare_credential_names(agent, payload.values)
     return services.agent_credential_status(agent)
 
 
@@ -355,6 +357,8 @@ def set_agent_zk_values(request: HttpRequest, slug: str, payload: ZkValuesIn) ->
         names = zk.set_values(agent, kv=payload.kv, values=payload.values, user=request.user)
     except zk.ZkError as exc:
         raise zk_problem(exc) from exc
+    # Storing a value is declaring it: the caller is the agent's owner or admin.
+    services.declare_credential_names(agent, names)
     return ZkValuesOut(kv=payload.kv, names=names)
 
 

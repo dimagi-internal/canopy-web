@@ -120,12 +120,23 @@ def test_status_shows_where_each_value_comes_from(fleet):
 
 
 def test_a_stored_value_nobody_declares_is_surfaced_not_hidden(fleet):
-    """An orphan — declared once, since removed from runtime.yaml. Hiding it
-    leaves a live secret nothing accounts for."""
+    """An orphan — declared once, since removed from the declared refs. Hiding
+    it leaves a live secret nothing accounts for."""
     _put(fleet["client"], {"retired-thing": SECRET})
+    Agent.objects.filter(slug="ace").update(runtime_secrets=["canopy-pat", "gog-token", "nova-api-key"])
     rows = {r["name"]: r for r in fleet["client"].get("/api/agents/ace/credentials/status").json()}
     assert rows["retired-thing"]["set"] is True
     assert rows["retired-thing"]["declared"] is False
+
+
+def test_storing_a_value_declares_it(fleet):
+    """The owner adding a secret on the Credentials page declares it there and
+    then — not a "not declared" row with no way to fix it on the page."""
+    assert _put(fleet["client"], {"BAILEY_GH_APP_ID": "12345"}).status_code == 200
+    fleet["agent"].refresh_from_db()
+    assert fleet["agent"].runtime_secrets == ["canopy-pat", "gog-token", "nova-api-key", "BAILEY_GH_APP_ID"]
+    rows = {r["name"]: r for r in fleet["client"].get("/api/agents/ace/credentials/status").json()}
+    assert rows["BAILEY_GH_APP_ID"]["declared"] is True
 
 
 def test_an_agent_that_declares_nothing_shows_nothing_rather_than_guessing(fleet):

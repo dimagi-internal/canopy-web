@@ -523,6 +523,19 @@ def test_values_put_checks_kv_and_shape(fleet):
     assert AgentCredential.objects.get(name="new-ref").value_zk == vals[0]["value_zk"]
 
 
+def test_storing_a_value_declares_its_name(fleet):
+    assert _enable(fleet).status_code == 200
+    vals = zk_values(fleet, {"BAILEY_GH_APP_ID": "12345"})
+    res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": vals}, content_type="application/json")
+    assert res.status_code == 200
+    fleet.agent.refresh_from_db()
+    assert fleet.agent.runtime_secrets == ["CANOPY_WEB_PAT", "kindora", "BAILEY_GH_APP_ID"]
+    # Writing it again adds nothing.
+    fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": vals}, content_type="application/json")
+    fleet.agent.refresh_from_db()
+    assert fleet.agent.runtime_secrets.count("BAILEY_GH_APP_ID") == 1
+
+
 def test_before_enable_every_eligible_principal_is_pending(fleet):
     state = fleet.client.get(ZK).json()
     assert not state["enabled"]
