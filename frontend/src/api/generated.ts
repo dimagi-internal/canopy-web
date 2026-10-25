@@ -5153,6 +5153,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/pat-rotation/own": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * An agent rotates its OWN canopy token because it may have leaked
+         * @description Call this the moment you think your canopy token (CANOPY_WEB_PAT) left
+         *     where it belongs — sent to a third-party host, pasted into a chat or a log,
+         *     committed. Same rotation as the schedule: a new token goes into your stored
+         *     CANOPY_WEB_PAT (each box picks it up at its next `canopy cred sync`), the old
+         *     one keeps working for 24 h so your other boxes don't break, then is revoked.
+         *     `reason` is recorded with the rotation and in the settings audit, where your
+         *     owner sees it. Only the agent's own login; anyone else gets a 403.
+         */
+        readonly post: operations["rotate_own_pat"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credentials/{name}/reveal": {
         readonly parameters: {
             readonly query?: never;
@@ -24680,6 +24706,29 @@ export interface components {
              * @default 30
              */
             readonly period_days: number;
+        };
+        /**
+         * OwnPatRotateOut
+         * @description The rotation the agent just triggered on its own login. Never a token.
+         */
+        readonly OwnPatRotateOut: {
+            /**
+             * Rotated At
+             * Format: date-time
+             */
+            readonly rotated_at: string;
+            /** Old Token Revoked After */
+            readonly old_token_revoked_after?: string | null;
+            /** Detail */
+            readonly detail: string;
+        };
+        /** OwnPatRotateIn */
+        readonly OwnPatRotateIn: {
+            /**
+             * Reason
+             * @description What happened: where the token went, or why you think it is exposed.
+             */
+            readonly reason: string;
         };
         /**
          * AgentCredentialRevealOut
@@ -44941,6 +44990,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PatRotationOut"];
+                };
+            };
+        };
+    };
+    readonly rotate_own_pat: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OwnPatRotateIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OwnPatRotateOut"];
                 };
             };
         };

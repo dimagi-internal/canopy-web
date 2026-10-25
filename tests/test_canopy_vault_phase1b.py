@@ -585,3 +585,50 @@ def test_the_management_command_runs_a_tick(fleet, agent_login):
     assert "due: eva" in out.getvalue()
     call_command("rotate_canopy_pats", stdout=out)
     assert "rotated 1" in out.getvalue()
+
+
+# ---- an agent rotating its own token (it leaked it) ------------------------------------
+
+def _rotate_own(raw, reason="sent to a third-party CDN by a link checker"):
+    return Client().post("/api/agents/eva/pat-rotation/own", data={"reason": reason},
+                         content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
+
+
+def test_an_agent_rotates_its_own_token_at_once(fleet, agent_login):
+    res = _rotate_own(agent_login["raw"])
+    assert res.status_code == 200, res.content
+    body = res.json()
+    assert body["old_token_revoked_after"] and "Self-requested: sent to a third-party CDN" in body["detail"]
+    agent = Agent.objects.get(pk=fleet["agent"].pk)
+    new_raw = _stored_pat(agent)
+    assert new_raw != agent_login["raw"] and PersonalToken.lookup(new_raw).user_id == agent_login["login"].pk
+    # The leaked token keeps working only for the overlap, so the agent's other boxes catch up.
+    old = PersonalToken.objects.get(pk=agent_login["token"].pk)
+    assert old.expires_at is not None and old.expires_at - timezone.now() <= pat_rotation.OVERLAP
+    row = AgentPatRotation.objects.get()
+    assert (row.trigger, row.actor_id) == ("self", agent_login["login"].pk)
+    from apps.events.models import SettingChange
+
+    assert SettingChange.objects.filter(operation="rotate_own_pat").exists()
+
+
+def test_a_login_that_once_signed_in_may_still_rotate_its_own(fleet, agent_login):
+    # The workspace-owner guard is against minting for someone else's account.
+    get_user_model().objects.filter(pk=agent_login["login"].pk).update(last_login=timezone.now())
+    assert _rotate_own(agent_login["raw"]).status_code == 200
+
+
+def test_nobody_else_may_use_the_own_rotation(fleet, agent_login):
+    # Not the owner (they have /pat-rotation/rotate), not another member.
+    res = fleet["client"].post("/api/agents/eva/pat-rotation/own", data={"reason": "x" * 20},
+                               content_type="application/json")
+    assert res.status_code == 403
+    other = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
+    WorkspaceMembership.objects.create(workspace=fleet["ws"], user=other, role=WorkspaceMembership.EDITOR)
+    raw, _ = PersonalToken.create_for_user(user=other, label="o", ttl_days=0)
+    assert _rotate_own(raw).status_code in (403, 404)
+    assert not AgentPatRotation.objects.exists()
+
+
+def test_the_own_rotation_needs_a_reason(fleet, agent_login):
+    assert _rotate_own(agent_login["raw"], reason="oops").status_code == 422

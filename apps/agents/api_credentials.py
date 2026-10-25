@@ -69,6 +69,8 @@ from .schemas import (
     AgentVaultIn,
     AgentVaultOut,
     DeviceProofRequiredOut,
+    OwnPatRotateIn,
+    OwnPatRotateOut,
     PatRotationIn,
     PatRotationOut,
     SecretRequestIn,
@@ -969,6 +971,35 @@ def rotate_pat_now(request: HttpRequest, slug: str) -> PatRotationOut:
         raise HttpError(exc.status, str(exc)) from exc
     agent.refresh_from_db()
     return PatRotationOut(**pat_rotation.status(agent))
+
+
+@router.post("/{slug}/pat-rotation/own", response=OwnPatRotateOut,
+             summary="An agent rotates its OWN canopy token because it may have leaked")
+# the agent's own login only: rotating its own credential can only shorten the old
+# one's life, so it needs no admin — and an agent that leaked its token must be able
+# to act at once, not wait for a person (Jonathan, 2026-10-24)
+@gate("agent-login", setting=True, step_up="a token call by the agent's own login; carries no secret")
+def rotate_own_pat(request: HttpRequest, slug: str, payload: OwnPatRotateIn) -> OwnPatRotateOut:
+    """Call this the moment you think your canopy token (CANOPY_WEB_PAT) left
+    where it belongs — sent to a third-party host, pasted into a chat or a log,
+    committed. Same rotation as the schedule: a new token goes into your stored
+    CANOPY_WEB_PAT (each box picks it up at its next `canopy cred sync`), the old
+    one keeps working for 24 h so your other boxes don't break, then is revoked.
+    `reason` is recorded with the rotation and in the settings audit, where your
+    owner sees it. Only the agent's own login; anyone else gets a 403."""
+
+    agent = agent_for_read(request, slug)
+    if not agent.is_own_login(request.user):
+        raise HttpError(403, "only the agent's own login may rotate its own token; an admin uses /pat-rotation/rotate")
+    try:
+        row = pat_rotation.rotate(agent, trigger="self", actor=request.user)
+    except pat_rotation.RotationRefused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    row.detail = f"{row.detail}. Self-requested: {payload.reason}"[:500]
+    row.save(update_fields=["detail"])
+    audit.note_change(scope=f"agent:{agent.slug}/canopy-pat", before="current token",
+                      after=f"rotated by the agent itself: {payload.reason}"[:300])
+    return OwnPatRotateOut(rotated_at=row.created_at, old_token_revoked_after=row.revoke_after, detail=row.detail)
 
 
 @router.post("/{slug}/credentials/{name}/reveal", response=AgentCredentialRevealOut,

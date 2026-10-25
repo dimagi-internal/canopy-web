@@ -90,7 +90,10 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     if not AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists():
         return RotationRefused(f"{agent.slug} has no {CANOPY_PAT_REF} stored in canopy-web; "
                                "rotation replaces the stored value, so store it here first")
-    if agent.user.last_login is not None and (
+    # The guard is against minting a token for someone ELSE's account. The login
+    # rotating its own token (an agent that leaked it: `rotate_own_pat`) is that
+    # account acting on itself, so it passes.
+    if agent.user.last_login is not None and not agent.is_own_login(actor) and (
             actor is None or not perms.can(actor, agent.workspace, perms.OWN)):
         return RotationRefused(f"{agent.user.email} has signed in to canopy, so it may be a "
                                "person's account; only a workspace owner may rotate its token", 403)
