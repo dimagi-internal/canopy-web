@@ -180,6 +180,8 @@ class BearerTokenAuthMiddleware:
             request.runner_requirements = tuple(ctok.runner_requirements or ())
             # The one agent the site bound this arrival to, if it did.
             request.bound_agent_id = ctok.bound_agent_id
+            # The host grant redeemed on this token's arrival: its page's grant.
+            request.host_grant_id = ctok.host_grant_id
             request.auth_method = found.auth_method
             request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
@@ -227,6 +229,9 @@ class BearerTokenAuthMiddleware:
             request.auth_method = found.auth_method
             request.auth_credential = found.credential
 
+        # The host grant redeemed on this token's arrival — the grant of the page
+        # the panel is on (`canopy_sessions.services.note_host_grant`).
+        request.host_grant_id = dtok.host_grant_id
         # Safe with or without a session, and required with one: the frame
         # authenticates by header and holds no CSRF cookie for canopy, so its
         # writes (declaring page actions, posting a result) would 403 otherwise.

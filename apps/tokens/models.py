@@ -514,6 +514,13 @@ class DelegatedToken(models.Model):
     #: allow-list, as before the claim existed.
     bound_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
                                     blank=True, related_name="+")
+    #: The host grant redeemed on the SAME arrival as this token (`HostGrant`), or
+    #: null. It is the page's grant: what the panel on that page does in a
+    #: conversation with this token is stamped with it (`canopy_sessions.services.
+    #: note_host_grant`), so the agent reaches the site through the grant of the page
+    #: the conversation is on — not whichever of the person's pages minted last.
+    host_grant = models.ForeignKey("tokens.HostGrant", on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
 
     class Meta:
         db_table = "delegated_tokens"
@@ -521,12 +528,13 @@ class DelegatedToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, user, ttl_seconds, assurance: str = "delegated",
-              runner_requirements=(), bound_agent=None):
+              runner_requirements=(), bound_agent=None, host_grant=None):
         from django.utils import timezone
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, user=user, assurance=assurance,
             runner_requirements=list(runner_requirements), bound_agent=bound_agent,
+            host_grant=host_grant,
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
         )
@@ -696,6 +704,10 @@ class ContactToken(models.Model):
     #: reason, as `DelegatedToken.bound_agent`.
     bound_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
                                     blank=True, related_name="+")
+    #: The host grant redeemed on the same arrival — the same field, for the same
+    #: reason, as `DelegatedToken.host_grant`.
+    host_grant = models.ForeignKey("tokens.HostGrant", on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
 
     class Meta:
         db_table = "contact_tokens"
@@ -703,13 +715,13 @@ class ContactToken(models.Model):
 
     @classmethod
     def issue(cls, *, app, contact, ttl_seconds, runner_requirements=(), verified_email="",
-              bound_agent=None):
+              bound_agent=None, host_grant=None):
         from django.utils import timezone
 
         raw = cls.PREFIX + secrets.token_urlsafe(32)
         token = cls.objects.create(
             app=app, contact=contact, runner_requirements=list(runner_requirements),
-            bound_agent=bound_agent,
+            bound_agent=bound_agent, host_grant=host_grant,
             verified_email=verified_email or "",
             token_hash=hash_token(raw),
             expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
@@ -765,6 +777,16 @@ class HostGrant(models.Model):
     `user` say which canopy principal that is, so a turn resolves its grant from
     who asked (`turn.initiator_*`), never from a session id a caller supplied.
 
+    **One row per arrival, not per visitor.** Each page's panel arrives on its own
+    (and re-arrives every few minutes), and a host may hold a grant to what THAT
+    page shows (connect-labs holds a data page's agent to its selection). Kept as
+    one row per visitor, the latest arrival from ANY of their pages overwrote it,
+    and a conversation on one page read through another page's grant. So each
+    arrival is its own row, the token minted with it points at it
+    (`DelegatedToken.host_grant`), and a conversation remembers the grant of the
+    page that last acted in it (`host_grants.grant_for(session=)`). Expired rows
+    are pruned at the visitor's next arrival.
+
     There is no refresh token and no fallback: when `expires_at` passes, the
     host is out of reach for that visitor until they are back on the page and
     the widget re-mints (a fresh ID-JAG arrives with it).
@@ -789,10 +811,9 @@ class HostGrant(models.Model):
     #: makes every stored token useless, and this says so instead of a 401.
     dpop_jkt = models.CharField(max_length=64)
     #: The runner requirements (`sensitive_data`) of the arrival that minted this grant.
-    #: A grant is per (site, visitor), NOT per conversation, so it can be
-    #: reached from a conversation no sensitive-data arrival ever stamped; the gateway
-    #: enforces these alongside the session's own and stamps them onto it.
-    #: Replaced by each redemption: the latest arrival is the host's word.
+    #: A grant is per arrival, NOT per conversation, so it can be reached from a
+    #: conversation no sensitive-data arrival ever stamped; the gateway enforces these
+    #: alongside the session's own and stamps them onto it.
     runner_requirements = models.JSONField(default=list, blank=True)
     #: The agent the arrival that minted this grant was BOUND to (`canopy_agent`):
     #: the page chose it, and granted these scopes with it in mind. Only that
@@ -806,16 +827,9 @@ class HostGrant(models.Model):
 
     class Meta:
         db_table = "host_grants"
-        # One grant per (site, visitor) for unbound arrivals, and one per agent
-        # for bound ones — so a data page's grant never overwrites the
-        # marketplace's, or the reverse.
-        constraints = [
-            models.UniqueConstraint(fields=["app", "subject"], condition=models.Q(agent__isnull=True),
-                                    name="one_host_grant_per_visitor"),
-            models.UniqueConstraint(fields=["app", "subject", "agent"],
-                                    condition=models.Q(agent__isnull=False),
-                                    name="one_bound_host_grant_per_visitor_agent"),
-        ]
+        # One row per arrival (see the class docstring); the visitor's grants at a
+        # site are read newest first.
+        indexes = [models.Index(fields=["app", "subject", "-updated_at"], name="host_grant_visitor_idx")]
 
     def __str__(self) -> str:  # pragma: no cover - never shows the token
         return f"host grant {self.app_id}:{self.subject} scope={self.scope!r}"

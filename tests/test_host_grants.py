@@ -243,9 +243,9 @@ def test_the_grant_remembers_the_runner_requirements_it_was_minted_under(site, h
                 **{contract.RUNNER_REQUIREMENTS_CLAIM: ["sensitive_data"]})
     assert r.status_code == 200, r.content
     assert HostGrant.objects.get().runner_requirements == ["sensitive_data"]
-    # A later arrival is the host's current word: it replaces, like the token.
+    # A later arrival is its own grant, carrying its own requirements.
     r = _arrive(site, id_jag=_id_jag(site["priv"]))
-    assert HostGrant.objects.get().runner_requirements == []
+    assert HostGrant.objects.order_by("-pk").first().runner_requirements == []
 
 
 def test_no_id_jag_means_no_grant_and_the_arrival_is_unchanged(site, host):

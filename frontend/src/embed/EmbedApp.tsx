@@ -731,9 +731,12 @@ function EmbedStart({
                 key={s.id}
                 className="flex items-stretch rounded-lg border border-border bg-card hover:bg-muted"
               >
+                {/* Which conversation the row opens: private rows all read "Private
+                    conversation", so a script (or a test) picks one by its id. */}
                 <button
                   type="button"
                   onClick={() => onOpen(s.id)}
+                  data-session-id={s.id}
                   className="min-w-0 flex-1 px-3 py-2 text-left"
                 >
                   <span className="block text-[11px] text-muted-foreground">{whenLabel(s.at)}</span>

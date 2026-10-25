@@ -339,6 +339,11 @@ class RealtimeAuthMiddleware:
         scope["bound_agent_id"] = (
             delegated.bound_agent_id if user is not None and delegated else None
         )
+        # The host grant redeemed on the token's arrival (its page's grant), read the
+        # same way: a send on this socket stamps it (`services.note_host_grant`).
+        scope["host_grant_id"] = (
+            delegated.host_grant_id if user is not None and delegated else None
+        )
         # Only when nothing resolved a user. A contact and a user are never both
         # present, so a consumer cannot accidentally read the wrong one — and
         # `scope["user"]` stays anonymous for a contact, so any consumer that

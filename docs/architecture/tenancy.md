@@ -184,7 +184,11 @@ failure again.
   chain: the host issues an ID-JAG at arrival, canopy redeems it (`apps/host_grants/host_grants.py`,
   stored DPoP-bound in `HostGrant`) and attaches it server-side in `site_tools`/`site_call`
   (`apps/host_grants/host_gateway.py`). No runner holds it; an expired grant is a refusal, never a
-  fallback to the agent's credential. canopy's client identity is the CIMD at
+  fallback to the agent's credential. **A grant is one page's arrival, not the visitor's:** each
+  arrival is its own `HostGrant` row, the token minted with it points at it, and a conversation
+  reads through the grant of the page that last acted in it (a send, a page-state declaration —
+  `canopy_sessions.services.note_host_grant`, read by `host_grants.grant_for(session=)`), so a
+  host that holds a page's grant to what that page shows sees each tab's own. canopy's client identity is the CIMD at
   `/oauth/client.json` + `/oauth/jwks.json` (keys `CANOPY_OAUTH_CLIENT_KEY` /
   `CANOPY_OAUTH_DPOP_KEY`). Contract: [`sdk/python/README.md` § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1).
 - Guarded by `tests/test_contact_surface_is_bounded.py`.

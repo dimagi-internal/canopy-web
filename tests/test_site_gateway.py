@@ -397,13 +397,15 @@ def test_the_agents_own_bound_grant_wins_over_an_unbound_one(w):
     assert grant_for(w["app"], agent=None, contact=w["contact"]) == unbound
 
 
-def test_one_visitor_may_hold_one_grant_per_bound_agent_and_one_unbound(w):
-    from django.db import IntegrityError, transaction
+def test_a_turn_reaches_the_site_through_its_own_pages_grant_not_the_latest(w):
+    """Each of the visitor's pages arrives with its own grant, which a host may hold
+    to what that page shows. A turn in a conversation reads through the grant of the
+    page that conversation is on (stamped as that page acted in it), even after
+    another of the visitor's pages arrived later."""
+    from apps.canopy_sessions.services import note_host_grant
 
-    labsdata = _labsdata(w)
-    _grant(w)
-    _grant(w, agent=labsdata)
-    _grant(w, agent=w["agent"])
-    for agent in (None, labsdata):
-        with pytest.raises(IntegrityError), transaction.atomic():
-            _grant(w, agent=agent)
+    this_page = _grant(w, scope="data:read")
+    note_host_grant(w["session"], this_page.pk, contact=w["contact"])
+    _grant(w, scope="data:read", expires_at=timezone.now() + timedelta(minutes=14))  # another tab, later
+    ctx = host_gateway.resolve(str(w["turn"].pk))
+    assert ctx._token == HOST_TOKEN and ctx.expires_at == this_page.expires_at
