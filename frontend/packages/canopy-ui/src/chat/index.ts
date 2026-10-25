@@ -53,6 +53,33 @@ export {
   type TurnNotice,
 } from "./turnStatus";
 
+// What a turn did: the live activity line, its to-do list, the fold line and
+// the files it changed — exported so a host can say the same outside the panel.
+export {
+  currentActivity,
+  describeCall,
+  filesChanged,
+  foldLine,
+  formatElapsed,
+  latestTodos,
+  planFold,
+  segmentTurns,
+  summariseTurn,
+  todosOf,
+  type ActivityText,
+  type FileChange,
+  type Todo,
+  type TodoStatus,
+  type TurnFold as TurnFoldPlan,
+  type TurnSegment,
+  type TurnSummary,
+} from "./turnWork";
+export { ActivityLine, type ActivityLineProps } from "./ActivityLine";
+export { TodoChecklist, TodoWriteRow } from "./TodoChecklist";
+export { FilesChanged, TurnFold } from "./TurnFold";
+export { FindBar } from "./FindBar";
+export { findTextRanges } from "./transcriptFind";
+
 // Composer persistence (survives unmount / tab close)
 export {
   DRAFT_STORAGE_TTL_MS,

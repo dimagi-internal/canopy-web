@@ -40,9 +40,7 @@ export function groupToolRuns(
   };
 
   for (const row of rows) {
-    // A call with an MCP Apps View, or one asking for a secret, is something the
-    // person ACTS on, so it is never folded into a collapsed run.
-    if (row.kind === "tool_pair" && !row.result?.app && !row.result?.secret_request) {
+    if (row.kind === "tool_pair" && !isActionableRow(row)) {
       run.push(row);
       continue;
     }
@@ -51,6 +49,13 @@ export function groupToolRuns(
   }
   flush();
   return out;
+}
+
+/** A call with an MCP Apps View, or one asking for a secret, is something the
+ *  person ACTS on, so it is never folded into a collapsed run (nor behind a
+ *  finished turn's fold, `turnWork.planFold`). */
+export function isActionableRow(row: ChatRow): boolean {
+  return row.kind === "tool_pair" && Boolean(row.result?.app || row.result?.secret_request);
 }
 
 /** True when any call in the run is still running — a collapsed group should say
