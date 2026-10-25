@@ -150,9 +150,26 @@ def request_action(
     default argument, which binds once at import — so the module constant that
     every caller and test treats as the knob was not one, and the tests that
     set it to shrink a 20-second wait were quietly waiting the full 20.
+
+    The steps are public for an async caller (`apps/mcp/page_tools.py`), which
+    must run each one as its own short call on the shared sync thread: waiting
+    there for the whole timeout holds up the chat socket that delivers this
+    action's doorbell, so the page would hear it only after the wait expired.
     """
     if timeout is None:
         timeout = DEFAULT_TIMEOUT_SECONDS
+    action = begin_action(session=session, name=name, args=args, user=user)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        settled = wait_once(action)
+        if settled is not None:
+            return settled
+    expire(action, timeout)
+    raise AssertionError("unreachable")  # pragma: no cover - expire raises
+
+
+def begin_action(*, session: Session, name: str, args: dict, user) -> PageAction:
+    """Check the action against the page's declaration, record it, ring the page."""
     available = {a["name"]: a for a in declared_actions(session)}
     if not available:
         raise PageActionError(
@@ -185,21 +202,29 @@ def request_action(
         "type": "session.page_action",
         "action": {"id": str(action.id), "name": name, "args": args or {}},
     })
+    return action
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        time.sleep(POLL_INTERVAL_SECONDS)
-        action.refresh_from_db()
-        if action.status == PageAction.DONE:
-            if sensitive:
-                _forget(action)
-            return action
-        if action.status == PageAction.FAILED:
-            error = action.error
-            if sensitive:
-                _forget(action)
-            raise PageActionError("refused", error or "the page refused the action")
 
+def wait_once(action: PageAction) -> PageAction | None:
+    """One poll interval: the settled action, None while it is pending, or the page's
+    refusal raised."""
+    time.sleep(POLL_INTERVAL_SECONDS)
+    action.refresh_from_db()
+    sensitive = sensitivity.is_sensitive(action.session)
+    if action.status == PageAction.DONE:
+        if sensitive:
+            _forget(action)
+        return action
+    if action.status == PageAction.FAILED:
+        error = action.error
+        if sensitive:
+            _forget(action)
+        raise PageActionError("refused", error or "the page refused the action")
+    return None
+
+
+def expire(action: PageAction, timeout: float) -> None:
+    """The wait is over: mark a still-pending action expired, and say so."""
     PageAction.objects.filter(pk=action.pk, status=PageAction.PENDING).update(
         status=PageAction.EXPIRED, resolved_at=timezone.now()
     )

@@ -34,6 +34,7 @@ mechanism.
 from __future__ import annotations
 
 import logging
+import time
 
 from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
@@ -155,7 +156,7 @@ class PageActionTool(Tool):
             # its page.
             if sensitivity.is_sensitive(session) and not _is_own_conversation(session):
                 raise page_actions.PageActionError("refused", sensitivity.NOT_IN_IT_PAGE)
-            return page_actions.request_action(
+            return page_actions.begin_action(
                 session=session,
                 name=self.action_name,
                 args=arguments or {},
@@ -164,6 +165,18 @@ class PageActionTool(Tool):
 
         try:
             action = await sync_to_async(go, thread_sensitive=True)()
+            # The wait, one poll at a time, each its own short call: the shared sync
+            # thread is where the chat socket delivers this action's doorbell, and
+            # held for the whole wait the page heard it only once the wait had
+            # expired. It ran, answered within a second, and found the row expired.
+            timeout = page_actions.DEFAULT_TIMEOUT_SECONDS
+            deadline = time.monotonic() + timeout
+            settled = None
+            while settled is None and time.monotonic() < deadline:
+                settled = await sync_to_async(page_actions.wait_once, thread_sensitive=True)(action)
+            if settled is None:
+                await sync_to_async(page_actions.expire, thread_sensitive=True)(action, timeout)
+            action = settled
         except page_actions.PageActionError as exc:
             # A refusal must reach the MODEL as words it can act on. `ToolError`
             # is what FastMCP renders into `isError` content; letting the

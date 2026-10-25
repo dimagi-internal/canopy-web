@@ -157,3 +157,47 @@ def test_site_call_leaves_a_page_named_tool_this_page_does_not_declare_to_the_ga
         sg.call(host, "site_call", {"tool": "page_openItem", "arguments": {}})
     assert "not something you may use" in str(err.value)
     assert not MCPAuditLog.objects.filter(tool="site_call", error="page_action").exists()
+
+
+# --- the wait never holds the doorbell up ---------------------------------------------
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_wait_leaves_the_shared_sync_thread_free_for_the_doorbell(monkeypatch):
+    """The page's doorbell is delivered by the chat socket, whose database work runs on
+    the shared (thread-sensitive) sync thread. The tool's 20-second wait for the answer
+    ran there too, so the doorbell reached the page only when the wait expired: the
+    action ran, answered at once, and found its row expired (labs Data page, prod)."""
+    import asyncio
+
+    from asgiref.sync import sync_to_async
+
+    w = sg.world()
+    page_actions.set_declared_actions(w["session"], [SHOW])
+    monkeypatch.setattr(page_actions, "DEFAULT_TIMEOUT_SECONDS", 3)
+    monkeypatch.setattr(page_actions, "POLL_INTERVAL_SECONDS", 0.05)
+
+    def doorbell_then_page_answers():
+        # What the socket does with the frame, on the thread-sensitive executor: find
+        # the pending row; the page answers it.
+        pending = PageAction.objects.filter(session=w["session"], status=PageAction.PENDING).first()
+        if pending is None:
+            return False
+        page_actions.resolve(pending, result={"shown": True})
+        return True
+
+    async def go():
+        call = asyncio.ensure_future(mcp.call_tool("page_showQuery", {"sql": "select 1"}))
+        answered = False
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            answered = await asyncio.wait_for(
+                sync_to_async(doorbell_then_page_answers, thread_sensitive=True)(), timeout=1)
+            if answered:
+                break
+        return answered, await call
+
+    with sg.visitor(w):
+        answered, out = async_to_sync(go)()
+    assert answered
+    assert out.structured_content == {"result": {"shown": True}}
