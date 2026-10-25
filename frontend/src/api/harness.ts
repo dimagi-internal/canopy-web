@@ -24,8 +24,18 @@ function toRunner(row: unknown): RunnerOut {
 // so a page that only needs it to be roughly current (the chat's offline banner)
 // reuses one a poller such as /ide just made instead of asking again per chat.
 let lastFleet: { at: number; rows: RunnerOut[] } | null = null
+// The read in flight, shared: /supervisor and the sessions list it embeds both
+// ask for the fleet as they mount, and two 1-3s reads of one list is one too many.
+let fleetInFlight: Promise<RunnerOut[]> | null = null
 
-export async function listRunners(): Promise<RunnerOut[]> {
+export function listRunners(): Promise<RunnerOut[]> {
+  fleetInFlight ??= readFleet().finally(() => {
+    fleetInFlight = null
+  })
+  return fleetInFlight
+}
+
+async function readFleet(): Promise<RunnerOut[]> {
   const res = await apiV2.GET('/api/harness/runners/')
   // Array.from rebuilds a real outer array; toRunner is the per-row step above.
   const rows = Array.from(unwrap(res, 'listRunners'), toRunner)

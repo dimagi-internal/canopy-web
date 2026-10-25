@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { closeSession, listSessions, type ChatSession } from '@/api/chat'
+import { closeSession, listSessions, type ChatSession, type SessionState } from '@/api/chat'
 import { listMyAgents, type AgentOut } from '@/api/agents'
-import { listRunners, type RunnerOut } from '@/api/harness'
+import { listRunners, recentRunners, type RunnerOut } from '@/api/harness'
+import { rememberListed } from '@/pages/chat/sessionCache'
 import { relativeAge } from '@/lib/relativeAge'
 import { usePolled } from '@/hooks/usePolled'
 import { sessionTargetLabel } from './sessionTargetLabel'
@@ -50,6 +51,33 @@ function FilterToggle({
   )
 }
 
+// What this tab last listed, per filter. Opening a chat and coming back
+// remounts the panel; it paints these rows at once and refreshes underneath,
+// instead of "Loading sessions…" every time.
+const listedBefore = new Map<SessionState, ChatSession[]>()
+
+// How old a fleet read another page made may be and still fill the
+// "+ New chat" menu, which only needs the runners' declared repos.
+const FLEET_REUSE_MS = 60_000
+
+/** Tests only: start the next mount from nothing. */
+export function forgetListed(): void {
+  listedBefore.clear()
+}
+
+const listState = (archived: boolean): SessionState => (archived ? 'all' : 'active')
+
+/** The list as the server has it now, kept for the next mount, and each row
+ *  marked so opening it skips the private-conversation read (as /ide's do). */
+function readList(archived: boolean): Promise<ChatSession[]> {
+  const state = listState(archived)
+  return listSessions(state).then((rows) => {
+    listedBefore.set(state, rows)
+    rememberListed(rows)
+    return rows
+  })
+}
+
 /**
  * Reusable, CROSS-WORKSPACE chat session surface: a findable list of your chat
  * sessions (continue any from any device) + "New chat with <agent>". Each session
@@ -65,10 +93,10 @@ export function ChatSessionsPanel({
   agents?: AgentOut[]
   heading?: string
 }) {
-  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [sessions, setSessions] = useState<ChatSession[]>(() => listedBefore.get('active') ?? [])
   const [agents, setAgents] = useState<AgentOut[]>(agentsProp ?? [])
-  const [runners, setRunners] = useState<RunnerOut[] | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [runners, setRunners] = useState<RunnerOut[] | null>(() => recentRunners(FLEET_REUSE_MS))
+  const [loading, setLoading] = useState(() => !listedBefore.has('active'))
   const [sort, setSort] = useState<SessionSort>('time')
   const [showArchived, setShowArchived] = useState(false)
   // Sessions whose bound runner is paused or offline are held back by default:
@@ -88,38 +116,65 @@ export function ChatSessionsPanel({
   const [transferNote, setTransferNote] = useState<{ text: string; error: boolean } | null>(null)
 
 
-  useEffect(() => {
-    if (agentsProp) setAgents(agentsProp)
-  }, [agentsProp])
-
+  // The list, the fleet and the agents load on their own: the list is the page
+  // (~0.5s), while the fleet (1-3s) and the agents only feed the "+ New chat"
+  // menu, so neither holds the rows back. A list read before paints at once.
   useEffect(() => {
     let live = true
-    setLoading(true)
-    // Sessions + runners always load (the runners' reported repos feed the
-    // "+ New chat" dropdown's repo chats); agents load unless provided by a prop.
-    const jobs: Promise<unknown>[] = [listSessions(showArchived ? 'all' : 'active'), listRunners()]
-    if (!agentsProp) jobs.push(listMyAgents({ limit: 100 }))
-    Promise.allSettled(jobs).then((results) => {
-      if (!live) return
-      const [s, p, a] = results
-      if (s.status === 'fulfilled') setSessions(s.value as ChatSession[])
-      else setError(s.reason instanceof Error ? s.reason.message : 'failed to load sessions')
-      setRunners(p.status === 'fulfilled' ? ((p.value as RunnerOut[] | undefined) ?? []) : [])
-      if (!agentsProp && a && a.status === 'fulfilled') {
-        setAgents((a.value as { items: AgentOut[] }).items)
-      }
-      setLoading(false)
-    })
+    const before = listedBefore.get(listState(showArchived))
+    if (before) setSessions(before)
+    setLoading(!before)
+    readList(showArchived)
+      .then((rows) => {
+        if (live) setSessions(rows)
+      })
+      .catch((err: unknown) => {
+        if (live && !before) setError(err instanceof Error ? err.message : 'failed to load sessions')
+      })
+      .finally(() => {
+        if (live) setLoading(false)
+      })
     return () => {
       live = false
     }
-  }, [agentsProp, showArchived])
+  }, [showArchived])
+
+  useEffect(() => {
+    if (recentRunners(FLEET_REUSE_MS)) return
+    let live = true
+    listRunners()
+      .then((rows) => {
+        if (live) setRunners(rows ?? [])
+      })
+      .catch(() => {
+        if (live) setRunners([])
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (agentsProp) {
+      setAgents(agentsProp)
+      return
+    }
+    let live = true
+    listMyAgents({ limit: 100 })
+      .then((page) => {
+        if (live) setAgents(page.items)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [agentsProp])
 
   // A slow REST refresh keeps the unified list current (the live push into the
   // list is a deferred follow-up; per-row liveness is live inside ChatPanel).
   // A failed refresh keeps last-good; the mount fetch owns first-error surfacing.
   usePolled(
-    () => listSessions(showArchived ? 'all' : 'active').then(setSessions).catch(() => {}),
+    () => readList(showArchived).then(setSessions).catch(() => {}),
     { ms: 20_000, deps: [showArchived], immediate: false },
   )
 
@@ -152,7 +207,7 @@ export function ChatSessionsPanel({
         const message = closeResultMessage(result, s)
         if (message) setCloseError(message)
         else if (result.closing) setPendingClose((prev) => ({ ...prev, [s.id]: Date.now() }))
-        else setSessions(await listSessions(showArchived ? 'all' : 'active'))
+        else setSessions(await readList(showArchived))
       } catch {
         setCloseError('Couldn’t close this session')
       } finally {
@@ -180,7 +235,7 @@ export function ChatSessionsPanel({
         return
       }
       setTransferNote({ text: `Moved to ${result?.runner}.${handoffNote(result)}`, error: false })
-      void listSessions(showArchived ? 'all' : 'active').then(setSessions)
+      void readList(showArchived).then(setSessions)
     },
     [showArchived],
   )
@@ -190,7 +245,7 @@ export function ChatSessionsPanel({
   const waitingOnCloses = Object.keys(pendingClose).length > 0
   usePolled(
     () =>
-      listSessions(showArchived ? 'all' : 'active')
+      readList(showArchived)
         .then((listed) => {
           setSessions(listed)
           setPendingClose((prev) => {
