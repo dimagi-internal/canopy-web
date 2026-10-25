@@ -166,6 +166,35 @@ describe('a send carries its own text and waits for a receipt', () => {
     expect(hook.result.current.state.messages[0].id).toBe('m9')
   })
 
+  it('a send with a file meets its snapshot echo, attachment note and all', () => {
+    const hook = user()
+    act(() => hook.result.current.updateDraft('got this error: [Image #1]'))
+    act(() => hook.result.current.sendChat())
+    act(() => FakeSocket.last!.receive({
+      event: 'draft.committed',
+      data: { draft_id: 'd1', user_message_id: 'transient:abc', client_id: sentSend().client_id },
+    }))
+    // The transcript echoes what was typed plus the runner's attachment note,
+    // run together on one line; a reconnect snapshot holds that copy.
+    act(() => FakeSocket.last!.receive({
+      ...SNAPSHOT,
+      data: {
+        ...SNAPSHOT.data,
+        messages: [{
+          id: 'm9', turn_index: 90001, role: 'user', content: {},
+          plaintext: 'got this error: [Image #1]The user attached the following file. Read it with the Read tool '
+            + 'before replying:- [Image #1] /tmp/1-image.png',
+          status: 'complete', error_detail: null, started_at: null, completed_at: null, created_at: '',
+        }, {
+          id: 'm10', turn_index: 90002, role: 'assistant', content: {}, plaintext: 'Looking at it.',
+          status: 'complete', error_detail: null, started_at: null, completed_at: null, created_at: '',
+        }],
+      },
+    }))
+    // One row for the line, above its reply — not a second copy at the bottom.
+    expect(hook.result.current.state.messages.map((m) => m.id)).toEqual(['m9', 'm10'])
+  })
+
   it('a line the agent already read is not carried below its own reply', () => {
     const hook = user()
     act(() => hook.result.current.updateDraft('can you check the jj runner'))
