@@ -63,7 +63,7 @@ def _declared(agent, name: str) -> str:
     declared = services.declared_credential_names(agent)
     if name not in declared:
         raise RequestError(422, "not_declared",
-                           f"{name or '(empty)'} is not a secret {agent.slug} declares in runtime.yaml"
+                           f"{name or '(empty)'} is not a secret {agent.slug} declares in its vault"
                            + (f" (declared: {', '.join(sorted(declared))})" if declared
                               else " — it declares none"))
     return name

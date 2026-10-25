@@ -21,8 +21,10 @@ request: an email and a Web Push, each linking to the agent's Credentials.
   its own scheduled credential refresh, also expected without a turn. The owner's
   own token proved by their own laptop's device key is the owner opening a
   session there — an `admin` read, not a box (2026-10-18).
-* `undeclared-ref` — a read that asks for, or is handed, a ref the agent's
-  runtime.yaml does not declare.
+* `undeclared-ref` — a read that asks for, or is handed, a ref the agent does not
+  declare: not among its declared secrets on canopy-web (`runtime_secrets`, written by
+  `canopy agent vault` — the vault is the one declaration since 2026-10-22; the repo's
+  runtime.yaml no longer lists secrets) nor supplied by a layered workspace vault.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one
   agent inside a 5-minute window. Counted per resolve request, not per ref: one
   unscoped resolve of ACE hands out 45 refs and is one read.
@@ -117,7 +119,7 @@ def after_read(agent, request, *, via: str, turn_id: str, asked: set[str] | None
                            "(no X-Canopy-Turn-Id)",
                     refs=sorted(handed)))
         # A name a workspace vault layered under the agent holds is declared by that
-        # vault, not missing from runtime.yaml (Jonathan, 2026-10-22: the gog OAuth
+        # vault, not missing from the agent's own declaration (Jonathan, 2026-10-22: the gog OAuth
         # clients are the same for every dimagi agent and live in the workspace vault).
         from . import workspace_vaults  # noqa: PLC0415 — a cycle: zk imports this module, workspace_vaults imports zk
         declared = services.declared_credential_names(agent) | workspace_vaults.layered_names(agent)
@@ -269,9 +271,10 @@ _WHY = {
                       "proof: if nobody was checking, treat it as a read outside a turn — "
                       "pause the box and revoke its token."),
     "undeclared-ref": ("Canopy watches for this because an agent should only ask for the "
-                       "secrets its runtime.yaml declares. Usually the agent's repo is "
-                       "missing a declaration, so add those names to its runtime.yaml. If "
-                       "the agent should never use them, find out who asked."),
+                       "secrets declared in its vault on Canopy (its repo's runtime.yaml no "
+                       "longer lists secrets). If the agent needs it, store it in the agent's "
+                       "vault (`canopy agent vault`), which declares it. If the agent "
+                       "should never use it, find out who asked."),
     "burst": ("Canopy watches for this because a normal turn reads an agent's secrets a "
               "few times, not dozens; a burst can mean a loop or someone harvesting them. "
               "Check which box and turn the reads came from."),

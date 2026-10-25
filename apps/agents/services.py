@@ -1740,7 +1740,8 @@ def credential_reads(agent, name: str, *, limit: int = 100) -> list[dict]:
 
 
 def declared_credential_names(agent) -> set[str]:
-    """Every ref the agent's runtime.yaml declares: `runtime_secrets` (the names)
+    """Every ref the agent declares: `runtime_secrets` (the names, written by
+    `canopy agent vault` — historically mirrored from the repo's runtime.yaml)
     plus `runtime_sources` (where each lives). The set `?refs=` is scoped to."""
     names = {str(n).strip() for n in (agent.runtime_secrets or []) if str(n).strip()}
     names |= {str(n).strip() for n in (agent.runtime_sources or {}) if str(n).strip()}
