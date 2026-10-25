@@ -176,7 +176,8 @@ def resolve(raw: str) -> Grant | None:
 
 def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | None:
     """A sensitive turn's grant: at most the canopy tools a `data: sensitive`
-    capability may hold (`sensitive_data.SENSITIVE_CANOPY_TOOLS`), and only while
+    capability may hold (`sensitive_data.SENSITIVE_CANOPY_TOOLS`, and its page's own
+    actions), and only while
     its capability still says `data: sensitive`. Asked on every call, so an
     interface edited mid-turn — the switch turned off, a tool added — narrows the
     token at once rather than widening it: a sensitive turn never reaches a tool
@@ -185,4 +186,8 @@ def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | No
         return None
     allowed = sorted(name for name in sensitive_data.SENSITIVE_CANOPY_TOOLS
                      if any(fnmatch.fnmatchcase(name, g) for g in globs))
+    # The page's own actions, when the capability lists them (a site capability always
+    # does: `interface.PAGE_TOOLS`) — never a wider glob than `page_*`, whatever it says.
+    if any(fnmatch.fnmatchcase(sensitive_data.PAGE_TOOL_GLOB, g) for g in globs):
+        allowed.append(sensitive_data.PAGE_TOOL_GLOB)
     return Grant(turn=current, tool_globs=allowed, sensitive=True, **kw)

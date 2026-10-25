@@ -28,8 +28,10 @@ from __future__ import annotations
 from asgiref.sync import sync_to_async
 from fastmcp.exceptions import ToolError
 
+from apps.mcp import page_tools
 from apps.mcp.audit import current_user_id, write_audit
 from apps.mcp.server import mcp
+from apps.mcp.turn_scope import caller_turn_ids
 
 
 def _current_turn_id() -> str:
@@ -55,6 +57,23 @@ async def _context(tool: str):
         raise ToolError(exc.message) from None
 
 
+def _page_action_named(tool: str) -> str:
+    """The `page_*` tool `tool` names when it is one of the actions this conversation's
+    page declares (written `page_<name>`, with or without an MCP server prefix), else "".
+
+    Only a name the page declares matches: a site may have tools of its own whose
+    names start `page_` (Labs' `page_context`), and those still go to the site. A bare
+    action name is left alone too — it could as well be one of the site's tools."""
+    from apps.host_grants import host_gateway  # noqa: PLC0415 — as site_call: the gateway loads with a call
+
+    turn_ids = caller_turn_ids()
+    if not turn_ids:
+        return ""
+    declared = page_tools.declared_tool_names(turn_ids)
+    name = host_gateway.host_tool_name(tool)
+    return name if name.startswith(page_tools.TOOL_PREFIX) and name in declared else ""
+
+
 @mcp.tool
 async def site_tools() -> dict:
     """The tools of the site this visitor is on that you may use for them.
@@ -66,6 +85,10 @@ async def site_tools() -> dict:
 
     Refused when the visitor has left the page (their access is short-lived and
     never renewed without them): tell them you need them back on the page.
+
+    What the PAGE itself can do (show a query, open a row, fill a form) is not
+    here: those are canopy's own `page_*` tools, called directly — never through
+    `site_call`.
     """
     from apps.host_grants import host_gateway
 
@@ -93,6 +116,18 @@ async def site_call(tool: str, arguments: dict | None = None) -> dict:
     """
     from apps.host_grants import host_gateway
 
+    page_tool = await sync_to_async(_page_action_named, thread_sensitive=True)(tool)
+    if page_tool:
+        # Not the site's: one of the actions the person's PAGE declared, which runs in
+        # their tab through canopy's own tool of that name. Said by name so a wrong
+        # guess corrects itself instead of reading as the site refusing the person.
+        await write_audit(user_id=current_user_id(), tool="site_call",
+                          args_summary=f"tool={host_gateway.host_tool_name(tool)}",
+                          ok=False, error="page_action")
+        raise ToolError(
+            f"{tool} is an action of the page the person is on, not one of the site's tools: "
+            f"call canopy's own tool `{page_tool}` directly (load it with ToolSearch if it is "
+            "not in your list). It runs in their open tab, as them.")
     ctx = await _context("site_call")
     # `app=<pk>` names the Connected site unambiguously (a site NAME is unique
     # only per tenant); the Connected sites table reads it for real-traffic health.

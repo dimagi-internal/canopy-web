@@ -654,9 +654,11 @@ THE predicate; every surface below asks it, one test each in
   mirroring (`slack.relay`), export (403), the usage scan's title.
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
   fleet's transcript readers find none to read.
-- **A sensitive turn's token reaches four tools:** its caller token's tools are the
+- **A sensitive turn's token reaches a fixed few tools:** its caller token's tools are the
   capability's globs ∩ `sensitive_data.SENSITIVE_CANOPY_TOOLS` (`current_page`,
-  `who_is_asking`, `site_tools`, `site_call`), whatever the interface lists; it resolves to
+  `who_is_asking`, `site_tools`, `site_call`, `site_read`) plus its own page's actions
+  (`page_*`, `sensitive_data.sensitive_tool`: each runs in its person's tab and answers
+  only the turn, so nothing leaves its people), whatever the interface lists; it resolves to
   nothing once the capability stops saying `data: sensitive` (re-read on every call) or the
   turn is not confined (`caller_tokens._sensitive_grant`, `mcp/turn_scope.py`). So a
   sensitive turn creates no schedule, task or turn of its own.

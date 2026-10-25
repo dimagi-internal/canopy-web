@@ -16,7 +16,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
-from apps.agents.sensitive_data import SENSITIVE_CANOPY_TOOLS
+from apps.agents.sensitive_data import sensitive_tool
 from apps.tokens import kinds
 
 
@@ -47,10 +47,10 @@ def caller_turn_ids() -> list[str] | None:
 def _allowed(name: str, claims: dict) -> bool:
     if claims.get("sensitive"):
         # A sensitive turn's session: the canopy tools a `data: sensitive`
-        # capability may hold, never more, whatever else the claims say
-        # (`caller_tokens._sensitive_grant` already narrowed them; this is the
-        # second line).
-        if name not in SENSITIVE_CANOPY_TOOLS:
+        # capability may hold (and its page's own actions), never more, whatever
+        # else the claims say (`caller_tokens._sensitive_grant` already narrowed
+        # them; this is the second line).
+        if not sensitive_tool(name):
             return False
         return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
     if claims.get("all_tools"):

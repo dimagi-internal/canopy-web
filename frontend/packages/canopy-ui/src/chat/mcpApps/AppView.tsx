@@ -69,10 +69,17 @@ export function humanTool(tool: string): string {
 }
 
 /** The View's title: the name its result link carries ("Query over KMC Nigeria"),
- *  else the tool, humanised. */
+ *  else the tool, humanised.
+ *
+ *  A sensitive conversation keeps the link but not the host's words: canopy stores
+ *  it with its URI's scheme as its name (`sensitivity.strip_result`), so that name
+ *  ("labs-result") is a placeholder, never a title -- the tool names it instead. */
 export function appTitle(result: CallToolResult | null | undefined, tool: string): string {
-  const name = linkOf(result)?.name;
-  return typeof name === "string" && name.trim() ? name.trim().slice(0, 120) : humanTool(tool);
+  const link = linkOf(result);
+  const name = typeof link?.name === "string" ? link.name.trim() : "";
+  const scheme = typeof link?.uri === "string" ? link.uri.split("://")[0] : "";
+  const withheld = Boolean((result?._meta as Facts | undefined)?.["canopy/withheld"]);
+  return name && !withheld && name !== scheme ? name.slice(0, 120) : humanTool(tool);
 }
 
 /** What a collapsed View says about itself, from its tool result: rows × columns,

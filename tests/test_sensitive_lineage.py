@@ -25,7 +25,7 @@ from django.test import Client, RequestFactory
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.agents.sensitive_data import SENSITIVE_CANOPY_TOOLS
+from apps.agents.sensitive_data import PAGE_TOOL_GLOB, SENSITIVE_CANOPY_TOOLS
 from apps.canopy_sessions import drafts, transcript_ingest
 from apps.canopy_sessions import send as chat_send
 from apps.canopy_sessions import services as chat_services
@@ -94,7 +94,7 @@ def test_a_sensitive_tokens_tools_are_at_most_the_four_whatever_the_interface_li
     turn = _turn(w["hot"], capability="ask")
     grant = caller_tokens.resolve(caller_tokens.mint(turn))
     assert grant is not None and grant.sensitive and not grant.all_tools
-    assert set(grant.tool_globs) == SENSITIVE_CANOPY_TOOLS
+    assert set(grant.tool_globs) == SENSITIVE_CANOPY_TOOLS | {PAGE_TOOL_GLOB}
     assert not grant.allows_tool("create_turn") and not grant.allows_tool("create_schedule")
     # An ordinary turn of the same capability gets what the interface lists.
     plain = caller_tokens.resolve(caller_tokens.mint(_turn(w["cold"], capability="ask")))

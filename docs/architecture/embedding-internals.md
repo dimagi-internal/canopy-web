@@ -160,7 +160,9 @@ routes in `apps/canopy_sessions/app_views_api.py` and `apps/contacts/contact_api
   the embed panel set it; the embed lifts `maxWidth: 420` and raises `maxHeight`
   while the panel is expanded.
 - **A View's header names it and collapses it** (a button with `aria-expanded`).
-  The title is its result link's `name` ("Query over …"), else the tool humanised;
+  The title is its result link's `name` ("Query over …"), else the tool humanised —
+  always the tool in a sensitive conversation, whose kept link's name is only its
+  URI's scheme (`sensitivity.strip_result`);
   the raw tool name is the tooltip. `MessageList` names the newest View in the
   conversation (`LatestAppViewContext`): it opens expanded, every earlier one
   collapsed to one line (rows × columns, time, a row-cap cut-off, from the tool
