@@ -3,7 +3,7 @@ import json
 
 import pytest
 from canopy_kb import curate, records
-from canopy_kb.curate import Budget, Curation, MemoryStore, OverBudget, StaleStep, State, Step
+from canopy_kb.curate import Curation, MemoryStore, StaleStep, State, Step
 
 
 def _doc(i, text, **kw):
@@ -77,14 +77,6 @@ def test_a_model_result_is_stored_the_moment_it_is_made():
     cur = Curation(store).__enter__()
     cur.put("c" * 64, {"card": 1}, now=True)
     assert "c" * 64 in store.objects["results"]  # a run that dies now has not lost it
-
-
-def test_the_budget_stops_a_run_before_its_first_model_call():
-    b = Budget(2)
-    b.plan(Step("card", "1", cost=0.001), 10904)
-    with pytest.raises(OverBudget, match=r"card: 10904 calls .*--budget 11"):
-        b.check()
-    Budget(12).check()
 
 
 def test_a_version_carries_its_state_and_an_unchanged_refresh_sends_and_saves_nothing():

@@ -39,10 +39,7 @@ def test_a_tab_copied_into_several_workbooks_keeps_its_rows_in_the_most_linked_o
     assert copy["meta"]["shared_tabs_in"] == ["sheet:home"]
 
 
-def test_structured_items_are_carded_without_a_model_and_cards_attach_with_enrichment(tmp_path):
-    (tmp_path / "items.jsonl").write_text(json.dumps(_item("grant:1", "Recipient: Dimagi", "grant_record")) + "\n")
-    out = cards.run(tmp_path, "Acme", structured=lambda it: {"summary": it["text"]} if it["type"] == "grant_record" else None)
-    assert out == {"written": 0, "failed": 0, "cached": 1}
+def test_cards_attach_with_enrichment_and_a_dataset_takes_its_parents(tmp_path):
     (tmp_path / "cards.json").write_text(json.dumps({
         "page:1": {"sha256": "x", "card": {"summary": "A review.", "orgs": ["Acme"]}},
         "sheet:1": {"sha256": "y", "card": {"summary": "A model.", "orgs": []}}}))

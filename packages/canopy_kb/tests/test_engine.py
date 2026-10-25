@@ -1,4 +1,4 @@
-"""Who does a model step's work (`canopy_kb.prep.engine`), and why it is not in the key."""
+"""The session does a model step's work (`canopy_kb.prep.engine`), and who did is not in the key."""
 import json
 import threading
 import time
@@ -23,7 +23,7 @@ def test_the_model_is_metadata_and_what_it_made_before_is_still_found():
     the key keeps its address among `keys`, so moving model (or engine) re-makes nothing."""
     step, it = steps.card_step("GiveWell"), _item()
     old = Step("card", "1", {**step.settings, "model": "gemini-2.5-flash"})  # the step as it was
-    assert "model" not in step.settings and step.meta["model"]
+    assert "model" not in step.settings
     assert steps.card_key(step, it, []) != old.key(**steps.card_inputs(it, []))
     assert steps.card_keys(step, it, [])[1] == old.key(**steps.card_inputs(it, []))
     other = Step(step.name, step.revision, step.settings, meta={"model": "another"})
@@ -145,17 +145,6 @@ def test_split_and_merge_fan_a_batch_out_and_back(tmp_path):
     assert len(json.loads((tmp_path / "card.results.json").read_text())) == 5
     assert not list(tmp_path.glob("card.part-*"))
     assert engine.status(tmp_path)["waiting"] == {"card": 5}
-
-
-def test_the_vertex_engine_reads_the_model_from_the_steps_meta(monkeypatch):
-    from canopy_kb.prep import gemini
-    asked = []
-    monkeypatch.setattr(gemini, "generate_json", lambda model, parts, **kw: asked.append((model, kw)) or (CARD, {}))
-    step = steps.card_step("GiveWell")
-    todo = [(steps.card_key(step, _item(), []), _item(), [])]
-    with Curation(MemoryStore()) as cur:
-        got = steps.cards(cur, step, todo, engine=engine.Vertex())
-    assert list(got.values()) == [CARD] and asked == [(step.meta["model"], {"max_tokens": 2048})]
 
 
 def _reader(kind, body, page_selector=None, title_suffix=""):

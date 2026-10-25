@@ -12,7 +12,6 @@ call these for the rest:
 | `dedupe.py` | identical documents once; shared spreadsheet tabs once |
 | `cards.py` | a catalog card per item: its prompt and the shape a card is held to |
 | `aliases.py` | entity names that are one thing: their prompt and the groups kept |
-| `engine.py` | who reads those prompts: the AI session running the refresh (default), or Gemini on Vertex |
+| `engine.py` | the AI session running the refresh reads those prompts: the task hand-over and its helpers |
 | `originals.py` | each item's original file, for `canopy kb push --originals` |
-| `gemini.py` | the Vertex AI client the Vertex engine uses |
 """

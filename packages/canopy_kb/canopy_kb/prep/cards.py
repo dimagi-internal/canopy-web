@@ -2,22 +2,19 @@
 about. Cards are what a researching agent browses before it opens anything (search
 results, entity pages and `doc` show them), and their names build the entity index.
 
-Gemini 2.5 Flash reads the title, the documents that link to it, the outline and the
-first 7,000 and last 1,500 characters: ~$10 for the GiveWell corpus (30k items). A
-refresh re-cards only items whose text changed (<data>/cards.json, keyed by item id and
-sha256). A curator can card structured items without a model (`structured`), and a
-`dataset` item inherits its parent's card. `attach` puts the cards on the items.
+The AI session running the refresh (fast subagents, for a batch) reads the title, the
+documents that link to it, the outline and the first 7,000 and last 1,500 characters
+(`prompt`) and returns the card, held to its shape by `check`. A curator can card
+structured items without a model (`structured`), and a `dataset` item inherits its
+parent's card. `attach` puts the cards on the items.
 """
 from __future__ import annotations
 
-import concurrent.futures as cf
 import re
-import threading
 from pathlib import Path
 from typing import Callable, Optional
 
-from canopy_kb.prep import gemini
-from canopy_kb.prep.raw import log, read_json, read_jsonl, write_json
+from canopy_kb.prep.raw import read_json
 
 HEAD, TAIL = 7000, 1500
 MAX_TOKENS = 2048
@@ -116,58 +113,12 @@ def check(card) -> dict:
     return out
 
 
-def write(it: dict, linked: list[str], publisher: str, kinds: str = KINDS) -> dict:
-    """One card from the model."""
-    card, _ = gemini.generate_json(gemini.FLASH, [{"text": prompt(it, linked, publisher, kinds)}], max_tokens=MAX_TOKENS)
-    return card[0] if isinstance(card, list) else card
-
-
 def dataset_card(parent: dict) -> dict:
     """A dataset item's card: its workbook's, said of its data tabs."""
     card = dict(parent)
     card["summary"] = "Data tabs of: " + card.get("summary", "")
     card["kind"] = "model inputs/data"
     return card
-
-
-def run(data: Path, publisher: str, structured: Structured | None = None, kinds: str = KINDS,
-        workers: int = 32, limit: int | None = None) -> dict:
-    items = read_jsonl(data / "items.jsonl")
-    path = data / "cards.json"
-    cache: dict = read_json(path, {})
-    titles = {it["id"]: it["title"] for it in items}
-    by_url = {it["url"]: it["title"] for it in items}
-    todo = []
-    for it in items:
-        c = cache.get(it["id"])
-        if it["type"] == "dataset" or (c and c.get("sha256") == it.get("sha256")):
-            continue
-        card = structured(it) if structured else None
-        if card:
-            cache[it["id"]] = {"sha256": it.get("sha256"), "card": card}
-            continue
-        todo.append(it)
-    todo = todo[:limit] if limit else todo
-    log(f"cards: {len(todo)} to write ({len(items) - len(todo)} cached or structured)")
-    lock = threading.Lock()
-    failed = []
-
-    def job(it):
-        try:
-            card = write(it, linked_titles(it, titles, by_url), publisher, kinds)
-        except Exception as e:  # noqa: BLE001
-            failed.append(it["id"])
-            log("  card failed:", it["id"], str(e)[:100])
-            return
-        with lock:
-            cache[it["id"]] = {"sha256": it.get("sha256"), "card": card}
-            if len(cache) % 500 == 0:
-                write_json(path, cache)
-
-    with cf.ThreadPoolExecutor(workers) as ex:
-        list(ex.map(job, todo))
-    write_json(path, cache)
-    return {"written": len(todo) - len(failed), "failed": len(failed), "cached": len(cache)}
 
 
 def attach(items: list[dict], data: Path, enrich: Enrich | None = None) -> int:

@@ -21,9 +21,7 @@ one, so a runner's disk is scratch (canopy-web#1925):
 * **Revisions are checked before anything runs** (`check_lock`): a step whose code or
   reader libraries changed since `steps.lock` refuses to run until its author bumps its
   REVISION (it re-runs) or relocks (its output cannot change). Nothing goes stale
-  silently, and a comment edit never spends money.
-* **Spending is planned** (`Budget`): model calls are counted and priced before any is
-  made, and a run over its budget stops before the first one.
+  silently, and a comment edit never re-makes anything.
 * **The refresh builds the index** (`Curation.publish`): it compares what it would
   publish with what its starting state published, and when nothing changed it stops:
   nothing is built, sent or saved. Otherwise it fetches the file the host serves,
@@ -67,10 +65,6 @@ class StaleStep(CurationError):
     """A step's code changed since steps.lock without its REVISION saying so."""
 
 
-class OverBudget(CurationError):
-    """The model calls a refresh plans cost more than it may spend."""
-
-
 def sha(obj) -> str:
     return records.sha(obj)
 
@@ -97,15 +91,13 @@ class Step:
     `formerly` lists earlier `settings` whose results are this step's own (a setting that
     became metadata): `keys` names them too, so what they made is still found. `sources`
     are the files whose code produces it (shared helpers included) and `libraries` the
-    packages it reads with: `check_lock` compares them with the lock. `cost` is an
-    estimate in USD per call, for a step that calls a model."""
+    packages it reads with: `check_lock` compares them with the lock."""
 
     name: str
     revision: str
     settings: dict = dataclasses.field(default_factory=dict)
     sources: tuple[str, ...] = ()
     libraries: tuple[str, ...] = ()
-    cost: float = 0.0
     meta: dict = dataclasses.field(default_factory=dict)
     formerly: tuple[dict, ...] = ()
 
@@ -383,31 +375,6 @@ def put_missing(store: Store, blobs: dict[str, bytes]) -> int:
     return n
 
 
-# ---- the budget ---------------------------------------------------------------------------
-
-class Budget:
-    """What a refresh may spend on model calls, planned before any is made."""
-
-    def __init__(self, usd: float):
-        self.usd = float(usd)
-        self.planned: dict[str, dict] = {}
-
-    def plan(self, step: Step, calls: int, cost: float | None = None) -> None:
-        """`cost`: USD per call when it is not the step's own (another engine does the work)."""
-        per = step.cost if cost is None else cost
-        self.planned[step.name] = {"calls": int(calls), "usd": round(calls * per, 2)}
-
-    @property
-    def total(self) -> float:
-        return round(sum(p["usd"] for p in self.planned.values()), 2)
-
-    def check(self) -> None:
-        if self.total > self.usd:
-            lines = ", ".join(f"{n}: {p['calls']} calls (~${p['usd']})" for n, p in self.planned.items() if p["calls"])
-            raise OverBudget(f"this refresh would make {lines}: about ${self.total}, over its budget of ${self.usd}. "
-                             f"Nothing was spent. Rerun with --budget {max(1, int(self.total + 1))} to go ahead.")
-
-
 # ---- a refresh ------------------------------------------------------------------------------
 
 #: State sections `publish` keeps: what the version it made holds (item id -> record sha,
@@ -420,9 +387,8 @@ class Curation:
     writes, and its publish. Use as a context manager: pending results are stored
     however it ends, so nothing paid for is lost."""
 
-    def __init__(self, store: Store, budget: Budget | None = None):
+    def __init__(self, store: Store):
         self.store = store
-        self.budget = budget or Budget(0)
         self.state: State = State()
         self._pending: dict[str, bytes] = {}
         self._pending_bytes = 0

@@ -1,20 +1,17 @@
-"""Who does a model step's work: the AI session running the refresh, or Gemini on Vertex.
+"""Who does a model step's work: the AI session running the refresh.
 
 A curator's refresh decides WHAT needs a model (each new card, the alias groups when the
-names moved) and prices it; an engine does it. Either way the prompt is the step's own
-and the result is checked to the step's shape before it is stored, so a result does not
+names moved); the session that started it does the work. The prompt is the step's own and
+the result is checked to the step's shape before it is stored, so a result does not
 depend on who made it, and its key does not name them (`Step.meta`; Jonathan,
 2026-10-24: "the model is just metadata").
 
-* `Session`, the default: the AI session that started the refresh does the work. The
-  refresh writes the tasks to a directory and waits; the session writes the results
-  beside them and the refresh carries on, so one crawl serves every step. Judgment (the
-  alias groups) stays with the session; a batch of cards fans out to fast subagents
-  (`split`, then `merge`). A refresh on this engine is started by an AI session, never
-  by a scheduler: nobody would answer it.
-* `Vertex`: Gemini on Vertex AI (`gemini.py`, the model each step's `meta` names), for a
-  cold build of a whole corpus, where a session would take hours. Needs a Google access
-  token.
+The refresh writes the tasks to a directory and waits; the session writes the results
+beside them and the refresh carries on, so one crawl serves every step. Judgment (the
+alias groups) stays with the session; a batch of cards fans out to fast subagents
+(`split`, then `merge`). A refresh is started by an AI session, never by a scheduler:
+nobody would answer it. There is no other engine and nothing is priced: the work is the
+session's own (Jonathan, 2026-10-24: "this should all be built inside our session").
 
 The protocol, in the session's directory, one step at a time (`<step>` is the step's name):
 
@@ -33,10 +30,8 @@ canopy_kb.prep.engine status|split|merge DIR` are the session's helpers.
 from __future__ import annotations
 
 import argparse
-import concurrent.futures as cf
 import json
 import os
-import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -47,11 +42,6 @@ from canopy_kb.prep.raw import log
 Check = Callable[[dict, Any], Any]
 #: (task id, checked result): store it the moment it is checked.
 Keep = Callable[[str, Any], None]
-
-#: Estimated USD per task on the session, for planning: a card by a fast subagent model
-#: (~2.5k tokens in, ~0.4k out, plus its share of the subagent's overhead), the alias
-#: groups by the session's own model (one long list per kind).
-SESSION_COST = {"card": 0.005, "aliases": 0.75}
 
 INSTRUCTIONS = {
     "card": (
@@ -65,40 +55,6 @@ INSTRUCTIONS = {
         "merge (a charity and its parent, two countries' ministries) corrupts the entity index; a missed "
         "one only leaves two pages."),
 }
-
-
-class Vertex:
-    """Gemini on Vertex AI: each task one generateContent call, in parallel."""
-
-    name = "vertex"
-
-    def __init__(self, workers: int = 32):
-        self.workers = workers
-
-    def cost(self, step) -> float:
-        return step.cost
-
-    def run(self, step, tasks: list[dict], check: Check, keep: Keep) -> dict[str, Any]:
-        from canopy_kb.prep import gemini
-        model, call = step.meta["model"], dict(step.meta.get("call") or {})
-        out: dict[str, Any] = {}
-        lock = threading.Lock()
-
-        def job(t):
-            try:
-                raw, _ = gemini.generate_json(model, [{"text": t["prompt"]}], **call)
-                value = check(t, raw)
-            except Exception as e:  # noqa: BLE001 - one failed task; the next refresh asks again
-                log(f"  {step.name} failed:", str(t.get("item") or t["id"])[:40], str(e)[:100])
-                return
-            with lock:
-                keep(t["id"], value)
-                out[t["id"]] = value
-
-        if tasks:
-            with cf.ThreadPoolExecutor(min(self.workers, len(tasks))) as ex:
-                list(ex.map(job, tasks))
-        return out
 
 
 def _write(path: Path, obj) -> None:
@@ -119,9 +75,6 @@ class Session:
 
     def __init__(self, dir: Path, timeout: float = 4 * 3600, poll: float = 5.0):
         self.dir, self.timeout, self.poll = Path(dir), timeout, poll
-
-    def cost(self, step) -> float:
-        return SESSION_COST.get(step.name, step.cost)
 
     def run(self, step, tasks: list[dict], check: Check, keep: Keep) -> dict[str, Any]:
         self.dir.mkdir(parents=True, exist_ok=True)
