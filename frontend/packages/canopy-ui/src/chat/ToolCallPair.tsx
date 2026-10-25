@@ -1,8 +1,14 @@
 import { Check, ChevronRight, Loader2, X } from "lucide-react";
 
 import type { Message } from "./protocol";
-import { deriveToolStatus, toolDisplayName, toolPreview } from "./pairToolMessages";
+import {
+  deriveToolStatus,
+  toolDiffStats,
+  toolDisplayName,
+  toolPreview,
+} from "./pairToolMessages";
 import { subagentProgress, useRowSubagent } from "./subagents";
+import { ToolBody } from "./toolBodies/ToolBody";
 
 interface Props {
   use: Message;
@@ -17,8 +23,9 @@ interface Props {
  *
  * Header line: ``{status icon} {tool name} · {preview}`` — readable when
  * collapsed so the user can scan a long stream of tool calls without
- * expanding any. Expanded view stacks the input JSON on top of the
- * result body, both monospace.
+ * expanding any; a file edit adds its ``+A −R`` line count. The expanded
+ * body is shaped per tool (`toolBodies/ToolBody`): a diff, a terminal
+ * block, a key/value list, or the raw JSON for a tool nothing knows.
  */
 export function ToolCallPair({ use, result, forceOpen }: Props) {
   const sub = useRowSubagent(use);
@@ -33,6 +40,7 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
       : toolStatus;
   const name = toolDisplayName(use);
   const preview = toolPreview(use, result);
+  const diff = toolDiffStats(use);
 
   const StatusIcon =
     status.kind === "success" ? Check : status.kind === "error" ? X : Loader2;
@@ -44,6 +52,9 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
         : "text-muted-foreground animate-spin";
 
   const input = (use.content as { input?: unknown } | undefined)?.input;
+  const toolName = String(
+    (use.content as { name?: unknown } | undefined)?.name ?? "tool",
+  );
 
   return (
     <details
@@ -66,6 +77,15 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
               · {preview}
             </span>
           )}
+          {diff && (diff.added > 0 || diff.removed > 0) && (
+            <span
+              data-testid="tool-diff-stats"
+              className="shrink-0 whitespace-nowrap font-mono text-xs"
+            >
+              <span className="text-success">+{diff.added}</span>{" "}
+              <span className="text-destructive">−{diff.removed}</span>
+            </span>
+          )}
           {sub && (
             <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-muted-foreground">
               {sub.summary.state} · {subagentProgress(sub.summary)}
@@ -82,31 +102,13 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
           </div>
         )}
       </summary>
-      <div className="space-y-2 border-t border-border/60 p-2">
-        {input !== undefined && (
-          <div>
-            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-              input
-            </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-background p-2 text-xs">
-              {JSON.stringify(input, null, 2)}
-            </pre>
-          </div>
-        )}
-        <div>
-          <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
-            result
-          </div>
-          {result === null ? (
-            <div className="text-xs italic text-muted-foreground">
-              (running…)
-            </div>
-          ) : (
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-background p-2 text-xs">
-              {result.plaintext}
-            </pre>
-          )}
-        </div>
+      <div className="border-t border-border/60 p-2">
+        <ToolBody
+          name={toolName}
+          input={input}
+          result={result}
+          isError={status.kind === "error"}
+        />
       </div>
     </details>
   );

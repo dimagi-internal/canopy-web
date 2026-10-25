@@ -1,4 +1,5 @@
 import type { Message } from "./protocol";
+import { type DiffStats, editStats } from "./toolBodies/diff";
 
 /**
  * A renderable row in the chat: either a single message (user / assistant /
@@ -193,8 +194,22 @@ export function toolPreview(use: Message, result: Message | null): string {
   if (name === "Read" && input && typeof input.file_path === "string") {
     return input.file_path;
   }
-  if (name === "Edit" && input && typeof input.file_path === "string") {
+  if (
+    (name === "Edit" || name === "MultiEdit") &&
+    input &&
+    typeof input.file_path === "string"
+  ) {
     return input.file_path;
+  }
+  if ((name === "Grep" || name === "Glob") && input && typeof input.pattern === "string") {
+    const where = typeof input.path === "string" ? ` in ${input.path}` : "";
+    return `${input.pattern}${where}`;
+  }
+  if (name === "WebFetch" && input && typeof input.url === "string") {
+    return input.url;
+  }
+  if (name === "WebSearch" && input && typeof input.query === "string") {
+    return input.query;
   }
   if (name === "TodoWrite") {
     const todos = (input as { todos?: unknown[] } | undefined)?.todos;
@@ -223,6 +238,13 @@ export function toolPreview(use: Message, result: Message | null): string {
   // Default: a peek at the result body so the user can scan the call
   // outcome without expanding every row.
   return (result?.plaintext || "").split("\n")[0]?.slice(0, 100) ?? "";
+}
+
+/** ``+A −R`` line counts for an Edit / MultiEdit / Write call, for the
+ *  collapsed header; null for every other tool. */
+export function toolDiffStats(use: Message): DiffStats | null {
+  const content = use.content as { name?: unknown; input?: unknown } | undefined;
+  return editStats(String(content?.name ?? ""), content?.input);
 }
 
 /** The MCP server a `mcp__<server>__<tool>` name came from, for people:
