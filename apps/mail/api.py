@@ -27,7 +27,7 @@ from apps.workspaces import services as wsvc
 from apps.workspaces.gates import workspace_for
 from apps.workspaces.models import Workspace
 
-from . import agent_mail, auto_addresses, domains, inbound, reputation, ses, sns
+from . import agent_mail, auto_addresses, domains, inbound, reputation, ses, sns, storage
 from .models import MailDomain, MailMessage, MailRoute, MailThread
 from .schemas import (
     AgentMailboxIn,
@@ -368,6 +368,8 @@ def _agent_full(user, route) -> None:
 
 
 def _presign(a) -> str:
+    if not a.kept:
+        return ""
     try:
         return ses.presign(a.s3_key, a.filename)
     except ses.MailOff:
@@ -376,7 +378,7 @@ def _presign(a) -> str:
 
 def _msg_out(m) -> dict:
     atts = [{"filename": a.filename, "content_type": a.content_type, "size": a.size,
-             "url": _presign(a)} for a in m.attachments.all()]
+             "url": _presign(a), "kept": a.kept} for a in m.attachments.all()]
     return {"id": m.pk, "direction": m.direction, "message_id": m.message_id, "from_addr": m.from_addr,
             "from_name": m.from_name, "to": m.to, "cc": m.cc, "reply_to": m.reply_to or [], "subject": m.subject, "text": m.text,
             "html": m.html, "delivery_status": m.delivery_status, "verdicts": m.verdicts or {},
@@ -462,10 +464,14 @@ def resolve_mail_address(request: HttpRequest, address: str = "", thread: str = 
 def _mailbox_out(request: HttpRequest, agent) -> dict:
     from apps.workspaces import permissions as wperms
 
-    return {**domains.agent_mailbox(agent),
+    box = domains.agent_mailbox(agent)
+    return {**box,
             "addresses": domains.agent_addresses(agent),
             "hosted_domains": [d.name for d in domains.usable_domains(agent.workspace)],
-            "can_route": wperms.can(request.user, agent.workspace, wperms.INTEGRATIONS)}
+            "can_route": wperms.can(request.user, agent.workspace, wperms.INTEGRATIONS),
+            "used_bytes": (storage.used_bytes(agent.workspace_id, box["address"])
+                           if box["kind"] == "hosted" else 0),
+            "cap_bytes": storage.cap_bytes()}
 
 
 @router.get("/agents/{slug}/mailbox", response=AgentMailboxOut,

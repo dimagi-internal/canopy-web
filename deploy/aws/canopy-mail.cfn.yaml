@@ -201,6 +201,13 @@ Resources:
           - Effect: Allow
             Action: [s3:GetObject, s3:PutObject]
             Resource: !Sub ${InboundBucket.Arn}/*
+          # The mailbox cap (apps/mail/storage.py) deletes an evicted message's objects:
+          # only canopy's own copies, never SES's incoming/ objects.
+          - Effect: Allow
+            Action: s3:DeleteObject
+            Resource:
+              - !Sub ${InboundBucket.Arn}/kept/*
+              - !Sub ${InboundBucket.Arn}/attachments/*
 Outputs:
   InboundBucket: {Value: !Ref InboundBucket}
   InboundTopicArn: {Value: !Ref InboundTopic}

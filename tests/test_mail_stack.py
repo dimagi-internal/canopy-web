@@ -91,3 +91,12 @@ def test_sns_retry_policy_fits_under_the_one_hour_cap():
     for name in ("InboundSubscription", "EventsSubscription"):
         p = _res()[name]["Properties"]["DeliveryPolicy"]["healthyRetryPolicy"]
         assert p["numRetries"] * p["maxDelayTarget"] <= 3600, name
+
+
+def test_the_task_role_deletes_only_canopys_own_copies():
+    # The mailbox cap deletes evicted mail's kept/ and attachments/ objects, never incoming/.
+    doc = _res()["MailPolicy"]["Properties"]["PolicyDocument"]
+    deletes = [s for s in doc["Statement"] if "s3:DeleteObject" in s["Action"]]
+    assert len(deletes) == 1
+    text = STACK.read_text()
+    assert "${InboundBucket.Arn}/kept/*" in text and "${InboundBucket.Arn}/attachments/*" in text

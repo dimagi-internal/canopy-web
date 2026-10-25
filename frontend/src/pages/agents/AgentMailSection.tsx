@@ -73,14 +73,17 @@ function MessageView({ m }: { m: MailMessageOut }) {
       )}
       {m.attachments.length > 0 && (
         <ul className="mt-2 flex flex-wrap gap-3 text-[12px]">
-          {m.attachments.map((a) => (
-            <li key={a.url}>
+          {m.attachments.map((a, i) => (
+            <li key={`${i}-${a.filename}`}>
               {/^https:\/\//.test(a.url) ? (
                 <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-primary underline">
                   {a.filename}
                 </a>
               ) : (
-                <span className="text-muted-foreground">{a.filename}</span>
+                <span className="text-muted-foreground">
+                  {a.filename}
+                  {a.kept === false && ' (too large, not kept)'}
+                </span>
               )}
             </li>
           ))}

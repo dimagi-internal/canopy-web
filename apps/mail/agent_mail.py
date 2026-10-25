@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
@@ -15,8 +16,10 @@ from django.utils import timezone
 from apps.harness import services as harness
 from apps.harness.models import Turn
 
-from . import domains, ses, threads
+from . import domains, ses, storage, threads
 from .models import MailAttachment, MailDomain, MailMessage, MailThread
+
+logger = logging.getLogger(__name__)
 
 
 def _auth_results(parsed) -> list[dict]:
@@ -52,13 +55,27 @@ def _turn_key(agent, thread, msg) -> str:
     return f"email-{agent.slug}-{thread.uuid}-{msg.pk}"
 
 
-def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str:
+def _enforce_cap(msg) -> None:
+    """Keep the mailbox under its cap. Never fails the delivery or send that called it:
+    the message is stored either way, and the next one tries again."""
+    try:
+        storage.enforce_cap(msg.workspace_id, msg.mailbox, keep=msg.pk)
+    except Exception:  # noqa: BLE001
+        logger.exception("mail cap %s: eviction failed", msg.mailbox)
+
+
+def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None, raw_size: int = 0) -> str:
+    """Store one inbound copy for `route` and wake its agent. `raw_size` is the raw MIME
+    object's length, counted against the mailbox's cap with the stored parts."""
     ws = route.workspace
     existing = (MailMessage.objects.filter(workspace=ws, mailbox=route.address,
                                            message_id=parsed.message_id)
                 .select_related("thread").first())
     if existing is None:
         quiet = _quiet(route, parsed)
+        keep = storage.kept_attachments([len(a.data) for a in parsed.attachments])
+        # The raw MIME holds every attachment, so a message that dropped one keeps no raw copy.
+        whole = all(keep)
         try:
             with transaction.atomic():
                 thread = threads.place(route, parsed)
@@ -68,14 +85,18 @@ def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str
                     references=" ".join(parsed.references), from_addr=parsed.from_addr,
                     from_name=parsed.from_name, to=parsed.to, cc=parsed.cc,
                     reply_to=parsed.reply_to, subject=parsed.subject[:998], text=parsed.text, html=parsed.html,
-                    raw_key=ses.keep(raw_key), verdicts=dict(verdicts or {}),
+                    raw_key=ses.keep(raw_key) if whole else "", verdicts=dict(verdicts or {}),
+                    size_bytes=storage.message_size(
+                        text=parsed.text, html=parsed.html, raw_size=raw_size if whole else 0,
+                        attachment_sizes=[len(a.data) for a, k in zip(parsed.attachments, keep) if k]),
                     auth_results="\n".join(h["value"] for h in _auth_results(parsed)))
-                for i, att in enumerate(parsed.attachments):
-                    key = f"attachments/{ws.slug}/{msg.pk}/{i}"
-                    ses.put_object(key, att.data, att.content_type)
+                for i, (att, kept) in enumerate(zip(parsed.attachments, keep)):
+                    key = f"attachments/{ws.slug}/{msg.pk}/{i}" if kept else ""
+                    if kept:
+                        ses.put_object(key, att.data, att.content_type)
                     MailAttachment.objects.create(message=msg, filename=att.filename[:255],
                                                   content_type=att.content_type[:255],
-                                                  size=len(att.data), s3_key=key)
+                                                  size=len(att.data), s3_key=key, kept=kept)
                 upd = {"message_count": F("message_count") + 1, "last_message_at": timezone.now()}
                 if quiet is None:
                     upd["unread"] = True
@@ -84,6 +105,7 @@ def deliver(route, parsed, raw_key: str, *, verdicts: dict | None = None) -> str
                 MailThread.objects.filter(pk=thread.pk).update(**upd)
         except IntegrityError:
             return "duplicate"
+        _enforce_cap(msg)
         thread.refresh_from_db()
         if quiet:
             return quiet
@@ -149,8 +171,10 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
     with transaction.atomic():
         domain = MailDomain.objects.select_for_update(of=("self",)).select_related("workspace").get(
             pk=route.domain_id)
-        return _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
-                            thread=thread, attachments=attachments)
+        out = _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
+                           thread=thread, attachments=attachments)
+    _enforce_cap(out)  # outside the domain lock: eviction is the mailbox's own business
+    return out
 
 
 def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments) -> MailMessage:
@@ -218,7 +242,9 @@ def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachme
         message_id=msg["Message-ID"], in_reply_to=msg.get("In-Reply-To", ""),
         references=msg.get("References", ""), from_addr=route.address, to=to, cc=cc,
         subject=subject[:998], text=text, html=html, ses_message_id=ses_id,
-        delivery_status=MailMessage.SENT)
+        delivery_status=MailMessage.SENT,
+        # Only the text and html of a sent message are stored (no raw MIME, no attachments).
+        size_bytes=storage.message_size(text=text, html=html))
     MailThread.objects.filter(pk=thread.pk).update(
         message_count=F("message_count") + 1, last_message_at=timezone.now(), unread=False)
     return out
