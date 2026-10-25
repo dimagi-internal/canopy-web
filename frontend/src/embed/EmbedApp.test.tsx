@@ -729,6 +729,12 @@ describe('the agent and your earlier conversations', () => {
         if (u.includes('/api/canopy-sessions/?') && (!init?.method || init.method === 'GET')) {
           return { ok: true, status: 200, json: async () => EARLIER } as Response
         }
+        // A row is read as the visitor before it opens (the same check as the
+        // page's openSession), so the detail of a listed chat is served.
+        const row = EARLIER.find((r) => u.endsWith(`/api/canopy-sessions/${r.id}`))
+        if (row && (!init?.method || init.method === 'GET')) {
+          return { ok: true, status: 200, json: async () => row } as Response
+        }
         return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
       }),
     )
