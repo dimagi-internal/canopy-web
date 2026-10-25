@@ -1344,6 +1344,10 @@ class AgentProject(models.Model):
 
     notes = models.TextField(blank=True, default="")
     links = models.JSONField(default=list, blank=True)
+    #: Where its knowledge base's objects are stored (`kb_store.root`): fixed for good,
+    #: so a new handle or workspace moves nothing (#2047). Blank: `kb-projects/<pk>/`.
+    #: A project made before then keeps the address-keyed root it stored under.
+    storage_root = models.CharField(max_length=200, blank=True, default="")
     #: The page that proposed this project — a huddle, a thread — the same idea
     #: as `AgentTask.source_url`. Indexed: a huddle page lists the projects whose
     #: `source_url` is that page.

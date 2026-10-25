@@ -40,7 +40,6 @@ BASE = "https://canopy.test"
 
 ORIGINAL = {"sha256": "c" * 64, "filename": "Diarrheal disease.txt", "content_type": "text/plain", "bytes": 52,
             "source_url": "https://gw/1/transcript.txt", "fetched_at": "2026-10-20T00:00:00Z", "path": "/eva/raw/x"}
-ORIGINALS = "workspace-projects/{}/givewell-kb/originals/"
 
 
 def _kb_gz(tmp_path, original=None) -> bytes:
@@ -128,7 +127,7 @@ def test_a_viewer_cannot_publish(world, s3):
 
 
 def test_the_steward_uploads_only_the_originals_the_store_lacks(world, s3):
-    prefix = ORIGINALS.format(world["connect"].pk)
+    prefix = kb_store.root(world["project"]) + "originals/"
     s3.objects[prefix + "a" * 64] = b"already stored"
     files = [{"sha256": "a" * 64, "bytes": 14, "content_type": "application/pdf"},
              {"sha256": "B" * 64, "bytes": 9, "content_type": "application/pdf"},
@@ -234,7 +233,7 @@ def test_a_reader_gets_a_download_of_the_original_under_its_file_name(world, s3,
 
     _, missing = http("/api/mcp/projects/connect/givewell-kb/", tok, "tools/call",
                       {"name": "original", "arguments": {"ref": "p:1"}})
-    s3.objects[ORIGINALS.format(world["connect"].pk) + ORIGINAL["sha256"]] = b"transcript"
+    s3.objects[kb_store.root(world["project"]) + "originals/" + ORIGINAL["sha256"]] = b"transcript"
     _, called = http("/api/mcp/projects/connect/givewell-kb/", tok, "tools/call",
                      {"name": "original", "arguments": {"ref": "p:1"}})
 

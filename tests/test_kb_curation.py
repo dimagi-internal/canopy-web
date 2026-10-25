@@ -48,7 +48,7 @@ def test_results_are_stored_once_by_key_and_fetched_by_link(world, s3):
     have = c.post(f"{KB_URL}/objects/have", {"store": "results", "keys": [key, "2" * 64]}, content_type=J)
     assert have.json() == {"have": [key]}
     links = c.post(f"{KB_URL}/objects/links", {"store": "originals", "keys": ["3" * 64]}, content_type=J).json()
-    assert links["links"][0]["url"].startswith("https://s3.test/workspace-projects/") and "/originals/" in \
+    assert links["links"][0]["url"].startswith("https://s3.test/kb-projects/") and "/originals/" in \
         links["links"][0]["url"]
     assert c.post(f"{KB_URL}/objects/have", {"store": "results", "keys": ["nope"]},
                   content_type=J).status_code == 422

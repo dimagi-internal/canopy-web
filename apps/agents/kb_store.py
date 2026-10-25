@@ -81,12 +81,18 @@ def _client():
     return boto3.client("s3", config=Config(signature_version="s3v4"))
 
 
+def root(project) -> str:
+    """Where everything the project's knowledge base stores lives: keyed by the project,
+    never by its address, so a rename (`services.promote_project`) moves nothing (#2047)."""
+    return project.storage_root or f"kb-projects/{project.pk}/"
+
+
 def _prefix(project) -> str:
-    return f"workspace-projects/{project.workspace_id}/{project.handle}/kb/"
+    return f"{root(project)}kb/"
 
 
 def _originals_prefix(project) -> str:
-    return f"workspace-projects/{project.workspace_id}/{project.handle}/originals/"
+    return f"{root(project)}originals/"
 
 
 def _is_sha256(v: str) -> bool:
@@ -253,7 +259,7 @@ STEWARD_LINK_SECONDS = UPLOAD_TTL_SECONDS
 
 
 def _results_prefix(project) -> str:
-    return f"workspace-projects/{project.workspace_id}/{project.handle}/results/"
+    return f"{root(project)}results/"
 
 
 def _store_prefix(project, store: str) -> str:
@@ -347,7 +353,7 @@ def local_path(project) -> Path:
     kb = project.knowledge_base
     if kb is None or not kb.kb_key or not kb.kb_sha256:
         raise KbPublishError("this project has not published a knowledge base")
-    folder = _cache_root() / f"{project.workspace_id}--{project.handle}"
+    folder = _cache_root() / f"project-{project.pk}"
     path = folder / f"{kb.kb_sha256}.sqlite"
     if path.exists():
         return path
