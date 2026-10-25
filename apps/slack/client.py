@@ -12,6 +12,17 @@ API = "https://slack.com/api/"
 TIMEOUT = 10
 
 
+def unescape(text: str) -> str:
+    """Slack's message text with its three escapes undone.
+
+    Slack sends `&`, `<` and `>` in a message as `&amp;`, `&lt;` and `&gt;` (its
+    own markup — mentions, links — uses the bare brackets). Call it AFTER the
+    markup has been read, so a person who typed `<@U1>` as text never becomes a
+    mention; `&amp;` goes last, so a typed `&lt;` stays `&lt;`.
+    """
+    return (text or "").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+
+
 class SlackApiError(Exception):
     def __init__(self, method: str, error: str):
         super().__init__(f"{method}: {error}")

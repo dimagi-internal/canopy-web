@@ -891,7 +891,7 @@ def transcript(ingest: SlackChannelIngest, *, after: int = 0, oldest: float = 0.
 
     def one(r: SlackIngestMessage, indent: str, *, context: bool = False) -> str:
         who = r.name or names.get(r.user, r.user or "someone")
-        text = _MENTION.sub(lambda m: "@" + names.get(m.group(1), m.group(1)), r.text).strip()
+        text = client.unescape(_MENTION.sub(lambda m: "@" + names.get(m.group(1), m.group(1)), r.text).strip())
         day, clock = _when(r.ts)
         if context:
             text = (text[:200] + "…") if len(text) > 200 else text

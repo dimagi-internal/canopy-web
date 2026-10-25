@@ -5,6 +5,11 @@ from unittest import mock
 from apps.slack import client
 
 
+def test_unescape_undoes_slacks_three_entities_and_nothing_else():
+    assert client.unescape("R&amp;D &lt;b&gt; &amp;lt; &quot;") == 'R&D <b> &lt; &quot;'
+    assert client.unescape("") == "" and client.unescape(None) == ""
+
+
 def test_display_name_prefers_the_full_name_then_falls_back():
     assert client.display_name({"profile": {"real_name": "Alice A", "display_name": "al"}}) == "Alice A"
     assert client.display_name({"profile": {"display_name": "al"}, "name": "alice"}) == "al"
