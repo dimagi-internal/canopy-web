@@ -22,11 +22,15 @@ import datetime as dt
 import logging
 import uuid
 
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
-from .models import Contact, Person, PersonAccess, PersonFact
+from apps.workspaces import permissions as perms
+
+from .models import Contact, Person, PersonAccess, PersonAddress, PersonFact
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +350,63 @@ def retract(fact: PersonFact, *, by, actor=None, reason: str = "") -> PersonFact
                          else hcp.SYSTEM)
             hcp.audit(fact.person, "preference.deleted", actor=actor, entry=fact, detail=reason)
     return fact
+
+
+# --- more ways to reach a person (PersonAddress) ------------------------------------
+
+
+class AddressError(ValueError):
+    """A contact method that cannot be stored; the message says why."""
+
+
+LABEL_MAX = 40
+_PHONE_CHARS = set("0123456789+-(). ")
+
+
+def may_edit_addresses(user, person: Person, workspace_slug: str) -> bool:
+    """The person themself, or an admin of that workspace — never an agent's
+    login: an address is declared by people, so agents can trust what they read."""
+    if not getattr(user, "is_authenticated", False) or agent_of_login(user) is not None:
+        return False
+    if person.user_id and person.user_id == user.pk:
+        return True
+    return perms.can(user, workspace_slug, perms.MEMBERS_MANAGE)
+
+
+def add_address(*, person: Person, workspace, kind: str, label: str, value: str,
+                by) -> PersonAddress:
+    """Store one labelled email or phone for `person` in `workspace`. Adding
+    the same kind and value again relabels it rather than duplicating it."""
+    kind = (kind or "").strip().lower()
+    label = " ".join((label or "").split()).lower()
+    value = (value or "").strip()
+    if kind not in (PersonAddress.EMAIL, PersonAddress.PHONE):
+        raise AddressError("kind is email or phone")
+    if not label or len(label) > LABEL_MAX:
+        raise AddressError(f"label is 1–{LABEL_MAX} characters (work, personal …)")
+    if kind == PersonAddress.EMAIL:
+        value = value.lower()
+        try:
+            validate_email(value)
+        except ValidationError:
+            raise AddressError("value is not an email address") from None
+    elif not value or set(value) - _PHONE_CHARS or sum(c.isdigit() for c in value) < 5:
+        raise AddressError("value is not a phone number")
+    row, _ = PersonAddress.objects.update_or_create(
+        person=person, workspace=workspace, kind=kind, value=value,
+        defaults={"label": label, "added_by": by if getattr(by, "is_authenticated", False) else None})
+    return row
+
+
+def addresses_in(person: Person, workspace_slug: str):
+    return PersonAddress.objects.filter(person=person, workspace_id=workspace_slug)
+
+
+def address_dict(row: PersonAddress) -> dict:
+    return {"id": row.pk, "kind": row.kind, "label": row.label, "value": row.value,
+            "workspace": row.workspace_id,
+            "added_by": row.added_by.email if row.added_by_id else "",
+            "created_at": row.created_at.isoformat() if row.created_at else None}
 
 
 # --- reads, logged -----------------------------------------------------------------

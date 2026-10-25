@@ -75,6 +75,32 @@ class PersonOut(PersonRefOut):
     see_all: str = "/people/me/"
 
 
+class PersonAddressOut(StrictModel):
+    """One more way to reach a person, as one workspace knows it."""
+
+    id: int
+    kind: str = Field(description="email | phone.")
+    label: str = Field(description="What it is for: work, personal, school …")
+    value: str
+    workspace: str
+    added_by: str = Field(default="", description="The email of who added it.")
+    created_at: str | None = None
+
+
+class PersonAddressesOut(StrictModel):
+    person: int
+    workspace: str
+    addresses: list[PersonAddressOut] = Field(default_factory=list)
+
+
+class PersonAddressIn(StrictModel):
+    workspace: str | None = Field(
+        default=None, description="The workspace slug it is known in (default: the /api/w/{ws}/ one).")
+    kind: str = Field(description="email | phone — anything else is a 400.")
+    label: str = Field(description="What it is for, 1–40 characters: work, personal, school …")
+    value: str = Field(description="The address or number. The same kind and value again relabels it.")
+
+
 class PersonAccessOut(StrictModel):
     """One read of what canopy knows about you."""
 
@@ -272,6 +298,8 @@ class PersonMeOut(PersonRefOut):
     memory_paused: bool = Field(default=False, description="Memory is not on for you, but canopy "
                                 "still holds some of yours: you can see, download and delete it.")
     facts: list[PersonFactDetailOut] = Field(default_factory=list)
+    addresses: list[PersonAddressOut] = Field(
+        default_factory=list, description="Every other way a workspace holds to reach you.")
     accesses: list[PersonAccessOut] = Field(default_factory=list)
 
 
