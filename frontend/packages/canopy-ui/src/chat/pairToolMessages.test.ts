@@ -4,6 +4,7 @@ import type { Message } from "./protocol";
 import {
   deriveToolStatus,
   pairToolMessages,
+  toolDiffStats,
   toolDisplayName,
   toolPreview,
 } from "./pairToolMessages";
@@ -320,6 +321,37 @@ describe("toolPreview / toolDisplayName", () => {
     expect(toolDisplayName(use)).toBe("data_query");
     // Never "data_query · data_query".
     expect(toolPreview(use, null)).toBe("from Labs");
+  });
+});
+
+describe("toolPreview — search and fetch tools", () => {
+  const call = (name: string, input: Record<string, unknown>) =>
+    msg({ id: "1", role: "tool_use", content: { name, input } });
+
+  it("shows a Grep / Glob pattern and where it looks", () => {
+    expect(toolPreview(call("Grep", { pattern: "TODO", path: "apps/" }), null)).toBe(
+      "TODO in apps/",
+    );
+    expect(toolPreview(call("Glob", { pattern: "**/*.ts" }), null)).toBe("**/*.ts");
+  });
+
+  it("shows a WebFetch url, a WebSearch query and a MultiEdit path", () => {
+    expect(toolPreview(call("WebFetch", { url: "https://x.dev" }), null)).toBe("https://x.dev");
+    expect(toolPreview(call("WebSearch", { query: "vite 7" }), null)).toBe("vite 7");
+    expect(toolPreview(call("MultiEdit", { file_path: "/a.ts", edits: [] }), null)).toBe("/a.ts");
+  });
+});
+
+describe("toolDiffStats", () => {
+  it("counts an Edit's lines and is null for other tools", () => {
+    const edit = msg({
+      id: "1",
+      role: "tool_use",
+      content: { name: "Edit", input: { file_path: "/a", old_string: "a\nb", new_string: "a\nc\nd" } },
+    });
+    expect(toolDiffStats(edit)).toEqual({ added: 2, removed: 1 });
+    const bash = msg({ id: "2", role: "tool_use", content: { name: "Bash", input: { command: "ls" } } });
+    expect(toolDiffStats(bash)).toBeNull();
   });
 });
 
