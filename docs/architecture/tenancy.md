@@ -218,10 +218,24 @@ failure again.
 
 One module decides who may see and act on a chat session: `apps/canopy_sessions/access.py`.
 
-- **Tenant first** (member of `Session.workspace`), then one of four legs: creator ·
+- **Tenant first** (member of `Session.workspace`), then one of five legs: creator ·
   explicit participant (`SessionParticipant`) · runner-discovered emdash session · the own
   thread of an agent you administer (`Agent.is_admin`: its owner, a workspace owner, or an
-  `AgentAdmin`).
+  `AgentAdmin`) · a **session review grant**.
+- **A session review grant lets one agent's own login read one person's sessions** — a
+  coach (`SessionReviewGrant`; leg 5, `access._review_grant_q`). Only the person makes
+  or ends it, for an agent of a workspace they are in (`/api/people/me/session-reviewers/`,
+  `apps/contacts/session_reviewers.py`), each act on their memory audit
+  (`sessionReviewer.granted` / `.revoked`); revoking drops the agent's next read. "Their
+  sessions" are the chats they started and the runner-discovered sessions on a box they
+  own that are not an agent's own work (`access.sessions_of_q`). Read-only (`role_for`
+  gives the agent a viewer), never a sensitive conversation (any runner requirement keeps
+  it out, failing closed), and never anyone but that agent's login — its admins, other
+  agents and co-tenants gain nothing. The agent lists who let it in
+  (`GET /api/people/session-reviewers/granted-to-me/`) and one person's sessions with
+  `GET /api/canopy-sessions/?of_user=<id>`. Which agent canopy offers as the coach (the
+  first-run checkbox, the Settings switch) is `settings.COACHING_AGENT_SLUG`, offered only
+  where that agent is in a workspace the person is in or may ask to join.
 - Acting needs participant role owner/editor; a `viewer` reads; sharing is the owner's
   (`/participants`, the chat header's People control).
 - Every door calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push

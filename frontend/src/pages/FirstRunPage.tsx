@@ -9,6 +9,8 @@ import {
   requestWorkspaceAccess,
   type RequestableWorkspaceOut,
 } from '@/api/workspaces'
+import { addMySessionReviewer, listMySessionReviewers, type CoachOffer } from '@/api/people'
+import { coachLabel } from '@/components/settings/SessionReviewersPanel'
 import { scopedPath } from '@/lib/scopedLinks'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
@@ -37,6 +39,13 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
   // `pending_request_id`, or set when a request we just sent came back pending.
   const [pendingSlugs, setPendingSlugs] = useState<Set<string>>(new Set())
   const [requestError, setRequestError] = useState('')
+  // The coach canopy offers (`COACHING_AGENT_SLUG`), when it is in a workspace this
+  // person may ask to join — null otherwise, and the checkbox never shows.
+  const [coach, setCoach] = useState<CoachOffer | null>(null)
+  const [coachMe, setCoachMe] = useState(false)
+  // Asked for coaching on a request that is waiting on an admin: it can only be
+  // turned on once they are in, from Settings.
+  const [coachLater, setCoachLater] = useState(false)
 
   // AuthProvider resolves `useAuth()` before any route mounts (it gates on
   // `status === 'loading'` itself), so `user` is always the real MeOut here —
@@ -72,6 +81,13 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
         // Best-effort: the request section just stays empty on failure — the
         // create/needs-invite path below is still fully usable.
       })
+    listMySessionReviewers()
+      .then((r) => {
+        if (!cancelled) setCoach(r.coach ?? null)
+      })
+      .catch(() => {
+        // Best-effort: no offer, no checkbox.
+      })
     return () => {
       cancelled = true
     }
@@ -89,13 +105,24 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
     setRequestError('')
     try {
       const req = await requestWorkspaceAccess(ws.slug, (notes[ws.slug] ?? '').trim())
+      const wantsCoach = coachMe && coach?.workspace === ws.slug
       if (req.status === 'approved') {
-        // Auto-approved: they are in. WorkspaceProvider's membership list never
+        // Auto-approved: they are in, so the coach is now an agent of one of
+        // their workspaces and the grant can be made — their own act, ticked here.
+        if (wantsCoach && coach) {
+          try {
+            await addMySessionReviewer(coach.agent)
+          } catch {
+            // They are in either way; Settings has the switch to try again.
+          }
+        }
+        // WorkspaceProvider's membership list never
         // invalidates itself, so refresh before the redirect resolves.
         await refresh()
         navigate(scopedPath(ws.slug, ''))
         return
       }
+      if (wantsCoach) setCoachLater(true)
       setPendingSlugs((prev) => new Set(prev).add(ws.slug))
     } catch (e) {
       setRequestError(e instanceof Error ? e.message : 'Could not send the request.')
@@ -196,8 +223,23 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
                   {pending ? (
                     <p className="mt-2 text-[12px] text-foreground-secondary">
                       Requested — an admin will review it. You&apos;ll get an email when they decide.
+                      {coachLater && coach?.workspace === ws.slug
+                        ? ` Once you're in, turn on ${coach.name}'s coaching from Settings.`
+                        : ''}
                     </p>
                   ) : (
+                    <>
+                    {coach && !coach.member && coach.workspace === ws.slug ? (
+                      <label className="mt-2 flex items-start gap-2 text-[12px] text-foreground-secondary">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={coachMe}
+                          onChange={(e) => setCoachMe(e.target.checked)}
+                        />
+                        <span>{coachLabel(coach.name)}</span>
+                      </label>
+                    ) : null}
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         aria-label={`Note to the admins of ${ws.display_name} (optional)`}
@@ -216,6 +258,7 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
                         {sendingSlug === ws.slug ? 'Sending…' : `Request an invitation to ${ws.display_name}`}
                       </button>
                     </div>
+                    </>
                   )}
                 </li>
               )

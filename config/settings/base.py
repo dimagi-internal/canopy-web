@@ -842,6 +842,11 @@ CANOPY_BETA_REQUESTS_TO = env("CANOPY_BETA_REQUESTS_TO", default="jjackson@dimag
 # the fleet (Ada) can pull the brake the moment something looks wrong; RELEASING stays
 # superuser-only, so an agent can stop the fleet but never restart it.
 CANOPY_FLEET_HOLDERS = env.list("CANOPY_FLEET_HOLDERS", default=["ada@dimagi-ai.com"])
+# The agent offered to people as a coach that reviews their sessions
+# (apps/contacts/session_reviewers.py): a checkbox on the first-run screen and a
+# switch on /people/me, shown only where this agent is in a workspace the person is
+# in or may ask to join. Blank = no coach is offered anywhere.
+COACHING_AGENT_SLUG = env("COACHING_AGENT_SLUG", default="trellis")
 # Django mails ADMINS on every unhandled 500 once a real backend is live;
 # connect-labs learned that the hard way (a message every two minutes into
 # DeliveryDelay on a fresh domain). Errors go to CloudWatch; never mail them.

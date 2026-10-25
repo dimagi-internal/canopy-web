@@ -12,9 +12,11 @@ The rule, whole:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of four legs** (`visible_session_q`): you created it; you were
+* **Then one of five legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered emdash session (tenant-visible
-  by design); or it is the own thread of an agent you run.
+  by design); it is the own thread of an agent you run; or you are an agent's
+  own login and its person let that agent review their sessions
+  (`SessionReviewGrant`, read-only, never a sensitive one).
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
@@ -60,9 +62,10 @@ from __future__ import annotations
 
 from django.db.models import Q
 
+from apps.harness import runner_requirements as rr
 from apps.harness import sensitivity
 
-from .models import Session, SessionParticipant
+from .models import Session, SessionParticipant, SessionReviewGrant
 
 
 def visible_session_q(user) -> Q:
@@ -71,7 +74,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Four ways in, and no fifth:
+    Five ways in, and no sixth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -88,6 +91,15 @@ def visible_session_q(user) -> Q:
        "Owner" alone was not enough: on labs every agent's `owner` is null, so
        it matched no one. Narrower than leg 3 on purpose: the agent's admins,
        not the whole tenant.
+    5. you are an agent's own login (`Agent.user`) and the session's person let
+       THAT agent review their sessions (a live `SessionReviewGrant`, the
+       person's own act). Their sessions are the ones they created and the
+       runner-discovered sessions on a box they own that are not an agent's own
+       work (`sessions_of_q`). Never a sensitive one: a session carrying any
+       runner requirement is left out (`_not_sensitive_q`, the SQL form of
+       `sensitivity.is_sensitive`, failing closed). Another agent's login, or a
+       person who administers the agent, gains nothing from the grant; revoking
+       it drops the next read.
 
     Leg 3 keeps `runner_binding__isnull=False` alongside the origin check
     rather than dropping it: origin alone would newly expose runner-origin rows
@@ -115,7 +127,34 @@ def visible_session_q(user) -> Q:
         | Q(participants__user=user)
         | (Q(origin=Session.ORIGIN_RUNNER) & Q(runner_binding__isnull=False))
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
+        | _review_grant_q(user)
     )
+
+
+def sessions_of_q(user_ids) -> Q:
+    """A person's OWN sessions, for `user_ids` (ids or a subquery of them): the
+    chats they started, and the runner-discovered sessions on a box they own that
+    are not an agent's own work. Narrows; grants nothing by itself."""
+    return (Q(created_by_id__in=user_ids)
+            | Q(origin=Session.ORIGIN_RUNNER, created_by__isnull=True, agent__isnull=True,
+                runner_binding__runner__owner_id__in=user_ids))
+
+
+def _not_sensitive_q() -> Q:
+    """Sessions that are certainly not sensitive: no runner requirement at all.
+    `sensitivity.is_sensitive` reads the same key; any value there (even one that
+    would parse as harmless) is left out, so a new flag fails closed."""
+    return ~Q(metadata__has_key=rr.METADATA_KEY)
+
+
+def _review_grant_q(user) -> Q:
+    """Leg 5: the sessions of the people who let the agent whose own login
+    `user` is review them. Empty for anyone else."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    granters = (SessionReviewGrant.objects
+                .filter(agent__user=user, revoked_at__isnull=True).values("user_id"))
+    return sessions_of_q(granters) & Q(contact__isnull=True) & _not_sensitive_q()
 
 
 def _agent_admin_q(user) -> Q:
@@ -163,7 +202,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the four legs.
+    """Every session `user` may read — the tenant gate AND the five legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.

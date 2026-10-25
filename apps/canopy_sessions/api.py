@@ -455,7 +455,7 @@ def _filtered_sessions(
     resource: str = "", page_path: str = "", session_key: str = "",
     q: str = "", repo: str = "", branch: str = "", pr: str = "",
     since: dt.datetime | None = None,
-    until: dt.datetime | None = None, runner: str = "",
+    until: dt.datetime | None = None, runner: str = "", of_user: int | None = None,
 ):
     """Every session the caller may see, narrowed by the list filters, with
     `_last_msg_at`, `_activity` (= `last_activity_at`, computed in SQL) and
@@ -519,6 +519,11 @@ def _filtered_sessions(
     if runner:
         box = transfer_requests.resolve_runner(runner)
         rows = rows.filter(runner_binding__runner=box) if box is not None else rows.none()
+    # One person's own sessions (`access.sessions_of_q`) — what a coach an agent's
+    # person let review them lists (`/api/people/session-reviewers/granted-to-me/`).
+    # Only narrows what the caller may already read.
+    if of_user is not None:
+        rows = rows.filter(access.sessions_of_q([of_user]))
     # Free text over what a person reads off a card: the title, or the runner's
     # session_key (an emdash task name, or a cloud session's Claude UUID).
     if q:
@@ -563,6 +568,7 @@ def list_sessions(
     resource: str = "", page_path: str = "", reply: bool = False,
     session_key: str = "", q: str = "", repo: str = "", branch: str = "", pr: str = "",
     since: dt.datetime | None = None, until: dt.datetime | None = None, runner: str = "",
+    of_user: int | None = None,
 ):
     """The sessions you can see: waiting on you first, then running, then most
     recent activity — at most `limit` (≤ 500) of them, with no paging.
@@ -572,7 +578,9 @@ def list_sessions(
     `pr` (a PR it created or asked to merge — N, owner/name#N or a URL),
     `since` / `until` (last activity in [since, until)), `runner` (the runner it
     is on, by id or name — `?runner=<name>&state=active` is every open session on
-    a box, what `POST /transfer-all` moves). To reach EVERY session
+    a box, what `POST /transfer-all` moves), `of_user` (one person's own sessions,
+    by canopy user id: the chats they started and the runner sessions on their own
+    boxes — how a coach lists the sessions of someone who let it review them). To reach EVERY session
     rather than the newest 500, walk `GET /api/canopy-sessions/search` instead.
     """
     # The ONE unified list (Plan 4): every session the caller can see in their
@@ -591,7 +599,7 @@ def list_sessions(
         request, state=state, source=source, opp_slug=opp_slug, opp_run_id=opp_run_id,
         origin_key=origin_key, embed_app=embed_app, resource=resource,
         page_path=page_path, session_key=session_key, q=q, repo=repo,
-        branch=branch, pr=pr, since=since, until=until, runner=runner,
+        branch=branch, pr=pr, since=since, until=until, runner=runner, of_user=of_user,
     ).order_by("-created_at")
 
     # Every row says which mode drove it — the list shows it on each card, so an

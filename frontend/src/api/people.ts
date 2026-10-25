@@ -375,6 +375,31 @@ export async function removeMyViewer(agent: string): Promise<MemoryViewers> {
   return data as MemoryViewers
 }
 
+export type SessionReviewers = components['schemas']['SessionReviewersOut']
+export type CoachOffer = components['schemas']['CoachOfferOut']
+
+/** The agents you let review your sessions (a coach), the ones you could, and
+ *  the coach canopy offers you, if any (apps/contacts/session_reviewers.py). */
+export async function listMySessionReviewers(): Promise<SessionReviewers> {
+  const res = await apiV2.GET('/api/people/me/session-reviewers/')
+  const data = unwrap(res, 'Failed to load which agents can review your sessions')
+  return data as SessionReviewers
+}
+
+export async function addMySessionReviewer(agent: string): Promise<SessionReviewers> {
+  const res = await apiV2.POST('/api/people/me/session-reviewers/', { body: { agent } })
+  const data = unwrap(res, 'Failed to let that agent review your sessions')
+  return data as SessionReviewers
+}
+
+export async function removeMySessionReviewer(agent: string): Promise<SessionReviewers> {
+  const res = await apiV2.DELETE('/api/people/me/session-reviewers/{agent_slug}/', {
+    params: { path: { agent_slug: agent } },
+  })
+  const data = unwrap(res, 'Failed to stop that agent reviewing your sessions')
+  return data as SessionReviewers
+}
+
 // --- someone's page, as they let this agent see it (apps/contacts/viewers.py) -----
 
 export type MemoryPage = components['schemas']['MemoryPageOut']
