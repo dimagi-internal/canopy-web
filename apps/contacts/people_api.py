@@ -402,9 +402,10 @@ def people_coverage(request: HttpRequest, workspace: str | None = None, days: in
 @gate("member")  # every human member of `?workspace=`; each person whose addresses are returned gets a logged read
 def list_workspace_addresses(request: HttpRequest, workspace: str | None = None) -> dict:
     """Every person in `?workspace=` (its human members, not agents or system
-    accounts) with their labelled emails and phones, and `may_edit` — true
-    only on your own row: a person changes their own contact details, at
-    `POST /api/people/me/addresses/`. Members of that workspace only."""
+    accounts) with their labelled emails and phones — how an agent finds, say,
+    every family member's work email in one read. `may_edit` is true only on
+    your own row: a person changes their own, at `POST /api/people/me/addresses/`.
+    Members of that workspace only."""
     ws = _workspace(request, workspace)
     reader_agent = people.agent_of_login(request.user)
     users = [m.user for m in wsvc.effective_memberships(ws) if people.is_human_account(m.user)]

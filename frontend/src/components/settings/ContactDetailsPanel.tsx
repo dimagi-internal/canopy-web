@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { listMyAddresses, type PersonAddress } from '@/api/people'
 import { useAuth } from '@/auth/AuthProvider'
-import { MyAddressesEditor } from '@/components/people/ContactDetailsSection'
+import { MyAddressesEditor } from './MyAddressesEditor'
 
 /**
  * Your contact details (apps/contacts/models.py `PersonAddress`): other ways to

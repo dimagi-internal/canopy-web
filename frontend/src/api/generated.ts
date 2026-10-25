@@ -14118,9 +14118,10 @@ export interface paths {
         /**
          * Every member's other addresses, as one workspace sees them
          * @description Every person in `?workspace=` (its human members, not agents or system
-         *     accounts) with their labelled emails and phones, and `may_edit` — true
-         *     only on your own row: a person changes their own contact details, at
-         *     `POST /api/people/me/addresses/`. Members of that workspace only.
+         *     accounts) with their labelled emails and phones — how an agent finds, say,
+         *     every family member's work email in one read. `may_edit` is true only on
+         *     your own row: a person changes their own, at `POST /api/people/me/addresses/`.
+         *     Members of that workspace only.
          */
         readonly get: operations["list_workspace_addresses"];
         readonly put?: never;

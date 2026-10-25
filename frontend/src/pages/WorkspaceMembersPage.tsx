@@ -22,7 +22,6 @@ import {
   type SystemAccountOut,
 } from '@/api/workspaces'
 import { SystemAccountsSection } from '@/components/people/SystemAccountsSection'
-import { ContactDetailsSection } from '@/components/people/ContactDetailsSection'
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
@@ -284,8 +283,6 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           )}
         </div>
       )}
-
-      <ContactDetailsSection slug={slug} />
 
       <SystemAccountsSection
         slug={slug}

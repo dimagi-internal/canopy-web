@@ -7,7 +7,7 @@ import type { PersonAddress } from '@/api/people'
 const listMyAddresses = vi.fn<() => Promise<PersonAddress[]>>()
 const addMyAddress = vi.fn<(body: object) => Promise<PersonAddress>>()
 const removeMyAddress = vi.fn<(addressId: number) => Promise<void>>()
-vi.mock('@/api/people', () => ({ listMyAddresses, addMyAddress, removeMyAddress, listWorkspaceAddresses: vi.fn() }))
+vi.mock('@/api/people', () => ({ listMyAddresses, addMyAddress, removeMyAddress }))
 vi.mock('@/auth/AuthProvider', () => ({
   useAuth: () => ({ status: 'authenticated', user: { email: 'gina@example.com' } }),
 }))
@@ -32,5 +32,14 @@ describe('ContactDetailsPanel', () => {
     await waitFor(() => expect(screen.getByText('+1 617 555 0100')).toBeTruthy())
     expect(addMyAddress).toHaveBeenCalledWith({ kind: 'phone', label: 'mobile', value: '+1 617 555 0100' })
     expect(screen.getByText('gina@employer.org')).toBeTruthy()
+  })
+
+  it('removes one', async () => {
+    listMyAddresses.mockResolvedValue([{ id: 1, kind: 'email', label: 'work', value: 'gina@employer.org', created_at: null }])
+    removeMyAddress.mockResolvedValue()
+    render(<ContactDetailsPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove work email for gina@example.com' }))
+    await waitFor(() => expect(screen.queryByText('gina@employer.org')).toBeNull())
+    expect(removeMyAddress).toHaveBeenCalledWith(1)
   })
 })

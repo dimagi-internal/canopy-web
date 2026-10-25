@@ -1,13 +1,9 @@
-import { useEffect, useState, type FormEvent, type JSX } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, type FormEvent, type JSX } from 'react'
 import { Button, Input } from 'canopy-ui/ui'
-import { WorkbenchSubHeader } from 'canopy-ui'
 import {
   addMyAddress,
-  listWorkspaceAddresses,
   removeMyAddress,
   type AddressKind,
-  type MemberAddresses,
   type PersonAddress,
 } from '@/api/people'
 
@@ -15,7 +11,7 @@ import {
 // labelled email or phone beside the login that identifies them — Gina's work
 // email, say — which agents read when they act (invite her work address to the
 // family calendar). They belong to the person's ACCOUNT, not a workspace, and
-// only the person changes them: here on their own card, or in account settings.
+// only the person changes them, in account settings.
 
 function errorText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback
@@ -57,8 +53,7 @@ export function AddressList({
   )
 }
 
-/** Your own addresses, editable: the list, Remove, and the add form. Used on
- *  your card on a members page and in account settings. */
+/** Your own addresses, editable: the list, Remove, and the add form. */
 export function MyAddressesEditor({
   addresses,
   who,
@@ -92,69 +87,6 @@ export function MyAddressesEditor({
         }}
       />
     </>
-  )
-}
-
-/** Settings → Members: every member's contact details; you edit only your own. */
-export function ContactDetailsSection({ slug }: { slug: string }): JSX.Element {
-  const [people, setPeople] = useState<MemberAddresses[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    setPeople(null)
-    listWorkspaceAddresses(slug)
-      .then((p) => {
-        if (!cancelled) setPeople(p)
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setPeople([])
-          setError(errorText(e, 'Failed to load contact details'))
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [slug])
-
-  function replace(personId: number, addresses: PersonAddress[]) {
-    setPeople((prev) => (prev ?? []).map((p) => (p.person_id === personId ? { ...p, addresses } : p)))
-  }
-
-  return (
-    <div className="mb-8" data-testid="contact-details">
-      <WorkbenchSubHeader title="Contact details" count={people?.length} />
-      <p className="mb-3 text-[12px] text-muted-foreground">
-        Other ways to reach each person, such as a work email or a phone. Agents use them when they act, for example to
-        invite someone’s work address to a calendar event. Each person keeps their own: add yours on your card here or
-        in <Link to="/settings" className="text-primary underline-offset-2 hover:underline">your account settings</Link>.
-        They follow you into every workspace you’re in.
-      </p>
-      {error && <div className="mb-3 text-sm text-destructive">{error}</div>}
-      {people === null ? (
-        <div className="h-16 animate-pulse rounded-lg bg-muted" />
-      ) : (
-        <ul className="m-0 flex list-none flex-col gap-3 p-0">
-          {people.map((p) => (
-            <li key={p.person_id} className="rounded-lg border border-border bg-card p-4" data-testid={`contact-${p.user_id}`}>
-              <div className="flex flex-wrap items-baseline gap-2">
-                <span className="font-medium text-foreground">{p.display_name || p.email}</span>
-                {p.display_name && p.display_name !== p.email && (
-                  <span className="text-[12px] text-muted-foreground">{p.email}</span>
-                )}
-                {p.may_edit && <span className="text-[11px] text-muted-foreground">(you)</span>}
-              </div>
-              {p.may_edit ? (
-                <MyAddressesEditor addresses={p.addresses} who={p.email} onChange={(next) => replace(p.person_id, next)} />
-              ) : (
-                <AddressList addresses={p.addresses} who={p.email} />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
   )
 }
 

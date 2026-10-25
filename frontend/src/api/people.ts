@@ -82,22 +82,7 @@ export async function retractFact(personId: number, factId: number): Promise<voi
 // --- More ways to reach a person (PersonAddress) ------------------------------
 
 export type PersonAddress = components['schemas']['PersonAddressOut']
-/** A member with their addresses, always a list (the schema's default). */
-export type MemberAddresses = Omit<components['schemas']['MemberAddressesOut'], 'addresses'> & {
-  addresses: PersonAddress[]
-}
 export type AddressKind = 'email' | 'phone'
-
-/** Every human member of a workspace with their labelled emails and phones
- *  (work, personal …); `may_edit` is true only on your own. */
-export async function listWorkspaceAddresses(workspace: string): Promise<MemberAddresses[]> {
-  const res = await apiV2.GET('/api/people/addresses/', { params: { query: { workspace } } })
-  const data = unwrap(res, 'Failed to load contact details')
-  return ((data as components['schemas']['WorkspaceAddressesOut']).people ?? []).map((p) => ({
-    ...p,
-    addresses: [...(p.addresses ?? [])],
-  }))
-}
 
 /** Your own contact details — yours across every workspace. */
 export async function listMyAddresses(): Promise<PersonAddress[]> {
