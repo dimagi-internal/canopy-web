@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowDown, Search } from "lucide-react";
 
-import type { PeerDraft, SessionState, SubagentSummary, TypingVisibility } from "./protocol";
+import type {
+  Message, PeerDraft, QueuedMessage, SessionState, SubagentSummary, TypingVisibility,
+} from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
@@ -21,6 +23,7 @@ import { AppHostContext, type AppHost } from "./mcpApps/context";
 import { SecretRequestHostContext, type SecretRequestHost } from "./secretRequest";
 import { AttachmentHostContext, type AttachmentHost } from "./attachmentHost";
 import { SubagentsContext } from "./subagents";
+import { MessageActionsContext, type MessageActionsHost } from "./messageActions";
 
 export interface ChatPanelProps {
   state: SessionState;
@@ -81,6 +84,9 @@ export interface ChatPanelProps {
   /** The bound runner's Claude model setting (`opus[1m]`), which sizes the
    *  context meter's window. Omit and the window is inferred or "unknown". */
   runnerModel?: string | null;
+  /** Per-message actions the host runs (Fork from here). Copy is always on;
+   *  Edit and resend is the panel's own, offered on your last line. */
+  messageActions?: MessageActionsHost;
 }
 
 /**
@@ -119,6 +125,7 @@ export function ChatPanel({
   attachmentHost,
   slashCommands,
   runnerModel,
+  messageActions,
 }: ChatPanelProps) {
   // `onDiscard` is part of the public surface (co-edit teardown) even though
   // the default composer doesn't render a discard button. Referenced to keep
@@ -307,10 +314,40 @@ export function ChatPanel({
   const peerDrafts = state.peer_drafts ?? EMPTY_PEERS;
   const typingUserIds = useMemo(() => peerDrafts.map((p) => p.author.id), [peerDrafts]);
 
+  // Edit and resend, on your own last line only: while a runner has not taken it
+  // (editing withdraws it from the queue), or once its turn is over. Either way
+  // the text goes back in the box and sending it is a new turn — history is
+  // never rewritten. Not offered while the agent is working on it.
+  const [prefill, setPrefill] = useState<{ text: string; seq: number } | null>(null);
+  const putBack = (text: string) => setPrefill((p) => ({ text, seq: (p?.seq ?? 0) + 1 }));
+  const edit = useMemo(
+    () =>
+      editTarget({
+        messages: shownMessages, queued: state.queued ?? [], currentUserId, currentContactId,
+        canUnqueue: Boolean(onUnqueue),
+        settled: inFlightMessage == null && !agentHasFloor && !awaitingReply,
+        blocked: Boolean(disabledReason),
+      }),
+    [shownMessages, state.queued, currentUserId, currentContactId, onUnqueue, inFlightMessage,
+     agentHasFloor, awaitingReply, disabledReason],
+  );
+  const editQueued = (q: QueuedMessage) => {
+    onUnqueue?.(q.turn_id);
+    putBack(q.text);
+  };
+  const actionsValue = {
+    host: messageActions ?? null,
+    editableId: edit?.messageId ?? null,
+    onEdit: edit
+      ? (m: Message) => (edit.queued ? editQueued(edit.queued) : putBack(m.plaintext))
+      : null,
+  };
+
   return (
     <AppHostContext.Provider value={appHost ?? null}>
     <SecretRequestHostContext.Provider value={secretRequestHost ?? null}>
     <AttachmentHostContext.Provider value={attachmentHost ?? null}>
+    <MessageActionsContext.Provider value={actionsValue}>
     <div className="flex h-full flex-col" onKeyDown={onPanelKeyDown}>
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
         <ConnectionStatus connected={connected} />
@@ -384,6 +421,8 @@ export function ChatPanel({
           currentContactId={currentContactId}
           ownPendingTexts={ownPendingTexts}
           onCancel={onUnqueue}
+          editableTurnId={edit?.queued?.turn_id ?? null}
+          onEdit={editQueued}
         />
       </div>
       {away && (
@@ -443,11 +482,51 @@ export function ChatPanel({
         storage={draftStorage}
         typingVisibility={typingVisibility}
         onTypingVisibilityChange={onTypingVisibilityChange}
+        prefill={prefill}
       />
     </div>
+    </MessageActionsContext.Provider>
     </AttachmentHostContext.Provider>
     </SecretRequestHostContext.Provider>
     </AppHostContext.Provider>
   );
 }
 
+
+/** Which of your lines "Edit and resend" is offered on, if any: your most recent
+ *  send while it is still queued and unclaimed, else your last line in the
+ *  transcript once nothing is running. Null while a runner holds your send or the
+ *  agent is working, and when sending is refused. */
+export function editTarget({
+  messages, queued, currentUserId, currentContactId, canUnqueue, settled, blocked,
+}: {
+  messages: Message[];
+  queued: QueuedMessage[];
+  currentUserId: number | null;
+  currentContactId: number | null;
+  canUnqueue: boolean;
+  settled: boolean;
+  blocked: boolean;
+}): { messageId: string | null; queued: QueuedMessage | null } | null {
+  if (blocked) return null;
+  const mine = queued.filter((q) => isMine(q.author, currentUserId, currentContactId));
+  const latest = mine[mine.length - 1];
+  if (latest) {
+    if (latest.state !== "queued" || !canUnqueue) return null;
+    const row = latest.client_id
+      ? messages.find((m) => m.role === "user" && m.content?.client_id === latest.client_id)
+      : undefined;
+    return { messageId: row?.id ?? null, queued: latest };
+  }
+  if (!settled) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user" || (m.content?.record as { compact_summary?: unknown } | undefined)?.compact_summary) {
+      continue;
+    }
+    // A row with no author predates authorship, and renders as yours.
+    if (m.author && !isMine(m.author, currentUserId, currentContactId)) continue;
+    return m.plaintext.trim() ? { messageId: m.id, queued: null } : null;
+  }
+  return null;
+}

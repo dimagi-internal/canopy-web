@@ -9,6 +9,7 @@ import {
 } from "./pairToolMessages";
 import { subagentProgress, useRowSubagent } from "./subagents";
 import { ToolBody } from "./toolBodies/ToolBody";
+import { MessageActions, toolCopyText } from "./messageActions";
 
 interface Props {
   use: Message;
@@ -65,7 +66,8 @@ export function ToolCallPair({ use, result, forceOpen }: Props) {
       open={forceOpen}
       className="group my-1 rounded border border-border bg-muted/40 text-sm"
     >
-      <summary className="block cursor-pointer px-2 py-1.5 text-muted-foreground hover:bg-muted/60 select-none [&::-webkit-details-marker]:hidden">
+      <summary className="group/msg relative block cursor-pointer px-2 py-1.5 text-muted-foreground hover:bg-muted/60 select-none [&::-webkit-details-marker]:hidden">
+        <MessageActions message={use} copyText={toolCopyText(use, result)} className="absolute right-1 top-1/2 -translate-y-1/2" />
         <div className="flex items-center gap-2">
           <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" />
           <StatusIcon className={`h-3.5 w-3.5 shrink-0 ${iconColor}`} />

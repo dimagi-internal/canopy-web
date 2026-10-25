@@ -106,7 +106,8 @@ export {
 } from "./pairToolMessages";
 
 // Presentational components
-export { ChatPanel, type ChatPanelProps } from "./ChatPanel";
+export { ChatPanel, editTarget, type ChatPanelProps } from "./ChatPanel";
+export { toolCopyText, type MessageActionsHost } from "./messageActions";
 export { MenuPrompt, type MenuPromptProps } from "./MenuPrompt";
 export { MessageList } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
