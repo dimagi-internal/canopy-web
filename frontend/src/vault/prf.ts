@@ -20,6 +20,18 @@ export class PrfUnsupportedError extends Error {
   }
 }
 
+/** A passkey request that ended without a passkey: the person dismissed the
+ *  browser's sheet, it timed out, or the browser refused to show it (no recent
+ *  click). WebAuthn calls all three `NotAllowedError`, with a message that
+ *  explains none of them. */
+export function isPasskeyRefusal(e: unknown): boolean {
+  return e instanceof Error && e.name === 'NotAllowedError'
+}
+
+export const PASSKEY_NOT_COMPLETED =
+  'The passkey check did not finish — it was dismissed, timed out, or the browser blocked it — so nothing ' +
+  'was changed. Click again to retry.'
+
 export const PRF_UNSUPPORTED =
   'This passkey or browser does not support the WebAuthn PRF extension, which the vault key needs. ' +
   'Use a passkey that does — iCloud Keychain on Safari 18+ / macOS 15+, Google Password Manager or ' +

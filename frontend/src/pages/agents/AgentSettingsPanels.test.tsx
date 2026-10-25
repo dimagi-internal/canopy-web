@@ -102,7 +102,7 @@ describe('Security — its secrets', () => {
     await waitFor(() => expect(setAgentCredentials).toHaveBeenCalledWith('echo', { NOVA_API_KEY: 'new-key' }))
   })
 
-  it('stores a file from disk as a value, without a trailing newline', async () => {
+  it('stores a file from disk as a value on Save, without a trailing newline', async () => {
     getAgentCredentialStatus.mockResolvedValue([
       { name: 'GOOGLE_PROVISIONER_KEY', declared: true, set: false, source: 'unset', updated_at: null },
     ])
@@ -111,6 +111,9 @@ describe('Security — its secrets', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Set GOOGLE_PROVISIONER_KEY' }))
     const key = '{\n  "type": "service_account"\n}\n'
     fireEvent.change(screen.getByTestId('upload-GOOGLE_PROVISIONER_KEY'), { target: { files: [new File([key], 'key.json')] } })
+    await waitFor(() => expect((screen.getByLabelText('New value for GOOGLE_PROVISIONER_KEY') as HTMLTextAreaElement).value)
+      .toBe('{\n  "type": "service_account"\n}'))
+    fireEvent.click(screen.getByTestId('vault-save-GOOGLE_PROVISIONER_KEY'))
     await waitFor(() => expect(setAgentCredentials).toHaveBeenCalledWith(
       'echo', { GOOGLE_PROVISIONER_KEY: '{\n  "type": "service_account"\n}' }))
   })

@@ -20,7 +20,7 @@ import { OpenSecretRequests } from '@/pages/agents/OpenSecretRequests'
 import { sections } from '@/pages/agents/agentCredentials'
 import { GOG_TOKEN_REF } from '@/pages/agents/googleMint'
 import { revealZkValue, setZkValue, unlockVaultKey } from '@/vault/operations'
-import { PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
+import { isPasskeyRefusal, PASSKEY_NOT_COMPLETED, PrfUnsupportedError, PRF_UNSUPPORTED } from '@/vault/prf'
 import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 
 // The top of the agent's Security tab: where its secrets live, its canopy
@@ -39,6 +39,7 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 function reason(e: unknown, fallback: string): string {
   if (e instanceof AgentApiError && e.detail) return e.detail
   if (e instanceof PrfUnsupportedError) return PRF_UNSUPPORTED
+  if (isPasskeyRefusal(e)) return PASSKEY_NOT_COMPLETED
   return e instanceof Error ? e.message : fallback
 }
 

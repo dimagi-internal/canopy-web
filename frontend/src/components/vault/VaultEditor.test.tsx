@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// Changing a key is the job: find it, Change, paste, Save — in the row.
+// Changing a key is the job: find it, Change, paste (or load a file), Save — in the row.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
@@ -29,8 +29,9 @@ describe('VaultEditor', () => {
   it('changes a value in its row, and drops the draft once it lands', async () => {
     const { onSave } = show()
     fireEvent.click(screen.getByRole('button', { name: 'Change ACE_HQ_PASSWORD' }))
-    const input = screen.getByLabelText('New value for ACE_HQ_PASSWORD') as HTMLInputElement
-    expect(input.type).toBe('password')
+    const input = screen.getByLabelText('New value for ACE_HQ_PASSWORD') as HTMLTextAreaElement
+    // Plain text you can see, on as many lines as it needs.
+    expect(input.tagName).toBe('TEXTAREA')
     fireEvent.change(input, { target: { value: '  hunter2  ' } })
     fireEvent.click(screen.getByTestId('vault-save-ACE_HQ_PASSWORD'))
     await waitFor(() => expect(onSave).toHaveBeenCalledWith('ACE_HQ_PASSWORD', 'hunter2'))
@@ -47,6 +48,40 @@ describe('VaultEditor', () => {
     fireEvent.click(screen.getByTestId('vault-save-OCS_API_TOKEN'))
     expect((await screen.findByTestId('vault-error')).textContent).toBe('step up first')
     expect(screen.getByLabelText('New value for OCS_API_TOKEN')).toBeTruthy()
+  })
+
+  it('keeps the line breaks of a multi-line value such as a PEM', async () => {
+    const { onSave } = show()
+    const pem = '-----BEGIN TEST VALUE-----\nMIIE\nabcd\n-----END TEST VALUE-----'
+    fireEvent.click(screen.getByRole('button', { name: 'Set NOVA_API_KEY' }))
+    fireEvent.change(screen.getByLabelText('New value for NOVA_API_KEY'), { target: { value: `${pem}\n` } })
+    fireEvent.click(screen.getByTestId('vault-save-NOVA_API_KEY'))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('NOVA_API_KEY', pem))
+  })
+
+  it('loads a file into a new secret, and stores it only on Save', async () => {
+    const { onSave } = show()
+    fireEvent.click(screen.getByTestId('vault-add'))
+    fireEvent.change(screen.getByLabelText('New secret name'), { target: { value: 'BAILEY_GH_APP_KEY' } })
+    const pem = '-----BEGIN TEST VALUE-----\nMIIE\n-----END TEST VALUE-----'
+    fireEvent.change(screen.getByTestId('upload-new'), { target: { files: [new File([`${pem}\n`], 'app.pem')] } })
+    // The file's picker event is no click, so it only fills the field — the
+    // passkey check starts from Save.
+    await waitFor(() => expect((screen.getByLabelText('New secret value') as HTMLTextAreaElement).value).toBe(pem))
+    expect(onSave).not.toHaveBeenCalled()
+    fireEvent.click(within(screen.getByTestId('vault-add-row')).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('BAILEY_GH_APP_KEY', pem))
+  })
+
+  it('drops an error once its row is closed', async () => {
+    show({ onSave: vi.fn(async () => { throw new Error('passkey check did not finish') }) })
+    fireEvent.click(screen.getByTestId('vault-add'))
+    fireEvent.change(screen.getByLabelText('New secret name'), { target: { value: 'X' } })
+    fireEvent.change(screen.getByLabelText('New secret value'), { target: { value: 'v' } })
+    fireEvent.click(within(screen.getByTestId('vault-add-row')).getByRole('button', { name: 'Save' }))
+    await screen.findByTestId('vault-error')
+    fireEvent.click(within(screen.getByTestId('vault-add-row')).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByTestId('vault-error')).toBeNull()
   })
 
   it('adds a new secret, refusing a name that is not one', async () => {

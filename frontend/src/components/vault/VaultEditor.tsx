@@ -7,7 +7,7 @@ import { relativeAge } from '@/lib/relativeAge'
 
 /**
  * A vault's secrets as one table you edit in place: find a key, Change it,
- * paste, Save. Reveal and Delete sit on the same row.
+ * paste (or load a file), Save. Reveal and Delete sit on the same row.
  *
  * It knows nothing about WHOSE vault it is. The page that owns the vault (an
  * agent's Secrets tab today) loads the rows and hands in the four operations;
@@ -91,11 +91,14 @@ export function VaultEditor({
       .sort((a, b) => Number(needsYou(b)) - Number(needsYou(a)) || a.name.localeCompare(b.name))
   }, [entries, query])
 
+  // Closing a row also drops its error: a message left behind would read as
+  // being about whatever the table shows now.
   const close = () => {
     setEditing(null)
     setAdding(false)
     setNewName('')
     setDraft('')
+    setError(null)
   }
 
   const run = async (fallback: string, op: () => Promise<void>) => {
@@ -120,8 +123,8 @@ export function VaultEditor({
     })
   }
 
-  const add = (ev: FormEvent) => {
-    ev.preventDefault()
+  const add = (ev?: FormEvent) => {
+    ev?.preventDefault()
     const name = newName.trim()
     if (!NAME_RE.test(name)) {
       setError('A name is letters, digits, _ or -, and does not start with a digit.')
@@ -134,23 +137,23 @@ export function VaultEditor({
     save(name)()
   }
 
-  // A key file (a service-account JSON, a PEM) is read straight from disk into
-  // the save, never into component state; only a trailing newline is dropped.
-  const upload = (name: string, file: File | undefined) => {
+  // A key file (a service-account JSON, a PEM) is loaded into the draft, to be
+  // stored by Save like a pasted value. Storing it on the file picker's own
+  // event would open the passkey check outside a click, which browsers refuse.
+  // Only a trailing newline is dropped.
+  const load = async (file: File | undefined) => {
     if (!file || busy) return
     if (file.size > MAX_UPLOAD_BYTES) {
       setError(`${file.name} is larger than ${MAX_UPLOAD_BYTES / 1024} KB — not a credential file?`)
       return
     }
-    void run('Could not save', async () => {
-      await onSave(name, (await file.text()).replace(/\r?\n$/, ''))
-      close()
-    })
+    setError(null)
+    setDraft((await file.text()).replace(/\r?\n$/, ''))
   }
 
-  const uploadButton = (name: string) => (
+  const uploadButton = (name: string, testId = `upload-${name}`) => (
     <label
-      title="Store the contents of a file from your computer (e.g. a service-account JSON key)"
+      title="Load the contents of a file from your computer (e.g. a PEM or a service-account JSON key), then Save"
       className={`inline-flex h-7 cursor-pointer items-center rounded-md border border-border px-2.5 text-[0.8rem] font-medium text-foreground hover:bg-muted ${busy ? 'pointer-events-none opacity-50' : ''}`}
     >
       Upload file
@@ -159,11 +162,11 @@ export function VaultEditor({
         className="sr-only"
         disabled={busy}
         aria-label={`Upload a file as the value of ${name}`}
-        data-testid={`upload-${name}`}
+        data-testid={testId}
         onChange={(e) => {
           const file = e.target.files?.[0]
           e.target.value = ''
-          upload(name, file)
+          void load(file)
         }}
       />
     </label>
@@ -184,17 +187,26 @@ export function VaultEditor({
     })
   }
 
-  const valueInput = (name: string) => (
-    <input
-      type="password"
+  // Plain, multi-line text: a PEM or a JSON key keeps its line breaks, and you
+  // can see what you pasted. ⌘/Ctrl+Enter saves, Escape cancels.
+  const valueInput = (label: string, onSubmit: () => void, autoFocus = true) => (
+    <textarea
       autoComplete="off"
-      autoFocus
+      spellCheck={false}
+      autoFocus={autoFocus}
+      rows={draft.includes('\n') ? Math.min(12, draft.split('\n').length) : 1}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
-      onKeyDown={(e) => e.key === 'Escape' && close()}
-      placeholder="Paste the new value"
-      aria-label={`New value for ${name}`}
-      className="min-h-11 w-full rounded-md border border-primary bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') close()
+        else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault()
+          onSubmit()
+        }
+      }}
+      placeholder="Paste the value, or Upload file"
+      aria-label={label}
+      className="min-h-11 w-full resize-y rounded-md border border-primary bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0"
     />
   )
 
@@ -251,18 +263,10 @@ export function VaultEditor({
                     className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0 sm:w-56"
                   />
                   <div className="min-w-48 flex-1">
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Escape' && close()}
-                      placeholder="Value"
-                      aria-label="New secret value"
-                      className="min-h-11 w-full rounded-md border border-input bg-input px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground sm:min-h-0"
-                    />
+                    {valueInput('New secret value', () => add(), false)}
                   </div>
                   <Button size="sm" type="submit" disabled={busy || !newName.trim() || !draft.trim()}>Save</Button>
+                  {uploadButton(newName.trim() || 'the new secret', 'upload-new')}
                   <Button size="sm" variant="ghost" type="button" onClick={close}>Cancel</Button>
                 </form>
               </TableCell>
@@ -274,7 +278,7 @@ export function VaultEditor({
               <TableRow key={e.name} className="bg-muted/40" data-testid={`vault-row-${e.name}`}>
                 <TableCell className="font-mono text-foreground">{e.name}</TableCell>
                 <TableCell colSpan={3}>
-                  <form onSubmit={save(e.name)}>{valueInput(e.name)}</form>
+                  <form onSubmit={save(e.name)}>{valueInput(`New value for ${e.name}`, () => save(e.name)())}</form>
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">

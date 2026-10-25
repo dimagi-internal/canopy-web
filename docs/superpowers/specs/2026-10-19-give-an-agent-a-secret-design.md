@@ -11,7 +11,7 @@ What the owner wants: from the IDE, an easy way to put a secret into an agent's 
 ## Goals
 
 - An agent's session asks for a declared secret by name, and a card appears inline in the chat.
-- The card has one password field. The **browser** seals the value to `zks1` (spec §6 of `docs/vault/zk-v1/zk_v1_reference.py`) before anything leaves the page. Only ciphertext travels.
+- The card has one plain multi-line field (pasted, or filled by Upload file — a PEM keeps its line breaks). The **browser** seals the value to `zks1` (spec §6 of `docs/vault/zk-v1/zk_v1_reference.py`) before anything leaves the page. Only ciphertext travels.
 - The writer never needs the vault key, so filling a secret never grants the ability to read one.
 - The card verifies **who** it is sealing to (§4). The server's word about the recipients is not enough.
 - The session learns only "`GITHUB_TOKEN` stored for bailey". It never learns the value.
