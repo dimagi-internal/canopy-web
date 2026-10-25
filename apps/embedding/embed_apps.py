@@ -267,6 +267,33 @@ def set_agents(app: AppCredential, slugs: list[str]) -> None:
         AppCredentialAgent.objects.get_or_create(app=app, agent=found[slug])
 
 
+def set_default_agent(app: AppCredential, slug: str) -> None:
+    """Name the agent this site's panel opens on, or clear it with "".
+
+    It must be one the site already offers: a default outside the allowlist
+    would be offered to nobody and read as a setting that silently does
+    nothing. The panel still ranks it below a page that chose its agent and a
+    visitor's own preference (`defaults.resolve`).
+    """
+    slug = (slug or "").strip()
+    links = AppCredentialAgent.objects.filter(app=app)
+    if slug and not links.filter(agent__slug=slug).exists():
+        raise EmbedAppError(
+            "unknown_agent",
+            f"{slug!r} is not one of this site's agents. Allow it for the site "
+            "first, then make it the default.",
+        )
+    links.filter(is_default=True).exclude(agent__slug=slug).update(is_default=False)
+    if slug:
+        links.filter(agent__slug=slug).update(is_default=True)
+
+
+def default_agent_slug(app: AppCredential) -> str:
+    """The site's default agent's slug, or "" when it has none."""
+    link = AppCredentialAgent.objects.filter(app=app, is_default=True).select_related("agent").first()
+    return link.agent.slug if link else ""
+
+
 def _clean_jwks_url(url) -> str:
     """A site's published-keys URL, checked before it is stored.
 
@@ -308,6 +335,7 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
              jwks_url: str | None = None,
              host_issuer: str | None = None,
              host_mcp_resource: str | None = None,
+             default_agent: str = "",
              ) -> AppCredential:
     """Register a site in this workspace. It holds no secret: the site proves
     itself by signing, against the keys at `jwks_url` (or pasted)."""
@@ -348,12 +376,14 @@ def register(*, user, workspace_slug: str, name: str, origins: list[str],
     app.save(update_fields=["allowed_frame_origins", "public_keys", "jwks_url",
                             "host_issuer", "host_mcp_resource"])
     set_agents(app, agents or [])
+    if default_agent:
+        set_default_agent(app, default_agent)
     return app
 
 
 def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agents=None,
            public_keys=None, jwks_url=None, host_issuer=None,
-           host_mcp_resource=None) -> AppCredential:
+           host_mcp_resource=None, default_agent=None) -> AppCredential:
     """Change what this workspace's site may do. Every field is this tenant's
     own, so there is one gate — owning the workspace the row belongs to."""
     require(user, workspace_slug, perms.OWN)
@@ -380,6 +410,8 @@ def update(*, user, app: AppCredential, workspace_slug: str, origins=None, agent
         app.save(update_fields=fields)
     if agents is not None:
         set_agents(app, agents)
+    if default_agent is not None:
+        set_default_agent(app, default_agent)
     return app
 
 

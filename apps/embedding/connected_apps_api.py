@@ -92,6 +92,9 @@ class ConnectedAppOut(Schema):
     name: str
     origins: list[str]
     agents: list[ConnectedAgentOut]
+    #: The agent the site's panel opens on when neither the page nor the visitor
+    #: chose one; blank when it has none. Always one of `agents`.
+    default_agent: str = ""
     #: Registered PEM public keys. Returned in full — they are public by
     #: definition, and showing only a count would leave an operator unable to
     #: tell which key they are about to retire.
@@ -125,6 +128,8 @@ class ConnectIn(Schema):
     name: str
     origins: list[str] = []
     agents: list[str] = []
+    #: One of `agents`, or blank for none.
+    default_agent: str = ""
     public_keys: list[str] = []
     jwks_url: str = ""
     host_issuer: str = ""
@@ -136,6 +141,9 @@ class UpdateIn(Schema):
     origins: list[str] | None = None
     jwks_url: str | None = None
     agents: list[str] | None = None
+    #: The agent the site's panel opens on — one of its agents (after any
+    #: `agents` change in the same request), or "" to clear it.
+    default_agent: str | None = None
     public_keys: list[str] | None = None
     host_issuer: str | None = None
     host_mcp_resource: str | None = None
@@ -186,6 +194,7 @@ def _out(app: AppCredential) -> ConnectedAppOut:
             ConnectedAgentOut(slug=link.agent.slug, name=link.agent.name)
             for link in app.allowed_agents.all()
         ],
+        default_agent=next((link.agent.slug for link in app.allowed_agents.all() if link.is_default), ""),
         shows_on_canopy_pages=app.show_on_canopy_pages,
         asserts_verified_email=app.asserts_verified_email,
         created_at=app.created_at.isoformat(),
@@ -270,6 +279,7 @@ def connect_app(request: HttpRequest, slug: str, payload: ConnectIn) -> Status:
             origins=payload.origins, agents=payload.agents,
             public_keys=payload.public_keys, jwks_url=payload.jwks_url,
             host_issuer=payload.host_issuer, host_mcp_resource=payload.host_mcp_resource,
+            default_agent=payload.default_agent,
         )
         if payload.show_on_canopy_pages:
             embed_apps.set_show_on_canopy_pages(
@@ -306,7 +316,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
             user=request.user, app=app, workspace_slug=slug, origins=payload.origins,
             agents=payload.agents, public_keys=payload.public_keys,
             jwks_url=payload.jwks_url, host_issuer=payload.host_issuer,
-            host_mcp_resource=payload.host_mcp_resource,
+            host_mcp_resource=payload.host_mcp_resource, default_agent=payload.default_agent,
         )
         if payload.show_on_canopy_pages is not None:
             embed_apps.set_show_on_canopy_pages(
@@ -331,6 +341,7 @@ def update_connected_app(request: HttpRequest, slug: str, app_id: int,
     audit(event=EmbedAuditLog.UPDATE, request=request, app=app, actor=request.user,
           detail=f"origins={app.frame_origins()} "
                  f"agents={[l.agent.slug for l in app.allowed_agents.all()]} "
+                 f"default_agent={embed_apps.default_agent_slug(app)!r} "
                  f"trusted_email={app.asserts_verified_email}")
     return _out(app)
 

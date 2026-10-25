@@ -2680,3 +2680,25 @@ class KbSource(models.Model):
         db_table = "agents_kb_source"
         ordering = ["project", "id"]
         constraints = [models.UniqueConstraint(fields=["project", "name"], name="kb_source_name_unique")]
+
+
+class PreferredAgent(models.Model):
+    """The agent a person wants an embedded panel to open on.
+
+    One per person, everywhere: the same answer on every connected site and on
+    canopy's own pages. It is a preference and grants nothing — a panel honours
+    it only when the agent is one that panel may offer this person
+    (`apps/embedding/defaults.py`), so a preference for an agent a site does not
+    offer, or one the person can no longer reach, is passed over there.
+    """
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                                related_name="preferred_agent")
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "agents_preferred_agent"
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.user_id} → {self.agent_id}"

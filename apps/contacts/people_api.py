@@ -23,9 +23,11 @@ from django.utils.dateparse import parse_datetime
 from ninja import Router
 
 from apps.agents import access as agent_access
+from apps.agents.models import Agent, PreferredAgent
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_FORBIDDEN, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
+from apps.embedding import defaults as agent_defaults
 from apps.workspaces import services as wsvc
 from apps.tokens import kinds
 
@@ -36,6 +38,8 @@ from .people_schemas import (
     AgentGrantIn,
     AgentMemoryIn,
     AgentMemoryOut,
+    DefaultAgentIn,
+    DefaultAgentOut,
     GrantCollectionIn,
     MemoryCollectionIn,
     MemoryCollectionOut,
@@ -260,6 +264,45 @@ def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
                            type_=TYPE_VALIDATION if exc.status == 422 else TYPE_FORBIDDEN,
                            detail=exc.detail) from None
     return _memory(person)["agent_memory"]
+
+
+def _default_agent_out(user) -> dict:
+    pref = PreferredAgent.objects.filter(user=user).select_related("agent").first()
+    return {"agent": pref.agent.slug, "name": pref.agent.name} if pref else {"agent": "", "name": ""}
+
+
+@router.get("/me/default-agent/", response=DefaultAgentOut,
+            summary="The agent an embedded panel opens on for you")
+@gate("self")
+def get_my_default_agent(request: HttpRequest) -> dict:
+    """The agent every embedded panel — on a connected site or on canopy's own
+    pages — opens on for you, unless the page chose its own agent. Blank when you
+    have not chosen one, and the site's own default applies."""
+    return _default_agent_out(request.user)
+
+
+@router.put("/me/default-agent/", response=DefaultAgentOut,
+            summary="Choose the agent an embedded panel opens on for you")
+# Only the person: refused to an agent's login, a caller token and a system account.
+@gate("self", setting=True)
+def set_my_default_agent(request: HttpRequest, payload: DefaultAgentIn) -> dict:
+    """Choose the agent every embedded panel opens on for you, by slug; `""`
+    clears it. It must be an agent in one of your workspaces. A panel uses it
+    only where that site offers the agent, and a page that chose its own agent
+    still wins."""
+    user = request.user
+    if (people.agent_of_login(user) is not None or kinds.speaks_for_a_turn(request)
+            or not people.is_human_account(user)):
+        raise ProblemError(403, "Only the person may change this", type_=TYPE_FORBIDDEN)
+    slug = (payload.agent or "").strip()
+    if not slug:
+        agent_defaults.set_preferred(user, None)
+        return _default_agent_out(user)
+    agent = Agent.objects.filter(slug=slug, workspace_id__in=wsvc.user_workspace_slugs(user)).first()
+    if agent is None:
+        raise _not_found("No such agent in your workspaces")
+    agent_defaults.set_preferred(user, agent)
+    return _default_agent_out(user)
 
 
 def _my_session(request: HttpRequest, session_id: str):

@@ -20,6 +20,7 @@ import { useSealedConversation } from '@/vault/useSealedConversation'
 import { menuBlocksComposer } from '@/pages/chatPageLogic'
 
 import { buildPageContextBlock } from './pageContextBlock'
+import { pickInitialAgent } from './pickAgent'
 import { currentFrameBaseUrl } from './frameBase'
 import type { HostInit, HostLink } from './hostLink'
 import { resolvePrincipal, type Principal } from './principal'
@@ -79,6 +80,8 @@ interface EmbedAgent {
   description: string
   avatar_url: string
   workspace: string
+  default?: boolean
+  preferred?: boolean
 }
 
 interface Props {
@@ -235,6 +238,8 @@ export function EmbedApp({ link, app }: Props) {
   /** The agents this site offers this visitor — the only ones a conversation
    *  opened by id may be with. */
   const agentsRef = useRef<EmbedAgent[]>([])
+  /** How many agents are on offer — whether switching means anything. */
+  const [agentCount, setAgentCount] = useState(0)
   const clientRef = useRef<CanopyClient | null>(null)
   /** Captured once per session, at open — a snapshot, not a subscription (v2
    *  spec §8). Held so the first send can carry it to the agent. */
@@ -299,6 +304,7 @@ export function EmbedApp({ link, app }: Props) {
         // registered with its slug as its name reads as a word, not an id.
         const agents = (who.agents as EmbedAgent[]).map((a) => ({ ...a, name: agentLabel(a) }))
         agentsRef.current = agents
+        setAgentCount(agents.length)
 
         if (agents.length === 0) {
           setPhase({
@@ -310,11 +316,9 @@ export function EmbedApp({ link, app }: Props) {
           return
         }
 
-        // Skip the picker when there is nothing to pick — either the host named
-        // an agent or only one is on offer.
-        const preselected =
-          (hostInit.agent && agents.find((a) => a.slug === hostInit.agent)) ??
-          (agents.length === 1 ? agents[0] : null)
+        // Skip the picker when there is nothing to pick: canopy's default for
+        // this visitor, else the agent the host named, else the only one.
+        const preselected = pickInitialAgent(agents, hostInit.agent)
 
         if (preselected) {
           setPhase({ kind: 'ready', agent: preselected })
@@ -545,6 +549,18 @@ export function EmbedApp({ link, app }: Props) {
       })
   }, [asked, phase, startConversation])
 
+  /** The visitor makes this agent the one every panel opens on for them. */
+  const makeDefault = useCallback(async (agent: EmbedAgent) => {
+    await client.rest.json('/api/embed/default-agent', {
+      method: 'PUT',
+      body: JSON.stringify({ agent: agent.slug }),
+    })
+    agentsRef.current = agentsRef.current.map((a) => ({ ...a, preferred: a.slug === agent.slug }))
+    setPhase((p) => (p.kind === 'ready' && p.agent.slug === agent.slug
+      ? { kind: 'ready', agent: { ...p.agent, preferred: true } }
+      : p))
+  }, [client])
+
   if (phase.kind === 'connecting') {
     return <Centered>Starting&hellip;</Centered>
   }
@@ -568,7 +584,10 @@ export function EmbedApp({ link, app }: Props) {
             onClick={() => setPhase({ kind: 'ready', agent })}
             className="rounded-lg border border-border bg-card p-3 text-left hover:bg-muted"
           >
-            <span className="block text-sm text-foreground">{agent.name}</span>
+            <span className="block text-sm text-foreground">
+              {agent.name}
+              {agent.preferred ? <span className="ml-2 text-[11px] text-muted-foreground">your default</span> : null}
+            </span>
             {agent.description ? (
               <span className="block text-[12px] text-muted-foreground">{agent.description}</span>
             ) : null}
@@ -640,6 +659,11 @@ export function EmbedApp({ link, app }: Props) {
         onStart={(text) => startConversation(phase.agent, text)}
         onOpen={(sessionId) => setOpenRequest({ id: sessionId })}
         onClose={() => link.requestClose()}
+        // Several on offer: the name opens the picker, and a person (not a
+        // contact, who has no preference) may make this one their default.
+        onSwitch={agentCount > 1 ? () => setPhase({ kind: 'choosing', agents: agentsRef.current }) : undefined}
+        onMakeDefault={agentCount > 1 && principal?.kind !== 'contact' && !phase.agent.preferred
+          ? () => makeDefault(phase.agent) : undefined}
         link={link}
         headerControls={
           <>
@@ -685,6 +709,8 @@ function EmbedStart({
   onStart,
   onOpen,
   onClose,
+  onSwitch,
+  onMakeDefault,
   link,
   initialBody,
   initialError,
@@ -696,6 +722,11 @@ function EmbedStart({
   onStart: (text: string) => Promise<void>
   onOpen: (sessionId: string) => void
   onClose: () => void
+  /** Back to the picker; absent when only one agent is on offer. */
+  onSwitch?: () => void
+  /** Make this agent the visitor's default; absent when it already is, or
+   *  there is nothing to choose between. */
+  onMakeDefault?: () => Promise<void>
   /** The page around the panel: what it is about, for the visitor to see. */
   link: HostLink
   /** A question the page asked that could not be sent: shown, not dropped. */
@@ -732,10 +763,36 @@ function EmbedStart({
       })
   }, [body, sending, onStart])
 
+  const [defaulting, setDefaulting] = useState(false)
+  const makeDefault = onMakeDefault
+    ? () => {
+        setDefaulting(true)
+        void onMakeDefault()
+          .catch(() => setError('Could not make this your default.'))
+          .finally(() => setDefaulting(false))
+      }
+    : undefined
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-[12px] text-muted-foreground">{agent.name}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {onSwitch ? (
+            <button type="button" onClick={onSwitch} aria-label="Switch agent"
+              title="Ask a different agent"
+              className="truncate rounded px-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground">
+              {agent.name} &#9662;
+            </button>
+          ) : (
+            <span className="text-[12px] text-muted-foreground">{agent.name}</span>
+          )}
+          {makeDefault ? (
+            <button type="button" onClick={makeDefault} disabled={defaulting}
+              className="shrink-0 rounded px-1 text-[11px] text-primary hover:bg-muted disabled:opacity-50">
+              Make this my default
+            </button>
+          ) : null}
+        </span>
         <span className="flex shrink-0 items-center gap-1">
           {headerControls}
           <button

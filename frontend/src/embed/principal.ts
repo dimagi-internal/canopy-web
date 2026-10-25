@@ -25,6 +25,10 @@ export interface EmbedAgent {
   description: string
   avatar_url?: string
   workspace?: string
+  /** canopy's pick for this visitor (page-bound > own preference > site default). */
+  default?: boolean
+  /** The visitor's own preferred agent. A contact has none. */
+  preferred?: boolean
 }
 
 export type Principal =

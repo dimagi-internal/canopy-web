@@ -1088,3 +1088,68 @@ describe('starting a conversation, and the visitor\'s vault key', () => {
     expect(created()).toBeUndefined()
   })
 })
+
+describe('the default agent, and switching', () => {
+  type Row = (typeof AGENTS)[number] & { default?: boolean; preferred?: boolean }
+  function serving(agents: Row[]) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        if (String(url).includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => agents } as Response
+        }
+        if (String(url).includes('/api/embed/default-agent')) {
+          return { ok: true, status: 200, json: async () => ({ agent: 'echo' }) } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as Response
+      }),
+    )
+  }
+
+  it("opens on canopy's default, over the agent the host named", async () => {
+    serving([AGENTS[0], { ...AGENTS[1], default: true }])
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'echo', actions: [] }) })}
+        app="connect-labs"
+      />,
+    )
+    expect((await screen.findByRole('button', { name: 'Switch agent' })).textContent).toBe('Hal ▾')
+  })
+
+  it('switches back to the picker from the header', async () => {
+    serving([{ ...AGENTS[0], default: true }, AGENTS[1]])
+    render(<EmbedApp link={fakeLink()} app="connect-labs" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Switch agent' }))
+    expect(await screen.findByText('Who would you like to ask?')).toBeTruthy()
+    fireEvent.click(screen.getByText('Hal'))
+    expect((await screen.findByRole('button', { name: 'Switch agent' })).textContent).toBe('Hal ▾')
+  })
+
+  it("makes the open agent the visitor's default", async () => {
+    serving([{ ...AGENTS[0], default: true }, AGENTS[1]])
+    render(<EmbedApp link={fakeLink()} app="connect-labs" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Make this my default' }))
+    await waitFor(() => expect(calls.some((c) => c.url.includes('/api/embed/default-agent'))).toBe(true))
+    const put = calls.find((c) => c.url.includes('/api/embed/default-agent'))!
+    expect(put.init?.method).toBe('PUT')
+    expect(JSON.parse(String(put.init!.body))).toEqual({ agent: 'echo' })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Make this my default' })).toBeNull())
+  })
+
+  it('offers neither when only one agent is on offer', async () => {
+    serving([AGENTS[0]])
+    render(<EmbedApp link={fakeLink()} app="connect-labs" />)
+    await screen.findByPlaceholderText(/^Type a message/)
+    expect(screen.queryByRole('button', { name: 'Switch agent' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Make this my default' })).toBeNull()
+  })
+
+  it('does not offer to make it the default when it already is', async () => {
+    serving([{ ...AGENTS[0], default: true, preferred: true }, AGENTS[1]])
+    render(<EmbedApp link={fakeLink()} app="connect-labs" />)
+    await screen.findByRole('button', { name: 'Switch agent' })
+    expect(screen.queryByRole('button', { name: 'Make this my default' })).toBeNull()
+  })
+})

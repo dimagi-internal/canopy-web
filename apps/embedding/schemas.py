@@ -22,6 +22,24 @@ class EmbedAgentOut(StrictModel):
     description: str
     avatar_url: str
     workspace: str
+    #: The one to open on for THIS visitor: the agent the page bound, else their
+    #: own preference, else the site's default — each only when it is on this
+    #: list. At most one row is true; none means the panel falls back to the
+    #: agent the host named, then to the only one, then to the picker.
+    default: bool = False
+    #: The visitor's own preferred agent (`PUT /api/embed/default-agent`), when it
+    #: is on this list.
+    preferred: bool = False
+
+
+class EmbedDefaultAgentIn(StrictModel):
+    #: The agent to open on from now on — one this site offers you — or "" to clear.
+    agent: str
+
+
+class EmbedDefaultAgentOut(StrictModel):
+    #: Your preferred agent's slug, or "" for none.
+    agent: str
 
 
 class EmbedSelfOut(StrictModel):

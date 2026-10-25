@@ -40,11 +40,13 @@ export async function connectApp(
      *  its tools AS the visitor (host grant contract v1). "" when it does not. */
     host_issuer: string
     host_mcp_resource: string
+    /** One of `agents` for its panel to open on; "" (the default) for none. */
+    default_agent?: string
   },
 ): Promise<ConnectedApp> {
   const res = await apiV2.POST('/api/workspaces/{slug}/connected-apps', {
     params: { path: { slug } },
-    body,
+    body: { ...body, default_agent: body.default_agent ?? '' },
   })
   return unwrap<ConnectedApp>(res, 'Could not connect the site')
 }
@@ -55,6 +57,8 @@ export async function updateConnectedApp(
   body: {
     origins?: string[]
     agents?: string[]
+    /** One of the site's agents, or '' to clear it. */
+    default_agent?: string
     public_keys?: string[]
     jwks_url?: string
     host_issuer?: string

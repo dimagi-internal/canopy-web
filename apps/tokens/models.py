@@ -469,12 +469,19 @@ class AppCredentialAgent(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
     )
+    #: The agent this site's panel opens on when neither the page nor the person
+    #: chose one. At most one per site, and always one of its allowed agents — a
+    #: flag on the allowlist row rather than a column on the app, so taking the
+    #: agent off the list takes the default with it.
+    is_default = models.BooleanField(default=False)
 
     class Meta:
         db_table = "app_credential_agents"
         ordering = ["app_id", "agent_id"]
         constraints = [
-            models.UniqueConstraint(fields=["app", "agent"], name="one_row_per_app_agent")
+            models.UniqueConstraint(fields=["app", "agent"], name="one_row_per_app_agent"),
+            models.UniqueConstraint(fields=["app"], condition=models.Q(is_default=True),
+                                    name="one_default_agent_per_app"),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
