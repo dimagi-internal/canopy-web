@@ -360,7 +360,7 @@ def _body(token: str, lines: list[Line]) -> list[str]:
     names = _names(token, lines)
 
     def one(ln: Line, indent: str = "") -> str:
-        text = _MENTION.sub(lambda m: "@" + names.get(m.group(1), m.group(1)), ln.text).strip()
+        text = client.unescape(_MENTION.sub(lambda m: "@" + names.get(m.group(1), m.group(1)), ln.text).strip())
         text = text.replace("\n", "\n" + indent + "    ")
         who = ln.name or names.get(ln.user, ln.user or "someone")
         return f"{indent}[{_clock(ln.ts)} UTC] {who}: {text}"

@@ -428,6 +428,17 @@ def test_only_enabled_agent_is_the_default(slack, linked, hal):
     assert Turn.objects.get().prompt == "what's on today?"
 
 
+def test_the_prompt_is_what_the_person_typed_not_slacks_escaping(slack, linked, hal):
+    """Slack sends `&`, `<`, `>` as entities; the agent must read the characters."""
+    mention(f"<@{BOT}> hal convince their VP of R&amp;D that 3 &lt; 5 &gt; 4, not &amp;lt;")
+    assert Turn.objects.get().prompt == "convince their VP of R&D that 3 < 5 > 4, not &lt;"
+
+
+def test_a_typed_mention_is_text_not_a_mention(slack, linked, hal):
+    mention(f"<@{BOT}> hal what does &lt;@{BOT}&gt; do?")
+    assert Turn.objects.get().prompt == f"what does <@{BOT}> do?"
+
+
 # ---- /canopy ----------------------------------------------------------------
 
 def test_slash_command_anchors_a_thread_and_queues(slack, linked, hal):
@@ -444,6 +455,11 @@ def test_slash_command_anchors_a_thread_and_queues(slack, linked, hal):
     turn = Turn.objects.get()
     assert turn.origin == Turn.ORIGIN_SLACK and turn.prompt == "draft the update"
     assert turn.chat_session.metadata["slack_thread_ts"] == "1700000999.000100"
+
+
+def test_a_slash_command_prompt_is_unescaped(slack, linked, hal):
+    command("hal brief me on R&amp;D")
+    assert Turn.objects.get().prompt == "brief me on R&D"
 
 
 def test_a_slash_command_line_keeps_the_ask_on_every_later_edit(slack, linked, hal, alice):

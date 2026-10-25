@@ -237,10 +237,11 @@ def enabled_agents(installation: SlackInstallation):
 
 
 def strip_mentions(text: str, bot_user_id: str) -> str:
-    """Drop the bot's own mention; keep anyone else's, rendered readably."""
+    """Drop the bot's own mention; keep anyone else's, rendered readably; and
+    undo Slack's escaping, so the agent reads `R&D`, not `R&amp;D`."""
     def repl(m: re.Match) -> str:
         return "" if m.group(1) == bot_user_id else f"@{m.group(1)}"
-    return re.sub(r"\s+", " ", _MENTION.sub(repl, text or "")).strip()
+    return client.unescape(re.sub(r"\s+", " ", _MENTION.sub(repl, text or "")).strip())
 
 
 def agent_list(installation: SlackInstallation) -> str:
