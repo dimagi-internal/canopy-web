@@ -1,5 +1,6 @@
 import { registerSW } from 'virtual:pwa-register'
 import { markUpdateReady } from './updateReady'
+import { switchToWaiting } from './switchToWaiting'
 import { swIsThisBuild, thisPageEntry } from './thisBuild'
 
 // Adopt new service workers — but never underneath a page someone is looking at.
@@ -51,13 +52,9 @@ function applyWhenHidden(apply: () => void): void {
 export function registerPwa(): void {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return
 
-  /** The banner's switch. A page loaded past the SW (a hard reload) has no
-   *  controller to change, so the plugin's reload-on-controlling never fires
-   *  for it: reload it here, or the button does nothing. */
-  const switchNow = (): void => {
-    void updateSW(true)
-    if (!navigator.serviceWorker.controller) window.location.reload()
-  }
+  /** The switch, for the banner and for a hidden page alike: the new worker
+   *  takes over AND the page reloads into it (switchToWaiting.ts). */
+  const switchNow = (): void => switchToWaiting(() => void updateSW(true))
 
   let offered = false
   /** Offer the reload only when the server's build is not this page's (thisBuild.ts).
@@ -78,7 +75,7 @@ export function registerPwa(): void {
     if (swIsThisBuild(source, thisPageEntry())) return
     offered = true
     markUpdateReady(switchNow)
-    applyWhenHidden(() => void updateSW(true))
+    applyWhenHidden(switchNow)
   }
 
   const updateSW = registerSW({
@@ -89,6 +86,7 @@ export function registerPwa(): void {
     // the waiting build is not the page's own: one loaded after the deploy is
     // already current, and a hidden switch is all it needs.
     onNeedRefresh() {
+      // A page that may already be current: adopting the worker is enough.
       applyWhenHidden(() => void updateSW(true))
       void offerIfNewer()
     },
