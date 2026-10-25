@@ -142,8 +142,10 @@ def update_dynamic_view(request: HttpRequest, view_id: int, payload: DynamicView
     data = payload.model_dump(exclude_unset=True)
     project_given = "project" in data
     project = None
-    if project_given and data["project"]:
-        project = _project_or_422(view.workspace_id, data["project"])
+    if project_given:
+        # A move needs rights where the view lands too: a project lead may not
+        # put a view on the workspace, or on a project they do not edit.
+        project = _project_or_422(view.workspace_id, data["project"]) if data["project"] else None
         _require_edit(request, view.workspace_id, project)
     try:
         view = services.update(view, data=data, user=request.user, project=project, project_given=project_given)

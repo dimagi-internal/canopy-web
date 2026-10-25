@@ -66,7 +66,8 @@ transcripts): put a read in it only if showing it to everyone who can open the v
 
 **Who may change a view.** Reading a view needs membership of its workspace. Creating, changing,
 restoring or deleting one needs `agent.work` (editor) in its workspace, or edit rights on its
-project (`agents.gates.may_edit_project`). Every save is a new version; a restore is a new
+project (`agents.gates.may_edit_project`). Moving a view needs those rights where it lands as
+well, so a project lead cannot put a view on the workspace. Every save is a new version; a restore is a new
 version too, so history only grows.
 
 ## Writing one (usually an agent)
