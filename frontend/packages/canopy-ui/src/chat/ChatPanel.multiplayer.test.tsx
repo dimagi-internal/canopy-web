@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChatPanel } from "./ChatPanel";
-import type { SessionState } from "./protocol";
+import type { SessionState, TurnStatus } from "./protocol";
 
 afterEach(cleanup);
 
@@ -16,6 +16,11 @@ function state(over: Partial<SessionState> = {}): SessionState {
 }
 
 const noop = () => undefined;
+const held = (s: string): TurnStatus => ({
+  state: s, agent_slug: "hal", runners: ["jj-mbp"], claimed_by: null, pinned: false,
+  cloud_runner: null, cloud_runner_id: null, last_seen_at: null, menu_pending: false,
+  settled: s === "done", stuck: false,
+} as TurnStatus);
 const props = {
   connected: true,
   currentUserId: 1,
@@ -115,6 +120,7 @@ describe("multiplayer composer", () => {
     render(<ChatPanel {...props} state={state({
       messages: [mine],
       queued: [{ turn_id: "t", client_id: "abc", author: null, text: "please help", sent_at: "", state: "queued" }],
+      turn_status: held("waiting_runner"),
     })} />);
     expect(screen.getAllByTestId("queued-row")).toHaveLength(1);
     expect(screen.getAllByText("please help")).toHaveLength(1);
@@ -141,6 +147,38 @@ describe("multiplayer composer", () => {
     const rows = screen.getAllByTestId("queued-row");
     expect(rows.map((r) => r.textContent)).toEqual(["Youqueuedfirst", "Youqueuedsecond"]);
     expect(screen.getAllByText("second")).toHaveLength(1);
+  });
+
+  it("keeps my bubble in place while a live runner picks the send up", () => {
+    // Every send is `queued` until a runner claims it — a second or two on a
+    // live idle box. Moving the bubble into the queue and back for that window
+    // read as a flicker.
+    const mine = {
+      id: "local:c1", turn_index: 1, role: "user" as const,
+      content: { text: "hello", client_id: "c1" }, plaintext: "hello",
+      status: "pending" as const, error_detail: null, started_at: null,
+      completed_at: null, created_at: "", author: { name: "Alice A", user_id: 1 },
+    };
+    const queued = [{ turn_id: "t1", client_id: "c1", author: { name: "Alice A", user_id: 1 }, text: "hello", sent_at: "", state: "queued" as const }];
+    for (const s of ["picking_up", "done"]) {
+      render(<ChatPanel {...props} onUnqueue={noop} state={state({ messages: [mine], queued, turn_status: held(s) })} />);
+      expect(screen.queryByTestId("queued-row")).toBeNull();
+      expect(screen.getAllByText("hello")).toHaveLength(1);
+      cleanup();
+    }
+  });
+
+  it("moves my send into the queue when it will really wait", () => {
+    const mine = {
+      id: "local:c1", turn_index: 1, role: "user" as const,
+      content: { text: "hello", client_id: "c1" }, plaintext: "hello",
+      status: "pending" as const, error_detail: null, started_at: null,
+      completed_at: null, created_at: "", author: { name: "Alice A", user_id: 1 },
+    };
+    const queued = [{ turn_id: "t1", client_id: "c1", author: { name: "Alice A", user_id: 1 }, text: "hello", sent_at: "", state: "queued" as const }];
+    render(<ChatPanel {...props} state={state({ messages: [mine], queued, turn_status: held("waiting_runner") })} />);
+    expect(screen.getByTestId("queued-row").textContent).toContain("hello");
+    expect(screen.getAllByText("hello")).toHaveLength(1);
   });
 
   it("shows my follow-up as delivered into the running turn, once", () => {

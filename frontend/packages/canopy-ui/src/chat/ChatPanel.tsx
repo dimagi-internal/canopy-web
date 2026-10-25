@@ -97,6 +97,11 @@ export interface ChatPanelProps {
  */
 const EMPTY_PEERS: PeerDraft[] = [];
 const NO_SUBAGENTS: SubagentSummary[] = [];
+/** Turn states in which a fresh send will sit and wait rather than be picked
+ *  up in a moment: behind a running turn, or with no box that will take it. */
+const HELD_STATES = new Set([
+  "queued_behind", "waiting_runner", "signed_out", "unrouted", "working", "blocked", "paused",
+]);
 
 export function ChatPanel({
   state,
@@ -240,14 +245,21 @@ export function ChatPanel({
   // in place it read as already sent, and it sat ABOVE every queued row without
   // a bubble of its own (a send from before a remount), so a later line showed
   // first. A `delivering` send keeps its bubble — it is the agent's next read.
+  //
+  // Only when the wait is real, though. Every send is `queued` until a runner
+  // claims it, which on a live idle box is a second or two, and moving the
+  // bubble out for that window and back read as a flicker. So the head of the
+  // queue keeps its bubble unless something holds it: a send ahead of it, or a
+  // status that says it will wait (`picking_up` and a finished turn do not).
+  const waitIsReal = status != null && HELD_STATES.has(status.state);
   const waitingClientIds = useMemo(
     () =>
       new Set(
         (state.queued ?? [])
-          .filter((q) => (q.state === "queued" || q.state === "midturn") && q.client_id)
+          .filter((q, i) => q.client_id && (q.state === "midturn" || (q.state === "queued" && (i > 0 || waitIsReal))))
           .map((q) => q.client_id),
       ),
-    [state.queued],
+    [state.queued, waitIsReal],
   );
   const shownMessages = useMemo(
     () =>
