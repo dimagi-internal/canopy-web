@@ -555,8 +555,9 @@ def free_handle(workspace_slug: str, name: str, fallback: str = "project") -> st
 def promote_project(project: AgentProject, handle: str, workspace: str = "") -> AgentProject:
     """Give a project the address `<workspace>/<handle>` — a new handle, and/or
     a workspace below its lead agent's. The same address is a no-op; an address
-    already taken is refused (409). Its alias, tasks, folder and history are
-    untouched."""
+    already taken is refused (409). Its alias, tasks, folder, history and its
+    knowledge base's stored objects (`kb_store.root`, not keyed by the address)
+    are untouched."""
     handle = _clean_handle(handle)
     workspace = (workspace or "").strip() or project.workspace_id
     if project.handle == handle and project.workspace_id == workspace:
