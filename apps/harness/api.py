@@ -447,7 +447,7 @@ def declared_capabilities(caps: dict) -> dict:
 
 # The routes live in their own modules but on THIS router, registered in this
 # order (route order is path-match order and the schema's order).
-from . import api_runners, api_session_sync, api_turns  # noqa: E402,F401
+from . import api_runner_projects, api_runners, api_session_sync, api_turns  # noqa: E402,F401
 
 
 def _runner_schedule_qs(runner: Runner):

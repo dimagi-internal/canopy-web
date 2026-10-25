@@ -35,7 +35,7 @@ export function WorkspaceOrderPanel({
   const [rows, setRows] = useState<RunnerOrderRowOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState('')
-  const [repoFor, setRepoFor] = useState<{ agent: MapAgent; runners: string[] } | null>(null)
+  const [repoFor, setRepoFor] = useState<{ agent: MapAgent; runners: string[]; runnerIds: string[] } | null>(null)
   const seq = useRef(0)
 
   useEffect(() => {
@@ -189,7 +189,7 @@ export function WorkspaceOrderPanel({
                 <span className="text-foreground-secondary">
                   {a.name}: skips {names.join(', ')}
                 </span>
-                <button type="button" onClick={() => setRepoFor({ agent: a, runners: names })} className="text-primary hover:underline">
+                <button type="button" onClick={() => setRepoFor({ agent: a, runners: names, runnerIds: (a.follows?.missing_repo ?? []).map(String) })} className="text-primary hover:underline">
                   Get it there…
                 </button>
               </div>
@@ -205,6 +205,7 @@ export function WorkspaceOrderPanel({
           agentName={repoFor.agent.name}
           repoUrl={repoFor.agent.repoUrl}
           runners={repoFor.runners}
+          runnerIds={repoFor.runnerIds}
         />
       )}
     </div>

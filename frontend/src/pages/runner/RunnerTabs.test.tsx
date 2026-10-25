@@ -36,6 +36,10 @@ vi.mock('@/api/harness', () => ({
   setRunnerPrivate: vi.fn(),
   enrollRunnerWorkspace: vi.fn(),
   unenrollRunnerWorkspace: vi.fn(),
+  // The Repos section (RunnerProjects) reads on mount.
+  listRunnerProjects: vi.fn().mockResolvedValue({ projects: ['ada'], requests: [], can_add: true }),
+  addRunnerProject: vi.fn(),
+  deleteRunnerProjectRequest: vi.fn(),
 }))
 vi.mock('@/api/workspaces', () => ({
   listMembers: vi.fn().mockResolvedValue([]),

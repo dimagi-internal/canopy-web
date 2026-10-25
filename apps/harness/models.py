@@ -1879,6 +1879,51 @@ class RunnerDrill(models.Model):
         ]
 
 
+class RunnerProjectRequest(models.Model):
+    """A person asked a LAPTOP runner to make a repo one of its emdash projects.
+
+    One row per (runner, project name): asking again re-arms the same row. The ask
+    rides the box's heartbeat reply (`RunnerOut.add_projects`, the durable-ask rule
+    — never a frame); the box clones the repo under its own account, opens it in
+    emdash through emdash's own Add Project dialog, and reports back
+    (`POST …/projects/{id}/result`). A pending ask is also discharged by
+    observation: the moment the box's heartbeat reports the project
+    (`capabilities.projects`), it is ADDED, whoever made it.
+
+    A failed add marks only this row failed. It never touches the box's
+    readiness: a missing repo is a per-agent setup gap, not box health.
+    """
+
+    PENDING, ADDED, FAILED = "pending", "added", "failed"
+    STATUS_CHOICES = [(PENDING, "Pending"), (ADDED, "Added"), (FAILED, "Failed")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    runner = models.ForeignKey(Runner, on_delete=models.CASCADE, related_name="project_requests")
+    #: The emdash project name — an agent's slug when it is the agent's repo.
+    name = models.CharField(max_length=100)
+    repo_url = models.CharField(max_length=500)
+    agent = models.ForeignKey("agents.Agent", on_delete=models.SET_NULL, null=True, blank=True,
+                              related_name="+")
+    requested_by = models.ForeignKey("auth.User", on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+")
+    status = models.CharField(max_length=8, choices=STATUS_CHOICES, default=PENDING)
+    #: The box's own words for what happened (a git error, the dialog that would
+    #: not take the path) — shown to the person as the reason.
+    detail = models.TextField(blank=True, default="")
+    requested_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "runner_project_requests"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["runner", "name"], name="one_project_request_per_runner_name"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"runner-project:{self.runner_id}:{self.name}:{self.status}"
+
+
 class FailureInvestigation(models.Model):
     """One KIND of turn failure, and what the fleet's debugger agent did about it.
 

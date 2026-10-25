@@ -9125,6 +9125,82 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/projects": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The emdash projects a laptop runner holds, and repos asked of it
+         * @description The repos this runner reports as emdash projects, every ask to add one (with
+         *     `pending`/`added`/`failed` and the box's reason), and whether you may ask.
+         */
+        readonly get: operations["list_runner_projects"];
+        readonly put?: never;
+        /**
+         * Ask a laptop runner to add a repo as an emdash project
+         * @description Ask this laptop to clone a repo and add it to emdash, on its own: name an
+         *     `agent` (its repo, as the emdash project named after it — what routing needs
+         *     before the laptop takes that agent's work) or give `repo_url` and an optional
+         *     `name`. The box reads the ask off its next heartbeat, clones the repo under
+         *     its own account, opens it in emdash's Add Project dialog, checks emdash holds
+         *     it, and reports back; poll `GET …/projects` for the outcome. Asking again for
+         *     the same name re-arms the ask. Its owner or a runner administrator only, and
+         *     only a laptop (emdash) runner: a cloud box clones its agents itself.
+         */
+        readonly post: operations["add_runner_project"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/projects/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Withdraw or clear an ask to add a repo
+         * @description Forget one ask — a pending one is withdrawn (the box stops being asked), a
+         *     finished one is cleared from the list. Never touches emdash: a project the
+         *     box already added stays.
+         */
+        readonly delete: operations["delete_runner_project_request"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/projects/{request_id}/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The runner reports how adding a repo went
+         * @description The box's word on one ask (`ok`, and its reason in `detail`). A success
+         *     counts once emdash's project shows in the box's own report; a failure marks
+         *     only this ask failed, never the box.
+         */
+        readonly post: operations["report_runner_project_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/": {
         readonly parameters: {
             readonly query?: never;
@@ -21588,6 +21664,11 @@ export interface components {
              */
             readonly missing_repo: readonly string[];
             /**
+             * Missing Repo Ids
+             * @default []
+             */
+            readonly missing_repo_ids: readonly string[];
+            /**
              * Cannot Hold
              * @default []
              */
@@ -30962,6 +31043,95 @@ export interface components {
             readonly granted: number;
         };
         /**
+         * RunnerProjectRequestOut
+         * @description An ask to add a repo to a laptop runner, and how it went: `pending` until
+         *     the box adds it (or its heartbeat reports the project), `added`, or `failed`
+         *     with the box's reason in `detail`.
+         */
+        readonly RunnerProjectRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Name */
+            readonly name: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /** Agent */
+            readonly agent?: string | null;
+            /** Status */
+            readonly status: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            readonly requested_at: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /** Requested By Email */
+            readonly requested_by_email?: string | null;
+        };
+        /**
+         * RunnerProjectsOut
+         * @description What emdash projects a laptop holds (as it reports them), what it was asked
+         *     to add, and whether the caller may ask it (its owner or an administrator, on a
+         *     laptop — a cloud box clones its agents on its own).
+         */
+        readonly RunnerProjectsOut: {
+            /** Projects */
+            readonly projects: readonly string[];
+            /** Requests */
+            readonly requests: readonly components["schemas"]["RunnerProjectRequestOut"][];
+            /** Can Add */
+            readonly can_add: boolean;
+        };
+        /**
+         * RunnerProjectRequestIn
+         * @description Add a repo: name an `agent` (its repo, under its slug) or give `repo_url`
+         *     (and optionally `name`, else the repo's own name).
+         */
+        readonly RunnerProjectRequestIn: {
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Repo Url
+             * @default
+             */
+            readonly repo_url: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /**
+         * RunnerProjectResultIn
+         * @description The box's word on one ask: whether emdash now holds the project, and why not.
+         */
+        readonly RunnerProjectResultIn: {
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+        };
+        /**
          * HealthCheck
          * @description One feature a runner checked on itself. `warn` is "works, but a person
          *     should know" (a CLI behind its plugin); `fail` is "this feature
@@ -31136,6 +31306,30 @@ export interface components {
             readonly refresh_pending?: boolean | null;
             /** Cancel Turn Ids */
             readonly cancel_turn_ids?: readonly string[] | null;
+            /** Add Projects */
+            readonly add_projects?: readonly components["schemas"]["RunnerProjectAskOut"][] | null;
+        };
+        /**
+         * RunnerProjectAskOut
+         * @description One repo a laptop owes: make it the emdash project `name`. `requested_at`
+         *     changes when the ask is re-armed, so a box that already answered the old one
+         *     knows this is a new attempt.
+         */
+        readonly RunnerProjectAskOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Repo Url */
+            readonly repo_url: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            readonly requested_at: string;
         };
         /** RunnerIn */
         readonly RunnerIn: {
@@ -50270,6 +50464,102 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultKeeperPinsOut"];
+                };
+            };
+        };
+    };
+    readonly list_runner_projects: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerProjectsOut"];
+                };
+            };
+        };
+    };
+    readonly add_runner_project: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerProjectRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerProjectRequestOut"];
+                };
+            };
+        };
+    };
+    readonly delete_runner_project_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly report_runner_project_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerProjectResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerProjectRequestOut"];
                 };
             };
         };

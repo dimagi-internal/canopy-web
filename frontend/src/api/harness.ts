@@ -147,6 +147,43 @@ export async function setRunnerEgress(
 // Claude Code, agent provisioning) at its next idle moment. Durable: the box
 // reads `refresh_pending` off its own heartbeat, so this survives a dropped
 // socket, and it stays pending until the box reports a newer bootstrap.
+export type RunnerProjectRequest = components['schemas']['RunnerProjectRequestOut']
+export type RunnerProjects = {
+  projects: string[]
+  requests: RunnerProjectRequest[]
+  can_add: boolean
+}
+
+/** The emdash projects a laptop reports, and each ask to add one (pending/added/failed). */
+export async function listRunnerProjects(runnerId: string): Promise<RunnerProjects> {
+  const res = await apiV2.GET('/api/harness/runners/{runner_id}/projects', {
+    params: { path: { runner_id: runnerId } },
+  })
+  const body = unwrap(res, 'listRunnerProjects')
+  return { projects: Array.from(body.projects), requests: Array.from(body.requests), can_add: body.can_add }
+}
+
+/** Ask a laptop to clone a repo and add it to emdash on its own: an agent's repo
+ *  (`agent`, under its slug), or any repo (`repoUrl`, optional `name`). */
+export async function addRunnerProject(
+  runnerId: string,
+  ask: { agent?: string; repoUrl?: string; name?: string },
+): Promise<RunnerProjectRequest> {
+  const res = await apiV2.POST('/api/harness/runners/{runner_id}/projects', {
+    params: { path: { runner_id: runnerId } },
+    body: { agent: ask.agent ?? '', repo_url: ask.repoUrl ?? '', name: ask.name ?? '' },
+  })
+  return unwrap(res, 'addRunnerProject')
+}
+
+/** Withdraw a pending ask, or clear a finished one. Never removes the emdash project. */
+export async function deleteRunnerProjectRequest(runnerId: string, requestId: string): Promise<void> {
+  const res = await apiV2.DELETE('/api/harness/runners/{runner_id}/projects/{request_id}', {
+    params: { path: { runner_id: runnerId, request_id: requestId } },
+  })
+  ensureOk(res, 'deleteRunnerProjectRequest')
+}
+
 export async function refreshRunner(runnerId: string): Promise<RunnerOut> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/refresh', {
     params: { path: { runner_id: runnerId } },

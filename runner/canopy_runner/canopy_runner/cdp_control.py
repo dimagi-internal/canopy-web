@@ -328,6 +328,16 @@ def interrupt(task: str, *, port: int = 9222, project: str = "") -> dict:
     return _run("interrupt", args)
 
 
+def add_project(name: str, path: str, *, port: int = 9222) -> dict:
+    """Make the git checkout at `path` the emdash project `name`, through emdash's own
+    Add Project dialog (add_project.py clones it first). Returns {"action": "submitted"}
+    once the dialog accepted it and closed — NOT proof the project exists: the caller
+    checks emdash's DB, as `_not_created` does for a task. Raises CDPError with the
+    dialog's own words when emdash refuses the folder, and ``BUSY:`` when a dialog is
+    already open (a person is using emdash) — try again later, nothing was touched."""
+    return _run("add-project", {"port": port, "name": name, "path": path}, timeout=60)
+
+
 def close_task(task: str, *, port: int = 9222, project: str = "") -> dict:
     """DELETE `task` from emdash (the designed close behaviour). Returns {"action": "deleted"} or {"action": "absent"}.
 

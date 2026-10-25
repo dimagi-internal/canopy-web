@@ -64,6 +64,9 @@ CDP_CONTRACTS: tuple[tuple[str, int, bool], ...] = (
     ("xterm_rows", 1, False),
     ("terminal_input", 1, False),
     ("claude_tabs", 1, False),
+    # The sidebar's "Add Project" button — add_project.py's way into the dialog.
+    # Not required: a missing one breaks adding repos, never a turn.
+    ("add_project_button", 1, False),
 )
 
 

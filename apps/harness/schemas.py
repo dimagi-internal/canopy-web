@@ -198,6 +198,68 @@ class RunnerEngineIn(Schema):
     engine: str
 
 
+class RunnerProjectAskOut(Schema):
+    """One repo a laptop owes: make it the emdash project `name`. `requested_at`
+    changes when the ask is re-armed, so a box that already answered the old one
+    knows this is a new attempt."""
+
+    id: uuid.UUID
+    name: str
+    repo_url: str
+    requested_at: dt.datetime
+
+
+class RunnerProjectRequestOut(Schema):
+    """An ask to add a repo to a laptop runner, and how it went: `pending` until
+    the box adds it (or its heartbeat reports the project), `added`, or `failed`
+    with the box's reason in `detail`."""
+
+    id: uuid.UUID
+    runner_id: uuid.UUID
+    name: str
+    repo_url: str
+    agent: str | None = None
+    status: str
+    detail: str = ""
+    requested_at: dt.datetime
+    finished_at: dt.datetime | None = None
+    requested_by_email: str | None = None
+
+    @staticmethod
+    def resolve_agent(obj) -> str | None:
+        return obj.agent.slug if obj.agent_id else None
+
+    @staticmethod
+    def resolve_requested_by_email(obj) -> str | None:
+        return obj.requested_by.email if obj.requested_by_id else None
+
+
+class RunnerProjectsOut(Schema):
+    """What emdash projects a laptop holds (as it reports them), what it was asked
+    to add, and whether the caller may ask it (its owner or an administrator, on a
+    laptop — a cloud box clones its agents on its own)."""
+
+    projects: list[str]
+    requests: list[RunnerProjectRequestOut]
+    can_add: bool
+
+
+class RunnerProjectRequestIn(Schema):
+    """Add a repo: name an `agent` (its repo, under its slug) or give `repo_url`
+    (and optionally `name`, else the repo's own name)."""
+
+    agent: str = ""
+    repo_url: str = ""
+    name: str = ""
+
+
+class RunnerProjectResultIn(Schema):
+    """The box's word on one ask: whether emdash now holds the project, and why not."""
+
+    ok: bool
+    detail: str = ""
+
+
 def _enrolled_roots(obj) -> list[str]:
     """`runners.enrolled_roots`, read once per row."""
     cached = getattr(obj, "_enrolled_roots_cache", None)
@@ -396,6 +458,18 @@ class RunnerOut(Schema):
     # The durable half of a stop: the `cancel` frame is the doorbell, this is
     # what reaches a runner whose socket missed it.
     cancel_turn_ids: list[str] | None = None
+    # Repos a person asked this laptop to make emdash projects of
+    # (`runner_projects.owed`) — set only on a heartbeat reply, None elsewhere.
+    # The durable ask; the box reports each back on `…/projects/{id}/result`.
+    add_projects: list[RunnerProjectAskOut] | None = None
+
+    @staticmethod
+    def resolve_add_projects(obj) -> list[RunnerProjectAskOut] | None:
+        wanted = getattr(obj, "add_projects_wanted", None)
+        if wanted is None:
+            return None
+        return [RunnerProjectAskOut(id=r.pk, name=r.name, repo_url=r.repo_url, requested_at=r.requested_at)
+                for r in wanted]
 
     @staticmethod
     def resolve_health_checks(obj) -> dict[str, HealthCheck] | None:

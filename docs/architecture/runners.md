@@ -250,6 +250,45 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
   `cx-` profile, a local-turn file). In any other session they write local files
   only and send nothing to canopy-web.
 
+## Adding a repo to a laptop (`RunnerProjectRequest`)
+
+A laptop runs an agent in the emdash project named after its slug, and routing
+skips a laptop without one (`routing.cannot_serve`, `InheritedOrder.missing_repo`).
+A person can ask the laptop to make that project itself, from canopy-web:
+**"Get it there…"** wherever a laptop is shown lacking an agent's repo (the agent's
+Routing / default order, the fleet map's workspace order, adding a laptop to an
+agent's runners) → *Add it there now*; the runner page's **Routing → Repos (emdash
+projects)** (an agent's repo, or any repo URL); and **Add repo** on `/ide`.
+
+- **The ask** (`apps/harness/runner_projects.py`) is one row per (runner, project
+  name), re-armed by asking again. Its owner or a runner administrator only, and a
+  laptop (`kind=emdash`) only — a cloud box clones its agents itself
+  (`cloud_runner._ensure_agent_clone`). An agent's ask uses its `repo_url` under
+  its slug. Name and URL are validated on both ends (they become a folder name and
+  a `git clone` argument on the box).
+- **Delivery is durable**: pending asks ride the REST heartbeat reply as
+  `add_projects` (`[{id, name, repo_url, requested_at}]`); a `runner.wake` ring only
+  makes the box beat sooner.
+- **The box** (`canopy_runner/add_project.py`): already in emdash's DB → added.
+  Else `git clone -- <url> <repos root>/<name>` in the background with the macOS
+  account's own git credentials (`GIT_TERMINAL_PROMPT=0`; the root is
+  `~/emdash/repositories`, else `~/emdash-projects`); a folder already there is
+  used only when its `origin` is the same repo. Then, in the loop thread and only
+  with CDP healthy, `cdp/emdash_control.mjs add-project {name, path}` drives
+  emdash's own **Add Project → Pick Directory** dialog: the path is handed to the
+  Directory field's `onPathChange` through its React fiber (the field is a button
+  that opens a native folder picker CDP cannot drive), the name input is set to
+  `name`, and Create is clicked once emdash's path inspection enables it. A dialog
+  already open (`BUSY`) defers the step a minute. The runner then checks emdash's
+  DB for the project — a dialog that closed is not a project — and reports
+  `POST …/projects/{id}/result {ok, detail}`. It never writes emdash's DB.
+- **Outcome**: `added` when the project shows in the box's heartbeat report
+  (observation discharges a pending ask whoever made the project; a reported
+  success counts only once it does), else `failed` with the box's reason. A
+  failure marks that ask only, never the runner not-ready.
+- A repo that is not an agent's also needs the owner's opt-in (above) before repo
+  work routes to it.
+
 ## Which agents a box may hold
 
 `apps/agents/services.py::runner_may_hold_agent(runner, agent)` — true only when
