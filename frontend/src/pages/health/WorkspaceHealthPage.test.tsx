@@ -122,7 +122,9 @@ describe('WorkspaceHealthPage', () => {
   })
 
   it('links an agent’s projects and open tasks, and says who can use it in words', async () => {
-    renderPage()
+    // Loaded, not just the table: an opened row shows its sessions only once
+    // its checklist is in, and on a slow CI box the click could beat it.
+    await renderLoaded()
     expect((await screen.findAllByRole('link', { name: '3 open tasks' }))[0].getAttribute('href')).toBe('/w/connect/agents/hal/tasks')
     expect(screen.getAllByRole('link', { name: '1 projects' })[0].getAttribute('href')).toBe('/w/connect/agents/hal/projects')
     expect(screen.getAllByText('Admins only').length).toBe(3)
