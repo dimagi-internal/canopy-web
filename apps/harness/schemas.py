@@ -2411,6 +2411,27 @@ class RunnerCredentialSetVaultOut(Schema):
     missing: list[str] = []
 
 
+class RunnerCredentialSetEntryOut(Schema):
+    """One entry of the set's list, in order."""
+
+    name: str = ""
+    #: login / token / api_key
+    kind: str
+
+
+class RunnerCredentialSetCandidateOut(Schema):
+    """One of the owner's other cloud runners, as a runner the set could be given to."""
+
+    id: uuid.UUID
+    name: str
+    workspace: str | None = None
+    root: str = ""
+    #: In a tree the set has no vault for yet: its values are then sealed there anew.
+    new_tree: bool = False
+    #: Why it cannot read the set now; null when it can.
+    refusal: str | None = None
+
+
 class RunnerCredentialSetOut(Schema):
     """A credential set: one ordered list of Claude credentials that every runner on
     it reads, with a vault per workspace tree for the values."""
@@ -2418,7 +2439,10 @@ class RunnerCredentialSetOut(Schema):
     id: uuid.UUID
     name: str
     workspace: str
+    entries: list[RunnerCredentialSetEntryOut] = []
     runners: list[RunnerCredentialSetRunnerOut] = []
+    #: The owner's other cloud runners, for adding one to the set.
+    candidates: list[RunnerCredentialSetCandidateOut] = []
     vaults: list[RunnerCredentialSetVaultOut] = []
 
 

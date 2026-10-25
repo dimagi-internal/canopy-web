@@ -301,6 +301,11 @@ describe('a shared credential list', () => {
     vaults: [marshVault],
     credential_set: {
       id: 's1', name: 'jj credentials', workspace: 'dimagi',
+      entries: [{ name: 'jj max', kind: 'token' }],
+      candidates: [
+        { id: 'r3', name: 'free-box', workspace: 'dimagi', root: 'dimagi', new_tree: false, refusal: null },
+        { id: 'r4', name: 'busy-box', workspace: 'dimagi', root: 'dimagi', new_tree: false, refusal: 'has credentials of its own: remove them first' },
+      ],
       runners: [{ id: 'r1', name: 'cloud-ec2-2-marsh', workspace: 'marsh' }, { id: 'r2', name: 'dimagi-0abc', workspace: 'dimagi' }],
       vaults: [
         { vault_id: 'vd', name: 'jj credentials', workspace: 'dimagi', root: 'dimagi', kv: 1, missing: [] },
@@ -309,10 +314,11 @@ describe('a shared credential list', () => {
     },
   })
 
-  it('names the set, who else reads it, and what this tree has no value for yet', async () => {
+  it('names the set, its list, who reads it, and what this tree has no value for yet', async () => {
     api.getRunnerCredentialStatus.mockResolvedValue(onSet())
     render(<RunnerCredentials runnerId="r1" />)
-    expect((await screen.findByTestId('cred-set-others')).textContent).toContain('also read by dimagi-0abc')
+    expect((await screen.findByTestId('cred-set-others')).textContent).toContain('Read by this runner, dimagi-0abc')
+    expect(screen.getByTestId('cred-set-entries').textContent).toContain('jj max (token)')
     expect(screen.getByTestId('cred-set-missing').textContent).toContain('1 entry has no value in this tree yet')
     expect(screen.getByTestId('cred-set-tree-dimagi').textContent).toContain('every value set')
     // A token with no value in this tree is one to get, not to replace.
@@ -328,6 +334,18 @@ describe('a shared credential list', () => {
     fireEvent.change(await screen.findByTestId('cred-set-pick'), { target: { value: 's1' } })
     await waitFor(() => expect(api.setRunnerCredentialSet).toHaveBeenCalledWith('r1', 's1'))
     await screen.findByTestId('cred-set')
+  })
+
+  it('adds another runner to the set, and says why one cannot be added', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(onSet())
+    api.setRunnerCredentialSet.mockResolvedValue(onSet())
+    render(<RunnerCredentials runnerId="r1" />)
+    const pick = await screen.findByTestId('cred-set-add')
+    const busy = [...pick.querySelectorAll('option')].find((o) => o.value === 'r4')!
+    expect(busy.disabled).toBe(true)
+    expect(busy.textContent).toContain('has credentials of its own')
+    fireEvent.change(pick, { target: { value: 'r3' } })
+    await waitFor(() => expect(api.setRunnerCredentialSet).toHaveBeenCalledWith('r3', 's1'))
   })
 
   it('stops reading it after asking', async () => {

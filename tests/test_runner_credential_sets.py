@@ -248,3 +248,26 @@ def test_only_the_sets_owner_changes_a_shared_list(fleet):
     assert res.status_code == 403 and "only its owner" in res.json()["detail"]
     assert client.post(f"/api/harness/runners/{fleet['runner'].pk}/vault/entries",
                        data={"kind": "api_key"}, content_type="application/json").status_code == 403
+
+
+# ── what a set shows: its list, and the runners it could be given to ─────────
+
+def test_a_set_names_its_entries_and_the_runners_you_could_add(fleet):
+    box = fleet["runner"]
+    _with_token(box)
+    cset = _share(fleet, box)
+    free = _runner(fleet, name="free-box", ws=_family(fleet))
+    busy = _runner(fleet, name="busy-box")
+    RunnerLogin.objects.create(runner=busy, kind=RunnerLogin.TOKEN, key="bbbb0001", position=0)
+    _runner(fleet, name="someone-elses", owner=get_user_model().objects.create_user(username="x", email="x@x.com"))
+
+    listed = fleet["client"].get(SETS).json()[0]
+    assert listed["entries"] == [{"name": "jj max", "kind": "token"}]
+    by_name = {c["name"]: c for c in listed["candidates"]}
+    assert box.name not in by_name and "someone-elses" not in by_name
+    assert by_name["free-box"]["refusal"] is None and by_name["free-box"]["new_tree"] is True
+    assert by_name["busy-box"]["refusal"].startswith("has credentials of its own")
+
+    assert _choose(fleet, free, cset).status_code == 200
+    again = {c["name"] for c in fleet["client"].get(SETS).json()[0]["candidates"]}
+    assert "free-box" not in again

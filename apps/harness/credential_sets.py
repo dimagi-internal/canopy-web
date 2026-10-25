@@ -173,16 +173,42 @@ def summary(cset: RunnerCredentialSet) -> dict:
     held: dict = {}
     for vault_id, name in VaultSecret.objects.filter(vault__in=vaults).values_list("vault_id", "name"):
         held.setdefault(vault_id, set()).add(name)
-    names = [e.vault_secret_name for e in cset.entries.filter(kind__in=harness_runners.VALUE_KINDS)]
+    entries = list(cset.entries.order_by("position", "created_at"))
+    names = [e.vault_secret_name for e in entries if e.kind in harness_runners.VALUE_KINDS]
     runners = (Runner.objects.filter(credential_set=cset).exclude(status=Runner.RETIRED)
                .order_by("name").values("id", "name", "workspace_id"))
     return {
         "id": cset.pk, "name": cset.name, "workspace": cset.workspace_id,
+        "entries": [{"name": e.name, "kind": e.kind} for e in entries],
         "runners": [{"id": r["id"], "name": r["name"], "workspace": r["workspace_id"]} for r in runners],
+        "candidates": candidates(cset),
         "vaults": [{"vault_id": str(v.pk), "name": v.name, "workspace": v.workspace_id,
                     "root": _root(v.workspace_id), "kv": v.kv,
                     "missing": [n for n in names if n not in held.get(v.pk, set())]} for v in vaults],
     }
+
+
+def candidates(cset: RunnerCredentialSet) -> list[dict]:
+    """The owner's other cloud runners, each with why `join` would refuse it (None
+    when it may join) and whether it is in a tree the set has no vault for yet — one
+    whose values someone then seals there."""
+    if not cset.owner_id:
+        return []
+    rows = list(Runner.objects.filter(owner_id=cset.owner_id, kind=Runner.CLOUD)
+                .exclude(status=Runner.RETIRED).exclude(credential_set=cset).order_by("name"))
+    with_own = set(RunnerLogin.objects.filter(runner__in=rows).values_list("runner_id", flat=True))
+    roots = wsvc.tree_roots({r.workspace_id for r in rows} | {v.workspace_id for v in cset.vaults.all()})
+    served = {roots.get(v.workspace_id, v.workspace_id) for v in cset.vaults.all()}
+    out = []
+    for r in rows:
+        root = roots.get(r.workspace_id, r.workspace_id)
+        refusal = ("a fleet member: it reads its fleet's set" if r.fleet_id
+                   else "reads another set" if r.credential_set_id
+                   else "has credentials of its own: remove them first" if r.pk in with_own
+                   else None)
+        out.append({"id": r.pk, "name": r.name, "workspace": r.workspace_id, "root": root,
+                    "new_tree": root not in served, "refusal": refusal})
+    return out
 
 
 def owned_by(user) -> list[RunnerCredentialSet]:
