@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
-import type { KeyboardEvent } from 'react'
+import type { DragEvent, KeyboardEvent } from 'react'
+import { REFERENCE_MIME } from 'canopy-ui/chat'
 
 import { setSessionTitle, type ChatSession } from '@/api/chat'
 import type { AgentOut } from '@/api/agents'
@@ -13,6 +14,7 @@ import { StateDot as SharedStateDot } from '@/components/sessions/StateDot'
 import {
   linkKind,
   sessionMode,
+  sessionReference,
   sessionState,
   shortAge,
   type IdeFolder,
@@ -25,6 +27,15 @@ export const MODE_LABEL: Record<IdeMode, string> = { manual: 'manual', auto: 'au
 
 export const sessionLabel = (s: ChatSession) =>
   listTitle(s, sessionDisplayTitle(s.title) || '(untitled)')
+
+/** Dragging a row carries a reference the composer types in where it lands
+ *  (REFERENCE_MIME); the link itself still rides along for anywhere else. */
+function dragReference(e: DragEvent<HTMLAnchorElement>, s: ChatSession) {
+  const reference = sessionReference(s, sessionLabel(s), window.location.origin)
+  e.dataTransfer.setData(REFERENCE_MIME, reference)
+  e.dataTransfer.setData('text/plain', reference)
+  e.dataTransfer.effectAllowed = 'copyLink'
+}
 
 export function StateDot({ state }: { state: IdeState }) {
   return <SharedStateDot tone={state === 'input' ? 'asking' : state} />
@@ -192,6 +203,7 @@ export function IdeTree({
                     to={`/ide/${s.id}`}
                     data-testid={`ide-row-${s.id}`}
                     aria-current={s.id === id ? 'page' : undefined}
+                    onDragStart={(e) => dragReference(e, s)}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       onRowMenu(s, e.clientX, e.clientY)
@@ -270,6 +282,7 @@ export function IdeTree({
                           key={k.id}
                           to={`/ide/${k.id}`}
                           data-testid={`ide-link-${s.id}-${k.id}`}
+                          onDragStart={(e) => dragReference(e, k)}
                           title={`${linkKind(k) === 'fork' ? 'Forked' : 'Started'} from this session · opens ${label(k)} where it lives`}
                           className={clsx(
                             'grid grid-cols-[minmax(0,1fr)_auto_2.25rem] items-center gap-2 py-0.5 pr-2 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground-secondary',

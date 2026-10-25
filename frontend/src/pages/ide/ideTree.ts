@@ -13,6 +13,8 @@
  * a reference to the real row, never a move (`childLinks`).
  */
 
+import { scopedPath } from '@/lib/scopedLinks'
+
 export type IdeSession = {
   id: string
   title: string
@@ -181,4 +183,16 @@ export function shortAge(iso: string, now: Date): string {
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `${hours}h`
   return `${Math.floor(hours / 24)}d`
+}
+
+/** What dragging a row into a composer types: a markdown link to the session's
+ *  page, its title as the text. The id in the URL is what an agent reads the
+ *  session by; the title is for the people in the conversation. */
+export function sessionReference(
+  s: { id: string; workspace: string },
+  label: string,
+  origin: string,
+): string {
+  const text = label.replace(/[[\]\\]/g, '\\$&')
+  return `[${text}](${origin}${scopedPath(s.workspace, `/chat/${s.id}`)})`
 }

@@ -14,9 +14,9 @@
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, fireEvent } from "@testing-library/react";
+import { cleanup, createEvent, render, screen, fireEvent } from "@testing-library/react";
 
-import { SendBox } from "./SendBox";
+import { REFERENCE_MIME, SendBox } from "./SendBox";
 import type { Draft } from "./protocol";
 
 afterEach(cleanup);
@@ -795,5 +795,45 @@ describe("SendBox — a stop you asked for shows at once", () => {
     setup({ isStreaming: false, stopState: "stopped" });
     expect(screen.getByText(/^stopped$/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /stop/i })).toBeNull();
+  });
+});
+
+describe("SendBox — dropping a reference", () => {
+  const REF = "[Fix the runner](https://canopy.test/w/dimagi/chat/abc)";
+  const dropped = (data: Record<string, string>) => ({
+    dataTransfer: {
+      types: Object.keys(data),
+      files: [],
+      getData: (type: string) => data[type] ?? "",
+    },
+  });
+
+  it("types a dragged reference in at the caret, like a paste", () => {
+    // Dragging a session row from the /ide tree: the agent gets the link, the
+    // people in the conversation see the title.
+    const { textarea, onUpdate } = setup({ storage: null });
+    fireEvent.change(textarea(), { target: { value: "look at and tell me" } });
+    textarea().setSelectionRange(8, 8);
+    fireEvent.drop(textarea(), dropped({ [REFERENCE_MIME]: REF }));
+    expect(textarea().value).toBe(`look at ${REF} and tell me`);
+    expect(onUpdate).toHaveBeenLastCalledWith(`look at ${REF} and tell me`);
+  });
+
+  it("takes a reference even when the host has no attaching", () => {
+    // Attaching off used to mean the box ignored every drop.
+    const { textarea } = setup({ storage: null });
+    const over = createEvent.dragOver(textarea(), dropped({ [REFERENCE_MIME]: REF }));
+    fireEvent(textarea(), over);
+    expect(over.defaultPrevented).toBe(true);
+  });
+
+  it("leaves a plain text drag to the browser", () => {
+    // Moving selected text within the box must not be doubled up.
+    const { textarea } = setup({ storage: null });
+    fireEvent.change(textarea(), { target: { value: "hello" } });
+    const drop = createEvent.drop(textarea(), dropped({ "text/plain": "hello" }));
+    fireEvent(textarea(), drop);
+    expect(drop.defaultPrevented).toBe(false);
+    expect(textarea().value).toBe("hello");
   });
 });
