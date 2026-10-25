@@ -249,7 +249,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   - **inbound** — the Gmail push doorbell.
   - **email** — the workspace's own mail domain via SES: DNS records, per-address routes (agent / member forward / drop; the catch-all forwards or drops), daily send cap. Removing an address or the domain asks first and says existing threads are kept.
   - **connected-apps** ("Connected sites") — which websites may host one of
-    this workspace's agents; per site, what it asks of agents (its signed
+    this workspace's agents and which one its panel opens on ("Opens on"); per
+    site, what it asks of agents (its signed
     `site.json`): per allowed agent, whether the site offers it, lets it work
     with its sensitive data, and — only then — whether it can handle that data,
     with why not and a link to fix it (marked only when an offered agent cannot);

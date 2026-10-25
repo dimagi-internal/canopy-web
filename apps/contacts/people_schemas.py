@@ -310,6 +310,15 @@ class MemoryFeatureIn(StrictModel):
                                                            "new sessions. Omit to leave it.")
 
 
+class DefaultAgentIn(StrictModel):
+    agent: str = Field(description="The agent's slug, or \"\" to clear your default.")
+
+
+class DefaultAgentOut(StrictModel):
+    agent: str = Field(description="Your default agent's slug, or \"\" for none.")
+    name: str = Field(default="", description="Its name.")
+
+
 class AgentMemoryIn(StrictModel):
     record: MemoryFeatureIn | None = Field(
         default=None, description="Learn from me. Omit to leave it unchanged.")

@@ -110,6 +110,42 @@ function AgentPicker({
 }
 
 /**
+ * The agent this site's panel opens on when neither the page nor the visitor
+ * chose one. A visitor's own default (set from the panel) and a page that
+ * chose its agent both win over it.
+ */
+function DefaultAgentPicker({
+  app,
+  busy,
+  onChange,
+}: {
+  app: ConnectedApp
+  busy: boolean
+  onChange: (agent: string) => void
+}): JSX.Element {
+  return (
+    <label className="flex items-center gap-2 text-xs text-foreground-secondary">
+      Opens on
+      <select
+        aria-label="Default agent"
+        value={app.default_agent ?? ''}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded border border-input bg-input px-2 py-1 text-xs text-foreground"
+      >
+        <option value="">No default (the visitor picks)</option>
+        {app.agents.map((a) => (
+          <option key={a.slug} value={a.slug}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+      <span className="text-muted-foreground">unless the page or the visitor chose another</span>
+    </label>
+  )
+}
+
+/**
  * Where the site's own OAuth server and MCP server are, so the agent can call
  * the site's tools AS the visitor (host grant contract v1). Both blank is an
  * ordinary state: the site grants nothing, and the agent cannot act for a
@@ -952,6 +988,15 @@ export function ConnectedAppsPage(): JSX.Element | null {
                   selected={app.agents.map((a) => a.slug)}
                   onChange={(slugs) =>
                     void run(() => updateConnectedApp(slug, app.id, { agents: slugs }))
+                  }
+                />
+              )}
+              {isOwner && !app.revoked && app.agents.length > 1 && (
+                <DefaultAgentPicker
+                  app={app}
+                  busy={busy}
+                  onChange={(agent) =>
+                    void run(() => updateConnectedApp(slug, app.id, { default_agent: agent }))
                   }
                 />
               )}

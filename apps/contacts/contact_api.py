@@ -36,6 +36,7 @@ from apps.canopy_sessions.schemas import (
 )
 from apps.canopy_sessions.services import note_request_grant
 from apps.embedding import assertions
+from apps.embedding import defaults as agent_defaults
 from apps.embedding.audit import client_ip
 from apps.embedding.audit import record as audit
 from apps.embedding.rate_limit import (
@@ -126,6 +127,9 @@ class ContactAgentOut(Schema):
     slug: str
     name: str
     description: str
+    #: The one to open on: the agent the page bound, else the site's default
+    #: (a contact has no preference of their own). At most one row is true.
+    default: bool = False
 
 
 class ContactMeOut(Schema):
@@ -397,18 +401,21 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
 
     contact = request.contact
     app = request.delegated_app
-    rows = _bound(request, (
+    rows = list(_bound(request, (
         Agent.objects.filter(embedding_apps__app=app, workspace_id=contact.workspace_id)
         .order_by("slug")
         .distinct()
-    ), "pk")
+    ), "pk"))
+    chosen = agent_defaults.resolve([a.pk for a in rows], app=app,
+                                    bound_agent_id=getattr(request, "bound_agent_id", None))
     return ContactMeOut(
         contact_id=contact.pk,
         display_name=contact.display_name,
         identity=contact.identity,
         app=app.name,
         agents=[
-            ContactAgentOut(slug=a.slug, name=a.name, description=a.description)
+            ContactAgentOut(slug=a.slug, name=a.name, description=a.description,
+                            default=a.pk == chosen.default_id)
             for a in rows
         ],
     )

@@ -79,6 +79,11 @@ label `canopy_host`), `.conformance`.
 
 ## The embedded widget is canopy's chat page
 
+Which agent it opens on is ranked in one place, `apps/embedding/defaults.py`
+(bound token > `PreferredAgent` > `AppCredentialAgent.is_default`, each only if
+listed), surfaced as `default` on the agent list; the frame's own fallbacks
+(`init.agent`, the only agent, the picker) are `frontend/src/embed/pickAgent.ts`.
+
 `frontend/src/embed/EmbedApp.tsx` mounts the same `ChatPanel` (canopy-ui/chat)
 over the same `ag-ui` protocol as `ChatPage`. When the widget looks or behaves
 worse than canopy-web, the cause is a **seam** — a prop or call `ChatPage` makes

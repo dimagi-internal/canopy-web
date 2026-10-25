@@ -29,7 +29,15 @@ from apps.workspaces import services as wsvc
 
 from .audit import record as audit
 from .rate_limit import MintRateLimitError, check_mint_limit
-from .schemas import EmbedAgentOut, EmbedSelfOut, EmbedSelfTokenOut, EmbedSessionMemoryOut
+from . import defaults as agent_defaults
+from .schemas import (
+    EmbedAgentOut,
+    EmbedDefaultAgentIn,
+    EmbedDefaultAgentOut,
+    EmbedSelfOut,
+    EmbedSelfTokenOut,
+    EmbedSessionMemoryOut,
+)
 
 embed_router = Router(auth=session_auth, tags=["embed"])
 
@@ -81,7 +89,8 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     most often that nothing has been allowed for this app yet.
 
     Each row carries the workspace a session started with that agent will
-    belong to.
+    belong to. At most one row is `default`: the agent the page chose, else your
+    own preferred agent, else the site's default — each only if it is listed.
     """
     # Rationale (deliberately NOT in the docstring — a route's docstring is its
     # published OpenAPI description; see #757). Neither condition is sufficient
@@ -90,6 +99,26 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     # which ignores what the host was permitted to embed. Fails closed: an app
     # with no agent rows offers nothing.
     app = _acting_app(request)
+    rows = list(_offered_rows(request, app))
+    chosen = agent_defaults.resolve([a.pk for a in rows], app=app, user=request.user,
+                                    bound_agent_id=getattr(request, "bound_agent_id", None))
+    return [
+        EmbedAgentOut(
+            slug=a.slug,
+            name=a.name,
+            description=a.description,
+            avatar_url=a.avatar_url,
+            workspace=a.workspace_id,
+            default=a.pk == chosen.default_id,
+            preferred=a.pk == chosen.preferred_id,
+        )
+        for a in rows
+    ]
+
+
+def _offered_rows(request: HttpRequest, app):
+    """The agents this site may offer this visitor: its allowlist ∩ their
+    workspaces, narrowed to the one agent a bound token names."""
     reachable = wsvc.user_workspace_slugs(request.user)
     rows = (
         Agent.objects.filter(embedding_apps__app=app, workspace_id__in=reachable)
@@ -100,16 +129,35 @@ def list_embeddable_agents(request: HttpRequest) -> list[EmbedAgentOut]:
     bound = getattr(request, "bound_agent_id", None)
     if bound:
         rows = rows.filter(pk=bound)
-    return [
-        EmbedAgentOut(
-            slug=a.slug,
-            name=a.name,
-            description=a.description,
-            avatar_url=a.avatar_url,
-            workspace=a.workspace_id,
-        )
-        for a in rows
-    ]
+    return rows
+
+
+@embed_router.put("/default-agent", response=EmbedDefaultAgentOut,
+                  summary="Make an agent this site offers you your default")
+@gate("self", setting=True)
+def set_embed_default_agent(request: HttpRequest, payload: EmbedDefaultAgentIn) -> EmbedDefaultAgentOut:
+    """Make one of the agents this site offers you the one every panel opens on
+    for you — here, on other sites and on canopy's own pages — unless a page
+    chose its own agent. `agent: ""` clears it. Only your own preference, and
+    only for a person's account."""
+    # A site may set this for the visitor it acts for (the panel's "Make this my
+    # default"). That is narrower than the memory switches a site may not touch:
+    # it can only name an agent this site already offers the visitor, and it
+    # changes which agent a panel opens on, never what anyone may see or do.
+    from apps.contacts import people  # noqa: PLC0415 — contacts imports embedding at load
+
+    app = _acting_app(request)
+    if people.agent_of_login(request.user) is not None or not people.is_human_account(request.user):
+        raise ProblemError(403, "Only a person has a default agent", type_=TYPE_FORBIDDEN)
+    slug = (payload.agent or "").strip()
+    if not slug:
+        agent_defaults.set_preferred(request.user, None)
+        return EmbedDefaultAgentOut(agent="")
+    agent = _offered_rows(request, app).filter(slug=slug).first()
+    if agent is None:
+        raise HttpError(404, "This site does not offer you that agent")
+    agent_defaults.set_preferred(request.user, agent)
+    return EmbedDefaultAgentOut(agent=agent.slug)
 
 
 # --- canopy-web embedding its own widget ------------------------------------

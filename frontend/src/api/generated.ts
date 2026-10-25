@@ -1600,10 +1600,34 @@ export interface paths {
          *     most often that nothing has been allowed for this app yet.
          *
          *     Each row carries the workspace a session started with that agent will
-         *     belong to.
+         *     belong to. At most one row is `default`: the agent the page chose, else your
+         *     own preferred agent, else the site's default — each only if it is listed.
          */
         readonly get: operations["list_embeddable_agents"];
         readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/default-agent": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Make an agent this site offers you your default
+         * @description Make one of the agents this site offers you the one every panel opens on
+         *     for you — here, on other sites and on canopy's own pages — unless a page
+         *     chose its own agent. `agent: ""` clears it. Only your own preference, and
+         *     only for a person's account.
+         */
+        readonly put: operations["set_embed_default_agent"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -14045,6 +14069,35 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/people/me/default-agent/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The agent an embedded panel opens on for you
+         * @description The agent every embedded panel — on a connected site or on canopy's own
+         *     pages — opens on for you, unless the page chose its own agent. Blank when you
+         *     have not chosen one, and the site's own default applies.
+         */
+        readonly get: operations["get_my_default_agent"];
+        /**
+         * Choose the agent an embedded panel opens on for you
+         * @description Choose the agent every embedded panel opens on for you, by slug; `""`
+         *     clears it. It must be an agent in one of your workspaces. A panel uses it
+         *     only where that site offers the agent, and a page that chose its own agent
+         *     still wins.
+         */
+        readonly put: operations["set_my_default_agent"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/people/me/sessions/{session_id}/agent-memory/": {
         readonly parameters: {
             readonly query?: never;
@@ -17705,6 +17758,26 @@ export interface components {
             readonly avatar_url: string;
             /** Workspace */
             readonly workspace: string;
+            /**
+             * Default
+             * @default false
+             */
+            readonly default: boolean;
+            /**
+             * Preferred
+             * @default false
+             */
+            readonly preferred: boolean;
+        };
+        /** EmbedDefaultAgentOut */
+        readonly EmbedDefaultAgentOut: {
+            /** Agent */
+            readonly agent: string;
+        };
+        /** EmbedDefaultAgentIn */
+        readonly EmbedDefaultAgentIn: {
+            /** Agent */
+            readonly agent: string;
         };
         /**
          * EmbedSelfOut
@@ -17853,6 +17926,11 @@ export interface components {
             readonly name: string;
             /** Description */
             readonly description: string;
+            /**
+             * Default
+             * @default false
+             */
+            readonly default: boolean;
         };
         /** ContactMeOut */
         readonly ContactMeOut: {
@@ -29992,6 +30070,11 @@ export interface components {
             readonly origins: readonly string[];
             /** Agents */
             readonly agents: readonly components["schemas"]["ConnectedAgentOut"][];
+            /**
+             * Default Agent
+             * @default
+             */
+            readonly default_agent: string;
             /** Public Keys */
             readonly public_keys: readonly string[];
             /** Signs Assertions */
@@ -30066,6 +30149,11 @@ export interface components {
              */
             readonly agents: readonly string[];
             /**
+             * Default Agent
+             * @default
+             */
+            readonly default_agent: string;
+            /**
              * Public Keys
              * @default []
              */
@@ -30099,6 +30187,8 @@ export interface components {
             readonly jwks_url?: string | null;
             /** Agents */
             readonly agents?: readonly string[] | null;
+            /** Default Agent */
+            readonly default_agent?: string | null;
             /** Public Keys */
             readonly public_keys?: readonly string[] | null;
             /** Host Issuer */
@@ -37371,6 +37461,28 @@ export interface components {
              */
             readonly default?: boolean | null;
         };
+        /** DefaultAgentOut */
+        readonly DefaultAgentOut: {
+            /**
+             * Agent
+             * @description Your default agent's slug, or "" for none.
+             */
+            readonly agent: string;
+            /**
+             * Name
+             * @description Its name.
+             * @default
+             */
+            readonly name: string;
+        };
+        /** DefaultAgentIn */
+        readonly DefaultAgentIn: {
+            /**
+             * Agent
+             * @description The agent's slug, or "" to clear your default.
+             */
+            readonly agent: string;
+        };
         /**
          * SessionMemoryOut
          * @description Your agent memory as it applies in one session, and what you have granted
@@ -40867,6 +40979,30 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["EmbedAgentOut"][];
+                };
+            };
+        };
+    };
+    readonly set_embed_default_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EmbedDefaultAgentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["EmbedDefaultAgentOut"];
                 };
             };
         };
@@ -56626,6 +56762,50 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentMemoryOut"];
+                };
+            };
+        };
+    };
+    readonly get_my_default_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefaultAgentOut"];
+                };
+            };
+        };
+    };
+    readonly set_my_default_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DefaultAgentIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DefaultAgentOut"];
                 };
             };
         };

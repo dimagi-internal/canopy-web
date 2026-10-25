@@ -77,6 +77,7 @@ The fields, whether filled or typed:
 | **Name** | The `app` value you pass to `canopy.init`, e.g. `connect-labs` | Mismatch ⇒ the widget's frame 404s |
 | **Site URLs** | The origins allowed to frame the widget. **Include every environment** — production, staging, and your local dev origin | Empty ⇒ the frame 404s by design; an exempt page with no `frame-ancestors` would be frameable by any site |
 | **Agents it may offer** | Which of this workspace's agents this site may offer | None ⇒ the picker offers nothing |
+| **Opens on** | The site's default agent, one of those it offers (`default_agent` on `PATCH …/connected-apps/{id}`). See §5c for what outranks it | None ⇒ your `AGENT_SLUG`, then the only agent, then the picker |
 | **Signing key** | The PUBLIC half of a key pair your server signs visitor statements with (§3). Several may be pasted during a rotation | Missing ⇒ your site can vouch for nobody, so the widget never gets a token |
 
 There is **no secret** to copy. A site proves itself by signing (§3), so canopy
@@ -515,7 +516,7 @@ them reach in.
 `inline` requires `target` (a selector or element) and is always open — there is
 no launcher to reopen it with.
 
-**Other options:** `theme` (above); `agent: 'labs-helper'` skips the picker; `metadata: {…}`
+**Other options:** `theme` (above); `agent: 'labs-helper'` opens on that agent when canopy has no default for the visitor (§5c); `metadata: {…}`
 stamps opaque data on sessions the widget creates; `onInvalidate(resource)` is
 called when data your page shows has changed (§5a); `onSession(session)` is
 called when the conversation open in the panel changes (§5e); `dismissible`, `storage`,
@@ -784,6 +785,29 @@ What canopy does with it:
 A token without `canopy_agent` behaves exactly as before: any agent the site
 offers. Hosts not on the SDK add the claim to their own assertion — see
 `sdk/python/README.md` § Host grant contract v1.
+
+### Which agent the panel opens on
+
+When more than one agent is on offer, the panel opens on the first of these that
+names one of them:
+
+1. **The page's choice** — a bound token (above). It is the only agent listed.
+2. **The visitor's own default** — set from the panel ("Make this my default",
+   `PUT /api/embed/default-agent`) or in canopy (`PUT /api/people/me/default-agent/`).
+   One per person, for every site and canopy's own pages.
+3. **The site's default** — "Opens on" on the Connected sites page
+   (`default_agent` on `PATCH /api/workspaces/{slug}/connected-apps/{id}`).
+4. **The agent you named** — `agent` in `canopy.init`, which the SDK fills from
+   `AGENT_SLUG`.
+5. **The only agent**, else the picker.
+
+canopy decides 1–3 and marks the winner `default: true` in `GET /api/embed/agents`
+(and `GET /api/contact/me`, where a contact has no default of their own); each
+counts only when the agent is on that visitor's list, so a default never grants
+an agent. The `agent` you send is therefore a fallback, not a choice: to make a
+page open on an agent whatever the visitor prefers, choose it with
+`panel_context(agent=...)` so the token is bound. With several agents on offer,
+the panel's header names the agent as a switch back to the picker.
 
 ## 5d. Choosing your agents from canopy's site agents API
 
