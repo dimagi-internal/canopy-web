@@ -98,6 +98,27 @@ and the embed does not — not a component. Compare against `ChatPage.tsx`:
   otherwise vanishes into an empty box. Don't track the HTTP request as the
   "waiting" signal: it ends long before the reply.
 
+### Opening a conversation, and naming one
+
+- **Every way into a conversation is read as the visitor first** — the page's
+  `widget.openSession`, a row of the start screen's list, and a chat whose socket
+  was refused all go through one check in `EmbedApp` (`openRequest`): an agent the
+  site does not offer, or one canopy will not give, is "isn't available here"; a
+  private one they are not in is canopy's ask-to-join interstitial. Never hand an
+  id straight to the socket.
+- **A refused socket is an answer.** `useSessionSocket` stops reconnecting on close
+  `4003`/`4004` (`REFUSAL_CLOSE_CODES`) and reports `refused` (with the server's
+  `session.error` words, e.g. `needs_key`); the panel then says so instead of a
+  chat that reads "Reconnecting…" over "Nothing here yet" forever.
+- **The list is your conversations**: rows with `you_are_in_it === false` (a
+  co-tenant's private conversation, listed so they could ask to join) are left out.
+  Each row is told apart by **metadata only** (`conversationLabels.ts`): when it
+  began and the page it began on (`origin_resource`, "on this page" when it is the
+  page's declared `resource`) — never its words, which canopy cannot read.
+- **The agent is named by `agentLabel`** (its name; a slug-for-a-name reads as a
+  word), and the panel says which page the agent is told about ("Asking about …":
+  the page state's `title` if the host declares one, else its `resource` as words).
+
 ### Styling: two halves, two doors
 
 `frontend/packages/canopy-widget/src/theme.ts`:

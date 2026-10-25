@@ -20,6 +20,11 @@ import {
 
 const HEARTBEAT_INTERVAL_MS = 20_000;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000];
+/** Close codes that are canopy's ANSWER, not a dropped line: 4003 (you may not
+ *  open this conversation — its ACL, the site's agents, or a private one you are
+ *  not in or hold no key for) and 4004 (there is no such conversation). Asking
+ *  again gets the same answer, so the hook stops and says so (`refused`). */
+export const REFUSAL_CLOSE_CODES: readonly number[] = [4003, 4004];
 const DRAFT_UPDATE_DEBOUNCE_MS = 150;
 /** How long a socket send may go without the server's receipt before the page
  *  resends it over HTTP. Short on purpose: the receipt normally arrives within
@@ -208,6 +213,13 @@ export interface UseSessionSocketResult {
    *  they're the same send rather than rendering it twice. */
   noteLocalSend: (text: string, clientId?: string) => void;
   lastError: string | null;
+  /** canopy turned this connection away for good (`REFUSAL_CLOSE_CODES`): the
+   *  hook has stopped reconnecting, and the host should say the conversation is
+   *  not available rather than show a chat that is "Reconnecting…" forever.
+   *  `reason` is the server's own words when it sent any (a `session.error` just
+   *  before closing, e.g. `needs_key`); "" otherwise. Null while connecting, open,
+   *  or merely dropped. */
+  refused: { code: number; reason: string } | null;
   /** This person's chosen mode for how their OWN in-progress message appears
    *  to others — persisted per browser (`canopy.chat.typingVisibility`).
    *  Defaults to `"live"`, today's behaviour. */
@@ -240,6 +252,10 @@ export function useSessionSocket({
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [refused, setRefused] = useState<{ code: number; reason: string } | null>(null);
+  // The server's `session.error` on the CURRENT connection, so a refusal that
+  // follows it can say why.
+  const connectionErrorRef = useRef<string>("");
   // A send has gone out but no reply has begun — i.e. the turn is QUEUED,
   // waiting for a runner to claim it. There is no assistant message during
   // this window, so nothing else in the state can express it, and without it
@@ -419,6 +435,7 @@ export function useSessionSocket({
     }
     if (frame.event === "session.error") {
       setLastError(frame.data.message);
+      connectionErrorRef.current = frame.data.message ?? "";
       if (
         frame.data.code === "draft_version_mismatch" &&
         frame.data.detail &&
@@ -482,6 +499,7 @@ export function useSessionSocket({
     );
     socketRef.current = ws;
 
+    connectionErrorRef.current = "";
     ws.onopen = () => {
       snapshotSeenRef.current = false;
       setConnected(true);
@@ -532,7 +550,7 @@ export function useSessionSocket({
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event?: { code?: number }) => {
       snapshotSeenRef.current = false;
       setConnected(false);
       // A send still waiting for its receipt will not get one on this socket.
@@ -542,6 +560,14 @@ export function useSessionSocket({
         heartbeatTimerRef.current = null;
       }
       if (closedByUserRef.current) return;
+      // canopy said no. Retrying would only hear no again, every 10s, behind a
+      // "Reconnecting…" chip over an empty transcript — which read as broken.
+      const code = event?.code;
+      if (code != null && REFUSAL_CLOSE_CODES.includes(code)) {
+        setAwaitingReply(false);
+        setRefused({ code, reason: connectionErrorRef.current });
+        return;
+      }
       const attempt = reconnectAttemptRef.current;
       const delay =
         RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
@@ -558,6 +584,7 @@ export function useSessionSocket({
   useEffect(() => {
     closedByUserRef.current = false;
     reconnectAttemptRef.current = 0;
+    setRefused(null);
     connect();
     return () => {
       generationRef.current += 1;
@@ -827,6 +854,7 @@ export function useSessionSocket({
     prependMessages,
     noteLocalSend,
     lastError,
+    refused,
     typingVisibility,
     setTypingVisibility,
   };
