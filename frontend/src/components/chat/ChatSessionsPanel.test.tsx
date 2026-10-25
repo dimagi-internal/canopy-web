@@ -21,9 +21,9 @@ vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession, transf
 // Default: the agent has runners of its own, so the picker reads getAgentRunners.
 const getAgentDefaultOrder = vi.fn().mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
 vi.mock('@/api/agents', () => ({ getAgentRunners, getAgentDefaultOrder, listAgents: vi.fn() }))
-vi.mock('@/api/harness', () => ({ listRunners }))
+vi.mock('@/api/harness', () => ({ listRunners, recentRunners: () => null }))
 
-const { ChatSessionsPanel } = await import('./ChatSessionsPanel')
+const { ChatSessionsPanel, forgetListed } = await import('./ChatSessionsPanel')
 
 function agent(overrides: Partial<AgentOut> = {}): AgentOut {
   return {
@@ -114,6 +114,7 @@ function deferred<T>() {
 
 afterEach(() => {
   cleanup()
+  forgetListed()
   vi.clearAllMocks()
   getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
 })
@@ -558,5 +559,50 @@ describe('ChatSessionsPanel — empty states', () => {
 
     expect(await screen.findByText('No chats on a live runner')).toBeTruthy()
     expect(screen.queryByText('No chats yet')).toBeNull()
+  })
+})
+
+describe('ChatSessionsPanel — coming back to the list', () => {
+  afterEach(() => listSessions.mockReset())
+
+  it('shows the rows before the fleet read finishes', async () => {
+    const fleet = deferred<RunnerOut[]>()
+    listRunners.mockReturnValue(fleet.promise)
+    listSessions.mockResolvedValue([chatSession('s1', { title: 'First chat' })])
+
+    renderPanel([agent()])
+
+    expect(await screen.findByText('First chat')).toBeTruthy()
+    fleet.resolve([])
+  })
+
+  it('paints the last list at once on a remount while the refresh is in flight', async () => {
+    listRunners.mockResolvedValue([])
+    listSessions.mockResolvedValueOnce([chatSession('s1', { title: 'First chat' })])
+    const first = renderPanel([agent()])
+    await screen.findByText('First chat')
+    first.unmount()
+
+    const refresh = deferred<ChatSession[]>()
+    listSessions.mockReturnValueOnce(refresh.promise)
+    renderPanel([agent()])
+
+    expect(screen.getByText('First chat')).toBeTruthy()
+    expect(screen.queryByText('Loading sessions…')).toBeNull()
+    await act(async () => {
+      refresh.resolve([chatSession('s2', { title: 'Second chat' })])
+    })
+    expect(await screen.findByText('Second chat')).toBeTruthy()
+  })
+
+  it('marks listed rows so opening one skips the private-conversation read', async () => {
+    const { knownNotPrivate } = await import('@/pages/chat/sessionCache')
+    listRunners.mockResolvedValue([])
+    listSessions.mockResolvedValue([chatSession('plain'), chatSession('sealed', { sensitive: true })])
+
+    renderPanel([agent()])
+
+    await waitFor(() => expect(knownNotPrivate('plain')).toBe(true))
+    expect(knownNotPrivate('sealed')).toBe(false)
   })
 })
