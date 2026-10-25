@@ -10,6 +10,7 @@ import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
 import { isMine, isUnconfirmed } from "./identity";
 import { QueuedRows } from "./QueuedRows";
+import { RunningAgents } from "./RunningAgents";
 import { PeerComposers } from "./PeerComposers";
 import { SendBox, type PendingAttachment } from "./SendBox";
 import type { SlashCommand } from "./slashCommands";
@@ -228,6 +229,22 @@ export function ChatPanel({
   const stopTurn = useCallback(
     () => onStop(inFlightMessage?.id ?? null),
     [onStop, inFlightMessage],
+  );
+
+  // A running agent's own row, from the strip above the composer.
+  const showAgentRow = useCallback(
+    (toolUseId: string) => {
+      const row = Array.from(containerRef.current?.querySelectorAll("[data-tool-use-id]") ?? [])
+        .find((el) => el.getAttribute("data-tool-use-id") === toolUseId);
+      if (!row) return;
+      // A background agent outlives its turn, whose work then folds away: open
+      // whatever it is folded into, or there is nothing to scroll to.
+      for (let el = row.parentElement?.closest("details"); el; el = el.parentElement?.closest("details")) {
+        el.open = true;
+      }
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+    },
+    [containerRef],
   );
 
   // Find in the loaded transcript: Cmd/Ctrl+F while the chat has focus.
@@ -469,6 +486,7 @@ export function ChatPanel({
         </button>
       )}
       </div>
+      <RunningAgents subagents={state.subagents ?? NO_SUBAGENTS} onShow={showAgentRow} />
       <SendBox
         draft={state.active_draft}
         connected={connected}
