@@ -166,6 +166,11 @@ const STYLES = `
     right: 0; top: 0; bottom: 0; width: var(--w);
     height: 100vh; border-radius: 0; border-width: 0 0 0 1px;
   }
+  /* Never wider than the window: a 560px rail on a 390px phone put its left half
+     off-screen. max-width, not width, so a dragged (inline) width still holds. */
+  .panel { max-width: calc(100vw - 32px); }
+  .panel[data-mode="docked"] { max-width: 100vw; }
+  .panel[data-mode="inline"] { max-width: none; }
   /* Snapped into the page it is part of the layout, not floating over it: the
      full height of the window whatever height it was given floating (inline
      styles, hence !important), square, and one hairline against the page. */
