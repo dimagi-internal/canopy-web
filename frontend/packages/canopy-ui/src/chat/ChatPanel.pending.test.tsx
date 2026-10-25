@@ -12,7 +12,7 @@
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 import { ChatPanel } from "./ChatPanel";
 import type { Message, SessionState, TurnStatus } from "./protocol";
@@ -110,8 +110,9 @@ describe("the pending-reply row", () => {
     expect(screen.queryByTestId("pending-reply")).toBeNull();
   });
 
-  it("yields to a real assistant row once one exists", () => {
-    // Otherwise the reply and the placeholder are both on screen at once.
+  it("stays under a streaming reply as its one live line", () => {
+    // It carries the chat's only Stop button, so it cannot go while the reply
+    // streams — but it is one line, never a second placeholder.
     panel({
       state: state({
         messages: [
@@ -121,7 +122,7 @@ describe("the pending-reply row", () => {
       }),
       awaitingReply: true,
     });
-    expect(screen.queryByTestId("pending-reply")).toBeNull();
+    expect(screen.getAllByTestId("pending-reply")).toHaveLength(1);
   });
 
   it("shows on a first-ever send, when the empty state would otherwise win", () => {
@@ -252,7 +253,23 @@ describe("Stop follows the same signal as the pending row", () => {
     panel({ state: state({ activity: "working" }), awaitingReply: false, onStop });
     fireEvent.keyDown(screen.getByTestId("composer"), { key: "Escape" });
     expect(onStop).toHaveBeenCalledWith(null);
-    expect(screen.getByRole("button", { name: /stopping/i })).not.toBeNull();
+    expect(screen.getByText(/stopping the agent/i)).not.toBeNull();
+  });
+
+  it("is clickable on the live line while the reply streams", () => {
+    // The composer has no Stop button; this is the one to click.
+    const onStop = vi.fn();
+    panel({
+      state: state({
+        messages: [
+          message(),
+          message({ id: "m2", turn_index: 2, role: "assistant", plaintext: "hal", content: {}, status: "streaming" }),
+        ],
+      }),
+      onStop,
+    });
+    fireEvent.click(within(screen.getByTestId("pending-reply")).getByRole("button", { name: /^stop$/i }));
+    expect(onStop).toHaveBeenCalledWith("m2");
   });
 
   it("is absent once the agent is idle", () => {

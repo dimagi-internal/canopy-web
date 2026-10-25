@@ -129,11 +129,10 @@ export function SendBox({
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // A stop you asked for shows AT ONCE, before the server says anything. Esc
-  // had no visible effect of its own, and the host clears `awaitingReply` on
-  // stop — which could take the Stop button (the only thing that relabels to
-  // "stopping…") away in the same render. Held until the server's verdict
-  // arrives or the turn ends.
+  // A stop you asked for (Esc) shows AT ONCE, before the server says anything —
+  // "stopping the agent…" beside Send. Held until the server's verdict arrives
+  // or the turn ends. The button to click lives on the turn's live line
+  // (ActivityLine), not here.
   const [stopAsked, setStopAsked] = useState(false);
   useEffect(() => {
     if (stopState !== undefined && stopState !== "requested") setStopAsked(false);
@@ -558,23 +557,6 @@ export function SendBox({
             <span role="status" className="mr-auto text-xs text-muted-foreground">
               stopped
             </span>
-          ) : null}
-          {/* Never DISABLED while a stop is in flight, only relabelled. If the
-              runner dies between the request and the verdict, `stopState` never
-              advances — and a button that latched off would leave the human with
-              no way to ask again, the exact trap #519 documents for the composer
-              lock. Pressing again is harmless: the runner dedupes by session_key,
-              so three impatient presses are still one Escape. */}
-          {isStreaming || stopping ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              title="Stop the agent (Esc)"
-              onClick={handleStopClick}
-            >
-              {stopping ? "stopping…" : "stop"}
-            </Button>
           ) : null}
           {typingVisibility != null && onTypingVisibilityChange != null && (
             <label className="flex items-center gap-1 text-xs text-muted-foreground">

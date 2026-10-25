@@ -167,6 +167,10 @@ export function ChatPanel({
     awaitingReply,
   });
   const showPendingReply = inFlightMessage == null && agentHasFloor;
+  // The live line (what it is doing, the clock, Stop) stays under the turn
+  // until it ends — while the reply streams too. It is the chat's one Stop
+  // button; the composer has only Esc.
+  const showActivityLine = showPendingReply || inFlightMessage != null;
   const pendingLabel = computePendingLabel({ status, activity: state.activity });
   // The sentence for an ask that is going NOWHERE. Rendered instead of the
   // bubble, never beside it: a spinner over a turn nothing will pick up is the
@@ -400,9 +404,9 @@ export function ChatPanel({
             messages={shownMessages}
             emptyState={emptyState}
             renderMarkdown={renderMarkdown}
-            pendingReply={showPendingReply}
+            pendingReply={showActivityLine}
             pendingLabel={pendingLabel}
-            pendingWorking={pendingWorking}
+            pendingWorking={pendingWorking || inFlightMessage?.status === "streaming"}
             pendingRunner={status?.claimed_by ?? null}
             pendingStartedAt={pendingWorking ? status?.claimed_at ?? null : null}
             onStopTurn={canStop ? stopTurn : undefined}

@@ -85,10 +85,10 @@ describe("multiplayer composer", () => {
     expect(hue(screen.getByTestId("message-author").className)).toBe(chipHue);
   });
 
-  it("send stays available while the agent is replying", () => {
+  it("send stays available while the agent is replying, Stop on the live line", () => {
     const streaming = { id: "a1", turn_index: 2, role: "assistant" as const, content: {}, plaintext: "working", status: "streaming" as const, error_detail: null, started_at: null, completed_at: null, created_at: "" };
     render(<ChatPanel {...props} state={state({ messages: [streaming] })} />);
-    expect(screen.getByRole("button", { name: /stop/i })).not.toBeNull();
+    expect(screen.getByTestId("pending-reply")).not.toBeNull();
     expect(screen.getByTestId("send")).not.toBeNull();
   });
 

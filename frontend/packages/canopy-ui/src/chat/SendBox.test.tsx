@@ -281,7 +281,7 @@ describe("SendBox — cancelling a queued turn", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /stop/i }));
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
 
     expect(onStop).toHaveBeenCalledWith(null);
   });
@@ -300,7 +300,7 @@ describe("SendBox — cancelling a queued turn", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /stop/i }));
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
 
     expect(onStop).toHaveBeenCalledWith("m1");
   });
@@ -766,13 +766,10 @@ describe("SendBox — a stop you asked for shows at once", () => {
     fireEvent.keyDown(textarea(), { key: "Escape" });
 
     expect(onStop).toHaveBeenCalledWith(null);
-    expect(screen.getByRole("button", { name: /stopping/i })).toBeTruthy();
     expect(screen.getByText(/stopping the agent/i)).toBeTruthy();
   });
 
-  it("keeps Stop on screen while the stop is in flight, even if the host stops calling it streaming", () => {
-    // The host clears `awaitingReply` the moment you stop, which used to take
-    // the button — the only thing that said "stopping…" — away with it.
+  it("keeps saying stopping while the stop is in flight", () => {
     const onStop = vi.fn();
     const { textarea, rerender } = setup({ isStreaming: true, onStop });
     fireEvent.keyDown(textarea(), { key: "Escape" });
@@ -788,7 +785,12 @@ describe("SendBox — a stop you asked for shows at once", () => {
         stopState="requested"
       />,
     );
-    expect(screen.getByRole("button", { name: /stopping/i })).toBeTruthy();
+    expect(screen.getByText(/stopping the agent/i)).toBeTruthy();
+  });
+
+  it("has no Stop button of its own — the turn's live line carries it", () => {
+    setup({ isStreaming: true });
+    expect(screen.queryByRole("button", { name: /stop/i })).toBeNull();
   });
 
   it("says stopped once the server confirms and the turn has ended", () => {
