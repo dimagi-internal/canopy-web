@@ -530,7 +530,7 @@ def attempt(d: HcpRevocationDelivery, *, now: dt.datetime | None = None, post=No
     attempt. Audits `revocation.notified` on first success and on abandonment."""
     now = now or timezone.now()
     with transaction.atomic():
-        d = HcpRevocationDelivery.objects.select_for_update().select_related(
+        d = HcpRevocationDelivery.objects.select_for_update(of=("self",)).select_related(
             "client", "grant__person").get(pk=d.pk)
         if d.delivered_at or d.abandoned_at or d.next_attempt_at > now:
             return
