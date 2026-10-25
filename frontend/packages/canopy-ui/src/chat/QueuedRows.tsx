@@ -9,6 +9,7 @@ import { authorColor } from "./personColor";
  *  (`ownPendingTexts`) — so a line never appears twice. */
 export function QueuedRows({
   queued, hideClientIds, currentUserId, currentContactId, ownPendingTexts, onCancel,
+  editableTurnId, onEdit,
 }: {
   queued: QueuedMessage[];
   hideClientIds: Set<string>;
@@ -18,6 +19,10 @@ export function QueuedRows({
   ownPendingTexts?: Set<string>;
   /** Withdraw one of your own still-queued sends; omit to offer no Cancel. */
   onCancel?: (turnId: string) => void;
+  /** The one queued send "Edit" is offered on (your latest), and what it does:
+   *  withdraw it and put its text back in the box. */
+  editableTurnId?: string | null;
+  onEdit?: (entry: QueuedMessage) => void;
 }) {
   const rows = queued.filter((q) => {
     if (q.client_id && hideClientIds.has(q.client_id)) return false;
@@ -41,10 +46,18 @@ export function QueuedRows({
                 {mine ? "You" : q.author?.name ?? "Someone"}
               </span>
               <span data-testid="queued-state">{queuedLabel(q.state)}</span>
+              {mine && q.state === "queued" && onEdit && editableTurnId === q.turn_id && (
+                <button type="button" onClick={() => onEdit(q)}
+                        data-testid="queued-edit"
+                        title="Take it out of the queue and back into the box to edit"
+                        className="ml-auto underline hover:text-foreground">
+                  Edit
+                </button>
+              )}
               {mine && q.state === "queued" && onCancel && (
                 <button type="button" onClick={() => onCancel(q.turn_id)}
                         data-testid="queued-cancel"
-                        className="ml-auto underline hover:text-foreground">
+                        className={`${onEdit && editableTurnId === q.turn_id ? "" : "ml-auto "}underline hover:text-foreground`}>
                   Cancel
                 </button>
               )}

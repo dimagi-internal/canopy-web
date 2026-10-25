@@ -10,6 +10,7 @@ import { AppView } from "./mcpApps/AppView";
 import { useAppHost } from "./mcpApps/context";
 import { useSecretRequestHost } from "./secretRequest";
 import { useAttachmentHost } from "./attachmentHost";
+import { MessageActions } from "./messageActions";
 
 /** How to render assistant/system markdown. Injected by the app so the kit
  *  stays free of `react-markdown`. Defaults to plain text in a <span>. */
@@ -213,9 +214,24 @@ export function MessageItem({
     // horizontal scroll; this only affects running text.
     <div
       data-turn-index={message.turn_index}
-      className={`my-2 min-w-0 max-w-[80%] rounded-2xl px-4 py-2 text-sm leading-relaxed [overflow-wrap:anywhere] ${bubbleClass}`}
+      // Focusable (not tabbable) so a tap on a touch screen reveals the row's
+      // actions, as hovering does with a mouse.
+      tabIndex={-1}
+      className={`group/msg relative my-2 min-w-0 max-w-[80%] rounded-2xl px-4 py-2 text-sm leading-relaxed outline-none [overflow-wrap:anywhere] ${bubbleClass}`}
       aria-live={isStreaming || isPending ? "polite" : undefined}
     >
+      {/* Beside the bubble, in the free side of the column, so it never covers
+          the words; over its top corner on a phone, where there is no side. */}
+      {!showThinking && (
+        <MessageActions
+          message={message}
+          className={`absolute -top-5 right-2 sm:top-auto sm:bottom-0 ${
+            message.role === "user" && !otherAuthor
+              ? "sm:right-full sm:mr-1"
+              : "sm:right-auto sm:left-full sm:ml-1"
+          }`}
+        />
+      )}
       {otherAuthor && (
         // In their colour — the same one as their presence chip and their live
         // draft box — so a teammate's lines are attributable at a glance.

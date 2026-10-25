@@ -225,7 +225,7 @@ function ChatPageInner({
   }, [id, live, socket.state.messages])
   const placement = useRunnerPlacement(id, meta, setMeta)
   const { boundOffline, boundRunner, boundPaused } = placement
-  const fork = useMessageFork(id, meta?.runner_name, placement.fleetRunners, socket.state.messages, sessionPath)
+  const fork = useMessageFork(id, meta?.runner_name, placement.fleetRunners, panelState.messages, sessionPath)
   const menuAnswer = useMenuAnswer(id, socket.state.menu, socket.state.activity)
   const { pendingAnswer, menuHidden, visibleMenu } = menuAnswer
   const actions = useSessionActions({ sessionId: id, meta, setMeta, onLeave, onTitleChange, editTitle })
@@ -522,6 +522,8 @@ function ChatPageInner({
             y={fork.messageMenu.y}
             busy={fork.forking}
             error={fork.forkError}
+            copyText={fork.messageMenu.copyText}
+            canFork={fork.messageMenu.canFork}
             onFork={fork.forkHere}
             onDismiss={fork.closeMessageMenu}
           />
@@ -561,6 +563,8 @@ function ChatPageInner({
           // The runner's model setting (opus[1m]) sizes the context meter's window.
           runnerModel={meta?.runner_model}
           slashCommands={slashCommands}
+          // Copy is the kit's; Fork from here runs here (and opens the fork).
+          messageActions={fork.messageActions}
           emptyState={emptyState}
           historySlot={historySlot}
           // Refuse the send outright rather than queueing it at a box that

@@ -47,4 +47,18 @@ describe('MessageContextMenu', () => {
     )
     expect(screen.getByRole('alert').textContent).toMatch(/still running/)
   })
+
+  it('copies the row and closes, with no Fork where the runner cannot cut one', () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const onDismiss = vi.fn()
+    render(
+      <MessageContextMenu x={5} y={5} busy={false} error={null} copyText="the words" canFork={false}
+        onFork={() => {}} onDismiss={onDismiss} />,
+    )
+    expect(screen.queryByTestId('message-menu-fork')).toBeNull()
+    fireEvent.click(screen.getByTestId('message-menu-copy'))
+    expect(writeText).toHaveBeenCalledWith('the words')
+    expect(onDismiss).toHaveBeenCalled()
+  })
 })

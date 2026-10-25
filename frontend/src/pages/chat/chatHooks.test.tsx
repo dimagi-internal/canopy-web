@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionMenu } from 'canopy-ui/chat'
 
-import type { ChatSessionDetail } from '@/api/chat'
+import { ChatApiError, type ChatSessionDetail } from '@/api/chat'
 import type { RunnerOut } from '@/api/harness'
 import { useAttachments } from './useAttachments'
 import { useMenuAnswer } from './useMenuAnswer'
@@ -317,11 +317,40 @@ describe('useMessageFork', () => {
     target.setAttribute('data-turn-index', '3')
     const preventDefault = vi.fn()
     act(() => result.current.onMessageContextMenu({ target, clientX: 1, clientY: 2, preventDefault } as never))
-    expect(result.current.messageMenu).toEqual({ x: 1, y: 2, turnIndex: 3 })
+    expect(result.current.messageMenu).toEqual({ x: 1, y: 2, turnIndex: 3, copyText: '', canFork: true })
     expect(preventDefault).toHaveBeenCalled()
     await act(async () => { await result.current.forkHere() })
     expect(chat.forkSession).toHaveBeenCalledWith('s1', 3)
     expect(nav.navigate).toHaveBeenCalled()
+  })
+
+  it('offers Copy alone where the runner cannot fork, with a tool call as command and output', () => {
+    const messages = [
+      { id: 'u', turn_index: 10, role: 'tool_use', status: 'complete', plaintext: '',
+        content: { id: 'toolu_1', name: 'Bash', input: { command: 'ls -la' } } },
+      { id: 'r', turn_index: 11, role: 'tool_result', status: 'complete', plaintext: 'a\nb',
+        content: { tool_use_id: 'toolu_1' } },
+    ] as never
+    const { result } = renderHook(() => useMessageFork('s1', null, [], messages))
+    const target = document.createElement('div')
+    target.setAttribute('data-turn-index', '10')
+    const preventDefault = vi.fn()
+    act(() => result.current.onMessageContextMenu({ target, clientX: 1, clientY: 2, preventDefault } as never))
+    expect(result.current.messageMenu).toMatchObject({ turnIndex: 10, copyText: '$ ls -la\n\na\nb', canFork: false })
+    expect(result.current.messageActions.canFork?.({ id: 'u', status: 'complete' } as never)).toBe(false)
+  })
+
+  it('forks at once from the hover bar, and shows a refusal beside it', async () => {
+    chat.forkSession.mockRejectedValue(new ChatApiError(403, 'only its owner can fork it'))
+    const fleet = [runner({ kind: 'cloud' } as Partial<RunnerOut>)]
+    const { result } = renderHook(() => useMessageFork('s1', 'box', fleet, []))
+    const row = { id: 'm1', turn_index: 4, status: 'complete' } as never
+    expect(result.current.messageActions.canFork?.(row)).toBe(true)
+    expect(result.current.messageActions.canFork?.({ id: 'local:x', status: 'pending' } as never)).toBe(false)
+    await act(async () => { result.current.messageActions.onFork?.(row, { x: 9, y: 8 }) })
+    expect(chat.forkSession).toHaveBeenCalledWith('s1', 4)
+    await waitFor(() => expect(result.current.forkError).toBe('only its owner can fork it'))
+    expect(result.current.messageMenu).toMatchObject({ x: 9, y: 8, turnIndex: 4 })
   })
 
   it('leaves the browser menu alone when nothing can fork', () => {

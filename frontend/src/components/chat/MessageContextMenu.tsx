@@ -2,9 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RunnerOut } from '@/api/harness'
 
 /**
- * The right-click menu on a chat message. Its one action, "Fork from here",
- * starts a new session holding the conversation up to the end of that message's
- * turn (`POST /canopy-sessions/{id}/fork`); the page runs it and opens the fork.
+ * The right-click (or long-press) menu on a chat message: Copy, and "Fork from
+ * here", which starts a new session holding the conversation up to the end of
+ * that message's turn (`POST /canopy-sessions/{id}/fork`); the page runs it and
+ * opens the fork. The hover bar's Fork opens it too, to show progress or a refusal.
  */
 
 /** Whether this session's runner can cut a fork. Mirrors the server's own
@@ -30,6 +31,8 @@ export function MessageContextMenu({
   y,
   busy,
   error,
+  copyText = '',
+  canFork: forkable = true,
   onFork,
   onDismiss,
 }: {
@@ -37,6 +40,10 @@ export function MessageContextMenu({
   y: number
   busy: boolean
   error: string | null
+  /** What Copy writes; empty hides it. */
+  copyText?: string
+  /** Whether Fork from here is offered. */
+  canFork?: boolean
   onFork: () => void
   onDismiss: () => void
 }) {
@@ -89,17 +96,33 @@ export function MessageContextMenu({
       className="fixed z-50 w-64 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
       onContextMenu={(e) => e.preventDefault()}
     >
-      <button
-        type="button"
-        role="menuitem"
-        data-testid="message-menu-fork"
-        disabled={busy}
-        title="A new session with the conversation up to the end of this turn, listed under this one. It runs in the same worktree, so both sessions see and edit the same files."
-        onClick={onFork}
-        className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] text-foreground enabled:hover:bg-muted disabled:cursor-default disabled:opacity-40"
-      >
-        {busy ? 'Forking…' : 'Fork from here'}
-      </button>
+      {copyText && (
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="message-menu-copy"
+          onClick={() => {
+            void navigator.clipboard?.writeText(copyText).catch(() => undefined)
+            onDismiss()
+          }}
+          className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] text-foreground hover:bg-muted"
+        >
+          Copy
+        </button>
+      )}
+      {forkable && (
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="message-menu-fork"
+          disabled={busy}
+          title="A new session with the conversation up to the end of this turn, listed under this one. It runs in the same worktree, so both sessions see and edit the same files."
+          onClick={onFork}
+          className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] text-foreground enabled:hover:bg-muted disabled:cursor-default disabled:opacity-40"
+        >
+          {busy ? 'Forking…' : 'Fork from here'}
+        </button>
+      )}
       {error && (
         <div role="alert" className="px-2 pb-1 text-[11px] text-destructive">
           {error}

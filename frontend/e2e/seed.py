@@ -42,6 +42,9 @@ p1 = AgentProject.objects.create(
 
 
 def t(**k):
+    # A task's order is its `rank`; `position` is only a read-only view of it now.
+    if "position" in k:
+        k["rank"] = k.pop("position")
     return AgentTask.objects.create(agent=a, **k)
 
 
