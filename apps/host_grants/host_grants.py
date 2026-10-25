@@ -17,7 +17,9 @@ MCP server, as this visitor, with this page's scope". canopy redeems it here:
 3. **Redeem** with the RFC 7523 jwt-bearer grant, authenticating with
    `private_key_jwt`, sender-constrained with a DPoP proof, naming the
    `resource` (RFC 8707).
-4. **Store** the access token encrypted, bound to (site, the visitor's host id).
+4. **Store** the access token encrypted, as this ARRIVAL's grant: one row per
+   arrival, which the token minted with it points at, so a conversation reaches
+   the site through the grant of the page it is on (`grant_for(session=)`).
 
 **Everything here fails closed, and none of it fails the arrival.** The caller
 (`contact_api.contact_token`) catches `HostGrantError`, records an Event and
@@ -190,30 +192,39 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     token, lifetime = answer.access_token, answer.expires_in
     scope = str(answer.scope or claims.get("scope") or "")[:500]
 
-    grant, _ = HostGrant.objects.update_or_create(
-        app=app, subject=subject, agent=agent,
-        defaults={
-            "contact": contact,
-            "user": user,
-            "access_token_enc": encrypt_secret(token),
-            "scope": scope,
-            "resource": app.host_mcp_resource,
-            "dpop_jkt": client_identity.dpop_jkt(),
-            "runner_requirements": sorted(set(runner_requirements or ())),
-            "expires_at": timezone.now() + timedelta(seconds=lifetime),
-        },
+    # This arrival's own row. A visitor's pages each arrive (and re-arrive every few
+    # minutes), and a host may hold each page's grant to what THAT page shows: one
+    # row per visitor let the last page to arrive speak for all of them. A grant no
+    # longer lives once it expires, so the visitor's expired ones go now.
+    now = timezone.now()
+    HostGrant.objects.filter(app=app, subject=subject, expires_at__lte=now).delete()
+    return HostGrant.objects.create(
+        app=app, subject=subject, agent=agent, contact=contact, user=user,
+        access_token_enc=encrypt_secret(token),
+        scope=scope,
+        resource=app.host_mcp_resource,
+        dpop_jkt=client_identity.dpop_jkt(),
+        runner_requirements=sorted(set(runner_requirements or ())),
+        expires_at=now + timedelta(seconds=lifetime),
     )
-    return grant
 
 
-def grant_for(app, *, agent, contact=None, user=None):
+def grant_for(app, *, agent, contact=None, user=None, session=None):
     """The visitor's grant at `app` that `agent` may use, or None — the ONE
     lookup the gateway (a turn) and MCP Apps Views (a viewer) share.
 
-    A grant bound to `agent` first: the page that chose this agent granted those
-    scopes for it. Then an unbound one (an arrival that named no binding). Never
-    a grant bound to a DIFFERENT agent — a data page's grant, minted for
-    `labsdata`, is not ACE's to spend however recently it was redeemed."""
+    With `session`: the grant of the PAGE that last acted in that conversation as
+    this visitor (`canopy_sessions.services.note_host_grant`, stamped by a send, a
+    page-state declaration and the create), while it lives. A host may hold a
+    page's grant to what that page shows, so a conversation on one page must not
+    read through the grant another of the visitor's pages minted more recently.
+
+    Otherwise (no page has acted in it as them, or that grant has expired — no page
+    has acted in it for as long as a grant lives): their latest. A grant bound to
+    `agent` first: the page that chose this agent granted those scopes for it. Then
+    an unbound one (an arrival that named no binding). Never a grant bound to a
+    DIFFERENT agent — a data page's grant, minted for `labsdata`, is not ACE's to
+    spend however recently it was redeemed."""
     from django.db.models import Q
 
     from apps.tokens.models import HostGrant
@@ -227,6 +238,14 @@ def grant_for(app, *, agent, contact=None, user=None):
     agent_id = getattr(agent, "pk", agent)
     rows = rows.filter(Q(agent_id=agent_id) | Q(agent__isnull=True)) if agent_id else \
         rows.filter(agent__isnull=True)
+    if session is not None:
+        from apps.canopy_sessions.services import page_host_grant_id  # noqa: PLC0415 — as this module's other model reads: loads with a call, never at import
+
+        pinned = page_host_grant_id(session, user=user if contact is None else None, contact=contact)
+        if pinned:
+            grant = rows.filter(pk=pinned, expires_at__gt=timezone.now()).first()
+            if grant is not None:
+                return grant
     # Bound before unbound (NULLs last), then the latest arrival.
     return rows.order_by(models.F("agent_id").asc(nulls_last=True), "-updated_at").first()
 

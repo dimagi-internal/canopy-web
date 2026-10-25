@@ -25,6 +25,8 @@ from apps.harness import acting_person, sensitivity
 from apps.mcp_apps_host import mcp_apps_views as views
 from apps.tokens import kinds
 
+from . import services
+
 router = Router(auth=session_auth, tags=["chat"])
 
 
@@ -131,6 +133,7 @@ def app_view_message(request: HttpRequest, session_id: uuid.UUID, tool_call_id: 
 
     session = _session(request, session_id)
     ref = _run(views.check_message, session, _viewer(request), tool_call_id, payload.text)
+    services.note_request_grant(session, request)
     message, turn = doors.send_from(
         "app_view", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,

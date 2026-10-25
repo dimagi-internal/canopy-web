@@ -193,16 +193,18 @@ def resolve(turn_id: str) -> SiteContext:
                              f"I am not set up to use {site}'s tools in this conversation")
 
     # WHO ASKED, from the turn — the grant is theirs or there is none. And for
-    # WHICH agent: a grant a page bound to another agent is not this one's.
+    # WHICH agent: a grant a page bound to another agent is not this one's. And
+    # from WHICH page: the one this conversation is on, not their latest.
     from .host_grants import grant_for
 
     grant = grant_for(app, agent=agent, contact=turn.initiator_contact,
-                      user=turn.initiator_user if not turn.initiator_contact_id else None)
+                      user=turn.initiator_user if not turn.initiator_contact_id else None,
+                      session=session)
     if grant is None:
         raise GatewayRefusal("no_grant",
                              f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
 
-    # The grant is per (site, visitor), not per conversation: a visitor who
+    # The grant is per arrival, not per conversation: a visitor who
     # arrived under `sensitive_data` can reach it from an OLDER conversation that no
     # such arrival stamped. So the grant's own requirements count too, and they are
     # written onto the conversation — refused or not — so its next turn routes

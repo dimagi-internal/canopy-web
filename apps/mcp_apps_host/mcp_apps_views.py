@@ -403,11 +403,13 @@ def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.Si
     app = row.app
     if not app.issues_host_grants():
         raise ViewRefusal("site_not_configured", f"{app.name} does not let canopy act for you there")
-    # The viewer's grant for THIS conversation's agent (`host_grants.grant_for`).
+    # The viewer's grant for THIS conversation's agent, from the page it is on
+    # (`host_grants.grant_for`).
     from apps.host_grants.host_grants import grant_for
 
     grant = grant_for(app, agent=session.agent if session.agent_id else None,
-                      contact=viewer.contact, user=viewer.user if viewer.contact is None else None)
+                      contact=viewer.contact, user=viewer.user if viewer.contact is None else None,
+                      session=session)
     if grant is None:
         raise ViewRefusal(GATES[6], host_gateway.BACK_ON_THE_PAGE)
     try:

@@ -34,6 +34,7 @@ from apps.canopy_sessions.schemas import (
     PageStateIn,
     PageStateOut,
 )
+from apps.canopy_sessions.services import note_request_grant
 from apps.embedding import assertions
 from apps.embedding.audit import client_ip
 from apps.embedding.audit import record as audit
@@ -272,9 +273,10 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raise HttpError(400, "the assertion does not identify a visitor")
 
     user = contact_services.resolve_arrival(app=app, contact=contact, claims=claims)
-    granted = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
-                                 contact=contact, user=user, runner_requirements=runner_reqs,
-                                 agent=bound_agent)
+    grant = _redeem_host_grant(request, app, payload.id_jag, claims=claims,
+                               contact=contact, user=user, runner_requirements=runner_reqs,
+                               agent=bound_agent)
+    granted = grant is not None
     ttl = HOST_GRANT_REMINT_SECONDS if granted else CONTACT_TOKEN_TTL_SECONDS
     if user is not None:
         # An existing canopy account arrives AS ITSELF: a delegated user token,
@@ -285,7 +287,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
         raw, token = DelegatedToken.issue(app=app, user=user, ttl_seconds=ttl,
                                           assurance=DelegatedToken.ASSURANCE_HOST_SIGNED,
                                           runner_requirements=runner_reqs,
-                                          bound_agent=bound_agent)
+                                          bound_agent=bound_agent, host_grant=grant)
         audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app, subject=user,
               detail=f"contact={contact.identity} arrived as user {user.pk} "
                      f"(assurance=host_signed) ttl={ttl}s host_grant={granted}"
@@ -297,7 +299,7 @@ def contact_token(request: HttpRequest, payload: ContactTokenIn) -> ContactToken
     raw, token = ContactToken.issue(app=app, contact=contact, ttl_seconds=ttl,
                                     runner_requirements=runner_reqs,
                                     verified_email=_trusted_email(app, claims),
-                                    bound_agent=bound_agent)
+                                    bound_agent=bound_agent, host_grant=grant)
     audit(event=EmbedAuditLog.EXCHANGE, request=request, app=app,
           detail=f"contact={contact.identity} grade=app_signed ttl={ttl}s host_grant={granted}"
                  f"{f' agent={bound_slug}' if bound_slug else ''}")
@@ -324,8 +326,9 @@ def _trusted_email(app, claims: dict) -> str:
 
 
 def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user,
-                       runner_requirements=(), agent=None) -> bool:
-    """Redeem the site's ID-JAG, if it sent one. Never fails the arrival.
+                       runner_requirements=(), agent=None):
+    """Redeem the site's ID-JAG, if it sent one: the `HostGrant`, or None. Never
+    fails the arrival.
 
     Only ever called AFTER the arrival assertion verified, so the visitor it
     names is one the site has just vouched for; `check_id_jag` then requires
@@ -336,11 +339,11 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     from apps.host_grants import host_grants
 
     if not (id_jag or "").strip():
-        return False
+        return None
     subject = str(claims.get("sub") or "").strip()
     if len(id_jag) > host_grants.MAX_ID_JAG_BYTES:
         host_grants.record_outcome(app, ok=False, subject=subject, code="too_large")
-        return False
+        return None
     try:
         grant = host_grants.redeem(app, id_jag.strip(), subject=subject,
                                    contact=contact, user=user,
@@ -349,19 +352,19 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
         log.warning("host grant refused for %s: %s", app.name, exc.code)
         host_grants.record_outcome(app, ok=False, subject=subject, code=exc.code,
                                    detail=exc.message)
-        return False
+        return None
     except Exception as exc:  # noqa: BLE001 - a bug here must not close the chat
         log.exception("host grant redemption failed for %s", app.name)
         host_grants.record_outcome(app, ok=False, subject=subject, code="error",
                                    detail=type(exc).__name__)
-        return False
+        return None
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
     # MCP Apps: list the site's tools as this visitor in the background, so a
     # result from the agent's own login (path D) finds its View.
     from apps.mcp_apps_host import mcp_apps_views
 
     mcp_apps_views.refresh_index_soon(app, grant)
-    return True
+    return grant
 
 
 @contact_router.post("/ws-ticket", response=WsTicketOut,
@@ -636,6 +639,9 @@ def send(request: HttpRequest, session_id: str, payload: ContactSendIn) -> dict:
         raise HttpError(422, "message text is required")
     from apps.harness.schemas import chat_send_origin
 
+    # The page this was sent from: the agent reaches its site through that page's grant.
+    note_request_grant(session, request)
+
     try:
         origin = chat_send_origin(payload.origin)
     except ValueError as exc:
@@ -738,6 +744,7 @@ def declare_page_state(request: HttpRequest, session_id: str,
     from apps.canopy_sessions import page_state
 
     session = _session_or_404(request, session_id)
+    note_request_grant(session, request)
     try:
         stored = page_state.set_page_state(session, payload.state)
     except page_state.PageStateError as exc:
@@ -756,6 +763,7 @@ def declare_page_actions(request: HttpRequest, session_id: str,
     from apps.canopy_sessions import page_actions
 
     session = _session_or_404(request, session_id)
+    note_request_grant(session, request)
     page_actions.set_declared_actions(session, [a.dict() for a in payload.actions])
     return [PageActionSpec(**a) for a in page_actions.declared_actions(session)]
 
@@ -964,6 +972,7 @@ def contact_app_view_message(request: HttpRequest, session_id: str, tool_call_id
     session = _session_or_404(request, session_id)
     text = payload.text
     ref = _app_run(mcp_apps_views.check_message, session, _app_viewer(request), tool_call_id, text)
+    note_request_grant(session, request)
     message, turn = doors.send_from(
         "contact_app_view", session=session, text=text, user=request.user,
         client_id=payload.client_id,

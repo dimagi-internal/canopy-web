@@ -44,6 +44,7 @@ def test_the_list_names_every_key_its_owner_writes():
     assert DETACHED_KEY in owned
     from apps.host_grants.host_gateway import LINKS_KEY
     assert LINKS_KEY in owned
+    assert services.HOST_GRANTS_KEY in owned
 
 
 @pytest.fixture()

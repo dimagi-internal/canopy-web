@@ -16,7 +16,7 @@ from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.realtime.groups import chat_user_group, session_group
 
-from . import access, agui, attach, conversation_keys, doors, drafts, presence, serializers, stream_map
+from . import access, agui, attach, conversation_keys, doors, drafts, presence, serializers, services, stream_map
 from . import control as chat_control
 from . import send as chat_send
 from . import transcript_ingest as chat_transcript_ingest
@@ -448,7 +448,9 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             return None
         # No HTTP request behind a socket frame, so nothing else would record what
         # sent it: bind the socket's own provenance (apps/harness/provenance.py),
-        # and name a widget's host the way the REST send does (`who.channel`).
+        # and name a widget's host the way the REST send does (`who.channel`). The
+        # page's grant travels with the send, as on REST.
+        services.note_host_grant(self.session, self.scope.get("host_grant_id"), user=self.user)
         msg, _turn = doors.send_from(
             "socket", session=self.session, text=text, user=self.user, client_id=client_id,
             runner_requirements=self.scope.get("runner_requirements", ()),

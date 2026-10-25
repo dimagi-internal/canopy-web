@@ -1661,6 +1661,8 @@ def send(request: HttpRequest, session_id: uuid.UUID, payload: SendIn):
     session = _session_or_404(request, session_id, write=True)
     if not payload.text.strip():
         raise HttpError(422, "message text is required")
+    # The page this was sent from: the agent reaches its site through that page's grant.
+    services.note_request_grant(session, request)
     message, turn = doors.send_from(
         "rest", session=session, text=payload.text, user=request.user,
         client_id=payload.client_id,
@@ -2188,6 +2190,7 @@ def declare_page_actions(request: HttpRequest, session_id: uuid.UUID,
     """
     session = _session_or_404(request, session_id, write=True)
     _page_in_it_or_403(request, session)
+    services.note_request_grant(session, request)
     page_actions.set_declared_actions(
         session, [a.dict() for a in payload.actions]
     )
@@ -2218,6 +2221,7 @@ def declare_page_state(request: HttpRequest, session_id: uuid.UUID,
     """
     session = _session_or_404(request, session_id, write=True)
     _page_in_it_or_403(request, session)
+    services.note_request_grant(session, request)
     try:
         stored = page_state.set_page_state(session, payload.state)
     except page_state.PageStateError as exc:
@@ -2244,6 +2248,7 @@ def declare_run_input(request: HttpRequest, session_id: uuid.UUID,
     """
     session = _session_or_404(request, session_id, write=True)
     _page_in_it_or_403(request, session)
+    services.note_request_grant(session, request)
 
     # Actions first, then state — the same order the widget uses, and for the
     # same reason: whichever lands last, the agent must never see a page that

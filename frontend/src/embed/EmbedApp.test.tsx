@@ -746,6 +746,9 @@ describe('the agent and your earlier conversations', () => {
 
     expect(screen.queryByText('Not this agent')).toBeNull()
     expect(newer.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Each row names the conversation it opens, so two "Private conversation" rows
+    // can be told apart by a script.
+    expect(newer.closest('button')?.getAttribute('data-session-id')).toBe('new-hal')
   })
 
   it('reopens an earlier chat without creating a new one, and names the agent', async () => {

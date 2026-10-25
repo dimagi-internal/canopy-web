@@ -773,7 +773,10 @@ What canopy does with it:
   sent into with that token — on REST, the chat socket, the contact surface and
   MCP Apps Views alike. The host grant redeemed on that arrival is usable only
   by that agent: an ACE turn never spends the grant a data page minted for
-  `labsdata`, however recently it was minted.
+  `labsdata`, however recently it was minted. And it is that PAGE's grant: a
+  conversation reaches your site through the grant of the page it is on (the
+  last page to send or declare its state in it), never another tab's, so you
+  may hold each page's grant to what that page shows.
 - The page's `runner_requirements` are added to the site's. Every conversation
   the token starts or sends into carries them, and routing runs it only on a
   runner that meets them.

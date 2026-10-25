@@ -47,6 +47,9 @@ SERVER_OWNED_METADATA = frozenset({
     "mcp_apps",
     # The resource links a host's tools returned through the gateway, and which tool
     # (apps/host_grants/host_gateway.py `remember_links`): what `site_read` may read back.
+    # The host grant of the page that last acted in the conversation, per person
+    # (`note_host_grant`): which grant the gateway reaches the site through.
+    "host_grants",
     "host_links",
     # Where each confined turn's transcript sits in the session
     # (apps/harness/session_sync.py::TURN_END_EPOCHS).
@@ -114,7 +117,76 @@ def stamp_host_metadata(metadata: dict, request) -> dict:
     reqs = getattr(request, "runner_requirements", ())
     if reqs:
         metadata[rr.METADATA_KEY] = list(reqs)
+    grant_id = getattr(request, "host_grant_id", None)
+    principal = _grant_principal(user=getattr(request, "user", None),
+                                 contact=getattr(request, "contact", None))
+    if grant_id and principal:
+        metadata[HOST_GRANTS_KEY] = {principal: grant_id}
     return metadata
+
+
+#: Where `note_host_grant` records, per person, the host grant of the page that last
+#: acted in a conversation.
+HOST_GRANTS_KEY = "host_grants"
+
+
+def _grant_principal(*, user=None, contact=None) -> str:
+    if contact is not None:
+        return f"contact:{contact.pk}"
+    if user is not None and getattr(user, "is_authenticated", False):
+        return f"user:{user.pk}"
+    return ""
+
+
+def note_host_grant(session: Session, grant_id, *, user=None, contact=None) -> None:
+    """A page acted in `session` (a send, a page-state declaration) with a token whose
+    arrival carried host grant `grant_id`: from now on the agent reaches the site, as
+    this person, through THAT page's grant (`host_grants.grant_for(session=)`).
+
+    A person's pages each arrive with a grant of their own, and a host may hold a
+    grant to what its page shows (connect-labs: a data space's page, its space; the
+    Data page, its selection). Without this the conversation read through whichever
+    of their pages had arrived last — another tab, another drawing. Per person, so a
+    teammate's panel on the same conversation never moves the owner's grant."""
+    principal = _grant_principal(user=user, contact=contact)
+    if not grant_id or not principal:
+        return
+    current = (session.metadata or {}).get(HOST_GRANTS_KEY)
+    current = current if isinstance(current, dict) else {}
+    if _not_newer(grant_id, current.get(principal)):
+        return
+    with transaction.atomic():
+        locked = Session.objects.select_for_update().get(pk=session.pk)
+        held = (locked.metadata or {}).get(HOST_GRANTS_KEY)
+        held = held if isinstance(held, dict) else {}
+        if _not_newer(grant_id, held.get(principal)):
+            return
+        locked.metadata = {**(locked.metadata or {}), HOST_GRANTS_KEY: {**held, principal: grant_id}}
+        locked.save(update_fields=["metadata", "updated_at"])
+    session.metadata = locked.metadata
+    session.updated_at = locked.updated_at
+
+
+def _not_newer(grant_id, held) -> bool:
+    """Only a later arrival moves the stamp: grants are numbered as they arrive, and
+    a socket opened before the page last re-arrived still carries the older one."""
+    return isinstance(held, int) and grant_id <= held
+
+
+def note_request_grant(session: Session, request) -> None:
+    """`note_host_grant` for an HTTP request: its token's grant, as its principal."""
+    note_host_grant(session, getattr(request, "host_grant_id", None),
+                    user=getattr(request, "user", None), contact=getattr(request, "contact", None))
+
+
+def page_host_grant_id(session: Session, *, user=None, contact=None):
+    """The host grant `note_host_grant` recorded for this person on `session`, or None."""
+    principal = _grant_principal(user=user, contact=contact)
+    held = (session.metadata or {}).get(HOST_GRANTS_KEY)
+    if not principal or not isinstance(held, dict):
+        return None
+    value = held.get(principal)
+    return value if isinstance(value, int) else None
 
 
 def host_filters(rows, *, source: str = "", origin_key: str = "", opp_slug: str = "",
