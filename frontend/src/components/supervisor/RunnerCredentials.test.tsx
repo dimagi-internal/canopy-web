@@ -24,6 +24,9 @@ const api = vi.hoisted(() => ({
   submitRunnerMintCode: vi.fn(),
   createRunnerVault: vi.fn(),
   addVaultedRunnerCredential: vi.fn(),
+  listRunnerCredentialSets: vi.fn(),
+  shareRunnerCredentials: vi.fn(),
+  setRunnerCredentialSet: vi.fn(),
 }))
 vi.mock('@/api/harness', () => api)
 const vaultApi = vi.hoisted(() => ({ getKeyset: vi.fn(), getWorkspaceVaultZk: vi.fn() }))
@@ -289,3 +292,50 @@ describe('the runner\'s own vault', () => {
   })
 })
 
+
+describe('a shared credential list', () => {
+  const marshVault = { vault_id: 'vm', name: 'jj credentials', kv: 1 }
+  const missingToken = entry({ key: 'tt', kind: 'token', has_value: false, vault_secret: 'claude-token:tt' })
+  const onSet = (): CredentialStatus => ({
+    ...status([missingToken]),
+    vaults: [marshVault],
+    credential_set: {
+      id: 's1', name: 'jj credentials', workspace: 'dimagi',
+      runners: [{ id: 'r1', name: 'cloud-ec2-2-marsh', workspace: 'marsh' }, { id: 'r2', name: 'dimagi-0abc', workspace: 'dimagi' }],
+      vaults: [
+        { vault_id: 'vd', name: 'jj credentials', workspace: 'dimagi', root: 'dimagi', kv: 1, missing: [] },
+        { ...marshVault, workspace: 'marsh', root: 'marsh', missing: ['claude-token:tt'] },
+      ],
+    },
+  })
+
+  it('names the set, who else reads it, and what this tree has no value for yet', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(onSet())
+    render(<RunnerCredentials runnerId="r1" />)
+    expect((await screen.findByTestId('cred-set-others')).textContent).toContain('also read by dimagi-0abc')
+    expect(screen.getByTestId('cred-set-missing').textContent).toContain('1 entry has no value in this tree yet')
+    expect(screen.getByTestId('cred-set-tree-dimagi').textContent).toContain('every value set')
+    // A token with no value in this tree is one to get, not to replace.
+    screen.getByText('Get a token')
+  })
+
+  it('reads one of your sets', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(status([]))
+    api.listRunnerCredentialSets.mockResolvedValue([onSet().credential_set])
+    api.setRunnerCredentialSet.mockResolvedValue(onSet())
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-set-use'))
+    fireEvent.change(await screen.findByTestId('cred-set-pick'), { target: { value: 's1' } })
+    await waitFor(() => expect(api.setRunnerCredentialSet).toHaveBeenCalledWith('r1', 's1'))
+    await screen.findByTestId('cred-set')
+  })
+
+  it('stops reading it after asking', async () => {
+    api.getRunnerCredentialStatus.mockResolvedValue(onSet())
+    api.setRunnerCredentialSet.mockResolvedValue(status([]))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<RunnerCredentials runnerId="r1" />)
+    fireEvent.click(await screen.findByTestId('cred-set-leave'))
+    await waitFor(() => expect(api.setRunnerCredentialSet).toHaveBeenCalledWith('r1', null))
+  })
+})

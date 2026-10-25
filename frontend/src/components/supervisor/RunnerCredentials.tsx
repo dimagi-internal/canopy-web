@@ -4,12 +4,16 @@ import {
   addVaultedRunnerCredential,
   createRunnerVault,
   getRunnerCredentialStatus,
+  listRunnerCredentialSets,
   orderRunnerCredentials,
   removeRunnerCredential,
   renameRunnerCredential,
+  setRunnerCredentialSet,
+  shareRunnerCredentials,
   type CredentialKind,
   type CredentialStatus,
   type RunnerCredentialEntry,
+  type RunnerCredentialSet,
 } from '@/api/harness'
 import { getWorkspaceVaultZk } from '@/api/vault'
 import {
@@ -254,6 +258,15 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
         />
       )}
 
+      {status && (
+        <CredentialSetRow
+          runnerId={runnerId}
+          status={status}
+          busy={busy}
+          write={write}
+        />
+      )}
+
       <p className="text-[11px] text-foreground-subtle">
         The runner uses the first credential that works, top to bottom.
         {apiKeysOnly && ' This is a sensitive-data runner: it uses only its ZDR API key.'}
@@ -369,10 +382,11 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
                     isSet={e.signed_in} onSignedIn={load} />
                 )}
                 {e.kind === 'token' && (
-                  <RunnerReauth runnerId={runnerId} slot="token" loginKey={e.key} isSet onSignedIn={load} />
+                  <RunnerReauth runnerId={runnerId} slot="token" loginKey={e.key} isSet={e.has_value} onSignedIn={load} />
                 )}
                 {e.kind === 'api_key' && (
-                  <ReplaceKey disabled={busy || !openVault} entryKey={e.key} onSave={(value) => replaceKey(e, value)} />
+                  <ReplaceKey disabled={busy || !openVault} entryKey={e.key} isSet={e.has_value}
+                    onSave={(value) => replaceKey(e, value)} />
                 )}
               </li>
             )
@@ -505,6 +519,100 @@ function RunnerVaultRow({ runnerId, workspace, vaults, busy, run, create, unlock
   )
 }
 
+/** Whose list this is. A runner on a credential set reads the set's list — shared with
+ *  every runner on it, in any workspace tree — and its VALUES from its own tree's vault:
+ *  a vault never serves two trees, so each tree's vault holds its own copy of each value.
+ *  A runner reading its own list can share it as a new set, or read one of yours. */
+function CredentialSetRow({ runnerId, status, busy, write }: {
+  runnerId: string
+  status: CredentialStatus
+  busy: boolean
+  write: (fn: () => Promise<CredentialStatus>, fallback: string) => Promise<boolean>
+}): JSX.Element {
+  const [sets, setSets] = useState<RunnerCredentialSet[] | null>(null)
+  const cset = status.credential_set ?? null
+
+  if (cset) {
+    const others = cset.runners.filter((r) => r.id !== runnerId)
+    const mine = new Set((status.vaults ?? []).map((v) => v.vault_id))
+    const here = cset.vaults.find((v) => mine.has(v.vault_id))
+    const elsewhere = cset.vaults.filter((v) => !mine.has(v.vault_id))
+    const leave = () => {
+      if (!window.confirm(`Stop reading ${cset.name}? This runner goes back to a list of its own, empty until you add to it.`)) return
+      return write(() => setRunnerCredentialSet(runnerId, null), 'Failed to leave the set')
+    }
+    return (
+      <div className="flex flex-col gap-1 rounded-md border border-border p-2 text-[12px]" data-testid="cred-set">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-foreground">Shared list: <span className="font-medium">{cset.name}</span></span>
+          <span className="text-[11px] text-foreground-subtle" data-testid="cred-set-others">
+            {others.length ? `also read by ${others.map((r) => r.name).join(', ')}` : 'no other runner reads it yet'}
+          </span>
+          <button type="button" onClick={() => void leave()} disabled={busy} data-testid="cred-set-leave"
+            className={`ml-auto ${smallButton}`}>Stop sharing</button>
+        </div>
+        <span className="text-[11px] text-foreground-subtle">
+          Changes to the list reach every runner on it. Values are kept per workspace tree: this runner reads
+          {here ? ` ${here.name}` : ' its tree’s vault'}.
+        </span>
+        {here && here.missing.length > 0 && (
+          <span className="text-[11px] text-warning" data-testid="cred-set-missing">
+            {here.missing.length === 1 ? '1 entry has' : `${here.missing.length} entries have`} no value in
+            this tree yet: get a token or add the key below.
+          </span>
+        )}
+        {elsewhere.map((v) => (
+          <span key={v.vault_id} className="text-[11px] text-foreground-subtle" data-testid={`cred-set-tree-${v.root}`}>
+            {v.root}: {v.kv === 0 ? 'no key yet' : v.missing.length ? `${v.missing.length} missing` : 'every value set'}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  const share = () => {
+    const name = window.prompt('Name the shared list (other runners of yours can then read it):')?.trim()
+    if (!name) return
+    return write(async () => {
+      await shareRunnerCredentials(runnerId, name)
+      return getRunnerCredentialStatus(runnerId)
+    }, 'Failed to share the list')
+  }
+  const choose = (id: string) => write(() => setRunnerCredentialSet(runnerId, id), 'Failed to use the set')
+  const open = async () => {
+    try {
+      setSets(await listRunnerCredentialSets())
+    } catch {
+      setSets([])
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="cred-set-none">
+      <button type="button" onClick={() => void share()} disabled={busy} data-testid="cred-set-share"
+        className="rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
+        Share this list
+      </button>
+      {sets === null ? (
+        <button type="button" onClick={() => void open()} disabled={busy} data-testid="cred-set-use"
+          className="rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
+          Use a shared list…
+        </button>
+      ) : sets.length === 0 ? (
+        <span className="text-[11px] text-foreground-subtle">You have no shared lists yet.</span>
+      ) : (
+        <select defaultValue="" disabled={busy} data-testid="cred-set-pick"
+          onChange={(ev) => { if (ev.target.value) void choose(ev.target.value) }}
+          className="rounded-md border border-input bg-input px-1.5 py-0.5 text-[12px] text-foreground">
+          <option value="" disabled>Choose a shared list</option>
+          {sets.map((c) => (
+            <option key={c.id} value={c.id}>{c.name} ({c.runners.length} runner{c.runners.length === 1 ? '' : 's'})</option>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
 /** A token's or key's name, edited in place. Neither can say whose it is, so a
  *  person names it. */
 function CredentialName({ entryKey, name, disabled, onSave }: {
@@ -560,10 +668,12 @@ const inputClass =
 const saveClass =
   'rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40'
 
-/** Paste a new value over an API key. Hidden until asked for. */
-function ReplaceKey({ entryKey, disabled, onSave }: {
+/** Paste a new value over an API key — or its first value in this runner's vault, for
+ *  an entry of a shared list that has none in this workspace tree. Hidden until asked for. */
+function ReplaceKey({ entryKey, disabled, isSet = true, onSave }: {
   entryKey: string
   disabled: boolean
+  isSet?: boolean
   onSave: (value: string) => Promise<boolean>
 }) {
   const [open, setOpen] = useState(false)
@@ -572,7 +682,7 @@ function ReplaceKey({ entryKey, disabled, onSave }: {
     return (
       <button type="button" onClick={() => setOpen(true)} data-testid={`cred-replace-${entryKey}`}
         className="w-fit rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
-        Replace key
+        {isSet ? 'Replace key' : 'Add its key'}
       </button>
     )
   }

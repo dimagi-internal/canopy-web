@@ -58,7 +58,7 @@ from apps.common import ticks
 from apps.events import activity
 from apps.workspaces import permissions as perms
 
-from . import aws_iam_proof, device_keys
+from . import aws_iam_proof, credential_sets, device_keys
 from .claim import _assignment_rows_for_turns, _coverage
 from .models import (
     FleetHold,
@@ -189,9 +189,12 @@ class FleetRefused(ValueError):
 
 
 def create(*, user, name: str, workspace: str, role_arn: str, ecdh_public_jwk: dict | None, region: str,
-           group_name: str, min_members: int, max_members: int, member_turns: int) -> RunnerInvitation:
+           group_name: str, min_members: int, max_members: int, member_turns: int,
+           credential_set: RunnerCredentialSet | None = None) -> RunnerInvitation:
     """A PENDING fleet, its credential set, and the invitation its creator approves
-    (the existing approve page). Nothing joins until that approval."""
+    (the existing approve page). Nothing joins until that approval. `credential_set`:
+    one of the creator's existing sets for its members to read (others' runners may
+    already read it, in this tree or another); else a new one, `<name> credentials`."""
     if not NAME.fullmatch(name):
         raise FleetRefused("a fleet's name is a lowercase slug of at most 40 characters")
     if not 1 <= min_members <= max_members:
@@ -204,6 +207,8 @@ def create(*, user, name: str, workspace: str, role_arn: str, ecdh_public_jwk: d
             role_jkt=jkt, fleet__isnull=True, consumed_at__isnull=True).exists():
         raise FleetRefused(f"{role} already belongs to a runner; a fleet needs a role of its own")
     ecdh = device_keys.normalize_public_jwk(ecdh_public_jwk) if ecdh_public_jwk else {}
+    if credential_set is not None and credential_set.owner_id != user.pk:
+        raise FleetRefused("a fleet reads only a credential set its creator owns")
     with transaction.atomic():
         existing = RunnerFleet.objects.select_for_update().filter(name=name).first()
         if existing is not None:
@@ -214,11 +219,13 @@ def create(*, user, name: str, workspace: str, role_arn: str, ecdh_public_jwk: d
             if fleet.role_jkt != jkt and RunnerFleet.objects.filter(role_jkt=jkt).exists():
                 raise FleetRefused(f"{role} is another fleet's role")
             fleet.invitations.all().delete()
+            if credential_set is not None:
+                fleet.credential_set = credential_set
         elif RunnerFleet.objects.filter(role_jkt=jkt).exists():
             raise FleetRefused(f"{role} is another fleet's role")
         else:
-            cset = RunnerCredentialSet.objects.create(name=f"{name} credentials", workspace_id=workspace,
-                                                      owner=user)
+            cset = credential_set or RunnerCredentialSet.objects.create(
+                name=f"{name} credentials", workspace_id=workspace, owner=user)
             fleet = RunnerFleet(name=name, owner=user, credential_set=cset)
         fleet.workspace_id, fleet.role_arn, fleet.role_jkt = workspace, role, jkt
         fleet.ecdh_public_jwk, fleet.region, fleet.group_name = ecdh, region, group_name
@@ -352,20 +359,13 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
 
 
 def _attach_vault(fleet: RunnerFleet, runner: Runner) -> None:
-    """Attach the credential set's vault to a new member — made with the fleet's
-    first member, since a vault for runners is made attached to one."""
-    from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — it imports harness.runners
-    from apps.agents.credentials.zk import ZkError  # noqa: PLC0415 — with it
+    """Serve a new member from its credential set's vault for the fleet's tree — made
+    with the fleet's first member there, since a vault for runners is made attached to
+    one (`credential_sets.attach_member`)."""
+    from apps.agents.credentials.zk import ZkError  # noqa: PLC0415 — agents imports harness
 
-    cset = fleet.credential_set
     try:
-        if cset.vault_id is None:
-            vault = workspace_vaults.create_for_runner(runner, by=fleet.owner)
-            vault.name = cset.name
-            vault.save(update_fields=["name"])
-            RunnerCredentialSet.objects.filter(pk=cset.pk, vault__isnull=True).update(vault=vault)
-        else:
-            workspace_vaults.attach(cset.vault, runner=runner, by=fleet.owner)
+        credential_sets.attach_member(fleet.credential_set, runner, by=fleet.owner)
     except ZkError as exc:
         # The member still runs; it reads no credentials until this is fixed, and
         # its health says so (`claude.credentials`).

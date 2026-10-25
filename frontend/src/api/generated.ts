@@ -8440,6 +8440,62 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runner-credential-sets/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Your runner credential sets
+         * @description Every credential set you own: the runners reading it, and the vault each
+         *     workspace tree's runners read its values from, with the entries that vault has no
+         *     value for yet.
+         */
+        readonly get: operations["list_runner_credential_sets"];
+        readonly put?: never;
+        /**
+         * Share a runner's credential list as a set other runners can read
+         * @description The runner's own tokens and API keys become a set named `name`, in the same
+         *     order, and its vault the set's vault for its workspace tree — nothing it reads
+         *     changes. Your other cloud runners then read the same list (`PUT …/runners/{id}`);
+         *     one in another workspace tree gets that tree's own vault, whose values someone
+         *     seals there. 409 while the list holds a full login, which cannot be shared.
+         */
+        readonly post: operations["create_runner_credential_set"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runner-credential-sets/runners/{runner_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Choose which credential set a runner reads
+         * @description `credential_set`: one of your sets — the runner reads its list, and its values
+         *     from the set's vault for the runner's workspace tree (made now if it is the set's
+         *     first runner there: make its key and seal the values on this runner's Credentials
+         *     tab). `null`: the runner reads its own list again, and the set's vault stops
+         *     serving it. 409 for a fleet member, or a runner with credentials of its own;
+         *     422 `vault_crosses_isolation` when the tree's vault serves runners of another
+         *     isolation boundary.
+         */
+        readonly put: operations["set_runner_credential_set"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/pair-by-role": {
         readonly parameters: {
             readonly query?: never;
@@ -30603,6 +30659,8 @@ export interface components {
              * @default 2
              */
             readonly member_turns: number;
+            /** Credential Set */
+            readonly credential_set?: string | null;
         };
         /** RunnerFleetSizeIn */
         readonly RunnerFleetSizeIn: {
@@ -30610,6 +30668,218 @@ export interface components {
             readonly min_members: number;
             /** Max Members */
             readonly max_members: number;
+        };
+        /**
+         * RunnerCredentialSetOut
+         * @description A credential set: one ordered list of Claude credentials that every runner on
+         *     it reads, with a vault per workspace tree for the values.
+         */
+        readonly RunnerCredentialSetOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Runners
+             * @default []
+             */
+            readonly runners: readonly components["schemas"]["RunnerCredentialSetRunnerOut"][];
+            /**
+             * Vaults
+             * @default []
+             */
+            readonly vaults: readonly components["schemas"]["RunnerCredentialSetVaultOut"][];
+        };
+        /** RunnerCredentialSetRunnerOut */
+        readonly RunnerCredentialSetRunnerOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace?: string | null;
+        };
+        /**
+         * RunnerCredentialSetVaultOut
+         * @description The set's vault for one workspace tree: its values for the runners in that tree.
+         */
+        readonly RunnerCredentialSetVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Root */
+            readonly root: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /**
+             * Missing
+             * @default []
+             */
+            readonly missing: readonly string[];
+        };
+        /**
+         * RunnerCredentialSetIn
+         * @description Share a cloud runner's own credential list as a new set.
+         */
+        readonly RunnerCredentialSetIn: {
+            /**
+             * Runner
+             * Format: uuid
+             */
+            readonly runner: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * RunnerCredentialEntryOut
+         * @description One credential in the list, masked.
+         */
+        readonly RunnerCredentialEntryOut: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "login" | "token" | "api_key";
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Signed In
+             * @default false
+             */
+            readonly signed_in: boolean;
+            /**
+             * Has Value
+             * @default false
+             */
+            readonly has_value: boolean;
+            /**
+             * In Vault
+             * @default false
+             */
+            readonly in_vault: boolean;
+            /**
+             * Vault Secret
+             * @default
+             */
+            readonly vault_secret: string;
+            /** Reported At */
+            readonly reported_at?: string | null;
+        };
+        /**
+         * RunnerCredentialStatusOut
+         * @description Masked view — booleans, never values. The POST response + any UI.
+         */
+        readonly RunnerCredentialStatusOut: {
+            /**
+             * Credentials
+             * @default []
+             */
+            readonly credentials: readonly components["schemas"]["RunnerCredentialEntryOut"][];
+            /**
+             * Has Claude Token
+             * @default false
+             */
+            readonly has_claude_token: boolean;
+            /**
+             * Has Claude Token Secondary
+             * @default false
+             */
+            readonly has_claude_token_secondary: boolean;
+            /**
+             * Has Claude Api Key
+             * @default false
+             */
+            readonly has_claude_api_key: boolean;
+            /**
+             * Claude Token Label
+             * @default
+             */
+            readonly claude_token_label: string;
+            /**
+             * Claude Token Secondary Label
+             * @default
+             */
+            readonly claude_token_secondary_label: string;
+            /**
+             * Logins
+             * @default []
+             */
+            readonly logins: readonly components["schemas"]["RunnerLoginOut"][];
+            /**
+             * Vaults
+             * @default []
+             */
+            readonly vaults: readonly components["schemas"]["RunnerVaultOut"][];
+            readonly credential_set?: components["schemas"]["RunnerCredentialSetOut"] | null;
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
+        /**
+         * RunnerLoginOut
+         * @description A full Claude login on the box, as the box last reported it.
+         */
+        readonly RunnerLoginOut: {
+            /** Key */
+            readonly key: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Signed In
+             * @default false
+             */
+            readonly signed_in: boolean;
+            /** Reported At */
+            readonly reported_at?: string | null;
+        };
+        /**
+         * RunnerVaultOut
+         * @description A vault that holds a runner's Claude credentials.
+         */
+        readonly RunnerVaultOut: {
+            /** Vault Id */
+            readonly vault_id: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+        };
+        /**
+         * RunnerCredentialSetChoiceIn
+         * @description Which set a runner reads: a set's id, or null for its own list again.
+         */
+        readonly RunnerCredentialSetChoiceIn: {
+            /** Credential Set */
+            readonly credential_set?: string | null;
         };
         /**
          * RunnerPairByRoleOut
@@ -31598,134 +31868,6 @@ export interface components {
              * @default
              */
             readonly workspace: string;
-        };
-        /**
-         * RunnerCredentialEntryOut
-         * @description One credential in the list, masked.
-         */
-        readonly RunnerCredentialEntryOut: {
-            /** Key */
-            readonly key: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "login" | "token" | "api_key";
-            /**
-             * Name
-             * @default
-             */
-            readonly name: string;
-            /**
-             * Account
-             * @default
-             */
-            readonly account: string;
-            /**
-             * Signed In
-             * @default false
-             */
-            readonly signed_in: boolean;
-            /**
-             * Has Value
-             * @default false
-             */
-            readonly has_value: boolean;
-            /**
-             * In Vault
-             * @default false
-             */
-            readonly in_vault: boolean;
-            /**
-             * Vault Secret
-             * @default
-             */
-            readonly vault_secret: string;
-            /** Reported At */
-            readonly reported_at?: string | null;
-        };
-        /**
-         * RunnerCredentialStatusOut
-         * @description Masked view — booleans, never values. The POST response + any UI.
-         */
-        readonly RunnerCredentialStatusOut: {
-            /**
-             * Credentials
-             * @default []
-             */
-            readonly credentials: readonly components["schemas"]["RunnerCredentialEntryOut"][];
-            /**
-             * Has Claude Token
-             * @default false
-             */
-            readonly has_claude_token: boolean;
-            /**
-             * Has Claude Token Secondary
-             * @default false
-             */
-            readonly has_claude_token_secondary: boolean;
-            /**
-             * Has Claude Api Key
-             * @default false
-             */
-            readonly has_claude_api_key: boolean;
-            /**
-             * Claude Token Label
-             * @default
-             */
-            readonly claude_token_label: string;
-            /**
-             * Claude Token Secondary Label
-             * @default
-             */
-            readonly claude_token_secondary_label: string;
-            /**
-             * Logins
-             * @default []
-             */
-            readonly logins: readonly components["schemas"]["RunnerLoginOut"][];
-            /**
-             * Vaults
-             * @default []
-             */
-            readonly vaults: readonly components["schemas"]["RunnerVaultOut"][];
-            /** Updated At */
-            readonly updated_at?: string | null;
-        };
-        /**
-         * RunnerLoginOut
-         * @description A full Claude login on the box, as the box last reported it.
-         */
-        readonly RunnerLoginOut: {
-            /** Key */
-            readonly key: string;
-            /**
-             * Account
-             * @default
-             */
-            readonly account: string;
-            /**
-             * Signed In
-             * @default false
-             */
-            readonly signed_in: boolean;
-            /** Reported At */
-            readonly reported_at?: string | null;
-        };
-        /**
-         * RunnerVaultOut
-         * @description A vault that holds a runner's Claude credentials.
-         */
-        readonly RunnerVaultOut: {
-            /** Vault Id */
-            readonly vault_id: string;
-            /** Name */
-            readonly name: string;
-            /**
-             * Kv
-             * @default 0
-             */
-            readonly kv: number;
         };
         /** RunnerLoginOrderIn */
         readonly RunnerLoginOrderIn: {
@@ -49891,6 +50033,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerFleetOut"];
+                };
+            };
+        };
+    };
+    readonly list_runner_credential_sets: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerCredentialSetOut"][];
+                };
+            };
+        };
+    };
+    readonly create_runner_credential_set: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerCredentialSetIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialSetOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_credential_set: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerCredentialSetChoiceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerCredentialStatusOut"];
                 };
             };
         };

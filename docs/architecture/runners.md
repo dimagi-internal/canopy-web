@@ -991,12 +991,9 @@ cloud runners, whose size canopy-web sets from the work waiting for it. Spec:
   (`_give_wraps`). The copy is ciphertext for the same public key; a wrap binds vault,
   key version and the ECDH key thumbprint, so it opens on any member and canopy-web
   opens none of it.
-- **A credential set is the fleet's one list** (`RunnerCredentialSet`, entries are
-  `RunnerLogin` rows on the set). A member reads it as its own (`runners.list_owner`).
-  An edit from any member's Credentials tab edits the set, and every member's stamp
-  moves. Tokens and API keys only: a full login is refused (409), because its refresh
-  token rotates and cannot be shared. Usage caps are per Claude account, so N members
-  on one token share one cap.
+- **A credential set is the fleet's one list** (`RunnerCredentialSet`, § Credential
+  sets below). `fleet.sh up --credential-set <name>` makes the fleet read an existing
+  set; otherwise it gets a new one.
 - **The scaler** (`tick`, the off-request clock, `RUNNER_SCALER_TICK_S` 30 s, 0 = off).
   Each tick, per fleet:
   1. Read the group and its warm pool. `Runner.power` follows each instance's state:
@@ -1032,6 +1029,43 @@ cloud runners, whose size canopy-web sets from the work waiting for it. Spec:
 - **Out of scope:** sensitive-data boxes and boxes of isolation units are single named
   boxes (`up.sh`). A fleet is one workspace-tree unit.
 
+
+## Credential sets (`apps/harness/credential_sets.py`)
+
+A **credential set** (`RunnerCredentialSet`) is one ordered list of Claude tokens and API
+keys that several cloud runners read as their own (`runners.list_owner`): every member
+of a fleet, and any other cloud runner of the set's owner that joins it. An edit from
+any of their Credentials tabs (add, rename, reorder, remove) edits the set, and every
+reader's stamp moves. Tokens and API keys only: a full login is refused (409), because
+its refresh token rotates and cannot be shared. Usage caps are per Claude account, so
+N runners on one token share one cap.
+
+- **The list is shared across workspace trees; the values are not.** A vault never
+  serves two isolation boundaries (`docs/architecture/vault.md` § A runner's own
+  vault), so a set keeps **one vault per workspace tree** (`RunnerCredentialSet.vaults`,
+  matched by the tree root of the vault's workspace, `credential_sets.vault_in_tree`).
+  The set's first runner in a tree brings its own vault or gets a new one named for the
+  set; every later runner in that tree is attached to it. A runner on a set is served
+  by that vault only. Each tree's vault holds its own copy of each value, sealed by a
+  person of that vault in their browser ("Add its key") or by one of its boxes after a
+  sign-in ("Get a token", which fills the existing entry). An entry with no value in a
+  runner's tree is one that runner skips; its Credentials tab says how many it lacks,
+  and how each other tree's vault stands.
+- **Coming onto a set.** A fleet member joins its fleet's set as it pairs. `POST
+  /api/harness/runner-credential-sets/` `{runner, name}` shares a runner's own list:
+  its entries and vault become the set's, so nothing it reads changes (409 while the
+  list holds a login). `PUT …/runner-credential-sets/runners/{id}` `{credential_set}`
+  makes a runner read a set (409 while it has entries of its own, or for a fleet
+  member; 422 `vault_crosses_isolation` when its tree's vault already serves runners of
+  another boundary, such as an agent unit beside a tree unit), or `null` to read its own
+  list again. The set's vault then stops serving it, and its copy of the key is handed
+  out to nobody (`workspace_vaults.device_may_hold`).
+- **One owner.** A set, and every runner on it, have the same owner. Only that person
+  puts a runner on a set, and only they change a set's list (`api_runners._list_admin_or_404`,
+  403): a runner administrator administers one runner, and the list is every runner's on
+  the set. They still read it.
+- **Removing an entry** deletes its secret from every tree's vault of the set, unless a
+  runner outside the set that a vault also serves still lists it.
 ## Runner readiness (the not-ready marker)
 
 A failed turn writes `~/.canopy/not-ready` (`runner/canopy_runner/canopy_runner/readiness.py`,

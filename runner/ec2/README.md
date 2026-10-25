@@ -985,6 +985,8 @@ aws sso login --profile labs
 # once its first member has joined: open that member's Credentials tab,
 #   Make its key (one passkey touch), then + Token for each Claude account
 # route work to it: add the members to the workspace runner order / agents' runners
+# or read a list your other runners already share (Credentials tab → Share this list):
+#   ./fleet.sh up --name dimagi --workspace dimagi --credential-set "jj credentials"
 ./fleet.sh up --name dimagi --max 6     # later: update the stack and the bounds; asks nothing
 ./fleet.sh down --name dimagi           # retire, empty the group (chats move), delete both stacks
 ```
