@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import pytest
 from django.contrib.auth.models import User
-from django.db import connection
-from django.db.migrations.executor import MigrationExecutor
 from django.test import Client
 
 from apps.agents.models import Agent, AgentProject, ProjectService
@@ -87,35 +85,3 @@ def test_a_published_knowledge_base_reads_through_the_project(w):
     assert (row["mcp_kind"], row["mcp_path"]) == ("kb", "/api/mcp/projects/dimagi/funders/")
     [svc] = row["services"]
     assert svc["kind"] == "kb" and svc["add_command"].startswith("claude mcp add --transport http funders ")
-
-
-@pytest.mark.django_db(transaction=True)
-@pytest.mark.needs_migrations
-def test_a_projects_knowledge_base_moves_to_its_service_row():
-    executor = MigrationExecutor(connection)
-    before = [("agents", "0085_workspace_tasks_constraints")]
-    after = [("agents", "0086_project_services")]
-    executor.migrate(before)
-    old = executor.loader.project_state(before).apps
-    User_ = old.get_model("auth", "User")
-    Workspace_ = old.get_model("workspaces", "Workspace")
-    Agent_ = old.get_model("agents", "Agent")
-    Project_ = old.get_model("agents", "AgentProject")
-    jj = User_.objects.create(username="jj", email="jj@dimagi.com")
-    reader = User_.objects.create(username="r", email="r@dimagi.com")
-    ws = Workspace_.objects.create(slug="connect", display_name="Connect", created_by=jj)
-    eva = Agent_.objects.create(slug="eva", name="Eva", workspace=ws)
-    kb = Project_.objects.create(agent=eva, workspace=ws, handle="givewell-kb", name="GiveWell", ext_id="P1",
-                                 mcp_kind="kb", kb_key="k1", kb_sha256="b" * 64, kb_bytes=42, kb_drive_replica=True)
-    kb.kb_readers.add(reader)
-    Project_.objects.create(agent=eva, workspace=ws, handle="plain", name="Plain", ext_id="P2")
-
-    executor = MigrationExecutor(connection)
-    executor.migrate(after)
-    new = executor.loader.project_state(after).apps
-    Service = new.get_model("agents", "ProjectService")
-
-    [svc] = Service.objects.all()
-    assert (svc.project_id, svc.kind, svc.name, svc.kb_key, svc.kb_bytes, svc.kb_drive_replica) == (
-        kb.pk, "kb", "kb", "k1", 42, True)
-    assert list(svc.kb_readers.values_list("email", flat=True)) == ["r@dimagi.com"]

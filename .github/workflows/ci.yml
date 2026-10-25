@@ -452,8 +452,10 @@ jobs:
     name: Backend pytest (migrations)
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # It runs 11-15 min; at 15 a slow box cancels it and the queue ejects the PR.
-    timeout-minutes: 30
+    # A data migration's test walks the graph back and forth, and costs more with
+    # every later migration; they are deleted once deployed (CLAUDE.md), so this
+    # job stays near the cost of building the DB once.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 

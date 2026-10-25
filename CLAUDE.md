@@ -34,6 +34,8 @@ gh workflow run "Deploy to Labs (AWS)" --ref main -f skip_migrations=true  # EME
 
 **Migrations:** write them the obvious way. Drops, renames and type changes need no expand/contract split; a brief window of errors during a deploy is accepted.
 
+**A data migration's test lives until its migration deploys.** One that walks the graph back (`MigrationExecutor.migrate(BEFORE)`, marked `needs_migrations`) costs more with every later migration, and once the migration has run in production it guards nothing; delete it in a later PR once a deploy includes it. `tests/test_migrations_apply.py` stays: it proves the whole graph applies to an empty DB.
+
 ## Testing and shipping
 
 ```bash
