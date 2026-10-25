@@ -94,6 +94,11 @@ interface Props {
   prefill?: { text: string; seq: number } | null;
 }
 
+/** The drag type a host puts on something the composer should type in where it
+ *  is dropped — a session row dragged from a list, say. Its data is the text to
+ *  insert. A drag without it (text moved within the box) is left to the browser. */
+export const REFERENCE_MIME = "application/x-canopy-reference";
+
 /** What the composer types where a file goes: "[Image #2]", "[File #3]". */
 function attachmentPlaceholder(file: Pick<File, "type">, n: number): string {
   return `[${file.type.startsWith("image/") ? "Image" : "File"} #${n}]`;
@@ -273,21 +278,32 @@ export function SendBox({
   // (N = its place among the staged files, the order the runner receives
   // them in), the way Claude Code shows a paste. The runner's note then names
   // the file behind each placeholder; the text itself is sent as typed.
-  const take = (files: FileList | File[] | null | undefined) => {
-    if (!canAttach || !files || files.length === 0) return;
-    const list = Array.from(files);
+  const insertAtCaret = (tokens: string) => {
     const el = textareaRef.current;
     const start = el?.selectionStart ?? body.length;
     const end = el?.selectionEnd ?? body.length;
     const before = body.slice(0, start);
     const after = body.slice(end);
-    const tokens = list.map((f, i) => attachmentPlaceholder(f, staged.length + i + 1)).join(" ");
     const inserted = `${before && !/\s$/.test(before) ? " " : ""}${tokens}${/^\s/.test(after) ? "" : " "}`;
     handleChange(before + inserted + after);
     const caret = before.length + inserted.length;
-    requestAnimationFrame(() => textareaRef.current?.setSelectionRange(caret, caret));
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(caret, caret);
+    });
+  };
+
+  const take = (files: FileList | File[] | null | undefined) => {
+    if (!canAttach || !files || files.length === 0) return;
+    const list = Array.from(files);
+    insertAtCaret(list.map((f, i) => attachmentPlaceholder(f, staged.length + i + 1)).join(" "));
     onAttach!(list);
   };
+
+  // A dragged reference (REFERENCE_MIME) is typed in like a paste. Dropping
+  // works while sending is blocked too: it only edits the text.
+  const carriesReference = (dt: DataTransfer | null) =>
+    Array.from(dt?.types ?? []).includes(REFERENCE_MIME);
 
   // Removing a file takes its placeholder out and renumbers the ones after it,
   // so "[Image #N]" keeps meaning the Nth file that is actually sent.
@@ -377,12 +393,19 @@ export function SendBox({
     <div
       className="border-t border-border bg-background"
       onDragOver={(e) => {
-        if (!canAttach) return;
+        if (!canAttach && !carriesReference(e.dataTransfer)) return;
         e.preventDefault();
         setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => {
+        const reference = e.dataTransfer?.getData(REFERENCE_MIME);
+        if (reference) {
+          e.preventDefault();
+          setDragging(false);
+          insertAtCaret(reference);
+          return;
+        }
         if (!canAttach) return;
         e.preventDefault();
         setDragging(false);

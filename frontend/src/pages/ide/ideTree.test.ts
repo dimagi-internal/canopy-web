@@ -9,6 +9,7 @@ import {
   linkKind,
   matches,
   sessionMode,
+  sessionReference,
   sessionState,
   shortAge,
   type IdeFilters,
@@ -158,5 +159,19 @@ describe('deleteConsequence', () => {
       'Cancels its turns on cloud-ec2-2 and archives it.',
     )
     expect(deleteConsequence(s({}))).toBe('Archives it (it has nothing on a runner).')
+  })
+})
+
+describe('sessionReference', () => {
+  it('links the session page under its workspace, titled for the people reading', () => {
+    expect(sessionReference({ id: 'abc', workspace: 'dimagi' }, 'Fix the runner', 'https://canopy.test')).toBe(
+      '[Fix the runner](https://canopy.test/w/dimagi/chat/abc)',
+    )
+  })
+
+  it('escapes brackets so a title cannot break the link', () => {
+    expect(sessionReference({ id: 'abc', workspace: 'dimagi' }, '[wip] a]b', 'https://canopy.test')).toBe(
+      '[\\[wip\\] a\\]b](https://canopy.test/w/dimagi/chat/abc)',
+    )
   })
 })

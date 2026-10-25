@@ -112,7 +112,7 @@ export { MenuPrompt, type MenuPromptProps } from "./MenuPrompt";
 export { MessageList } from "./MessageList";
 export { MessageItem, type RenderMarkdown } from "./MessageItem";
 export { ToolCallPair } from "./ToolCallPair";
-export { SendBox, type PendingAttachment } from "./SendBox";
+export { REFERENCE_MIME, SendBox, type PendingAttachment } from "./SendBox";
 export {
   matchSlashCommands,
   pendingArgsCommand,
