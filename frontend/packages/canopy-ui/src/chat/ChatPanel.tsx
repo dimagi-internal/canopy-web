@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowDown, Search } from "lucide-react";
 
 import type { PeerDraft, SessionState, SubagentSummary, TypingVisibility } from "./protocol";
 import type { RenderMarkdown } from "./MessageItem";
@@ -13,6 +14,8 @@ import type { SlashCommand } from "./slashCommands";
 import { type DraftStorage } from "./drafts";
 import { agentHasFloor as computeAgentHasFloor, pendingLabel as computePendingLabel, turnNotice } from "./turnStatus";
 import { useStickyBottom } from "./useStickyBottom";
+import { useNow } from "./useNow";
+import { FindBar } from "./FindBar";
 import { AppHostContext, type AppHost } from "./mcpApps/context";
 import { SecretRequestHostContext, type SecretRequestHost } from "./secretRequest";
 import { AttachmentHostContext, type AttachmentHost } from "./attachmentHost";
@@ -185,7 +188,35 @@ export function ChatPanel({
     messages.length > 0 ? messages[messages.length - 1].plaintext.length : 0;
   const queuedCount = state.queued?.length ?? 0;
   const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
-  const { containerRef, onScroll } = useStickyBottom(scrollDep);
+  const { containerRef, onScroll, scrollToBottom, away, unseen } = useStickyBottom(scrollDep);
+
+  // Is the newest turn still running? Then its work shows as it happens;
+  // once it isn't, the list folds that work into one line above the reply.
+  // From the server's status where there is one — a blocked agent or an open
+  // menu is still mid-turn, and folding the question away would hide it.
+  const liveTurn =
+    inFlightMessage != null ||
+    agentHasFloor ||
+    state.activity === "working" ||
+    state.activity === "blocked" ||
+    Boolean(status && (status.menu_pending || (!status.settled && !status.stuck)));
+  // Queued vs a runner has it: the server's `working` state, or the hook's
+  // word on a host with no status.
+  const pendingWorking = status ? status.state === "working" : state.activity === "working";
+  const canStop = state.active_draft != null && !disabledReason;
+  const stopTurn = useCallback(
+    () => onStop(inFlightMessage?.id ?? null),
+    [onStop, inFlightMessage],
+  );
+
+  // Find in the loaded transcript: Cmd/Ctrl+F while the chat has focus.
+  const [finding, setFinding] = useState(false);
+  const onPanelKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      setFinding(true);
+    }
+  };
 
   // A send still waiting its turn is drawn ONCE, in the queue, in the order the
   // server took it. Your own optimistic row for a send the server lists as
@@ -275,10 +306,20 @@ export function ChatPanel({
     <AppHostContext.Provider value={appHost ?? null}>
     <SecretRequestHostContext.Provider value={secretRequestHost ?? null}>
     <AttachmentHostContext.Provider value={attachmentHost ?? null}>
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" onKeyDown={onPanelKeyDown}>
       <div className="flex items-center gap-3 border-b border-border bg-background px-3 py-1.5 text-xs">
         <ConnectionStatus connected={connected} />
-        <div className="ml-auto">
+        <button
+          type="button"
+          onClick={() => setFinding((f) => !f)}
+          aria-label="Find in loaded messages"
+          aria-pressed={finding}
+          title="Find in loaded messages (⌘F / Ctrl+F)"
+          className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <Search className="h-3.5 w-3.5" />
+        </button>
+        <div>
           <PresenceChips
             participants={state.participants}
             presenceUserIds={state.presence_user_ids}
@@ -294,11 +335,23 @@ export function ChatPanel({
           session was in the DOM but scrolled out of view and covered by the
           header, i.e. unreachable. Pinning keeps "Load earlier"/"Load full"
           always visible. */}
+      {finding && (
+        <FindBar rootRef={containerRef} version={scrollDep} onClose={() => setFinding(false)} />
+      )}
       {historySlot}
+      <div className="relative min-h-0 flex-1">
       {/* overflow-x-hidden: `overflow-y: auto` alone computes overflow-x to
           auto, so anything wider than the column made the transcript scroll
-          sideways into empty space. Wide content scrolls inside its own box. */}
-      <div ref={containerRef} onScroll={onScroll} className="flex-1 overflow-x-hidden overflow-y-auto">
+          sideways into empty space. Wide content scrolls inside its own box.
+          tabIndex -1: clicking the transcript gives the chat focus, so ⌘F
+          finds in it rather than in the whole page. */}
+      <div
+        ref={containerRef}
+        onScroll={onScroll}
+        tabIndex={-1}
+        data-testid="chat-scroll"
+        className="h-full overflow-x-hidden overflow-y-auto outline-none"
+      >
         <SubagentsContext.Provider value={state.subagents ?? NO_SUBAGENTS}>
           <MessageList
             messages={shownMessages}
@@ -306,6 +359,12 @@ export function ChatPanel({
             renderMarkdown={renderMarkdown}
             pendingReply={showPendingReply}
             pendingLabel={pendingLabel}
+            pendingWorking={pendingWorking}
+            pendingRunner={status?.claimed_by ?? null}
+            pendingStartedAt={pendingWorking ? status?.claimed_at ?? null : null}
+            onStopTurn={canStop ? stopTurn : undefined}
+            stopping={state.stopState === "requested"}
+            liveTurn={liveTurn}
             currentUserId={currentUserId}
             currentContactId={currentContactId}
             cancellable={cancellable}
@@ -320,6 +379,20 @@ export function ChatPanel({
           ownPendingTexts={ownPendingTexts}
           onCancel={onUnqueue}
         />
+      </div>
+      {away && (
+        // Scrolled up to read, so new rows are not followed: say when there
+        // are some, and offer the way back down either way.
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          data-testid="jump-to-latest"
+          className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-foreground shadow-md hover:bg-muted"
+        >
+          <ArrowDown className="h-3 w-3" aria-hidden="true" />
+          {unseen ? "New messages" : "Jump to latest"}
+        </button>
+      )}
       </div>
       <SendBox
         draft={state.active_draft}
@@ -376,15 +449,3 @@ export function ChatPanel({
   );
 }
 
-
-/** `Date.now()`, re-read every `everyMs` — or frozen when `everyMs` is null. */
-function useNow(everyMs: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (everyMs == null) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), everyMs);
-    return () => clearInterval(id);
-  }, [everyMs]);
-  return now;
-}

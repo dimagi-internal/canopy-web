@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * Sticky-bottom auto-scroll for a streaming message list.
@@ -24,6 +24,8 @@ import { useCallback, useEffect, useRef, type RefObject } from "react";
  *  - `containerRef`: attach to the scrollable element.
  *  - `onScroll`: attach to `onScroll` on the same element.
  *  - `scrollToBottom`: force a snap (e.g. on send).
+ *  - `away`: the user has scrolled up off the bottom (offer "Jump to latest").
+ *  - `unseen`: and something new arrived since (say "New messages").
  */
 export function useStickyBottom<T>(
   dep: T,
@@ -32,12 +34,16 @@ export function useStickyBottom<T>(
   containerRef: RefObject<HTMLDivElement | null>;
   onScroll: () => void;
   scrollToBottom: () => void;
+  away: boolean;
+  unseen: boolean;
 } {
   const { thresholdPx = 100, enabled = true } = options;
   const containerRef = useRef<HTMLDivElement>(null);
   // Default true: when the container first mounts there's no history
   // to read, so the user is "at the bottom" by definition.
   const wasNearBottomRef = useRef(true);
+  const [away, setAway] = useState(false);
+  const [unseen, setUnseen] = useState(false);
 
   const isNearBottom = useCallback(
     (el: HTMLElement): boolean =>
@@ -48,7 +54,10 @@ export function useStickyBottom<T>(
   const onScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    wasNearBottomRef.current = isNearBottom(el);
+    const near = isNearBottom(el);
+    wasNearBottomRef.current = near;
+    setAway(!near);
+    if (near) setUnseen(false);
   }, [isNearBottom]);
 
   const scrollToBottom = useCallback(() => {
@@ -56,6 +65,8 @@ export function useStickyBottom<T>(
     if (!el) return;
     el.scrollTop = el.scrollHeight;
     wasNearBottomRef.current = true;
+    setAway(false);
+    setUnseen(false);
   }, []);
 
   useEffect(() => {
@@ -66,11 +77,15 @@ export function useStickyBottom<T>(
       // "instant" by direct scrollTop write — smooth scroll falls
       // behind during streaming and the view drifts.
       el.scrollTop = el.scrollHeight;
+    } else {
+      // Not followed, so say it: the person is reading history and something
+      // new landed below them.
+      setUnseen(true);
     }
     // dep is intentionally the only signal that triggers a follow;
     // it should change whenever the message list grows (length or
     // the last message's content length).
   }, [dep, enabled]);
 
-  return { containerRef, onScroll, scrollToBottom };
+  return { containerRef, onScroll, scrollToBottom, away, unseen };
 }

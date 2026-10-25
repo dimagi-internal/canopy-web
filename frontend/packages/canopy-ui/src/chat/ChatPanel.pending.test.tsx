@@ -179,7 +179,37 @@ describe("the server's turn status", () => {
 
   it("names the box in the spinner once a runner really has it", () => {
     panel({ state: state({ turn_status: status({ state: "working" }) }) });
-    expect(screen.getByText("Thinking on jj-mbp…")).not.toBeNull();
+    const line = screen.getByTestId("pending-reply");
+    expect(screen.getByTestId("activity-text").textContent).toBe("Thinking…");
+    expect(line.textContent).toContain("on jj-mbp");
+  });
+
+  it("says what the turn is doing now, for how long, and offers Stop", () => {
+    const onStop = vi.fn();
+    const sent = new Date(Date.now() - 72_000).toISOString();
+    panel({
+      onStop,
+      state: state({
+        messages: [
+          message({ created_at: sent }),
+          message({
+            id: "u1", turn_index: 2, role: "tool_use", plaintext: "",
+            content: { id: "t1", name: "Bash", input: { command: "npm test\n--watch" }, status: "pending" },
+          }),
+        ],
+        turn_status: status({ state: "working", claimed_at: sent }),
+      }),
+    });
+    expect(screen.getByTestId("activity-text").textContent).toBe("Running npm test");
+    expect(screen.getByTestId("activity-elapsed").textContent).toBe("· 1m 12s");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onStop).toHaveBeenCalledWith(null);
+  });
+
+  it("offers no Stop on the line to a viewer, who has no composer", () => {
+    panel({ state: state({ active_draft: null, turn_status: status({ state: "working" }) }) });
+    expect(screen.getByTestId("pending-reply")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   });
 
   it("clears a stuck spinner even if the stream frame that ends it never arrived", () => {
