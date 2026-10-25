@@ -663,10 +663,13 @@ function keepUnechoedSends(previous: Message[], snapshot: Message[]): Message[] 
       isUnconfirmed(m) && !snapshot.some((s) => s.id === m.id),
   );
   if (mine.length === 0) return snapshot;
+  // Compared as the live echo is (`comparableText`): the snapshot's copy of a
+  // send with a file carries the runner's attachment note, so an exact match
+  // missed it and carried the line to the bottom on every reconnect.
   const recent = new Set(
-    snapshot.filter((m) => m.role === "user").slice(-12).map((m) => m.plaintext.trim()),
+    snapshot.filter((m) => m.role === "user").slice(-12).map((m) => comparableText(m.plaintext)),
   );
-  const carried = mine.filter((m) => !recent.has(m.plaintext.trim()));
+  const carried = mine.filter((m) => !recent.has(comparableText(m.plaintext)));
   if (carried.length === 0) return snapshot;
   const top = snapshot.reduce((acc, m) => Math.max(acc, m.turn_index), 0);
   return [...snapshot, ...carried.map((m, i) => ({ ...m, turn_index: top + 1 + i }))];
