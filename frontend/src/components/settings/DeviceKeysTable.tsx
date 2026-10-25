@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { approveRunnerDeviceKey, revokeRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { relativeAge } from '@/lib/relativeAge'
 import { approveAndGrant, giveAccess, unlockVaultKey } from '@/vault/operations'
@@ -31,6 +31,12 @@ export function DeviceKeysTable({
   const [showRevoked, setShowRevoked] = useState(false)
   const revoked = keys.filter((k) => k.status === 'revoked' && k.id !== highlight)
   const shown = showRevoked ? keys : keys.filter((k) => !revoked.includes(k))
+  // A link to one machine (a setup step's "Let … in", a box's approve_url) lands on
+  // its row, not the top of a long Settings page.
+  const marked = !!highlight && keys.some((k) => k.id === highlight)
+  useEffect(() => {
+    if (marked) document.querySelector(`[data-testid="device-key-${highlight}"]`)?.scrollIntoView?.({ block: 'center' })
+  }, [marked, highlight])
 
   const grantAll = async (g0 = grant) => {
     if (!g0) return

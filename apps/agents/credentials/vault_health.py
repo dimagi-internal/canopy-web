@@ -54,19 +54,24 @@ def classify(agent: Agent, stored: set[str] | None = None) -> dict[str, str]:
     return out
 
 
-def machines_waiting(agent: Agent, facts=None) -> list[str]:
+def machine_keys_waiting(agent: Agent, facts=None) -> dict[str, str]:
     """Runners that would run this agent but cannot open its zero-knowledge
-    values yet (`zk.device_waits`), or whose new ECDH key awaits approval: a
-    member's passkey touch lets them in. `facts`: `device_keys.serving_facts`."""
+    values yet (`zk.device_waits`), or whose new ECDH key awaits approval, by name →
+    the device key a member's passkey touch lets in. `facts`: `device_keys.serving_facts`."""
     if not agent.zk_enabled:
-        return []
+        return {}
 
     facts = facts or device_keys.serving_facts([agent])
     eligible = zk.eligible_device_keys(agent, facts)
     blocked = zk.devices_waiting(agent, eligible)
-    waiting = {k.runner.name for k in eligible if k.pk in blocked}
-    waiting |= {k.runner.name for k in device_keys.keys_for_agent(agent, facts) if k.ecdh_waiting}
-    return sorted(waiting)
+    waiting = {k.runner.name: str(k.pk) for k in eligible if k.pk in blocked}
+    waiting.update({k.runner.name: str(k.pk) for k in device_keys.keys_for_agent(agent, facts) if k.ecdh_waiting})
+    return dict(sorted(waiting.items()))
+
+
+def machines_waiting(agent: Agent, facts=None) -> list[str]:
+    """The names of `machine_keys_waiting`."""
+    return list(machine_keys_waiting(agent, facts))
 
 
 def vault_health(agent: Agent, facts=None) -> dict:
