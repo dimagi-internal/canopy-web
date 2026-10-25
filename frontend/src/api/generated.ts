@@ -30722,6 +30722,46 @@ export interface components {
             readonly max_members: number;
         };
         /**
+         * RunnerCredentialSetCandidateOut
+         * @description One of the owner's other cloud runners, as a runner the set could be given to.
+         */
+        readonly RunnerCredentialSetCandidateOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace?: string | null;
+            /**
+             * Root
+             * @default
+             */
+            readonly root: string;
+            /**
+             * New Tree
+             * @default false
+             */
+            readonly new_tree: boolean;
+            /** Refusal */
+            readonly refusal?: string | null;
+        };
+        /**
+         * RunnerCredentialSetEntryOut
+         * @description One entry of the set's list, in order.
+         */
+        readonly RunnerCredentialSetEntryOut: {
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /** Kind */
+            readonly kind: string;
+        };
+        /**
          * RunnerCredentialSetOut
          * @description A credential set: one ordered list of Claude credentials that every runner on
          *     it reads, with a vault per workspace tree for the values.
@@ -30737,10 +30777,20 @@ export interface components {
             /** Workspace */
             readonly workspace: string;
             /**
+             * Entries
+             * @default []
+             */
+            readonly entries: readonly components["schemas"]["RunnerCredentialSetEntryOut"][];
+            /**
              * Runners
              * @default []
              */
             readonly runners: readonly components["schemas"]["RunnerCredentialSetRunnerOut"][];
+            /**
+             * Candidates
+             * @default []
+             */
+            readonly candidates: readonly components["schemas"]["RunnerCredentialSetCandidateOut"][];
             /**
              * Vaults
              * @default []

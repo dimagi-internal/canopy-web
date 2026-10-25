@@ -1060,6 +1060,11 @@ N runners on one token share one cap.
   another boundary, such as an agent unit beside a tree unit), or `null` to read its own
   list again. The set's vault then stops serving it, and its copy of the key is handed
   out to nobody (`workspace_vaults.device_may_hold`).
+- **Making a set is separate from choosing who reads it.** The Credentials tab offers
+  "Make a credential set from this list" (the POST), then shows the set's list, the
+  runners reading it, and an "Add a runner…" picker of the owner's other cloud runners
+  (`credential_sets.candidates`: each with why it may not join yet, and whether it is in
+  a tree the set has no vault for). Adding one is the PUT on that runner.
 - **One owner.** A set, and every runner on it, have the same owner. Only that person
   puts a runner on a set, and only they change a set's list (`api_runners._list_admin_or_404`,
   403): a runner administrator administers one runner, and the list is every runner's on
