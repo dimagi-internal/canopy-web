@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents import access, sensitive_data
-from apps.agents.interface import InterfaceError, parse
+from apps.agents.interface import InterfaceError, is_default, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.canopy_sessions.models import Session
 from apps.events.models import SettingChange
@@ -133,7 +133,7 @@ def test_someone_who_is_not_an_admin_cannot_set_it(w):
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert _put(c, "labsdata", source=SOURCE).status_code == 403
     w["agent"].refresh_from_db()
-    assert w["agent"].interface == {}
+    assert is_default(w["agent"].interface)
 
 
 def test_a_person_sets_it_and_the_change_is_audited(w):

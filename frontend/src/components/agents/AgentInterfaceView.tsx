@@ -2,52 +2,13 @@ import { useEffect, useState } from 'react'
 import {
   getAgentInterface,
   getAgentInterfaceHistory,
-  saveAgentInterface,
+  resetAgentInterface,
   setCapabilitySensitive,
-  unpublishAgentInterface,
   type AgentInterfaceOut,
   type SettingChangeOut,
 } from '@/api/agents'
-
-type Capability = {
-  description?: string
-  callers?: string[]
-  entry?: string | null
-  tools?: string[]
-  bash?: string[]
-  input?: Record<string, string>
-  data?: string
-}
-
-const STARTER = `# Who gets the WHOLE agent, as its admins do (domain-wide access).
-# Classes: member | contact | unknown, optionally @domain.tld, optionally :verified
-full:
-  - contact@example.org:verified
-
-# What everyone else may ask for. Everything not listed is refused.
-capabilities:
-  ask:
-    description: Ask a question by email.
-    callers: [contact]
-callers_default: none
-`
-
-// A `data: sensitive` line, the block form an author writes; JSON (`"data": "sensitive"`)
-// is caught by SENSITIVE_ANYWHERE but never edited.
-const SENSITIVE_LINE = /^\s*data\s*:\s*["']?sensitive["']?\s*(#.*)?$/
-const SENSITIVE_ANYWHERE = /(^|[\s{,])["']?data["']?\s*:\s*["']?sensitive\b/m
-
-// Does this YAML mark any capability as handling sensitive data? Comments do not
-// count. The server parses it for real; this only decides what the editor says.
-export function declaresSensitive(source: string): boolean {
-  return SENSITIVE_ANYWHERE.test(source.split('\n').map((l) => l.replace(/(^|\s)#.*$/, '')).join('\n'))
-}
-
-// The same YAML with every `data: sensitive` line taken out: saving it turns
-// sensitive data off.
-function withoutSensitive(source: string): string {
-  return source.split('\n').filter((l) => !SENSITIVE_LINE.test(l)).join('\n')
-}
+import { InterfaceEditor, SummaryLines } from './InterfaceEditor'
+import { describeCaller, type Capability } from './interfaceModel'
 
 // The capabilities an interface marks as handling sensitive data.
 function sensitiveCapabilities(iface: unknown): string[] {
@@ -55,21 +16,24 @@ function sensitiveCapabilities(iface: unknown): string[] {
   return Object.keys(caps).filter((n) => caps[n]?.data === 'sensitive')
 }
 
-// What one audited change did to sensitive data: on when the YAML it saved says
-// `data: sensitive`, off when it did not or it unpublished.
+// What one audited change did to sensitive data: on when the interface it saved marks a capability
+// sensitive, off when it did not or it reset to the default.
 function sensitiveAfter(c: SettingChangeOut): boolean {
-  if (c.operation === 'unpublish_interface') return false
+  if (c.operation === 'unpublish_interface' || c.operation === 'reset_interface') return false
   if (c.operation === 'set_capability_sensitive') {
     const after = (c.changes?.[0]?.after ?? {}) as { sensitive_capabilities?: string[] }
     return (after.sensitive_capabilities ?? []).length > 0
   }
   const body = (c.request?.body ?? {}) as { source?: string; interface?: unknown }
-  return body.source != null ? declaresSensitive(body.source) : sensitiveCapabilities(body.interface).length > 0
+  return body.source != null
+    ? /(^|[\s{,])["']?data["']?\s*:\s*["']?sensitive\b/m.test(body.source.replace(/(^|\s)#.*$/gm, ''))
+    : sensitiveCapabilities(body.interface).length > 0
 }
 
 // What one audited change was, in a word or three.
 function changeLabel(c: SettingChangeOut): string {
   if (c.operation === 'unpublish_interface') return 'Unpublished'
+  if (c.operation === 'reset_interface') return 'Reset to default'
   if (c.operation === 'set_capability_sensitive') {
     const on = Boolean((c.request?.body as { handles_sensitive?: boolean } | undefined)?.handles_sensitive)
     return `Sensitive data ${on ? 'on' : 'off'} for ${c.target.split(' / ')[1] ?? 'a capability'}`
@@ -79,7 +43,7 @@ function changeLabel(c: SettingChangeOut): string {
 
 // The agent's declared interface: who may make it do what. LIVE STATE held by
 // canopy-web — not a file in the agent's repo — so owners and admins edit it
-// here, and every member can read it.
+// here (a form, with the YAML one click away), and every member can read it.
 export function AgentInterfaceView({
   agentSlug,
   agentName,
@@ -91,12 +55,9 @@ export function AgentInterfaceView({
 }) {
   const [data, setData] = useState<AgentInterfaceOut | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [draft, setDraft] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [history, setHistory] = useState<SettingChangeOut[] | null>(null)
-
-  const sensitiveNow = sensitiveCapabilities(data?.interface)
-  const draftSensitive = draft !== null && declaresSensitive(draft)
 
   useEffect(() => {
     let cancelled = false
@@ -125,19 +86,11 @@ export function AgentInterfaceView({
     setError(null)
     try {
       setData(await fn())
-      setDraft(null)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not save')
     } finally {
       setBusy(false)
     }
-  }
-
-  const startEdit = (opts: { sensitiveOff?: boolean } = {}) => {
-    const iface = data?.interface ?? {}
-    // JSON is valid YAML, so an interface saved as a mapping still round-trips.
-    const source = data?.source || (Object.keys(iface).length ? JSON.stringify(iface, null, 2) : STARTER)
-    setDraft(opts.sensitiveOff ? withoutSensitive(source) : source)
   }
 
   if (data === null) {
@@ -146,77 +99,38 @@ export function AgentInterfaceView({
       : <p className="m-0 text-[12px] text-muted-foreground">Loading…</p>
   }
 
-  if (draft !== null) {
+  if (editing) {
     return (
-      <div className="flex flex-col gap-2">
-        <label htmlFor={`iface-${agentSlug}`} className="text-[12px] text-muted-foreground">
-          Interface (YAML)
-        </label>
-        <textarea
-          id={`iface-${agentSlug}`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={Math.min(30, Math.max(10, draft.split('\n').length + 1))}
-          spellCheck={false}
-          className="w-full rounded-md border border-input bg-input p-2 font-mono text-[12px] text-foreground"
-        />
-        {draftSensitive && (
-          <p data-testid="sensitive-on" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-foreground">
-            Every capability with <code>data: sensitive</code> handles sensitive data: you vouch that it reads a
-            host&apos;s data only through canopy&apos;s gateway and keeps none of it. Saving is logged with the agent&apos;s other setting
-            changes.
-          </p>
-        )}
-        {!draftSensitive && sensitiveNow.length > 0 && (
-          <p data-testid="sensitive-off" className="m-0 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[12px] text-warning">
-            No capability says <code>data: sensitive</code> any more: saving turns sensitive data off for{' '}
-            {sensitiveNow.join(', ')},
-            and hosts stop giving it their data.
-          </p>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void run(() => saveAgentInterface(agentSlug, draft))}
-            className="rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
-          >
-            {busy
-              ? 'Saving…'
-              : draftSensitive && sensitiveNow.length === 0
-                ? 'Save and turn on sensitive data'
-                : !draftSensitive && sensitiveNow.length > 0
-                  ? 'Save and turn off sensitive data'
-                  : 'Save'}
-          </button>
-          <button type="button" onClick={() => setDraft(null)} className="text-[12px] text-muted-foreground underline">
-            Cancel
-          </button>
-        </div>
-        {error && <p role="alert" className="m-0 whitespace-pre-wrap text-[12px] text-destructive">{error}</p>}
-      </div>
+      <InterfaceEditor
+        agentSlug={agentSlug}
+        saved={data}
+        onSaved={(out) => {
+          setData(out)
+          setEditing(false)
+        }}
+        onCancel={() => setEditing(false)}
+      />
     )
   }
 
   const iface = (data.interface ?? {}) as { full?: string[]; capabilities?: Record<string, Capability> }
   const caps = iface.capabilities ?? {}
   const names = Object.keys(caps)
-  const full = iface.full ?? []
-  const published = names.length > 0 || full.length > 0
+  const isDefault = data.is_default
 
   return (
     <div className="flex flex-col gap-2">
-      {!published && (
-        <p data-testid="interface-none" className="m-0 text-[13px] text-foreground-secondary">
-          No outside callers. Only workspace members can use {agentName ?? agentSlug}.
-        </p>
-      )}
-      {full.length > 0 && (
-        <div data-testid="interface-full" className="text-[13px] text-foreground">
-          <span className="text-[12px] text-muted-foreground">The whole agent, as its admins have it: </span>
-          <span className="font-mono text-[12px]">{full.join(', ')}</span>
+      <div data-testid="access-summary" className="flex flex-col gap-1 rounded-md border border-border bg-card px-3 py-2">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          Access summary{isDefault ? ' — default' : ''}
         </div>
-      )}
+        {isDefault && (
+          <p data-testid="interface-default" className="m-0 text-[13px] text-foreground">
+            Owner and admins only (default). Nobody else can use {agentName ?? agentSlug} until you add a rule.
+          </p>
+        )}
+        <SummaryLines lines={data.summary ?? []} />
+      </div>
       {names.length > 0 && (
         <table className="w-full text-[13px]">
           <thead>
@@ -242,10 +156,10 @@ export function AgentInterfaceView({
                     )}
                   </td>
                   <td className="py-1.5 align-top text-[12px] text-foreground-secondary">
-                    {(c.callers ?? []).join(', ') || 'nobody'}
+                    {(c.callers ?? []).map(describeCaller).join(', ') || 'nobody'}
                   </td>
                   <td className="py-1.5 align-top font-mono text-[11px] text-foreground-secondary">
-                    {[...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (
+                    {[...(c.sites ?? []).map((s) => `site: ${s}`), ...(c.tools ?? []), ...(c.bash ?? [])].map((t) => (
                       <div key={t}>{t}</div>
                     ))}
                   </td>
@@ -280,7 +194,7 @@ export function AgentInterfaceView({
           </tbody>
         </table>
       )}
-      {data.published_at && (
+      {!isDefault && data.published_at && (
         <p className="m-0 text-[11px] text-muted-foreground">
           Saved {new Date(data.published_at).toLocaleString()}
           {data.published_by_email ? ` by ${data.published_by_email}` : ''}. Everything not listed is refused.
@@ -299,28 +213,19 @@ export function AgentInterfaceView({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => startEdit()}
+            onClick={() => setEditing(true)}
             className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-primary"
           >
-            {published ? 'Edit' : 'Set up'}
+            {isDefault ? 'Add rules' : 'Edit'}
           </button>
-          {sensitiveNow.length > 0 && (
-            <button
-              type="button"
-              onClick={() => startEdit({ sensitiveOff: true })}
-              className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-destructive"
-            >
-              Turn off sensitive data
-            </button>
-          )}
-          {published && (
+          {!isDefault && (
             <button
               type="button"
               disabled={busy}
-              onClick={() => void run(() => unpublishAgentInterface(agentSlug))}
+              onClick={() => void run(() => resetAgentInterface(agentSlug))}
               className="text-[12px] text-muted-foreground underline hover:text-destructive disabled:opacity-50"
             >
-              Unpublish
+              Reset to default
             </button>
           )}
         </div>

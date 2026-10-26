@@ -3567,8 +3567,25 @@ export interface paths {
         /** Save the agent's declared interface (YAML source, or a parsed mapping) */
         readonly put: operations["publish_interface"];
         readonly post?: never;
-        /** Unpublish the declared interface: only the agent's admins and its workspace's editors can reach it */
-        readonly delete: operations["unpublish_interface"];
+        /** Reset the declared interface to the default: only the agent's admins and its workspace's editors can reach it */
+        readonly delete: operations["reset_interface"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/interface/validate": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /** Check a draft interface with the server's parser, without saving it */
+        readonly post: operations["validate_interface"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -21661,6 +21678,21 @@ export interface components {
              * @default
              */
             readonly source: string;
+            /**
+             * Yaml
+             * @default
+             */
+            readonly yaml: string;
+            /**
+             * Is Default
+             * @default true
+             */
+            readonly is_default: boolean;
+            /**
+             * Summary
+             * @default []
+             */
+            readonly summary: readonly components["schemas"]["InterfaceSummaryLineOut"][];
             /** Published At */
             readonly published_at?: string | null;
             /** Published By Email */
@@ -21671,6 +21703,15 @@ export interface components {
              */
             readonly warnings: readonly string[];
         };
+        /** InterfaceSummaryLineOut */
+        readonly InterfaceSummaryLineOut: {
+            /** Who */
+            readonly who: string;
+            /** Reaches */
+            readonly reaches: string;
+            /** Rule */
+            readonly rule?: string | null;
+        };
         /** AgentInterfaceIn */
         readonly AgentInterfaceIn: {
             /** Source */
@@ -21679,6 +21720,37 @@ export interface components {
             readonly interface?: {
                 readonly [key: string]: unknown;
             } | null;
+        };
+        /** AgentInterfaceValidateOut */
+        readonly AgentInterfaceValidateOut: {
+            /** Errors */
+            readonly errors: readonly components["schemas"]["InterfaceProblemOut"][];
+            /**
+             * Summary
+             * @default []
+             */
+            readonly summary: readonly components["schemas"]["InterfaceSummaryLineOut"][];
+            /** Interface */
+            readonly interface?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Yaml
+             * @default
+             */
+            readonly yaml: string;
+            /**
+             * Warnings
+             * @default []
+             */
+            readonly warnings: readonly string[];
+        };
+        /** InterfaceProblemOut */
+        readonly InterfaceProblemOut: {
+            /** Path */
+            readonly path: string;
+            /** Message */
+            readonly message: string;
         };
         /** CapabilitySensitiveIn */
         readonly CapabilitySensitiveIn: {
@@ -43920,7 +43992,7 @@ export interface operations {
             };
         };
     };
-    readonly unpublish_interface: {
+    readonly reset_interface: {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -43938,6 +44010,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentInterfaceOut"];
+                };
+            };
+        };
+    };
+    readonly validate_interface: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentInterfaceIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentInterfaceValidateOut"];
                 };
             };
         };

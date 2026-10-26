@@ -10,7 +10,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from apps.agents.interface import ASK, FULL, InterfaceError, parse
+from apps.agents.interface import ASK, FULL, InterfaceError, default_interface, parse
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness import caller_context, services
 from apps.harness import claim
@@ -256,10 +256,11 @@ def test_a_bad_interface_is_a_422_not_a_silent_partial(w):
     assert r.status_code == 422
 
 
-def test_unpublish_reverts_to_full(w):
+def test_reset_returns_to_the_default_not_to_nothing(w):
     _publish(w["agent"])
     r = _client(w["op"]).delete("/api/agents/ace/interface")
-    assert r.status_code == 200 and r.json()["interface"] == {}
+    assert r.status_code == 200 and r.json()["interface"] == default_interface()
+    assert r.json()["is_default"] is True
     w["agent"].refresh_from_db()
     assert _as_user(w["agent"], w["ed"], "k").capability == FULL
 

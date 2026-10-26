@@ -814,6 +814,31 @@ export async function saveAgentInterface(slug: string, source: string): Promise<
   return unwrap(res, 'saveAgentInterface') as unknown as AgentInterfaceOut
 }
 
+// Save the interface as the model the form edits (a parsed mapping, no YAML source kept).
+// A 422 carries the parser's reason.
+export async function saveAgentInterfaceModel(slug: string, model: object): Promise<AgentInterfaceOut> {
+  const res = await apiV2.PUT('/api/agents/{slug}/interface', {
+    params: { path: { slug } },
+    body: { interface: model as { [key: string]: unknown } },
+  })
+  return unwrap(res, 'saveAgentInterfaceModel') as unknown as AgentInterfaceOut
+}
+
+export type AgentInterfaceValidateOut = Schemas['AgentInterfaceValidateOut']
+
+// The server's parser, asked about a draft without saving it: every problem with the field it is
+// about, and (when valid) the access summary, the parsed model and its YAML.
+export async function validateAgentInterface(
+  slug: string,
+  draft: { source: string } | { interface: object },
+): Promise<AgentInterfaceValidateOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/interface/validate', {
+    params: { path: { slug } },
+    body: ('source' in draft ? draft : { interface: draft.interface as { [key: string]: unknown } }),
+  })
+  return unwrap(res, 'validateAgentInterface') as unknown as AgentInterfaceValidateOut
+}
+
 // The sensitive-data switch for one capability: canopy writes (or removes) its
 // `data: sensitive` in the saved YAML and saves it the way saveAgentInterface does, so
 // the editor and the switch always agree.
@@ -828,7 +853,7 @@ export async function setCapabilitySensitive(slug: string, name: string, handles
 export type SettingChangeOut = Schemas['SettingChangeOut']
 
 // The audited changes to this agent's interface, newest first: every save and
-// unpublish, from any client. Admins see everyone's; others see their own.
+// reset, from any client. Admins see everyone's; others see their own.
 export async function getAgentInterfaceHistory(slug: string): Promise<SettingChangeOut[]> {
   const res = await apiV2.GET('/api/events/setting-changes', {
     params: { query: { target: slug, limit: 50 } },
@@ -836,15 +861,16 @@ export async function getAgentInterfaceHistory(slug: string): Promise<SettingCha
   const items = (unwrap(res, 'getAgentInterfaceHistory') as unknown as { items: SettingChangeOut[] }).items
   return items.filter(
     (c) =>
-      ((c.operation === 'publish_interface' || c.operation === 'unpublish_interface') && c.target === slug) ||
+      ((c.operation === 'publish_interface' || c.operation === 'unpublish_interface' || c.operation === 'reset_interface') && c.target === slug) ||
       // The switch's row names the capability too: "<slug> / <capability>".
       (c.operation === 'set_capability_sensitive' && c.target.startsWith(`${slug} / `)),
   )
 }
 
-export async function unpublishAgentInterface(slug: string): Promise<AgentInterfaceOut> {
+// Back to the default interface: the owner, the admins and the workspace's editors, and nobody else.
+export async function resetAgentInterface(slug: string): Promise<AgentInterfaceOut> {
   const res = await apiV2.DELETE('/api/agents/{slug}/interface', { params: { path: { slug } } })
-  return unwrap(res, 'unpublishAgentInterface') as unknown as AgentInterfaceOut
+  return unwrap(res, 'resetAgentInterface') as unknown as AgentInterfaceOut
 }
 
 /** Remove an agent and everything hanging off it (editor and above). Its GitHub
