@@ -10466,6 +10466,18 @@ def profiles_supported(plugin_root: pathlib.Path | None = None) -> int:
 ONE_SHOT_TURN_ENV = {"CANOPY_ONE_SHOT_TURN": "1"}
 
 
+def _killed_by_shutdown(ok: bool, turn_id: str) -> bool:
+    """True when an unfinished turn died because the box itself is powering off (a
+    fleet member terminated, an instance stopped), not because it failed: systemd's
+    SIGTERM reaches the agent's claude too, and the adapter ends the turn with
+    stopReason `cancelled`. Such a turn is left running, so canopy-web queues it
+    again for another box — at once on a fleet (`fleets.requeue_lost`, when the
+    instance leaves the group), else by the lease sweep. A person's stop still
+    finishes it CANCELLED; a runner restart (an update) and a real failure are
+    reported as before."""
+    return not ok and _stop and not stop_requested(turn_id) and _system_shutting_down()
+
+
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
@@ -10759,6 +10771,14 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         # died mid-turn and the finish frame raised; the worker never touches the
         # socket at all, so that failure class is now structurally impossible
         # here rather than merely handled.
+        if _killed_by_shutdown(ok, turn_id):
+            # Left running: canopy-web queues it again for another box. Here, not in
+            # the old WS `_finish_turn`, which nothing called — so #2148's guard never
+            # ran, and turn 2087c077 (canopy-web on demo-0fc9c7b1efb87c5c3, 2026-10-26,
+            # failure investigation 13) was reported failed with "turn ended:
+            # cancelled" as its fleet member terminated.
+            _log(f"stopping: the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
+            return
         finish = "done" if ok else "failed"
         if not ok and stop_requested(turn_id):
             # Stopped on request — CANCELLED, never FAILED: a failure starts a
@@ -10977,57 +10997,6 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
         if msg.get("type") == want_type:
             return msg
     return None
-
-
-def _finish_turn(ws, turn_id: str, ok: bool, text: str, turn: dict | None = None) -> None:
-    """Finish the turn, falling back to REST when the WebSocket is gone.
-
-    The finish frame used to be a bare `_ws_request`. If the socket had died
-    mid-turn that raised, the exception unwound out of `_claim_and_run_once`,
-    `_drain` logged it as "drain error", and the turn was NEVER FINISHED — it sat
-    EXECUTING until the 900s lease sweep marked it LOST. That is the whole
-    "runner lost the turn (lease expired mid-drill)" story: on a 5-agent drill
-    wave only the ONE turn short enough to dodge a socket death ever logged
-    "finished turn"; the other four were orphaned and reported nothing for 15
-    minutes.
-
-    Why the socket dies: the runner only pongs from inside `ws.recv()`, and
-    during a turn `recv()` is reached only via each `emit()`'s ack — so a turn
-    with a quiet stretch longer than uvicorn's `--ws-ping-timeout` (20s, see the
-    Dockerfile) stops ponging and the server closes the connection. Fixing that
-    is a separate design question; completion must not depend on the socket
-    either way.
-
-    REST finish is idempotent server-side (`api.py::finish_turn` returns early
-    on an already-terminal turn), so this fallback is safe even if the WS finish
-    partially landed.
-    """
-    if not ok and _stop and _system_shutting_down():
-        # The turn did not fail: the box it ran on is powering off (a fleet member
-        # terminated, an instance stopped), which killed it. Left running, it is
-        # queued again for another box — at once on a fleet (`fleets.requeue_lost`,
-        # when the instance leaves the group), else by the lease sweep.
-        _log(f"stopping: the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
-        return
-    body = {"status": "done" if ok else "failed",
-            "result_note": _result_note(text, turn or {"id": turn_id})}
-    reason = ""
-    try:
-        acked = _ws_request(
-            ws, {"action": "finish", "turn_id": turn_id, **body}, "finish.ack"
-        )
-        if acked is not None:
-            _log(f"finished turn {turn_id[:8]} (WS): {body['status']}")
-            return
-        reason = "no finish.ack (socket closed)"
-    except Exception as exc:
-        reason = f"{exc}"
-    status, _ = _api("POST", f"/turns/{turn_id}/finish", body)
-    if status == 200:
-        _log(f"finished turn {turn_id[:8]} (REST, after ws finish failed: {reason}): {body['status']}")
-    else:
-        _log(f"COULD NOT FINISH turn {turn_id[:8]} (ws: {reason}; REST status={status}) "
-             f"— it will sit EXECUTING until the lease sweep")
 
 
 def _claim_and_run_once(ws, runner_id: str) -> bool:
