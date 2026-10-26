@@ -13,7 +13,7 @@ What follows from it, one test per surface (`tests/test_sensitive_storage.py`):
 * **forced retention** — `retention.services.sweep_sensitive`, whatever
   `CANOPY_RETENTION_ENFORCE` says;
 * **refuse re-exposure** — share links, Slack share and mirroring, export, MCP Apps
-  receipts and view context, the usage scan's and autotitle's title;
+  receipts and view context, autotitle's title;
 * **refuse re-processing** — auto-debug, and the fleet's transcript readers (there
   is no transcript to read);
 * **read back by its own people only** — the words are kept SEALED on the message,

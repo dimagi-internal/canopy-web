@@ -122,16 +122,17 @@ def test_a_repo_leaving_the_opt_in_stops_its_transcript(jj, ws, box):
     assert Session.objects.filter(runner_binding__session_key="fix-login").exists()  # kept, not shipped
 
 
-def test_usage_from_a_repo_not_opted_in_is_not_kept(jj, box):
+def test_the_usage_scan_reads_only_opted_in_repos_and_keeps_no_unknown_session(jj, box):
     _opt_in(jj, projects=["canopy-web"])
     day = str(timezone.now().date())
 
     def rep(cs, repo):
-        return {"claude_session": cs, "repo": repo, "title": "t", "first_at": f"{day}T09:00:00Z",
+        return {"claude_session": cs, "repo": repo, "first_at": f"{day}T09:00:00Z",
                 "last_at": f"{day}T10:00:00Z", "days": [{"day": day, "input_tokens": 1}]}
 
+    # Neither session is one canopy was sent: opted in or not, neither is kept.
     out = usage.record(_fresh(box), [rep("a", "canopy-web"), rep("b", "personal-site")])
-    assert out["stored"] == 1
+    assert out["stored"] == 0
     assert usage.scope(_fresh(box)) == ["canopy-web"]
 
 

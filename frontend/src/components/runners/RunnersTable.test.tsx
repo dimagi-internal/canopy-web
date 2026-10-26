@@ -15,7 +15,7 @@ function row(name: string, over: Partial<TopologyRunnerOut> = {}): TopologyRunne
     paused: false, host: name, last_heartbeat_at: null, workspace: 'dimagi', in_tree: true,
     owner_email: null, flags: [], agent_count: 0, code_current: null, problems: [], status_note: '',
     remedy: '', code_sha: '', expected_code_sha: '', agents: [], usage_reported_at: null,
-    missing_sessions: 0, can_administer: false, machine: '', unit: '',
+    can_administer: false, machine: '', unit: '',
     ...over,
   } as TopologyRunnerOut
 }

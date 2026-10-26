@@ -127,7 +127,7 @@
 "apps/events/audit.py" = ["PLC0415"]  # 11
 "apps/events/management/commands/backfill_activity.py" = ["PLC0415"]  # 5
 "apps/events/management/commands/prune_events.py" = ["PLC0415"]  # 2
-"apps/events/usage.py" = ["PLC0415"]  # 8
+"apps/events/usage.py" = ["PLC0415"]  # 5
 "apps/feedback/reactions.py" = ["PLC0415"]  # 1
 "apps/feedback/rounds.py" = ["PLC0415"]  # 1
 "apps/github_connect/github_app.py" = ["PLC0415"]  # 2
@@ -138,7 +138,7 @@
 "apps/harness/api_local.py" = ["PLC0415"]  # 4
 "apps/harness/api_runner_invitations.py" = ["PLC0415"]  # 1
 "apps/harness/api_runner_pairings.py" = ["PLC0415"]  # 1
-"apps/harness/api_runners.py" = ["PLC0415"]  # 32
+"apps/harness/api_runners.py" = ["PLC0415"]  # 28
 "apps/harness/api_session_sync.py" = ["PLC0415"]  # 6
 "apps/harness/api_turn_agent_token.py" = ["PLC0415"]  # 1
 "apps/harness/api_turns.py" = ["PLC0415"]  # 8
@@ -176,7 +176,7 @@
 "apps/harness/sign_in_requests.py" = ["PLC0415"]  # 1
 "apps/harness/signals.py" = ["PLC0415"]  # 2
 "apps/harness/sweeps.py" = ["PLC0415"]  # 1
-"apps/harness/topology.py" = ["PLC0415"]  # 3
+"apps/harness/topology.py" = ["PLC0415"]  # 2
 "apps/harness/turn_access.py" = ["PLC0415"]  # 2
 "apps/harness/turn_agent_tokens.py" = ["PLC0415"]  # 2
 "apps/harness/turn_gates.py" = ["PLC0415"]  # 1

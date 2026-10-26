@@ -2,8 +2,8 @@
 
 Both runners run this over `~/.claude/projects/*/*.jsonl` and post the result to
 canopy-web (`POST /runners/{id}/usage`). It reads only usage and a little identity
-— the session's working directory, its repo, its first prompt as a title, when it
-ran — never shipping content. Scoped to the repos canopy-web names for the box
+— the session's working directory, its repo, when it ran — never shipping content.
+canopy-web keeps the usage of the sessions it already has and drops the rest. Scoped to the repos canopy-web names for the box
 (`GET /runners/{id}/usage-scope`: its declared projects and the agents it serves),
 so nothing else on the machine is read past its first records.
 
@@ -17,10 +17,8 @@ import json
 from pathlib import Path
 
 from .paths import parse_emdash_worktree
-from .rows import record_usage, scrub, user_text
+from .rows import record_usage
 
-#: Long enough to recognise a session in a list, short enough to carry no content.
-TITLE_MAX = 120
 #: How far into a transcript to look for its working directory.
 _CWD_PROBE_LINES = 50
 
@@ -65,7 +63,7 @@ def _cwd(path: Path) -> str:
 def session_usage(path: Path, repo: str, cwd: str) -> dict | None:
     """One transcript's report, or None when it spent nothing."""
     by_message: dict[str, dict] = {}
-    title, first_at, last_at = "", "", ""
+    first_at, last_at = "", ""
     try:
         f = path.open("r", encoding="utf-8", errors="replace")
     except OSError:
@@ -82,11 +80,6 @@ def session_usage(path: Path, repo: str, cwd: str) -> dict | None:
             if at:
                 first_at = min(first_at, at) if first_at else at
                 last_at = max(last_at, at)
-            if not title and rec.get("type") == "user" and not rec.get("isMeta"):
-                msg = rec.get("message")
-                text = scrub(user_text(msg.get("content") if isinstance(msg, dict) else ""))
-                if text and not text.startswith("<"):
-                    title = " ".join(text.split())[:TITLE_MAX]
             u = record_usage(rec)
             if u:
                 by_message[u["message_id"] or f"#{len(by_message)}"] = u
@@ -108,17 +101,14 @@ def session_usage(path: Path, repo: str, cwd: str) -> dict | None:
         models = d.pop("_models")
         d["model"] = max(models, key=models.get) if models else ""
     return {
-        "claude_session": path.stem, "repo": repo, "cwd": cwd, "title": title,
+        "claude_session": path.stem, "repo": repo, "cwd": cwd,
         "first_at": first_at, "last_at": last_at, "days": sorted(days.values(), key=lambda d: d["day"]),
     }
 
 
-def scan(claude_home: Path, *, home: Path, repos: set[str], seen: dict | None = None,
-         full: bool = False) -> tuple[list[dict], dict]:
-    """Reports for every changed transcript in a known repo, and the new `seen`.
-
-    `full` ignores `seen` — the manual "check for missing sessions" asks for it, so
-    a session a lost report never delivered is found again."""
+def scan(claude_home: Path, *, home: Path, repos: set[str],
+         seen: dict | None = None) -> tuple[list[dict], dict]:
+    """Reports for every changed transcript in a known repo, and the new `seen`."""
     seen = dict(seen or {})
     out: list[dict] = []
     if not claude_home.is_dir() or not repos:
@@ -130,7 +120,7 @@ def scan(claude_home: Path, *, home: Path, repos: set[str], seen: dict | None = 
             continue
         stamp = [st.st_mtime, st.st_size]
         key = str(path)
-        if not full and seen.get(key) == stamp:
+        if seen.get(key) == stamp:
             continue
         seen[key] = stamp
         cwd = _cwd(path)
@@ -143,15 +133,13 @@ def scan(claude_home: Path, *, home: Path, repos: set[str], seen: dict | None = 
     return out, seen
 
 
-
 #: Sessions per POST; a report body stays far below the server's limits.
 REPORT_CHUNK = 100
 
 
-def send_report(post, *, home: Path, repos: list[str], full: bool) -> int:
-    """Scan and send: THE report both runners make. `post(sessions, full)` sends one
-    chunk; `full` rides the last one (an empty one when a full rescan found
-    nothing, so the ask is still settled). What was sent is remembered in
+def send_report(post, *, home: Path, repos: list[str]) -> int:
+    """Scan and send: THE report both runners make. `post(sessions)` sends one
+    chunk. What was sent is remembered in
     `~/.canopy/usage-seen.json`, written only after every chunk was taken, so a
     failed post is simply sent again. Returns how many sessions were reported."""
     seen_path = home / ".canopy" / "usage-seen.json"
@@ -159,10 +147,9 @@ def send_report(post, *, home: Path, repos: list[str], full: bool) -> int:
         seen = json.loads(seen_path.read_text())
     except (OSError, ValueError):
         seen = {}
-    sessions, seen = scan(home / ".claude" / "projects", home=home, repos=set(repos), seen=seen, full=full)
-    chunks = [sessions[i:i + REPORT_CHUNK] for i in range(0, len(sessions), REPORT_CHUNK)] or ([[]] if full else [])
-    for i, chunk in enumerate(chunks):
-        post(chunk, full and i == len(chunks) - 1)
+    sessions, seen = scan(home / ".claude" / "projects", home=home, repos=set(repos), seen=seen)
+    for i in range(0, len(sessions), REPORT_CHUNK):
+        post(sessions[i:i + REPORT_CHUNK])
     seen_path.parent.mkdir(parents=True, exist_ok=True)
     seen_path.write_text(json.dumps(seen))
     return len(sessions)

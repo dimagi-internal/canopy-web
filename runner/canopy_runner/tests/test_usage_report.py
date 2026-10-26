@@ -1,4 +1,4 @@
-"""The laptop's usage report rides the sweep: scope every minute, scan when due or asked."""
+"""The laptop's usage report rides the sweep: it scans when due, and retries a failure soon."""
 import json
 from types import SimpleNamespace
 
@@ -6,15 +6,17 @@ from canopy_runner import usage_report
 
 
 class FakeClient:
-    def __init__(self, full=False):
-        self.full, self.posts, self.scopes = full, [], 0
+    def __init__(self):
+        self.posts, self.scopes, self.down = [], 0, False
 
     def usage_scope(self, runner_id):
         self.scopes += 1
-        return {"repos": ["hal"], "full": self.full}
+        if self.down:
+            raise ConnectionError("down")
+        return {"repos": ["hal"]}
 
-    def post_usage(self, runner_id, sessions, *, full=False):
-        self.posts.append((len(sessions), full))
+    def post_usage(self, runner_id, sessions):
+        self.posts.append(len(sessions))
 
 
 def _transcript(home):
@@ -26,17 +28,19 @@ def _transcript(home):
          "message": {"id": "m1", "model": "m", "content": "ok", "usage": {"output_tokens": 5}}}]))
 
 
-def test_reports_when_due_and_at_once_when_a_rescan_is_asked(tmp_path, monkeypatch):
-    monkeypatch.setattr(usage_report, "_state", {"scope_at": 0.0, "scan_at": 0.0})
+def test_reports_when_due_and_retries_a_failure_soon(tmp_path, monkeypatch):
+    monkeypatch.setattr(usage_report, "_state", {"scan_at": 0.0})
     _transcript(tmp_path)
     cfg, client, t = SimpleNamespace(runner_id="r1"), FakeClient(), [1000.0]
     assert usage_report.maybe_report(cfg, client, now_fn=lambda: t[0], home=tmp_path)
-    assert client.posts == [(1, False)]
-    t[0] += 30  # before the next scope read: nothing asked
+    assert client.posts == [1]
+    t[0] += usage_report.INTERVAL_SECONDS - 1  # not due
     assert not usage_report.maybe_report(cfg, client, now_fn=lambda: t[0], home=tmp_path)
-    t[0] += 60  # scope read, but not due and not asked
+    assert client.scopes == 1
+    t[0] += 1  # due, but canopy-web is unreachable
+    client.down = True
     assert not usage_report.maybe_report(cfg, client, now_fn=lambda: t[0], home=tmp_path)
-    client.full = True
-    t[0] += 61
+    client.down = False
+    t[0] += usage_report.RETRY_SECONDS  # retried a minute later; the unchanged transcript is not re-sent
     assert usage_report.maybe_report(cfg, client, now_fn=lambda: t[0], home=tmp_path)
-    assert client.posts[-1] == (1, True)
+    assert client.posts == [1]

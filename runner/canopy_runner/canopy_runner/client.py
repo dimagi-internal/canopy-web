@@ -449,8 +449,8 @@ class Client:
         return (payload or {}).get("backfills", [])
 
     def usage_scope(self, runner_id: str) -> dict:
-        """{"repos": [...], "full": bool} — what the usage report scans, and whether a
-        person asked for a full rescan (canopy-web `events.usage.scope`)."""
+        """{"repos": [...]} — what the usage report scans (canopy-web
+        `events.usage.scope`)."""
         _, payload = self._call("GET", f"/runners/{runner_id}/usage-scope")
         return payload or {}
 
@@ -458,9 +458,9 @@ class Client:
         """Every slash command a session on this box can run (`slash_commands.scan`)."""
         self._call("PUT", f"/runners/{runner_id}/slash-commands", {"commands": commands})
 
-    def post_usage(self, runner_id: str, sessions: list[dict], *, full: bool = False) -> dict:
+    def post_usage(self, runner_id: str, sessions: list[dict]) -> dict:
         """One chunk of the usage report: per session, per UTC day, tokens — no content."""
-        _, payload = self._call("POST", f"/runners/{runner_id}/usage", {"sessions": sessions, "full": full})
+        _, payload = self._call("POST", f"/runners/{runner_id}/usage", {"sessions": sessions})
         return payload or {}
 
     def post_session_backfill(self, runner_id: str, session_id: str, messages: list[dict],

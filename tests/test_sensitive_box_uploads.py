@@ -1,12 +1,7 @@
 """Nothing of a sensitive-data box's transcripts reaches canopy-web except the
-sealed turn-end stream: its usage keeps no title, a session canopy has no record of
-is never kept or listed as missing, and nothing is sent up, backfilled or reset
-from it (spec 2026-10-22-sensitive-data-agents §1, §4).
-
-The chain this closes: a confined turn's transcript left on the box (an earlier
-credential's attempt, a crash) was reported by the usage scanner, matched nothing,
-was listed as missing, and `send_up` filed it as an ordinary unsealed Session and
-asked the box to ship the whole transcript.
+sealed turn-end stream: its usage carries token counts only, a session canopy has
+no record of is never kept, and nothing is backfilled or reset from it (spec
+2026-10-22-sensitive-data-agents §1, §4).
 """
 from __future__ import annotations
 
@@ -23,7 +18,7 @@ from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.events import usage
 from apps.events.models import SessionUsage
 from apps.harness import session_sync
-from apps.harness.models import Runner, RunnerFlag
+from apps.harness.models import Runner
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -44,9 +39,9 @@ def _box(owner, *, sensitive: bool, name="box"):
         capabilities={"projects": ["canopy-web"], **({"data_mode": "sensitive_data"} if sensitive else {})})
 
 
-def _report(cs, repo="canopy-web", title="the caller's first words"):
+def _report(cs, repo="canopy-web"):
     day = str(timezone.now().date())
-    return {"claude_session": cs, "repo": repo, "title": title, "first_at": f"{day}T09:00:00Z",
+    return {"claude_session": cs, "repo": repo, "first_at": f"{day}T09:00:00Z",
             "last_at": f"{day}T10:00:00Z",
             "days": [{"day": day, "input_tokens": 5, "output_tokens": 7, "messages": 2, "model": "m"}]}
 
@@ -64,52 +59,18 @@ def _bound_session(owner, runner):
     return s
 
 
-def test_an_unknown_session_on_a_sensitive_box_is_never_kept_or_listed(owner):
+def test_an_unknown_session_on_a_sensitive_box_is_never_kept(owner):
     box = _box(owner, sensitive=True)
     assert usage.record(box, [_report("leftover")]) == {"stored": 0, "matched": 0}
     assert not SessionUsage.objects.exists()
-    assert usage.missing(box) == []
-    r = _client(owner).get(f"/api/harness/runners/{box.pk}/missing-sessions")
-    assert r.status_code == 200 and r.json()["sessions"] == []
 
 
-def test_a_sensitive_box_keeps_no_title_even_for_a_matched_session(owner):
+def test_a_sensitive_box_still_counts_a_matched_sessions_tokens(owner):
     box = _box(owner, sensitive=True)
     s = _bound_session(owner, box)
     RunnerBinding.objects.filter(session=s).update(transcript_id="known")
     usage.record(box, [_report("known")])
-    row = SessionUsage.objects.get()
-    assert (row.title, row.output_tokens) == ("", 7)
-
-
-def test_an_ordinary_box_still_lists_and_titles_its_missing_sessions(owner):
-    box = _box(owner, sensitive=False)
-    usage.record(box, [_report("lost")])
-    assert [(m["claude_session"], m["title"]) for m in usage.missing(box)] == [
-        ("lost", "the caller's first words")]
-
-
-def test_send_up_from_a_sensitive_box_is_refused_with_a_reason(owner):
-    box = _box(owner, sensitive=False)
-    usage.record(box, [_report("lost")])  # recorded before the box went sensitive
-    Runner.objects.filter(pk=box.pk).update(capabilities={"data_mode": "sensitive_data"})
-    r = _client(owner).post(f"/api/harness/runners/{box.pk}/missing-sessions",
-                            data=json.dumps({"claude_sessions": ["lost"]}),
-                            content_type="application/json")
-    assert r.status_code == 409, r.content
-    assert "sensitive-data" in r.json()["detail"]
-    assert not Session.objects.exists()
-    box.refresh_from_db()
-    with pytest.raises(usage.SendUpRefusedError):
-        usage.send_up(box, ["lost"])
-
-
-def test_a_declared_sensitive_box_refuses_too(owner):
-    """Either half counts (`is_sensitive_data_box`): the person's flag alone."""
-    box = _box(owner, sensitive=False)
-    RunnerFlag.objects.create(runner=box, flag="sensitive_data", declared_by=owner)
-    with pytest.raises(usage.SendUpRefusedError):
-        usage.send_up(box, ["anything"])
+    assert SessionUsage.objects.get().output_tokens == 7
 
 
 def test_backfill_of_a_session_bound_to_a_sensitive_box_is_refused(owner, monkeypatch):

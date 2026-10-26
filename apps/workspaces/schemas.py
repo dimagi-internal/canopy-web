@@ -326,10 +326,7 @@ class TopologyRunnerOut(StrictModel):
     agents: list[RunnerAgentOut] = []
     # When the box last sent its usage report (`events.usage`).
     usage_reported_at: dt.datetime | None = None
-    # Its local sessions in known repos canopy has no record of (a count; the list
-    # is its admins' alone: GET /api/harness/runners/{id}/missing-sessions).
-    missing_sessions: int = 0
-    # The viewer may check for and send up its missing sessions.
+    # The viewer administers it.
     can_administer: bool = False
     # The machine it is on (its instance role's name; "" = not known). Runners on
     # one machine are that box's isolation units, listed together.

@@ -520,7 +520,7 @@ FOREIGN_AGENT = object()
 
 def _session_tenant(runner) -> set[str]:
     """`runner_tenant_slugs(runner)`, read once per runner object: the report
-    sweep and the missing-sessions paths ask `session_home` per session."""
+    sweep asks `session_home` per session."""
     cached = getattr(runner, "_session_tenant_cache", None)
     if cached is None:
         cached = runner_tenant_slugs(runner)
@@ -577,8 +577,7 @@ def session_home(runner, project: str, fallback=None):
     """(agent, project, workspace) a NEW agent-less session this box reports is filed
     under: the agent the project names, in its workspace (`_agent_for_project`);
     else the project, in the runner owner's default (`canopy_sessions.filing`),
-    else `fallback` (the runner's workspace). The one rule, for the report sweep and
-    a missing session sent up from Health (`events.usage.send_up`).
+    else `fallback` (the runner's workspace). The one rule, for the report sweep.
 
     None when the project names an agent outside the runner's tenant, or is a
     repo the runner's owner has not opted into (`Runner.opts_in`): such a

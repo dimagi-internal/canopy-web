@@ -59,16 +59,11 @@ the graph the page holds (`networkGraph.profile`): for a person or contact, who 
 the same threads, which agents and channels, and their threads; for an agent, who uses it;
 for a thread, its writers. Each thread carries `last_at`, its latest turn in the window.
 
-## Missing sessions
+## Only sessions canopy has
 
-A reported session that matches nothing has no workspace: it counts nowhere, and
-only the box's admins see it (Health → Runners → Missing sessions,
-`GET /runners/{id}/missing-sessions`). **Check for missing sessions** asks the box
-for a full rescan (`usage_scan_requested_at`, read off `usage-scope`); **Send up**
-files the chosen ones where the report sweep files that box's sessions
-(`harness.session_sync.session_home`) with a binding keyed `claude:<uuid>`
-(`canopy_transcript.transcript_for_key`, both runners) and requests the ordinary
-backfill; their usage is matched at once.
+A reported session that matches nothing canopy holds is dropped, not kept: canopy
+counts the sessions a person's machine sent it and never reaches down for the
+others. A matched session's usage row always has a workspace.
 
 ## Shipping a change to the shared transcript core
 

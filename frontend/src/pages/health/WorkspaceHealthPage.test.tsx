@@ -38,7 +38,7 @@ const HEALTH: WorkspaceHealthOut = {
   runners: [{ id: '00000000-0000-0000-0000-000000000001', name: 'laptop', kind: 'emdash', location: 'local', status: 'online',
     ready: true, ready_note: '', paused: false, host: 'h', last_heartbeat_at: '2026-10-17T00:00:00Z', workspace: 'dimagi',
     in_tree: true, owner_email: 'jj@x.org', flags: [], agent_count: 2, directed: false, code_current: false, machine: '', unit: '',
-    usage_reported_at: null, missing_sessions: 3, can_administer: false,
+    usage_reported_at: null, can_administer: false,
     status_note: 'emdash CDP unreachable on :9223', remedy: 'open Emdash CDP', code_sha: 'aaaa1111', expected_code_sha: 'bbbb2222',
     agents: [{ slug: 'hal', name: 'Hal', workspace: 'connect' }],
     problems: [{ name: 'disk', status: 'warn', detail: '90% full' }] }],
