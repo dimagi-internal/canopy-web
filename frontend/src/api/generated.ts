@@ -4845,8 +4845,8 @@ export interface paths {
          * @description `{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
          *     Needs exactly one `recovery` wrap and a wrap the caller can open (their
          *     member wrap, or a device wrap on a runner they own — the CLI enabling as
-         *     its device; the owner's member wrap can be granted later). `values` must cover every stored credential; each one's
-         *     custodial copy is wiped. Errors are problem+json with an `error` code.
+         *     its device; the owner's member wrap can be granted later). `values` must cover every stored credential,
+         *     re-encrypted under the new vault key. Errors are problem+json with an `error` code.
          */
         readonly post: operations["enable_agent_zk"];
         readonly delete?: never;
@@ -5456,29 +5456,6 @@ export interface paths {
          *     owner sees it. Only the agent's own login; anyone else gets a 403.
          */
         readonly post: operations["rotate_own_pat"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/credentials/{name}/reveal": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * PLAINTEXT — show one stored value to an admin who just confirmed a passkey
-         * @description Owner/agent admin, at a browser, with a passkey step-up in the last five
-         *     minutes (403 `step_up_required` otherwise). Returns the value once and
-         *     records who saw it; tokens are refused — a machine reads values through
-         *     `/credentials/resolve`.
-         */
-        readonly post: operations["reveal_agent_credential"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -24719,9 +24696,8 @@ export interface components {
          * @description Masked view — booleans and timestamps, NEVER values.
          *
          *     `declared` distinguishes a ref the agent declares from an
-         *     orphan left behind when one was removed; `source` says which store a live
-         *     value came from, so a canopy-web/1Password divergence during migration is
-         *     visible rather than silent.
+         *     orphan left behind when one was removed; `source` is `canopy-web-zk` for a
+         *     stored value (zero-knowledge ciphertext, the only kind) and `unset` otherwise.
          */
         readonly AgentCredentialStatusOut: {
             /** Name */
@@ -26058,16 +26034,6 @@ export interface components {
              * @description What happened: where the token went, or why you think it is exposed.
              */
             readonly reason: string;
-        };
-        /**
-         * AgentCredentialRevealOut
-         * @description PLAINTEXT, once, to an agent admin at a browser who just confirmed a passkey.
-         */
-        readonly AgentCredentialRevealOut: {
-            /** Name */
-            readonly name: string;
-            /** Value */
-            readonly value: string;
         };
         /** BootstrapReportOut */
         readonly BootstrapReportOut: {
@@ -47617,29 +47583,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["OwnPatRotateOut"];
-                };
-            };
-        };
-    };
-    readonly reveal_agent_credential: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly name: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentCredentialRevealOut"];
                 };
             };
         };

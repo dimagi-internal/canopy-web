@@ -32,7 +32,6 @@ from apps.agents.models import (
     Vault,
     VaultKeyWrap,
     VaultSecret,
-    ZeroKnowledgeValue,
 )
 from apps.agents.schemas import ZkWrapIn
 from apps.events.models import SettingChange
@@ -104,9 +103,6 @@ def fleet(client):
     client.force_login(f.user)
     grant_step_up(client)
     f.client = client
-    client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value",
-                                                               "kindora": "kin-value"}},
-               content_type="application/json")
     f.pat = _pat(f.user)
     f.sign = ec.generate_private_key(ec.SECP256R1())
     f.ecdh = ec.generate_private_key(ec.SECP256R1())
@@ -117,6 +113,13 @@ def fleet(client):
     f.member_priv, f.keyset = _make_keyset(f.user, f.passkey.credential_id)
     f.vk = os.urandom(32)
     f.recovery = os.urandom(32)
+    # Stored as `canopy vault import` stores them: sealed to the agent's readers (the
+    # approved device, the owner's keyset), the agent zero-knowledge at kv 0.
+    res = client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value",
+                                                                     "kindora": "kin-value"}},
+                     content_type="application/json")
+    assert res.status_code == 200, res.content
+    f.agent.refresh_from_db()
     return f
 
 
@@ -133,6 +136,13 @@ def _register(f, sign, ecdh=None, runner=None) -> RunnerDeviceKey:
 
 def _aid(f) -> str:
     return str(f.agent.pk)
+
+
+def _legacy(f) -> None:
+    """Make eva a legacy 1Password agent that never stored a value here: the one kind
+    that is not zero-knowledge."""
+    AgentCredential.objects.filter(agent=f.agent).delete()
+    Agent.objects.filter(pk=f.agent.pk).update(zk_enabled=False, zk_kv=0, credential_source=Agent.ONEPASSWORD)
 
 
 def device_wrap(f, kv=1, vk=None, key=None, ecdh=None) -> dict:
@@ -321,7 +331,7 @@ def test_registration_records_prf_support(client, settings):
 
 # ---- enable ------------------------------------------------------------------------------
 
-def test_enable_wipes_custodial_values_and_turns_zk_on(fleet):
+def test_enable_settles_every_value_under_the_new_vault_key(fleet):
     res = _enable(fleet)
     assert res.status_code == 200, res.content
     state = res.json()
@@ -331,9 +341,7 @@ def test_enable_wipes_custodial_values_and_turns_zk_on(fleet):
     dev = next(w for w in state["wraps"] if w["kind"] == "device")
     assert dev["public_jwk"] == ref.jwk(fleet.ecdh.public_key())
     for cred in AgentCredential.objects.filter(agent=fleet.agent):
-        assert cred.value_enc == "" and cred.value_zk.startswith("zk1:") and cred.kv == 1
-        with pytest.raises(ZeroKnowledgeValue):
-            cred.plaintext()
+        assert cred.value_zk.startswith("zk1:") and cred.kv == 1
     status = fleet.client.get("/api/agents/eva/credentials/status").json()
     assert {r["source"] for r in status} == {"canopy-web-zk"}
     # The recovery code opens the vault key; the member wrap opens with the keyset.
@@ -363,8 +371,8 @@ def test_enable_is_audited_without_the_ciphertext(fleet):
 def test_enable_refuses_a_bad_wrap_set(fleet, wraps, code):
     res = _enable(fleet, wraps=wraps(fleet))
     assert res.status_code == 422 and res.json()["error"] == code, res.content
-    assert not Agent.objects.get(pk=fleet.agent.pk).zk_enabled
-    assert AgentCredential.objects.get(name="CANOPY_WEB_PAT").plaintext() == "pat-value"
+    assert Agent.objects.get(pk=fleet.agent.pk).zk_kv == 0
+    assert AgentCredential.objects.get(name="CANOPY_WEB_PAT").value_zk.startswith("zks1:")
 
 
 def test_enable_needs_every_stored_value(fleet):
@@ -446,19 +454,19 @@ def test_only_an_admin_reaches_the_zk_routes(fleet):
     assert _enable(fleet, client=c).status_code == 403
 
 
-# ---- after enable: reveal refuses, a plaintext write is sealed --------------------------------
+# ---- after enable: a plaintext write is sealed ------------------------------------------------
 
-def test_reveal_refuses_and_a_plaintext_write_is_sealed_on_a_zk_agent(fleet):
+def test_a_plaintext_write_is_sealed_on_a_zk_agent(fleet):
     assert _enable(fleet).status_code == 200
-    res = fleet.client.post("/api/agents/eva/credentials/CANOPY_WEB_PAT/reveal")
-    assert res.status_code == 409 and res.json()["error"] == "zk_enabled"
+    # There is no reveal: canopy-web cannot open a value.
+    assert fleet.client.post("/api/agents/eva/credentials/CANOPY_WEB_PAT/reveal").status_code in (404, 405)
     # Zero-knowledge is the only mode: `canopy vault import` writes in plaintext
     # and canopy-web seals the value to the agent's readers, keeping no copy.
     res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "x"}},
                            content_type="application/json")
     assert res.status_code == 200, res.content
     row = AgentCredential.objects.get(name="CANOPY_WEB_PAT")
-    assert row.value_enc == "" and row.value_zk.startswith("zks1:") and row.kv == 1
+    assert row.value_zk.startswith("zks1:") and row.kv == 1
     assert ref.open_sealed_value(row.value_zk, _aid(fleet), "CANOPY_WEB_PAT", "member", str(fleet.user.pk),
                                  fleet.member_priv) == "x"
 
@@ -477,7 +485,7 @@ def test_zk_resolve_hands_out_ciphertext_and_the_devices_wrap(fleet):
     got = {n: ref.decrypt_value(vk, _aid(fleet), n, 1, v) for n, v in body["values"].items()}
     assert got == PLAIN
     assert set(AgentCredentialRead.objects.values_list("name", flat=True)) == set(PLAIN)
-    # Scoped like a custodial resolve.
+    # Scoped by `?refs=`.
     assert set(_resolve(fleet, refs="kindora").json()["values"]) == {"kindora"}
 
 
@@ -500,12 +508,6 @@ def test_a_device_without_a_wrap_gets_409_and_the_owner_an_alert(fleet):
     alert = AgentCredentialAlert.objects.get()
     assert alert.kind == "zk-wrap-missing" and alert.runner_id == fleet.runner.pk
     assert not AgentCredentialRead.objects.exists()
-
-
-def test_a_custodial_resolve_says_zk_false(fleet):
-    body = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet.pat}").json()
-    assert body["zk"] is False and body["kv"] is None and body["wrap"] is None
-    assert body["values"]["CANOPY_WEB_PAT"] == "pat-value"
 
 
 # ---- values, grants ---------------------------------------------------------------------------
@@ -537,6 +539,7 @@ def test_storing_a_value_declares_its_name(fleet):
 
 
 def test_before_enable_every_eligible_principal_is_pending(fleet):
+    _legacy(fleet)
     state = fleet.client.get(ZK).json()
     assert not state["enabled"]
     assert sorted((p["kind"], p["target"]) for p in state["pending"]) == sorted(
@@ -544,6 +547,7 @@ def test_before_enable_every_eligible_principal_is_pending(fleet):
 
 
 def test_values_put_refuses_an_agent_that_is_not_zk(fleet):
+    _legacy(fleet)
     res = fleet.client.put(f"{ZK}/values", data={"kv": 1, "values": zk_values(fleet, {"a": "b"})},
                            content_type="application/json")
     assert res.status_code == 409 and res.json()["error"] == "zk_not_enabled"
@@ -696,8 +700,10 @@ def test_the_key_list_says_which_machine_what_it_can_open_and_where_its_key_live
     def row():
         return fleet.client.get("/api/runner-device-keys/").json()[0]
 
-    assert row()["can_open"] == []  # not zero-knowledge yet: nothing to open
+    _legacy(fleet)
+    assert row()["can_open"] == []  # not zero-knowledge: nothing to open
     assert row()["runner_kind"] == "cloud" and row()["runner_host"] == ""
+    Agent.objects.filter(pk=fleet.agent.pk).update(credential_source=Agent.CANOPY_WEB)
     assert _enable(fleet).status_code == 200
     assert row()["can_open"] == [{"slug": "eva", "name": "Eva"}]
 
@@ -771,7 +777,7 @@ def test_server_seal_opens_with_the_reference_for_device_and_member(fleet):
     assert _enable(fleet).status_code == 200
     services.set_agent_credentials(_agent(fleet), {"gog-token": '{"t":1}'}, minted=True)
     stored = _stored("gog-token")
-    assert stored.startswith("zks1:") and AgentCredential.objects.get(name="gog-token").value_enc == ""
+    assert stored.startswith("zks1:")
     assert ref.open_sealed_value(stored, _aid(fleet), "gog-token", "device", fleet.device.ecdh_jkt,
                                  fleet.ecdh) == '{"t":1}'
     assert ref.open_sealed_value(stored, _aid(fleet), "gog-token", "member", str(fleet.user.pk),
@@ -855,6 +861,7 @@ def test_every_new_agent_is_born_zk_with_or_without_a_vault_key(fleet):
     nokey = _upsert("plain", fleet.ws, other)
     assert nokey.zk_enabled and nokey.zk_kv == 0
     # An existing agent is never switched by an upsert.
+    _legacy(fleet)
     _upsert("eva", fleet.ws, fleet.user)
     assert not _agent(fleet).zk_enabled
 
@@ -1100,33 +1107,6 @@ def test_disable_is_gone(fleet):
     res = fleet.client.post(f"{ZK}/disable", data={"values": []}, content_type="application/json")
     assert res.status_code in (404, 405)
     assert _agent(fleet).zk_enabled
-
-
-def test_custodial_agents_are_listed_never_converted(fleet):
-    from django.core.management import call_command
-    from io import StringIO
-
-    from apps.agents.management.commands.list_custodial_vault_agents import custodial_vault_agents
-
-    rows = custodial_vault_agents()
-    assert [r["slug"] for r in rows] == ["eva"] and rows[0]["custodial_values"] == ["CANOPY_WEB_PAT", "kindora"]
-    out = StringIO()
-    call_command("list_custodial_vault_agents", stdout=out)
-    assert "eva" in out.getvalue() and "kin-value" not in out.getvalue()
-    assert not _agent(fleet).zk_enabled  # reported, not converted
-    assert _enable(fleet).status_code == 200
-    assert custodial_vault_agents() == []
-
-
-def test_make_zero_knowledge_seals_every_custodial_value(fleet):
-    assert services.make_zero_knowledge(_agent(fleet)) == 2
-    agent = _agent(fleet)
-    assert agent.zk_enabled and agent.zk_kv == 0
-    for name, plain in PLAIN.items():
-        row = AgentCredential.objects.get(name=name)
-        assert row.value_enc == ""
-        assert ref.open_sealed_value(row.value_zk, _aid(fleet), name, "device", fleet.device.ecdh_jkt,
-                                     fleet.ecdh) == plain
 
 
 def test_migration_restores_a_key_sent_back_to_pending_by_its_ecdh_key(fleet):

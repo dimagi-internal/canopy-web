@@ -10,8 +10,6 @@ const api = vi.hoisted(() => ({
   putZkValues: vi.fn(), rotateZk: vi.fn(), addZkEndorsements: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
-const { revealAgentCredential } = vi.hoisted(() => ({ revealAgentCredential: vi.fn() }))
-vi.mock('@/api/agents', () => ({ revealAgentCredential }))
 const { approveRunnerDeviceKey } = vi.hoisted(() => ({ approveRunnerDeviceKey: vi.fn() }))
 vi.mock('@/api/deviceKeys', () => ({ approveRunnerDeviceKey }))
 const prf = vi.hoisted(() => ({ assertWithPrf: vi.fn() }))
@@ -101,7 +99,6 @@ describe('born zero-knowledge (kv 0)', () => {
     api.enableZk.mockResolvedValue(baseState())
     let code = ''
     await ops.turnOnZk('eva', ['kindora'], async (c) => void (code = c), unlocked(me))
-    expect(revealAgentCredential).not.toHaveBeenCalled()
     const body = api.enableZk.mock.calls[0][1]
     const rec = body.wraps.find((w: { kind: string }) => w.kind === 'recovery').wrap
     const vk = await zk.unwrapRecovery(rec, AGENT_ID, 1, zk.parseRecoveryCode(code))
@@ -161,7 +158,6 @@ describe('approve = wrap', () => {
     const dw = body.wraps.find((w: { kind: string }) => w.kind === 'device')
     const vk = await zk.unwrapEcdhEs(dw.wrap, device.privateKey, device.publicJwk, zk.deviceInfo(AGENT_ID, 1, device.jkt))
     expect(await zk.decryptValue(vk, AGENT_ID, 'kindora', 1, body.values[0].value_zk)).toBe('kin')
-    expect(revealAgentCredential).not.toHaveBeenCalled()
   })
 
   it('an approver who holds no copy of the vault key still vouches for the machine, for a keeper', async () => {

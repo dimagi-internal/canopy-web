@@ -7,7 +7,7 @@ import datetime as dt
 import uuid
 
 from django.contrib.auth import get_user_model
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
 
@@ -52,14 +52,12 @@ from .models import (
     AgentCredential,
     AgentSecretRequest,
     SenderTrust,
-    ZeroKnowledgeValue,
 )
 from .route_refusals import zk_problem
 from .schemas import (
     AgentCredentialAccessOut,
     AgentCredentialAlertOut,
     AgentCredentialReadOut,
-    AgentCredentialRevealOut,
     AgentCredentialsIn,
     AgentCredentialsResolveOut,
     AgentCredentialStatusOut,
@@ -291,7 +289,7 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
 # stores; the browser and the canopy CLI do every encryption (apps/agents/credentials/zk.py).
 # Owner/admin only. Writes from a browser need a passkey step-up; a token held
 # by an admin may enable, set values, grant and rotate (the canopy CLI acts as
-# its device) — but turning ZK OFF hands plaintext back, so it is browser-only.
+# its device). There is no turning it off: the agent vault has no other mode.
 
 
 def _zk_admin(request: HttpRequest, slug: str, *, browser_only: bool = False):
@@ -343,8 +341,8 @@ def enable_agent_zk(request: HttpRequest, slug: str, payload: ZkEnableIn) -> ZkS
     """`{kv: 1, wraps: [{kind, target, wrap}], values: [{name, value_zk}]}`.
     Needs exactly one `recovery` wrap and a wrap the caller can open (their
     member wrap, or a device wrap on a runner they own — the CLI enabling as
-    its device; the owner's member wrap can be granted later). `values` must cover every stored credential; each one's
-    custodial copy is wiped. Errors are problem+json with an `error` code."""
+    its device; the owner's member wrap can be granted later). `values` must cover every stored credential,
+    re-encrypted under the new vault key. Errors are problem+json with an `error` code."""
 
     agent = _zk_admin(request, slug)
     try:
@@ -1029,32 +1027,3 @@ def rotate_own_pat(request: HttpRequest, slug: str, payload: OwnPatRotateIn) -> 
     audit.note_change(scope=f"agent:{agent.slug}/canopy-pat", before="current token",
                       after=f"rotated by the agent itself: {payload.reason}"[:300])
     return OwnPatRotateOut(rotated_at=row.created_at, old_token_revoked_after=row.revoke_after, detail=row.detail)
-
-
-@router.post("/{slug}/credentials/{name}/reveal", response=AgentCredentialRevealOut,
-             summary="PLAINTEXT — show one stored value to an admin who just confirmed a passkey")
-# browser session + passkey step-up only (apps/passkeys)
-# reads one value; changes no configuration (recorded as an event)
-@gate("agent-admin", kind="action", step_up=True)
-def reveal_agent_credential(request: HttpRequest, response: HttpResponse, slug: str, name: str):
-    """Owner/agent admin, at a browser, with a passkey step-up in the last five
-    minutes (403 `step_up_required` otherwise). Returns the value once and
-    records who saw it; tokens are refused — a machine reads values through
-    `/credentials/resolve`."""
-    # The one deliberate exception to "a browser never sees plaintext"
-    # (canopy-web#1538). What makes it safe is the conjunction: agent admin (who
-    # could already overwrite the value and route a box of their own to read it)
-    # AND a person present at the browser (step-up) AND a durable record.
-
-    agent = agent_for_admin(request, slug)
-    stepup.require_recent_step_up(request)
-    try:
-        value = services.reveal_agent_credential(agent, name, user=request.user)
-    except ZeroKnowledgeValue as exc:
-        raise ProblemError(409, "Zero-knowledge value", type_=TYPE_CONFLICT, detail=str(exc),
-                           members={"error": "zk_enabled"}) from exc
-    if value is None:
-        raise ProblemError(404, "Credential not found", type_=TYPE_NOT_FOUND,
-                           detail=f"{agent.slug} has no value stored under {name!r}")
-    response["Cache-Control"] = "no-store"
-    return AgentCredentialRevealOut(name=name, value=value)

@@ -1903,9 +1903,8 @@ class AgentCredentialStatusOut(StrictModel):
     """Masked view — booleans and timestamps, NEVER values.
 
     `declared` distinguishes a ref the agent declares from an
-    orphan left behind when one was removed; `source` says which store a live
-    value came from, so a canopy-web/1Password divergence during migration is
-    visible rather than silent."""
+    orphan left behind when one was removed; `source` is `canopy-web-zk` for a
+    stored value (zero-knowledge ciphertext, the only kind) and `unset` otherwise."""
 
     name: str
     declared: bool
@@ -2018,13 +2017,6 @@ class DeviceBindingIn(StrictModel):
     canopy-web). Owner/admin only, like CredentialSourceIn."""
 
     require_device_binding: bool
-
-
-class AgentCredentialRevealOut(StrictModel):
-    """PLAINTEXT, once, to an agent admin at a browser who just confirmed a passkey."""
-
-    name: str
-    value: str
 
 
 class AgentCredentialAccessOut(StrictModel):

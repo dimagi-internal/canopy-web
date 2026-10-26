@@ -12,8 +12,10 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import time
+from pathlib import Path
 
 import pytest
 from botocore.auth import SigV4Auth
@@ -37,7 +39,7 @@ from apps.agents.models import (
 )
 from apps.harness import aws_iam_proof
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.aws_proof import ASSUMED, BODY, ENROLL, ENROLL_HTU, HTU, RESOLVE, ROLE, _active_role, _bind, _enroll, _proof
@@ -49,6 +51,37 @@ pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("fresh_cache")]
 
 
 # ---- the fleet ---------------------------------------------------------------------
+
+def _ref():
+    path = Path(__file__).resolve().parents[1] / "docs" / "vault" / "zk-v1" / "zk_v1_reference.py"
+    spec = importlib.util.spec_from_file_location("zk_v1_reference", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture
+def no_proof(fleet):
+    """An agent whose resolve asks no device proof: one still on 1Password (its
+    values here are zero-knowledge all the same). The read-classification and alert
+    rules under test are the same; a canopy-vault agent would refuse an unproven
+    read first."""
+    Agent.objects.filter(pk=fleet["agent"].pk).update(credential_source=Agent.ONEPASSWORD)
+
+@pytest.fixture
+def fleet(fleet):
+    """The shared fleet, its CANOPY_WEB_PAT re-sealed to a vault key this module holds
+    the private half of, so a test can open what was stored."""
+    from apps.agents import services
+    from apps.passkeys.models import UserVaultKeyset
+
+    # The shared fixture's keyset has no private key we hold: replace it with one we do.
+    UserVaultKeyset.objects.filter(user=fleet["user"]).delete()
+    fleet["vault_priv"] = give_vault_key(fleet["user"])
+    services.set_agent_credentials(fleet["agent"], {"CANOPY_WEB_PAT": "pat-value"}, user=fleet["user"])
+    fleet["agent"].refresh_from_db()
+    mail.outbox.clear()
+    return fleet
 
 
 def _resolve(fleet, proof=None, turn="turn-1", path=RESOLVE):
@@ -143,7 +176,7 @@ def test_a_valid_aws_proof_resolves_and_names_the_runner(fleet, sts):
     _active_role(fleet, sts)
     res = _resolve(fleet, _proof())
     assert res.status_code == 200, res.content
-    assert res.json()["values"]["CANOPY_WEB_PAT"] == "pat-value"
+    assert res.json()["values"]["CANOPY_WEB_PAT"].startswith("zks1:")
     assert AgentCredentialRead.objects.get(name="CANOPY_WEB_PAT").runner_id == fleet["runner"].pk
     assert RunnerDeviceKey.objects.get().last_used_at is not None
     assert all(c["url"] == "https://sts.amazonaws.com/" for c in sts.calls)
@@ -292,13 +325,13 @@ def test_a_refused_device_proof_names_the_box_the_request_names(fleet, sts):
     assert f"on {fleet['runner'].name} refused" in mail.outbox[0].body
 
 
-def test_other_alerts_link_to_the_alert_list_on_the_security_tab(fleet):
+def test_other_alerts_link_to_the_alert_list_on_the_security_tab(no_proof, fleet):
     assert _resolve_as_box(fleet).status_code == 200  # a no-turn alert
     assert "/w/connect/agents/eva/settings/security#cred-alerts" in mail.outbox[0].body
     assert "See eva\u2019s vault alerts and credential read history" in mail.outbox[0].body
 
 
-def test_a_box_read_without_a_turn_id_alerts(fleet):
+def test_a_box_read_without_a_turn_id_alerts(no_proof, fleet):
     assert _resolve_as_box(fleet).status_code == 200
     [alert] = _alerts("no-turn")
     assert alert.refs == ["CANOPY_WEB_PAT"] and alert.runner_id == fleet["runner"].pk
@@ -313,7 +346,7 @@ def test_a_proven_box_read_without_a_turn_id_alerts(fleet, sts):
     assert len(_alerts("no-turn")) == 1
 
 
-def test_a_boxs_own_credential_refresh_is_expected(fleet):
+def test_a_boxs_own_credential_refresh_is_expected(no_proof, fleet):
     """canopy-web#1563: cloud-ec2-2's runner-update timer refreshes every agent's
     credentials every 30 min, outside any turn, and says so."""
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
@@ -324,7 +357,7 @@ def test_a_boxs_own_credential_refresh_is_expected(fleet):
     assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).exists()  # still logged
 
 
-def test_a_verification_check_still_alerts_but_says_it_is_one(fleet):
+def test_a_verification_check_still_alerts_but_says_it_is_one(no_proof, fleet):
     """`canopy agent prepare --check` labels its reads. The label is self-reported
     (a stolen token could send it), so the read still alerts — worded as the check."""
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
@@ -338,7 +371,7 @@ def test_a_verification_check_still_alerts_but_says_it_is_one(fleet):
     assert "verification check" in body and "not proof" in body and "revoke its token" in body
 
 
-def test_a_labelled_check_does_not_use_up_the_hours_real_alert(fleet):
+def test_a_labelled_check_does_not_use_up_the_hours_real_alert(no_proof, fleet):
     """Its own kind: a check first must not debounce an unlabelled read after it."""
     Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
                  HTTP_X_CANOPY_RUNNER=str(fleet["runner"].pk),
@@ -348,7 +381,7 @@ def test_a_labelled_check_does_not_use_up_the_hours_real_alert(fleet):
     assert len(mail.outbox) == 2
 
 
-def test_a_refresh_purpose_without_a_named_box_is_not_an_exemption(fleet):
+def test_a_refresh_purpose_without_a_named_box_is_not_an_exemption(no_proof, fleet):
     """The purpose only explains a box's read; it never turns an unnamed read into one."""
     res = Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}",
                        HTTP_X_CANOPY_READ_PURPOSE="runner-refresh")
@@ -356,7 +389,7 @@ def test_a_refresh_purpose_without_a_named_box_is_not_an_exemption(fleet):
     assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).latest("pk").via == "admin"
 
 
-def test_an_owner_who_pairs_a_box_resolving_by_hand_is_expected(fleet):
+def test_an_owner_who_pairs_a_box_resolving_by_hand_is_expected(no_proof, fleet):
     """canopy-web#1563: the owner pairs a runner the agent routes to, but this
     request names no box (no device proof, no X-Canopy-Runner) — it is their
     own session, so it is an admin read and raises no no-turn alert."""
@@ -365,12 +398,12 @@ def test_an_owner_who_pairs_a_box_resolving_by_hand_is_expected(fleet):
     assert AgentCredentialRead.objects.filter(agent=fleet["agent"]).latest("pk").via == "admin"
 
 
-def test_a_read_inside_a_turn_raises_nothing(fleet):
+def test_a_read_inside_a_turn_raises_nothing(no_proof, fleet):
     assert _resolve(fleet, turn="t-1").status_code == 200
     assert _alerts() == [] and mail.outbox == []
 
 
-def test_an_admin_resolving_by_hand_without_a_turn_is_expected(fleet):
+def test_an_admin_resolving_by_hand_without_a_turn_is_expected(no_proof, fleet):
     """`via == "admin"`: an owner/admin who does not pair a box this agent
     routes to — a person resolving for their own Claude Code session."""
     RunnerAssignment.objects.all().delete()
@@ -378,21 +411,20 @@ def test_an_admin_resolving_by_hand_without_a_turn_is_expected(fleet):
     assert _alerts("no-turn") == []
 
 
-def test_asking_for_an_undeclared_ref_alerts(fleet):
+def test_asking_for_an_undeclared_ref_alerts(no_proof, fleet):
     res = _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,aws-root-key")
     assert res.status_code == 200 and "aws-root-key" not in res.json()["values"]
     [alert] = _alerts("undeclared-ref")
     assert alert.refs == ["aws-root-key"]
 
 
-def test_an_unscoped_read_of_a_stored_orphan_alerts(fleet):
-    AgentCredential.objects.create(agent=fleet["agent"], name="old-secret",
-                                   value_enc=AgentCredential.seal(fleet["agent"], "old-secret", "x"))
+def test_an_unscoped_read_of_a_stored_orphan_alerts(no_proof, fleet):
+    AgentCredential.objects.create(agent=fleet["agent"], name="old-secret", value_zk="zks1:x", kv=0)
     _resolve(fleet)
     assert _alerts("undeclared-ref")[0].refs == ["old-secret"]
 
 
-def test_a_name_a_workspace_vault_supplies_is_not_undeclared(fleet):
+def test_a_name_a_workspace_vault_supplies_is_not_undeclared(no_proof, fleet):
     """The fleet's gog OAuth clients live in the workspace vault, not in each
     agent's declaration; asking for one is not an undeclared read."""
     v = Vault.objects.create(workspace=fleet["ws"], kind=Vault.WORKSPACE, name="Shared", kv=1)
@@ -403,12 +435,12 @@ def test_a_name_a_workspace_vault_supplies_is_not_undeclared(fleet):
     assert alert.refs == ["aws-root-key"]
 
 
-def test_naming_a_resolve_extra_is_not_undeclared(fleet):
+def test_naming_a_resolve_extra_is_not_undeclared(no_proof, fleet):
     _resolve(fleet, path=RESOLVE + "?refs=CANOPY_WEB_PAT,github_token")
     assert _alerts("undeclared-ref") == []
 
 
-def test_a_burst_of_reads_alerts_once(fleet, settings):
+def test_a_burst_of_reads_alerts_once(no_proof, fleet, settings):
     settings.CANOPY_VAULT_READ_BURST_LIMIT = 3
     for _ in range(6):
         assert _resolve(fleet).status_code == 200
@@ -417,12 +449,14 @@ def test_a_burst_of_reads_alerts_once(fleet, settings):
 
 
 def test_no_alerts_for_an_agent_on_1password(fleet):
-    Agent.objects.filter(pk=fleet["agent"].pk).update(credential_source=Agent.ONEPASSWORD)
+    # A legacy 1Password agent that has never held a value here.
+    AgentCredential.objects.filter(agent=fleet["agent"]).delete()
+    Agent.objects.filter(pk=fleet["agent"].pk).update(credential_source=Agent.ONEPASSWORD, zk_enabled=False)
     _resolve(fleet, turn="", path=RESOLVE + "?refs=nope")
     assert _alerts() == []
 
 
-def test_alerts_are_listed_for_admins_only(fleet):
+def test_alerts_are_listed_for_admins_only(no_proof, fleet):
     _resolve_as_box(fleet)
     rows = fleet["client"].get("/api/agents/eva/credential-alerts").json()
     assert [r["kind"] for r in rows] == ["no-turn"] and rows[0]["notified"] is True
@@ -434,7 +468,7 @@ def test_alerts_are_listed_for_admins_only(fleet):
     assert c.get("/api/agents/eva/credential-alerts").status_code == 403
 
 
-def test_an_alert_failure_never_denies_a_runner(fleet, monkeypatch):
+def test_an_alert_failure_never_denies_a_runner(no_proof, fleet, monkeypatch):
     from apps.agents.credentials import vault_alerts
 
     def boom(*a, **k):
@@ -461,8 +495,11 @@ def agent_login(fleet):
     return {"login": login, "raw": raw, "token": token}
 
 
-def _stored_pat(agent) -> str:
-    return AgentCredential.objects.get(agent=agent, name="CANOPY_WEB_PAT").plaintext()
+def _stored_pat(fleet) -> str:
+    """Open the stored (sealed) canopy-pat as its owner would, with their vault key."""
+    row = AgentCredential.objects.get(agent=fleet["agent"], name="CANOPY_WEB_PAT")
+    return _ref().open_sealed_value(row.value_zk, str(row.agent_id), row.name, "member",
+                                    str(fleet["user"].pk), fleet["vault_priv"])
 
 
 def test_turning_rotation_on_is_an_audited_admin_setting(fleet, agent_login):
@@ -504,35 +541,40 @@ def test_a_login_that_signed_in_needs_a_workspace_owner(fleet, agent_login):
 
 
 def test_a_due_rotation_mints_writes_overlaps_then_revokes(fleet, agent_login):
-    Agent.objects.filter(pk=fleet["agent"].pk).update(
-        pat_rotation_enabled=True, pat_rotation_days=30, pat_rotation_enabled_by=fleet["user"],
-        pat_rotated_at=timezone.now() - dt.timedelta(days=31))
-    out = pat_rotation.tick()
-    assert out == {"rotated": 1, "failed": 0, "revoked": 0}
+    def due():
+        Agent.objects.filter(pk=fleet["agent"].pk).update(
+            pat_rotation_enabled=True, pat_rotation_days=30, pat_rotation_enabled_by=fleet["user"],
+            pat_rotated_at=timezone.now() - dt.timedelta(days=31))
 
+    due()
+    assert pat_rotation.tick() == {"rotated": 1, "failed": 0, "revoked": 0}
     agent = Agent.objects.get(pk=fleet["agent"].pk)
-    new_raw = _stored_pat(agent)
-    assert new_raw != agent_login["raw"]
-    new = PersonalToken.lookup(new_raw)
-    assert new is not None and new.user_id == agent_login["login"].pk and new.expires_at is not None
-    # The old one still works, but only for the overlap.
-    old = PersonalToken.objects.get(pk=agent_login["token"].pk)
-    assert PersonalToken.lookup(agent_login["raw"]) is not None
-    assert old.expires_at is not None
-    assert dt.timedelta(hours=23) < old.expires_at - timezone.now() <= dt.timedelta(hours=24)
-    row = AgentPatRotation.objects.get()
-    assert row.status == "rotated" and row.old_token_id == old.pk and row.new_token_id == new.pk
-    assert agent.pat_rotated_at is not None
+    first_raw = _stored_pat(fleet)
+    assert first_raw != agent_login["raw"]
+    first = PersonalToken.lookup(first_raw)
+    assert first is not None and first.user_id == agent_login["login"].pk and first.expires_at is not None
+    # canopy-web cannot read the stored value, so a token it did not mint is left alone.
+    assert PersonalToken.objects.get(pk=agent_login["token"].pk).expires_at is None
+    assert AgentPatRotation.objects.get().old_token_id is None and agent.pat_rotated_at is not None
     # Not due again yet.
     assert pat_rotation.tick()["rotated"] == 0
+
+    # The next rotation retires the one it minted last: it works only for the overlap.
+    due()
+    assert pat_rotation.tick()["rotated"] == 1
+    second_raw = _stored_pat(fleet)
+    old = PersonalToken.objects.get(pk=first.pk)
+    assert PersonalToken.lookup(first_raw) is not None and old.expires_at is not None
+    assert dt.timedelta(hours=23) < old.expires_at - timezone.now() <= dt.timedelta(hours=24)
+    row = AgentPatRotation.objects.latest("created_at")
+    assert row.status == "rotated" and row.old_token_id == old.pk
     # 24 h on: revoked.
     later = timezone.now() + dt.timedelta(hours=25)
     assert pat_rotation.tick(now=later)["revoked"] == 1
     assert PersonalToken.objects.get(pk=old.pk).revoked_at is not None
-    assert AgentPatRotation.objects.get().old_revoked_at is not None
     # The new token authenticates.
     assert Client().get("/api/agents/eva/credentials/access",
-                        HTTP_AUTHORIZATION=f"Bearer {new_raw}").status_code == 200
+                        HTTP_AUTHORIZATION=f"Bearer {second_raw}").status_code == 200
 
 
 def test_rotation_never_revokes_a_token_that_is_not_the_agents(fleet, agent_login):
@@ -569,7 +611,7 @@ def test_rotate_now_needs_a_step_up_from_a_browser(fleet, agent_login):
     res = fleet["client"].post("/api/agents/eva/pat-rotation/rotate")
     assert res.status_code == 200, res.content
     assert res.json()["history"][0]["status"] == "rotated"
-    assert _stored_pat(fleet["agent"]) != agent_login["raw"]
+    assert _stored_pat(fleet) != agent_login["raw"]
 
 
 def test_the_management_command_runs_a_tick(fleet, agent_login):
@@ -599,8 +641,7 @@ def test_an_agent_rotates_its_own_token_at_once(fleet, agent_login):
     assert res.status_code == 200, res.content
     body = res.json()
     assert body["old_token_revoked_after"] and "Self-requested: sent to a third-party CDN" in body["detail"]
-    agent = Agent.objects.get(pk=fleet["agent"].pk)
-    new_raw = _stored_pat(agent)
+    new_raw = _stored_pat(fleet)
     assert new_raw != agent_login["raw"] and PersonalToken.lookup(new_raw).user_id == agent_login["login"].pk
     # The leaked token keeps working only for the overlap, so the agent's other boxes catch up.
     old = PersonalToken.objects.get(pk=agent_login["token"].pk)

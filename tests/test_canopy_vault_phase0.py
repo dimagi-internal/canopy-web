@@ -2,7 +2,6 @@
 
 - FIELD_ENCRYPTION_KEY is its own secret, wired into the task definition.
 - `manage.py reencrypt_secrets` moves every *_enc column onto the write key.
-- Optional KMS envelope (`kms1:`) for AgentCredential values, off by default.
 - `/credentials/resolve` can be scoped with `?refs=`, drops the 1Password key for
   a `canopy-web` agent, and logs every ref it hands out.
 """
@@ -10,13 +9,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 from io import StringIO
 from pathlib import Path
 
 import pytest
 import yaml
-from botocore.stub import Stubber
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -24,89 +21,13 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents import services
-from apps.agents.models import Agent, AgentCredential, AgentCredentialRead
-from apps.common import kms_envelope
+from apps.agents.models import Agent, AgentCredentialRead
 from apps.common.encryption import encrypt_secret
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 AWS = Path(__file__).resolve().parent.parent / "deploy" / "aws"
-KEY_ARN = "arn:aws:kms:us-east-1:858923557655:key/11111111-2222-3333-4444-555555555555"
-
-
-# ---- a KMS double with KMS's semantics: the context must match ---------------
-
-class FakeKms:
-    def __init__(self):
-        self.wrapped: dict[bytes, tuple[bytes, dict]] = {}
-        self.calls: list[str] = []
-
-    def generate_data_key(self, *, KeyId, KeySpec, EncryptionContext):
-        assert KeySpec == "AES_256"
-        self.calls.append("generate_data_key")
-        dk = os.urandom(32)
-        blob = os.urandom(48)
-        self.wrapped[blob] = (dk, dict(EncryptionContext))
-        return {"Plaintext": dk, "CiphertextBlob": blob, "KeyId": KeyId}
-
-    def decrypt(self, *, CiphertextBlob, EncryptionContext):
-        self.calls.append("decrypt")
-        dk, ctx = self.wrapped[CiphertextBlob]
-        if ctx != EncryptionContext:
-            raise RuntimeError("InvalidCiphertextException")
-        return {"Plaintext": dk}
-
-
-@pytest.fixture
-def kms(settings, monkeypatch):
-    settings.VAULT_KMS_KEY_ID = KEY_ARN
-    fake = FakeKms()
-    monkeypatch.setattr(kms_envelope, "_client", lambda: fake)
-    return fake
-
-
-# ---- the envelope ------------------------------------------------------------
-
-def test_envelope_round_trips_against_the_real_kms_api_shapes(settings, monkeypatch):
-    """botocore's Stubber validates the request params against the real KMS
-    model, so a misnamed argument fails here rather than in production."""
-    import boto3
-
-    settings.VAULT_KMS_KEY_ID = KEY_ARN
-    client = boto3.client("kms", region_name="us-east-1",
-                          aws_access_key_id="x", aws_secret_access_key="y")
-    ctx = {"workspace": "connect", "agent": "7", "name": "gog-token"}
-    dk, blob = os.urandom(32), b"wrapped-data-key-blob"
-    with Stubber(client) as stub:
-        stub.add_response("generate_data_key",
-                          {"Plaintext": dk, "CiphertextBlob": blob, "KeyId": KEY_ARN},
-                          {"KeyId": KEY_ARN, "KeySpec": "AES_256", "EncryptionContext": ctx})
-        stub.add_response("decrypt", {"Plaintext": dk, "KeyId": KEY_ARN},
-                          {"CiphertextBlob": blob, "EncryptionContext": ctx})
-        monkeypatch.setattr(kms_envelope, "_client", lambda: client)
-        sealed = kms_envelope.encrypt("s3cret", context=ctx)
-        assert sealed.startswith("kms1:") and "s3cret" not in sealed
-        assert kms_envelope.decrypt(sealed, expect=ctx) == "s3cret"
-        stub.assert_no_pending_responses()
-
-
-def test_envelope_refuses_a_value_copied_onto_another_credential(kms):
-    sealed = kms_envelope.encrypt("v", context={"workspace": "w", "agent": "1", "name": "a"})
-    with pytest.raises(kms_envelope.EnvelopeError):
-        kms_envelope.decrypt(sealed, expect={"workspace": "w", "agent": "2", "name": "a"})
-    with pytest.raises(kms_envelope.EnvelopeError):
-        kms_envelope.decrypt(sealed, expect={"workspace": "w", "agent": "1", "name": "b"})
-    # A moved agent (new workspace) still reads its own value.
-    assert kms_envelope.decrypt(sealed, expect={"workspace": "w2", "agent": "1", "name": "a"}) == "v"
-
-
-def test_an_edited_envelope_header_fails_authentication(kms):
-    sealed = kms_envelope.encrypt("v", context={"workspace": "w", "agent": "1", "name": "a"})
-    parts = sealed[len("kms1:"):].split(".")
-    forged = kms_envelope._b64e(b'{"agent":"1","name":"a","workspace":"zz"}')
-    with pytest.raises(Exception):
-        kms_envelope.decrypt("kms1:" + ".".join([forged, *parts[1:]]))
 
 
 # ---- fixtures for the agent-credential paths ---------------------------------
@@ -127,6 +48,7 @@ def fleet(db, client):
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    give_vault_key(jj)  # someone to seal a value to: every write is zero-knowledge
     client.force_login(jj)
     from apps.tokens.models import PersonalToken
 
@@ -145,36 +67,14 @@ def _resolve(fleet, qs="", **headers):
                         HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}", **headers)
 
 
-# ---- KMS through the real write/read paths ------------------------------------
-
-def test_with_kms_on_a_new_value_is_stored_kms1_and_resolves(fleet, kms):
-    assert _put(fleet["client"], {"canopy-pat": "pat-value"}).status_code == 200
-    row = AgentCredential.objects.get(agent=fleet["agent"], name="canopy-pat")
-    assert row.value_enc.startswith("kms1:")
-    assert _resolve(fleet).json()["values"]["canopy-pat"] == "pat-value"
-
-
-def test_both_formats_read_whichever_is_being_written(fleet, kms, settings):
-    AgentCredential.objects.create(agent=fleet["agent"], name="gog-token",
-                                   value_enc=encrypt_secret("fernet-value"))
-    _put(fleet["client"], {"canopy-pat": "kms-value"})
-    settings.VAULT_KMS_KEY_ID = ""  # switched off again: kms1 rows must still open
-    values = _resolve(fleet).json()["values"]
-    assert values == {"gog-token": "fernet-value", "canopy-pat": "kms-value"}
-
-
-def test_kms_off_by_default_writes_fernet(fleet, settings):
-    settings.VAULT_KMS_KEY_ID = ""
-    _put(fleet["client"], {"canopy-pat": "v"})
-    assert not AgentCredential.objects.get(name="canopy-pat").value_enc.startswith("kms1:")
-
-
 # ---- scoped resolve -----------------------------------------------------------
 
 def test_unscoped_resolve_is_unchanged(fleet):
     _put(fleet["client"], {"canopy-pat": "a", "gog-token": "b"})
     body = _resolve(fleet).json()
-    assert body["values"] == {"canopy-pat": "a", "gog-token": "b"}
+    # Ciphertext sealed to the agent's readers, never the values.
+    assert set(body["values"]) == {"canopy-pat", "gog-token"}
+    assert all(v.startswith("zks1:") for v in body["values"].values())
     assert body["op_sa_token"] == "ops_tok" and body["op_vault"] == "Agent-Eva"
 
 
@@ -185,7 +85,7 @@ def test_refs_returns_only_named_and_declared(fleet):
     body = _resolve(fleet, "?refs=canopy-pat,undeclared,nova-api-key").json()
     # `undeclared` is stored but not declared: never handed out by name.
     # `nova-api-key` is declared through runtime_sources.
-    assert body["values"] == {"canopy-pat": "a", "nova-api-key": "n"}
+    assert set(body["values"]) == {"canopy-pat", "nova-api-key"}
     # Secret extras ride along only when named.
     assert body["op_sa_token"] == "" and body["op_vault"] == "Agent-Eva"
 
@@ -244,7 +144,7 @@ def test_secret_columns_are_discovered_not_listed():
 
     found = {f"{m._meta.label}.{f}" for m, f in secret_columns()}
     assert {
-        "agents.AgentCredential.value_enc", "agents.Agent.op_sa_token_enc",
+        "agents.Agent.op_sa_token_enc",
         "agents.AgentDelegation.secret_enc",
         "slack.SlackInstallation.bot_token_enc",
         "contacts.HcpClient.webhook_secret_encrypted",
@@ -254,23 +154,19 @@ def test_secret_columns_are_discovered_not_listed():
 def test_reencrypt_dry_run_then_apply_then_idempotent(fleet, settings):
     settings.FIELD_ENCRYPTION_KEY = ""
     old = _legacy(settings.SECRET_KEY, "legacy-value")
-    AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
+    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=old)
     settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
     settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True
 
     out = StringIO()
     call_command("reencrypt_secrets", stdout=out)
     assert "would rewrite" in out.getvalue()
-    assert AgentCredential.objects.get(name="canopy-pat").value_enc == old  # dry run wrote nothing
+    assert Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc == old  # dry run wrote nothing
 
     call_command("reencrypt_secrets", "--apply", stdout=StringIO())
-    row = AgentCredential.objects.get(name="canopy-pat")
-    assert row.value_enc != old and row.plaintext() == "legacy-value"
+    stored = Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc
     new_key = base64.urlsafe_b64encode(hashlib.sha256(b"a-new-field-key").digest())
-    assert Fernet(new_key).decrypt(row.value_enc.encode()) == b"legacy-value"
-    # The agent's vault key (another *_enc column) moved too.
-    fleet["agent"].refresh_from_db()
-    assert Fernet(new_key).decrypt(fleet["agent"].op_sa_token_enc.encode()) == b"ops_tok"
+    assert stored != old and Fernet(new_key).decrypt(stored.encode()) == b"legacy-value"
 
     out = StringIO()
     call_command("reencrypt_secrets", "--apply", stdout=out)
@@ -325,38 +221,29 @@ def _migration_0053():
 def test_the_data_migration_is_a_noop_without_a_field_key(fleet, settings):
     settings.FIELD_ENCRYPTION_KEY = ""
     old = _legacy(settings.SECRET_KEY, "legacy-value")
-    AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
+    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=old)
     _migration_0053().reencrypt(None, None)
-    assert AgentCredential.objects.get(name="canopy-pat").value_enc == old
+    assert Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc == old
 
 
 def test_the_data_migration_moves_legacy_rows_onto_the_field_key(fleet, settings):
     settings.FIELD_ENCRYPTION_KEY = ""
     old = _legacy(settings.SECRET_KEY, "legacy-value")
-    AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat", value_enc=old)
+    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=old)
     settings.FIELD_ENCRYPTION_KEY = "a-new-field-key"
     settings.FIELD_ENCRYPTION_ACCEPT_LEGACY = True  # how prod read legacy rows when 0053 ran
     _migration_0053().reencrypt(None, None)
-    row = AgentCredential.objects.get(name="canopy-pat")
+    stored = Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc
     new_key = base64.urlsafe_b64encode(hashlib.sha256(b"a-new-field-key").digest())
-    assert Fernet(new_key).decrypt(row.value_enc.encode()) == b"legacy-value"
-
-
-def test_reencrypt_moves_agent_credentials_onto_kms_when_on(fleet, kms):
-    AgentCredential.objects.create(agent=fleet["agent"], name="gog-token",
-                                   value_enc=encrypt_secret("g"))
-    call_command("reencrypt_secrets", "--apply", stdout=StringIO())
-    row = AgentCredential.objects.get(name="gog-token")
-    assert row.value_enc.startswith("kms1:") and row.plaintext() == "g"
+    assert Fernet(new_key).decrypt(stored.encode()) == b"legacy-value"
 
 
 def test_reencrypt_leaves_an_unreadable_value_untouched(fleet):
-    AgentCredential.objects.create(agent=fleet["agent"], name="canopy-pat",
-                                   value_enc=Fernet(Fernet.generate_key()).encrypt(b"x").decode())
-    before = AgentCredential.objects.get(name="canopy-pat").value_enc
+    before = Fernet(Fernet.generate_key()).encrypt(b"x").decode()
+    Agent.objects.filter(pk=fleet["agent"].pk).update(op_sa_token_enc=before)
     err = StringIO()
     call_command("reencrypt_secrets", "--apply", stdout=StringIO(), stderr=err)
-    assert AgentCredential.objects.get(name="canopy-pat").value_enc == before
+    assert Agent.objects.get(pk=fleet["agent"].pk).op_sa_token_enc == before
     assert "left untouched" in err.getvalue()
 
 

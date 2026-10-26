@@ -13,10 +13,6 @@ configured there is nothing to rotate to, and it says so.
 Columns are DISCOVERED, not listed: every model TextField named `*_enc` or
 `*_encrypted`. A hand-kept list is the thing that silently misses the next one.
 
-`AgentCredential.value_enc` additionally moves onto the `kms1:` envelope when
-`VAULT_KMS_KEY_ID` is set (apps/common/kms_envelope.py); a `kms1:` value is
-already off Fernet and is left alone.
-
 Idempotent: a row already readable under the first (write) key is skipped, so a
 second run reports zero. A row no configured key can read is COUNTED and left
 untouched — never overwritten, never fatal to the run.
@@ -28,7 +24,7 @@ from django.apps import apps
 from django.core.management.base import BaseCommand
 from django.db import models
 
-from apps.common import encryption, kms_envelope
+from apps.common import encryption
 
 SUFFIXES = ("_enc", "_encrypted")
 
@@ -72,64 +68,43 @@ class Command(BaseCommand):
         keys = encryption._keys()
         primary = Fernet(keys[0])
         multi = encryption._fernet()
-        kms_on = kms_envelope.enabled()
-        if len(keys) == 1 and not kms_on:
-            self.stdout.write("Only one key is configured (FIELD_ENCRYPTION_KEY unset) and KMS is "
-                              "off: every row is already under the write key. Nothing to do.")
+        if len(keys) == 1:
+            self.stdout.write("Only one key is configured (FIELD_ENCRYPTION_KEY unset): every row "
+                              "is already under the write key. Nothing to do.")
 
-        totals = {"rotated": 0, "to_kms": 0, "current": 0, "unreadable": 0}
+        totals = {"rotated": 0, "current": 0, "unreadable": 0}
         for model, field in secret_columns(existing_only=existing_only):
             label = f"{model._meta.label}.{field}"
             counts = dict.fromkeys(totals, 0)
-            is_agent_cred = model._meta.label == "agents.AgentCredential" and field == "value_enc"
             qs = model._default_manager.exclude(**{field: ""}).only("pk", field)
-            if is_agent_cred:
-                qs = qs.select_related("agent").only("pk", field, "name", "agent")
             for row in qs.iterator(chunk_size=500):
                 stored = getattr(row, field) or ""
-                new = None
-                if kms_envelope.is_envelope(stored):
+                try:
+                    primary.decrypt(stored.encode())
                     counts["current"] += 1
                     continue
-                if is_agent_cred and kms_on:
-                    try:
-                        plain = multi.decrypt(stored.encode()).decode()
-                    except InvalidToken:
-                        counts["unreadable"] += 1
-                        continue
-                    if apply:
-                        new = row.seal(row.agent, row.name, plain)
-                    counts["to_kms"] += 1
-                else:
-                    try:
-                        primary.decrypt(stored.encode())
-                        counts["current"] += 1
-                        continue
-                    except InvalidToken:
-                        pass
-                    try:
-                        rotated = multi.rotate(stored.encode()).decode()
-                    except InvalidToken:
-                        counts["unreadable"] += 1
-                        continue
-                    if apply:
-                        new = rotated
-                    counts["rotated"] += 1
-                if new is not None:
+                except InvalidToken:
+                    pass
+                try:
+                    rotated = multi.rotate(stored.encode()).decode()
+                except InvalidToken:
+                    counts["unreadable"] += 1
+                    continue
+                counts["rotated"] += 1
+                if apply:
                     # .update(), not .save(): no auto_now bump, no signals — the
                     # secret did not change, only its wrapping.
-                    model._default_manager.filter(pk=row.pk).update(**{field: new})
+                    model._default_manager.filter(pk=row.pk).update(**{field: rotated})
             for k, v in counts.items():
                 totals[k] += v
-            if any(counts[k] for k in ("rotated", "to_kms", "unreadable")):
+            if counts["rotated"] or counts["unreadable"]:
                 self.stdout.write(
-                    f"{label}: rotate={counts['rotated']} to_kms={counts['to_kms']} "
+                    f"{label}: rotate={counts['rotated']} "
                     f"current={counts['current']} unreadable={counts['unreadable']}")
 
         verb = "rewrote" if apply else "would rewrite"
         self.stdout.write(
-            f"{verb} {totals['rotated'] + totals['to_kms']} value(s) "
-            f"(rotate={totals['rotated']}, to_kms={totals['to_kms']}); "
+            f"{verb} {totals['rotated']} value(s); "
             f"{totals['current']} already current; {totals['unreadable']} unreadable"
             + ("" if apply else " — dry run, pass --apply to write"))
         if totals["unreadable"]:

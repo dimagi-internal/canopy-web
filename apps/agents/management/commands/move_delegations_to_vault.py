@@ -52,7 +52,7 @@ def move(row: AgentDelegation, *, apply: bool) -> str:
         AgentCredential.objects.update_or_create(
             agent=agent, name=accounts.GITHUB_ENTRY,
             defaults={
-                "value_zk": value_zk, "value_enc": "", "kv": agent.zk_kv, "updated_by": row.user,
+                "value_zk": value_zk, "kv": agent.zk_kv, "updated_by": row.user,
                 "account": "delegated", "delegated_by": row.user, "delegated_by_agent": None,
                 "provider": "github",
                 "identity": {k: meta.get(k) for k in ("login", "user_id", "name")},

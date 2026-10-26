@@ -289,7 +289,7 @@ def test_a_chat_writer_fills_a_missing_secret_and_the_runner_opens_it(f):
     assert res.status_code == 200, res.content
     assert res.json()["status"] == "fulfilled" and res.json()["fulfilled_by_email"] == "sam@dimagi.com"
     stored = AgentCredential.objects.get(agent=f.agent, name="GITHUB_TOKEN")
-    assert stored.value_zk.startswith("zks1:") and stored.value_enc == ""
+    assert stored.value_zk.startswith("zks1:")
     assert "ghp_from_sam" not in stored.value_zk
     # The runner resolves the ciphertext and opens its own entry.
     got = _resolve(f)

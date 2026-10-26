@@ -26,6 +26,21 @@ def grant_step_up(client, *, seconds: int = STEP_UP_SECONDS) -> None:
     session.save()
 
 
+def give_vault_key(user):
+    """A UserVaultKeyset for `user` with a real P-256 public key (no seals), so a
+    zero-knowledge agent they may read has someone to seal a value to. Returns
+    the private key, for a test that opens what was sealed."""
+    from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415 — as the helpers below
+
+    from apps.passkeys.models import UserVaultKeyset  # noqa: PLC0415 — a model, after Django setup
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    n = priv.public_key().public_numbers()
+    UserVaultKeyset.objects.create(user=user, seals=[], public_jwk={
+        "kty": "EC", "crv": "P-256", "x": _b64u(n.x.to_bytes(32, "big")), "y": _b64u(n.y.to_bytes(32, "big"))})
+    return priv
+
+
 def _b64u(data: bytes) -> str:
     import base64
 

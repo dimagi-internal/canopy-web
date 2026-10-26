@@ -183,6 +183,7 @@ def test_the_id_token_payload_yields_the_mailbox():
 from django.contrib.auth import get_user_model  # noqa: E402
 
 from apps.agents.models import Agent, AgentCredential  # noqa: E402
+from apps.passkeys.testing import give_vault_key  # noqa: E402
 from apps.workspaces.models import Workspace, WorkspaceMembership  # noqa: E402
 
 CALLBACK = "/api/oauth/google/callback"
@@ -197,8 +198,10 @@ def fleet(client, settings):
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, runtime_secrets=["gog-token"])
+    # The minted token is sealed to whoever may read the agent: its owner, here.
+    key = give_vault_key(jj)
     client.force_login(jj)
-    return {"client": client, "agent": agent, "user": jj, "ws": ws}
+    return {"client": client, "agent": agent, "user": jj, "ws": ws, "key": key}
 
 
 def _google_response(*, refresh="1//refresh", scope=None):
@@ -235,17 +238,28 @@ def test_the_callback_stores_a_gog_importable_token(fleet, monkeypatch):
     res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
     assert res.status_code == 302 and res["Location"].endswith("?google=ok#credentials")
 
-    stored = json.loads(_stored_token(fleet["agent"]))
+    stored = json.loads(_stored_token(fleet))
     assert stored["email"] == "ace@dimagi-ai.com"
     assert stored["client"] == "canopy-web"
     assert stored["refresh_token"] == "1//refresh"
     assert stored["services"] == ["docs", "drive", "forms", "gmail", "sheets"]
 
 
-def _stored_token(agent) -> str:
-    from apps.agents import services as svc
+def _stored_token(fleet) -> str:
+    """The stored gog-token, opened as its owner's browser would: canopy-web holds
+    only `zks1` ciphertext sealed to the agent's readers."""
+    import importlib.util
+    from pathlib import Path
 
-    return svc.resolve_agent_credentials(agent)["gog-token"]
+    path = Path(__file__).resolve().parents[1] / "docs" / "vault" / "zk-v1" / "zk_v1_reference.py"
+    spec = importlib.util.spec_from_file_location("zk_v1_reference", path)
+    ref = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ref)
+    agent = fleet["agent"]
+    stored = AgentCredential.objects.get(agent=agent, name="gog-token").value_zk
+    assert stored.startswith("zks1:")
+    return ref.open_sealed_value(stored, str(agent.pk), "gog-token", "member", str(fleet["user"].pk),
+                                 fleet["key"])
 
 
 @pytest.mark.django_db

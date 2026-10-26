@@ -316,7 +316,7 @@ def set_github(agent: Agent, user, token: str):
         entry, _ = AgentCredential.objects.update_or_create(
             agent=agent, name=name,
             defaults={
-                "value_zk": value_zk, "value_enc": "", "kv": agent.zk_kv, "updated_by": user,
+                "value_zk": value_zk, "kv": agent.zk_kv, "updated_by": user,
                 "account": "delegated", "delegated_by": user, "delegated_by_agent": None,
                 "provider": "github",
                 "identity": {k: meta.get(k) for k in ("login", "user_id", "name")},
@@ -587,25 +587,19 @@ SALESFORCE_CREDENTIAL = "salesforce"
 
 
 def lender_salesforce_creds(lender: Agent) -> dict:
-    """The lender's own chrome-sales credential, parsed. DelegationError if absent."""
+    """The lender's own chrome-sales credential, parsed — which canopy-web can no
+    longer produce: every agent's vault is zero-knowledge, so the stored value is
+    ciphertext it holds no key for. Always DelegationError, naming why. Lending a
+    credential to another agent needs it shared to that agent's machines instead (a
+    delegated entry, `accounts`), which this path does not do yet."""
 
-    row = AgentCredential.objects.filter(agent=lender, name=SALESFORCE_CREDENTIAL).first()
-    if row is None:
+    if not AgentCredential.objects.filter(agent=lender, name=SALESFORCE_CREDENTIAL).exists():
         raise DelegationError(
             f"{lender.slug} holds no Salesforce credential to lend — it stores one as its "
             f"own credential '{SALESFORCE_CREDENTIAL}' (PUT /api/agents/{lender.slug}/credentials)")
-    if row.is_zk:
-        raise DelegationError(
-            f"{lender.slug} is zero-knowledge: canopy-web cannot read its Salesforce credential "
-            "to lend it (canopy-web#1550)")
-    try:
-        creds = json.loads(row.plaintext())
-    except (ValueError, TypeError) as exc:
-        raise DelegationError(f"{lender.slug}'s Salesforce credential is not valid JSON") from exc
-    if not all(creds.get(k) for k in ("refreshToken", "clientId", "instanceUrl")):
-        raise DelegationError(
-            f"{lender.slug}'s Salesforce credential lacks refreshToken/clientId/instanceUrl")
-    return creds
+    raise DelegationError(
+        f"{lender.slug}'s vault is zero-knowledge: canopy-web cannot read its Salesforce "
+        "credential to lend it (canopy-web#1550)")
 
 
 def probe_salesforce(creds: dict) -> dict:

@@ -20,6 +20,7 @@ from django.utils import timezone
 from apps.agents import services as asvc
 from apps.agents.models import Agent, AgentAdmin
 from apps.harness.models import Runner, RunnerAssignment
+from apps.passkeys.testing import give_vault_key
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 
@@ -62,6 +63,7 @@ def cs():
     agent = Agent.objects.create(slug="csbot", name="CS", workspace=ws, owner=owner,
                                  runtime_secrets=["canopy-pat"])
     AgentAdmin.objects.create(agent=agent, user=admin)
+    give_vault_key(owner)  # someone to seal its value to: every value is zero-knowledge
     asvc.set_agent_credentials(agent, {"canopy-pat": SECRET}, user=owner)
     return {"ws": ws, "owner": owner, "admin": admin, "editor": editor, "agent": agent}
 
@@ -84,24 +86,10 @@ def test_credential_source_defaults_to_1password_and_is_on_the_read_schemas(cs):
     assert listed["csbot"]["credential_source"] == "1password"
 
 
-def _vault_key(user):
-    import base64
-
-    from cryptography.hazmat.primitives.asymmetric import ec
-
-    from apps.passkeys.models import UserVaultKeyset
-
-    n = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
-    b64 = lambda i: base64.urlsafe_b64encode(i.to_bytes(32, "big")).rstrip(b"=").decode()  # noqa: E731
-    UserVaultKeyset.objects.create(user=user, public_jwk={"kty": "EC", "crv": "P-256", "x": b64(n.x), "y": b64(n.y)},
-                                   seals=[])
-
-
 @pytest.mark.parametrize("who", ["owner", "admin"])
 def test_owner_or_admin_sets_the_credential_source(cs, who):
-    # Zero-knowledge is the canopy-web vault's only mode: the stored value is
-    # sealed to the agent's readers (here, its owner's vault key) on the move.
-    _vault_key(cs["owner"])
+    # Zero-knowledge is the agent vault's only mode: the stored value was sealed
+    # to the agent's readers (its owner's vault key) when it was written.
     res = _session(cs[who]).patch(
         "/api/agents/csbot/credential-source",
         data={"credential_source": "canopy-web"}, content_type="application/json",
@@ -112,17 +100,20 @@ def test_owner_or_admin_sets_the_credential_source(cs, who):
     assert cs["agent"].credential_source == "canopy-web"
     assert cs["agent"].zk_enabled and cs["agent"].zk_kv == 0
     row = cs["agent"].credentials.get(name="canopy-pat")
-    assert row.value_enc == "" and row.value_zk.startswith("zks1:")
+    assert row.value_zk.startswith("zks1:")
 
 
-def test_moving_to_canopy_web_with_nobody_to_seal_to_is_refused(cs):
+def test_a_legacy_agent_holding_nothing_starts_its_vault_on_the_move(cs):
+    cs["agent"].credentials.all().delete()
+    type(cs["agent"]).objects.filter(pk=cs["agent"].pk).update(zk_enabled=False, zk_kv=0)
     res = _session(cs["owner"]).patch(
         "/api/agents/csbot/credential-source",
         data={"credential_source": "canopy-web"}, content_type="application/json",
     )
-    assert res.status_code == 409 and res.json()["error"] == "zk_no_recipients", res.content
+    assert res.status_code == 200, res.content
     cs["agent"].refresh_from_db()
-    assert cs["agent"].credential_source == "1password" and not cs["agent"].zk_enabled
+    assert cs["agent"].credential_source == "canopy-web"
+    assert cs["agent"].zk_enabled and cs["agent"].zk_kv == 0
 
 
 def test_an_editor_cannot_set_the_credential_source(cs):
@@ -167,7 +158,8 @@ def _resolve_events(agent):
 def test_an_admin_without_a_runner_resolves_and_is_audited_as_admin(cs, who):
     res = _bearer(cs[who]).get("/api/agents/csbot/credentials/resolve")
     assert res.status_code == 200, res.content
-    assert res.json()["values"]["canopy-pat"] == SECRET
+    body = res.json()
+    assert body["values"]["canopy-pat"].startswith("zks1:") and SECRET not in res.content.decode()
     [ev] = _resolve_events(cs["agent"])
     assert ev.payload["via"] == "admin"
 

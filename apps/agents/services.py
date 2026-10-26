@@ -16,7 +16,6 @@ from apps.agents.schemas import AgentVaultOut
 from apps.common.encryption import decrypt_secret, encrypt_secret
 from apps.contacts import people
 from apps.contacts.models import Person
-from apps.events import services as events
 from apps.harness.dispatch import dispatch, enqueue_task_turn
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
 from apps.harness.routing import inherited_orders
@@ -41,7 +40,6 @@ from .models import (
     AgentTask,
     AgentTaskAction,
     AgentTaskHumanWhy,
-    ZeroKnowledgeValue,
 )
 
 _VALID_TASK_STATUS = set(AgentTask.CATEGORY)
@@ -123,31 +121,14 @@ def born_zk_fields(owner) -> dict:
     return {"zk_enabled": True, "zk_kv": 0, "credential_source": Agent.CANOPY_WEB}
 
 
-def make_zero_knowledge(agent) -> int:
-    """Move a custodial agent to zero-knowledge, server side: each stored value
-    is sealed to the agent's readers (`zks1`, kv 0) and its custodial copy
-    wiped, atomically. canopy-web held these values readable until now; after
-    this it cannot. Raises ZkError `zk_no_recipients` when nobody could read
-    them (no vault key, no approved machine) — nothing changes then. Returns
-    the number of values sealed; a no-op on an agent already zero-knowledge."""
-    from django.db import transaction
-
-    from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services  # noqa: PLC0415
-
-    with transaction.atomic():
-        agent = zk._locked(agent)
-        if agent.zk_enabled:
-            return 0
+def start_zero_knowledge(agent) -> None:
+    """Turn the vault on for a legacy 1Password agent that has never held a value
+    here: zero-knowledge at kv 0, as a new agent is born. Callers hold the agent's
+    row lock. A no-op on an agent already zero-knowledge. There is nothing to
+    convert: canopy-web never stores an agent's value any other way."""
+    if not agent.zk_enabled:
         agent.zk_enabled, agent.zk_kv = True, 0
-        rows = list(AgentCredential.objects.filter(agent=agent))
-        plain = {r.name: r.plaintext() for r in rows if not r.is_zk}
-        sealed = {name: zk_seal.seal_for_agent(agent, name, value) for name, value in plain.items()}
-        for r in rows:
-            if r.name in sealed:
-                r.value_zk, r.kv, r.value_enc = sealed[r.name], 0, ""
-                r.save(update_fields=["value_zk", "kv", "value_enc", "updated_at"])
         agent.save(update_fields=["zk_enabled", "zk_kv", "updated_at"])
-    return len(sealed)
 
 
 def list_agents() -> list[Agent]:
@@ -320,7 +301,7 @@ def give_agent_canopy_login(agent: Agent, actor, *, email: str = "") -> dict:
         raise AgentTokenRefused(
             f"{agent.slug} reads its secrets from 1Password; switch it to the Canopy vault "
             "first, or put its token in 1Password with `canopy agent vault`", 409)
-    if agent.zk_enabled and not zk_seal.recipients_for(agent):
+    if not zk_seal.recipients_for(agent):
         raise AgentTokenRefused(
             "nobody can open this agent's secrets yet — set up your key under Settings → "
             "Security → You (one passkey touch), then try again", 409)
@@ -1636,11 +1617,8 @@ def filter_tasks(qs, *, user=None, project: str = "", status: str = "", waiting:
 # ---- Agent credentials (per-agent secret store, encrypted at rest) ----------
 # Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
-#: Where a resolved value came from. During migration a secret can exist in BOTH
-#: stores and the box silently prefers canopy-web, so the screen must say which
-#: is live rather than only that something is set.
-SOURCE_CANOPY_WEB = "canopy-web"
-#: Stored here as zero-knowledge ciphertext (canopy-web#1550).
+#: Where a value comes from: stored here as zero-knowledge ciphertext
+#: (canopy-web#1550), the only way canopy-web stores one, or not stored at all.
 SOURCE_CANOPY_WEB_ZK = "canopy-web-zk"
 SOURCE_UNSET = "unset"
 
@@ -1654,54 +1632,40 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     type anything", and storing it makes a declared ref read as SET while
     resolving to nothing — the worst of both.
 
-    Zero-knowledge is the canopy-web vault's only mode (Jonathan, 2026-10-17):
-    on a zero-knowledge agent — every agent created since, and every agent that
-    held nothing (migration 0059) — a value written in plaintext (`canopy vault
-    import`, or one canopy-web made itself: `minted`, Connect Google mailbox,
-    canopy-pat rotation) is sealed to every reader of the agent (`zks1`,
-    `zk_seal.py`) and the plaintext forgotten. Only an older agent that already
-    held custodial values is still written custodially until it is converted
-    (`manage.py list_custodial_vault_agents` lists them).
+    Zero-knowledge is the agent vault's only mode: every value written in
+    plaintext (`canopy vault import`, or one canopy-web made itself: `minted`,
+    Connect Google mailbox, canopy-pat rotation) is sealed to every reader of the
+    agent (`zks1`, `zk_seal.py`) and the plaintext forgotten. Raises ZkError
+    `zk_no_recipients` when nobody could read it yet; nothing is written then.
     """
 
-    del minted  # every write is sealed now; kept for callers' clarity
+    del minted  # every write is sealed; kept for callers' clarity
     blank = sorted(k for k, v in values.items() if not (v or "").strip())
     if blank:
         raise ValueError(f"blank value for: {', '.join(blank)}")
 
     by = user if getattr(user, "is_authenticated", False) else None
-    from .credentials import accounts  # cycle: credentials.accounts -> services  # noqa: PLC0415
+    from django.db import transaction
+
+    from .credentials import (  # cycle: credentials.* -> services  # noqa: PLC0415
+        accounts,
+        zk,
+        zk_seal,
+    )
 
     accounts.refuse_delegated_names(agent, values)
-    if agent.zk_enabled:
-        from django.db import transaction
-
-        from .credentials import zk, zk_seal  # cycle: agents.credentials.zk -> agents.services  # noqa: PLC0415
-
-        # Under the agent row lock, like every ZK write: a settle's
-        # compare-and-swap (`expect`) must see this write or come after it.
-        with transaction.atomic():
-            agent = zk._locked(agent)
-            sealed = {name.strip(): zk_seal.seal_for_agent(agent, name.strip(), value.strip())
-                      for name, value in values.items()}
-            for name, value_zk in sealed.items():
-                AgentCredential.objects.update_or_create(
-                    agent=agent, name=name,
-                    defaults={"value_zk": value_zk, "kv": agent.zk_kv, "value_enc": "", "updated_by": by})
-        return len(sealed)
-
-    written = 0
-    for name, value in values.items():
-        AgentCredential.objects.update_or_create(
-            agent=agent,
-            name=name.strip(),
-            defaults={
-                "value_enc": AgentCredential.seal(agent, name.strip(), value.strip()),
-                "updated_by": user if getattr(user, "is_authenticated", False) else None,
-            },
-        )
-        written += 1
-    return written
+    # Under the agent row lock, like every ZK write: a settle's
+    # compare-and-swap (`expect`) must see this write or come after it.
+    with transaction.atomic():
+        agent = zk._locked(agent)
+        start_zero_knowledge(agent)
+        sealed = {name.strip(): zk_seal.seal_for_agent(agent, name.strip(), value.strip())
+                  for name, value in values.items()}
+        for name, value_zk in sealed.items():
+            AgentCredential.objects.update_or_create(
+                agent=agent, name=name,
+                defaults={"value_zk": value_zk, "kv": agent.zk_kv, "updated_by": by})
+    return len(sealed)
 
 
 def delete_agent_credential(agent, name: str) -> int:
@@ -1745,8 +1709,7 @@ def agent_credential_status(agent) -> list[dict]:
             "name": name,
             "declared": name in declared,
             "set": cred is not None,
-            "source": ((SOURCE_CANOPY_WEB_ZK if cred.is_zk else SOURCE_CANOPY_WEB)
-                       if cred else SOURCE_UNSET),
+            "source": SOURCE_CANOPY_WEB_ZK if cred else SOURCE_UNSET,
             "updated_at": cred.updated_at if cred else None,
             "updated_by_email": (cred.updated_by.email if cred and cred.updated_by_id else None),
             "last_read_at": read.get("last"),
@@ -1797,22 +1760,6 @@ def declare_credential_names(agent, names) -> list[str]:
     return added
 
 
-def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, str]:
-    """PLAINTEXT. The only path that returns values, and only to a runner.
-
-    `refs=None` returns every stored value (the unscoped, original behaviour).
-    A set returns only those refs that the agent also DECLARES — a ref the
-    caller names but the agent does not declare is never handed out, so a scoped
-    caller cannot widen its read by guessing names."""
-
-    qs = AgentCredential.objects.filter(agent=agent).exclude(account="delegated").select_related("agent")
-    if refs is not None:
-        qs = qs.filter(name__in=sorted(set(refs) & declared_credential_names(agent)))
-    # A zero-knowledge agent never reaches here (resolve branches to zk.py);
-    # plaintext() refuses a zk value outright if one ever does.
-    return {c.name: c.plaintext() for c in qs}
-
-
 def record_credential_reads(agent, names, *, user=None, runner=None, via="", turn_id="",
                             license=None) -> None:
     """One `AgentCredentialRead` row per ref handed out (canopy-web#1538)."""
@@ -1825,47 +1772,6 @@ def record_credential_reads(agent, names, *, user=None, runner=None, via="", tur
         )
         for n in sorted(set(names))
     ])
-
-
-def reveal_agent_credential(agent, name: str, *, user) -> str | None:
-    """PLAINTEXT of ONE stored value, for a person who stepped up — and the
-    record that they saw it. None when nothing is stored under `name`.
-
-    The record is written FIRST and its failure propagates: unlike a runner's
-    resolve (which must not be starved of secrets by an audit hiccup), a human
-    reveal that cannot be recorded does not happen.
-    """
-
-    cred = AgentCredential.objects.filter(agent=agent, name=name).select_related("agent").first()
-    if cred is None:
-        return None
-    if cred.is_zk or cred.account == cred.DELEGATED:
-        # Nothing to show: canopy-web holds only ciphertext (canopy-web#1550), and a
-        # delegated credential is readable by no person at all (`accounts`).
-
-        raise ZeroKnowledgeValue(f"{name} is a zero-knowledge value; canopy-web cannot reveal it")
-
-    who = getattr(user, "email", "") or str(getattr(user, "pk", ""))
-    # The credential's own read history (the same log /credentials/resolve
-    # writes), so Settings → Credentials shows a reveal beside a box's reads.
-    AgentCredentialRead.objects.create(
-        agent=agent, name=name, user=user if getattr(user, "is_authenticated", False) else None,
-        via="reveal",
-    )
-    events.record(
-        [{
-            "source": "agents.credentials",
-            "kind": "agent.credentials.revealed",
-            "level": "warn",
-            # Blank key: every reveal is its own row, never coalesced into a count.
-            "key": "",
-            "summary": f"{who} revealed {agent.slug}'s {name}",
-            "payload": {"agent": agent.slug, "name": name, "by": who,
-                        "user_id": getattr(user, "pk", None), "via": "browser+passkey"},
-        }],
-        workspace=agent.workspace,
-    )
-    return cred.plaintext()
 
 
 def caller_runs_agent(user, agent) -> bool:

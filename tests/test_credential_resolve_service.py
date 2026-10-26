@@ -148,11 +148,21 @@ def test_a_zk_agent_without_this_devices_wrap_is_refused(monkeypatch, owner, ws,
     assert missing == [key]
 
 
+def _values(monkeypatch, agent, values):
+    """The agent's (zero-knowledge) values, as `zk.resolve_payload` hands them out. On
+    1Password, so an unproven read is not refused first: what is under test is how a
+    read is classified and what it withholds, not the device proof."""
+    agent.zk_enabled, agent.zk_kv, agent.credential_source = True, 0, Agent.ONEPASSWORD
+    agent.save()
+    monkeypatch.setattr(cr.zk, "resolve_payload", lambda agent, key, wanted: (dict(values), None))
+    monkeypatch.setattr(cr.zk, "needs_wrap", lambda values: False)
+
+
 def test_an_owner_without_a_named_box_reads_as_admin(monkeypatch, owner, ws, agent):
     """`caller_runs_agent` makes the owner a `runner` caller, but a request that
     names no box is the owner's own read (canopy-web#1563)."""
     RunnerAssignment.objects.create(agent=agent, runner=_box(owner, ws), rank=0)
-    monkeypatch.setattr(cr.services, "resolve_agent_credentials", lambda a, wanted: {"api-key": "v"})
+    _values(monkeypatch, agent, {"api-key": "v"})
     assert cr.credential_access(_request(owner), agent) == ("runner", "")
     out = cr.resolve(_request(owner), agent, None)
     assert isinstance(out, cr.Resolved)
@@ -162,8 +172,7 @@ def test_an_owner_without_a_named_box_reads_as_admin(monkeypatch, owner, ws, age
 def test_a_license_read_never_gets_the_agents_login_or_the_extras(monkeypatch, owner, agent):
     monkeypatch.setattr(cr, "credential_access", lambda request, agent: ("license", ""))
     monkeypatch.setattr(cr, "license_for_read", lambda request, agent: None)
-    monkeypatch.setattr(cr.services, "resolve_agent_credentials",
-                        lambda a, wanted: {"api-key": "v", "canopy-pat": "pat"})
+    _values(monkeypatch, agent, {"api-key": "v", "canopy-pat": "pat"})
     monkeypatch.setattr(cr.services, "resolve_agent_vault", lambda a: ("Agent-Eva", "ops-key"))
     monkeypatch.setattr(cr.delegations, "salesforce_creds_for", lambda a: "lent-sf")
     out = cr.resolve(_request(owner), agent, None)

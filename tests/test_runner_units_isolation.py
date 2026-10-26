@@ -16,7 +16,7 @@ from canopy_sdk.jose import make_dpop_proof
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.test import Client
 
-from apps.agents.models import Agent
+from apps.agents.models import Agent, AgentCredential
 from apps.harness import device_keys, runner_auth
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey
 from tests.fixtures.runner_invitations import make_org
@@ -24,6 +24,8 @@ from tests.fixtures.runner_units import BOX, _approve, _invite, _pair_units
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts", "fresh_cache")]
 
+
+SEALED = "zks1:eva-sealed"
 
 @pytest.fixture
 def org():
@@ -47,9 +49,10 @@ def box(org):
     approved device."""
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=org["ws"], owner=org["user"],
                                runtime_secrets=["canopy-pat"], credential_source=Agent.CANOPY_WEB,
-                               require_device_binding=True)
-    org["browser"].put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "eva-pat"}},
-                       content_type="application/json")
+                               require_device_binding=True, zk_enabled=True)
+    # What canopy-web stores is ciphertext (the agent vault is zero-knowledge); its
+    # shape does not matter here, only who is handed it.
+    AgentCredential.objects.create(agent=eva, name="canopy-pat", value_zk=SEALED, kv=0)
     units = [{"name": A, "workspace": "connect", "kind": "tree"},
              {"name": B, "workspace": "connect", "kind": "agent", "slug": "eva"}]
     signing = {A: ec.generate_private_key(ec.SECP256R1()), B: ec.generate_private_key(ec.SECP256R1())}
@@ -77,10 +80,10 @@ def test_unit_a_proof_for_an_agent_routed_only_to_b_is_not_routed(box):
     res = _resolve(box["pat"], make_dpop_proof(box["signing"][A], "GET", HTU))
     assert res.status_code == 401, res.content
     assert res.json()["reason"] == "not_routed"
-    assert "eva-pat" not in res.content.decode()
+    assert SEALED not in res.content.decode()
     # B's own proof is let through.
     ok = _resolve(box["pat"], make_dpop_proof(box["signing"][B], "GET", HTU))
-    assert ok.status_code == 200 and ok.json()["values"] == {"canopy-pat": "eva-pat"}
+    assert ok.status_code == 200 and ok.json()["values"] == {"canopy-pat": SEALED}
 
 
 def test_even_a_routing_row_to_unit_a_does_not_let_a_read_eva(box):
@@ -93,7 +96,7 @@ def test_even_a_routing_row_to_unit_a_does_not_let_a_read_eva(box):
 
 def test_unit_a_token_is_refused_for_bs_agent(box):
     res = _resolve(box["tokens"][A])
-    assert res.status_code == 403 and "eva-pat" not in res.content.decode()
+    assert res.status_code == 403 and SEALED not in res.content.decode()
     res = _resolve(box["tokens"][A], make_dpop_proof(box["signing"][A], "GET", HTU))
     assert res.status_code == 403
     # …and its token with B's proof is not B's either: a proof goes with its own box.

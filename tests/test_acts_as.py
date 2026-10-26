@@ -24,7 +24,8 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 User = get_user_model()
-SECRET = "hal-value-not-a-real-token"
+# What canopy-web holds and hands out: ciphertext (the agent vault is zero-knowledge).
+SECRET = "zks1:hal-ciphertext"
 
 
 @pytest.fixture
@@ -36,10 +37,11 @@ def world():
     WorkspaceMembership.objects.create(workspace=ws, user=other, role=WorkspaceMembership.EDITOR)
     # No published interface: an editor gets the whole agent (manual), a viewer nothing.
     hal = Agent.objects.create(slug="hal", name="Hal", workspace=ws, owner=jj, turn_mode=Agent.AUTO,
-                               runtime_secrets=["hal-key"], credential_source=Agent.CANOPY_WEB)
-    AgentCredential.objects.create(agent=hal, name="hal-key", value_enc="")
-    from apps.agents import services as agent_services
-    agent_services.set_agent_credentials(hal, {"hal-key": SECRET}, user=jj)
+                               runtime_secrets=["hal-key"],
+                               # Who may read, not the device layer: a bearer-only read,
+                               # which a canopy-vault agent would refuse without a proof.
+                               credential_source=Agent.ONEPASSWORD, zk_enabled=True)
+    AgentCredential.objects.create(agent=hal, name="hal-key", value_zk=SECRET, kv=0)
     box = Runner.objects.create(name="jj-mbp-cdp", kind=Runner.EMDASH, owner=jj, workspace=ws,
                                 status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                 capabilities={"agents": ["hal"], "sessions": True})
