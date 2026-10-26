@@ -713,6 +713,13 @@ an agent's login or a system account, and never into a sensitive conversation.
   or DKIM signed by the From: domain), joined as each message arrives; an unaligned
   message admits nobody, so a forged From cannot Cc someone into a thread's history. The
   agent's own replies admit their To/Cc (`mail.agent_mail._admit_recipients`).
+* **Slack: everyone in the channel, full access — as in Slack** (`apps/slack/audience.py`) —
+  every linked canopy member (`SlackUserLink`, or auto-linked by verified email) in the
+  conversation the session lives in (channel members; a DM's or group DM's people) is an
+  editor, synced from `conversations.members` (cached 5 min) on each inbound message and
+  by a 10-minute sweep of sessions active in the last 14 days; one the channel brought in
+  (`SlackAudienceMember`) leaves when they leave the channel, never on an answer Slack did
+  not give. Contacts and guests see it in Slack only.
 
 ## Slack threads
 
@@ -732,8 +739,8 @@ Slack behaviours live here (`apps/slack/`, pinned in `tests/test_slack.py`).
   again continues it.
 * **`@canopy branch <ask>` splits a conversation into a new thread**
   (`apps/slack/branch.py`). Inside a thread with an agent session, anyone who may
-  write into that conversation (its owner or an editor — a member who replied in
-  the thread is one — or an admin of its agent) gets a new top-level message, a
+  write into that conversation (its owner or an editor — a member in the
+  channel is one — or an admin of its agent) gets a new top-level message, a
   child `Session` (`parent_session`, `parent_claude_session` from the parent
   binding's `transcript_id`, `metadata.slack_branched_from`) keyed to the new
   thread, and a first turn seeded with the parent conversation, condensed by

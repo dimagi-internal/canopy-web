@@ -240,8 +240,8 @@ One module decides who may see and act on a chat session: `apps/canopy_sessions/
   (`/participants`, the chat header's People control).
 - Every door calls it: REST, the chat socket, attachments, bulk reset, MCP, Slack share, push
   recipients. **Opening a chat is never a grant** — the socket must not auto-join anyone;
-  participation comes only from creating, being shared, joining a Slack thread you can
-  already read, being on an email thread its proven sender addressed to you (`access.md` §
+  participation comes only from creating, being shared, being in the Slack channel a
+  session lives in, being on an email thread its proven sender addressed to you (`access.md` §
   Who is in a session), or being in the conversation a session was dispatched from.
 - **A dispatched session inherits its parent's people.** A session created with a parent
   (`X-Canopy-Parent-Session`/`-Turn`, or a payload `parent`) that its creator can read gets

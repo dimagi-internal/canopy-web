@@ -32,15 +32,14 @@ from apps.agents.models import Agent
 from apps.canopy_sessions import doors
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions import control as session_control
-from apps.canopy_sessions.models import Session, SessionParticipant
-from apps.canopy_sessions.participants import ensure_participant
+from apps.canopy_sessions.models import Session
 from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.harness.models import Turn
 from apps.workspaces import links
 from apps.workspaces import services as wsvc
 
-from . import client, window
+from . import audience, client, window
 from .models import SlackInstallation, SlackUserLink, SlackWorkspaceLink
 
 logger = logging.getLogger(__name__)
@@ -457,21 +456,19 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
                    title: str) -> tuple[Session, bool]:
     """The Session for this (agent, Slack thread) — found, or created once.
 
-    Owned by whoever started the thread. A member owns it as `created_by`, so
-    `visible_session_q` shows it to them and nobody else; a contact owns it as
-    `contact`, so no member sees it at all. A MEMBER who joins someone else's
-    thread becomes a participant — they can already read it in Slack. A contact
-    who joins gains nothing in canopy: they see the thread in Slack, which is
-    all a contact is ever given.
+    Owned by whoever started the thread: a member as `created_by`, a contact as
+    `contact`. Its people are the conversation's (`audience.sync`): every linked
+    MEMBER in the Slack channel (or DM) is an editor participant, as anyone there
+    can read and write the thread in Slack, and one who leaves the channel leaves
+    the session. A contact gains nothing in canopy: they see the thread in Slack,
+    which is all a contact is ever given.
     """
     existing = (Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
                 .order_by("created_at").first())
     if existing is not None:
         # Never into a private conversation: replying is not being let in
-        # (`private_refusal`, which every caller asks next).
-        if (principal.user is not None and existing.created_by_id != principal.user.pk
-                and not sensitivity.is_sensitive(existing)):
-            ensure_participant(existing, principal.user, SessionParticipant.EDITOR)
+        # (`private_refusal`, which every caller asks next; `audience.sync` skips one).
+        _sync_audience(existing, inbound, principal)
         return existing, False
     metadata = {
         SLACK_THREAD_KEY: key,
@@ -483,11 +480,22 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
     # contact's session (contacts.contact_api) — null is what keeps it out of every
     # member's list. The one constructor either way, so a contact's thread is
     # recorded (transcript stamp, provenance) the same as a member's.
-    return session_services.create_session(
+    session = session_services.create_session(
         workspace=agent.workspace, created_by=principal.user, agent=agent,
         contact=principal.contact if principal.user is None else None,
         title=title[:200], metadata=metadata,
-    ), True
+    )
+    _sync_audience(session, inbound, principal)
+    return session, True
+
+
+def _sync_audience(session: Session, inbound: Inbound, principal: Principal) -> None:
+    """The session's people are the conversation's (`audience.sync`). Never fails
+    the message: a Slack hiccup costs a late join, not an answer."""
+    try:
+        audience.sync(session, installation_for(inbound.team_id), poster=principal.user)
+    except Exception:  # noqa: BLE001
+        logger.exception("slack audience: could not sync session %s", session.pk)
 
 
 def handle_message(inbound: Inbound) -> Outcome:
@@ -851,8 +859,7 @@ def _continue_shared(session: Session, principal: Principal, text: str, inbound:
                        session=session)
     if not text and not inbound.files:
         return Outcome(EMPTY, "What would you like this session to do?", session=session)
-    if session.created_by_id != principal.user.pk:
-        ensure_participant(session, principal.user, SessionParticipant.EDITOR)
+    _sync_audience(session, inbound, principal)
     return _send(session, False, None, principal, text, inbound)
 
 

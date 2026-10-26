@@ -78,6 +78,9 @@ class FakeSlack:
         self.granted: list[str] | None = None
         # What auth.test's X-OAuth-Scopes header says; None = no header.
         self.header_scopes: list[str] | None = None
+        # channel id -> who is in it, for conversations.members. A channel not here
+        # answers like Slack with no list (`{"ok": true}`), which canopy reads as unknown.
+        self.members: dict[str, list[str]] = {}
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -100,6 +103,10 @@ class FakeSlack:
         elif method == "chat.getPermalink" and self.permalink_base:
             ts = str(payload.get("message_ts") or "").replace(".", "")
             body = {"ok": True, "permalink": f"{self.permalink_base}/archives/{payload.get('channel')}/p{ts}"}
+        elif method == "conversations.members" and payload.get("channel") in self.members:
+            body = {"ok": True, "members": list(self.members[payload["channel"]])}
+        elif method == "users.list":
+            body = {"ok": True, "members": [{"id": uid, **info} for uid, info in self.users.items()]}
         elif method == "users.lookupByEmail":
             uid = self.lookup.get(payload.get("email", ""))
             body = {"ok": True, "user": {"id": uid}} if uid else {"ok": False, "error": "users_not_found"}

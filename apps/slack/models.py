@@ -288,6 +288,31 @@ class SlackUserLink(models.Model):
         return f"{self.slack_user_id} -> {self.user_id}"
 
 
+class SlackAudienceMember(models.Model):
+    """A session participant the Slack conversation brought in (`apps/slack/audience.py`).
+
+    A Slack-bound session's people are the linked canopy members in the Slack
+    conversation it lives in, kept in step with it: this row records that the
+    channel — not the session's owner — made someone a participant, so the same
+    door may take them out again when they leave the channel. A participant the
+    owner shared the session with has no row here and is never removed by Slack.
+    """
+
+    session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE,
+                                related_name="slack_audience")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="+")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["session", "user"], name="slack_audience_member_unique"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.session_id} <- {self.user_id}"
+
+
 class SlackRelayPost(models.Model):
     """One agent reply (a ledger row) that was posted into a Slack thread.
 
