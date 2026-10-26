@@ -121,6 +121,7 @@ describe('FirstRunPage — coaching opt-in', () => {
     renderPage()
     const box = await screen.findByRole('checkbox', { name: /Have Trellis coach me/ })
     expect((box as HTMLInputElement).checked).toBe(false) // opt-in, never pre-ticked
+    expect(screen.getByText(/Your computer will upload your synced Claude Code sessions to canopy so Trellis/)).toBeTruthy()
     fireEvent.click(box)
     fireEvent.click(screen.getByRole('button', { name: 'Request an invitation to Dimagi' }))
     expect(await screen.findByText('workspace home')).toBeTruthy()

@@ -83,6 +83,22 @@ close).
   `api-surface.md`) is safe for that reason.
 - Spec: `docs/superpowers/specs/2026-07-24-persist-runner-session-transcript-design.md`.
 
+### Coaching: the person's own runner uploads their sessions in full
+
+A runner ships every ACTIVE session it backs (`GET /runners/{id}/streams`). When the
+box's owner has a live `SessionReviewGrant` (they let a coach such as Trellis review
+their sessions), the same list also carries their own runner-discovered sessions
+that are no longer active, each flagged `ship_full` (`archived` says it is retired):
+the runner ships the whole history once, through the same ordinal, idempotent
+stream writes, then stops re-reading it. That is the person's machine choosing to
+send — canopy still never reaches down to pull a session, and the coach reads only
+stored rows. The set is `canopy_sessions.coaching.full_upload_session_ids`: never an
+agent's or a contact's session, never a sensitive one (any runner requirement),
+never another person's box, nothing from a sensitive-data box, and only repos the
+owner opted in to (the server's `_is_canopys`, and the runner again off its
+heartbeat's `report_projects`). Revoking the last grant drops them from the next
+poll; rows already uploaded stay until the person deletes the session.
+
 ### A session's worktree project is not its `project`
 
 `Session.project` is set only for an agentless repo chat; an agent chat leaves it

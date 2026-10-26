@@ -10,7 +10,7 @@ import {
   type RequestableWorkspaceOut,
 } from '@/api/workspaces'
 import { addMySessionReviewer, listMySessionReviewers, type CoachOffer } from '@/api/people'
-import { coachLabel } from '@/components/settings/SessionReviewersPanel'
+import { coachLabel, coachUploadNote } from '@/components/settings/SessionReviewersPanel'
 import { scopedPath } from '@/lib/scopedLinks'
 import { firstRunState, shouldOfferCreateForm } from './firstRun'
 
@@ -237,7 +237,10 @@ export function FirstRunPage({ alwaysOfferForm = false }: { alwaysOfferForm?: bo
                           checked={coachMe}
                           onChange={(e) => setCoachMe(e.target.checked)}
                         />
-                        <span>{coachLabel(coach.name)}</span>
+                        <span>
+                          {coachLabel(coach.name)}
+                          <span className="block text-[11px] text-muted-foreground">{coachUploadNote(coach.name)}</span>
+                        </span>
                       </label>
                     ) : null}
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">

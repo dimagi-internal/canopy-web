@@ -4,7 +4,9 @@ Runs for ALL of them, not only the watched ones: the transcript is the durable
 source (spec 2026-07-24), so persisting it must not depend on someone having the
 chat open. `stream_desired` survives server-side as the LIVE fan-out gate only.
 Holds NO durable resume state — the server's `first_index`/`last_index` are the
-checkpoint."""
+checkpoint. When the box's owner opted in to coaching, the server also lists their
+own retired sessions (`ship_full`), so each one's whole history is sent once; only
+from a repo the owner opted in to (`_may_ship`)."""
 from __future__ import annotations
 
 import logging
@@ -14,7 +16,7 @@ from pathlib import Path
 # cannot drift on either question (what to ship, and how big a request may be).
 from canopy_transcript import chunk_rows, rows_to_ship, summarize_subagents
 
-from . import activity, chat_bridge, desktop, hooks, transcript
+from . import activity, chat_bridge, desktop, hooks, server_status, transcript
 from .client import Client
 from .config import Config
 from .failure_log import note_failure, note_success
@@ -55,6 +57,18 @@ def post_stream_rows(
         return False
 
 
+def _may_ship(s: dict) -> bool:
+    """Whether this box may ship a stream the server listed. A coaching full upload
+    (`ship_full`: the owner let a coach review their sessions, so their own machine
+    sends them whole) ships only from a repo the owner opted in to sharing with
+    canopy — the server checks that too; this is the box keeping its own word off
+    the last heartbeat's `report_projects` (None = every repo)."""
+    if not s.get("ship_full"):
+        return True
+    wanted = server_status.report_projects()
+    return wanted is None or (s.get("project") or "") in wanted
+
+
 def sync_session_streams(cfg: Config, client: Client) -> None:
     """Tail EVERY session this runner backs and ship its conversational records
     (user + assistant) with their transcript ordinals — the server persists them as
@@ -83,7 +97,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
     except Exception:  # noqa: BLE001
         logger.debug("stream sync failed (non-fatal)", exc_info=True)
         return
-    desired = {s["session_id"]: s for s in streams if s.get("session_id")}
+    desired = {s["session_id"]: s for s in streams if s.get("session_id") and _may_ship(s)}
     home = Path.home()
     claude_home = home / ".claude" / "projects"
 
@@ -105,8 +119,16 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
         st["first_index"] = s.get("first_index")
         # ...and WHICH transcript they are markers into. See below.
         st["server_transcript_id"] = s.get("transcript_id") or ""
+        # A coached owner's retired session is listed so its whole history ships
+        # once (`ship_full`); after that nothing more is written to it, so it is
+        # not re-read every tick. Reopened, it tails like any other.
+        st["archived"] = bool(s.get("archived"))
+        if not st["archived"]:
+            st["settled"] = False
 
     for sid, st in _stream_readers.items():
+        if st.get("archived") and st.get("settled"):
+            continue  # a retired session whose history has shipped: nothing grows
         # Resolve EVERY tick, not just on attach. A binding is keyed on the emdash
         # task NAME and names are reused, so the session under a live reader can be
         # swapped for a different conversation without anything here changing —
@@ -149,6 +171,7 @@ def sync_session_streams(cfg: Config, client: Client) -> None:
             if rows and not post_stream_rows(cfg, client, sid, rows, transcript_id):
                 continue  # nothing consumed; re-attach next tick
             st["reader"], st["count"] = reader, len(records)
+            st["settled"] = st["archived"]
             continue
         new_records = reader.read_new()
         if not new_records:

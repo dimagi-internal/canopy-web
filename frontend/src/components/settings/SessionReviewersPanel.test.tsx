@@ -27,6 +27,8 @@ describe('SessionReviewersPanel', () => {
     render(<SessionReviewersPanel />)
     const box = (await screen.findByRole('checkbox', { name: /Have Trellis coach me/ })) as HTMLInputElement
     expect(box.checked).toBe(false)
+    // Says what turning it on does on the person's own machine.
+    expect(screen.getByText(/Your computer will upload your synced Claude Code sessions to canopy so Trellis can read them; turning coaching off stops the upload\./)).toBeTruthy()
     fireEvent.click(box)
     await waitFor(() => expect(addMySessionReviewer).toHaveBeenCalledWith('trellis'))
     await waitFor(() => expect(box.checked).toBe(true))
