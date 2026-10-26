@@ -3863,6 +3863,55 @@ export interface paths {
         readonly patch: operations["set_turn_mode"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/hold": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Is this agent on hold?
+         * @description Whether the agent is on hold, why, since when, and how many of its turns are
+         *     waiting on the release.
+         */
+        readonly get: operations["get_agent_hold"];
+        readonly put?: never;
+        /**
+         * Put an agent on hold
+         * @description Stop every runner from starting this agent's turns — its schedules,
+         *     dispatches, mail and chats with it — the per-agent sibling of the fleet hold.
+         *     Turns keep enqueuing and wait QUEUED; running turns finish normally; release
+         *     with POST /hold/release. Idempotent — holding again refreshes the note.
+         */
+        readonly post: operations["hold_agent"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/hold/release": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Release an agent's hold
+         * @description Release the agent's hold: its queued turns become claimable again, and its
+         *     runners are woken so they start now rather than at their next poll.
+         */
+        readonly post: operations["release_agent_hold"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/repository": {
         readonly parameters: {
             readonly query?: never;
@@ -22199,6 +22248,36 @@ export interface components {
              * @enum {string}
              */
             readonly turn_mode: "manual" | "auto";
+        };
+        /** AgentHoldOut */
+        readonly AgentHoldOut: {
+            /** Held */
+            readonly held: boolean;
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
+            /** Held At */
+            readonly held_at?: string | null;
+            /**
+             * Held By Email
+             * @default
+             */
+            readonly held_by_email: string;
+            /**
+             * Queued
+             * @default 0
+             */
+            readonly queued: number;
+        };
+        /** AgentHoldIn */
+        readonly AgentHoldIn: {
+            /**
+             * Note
+             * @default
+             */
+            readonly note: string;
         };
         /**
          * RepositoryIn
@@ -44673,6 +44752,76 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentHoldOut"];
+                };
+            };
+        };
+    };
+    readonly hold_agent: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentHoldIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentHoldOut"];
+                };
+            };
+        };
+    };
+    readonly release_agent_hold: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentHoldOut"];
                 };
             };
         };

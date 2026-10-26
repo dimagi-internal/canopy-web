@@ -15,6 +15,8 @@ import copy
 
 import requests
 import yaml
+from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest
 from django.utils import timezone
 from ninja import Router, Status
@@ -39,6 +41,7 @@ from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.passkeys import stepup
 from apps.plugins import services as plugin_services
+from apps.realtime import groups
 from apps.slack import commands as slack_commands
 from apps.slack.models import SlackInstallation
 from apps.tokens.middleware import minting_refusal
@@ -70,6 +73,8 @@ from .schemas import (
     AgentCanopyTokenOut,
     AgentCanopyUserIn,
     AgentDetailOut,
+    AgentHoldIn,
+    AgentHoldOut,
     AgentIn,
     AgentInterfaceIn,
     AgentInterfaceOut,
@@ -981,6 +986,53 @@ def set_turn_mode(request: HttpRequest, slug: str, payload: TurnModeIn) -> Agent
     agent.turn_mode = payload.turn_mode
     agent.save(update_fields=["turn_mode", "updated_at"])
     return _detail(request, agent)
+
+
+def _hold_out(agent) -> AgentHoldOut:
+    queued = 0
+    if agent.held:
+        queued = Turn.objects.filter(status=Turn.QUEUED).filter(
+            Q(agent=agent) | Q(chat_session__agent=agent)).count()
+    return AgentHoldOut(held=agent.held, note=agent.held_note, held_at=agent.held_at,
+                        held_by_email=(agent.held_by.email if agent.held_by_id else ""),
+                        queued=queued)
+
+
+@router.get("/{slug}/hold", response=AgentHoldOut, summary="Is this agent on hold?")
+@gate("member")
+def get_agent_hold(request: HttpRequest, slug: str) -> AgentHoldOut:
+    """Whether the agent is on hold, why, since when, and how many of its turns are
+    waiting on the release."""
+    return _hold_out(agent_for_read(request, slug))
+
+
+@router.post("/{slug}/hold", response=AgentHoldOut, summary="Put an agent on hold")
+@gate("agent.work", setting=True)
+def hold_agent(request: HttpRequest, slug: str, payload: AgentHoldIn) -> AgentHoldOut:
+    """Stop every runner from starting this agent's turns — its schedules,
+    dispatches, mail and chats with it — the per-agent sibling of the fleet hold.
+    Turns keep enqueuing and wait QUEUED; running turns finish normally; release
+    with POST /hold/release. Idempotent — holding again refreshes the note."""
+    agent = agent_for_work(request, slug)
+    if not agent.held:
+        agent.held_at, agent.held_by = timezone.now(), request.user
+    agent.held, agent.held_note = True, payload.note
+    agent.save(update_fields=["held", "held_note", "held_at", "held_by", "updated_at"])
+    return _hold_out(agent)
+
+
+@router.post("/{slug}/hold/release", response=AgentHoldOut, summary="Release an agent's hold")
+@gate("agent.work", setting=True)
+def release_agent_hold(request: HttpRequest, slug: str) -> AgentHoldOut:
+    """Release the agent's hold: its queued turns become claimable again, and its
+    runners are woken so they start now rather than at their next poll."""
+    agent = agent_for_work(request, slug)
+    if agent.held:
+        agent.held, agent.held_note, agent.held_at, agent.held_by = False, "", None, None
+        agent.save(update_fields=["held", "held_note", "held_at", "held_by", "updated_at"])
+        ws = agent.workspace_id
+        transaction.on_commit(lambda: groups.publish(groups.runnable_group(ws), {"type": "runner.wake"}))
+    return _hold_out(agent)
 
 
 @router.patch("/{slug}/repository", response=AgentDetailOut,
