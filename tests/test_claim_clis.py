@@ -122,3 +122,36 @@ def test_rider_runs_on_session_cli():
     assert claimed == follow_up
     assert claimed.rides_turn_id == first.pk
     assert claimed.cli == "codex"
+
+
+# ---- coverage and reach agree with the claim (Task 5) ----
+def test_reach_signed_out_codex():
+    agent, session, runner = _ctx(agent_clis=("claude-code", "codex"),
+                                  report={"claude-code": CONFINING, "codex": {"signed_in": False}})
+    Session.objects.filter(pk=session.pk).update(cli="codex")
+    turn = _send(session, "k1")
+    reach = claim.turn_reach(turn)
+    assert reach.kind == claim.SIGNED_OUT
+    assert [r.pk for r in reach.runners] == [runner.pk]
+    assert reach.cli == "codex"
+    assert reach.reason == "no runner has Codex signed in"
+
+
+def test_reach_live_on_codex():
+    agent, session, runner = _ctx(report={"codex": CONFINING})
+    turn = _agent_turn(agent)
+    assert claim.turn_reach(turn).kind == claim.LIVE
+
+
+def test_unclaimable_report_matches_claim_for_cli():
+    agent, session, runner = _ctx(report={"claude-code": CONFINING})
+    turn = _agent_turn(agent)
+    Turn.objects.filter(pk=turn.pk).update(created_at=timezone.now() - claim.UNCLAIMABLE_GRACE * 2)
+    stuck = {row["turn_id"]: row for row in claim.unclaimable_queued_turns(runner.owner)}
+    assert stuck[str(turn.pk)]["reason"].startswith("it runs on Codex, and none of the runners")
+    assert claim.turn_reach(turn).kind == claim.UNROUTED
+    runner.capabilities = {**runner.capabilities, "clis": {"claude-code": CONFINING,
+                                                           "codex": CONFINING}}
+    runner.save(update_fields=["capabilities"])
+    assert str(turn.pk) not in {row["turn_id"] for row in claim.unclaimable_queued_turns(runner.owner)}
+    assert claim.claim_next_turn(runner) == turn

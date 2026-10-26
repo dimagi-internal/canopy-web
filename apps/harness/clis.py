@@ -20,11 +20,17 @@ CLAUDE_CODE = "claude-code"
 CODEX = "codex"
 CLIS: tuple[str, ...] = (CLAUDE_CODE, CODEX)
 CHOICES = [(CLAUDE_CODE, "Claude Code"), (CODEX, "Codex")]
+LABELS = dict(CHOICES)
 #: What an agent, a repo turn or an agentless chat runs on when nothing says otherwise.
 DEFAULT: list[str] = [CLAUDE_CODE]
 #: The CLIs a conversation holding a host's sensitive data may run on. Only Claude
 #: Code has a zero-data-retention runner today (runner_requirements.SENSITIVE_DATA).
 SENSITIVE_CLIS = frozenset({CLAUDE_CODE})
+
+
+def label(cli: str) -> str:
+    """A CLI as a person reads it ("Codex"); an unknown value as it is."""
+    return LABELS.get(cli, cli)
 
 
 def default_list() -> list[str]:
