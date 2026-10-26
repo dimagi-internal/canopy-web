@@ -960,7 +960,7 @@ def cancel_transfer_request(request: HttpRequest, request_id: uuid.UUID):
 
 @router.post("/transfer-all", response=TransferAllOut,
              summary="Move every open session on one runner to another")
-@gate("session-acl", kind="conversation")  # each session: access.can_write, then the transfer's own rules
+@gate("session-acl", kind="conversation")  # each session: access.may_move, then the transfer's own rules
 def transfer_all(request: HttpRequest, payload: TransferAllIn):
     """Move every open session you can act in from `from_runner` to `to_runner`,
     each with its work (see `transfer`), and say what happened to each one.
@@ -987,8 +987,8 @@ def transfer_all(request: HttpRequest, payload: TransferAllIn):
         out = {"session_id": str(session.id), "title": session.title or "", "session_key": key,
                "status": "", "error": "", "turn_id": "", "handoff": None}
         results.append(out)
-        if not access.can_write(request.user, session):
-            out.update(status="refused", error="you can read this session but not act in it")
+        if not access.may_move(request.user, session):
+            out.update(status="refused", error="you can read this session but not move it")
             continue
         if payload.dry_run:
             busy = placement.busy_reason(session)
@@ -1744,7 +1744,7 @@ def fork_session(request: HttpRequest, session_id: uuid.UUID, payload: ForkIn):
     "/{session_id}/transfer", response=TransferOut,
     summary="Move a live session onto another runner",
 )
-@gate("session-acl", kind="conversation")  # write
+@gate("session-acl", kind="conversation")  # access.may_move: its writers, or an admin of its box
 def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     """Move a session between boxes — cloud -> laptop, or between the two macOS
     accounts — carrying its message history across.
@@ -1770,7 +1770,10 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
     """
     from . import transfer_requests
 
-    session = _session_or_404(request, session_id, write=True)
+    session = _session_or_404(request, session_id)
+    # Its writers, or an admin of the box it is on (`access.may_move`).
+    if not access.may_move(request.user, session):
+        raise HttpError(403, "you can read this session but not move it")
     try:
         req, moved = transfer_requests.request(
             session=session, runner_value=payload.runner, brief=payload.brief,
@@ -1903,21 +1906,35 @@ def stop_session_turn(request: HttpRequest, session_id: uuid.UUID):
 @router.post("/{session_id}/attach", response=StreamStateOut, summary="Attach a viewer (start live streaming)")
 @gate("session-acl", kind="conversation")  # READ gate on a POST (viewer signal)
 def attach_session(request: HttpRequest, session_id: uuid.UUID):
+    """Count this viewer in, and ask the session's runner to stream it live.
+    Only someone who may pull from that box (`access.may_pull`: its owner, or
+    someone let in to write) starts streaming; anyone else who can read it is
+    answered with the current state and asks nothing of the machine."""
     session = _session_or_404(request, session_id)
+    if not access.may_pull(request.user, session):
+        return {"streaming": transcript_ingest.stream_desired(session)}
     return {"streaming": transcript_ingest.attach_session(session)}
 
 
 @router.post("/{session_id}/detach", response=StreamStateOut, summary="Detach a viewer (stop when last leaves)")
 @gate("session-acl", kind="conversation")  # READ gate on a POST
 def detach_session(request: HttpRequest, session_id: uuid.UUID):
+    """The other half of `attach`: a no-op for a reader whose attach was one."""
     session = _session_or_404(request, session_id)
+    if not access.may_pull(request.user, session):
+        return {"streaming": transcript_ingest.stream_desired(session)}
     return {"streaming": transcript_ingest.detach_session(session)}
 
 
 @router.post("/{session_id}/backfill", response=BackfillStateOut, summary="Request full history from the runner")
 @gate("session-acl", kind="conversation")  # READ gate on a POST
 def request_backfill(request: HttpRequest, session_id: uuid.UUID):
+    """Ask the session's runner to ship its full history. Only someone who may
+    pull from that box (`access.may_pull`); anyone else reads what is stored (403)."""
     session = _session_or_404(request, session_id)
+    if not access.may_pull(request.user, session):
+        raise ProblemError(403, "History is asked of a machine only by its owner",
+                           detail=access.PULL_REFUSED)
     # A sensitive-data runner's session is refused (409): that box keeps its
     # transcripts to itself (`transcript_read.backfill_refused`).
     try:

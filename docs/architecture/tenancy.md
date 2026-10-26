@@ -218,10 +218,18 @@ failure again.
 
 One module decides who may see and act on a chat session: `apps/canopy_sessions/access.py`.
 
-- **Tenant first** (member of `Session.workspace`), then one of five legs: creator ·
-  explicit participant (`SessionParticipant`) · runner-discovered emdash session · the own
-  thread of an agent you administer (`Agent.is_admin`: its owner, a workspace owner, or an
-  `AgentAdmin`) · a **session review grant**.
+- **Tenant first** (member of `Session.workspace`), then one of six legs: creator ·
+  explicit participant (`SessionParticipant`) · a runner-discovered session on a box you
+  OWN (`Runner.owner`; never the whole tenant — a laptop session is single-player until
+  its owner adds someone) · the own thread of an agent you administer (`Agent.is_admin`:
+  its owner, a workspace owner, or an `AgentAdmin`) · a **session review grant** · an
+  admin of the box a discovered session is on (`RunnerAdmin`; read-only, may move it off
+  the box — `access.may_move`). Who sees what per channel: `access.md` § Who can see a session.
+- **Pulling from a machine is `access.may_pull`.** Asking a runner to stream a session
+  (`POST /{id}/attach`, and the chat socket's connect) or to ship its history
+  (`POST /{id}/backfill`) is for the box owner and anyone the rule lets write in it.
+  Everyone else who can read it — a coach, a runner admin, a viewer, an agent login not
+  explicitly added — reads the stored rows: their attach is a no-op and their backfill a 403.
 - **A session review grant lets one agent's own login read one person's sessions** — a
   coach (`SessionReviewGrant`; leg 5, `access._review_grant_q`). Only the person makes
   or ends it, for an agent of a workspace they are in (`/api/people/me/session-reviewers/`,

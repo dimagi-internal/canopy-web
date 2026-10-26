@@ -13407,7 +13407,13 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Attach a viewer (start live streaming) */
+        /**
+         * Attach a viewer (start live streaming)
+         * @description Count this viewer in, and ask the session's runner to stream it live.
+         *     Only someone who may pull from that box (`access.may_pull`: its owner, or
+         *     someone let in to write) starts streaming; anyone else who can read it is
+         *     answered with the current state and asks nothing of the machine.
+         */
         readonly post: operations["attach_session"];
         readonly delete?: never;
         readonly options?: never;
@@ -13424,7 +13430,10 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Detach a viewer (stop when last leaves) */
+        /**
+         * Detach a viewer (stop when last leaves)
+         * @description The other half of `attach`: a no-op for a reader whose attach was one.
+         */
         readonly post: operations["detach_session"];
         readonly delete?: never;
         readonly options?: never;
@@ -13441,7 +13450,11 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Request full history from the runner */
+        /**
+         * Request full history from the runner
+         * @description Ask the session's runner to ship its full history. Only someone who may
+         *     pull from that box (`access.may_pull`); anyone else reads what is stored (403).
+         */
         readonly post: operations["request_backfill"];
         readonly delete?: never;
         readonly options?: never;

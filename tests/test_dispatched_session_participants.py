@@ -32,7 +32,9 @@ def world():
     ws = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     for u in (agent_login, jj, mate, watcher):
         WorkspaceMembership.objects.create(user=u, workspace=ws, role=WorkspaceMembership.EDITOR)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=jj)
+    # `ace` is the agent's own login (`Agent.user`), which reads the agent's own
+    # runner-discovered work (`access._own_work_q`).
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=jj, user=agent_login)
     # The conversation the agent dispatches from: the agent's login owns it,
     # the people talking to it are participants.
     parent = Session.objects.create(workspace=ws, agent=agent, created_by=agent_login)
@@ -86,7 +88,7 @@ def test_naming_a_session_you_cannot_read_pulls_no_one_in(world):
 
 def _emdash_session(world):
     """A session started in emdash: runner-discovered, no creator, no participant
-    rows — its person reads it through the tenant leg, and typing into it from
+    rows — the box owner and the agent's own login read it, and typing into it from
     the web never writes a row (#926)."""
     import uuid
 

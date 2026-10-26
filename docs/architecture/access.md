@@ -701,6 +701,36 @@ stamps. Its initiator stays the agent: the agent made the call, for that person.
 canopy CLI sends the header with `--on-behalf-of <email>` (or `caller`, the current
 turn's verified asker).
 
+## Who can see a session
+
+A session is visible to the people who were **in the conversation where it
+happened**, plus whoever they explicitly add — never to someone merely for being
+in the same workspace. Multiplayer is always an explicit choice (a participant
+row, added by the session's owner). Agents get no implicit access: an agent's own
+login reads a session only if it was made a participant, it is running a live
+turn in it (`access.own_turn_session`), or the person granted it review (a
+coach). Canopy only operates on what a machine has already **sent**; it asks a
+machine for more (live streaming, history) only when its owner, or someone they
+explicitly added, asks (`access.may_pull`). Sensitive conversations stay sealed to
+their own people (`tenancy.md` § Sensitive conversations). The rule is
+`apps/canopy_sessions/access.py`; enforcement detail is `tenancy.md` § The
+chat-session ACL.
+
+| Where it happened | Who sees it (read + write unless noted) | Who may pull from the machine |
+|---|---|---|
+| **Laptop** (a runner-discovered session) | the box's owner (`Runner.owner`), + people they add; the box's runner admins read only (to move it off the box) | the box owner, + people they add as editor |
+| **Web chat** | its creator + people they add | the same |
+| **Email** | everyone on the thread who is a verified member (§ Who is in a session) | the agent's admins, + the thread's people |
+| **Slack** | everyone in the Slack channel (a DM: its people), read + write, as in Slack | the agent's admins, + the channel's people |
+| **Panel** (an embedded widget) | the visitor (a contact: `contact_session_q`) | the visitor |
+| **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
+| **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
+| **Coaching** | + the agent the person granted (`SessionReviewGrant`), read-only, never a sensitive one | no — it reads what is already uploaded |
+
+The email and Slack rows describe the doors those channels open (participant rows
+written when a person is on the thread or in the channel); the session ACL itself
+only honours the rows.
+
 ## Who is in a session
 
 A session is visible to the people who were in the conversation where it happened, plus

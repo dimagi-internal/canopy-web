@@ -859,16 +859,18 @@ async def test_presence_joined_names_the_person_who_joined():
     await a.receive_json_from(timeout=ARRIVES)   # own session.state
     await a.receive_json_from(timeout=ARRIVES)   # own presence.joined
 
-    # A reader with NO participant row: a runner-discovered session, which the
-    # whole tenant may read. Connecting must not create one (that was the
-    # auto-join the ACL removed) — and they must still be on the roster.
+    # A reader with NO participant row: a runner-discovered session on the
+    # owner's box, which an admin of that box may read. Connecting must not
+    # create a row (that was the auto-join the ACL removed) — and they must
+    # still be on the roster.
     def _discovered():
         from apps.canopy_sessions.models import RunnerBinding, Session
-        from apps.harness.models import Runner
+        from apps.harness.models import Runner, RunnerAdmin
 
         SessionParticipant.objects.filter(session=session, user=teammate).delete()
         Session.objects.filter(pk=session.pk).update(origin=Session.ORIGIN_RUNNER, created_by=None)
         runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", owner=owner)
+        RunnerAdmin.objects.create(runner=runner, user=teammate, granted_by=owner)
         RunnerBinding.objects.create(session=session, runner=runner, session_key="k")
 
     await database_sync_to_async(_discovered)()

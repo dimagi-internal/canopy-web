@@ -560,10 +560,10 @@ def test_a_sensitive_turns_done_push_reads_reply_ready(w):
 
 
 def test_asking_to_join_again_after_a_decline_waits_an_hour(w):
-    # Runner-discovered, so a co-tenant sees it exists; jj started it, so jj decides.
+    # Runner-origin, so an admin of its agent sees it exists; jj started it, so jj decides.
     Session.objects.filter(pk=w["hot"].pk).update(origin=Session.ORIGIN_RUNNER)
     RunnerBinding.objects.create(session=w["hot"], runner=w["runner"], session_key="k")
-    bob = _member(w, "bob")
+    bob = _admin(w, "bob")
     c = _browser(bob)
     url = f"/api/canopy-sessions/{w['hot'].pk}/join-requests"
     first = c.post(url)

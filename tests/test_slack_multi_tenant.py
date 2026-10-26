@@ -15,7 +15,7 @@ from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.contacts.models import Contact
 from apps.events.models import Event
-from apps.harness.models import Turn
+from apps.harness.models import Runner, Turn
 from apps.slack import commands, share
 from apps.slack.models import SlackUserLink, SlackWorkspaceLink
 from apps.workspaces import services as wsvc
@@ -117,7 +117,8 @@ def test_sharing_from_a_newly_linked_tenants_session(slack, installation, tenant
     wsvc.ensure_member(tenant_b, carol, WorkspaceMembership.OWNER)
     SlackUserLink.objects.create(installation=installation, slack_user_id=BOB, user=carol)
     session = Session.objects.create(workspace=tenant_b, project="widget", origin=Session.ORIGIN_RUNNER, title="w")
-    RunnerBinding.objects.create(session=session, session_key="w", emdash_project="widget")
+    box = Runner.objects.create(name="carol-mbp", kind=Runner.EMDASH, host="carol", owner=carol)
+    RunnerBinding.objects.create(session=session, runner=box, session_key="w", emdash_project="widget")
     result = share.share_session(carol, channel="C1", summary="hello", mode=share.BIND, session=session)
     assert result.ok
     session.refresh_from_db()
