@@ -22,7 +22,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
-from apps.canopy_sessions.staleness import stale_cutoff
+from apps.canopy_sessions.staleness import active
 from apps.workspaces import services as wsvc
 
 from .models import ProjectOptIn, Runner, Turn
@@ -1235,12 +1235,12 @@ class SessionView:
 def list_visible_sessions(user, ws_slugs: set[str] | None = None) -> list[SessionView]:
     """Open sessions in the caller's workspaces whose runner is LIVE. Newest-first.
 
-    Three conditions, all polled or explicit — none of them "the FK went null":
-      * the session is not explicitly ARCHIVED (a decision, effective immediately),
-      * its binding was in a report within SESSION_LIVE_WINDOW (the polled clock) —
-        or it is held by a cloud runner, which never re-reports a session,
+    Two conditions, all polled or explicit — none of them "the FK went null":
+      * the session is open by `staleness.active`, the ONE rule the session list
+        and the runner row's `open_sessions` count also read (not archived; still
+        reported, or on the cloud runner not yet finished),
       * and its runner is still heartbeating (Runner.live_status).
-    The last two overlap by design: a runner that stops heartbeating also stops
+    They overlap by design: a runner that stops heartbeating also stops
     reporting, so the strictest of the two wins and a dead box's rows go quiet fast.
 
     A domain-matching teammate who has not been let into the workspace (an
@@ -1263,15 +1263,9 @@ def list_visible_sessions(user, ws_slugs: set[str] | None = None) -> list[Sessio
             session__workspace_id__in=ws_slugs,
             # The chat ACL, not just the tenant: this returns each session's
             # recent messages.
-            session__in=Session.objects.filter(session_access.visible_session_q(user)).values("pk"),
-            session__status=Session.ACTIVE,
-        )
-        # The polled clock only means something on a box that reports. A cloud
-        # runner records a session once per turn and never again, so there the
-        # session stays open until it is closed (staleness.py's module note).
-        .filter(
-            Q(live_seen_at__gte=stale_cutoff())
-            | Q(runner__kind=Runner.CLOUD, runner__sessions_reported_at__isnull=True)
+            session__in=active(
+                Session.objects.filter(session_access.visible_session_q(user))
+            ).values("pk"),
         )
         .select_related("runner", "session", "session__agent")
         .order_by("-last_interacted_at")

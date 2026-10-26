@@ -95,13 +95,20 @@ def is_transferring(binding, now=None) -> bool:
 def driving_turns():
     """The turns that drove a session, for use under a Session queryset: a chat
     send carries the session itself (`chat_session`), an agent turn the runner
-    opened a session for carries its key (`Turn.session_key`, the binding's).
+    opened a session for carries the session too (`Turn.canopy_session`, written
+    by record-session) and its key (`Turn.session_key`, the binding's).
     Defined once for `transcript_read.with_driving_turn` (the mode badge and the feed)
     and `unseen_q` (the auto-retire leg), so the two cannot disagree about which
-    turn started a session."""
+    turn started a session.
+
+    The key alone is not enough: a dispatched turn that carries its own thread key
+    (a huddle round) can leave the turn's key and the binding's different, and then
+    the session had no driving turn at all — no mode badge, and on the cloud runner
+    never retired."""
     Turn = apps.get_model("harness", "Turn")
     return Turn.objects.filter(
         Q(chat_session=OuterRef("pk"))
+        | Q(canopy_session=OuterRef("pk"))
         | (
             Q(agent=OuterRef("agent"), session_key=OuterRef("runner_binding__session_key"))
             & ~Q(session_key="")
