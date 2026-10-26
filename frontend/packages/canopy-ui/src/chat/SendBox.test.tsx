@@ -758,33 +758,21 @@ describe("SendBox — Esc stops the agent", () => {
   });
 });
 
-describe("SendBox — a stop you asked for shows at once", () => {
-  it("Esc says it is stopping before the server answers", () => {
+describe("SendBox — saying a stop is under way", () => {
+  it("Esc asks the host to stop", () => {
     const onStop = vi.fn();
     const { textarea } = setup({ isStreaming: true, onStop });
-
     fireEvent.keyDown(textarea(), { key: "Escape" });
-
     expect(onStop).toHaveBeenCalledWith(null);
+  });
+
+  it("says stopping when the host says a stop is under way, or the server does", () => {
+    setup({ isStreaming: true, stopping: true });
     expect(screen.getByText(/stopping the agent/i)).toBeTruthy();
   });
 
-  it("keeps saying stopping while the stop is in flight", () => {
-    const onStop = vi.fn();
-    const { textarea, rerender } = setup({ isStreaming: true, onStop });
-    fireEvent.keyDown(textarea(), { key: "Escape" });
-    rerender(
-      <SendBox
-        draft={draft()}
-        connected
-        isStreaming
-        streamingMessageId={null}
-        onUpdate={vi.fn()}
-        onSend={vi.fn()}
-        onStop={onStop}
-        stopState="requested"
-      />,
-    );
+  it("says stopping while the server reports the stop in flight", () => {
+    setup({ isStreaming: true, stopState: "requested" });
     expect(screen.getByText(/stopping the agent/i)).toBeTruthy();
   });
 

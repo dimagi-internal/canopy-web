@@ -272,6 +272,22 @@ describe("Stop follows the same signal as the pending row", () => {
     expect(onStop).toHaveBeenCalledWith("m2");
   });
 
+  it("says stopping in both places whichever control asked — Stop or Esc", () => {
+    // One stop, one answer: the live line's Stop used to say nothing under the
+    // composer, while Esc did, until the server's frame came back.
+    for (const ask of ["click", "esc"] as const) {
+      const { unmount } = panel({ state: state({ activity: "working" }), awaitingReply: false, onStop: vi.fn() });
+      if (ask === "click") {
+        fireEvent.click(within(screen.getByTestId("pending-reply")).getByRole("button", { name: /^stop$/i }));
+      } else {
+        fireEvent.keyDown(screen.getByTestId("composer"), { key: "Escape" });
+      }
+      expect(screen.getByText(/stopping the agent/i)).not.toBeNull();
+      expect(within(screen.getByTestId("pending-reply")).getByText(/stopping…/)).not.toBeNull();
+      unmount();
+    }
+  });
+
   it("is absent once the agent is idle", () => {
     panel({ state: state({ activity: "idle" }) });
     expect(screen.queryByRole("button", { name: /^stop$/i })).toBeNull();
