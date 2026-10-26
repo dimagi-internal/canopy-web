@@ -241,6 +241,12 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
         rate_limit = dict(reducer.rate_limit or {})
         ok = stop in ("end_turn", "max_tokens") and rate_limit.get("status") != "rejected"
         text = reducer.assistant_text.strip() or f"turn ended: {stop or 'unknown'}"
+        if stop not in ("end_turn", "max_tokens") and not text.startswith("turn ended:"):
+            # A turn failed on its stop reason must say which one. On 2026-10-26 turn
+            # cfab21f5 (demo runner, failure investigation 12) failed with only the
+            # agent's last words — "Standalone sleep is blocked, so I'll run it in the
+            # background." — and nothing recorded why it was graded failed.
+            text = f"{text}\n\nturn ended: {stop or 'unknown'}"
         return TurnResult(ok=ok, text=text, session_id=session_id, stop_reason=stop,
                           cancelled=was_cancelled or stop == "cancelled", rate_limit=rate_limit)
     except Exception as exc:  # noqa: BLE001 — named, with how the adapter went

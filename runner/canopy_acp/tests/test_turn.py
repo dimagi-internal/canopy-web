@@ -155,6 +155,18 @@ def test_a_cancel_is_sent_once_and_reported():
     assert log.count("cancel") == 1
 
 
+def test_a_turn_failed_on_its_stop_reason_names_it_after_the_reply():
+    # Investigation 12: a failed turn's note was only the agent's last words.
+    res, _, _ = run(updates=[chunk("I'll run it in the background.")], stop="refusal")
+    assert not res.ok
+    assert res.text == "I'll run it in the background.\n\nturn ended: refusal"
+
+
+def test_a_clean_turn_text_is_the_reply_alone():
+    res, _, _ = run(updates=[chunk("Done.")])
+    assert res.ok and res.text == "Done."
+
+
 def test_a_rejected_rate_limit_fails_a_clean_end_turn():
     reducer = UpdateReducer()
     reducer.rate_limit = {"status": "rejected", "rateLimitType": "five_hour"}
