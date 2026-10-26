@@ -20,6 +20,46 @@ door that makes an agent do work asks it (see "Where it is asked" below);
 `tests/test_access_matrix.py` asks it through every door. Don't write a second
 predicate for "may this person make this agent do X" — ask `decide`.
 
+## Whose authority an agent acts with
+
+**An agent acts as itself — with its own credentials or ones it borrowed — or as you
+only under an act-as-you permission you granted.** Three kinds, one meaning each:
+
+* **Its own credential** — the agent's own login (`Agent.user`, e.g.
+  `ace@dimagi-ai.com`) and the secrets in its own vault. A runner turn signs in with a
+  login issued for that turn (`TurnAgentToken`); a stored login expires like any PAT
+  (`PAT_DEFAULT_TTL_DAYS`, 180 days) and rotation replaces it first
+  (`pat_rotation.max_days`).
+* **A borrowed credential** — a standing credential from a person's own account given
+  to the agent (`AgentDelegation`: its owner's or an admin's GitHub token, shown as
+  "GitHub · borrowed from <name>'s account"). It is the agent's to use in any turn
+  `decide` lets run in the full profile (never a caller's confined turn), and it leaves
+  canopy-web only for ONE turn a runner holds
+  (`POST /api/harness/runners/{rid}/turns/{tid}/github-token`) — never from
+  `credentials/resolve`, not to an admin's PAT, not to a box outside a turn.
+* **An act-as-you permission** — time-limited, granted by the person asking, in the
+  moment (a page's host grant; acting `X-Canopy-On-Behalf-Of` in their own turn, below).
+  Nothing else lets an agent act as a person. In particular:
+  - **A caller token only reads.** A full-profile turn asked by someone who is not the
+    agent's owner, an admin or canopy — an editor, a `full:` rule, a writer in
+    someone else's chat — and every repo chat reaches canopy as its asker so that it
+    sees what they may see, but its tools are the READ tools only (MCP readOnlyHint:
+    every GET route, and the hand-written reads). A write is refused, on MCP
+    (`mcp.turn_scope.READ_ONLY_REFUSAL`) and on REST
+    (`tokens.middleware._authenticate_caller_token`), saying the asker has granted no
+    act-as-you permission: the agent writes as its own login. Confined caller tokens
+    keep their capability's own tool list.
+  - **A person's account becomes an agent's login only when they say so.** An admin
+    links a fresh account made for the agent (one nobody has signed in to) directly,
+    or their own after a passkey step-up; anyone else's existing account gets a
+    request (`AgentLoginRequest`, 7 days) that ONLY that person accepts, in their own
+    browser behind a passkey step-up (Settings → "Agents asking to use your account",
+    `POST /api/me/agent-login-requests/{id}/accept`). Linking is browser-only: a token
+    is refused.
+  - **A runner never hands a turn its owner's token.** The cloud runner strips the
+    box's `CANOPY_TOKEN` from every turn, agentless repo turns included
+    (`cloud_runner._agent_env`).
+
 ## Workspace roles
 
 `viewer < editor < admin < owner` (`WorkspaceMembership.ROLE_RANK`). What each may
@@ -628,7 +668,7 @@ tool; and beside every delivered prompt — the runner leaves
   Expired, long-finished, or a conversation whose current turn is not confined → it
   authenticates nothing; `who_is_asking` answers only about its own conversation.
 * **A confined turn holds no credentials it does not need.** canopy refuses it
-  the owner's GitHub token (`agents.credentials.delegations.github_token_for_turn` → 409).
+  the agent's borrowed GitHub token (`agents.credentials.delegations.github_token_for_turn` → 409).
   The cloud runner builds its env from an allowlist (`_confined_env` in
   `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
   turn) — no `CANOPY_TOKEN`, no agent `.env`, no 1Password key (it never calls
@@ -638,8 +678,9 @@ tool; and beside every delivered prompt — the runner leaves
 * **A colleague's FULL turn reads as the colleague.** A full-profile turn not
   asked by the agent's owner, an admin or canopy (a `full:` rule, a workspace
   editor, a writer in an admin's session — `caller_tokens.is_caller_scoped`)
-  gets a **scoped** caller token (`CallerToken.scoped`): every tool exists
-  (`all_tools`), but each runs as the conversation's current asker, so
+  gets a **scoped** caller token (`CallerToken.scoped`): every READ tool exists
+  (`all_tools`, filtered to read-only tools; a write is refused — the asker granted no
+  act-as-you permission), and each runs as the conversation's current asker, so
   `turn_access.can_read_turn_content` and the session ACL decide what
   `harness_list_turns` / `read_turn_messages` / `read_turn_transcript` return.
   The cloud runner leaves it at `~/.canopy/scoped/turn/<turn id>.token` and sets
@@ -657,14 +698,16 @@ tool; and beside every delivered prompt — the runner leaves
   runner protocol) stay out of reach of a session acting for someone. A confined
   token is refused on REST (401): its capability's tool list is an MCP filter, and
   REST has no equivalent to apply. This is what lets the canopy CLI in a scoped
-  session act as the asker instead of failing for want of a PAT.
+  session read as the asker instead of failing for want of a PAT; like MCP, REST
+  refuses it every write (non-GET → 403).
 * **Projects run as the person who asked.** Agents and projects are both first
   class, and both act FOR the person who asked; they differ only in WHO the
   session is. An agent's turn acts as the agent, bounded by the asker (the rule
   above). A project turn or project chat (a repo, no agent) has no agent to act
   as, so it acts as its asker: a verified, active human initiator gets the same
   scoped caller token (`caller_tokens._project_asker`), so its session reads
-  canopy with exactly that person's access — nothing more, and never the box's.
+  canopy with exactly that person's access — nothing more, never a write, and never
+  the box's (the cloud runner strips its own `CANOPY_TOKEN` from the turn).
   The token follows the conversation's current asker and voids when a later turn
   has none verified. A project turn with no person behind it (a schedule, a
   drill) gets no token and no canopy identity. GitHub is the one thing a project
