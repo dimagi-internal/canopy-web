@@ -378,8 +378,11 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
   (`AgentSchedule.cli`, carried onto each turn it fires). `clis.refusal` refuses — 422 —
   a CLI the agent is not set up for, any CLI but Claude Code for an agentless or repo turn,
   and Codex for a sensitive site's conversation. The new-chat menu and the schedule editor
-  offer the choice only for an agent set up for more than one. Without a choice the claim
-  picks from the agent's list.
+  offer the choice only for an agent set up for more than one. In Slack the ask's first
+  word chooses it — `@canopy hal --codex <ask>`, `/hal --claude <ask>`
+  (`slack.services.cli_flag`) — for a new thread; a thread already on another CLI is
+  refused, saying to start a new one. Email, the embedded widget and a confined fork never
+  choose. Without a choice the claim picks from the agent's list.
 - **A box reports what it has** on every heartbeat, `clis`:
   `{"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}`, stored as
   `capabilities.clis` after `clis.sanitize` (unknown CLIs and malformed values dropped). It is

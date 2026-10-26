@@ -33,6 +33,7 @@ from apps.canopy_sessions import doors
 from apps.canopy_sessions import services as session_services
 from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions.models import Session
+from apps.harness import clis
 from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.harness.models import Turn
@@ -162,6 +163,8 @@ MOVED, NO_CLOUD, FORBIDDEN, MOVE_FAILED, NOTHING_QUEUED = (
     "moved", "no_cloud", "forbidden", "move_failed", "nothing_queued")
 #: `/<agent> read-channel <ask>` started reading; the answer comes when it is done.
 READING_CHANNEL = "reading_channel"
+#: A `--codex` / `--claude` the agent or the thread cannot run: nothing was sent.
+CLI_REFUSED = "cli_refused"
 #: Outcomes that are the system working, not refusing — nothing to log.
 OK_STATUSES = {SENT, ANSWERED, STALE, MOVED, NOTHING_QUEUED, READING_CHANNEL}
 
@@ -414,6 +417,36 @@ def named_agent(installation: SlackInstallation, text: str) -> tuple[Agent | Non
     return (named, rest.strip()) if named is not None else (None, text)
 
 
+#: The flags that choose a thread's agent CLI, read only as the ask's first word.
+CLI_FLAGS = {"--codex": clis.CODEX, "--claude": clis.CLAUDE_CODE, "--claude-code": clis.CLAUDE_CODE}
+
+
+def cli_flag(prompt: str) -> tuple[str, str]:
+    """(the CLI a leading `--codex` / `--claude` asks for, the rest) — or ("", prompt).
+    Only the first word: a flag later in the ask is the person's words, not ours."""
+    first, _, rest = prompt.partition(" ")
+    cli = CLI_FLAGS.get(first.lower())
+    return (cli, rest.strip()) if cli else ("", prompt)
+
+
+def _cli_refusal(agent: Agent, cli: str, key: str) -> Outcome | None:
+    """Why this thread cannot run on the `cli` its message asked for, or None. A
+    conversation keeps the CLI it started on (its history lives in that CLI's own
+    store), so a different one means a new thread."""
+    refused = clis.refusal(agent, cli)
+    if refused is None:
+        current = (Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
+                   .exclude(cli="").exclude(cli=cli).values_list("cli", flat=True).first())
+        if current:
+            refused = (f"This thread runs on {clis.label(current)}, and a conversation keeps the "
+                       f"CLI it started on. To use {clis.label(cli)}, start a new thread with "
+                       f"`@canopy {agent.slug} --{'codex' if cli == clis.CODEX else 'claude'} <your ask>`")
+    if refused is None:
+        return None
+    return Outcome(CLI_REFUSED, f"{refused}. Nothing you wrote here was sent.", agent=agent,
+                   workspace_id=agent.workspace_id)
+
+
 def resolve_agent(installation: SlackInstallation, text: str, key: str) -> tuple[Agent | None, str]:
     """(agent, the prompt with the agent's name removed)."""
     agents = {a.slug.lower(): a for a in enabled_agents(installation)}
@@ -453,7 +486,7 @@ def private_refusal(session: Session | None, *, agent: Agent | None = None) -> O
 
 
 def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
-                   title: str) -> tuple[Session, bool]:
+                   title: str, cli: str = "") -> tuple[Session, bool]:
     """The Session for this (agent, Slack thread) — found, or created once.
 
     Owned by whoever started the thread: a member as `created_by`, a contact as
@@ -483,7 +516,7 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
     session = session_services.create_session(
         workspace=agent.workspace, created_by=principal.user, agent=agent,
         contact=principal.contact if principal.user is None else None,
-        title=title[:200], metadata=metadata,
+        title=title[:200], metadata=metadata, cli=cli,
     )
     _sync_audience(session, inbound, principal)
     return session, True
@@ -552,6 +585,9 @@ def handle_message(inbound: Inbound) -> Outcome:
     # is the ask, so a bare `@canopy hal` there means "pick this up".
     joining = bool(inbound.thread_ts) and not inbound.is_dm and not Session.objects.filter(
         agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key}).exists()
+    cli, prompt = cli_flag(prompt)
+    if cli and (refused := _cli_refusal(agent, cli, key)) is not None:
+        return refused
     if not prompt and not inbound.files and not joining:
         return Outcome(EMPTY, f"What would you like `{agent.slug}` to do?", agent=agent)
     title = prompt or "Slack thread"
@@ -588,7 +624,7 @@ def handle_message(inbound: Inbound) -> Outcome:
                  else f"Slack: since {win.since}" if win.since else f"Slack: last {win.minutes} min") \
             + (f" — {ask}" if ask else "")
     session, created = thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
-                                      title=title)
+                                      title=title, cli=cli)
     refused = private_refusal(session, agent=agent)
     if refused is not None:
         return refused

@@ -24,6 +24,7 @@ from django.views.decorators.http import require_POST
 
 from apps.events import services as events_services
 from apps.events.models import Event
+from apps.harness import clis
 from apps.workspaces.models import Workspace
 
 from . import client, ingest, relay, services
@@ -291,8 +292,16 @@ def commands(request: HttpRequest) -> HttpResponse:
         return _ephemeral(f"What would you like `{agent.slug}` to do? `{usage} <ask>` — or"
                           f" `{usage} --history --min 30 <ask>` to include the channel's last 30 minutes"
                           " (or `--history --msgs 5` for its last 5 messages, or `--history 9am` for"
-                          " everything since 9 on your clock).")
-    anchor = f"<@{slack_user_id}> asked *{agent.slug}*: {ask}"
+                          " everything since 9 on your clock). Start it with `--codex` or `--claude`"
+                          " to choose the agent CLI the thread runs on.")
+    # A slash command always starts a new thread, so only the agent can refuse its
+    # CLI — asked before the public anchor, which would otherwise announce an ask
+    # that never runs.
+    cli, rest = services.cli_flag(ask)
+    if cli and (refused := clis.refusal(agent, cli)) is not None:
+        return _ephemeral(f"{refused}. Nothing you wrote here was sent.")
+    on = f" on {clis.label(cli)}" if cli else ""
+    anchor = f"<@{slack_user_id}> asked *{agent.slug}*{on}: {rest}"
     try:
         root_ts = client.post_message(installation.bot_token, channel=channel_id, text=anchor)
     except client.SlackApiError as e:
