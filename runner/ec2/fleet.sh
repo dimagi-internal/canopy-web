@@ -165,6 +165,13 @@ echo ">> rendering the fleet template (runner.cfn.yaml's own cloud-init)"
 python3 fleet_template.py fleet.cfn.yaml runner.cfn.yaml > fleet.rendered.cfn.yaml
 "${AWS[@]}" cloudformation validate-template --template-body file://fleet.rendered.cfn.yaml >/dev/null
 PARAMS=("FleetName=$NAME" "InstanceType=$INSTANCE_TYPE" "MaxMembers=$MAX")
+# Only the zones that offer the type: AWS otherwise tries one that does not (us-east-1e
+# has no t3) and launches late, after a failed attempt.
+ZONES=$("${AWS[@]}" ec2 describe-instance-type-offerings --location-type availability-zone \
+          --filters "Name=instance-type,Values=$INSTANCE_TYPE" --query 'InstanceTypeOfferings[].Location' \
+          --output text | tr -s '\t ' '\n' | sort | paste -sd, -)
+[[ -n "$ZONES" ]] || die "no zone in $REGION offers $INSTANCE_TYPE"
+PARAMS+=("Zones=$ZONES")
 [[ -n "$WORKSPACE" ]] && PARAMS+=("RunnerWorkspace=$WORKSPACE")
 [[ -n "$AGENTS" ]] && PARAMS+=("RunnerAgents=$AGENTS" "AgentSlugs=$AGENTS")
 [[ -n "$PROJECTS" ]] && PARAMS+=("RunnerProjects=$PROJECTS")

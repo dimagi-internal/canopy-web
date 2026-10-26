@@ -38,6 +38,12 @@ Parameters:
     # knows the fleet (an instance can only report ready once it has joined).
     MinValue: 0
     Description: Members in service however quiet it is (the group's MinSize).
+  Zones:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: >
+      The zones the group launches in. fleet.sh passes those that offer InstanceType
+      (not every zone in a region does); empty is every zone in the region.
   MaxMembers:
     Type: Number
     Default: 4
@@ -99,6 +105,9 @@ Parameters:
   RunnerSeedSecret:
     Type: String
     Default: canopy/cloud-runner/runner-seed
+
+Conditions:
+  HasZones: !Not [!Equals [!Join [',', !Ref Zones], '']]
 
 Resources:
   # No ingress at all: a member is reached through SSM, never SSH.
@@ -188,7 +197,7 @@ Resources:
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
       MinSize: !Ref MinMembers
       MaxSize: !Ref MaxMembers
-      AvailabilityZones: !GetAZs ''
+      AvailabilityZones: !If [HasZones, !Ref Zones, !GetAZs '']
       HealthCheckType: EC2
       NewInstancesProtectedFromScaleIn: true
       # A member is held where it is until it has bootstrapped (`--fleet-ready`
