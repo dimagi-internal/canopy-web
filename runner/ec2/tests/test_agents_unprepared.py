@@ -33,3 +33,24 @@ def test_a_failed_lazy_prepare_is_reported(cloud_runner, tmp_path, monkeypatch):
     cloud_runner._LAZY_BOOTSTRAP_TRIED.clear()
     cloud_runner._ensure_agent_clone("eva")
     assert cloud_runner.agents_unprepared() == []
+
+
+def test_a_new_agent_is_cloned_with_its_turns_github_identity(cloud_runner, tmp_path, monkeypatch):
+    """canopy-web never hands the agent's GitHub token to a read outside a turn, so the
+    box-wide prepare cannot clone a private agent repo: the first turn clones it with
+    ITS token, then prepare runs."""
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    seen = []
+    monkeypatch.setattr(cloud_runner, "_LAZY_CLONER", lambda s, env: seen.append((s, dict(env or {}))))
+    env = {"GH_TOKEN": "t", cloud_runner.AGENT_REPO_ENV: "dimagi-internal/fizzy"}
+    cloud_runner._ensure_agent_clone("fizzy", env)
+    assert seen == [("fizzy", env)]
+
+
+def test_the_cloner_needs_the_turns_token_and_a_plain_repo(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    ran = []
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda *a, **k: ran.append(a) or None)
+    cloud_runner._clone_agent_repo("fizzy", {cloud_runner.AGENT_REPO_ENV: "dimagi-internal/fizzy"})
+    cloud_runner._clone_agent_repo("fizzy", {"GH_TOKEN": "t", cloud_runner.AGENT_REPO_ENV: "../evil"})
+    assert ran == []

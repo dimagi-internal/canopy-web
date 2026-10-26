@@ -407,7 +407,10 @@ def requested_by(turn) -> str:
 
 
 def github_token_for_turn(turn) -> dict:
-    """The token, and the git identity to commit with, for one turn."""
+    """The token, and the git identity to commit with, for one turn.
+
+    THE ONLY WAY the agent's GitHub token (a borrowed credential) leaves canopy-web: `credentials/resolve`
+    never returns it, so no admin's PAT and no box outside a turn can read it."""
     if turn.capability:
         # A CALLER's turn (confined to a capability of the agent's interface) is
         # never lent the owner's GitHub identity: no published capability needs it,

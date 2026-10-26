@@ -170,9 +170,13 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
     always was. With `refs`, `values` holds only the named refs that the
     agent also declares (`runtime_secrets`), and the secret extras
-    (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
-    are included only when named in `refs` too. `op_vault`, `shared_op_vault`
-    and `mailbox` are not secrets and are always returned.
+    (`op_sa_token`, `shared_op_sa_token`, `salesforce_creds`) are included
+    only when named in `refs` too. `op_vault`, `shared_op_vault` and `mailbox`
+    are not secrets and are always returned.
+
+    **Never the agent's GitHub token.** That borrowed credential (the token its owner
+    or an admin gave it from their own GitHub account) leaves canopy-web only for one turn a runner holds
+    (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never from here.
 
     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
     service-account token (`op_sa_token` is ""): its values come from here, so

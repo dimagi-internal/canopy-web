@@ -2006,12 +2006,9 @@ class AgentCredentialsResolveOut(StrictModel):
     # them, and the box then behaves exactly as it does today.
     shared_op_vault: str = ""
     shared_op_sa_token: str = ""
-    # The agent OWNER's GitHub token for this agent (`AgentDelegation`), so a box
-    # can clone the agent's private repo and its private plugin repos. "" when
-    # the owner has lent none. A turn does NOT read it from here: it asks for
-    # its own, bound to the turn it claimed
-    # (`POST /api/harness/runners/{id}/turns/{id}/github-token`).
-    github_token: str = ""
+    # No GitHub token: the agent's (a borrowed credential, `AgentDelegation`) leaves
+    # canopy-web only for ONE turn a runner holds
+    # (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never here.
     # The chrome-sales `.sf-creds.json` this agent BORROWS (an `AgentDelegation`
     # of service salesforce: the lender's own credential, resolved now, not a
     # copy). "" when it borrows none. The box writes it to

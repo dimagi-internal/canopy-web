@@ -32,11 +32,13 @@ logger = logging.getLogger(__name__)
 
 #: The secret fields of the response beside `values`. A scoped resolve
 #: (`?refs=`) returns each only when it is named; the read log names each one
-#: handed out, like a ref.
-RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds")
+#: handed out, like a ref. Never the agent's GitHub token (a borrowed credential): it
+#: leaves canopy-web only for one turn a runner holds
+#: (`delegations.github_token_for_turn`), never to a read outside a turn.
+RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "salesforce_creds")
 
-#: What a `license` read (a person's local turn, canopy-web#1704) never gets: the
-#: agent OWNER's GitHub delegation, a credential LENT to the agent, the shared vault's
+#: What a `license` read (a person's local turn, canopy-web#1704) never gets (nor does
+#: any read: the agent OWNER's GitHub delegation): a credential LENT to the agent, the shared vault's
 #: key — none of them is the agent's own — and the agent's own canopy login, which would
 #: let the holder act AS the agent (graded `system`, past the editor tier's manual cap).
 #: Nor the agent's 1Password service-account key (`op_sa_token`): it reads the WHOLE
@@ -44,7 +46,7 @@ RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "s
 #: that login. A non-admin using a 1Password-backed agent locally therefore gets no
 #: secrets from 1Password; an agent whose secrets live in the canopy-web vault serves
 #: them value by value, as `values`.
-LICENSE_WITHHELD_EXTRAS = ("op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds")
+LICENSE_WITHHELD_EXTRAS = ("op_sa_token", "shared_op_sa_token", "salesforce_creds")
 LICENSE_WITHHELD_REFS = frozenset({"canopy-pat", "canopy-web-pat"})
 
 BEARER_REQUIRED = "bearer_required"
@@ -77,7 +79,6 @@ class Resolved:
     op_sa_token: str
     shared_op_vault: str
     shared_op_sa_token: str
-    github_token: str
     salesforce_creds: str
     mailbox: str
     mailbox_backend: str
@@ -305,13 +306,11 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     if via == "license":
         for layer in layers:
             layer["values"] = {k: v for k, v in layer["values"].items() if k not in LICENSE_WITHHELD_REFS}
-    delegation = delegations.delegation_for(agent) if extra("github_token") else None
     out = Resolved(
         values=values, op_vault=vault,
         op_sa_token=op_token if extra("op_sa_token") else "",
         shared_op_vault=shared_vault,
         shared_op_sa_token=shared_token if extra("shared_op_sa_token") else "",
-        github_token=delegations.decrypt_secret(delegation.secret_enc) if delegation else "",
         salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
         mailbox=agent.email or "",
         mailbox_backend=mailbox_backend(agent),
