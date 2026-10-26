@@ -1012,13 +1012,18 @@ def transfer_all(request: HttpRequest, payload: TransferAllIn):
             out.update(status="refused", error="you can read this session but not move it")
             continue
         if payload.dry_run:
-            busy = placement.busy_reason(session)
-            out.update(status="refused" if busy else "would_move", error=busy)
+            cli = payload.cli if payload.cli and payload.cli != session.cli else ""
+            why = (placement.busy_reason(session) or placement.cli_switch_refusal(session, cli)
+                   or ("" if placement._placeable_runner(session, str(target.id), cli=cli)
+                       else str(placement._placement_refused(session, str(target.id), "",
+                                                             cli=cli))))
+            out.update(status="refused" if why else "would_move", error=why)
             continue
         try:
             req, moved = transfer_requests.request(
                 session=session, runner_value=str(target.id), brief=payload.brief,
-                user=request.user, initiator=who.for_request(request, via="transfer"))
+                user=request.user, initiator=who.for_request(request, via="transfer"),
+                cli=payload.cli or "")
         except (LookupError, RuntimeError, FileExistsError, ValueError) as exc:
             out.update(status="refused", error=str(exc))
             continue
@@ -1829,6 +1834,7 @@ def transfer(request: HttpRequest, session_id: uuid.UUID, payload: TransferIn):
         req, moved = transfer_requests.request(
             session=session, runner_value=payload.runner, brief=payload.brief,
             user=request.user, initiator=who.for_request(request, via="transfer"),
+            cli=payload.cli or "",
         )
     except LookupError as exc:
         raise HttpError(404, str(exc))

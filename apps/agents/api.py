@@ -1219,7 +1219,6 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
         slug=agent.slug,
         repo_url=agent.repo_url,
         repo_ref=agent.repo_ref,
-        engine=agent.runtime_engine,
         secret_refs=list(agent.runtime_secrets or []),
         workspace=agent.workspace_id,
         clis=list(agent.clis or []),

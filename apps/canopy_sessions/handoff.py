@@ -38,6 +38,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
 
+from apps.harness import clis
 from apps.harness import initiator as who
 from apps.harness import sensitivity
 from apps.harness import services as harness_services
@@ -101,7 +102,7 @@ def _initiator_from(fields: dict | None, user):
 
 
 def begin(*, session: Session, binding: RunnerBinding, source, target, brief: str, user,
-          initiator) -> SessionHandoff:
+          initiator, to_cli: str = "") -> SessionHandoff:
     """Record the handoff for a transfer that is happening now (the caller holds
     the binding lock and has NOT yet cleared the source's identity off it).
 
@@ -126,8 +127,10 @@ def begin(*, session: Session, binding: RunnerBinding, source, target, brief: st
             user, "pk", None) else None,
         brief=brief, initiator=_initiator_fields(initiator),
         # The target resumes the conversation itself only if it runs Claude itself
-        # (a cloud box); emdash owns its Claude process and cannot be told to.
-        want_transcript=capturable and target.kind == Runner.CLOUD,
+        # (a cloud box); emdash owns its Claude process and cannot be told to. A
+        # move to another agent CLI never resumes: that CLI has no such session.
+        want_transcript=capturable and target.kind == Runner.CLOUD and not to_cli,
+        to_cli=to_cli,
         capture_status=SessionHandoff.PENDING if capturable else (
             SessionHandoff.UNREACHABLE if holds_task and not source.is_reachable
             else SessionHandoff.NOT_ASKED),
@@ -197,6 +200,11 @@ def build_prompt(h: SessionHandoff, *, source_name: str, target_name: str, resum
                 "stand, and wait — do not start new work.\n")
     else:
         head = TRANSFER_PREAMBLE.format(source=source_name, target=target_name)
+    if h.to_cli:
+        head += (f"\nIt also moved to {clis.label(h.to_cli)}"
+                 + (f" from {clis.label(src)}" if (src := getattr(h, "from_cli", "")) else "")
+                 + ": you are running in a different agent CLI from the one that held "
+                 "this conversation.\n")
     if h.capture_status == SessionHandoff.CAPTURED and h.manifest:
         work = (
             f"\n**The work came with you.** The runner restores {source_name}'s snapshot "
@@ -258,6 +266,11 @@ def settle(h: SessionHandoff) -> SessionHandoff:
             binding.transcript_id = ""
         binding.save(update_fields=["transcript_id", "index_offset", "updated_at"])
 
+        if h.to_cli:
+            # Held to the new CLI from here: its history starts with this turn.
+            h.from_cli = session.cli
+            Session.objects.filter(pk=session.pk).update(cli=h.to_cli, cli_session_id="")
+            session.cli = h.to_cli
         source_name = h.source_runner.name if h.source_runner else "an unknown runner"
         prompt = build_prompt(h, source_name=source_name, target_name=target.name, resumed=resume)
         origin_ref = {"thread_key": binding.thread_key or str(session.id),
@@ -275,6 +288,7 @@ def settle(h: SessionHandoff) -> SessionHandoff:
             prompt=prompt, origin_ref=origin_ref, enqueued_by=h.requested_by,
             pinned_runner=target, initiator=_initiator_from(h.initiator, h.requested_by),
             parent={"session": session}, provenance_extra={"transfer_from": source_name},
+            requested_cli=h.to_cli,
         )
         h.turn, h.settled_at, h.resume_planned = turn, timezone.now(), resume
         if captured:

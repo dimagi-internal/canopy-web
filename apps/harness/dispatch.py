@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from apps.agents.models import Agent
 
-from . import services
+from . import invocations, services
 from .dispatch_marker import stamp_dispatched, wrap_human_reply
 from .models import Turn
 
@@ -136,7 +136,7 @@ def dispatch(task, *, action, actor_workspace_ids: set[str]) -> list[Turn]:
         # Idempotent, so an agent that already stamped client-side (Ada does, ada#55) passes
         # through untouched and is not double-marked.
         sender = task.agent or task.created_by_agent or target
-        brief = stamp_dispatched(spec.prompt or f"/{target.slug}:turn", sender=sender.slug)
+        brief = stamp_dispatched(spec.prompt or invocations.command(target.slug, "turn"), sender=sender.slug)
         # Carry the card's title so the runner can NAME the emdash session after the
         # work rather than after its slash command — `c-retry-the-backoff-on-429`
         # instead of `c-turn`, which is what every board dispatch would otherwise

@@ -131,6 +131,7 @@ from apps.agents.interface_default import VERSION, default_interface  # noqa: F4
 from apps.canopy_sessions.models import SessionParticipant
 from apps.contacts.domain_proof import proof
 from apps.harness import initiator as who
+from apps.harness import invocations
 from apps.harness.caller_context import is_verified
 
 #: The fallback door for a free-form channel (email, chat, Slack, a widget on a
@@ -247,9 +248,10 @@ def parse(doc) -> dict:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
         entry = cap.get("entry")
-        if entry is not None and (not isinstance(entry, str) or not entry.startswith("/")
-                                  or "\n" in entry or len(entry) > _MAX_PATTERN):
-            raise InterfaceError(f"{name}.entry must be a one-line slash command")
+        if entry is not None and (not isinstance(entry, str) or "\n" in entry
+                                  or len(entry) > _MAX_PATTERN
+                                  or invocations.parse(entry) is None):
+            raise InterfaceError(f"{name}.entry must be one plugin command: /<plugin>:<skill> [args]")
         inputs = cap.get("input") or {}
         if not isinstance(inputs, dict) or len(inputs) > 20:
             raise InterfaceError(f"{name}.input must be a mapping of at most 20 fields")

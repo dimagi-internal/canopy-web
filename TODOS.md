@@ -107,7 +107,8 @@
 - **Plan 2, cloud runner Codex executor.** Starts with the live probe (a ChatGPT-signed-in `codex` on a box). Also covers Codex logins on `RunnerLogin`, an "add OpenAI key" UI, and runner copy that still says "Claude is not signed in".
 - **Plan 3, canopy plugin:** guards and caller context read Codex hook payloads; the factory's `skills/turn` and persona fallback (`AGENTS.md`).
 - **Plan 4, laptop headless runner on Codex.**
-- **Runner honours `cli_model`.** The claim sends each turn's model (`Agent.cli_models`); no executor reads it yet, so no screen offers it.
+- **`cli_model` everywhere.** The cloud `cli` executor starts `claude -p` on it; the ACP executor and laptops do not yet, so no screen offers it. Offer it in Settings once they do.
+- **Executors receive `invocation`.** The claim carries a turn's parsed plugin command; the Codex executor renders it as a skill invocation (Claude Code types `prompt` as is).
 
 **Priority:** P2
 **Depends on:** a Codex sign-in on a test box for Plan 2's probe

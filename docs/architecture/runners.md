@@ -437,6 +437,16 @@ headless); `claude-desktop` and `emdash` run Claude Code only.
   entries only once the box reports that CLI — older code reads every entry as Claude's.
 - **A local session** (`POST /api/harness/local-turns/`) is a person's own Claude Code
   session: its turn records `cli="claude-code"`.
+- **A prompt's plugin command is parsed once** (`apps/harness/invocations.py`): a first
+  line `/<plugin>:<skill> <args>` is the canonical text canopy-web stores, shows and
+  builds (`invocations.command` — mail turns, dispatches; an interface's `entry` must
+  parse), and the claimed turn carries it parsed as `invocation` (`plugin`, `skill`,
+  `args`, `rest`: the lines after). A turn executor renders that in its CLI's terms —
+  Claude Code types `prompt` as it is; a CLI that loads skills but not commands invokes
+  the skill `plugin:skill` — rather than parsing Claude's syntax itself.
+- **A conversation can change CLI only by a transfer** that names one
+  (`docs/architecture/chat-sessions.md` § A transfer carries the work): a fresh start in
+  the new CLI from the handoff, never a resume.
 
 Spec: `docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md`.
 

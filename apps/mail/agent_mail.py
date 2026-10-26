@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.canopy_sessions.models import Session
 from apps.harness import services as harness
-from apps.harness import session_sync
+from apps.harness import invocations, session_sync
 from apps.harness.channels import email as email_channel
 from apps.harness.models import Turn
 
@@ -43,7 +43,7 @@ def _wake(route, parsed, msg, thread) -> None:
     harness.enqueue_turn(
         agent=agent, origin=Turn.ORIGIN_EMAIL,
         idempotency_key=_turn_key(agent, thread, msg),
-        prompt=f"/{agent.slug}:turn --thread {thread.uuid}",
+        prompt=invocations.command(agent.slug, "turn", f"--thread {thread.uuid}"),
         origin_ref={"thread_id": str(thread.uuid), "backend": "ses", "mailbox": route.address,
                     "from": parsed.from_addr,
                     "from_name": parsed.from_name, "subject": parsed.subject,

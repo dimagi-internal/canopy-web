@@ -1,7 +1,7 @@
 """GET /api/agents/{slug}/runtime — the Agent Runtime Registry discovery endpoint.
 
 A runner asks canopy-web "how do I run agent X?" and gets the repo pointer, the
-secret-reference names to resolve, the engine preference, and the tenant. It is
+secret-reference names to resolve, the agent CLIs, and the tenant. It is
 tenant-gated exactly like every other agent read (a non-member 404s)."""
 from __future__ import annotations
 
@@ -34,11 +34,11 @@ def client(owner):
     return c
 
 
-def test_runtime_serves_repo_pointer_secrets_engine_and_tenant(client, workspace):
+def test_runtime_serves_repo_pointer_secrets_clis_and_tenant(client, workspace):
     Agent.objects.create(
         slug="echo", name="Echo", workspace=workspace,
         repo_url="https://github.com/dimagi/echo", repo_ref="main",
-        runtime_engine=Agent.CLOUD_P, runtime_secrets=["canopy-pat", "echo-gog"],
+        runtime_secrets=["canopy-pat", "echo-gog"],
     )
     resp = client.get("/api/agents/echo/runtime")
     assert resp.status_code == 200
@@ -47,7 +47,6 @@ def test_runtime_serves_repo_pointer_secrets_engine_and_tenant(client, workspace
         "slug": "echo",
         "repo_url": "https://github.com/dimagi/echo",
         "repo_ref": "main",
-        "engine": "cloud_p",
         "secret_refs": ["canopy-pat", "echo-gog"],
         "workspace": "canopy",
         "clis": ["claude-code"],
@@ -62,7 +61,6 @@ def test_runtime_defaults_for_an_unconfigured_agent(client, workspace):
     body = client.get("/api/agents/plain/runtime").json()
     assert body["repo_url"] == ""
     assert body["repo_ref"] == "main"
-    assert body["engine"] == "any"
     assert body["secret_refs"] == []
 
 
@@ -86,23 +84,22 @@ def test_upsert_sets_runtime_fields(client, workspace):
         data={
             "slug": "echo", "name": "Echo", "workspace": workspace.slug,
             "repo_url": "https://github.com/dimagi/echo",
-            "runtime_engine": "cloud_p", "runtime_secrets": ["canopy-pat"],
+            "runtime_secrets": ["canopy-pat"],
         },
         content_type="application/json",
     )
     assert resp.status_code in (200, 201), resp.content
     body = client.get("/api/agents/echo/runtime").json()
     assert body["repo_url"] == "https://github.com/dimagi/echo"
-    assert body["engine"] == "cloud_p"
     assert body["secret_refs"] == ["canopy-pat"]
 
 
 def test_reupsert_without_runtime_fields_does_not_clobber(client, workspace):
     # The plugin re-upserts agents on every sync WITHOUT runtime fields; that must
-    # not reset a previously-configured repo pointer / engine / secret refs.
+    # not reset a previously-configured repo pointer / secret refs.
     Agent.objects.create(
         slug="echo", name="Echo", workspace=workspace,
-        repo_url="https://github.com/dimagi/echo", runtime_engine=Agent.CLOUD_P,
+        repo_url="https://github.com/dimagi/echo",
         runtime_secrets=["canopy-pat"],
     )
     resp = client.post(
@@ -113,5 +110,4 @@ def test_reupsert_without_runtime_fields_does_not_clobber(client, workspace):
     assert resp.status_code in (200, 201), resp.content
     body = client.get("/api/agents/echo/runtime").json()
     assert body["repo_url"] == "https://github.com/dimagi/echo"  # preserved
-    assert body["engine"] == "cloud_p"
     assert body["secret_refs"] == ["canopy-pat"]

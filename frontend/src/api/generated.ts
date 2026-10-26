@@ -21716,8 +21716,6 @@ export interface components {
             readonly repo_url?: string | null;
             /** Repo Ref */
             readonly repo_ref?: string | null;
-            /** Runtime Engine */
-            readonly runtime_engine?: ("emdash" | "cloud_p" | "any") | null;
             /** Clis */
             readonly clis?: readonly ("claude-code" | "codex")[] | null;
             /** Cli Models */
@@ -22551,8 +22549,8 @@ export interface components {
         /**
          * AgentRuntimeOut
          * @description What a runner needs from canopy-web to run this agent: the repo pointer,
-         *     the secret-reference names to resolve from the env store, the engine
-         *     preference, and the tenant. Secret VALUES live in the secret store.
+         *     the secret-reference names to resolve from the env store, the agent CLIs it
+         *     runs on, and the tenant. Secret VALUES live in the secret store.
          */
         readonly AgentRuntimeOut: {
             /** Slug */
@@ -22561,8 +22559,6 @@ export interface components {
             readonly repo_url: string;
             /** Repo Ref */
             readonly repo_ref: string;
-            /** Engine */
-            readonly engine: string;
             /** Secret Refs */
             readonly secret_refs: readonly string[];
             /** Workspace */
@@ -33984,7 +33980,28 @@ export interface components {
              * @default
              */
             readonly cli_model: string;
+            readonly invocation?: components["schemas"]["InvocationOut"] | null;
             readonly page_site?: components["schemas"]["ClaimPageSiteOut"] | null;
+        };
+        /**
+         * InvocationOut
+         * @description The plugin command a turn's prompt opens with (`harness.invocations`).
+         */
+        readonly InvocationOut: {
+            /** Plugin */
+            readonly plugin: string;
+            /** Skill */
+            readonly skill: string;
+            /**
+             * Args
+             * @default
+             */
+            readonly args: string;
+            /**
+             * Rest
+             * @default
+             */
+            readonly rest: string;
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {
@@ -37014,6 +37031,8 @@ export interface components {
              * @default false
              */
             readonly dry_run: boolean;
+            /** Cli */
+            readonly cli?: ("claude-code" | "codex") | null;
         };
         /**
          * JoinRequestOut
@@ -37754,6 +37773,8 @@ export interface components {
              * @default
              */
             readonly brief: string;
+            /** Cli */
+            readonly cli?: ("claude-code" | "codex") | null;
         };
         /**
          * MenuAnswerIn

@@ -274,7 +274,7 @@ def _upsert(c, **fields):
 @pytest.mark.parametrize("field,value", [
     ("repo_url", "https://github.com/evil/echo"),
     ("repo_ref", "evil-branch"),
-    ("runtime_engine", "cloud_p"),
+    ("clis", ["codex"]),
     ("runtime_secrets", ["gog-token", "aws-root"]),
     ("runtime_sources", {"gog-token": "op://Elsewhere/x"}),
 ])

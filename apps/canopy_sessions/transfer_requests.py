@@ -76,11 +76,12 @@ def _transfer(req: TransferRequest, user, initiator):
     keeps the request pending and says to stop the session first."""
     return placement.transfer_session(
         session=req.session, placement=str(req.to_runner_id), brief=req.brief, user=user,
-        initiator=initiator,
+        initiator=initiator, cli=req.cli,
     )
 
 
-def request(*, session: Session, runner_value: str, brief: str, user, initiator=None):
+def request(*, session: Session, runner_value: str, brief: str, user, initiator=None,
+            cli: str = ""):
     """Ask to move `session` onto `runner_value`. Returns (request, transfer|None).
 
     A requester who administers the target is not asking anyone: the move runs now
@@ -89,12 +90,17 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
     could never run on (the same `_placeable_runner` gate a transfer applies, so a
     request can't wait a day for an approval that would then fail), LookupError for
     a session with nothing on a box, RuntimeError while a turn executes on the
-    immediate path, and FileExistsError when a request is already open.
+    immediate path, and FileExistsError when a request is already open. `cli`
+    continues it on another agent CLI (`placement.transfer_session`).
     """
+    cli = cli if cli and cli != session.cli else ""
+    if (refused := placement.cli_switch_refusal(session, cli)) is not None:
+        raise ValueError(refused)
     target = resolve_runner(runner_value)
-    if target is None or placement._placeable_runner(session, str(target.id)) is None:
+    if target is None or placement._placeable_runner(session, str(target.id), cli=cli) is None:
         raise placement._placement_refused(
-            session, str(target.id) if target else runner_value, "unknown runner for transfer")
+            session, str(target.id) if target else runner_value, "unknown runner for transfer",
+            cli=cli)
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
     binding = getattr(session, "runner_binding", None)
@@ -114,10 +120,10 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
     if same_owner or runners.can_administer_runner(user, target):
         binding_after, turn = placement.transfer_session(
             session=session, placement=str(target.id), brief=brief, user=user,
-            initiator=initiator)
+            initiator=initiator, cli=cli)
         req = TransferRequest.objects.create(
             session=session, to_runner=target, from_runner=binding.runner, requested_by=user,
-            brief=brief, status=TransferRequest.APPROVED, decided_by=user,
+            brief=brief, cli=cli, status=TransferRequest.APPROVED, decided_by=user,
             decided_at=timezone.now(), turn_id=turn.id if turn else None,
             note=("same owner on both runners — no approval needed" if same_owner
                   else "requester administers the target — no approval needed"),
@@ -129,7 +135,7 @@ def request(*, session: Session, runner_value: str, brief: str, user, initiator=
         with transaction.atomic():
             req = TransferRequest.objects.create(
                 session=session, to_runner=target, from_runner=binding.runner,
-                requested_by=user, brief=brief,
+                requested_by=user, brief=brief, cli=cli,
             )
     except IntegrityError:
         raise FileExistsError("this session already has a transfer request waiting — "

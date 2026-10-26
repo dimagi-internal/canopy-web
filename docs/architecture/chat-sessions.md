@@ -163,8 +163,18 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   (`handoff.suppressed_tasks`). A failed close is retried each tick and raises the
   `transfer_left_open` alert; so does a task KEPT because it holds the only copy
   (pack failed, restore mismatched, sensitive) — "Close it anyway" forces it.
+- **Onto another agent CLI.** `cli` on `POST /{id}/transfer` (and `/transfer-all`,
+  and a pending `TransferRequest`) continues the conversation on another CLI its agent
+  is set up for — off a box whose Claude ran out onto Codex, or back
+  (`placement.cli_switch_refusal`: never a sensitive conversation off Claude Code).
+  Without it a target lacking the conversation's CLI is refused, naming the `cli` that
+  would work. A switch never resumes (`SessionHandoff.to_cli`, `want_transcript`
+  false): at settle the conversation is held to the new CLI (`Session.cli`, its
+  `cli_session_id` cleared), the transfer turn asks for it (`requested_cli`), and the
+  prompt says the CLI changed. The work still travels as a snapshot.
 - **Batch.** `POST /transfer-all` moves every open session on one runner (what an
-  account switch does); `GET /?runner=<name>` lists them.
+  account switch does); its `dry_run` reports a target that could not run one, and
+  `GET /?runner=<name>` lists them.
 
 ## Several people in one chat: drafts and authorship
 
