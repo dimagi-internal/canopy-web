@@ -129,6 +129,15 @@ export async function getRunnerOnlyAgents(runnerId: string): Promise<RunnerOnlyA
   return { agents: Array.from(out.agents), choices: Array.from(out.choices) }
 }
 
+// The name people see for a runner. The box keeps the name it paired as.
+export async function setRunnerName(runnerId: string, name: string): Promise<RunnerOut> {
+  const res = await apiV2.PUT('/api/harness/runners/{runner_id}/name', {
+    params: { path: { runner_id: runnerId } },
+    body: { name },
+  })
+  return toRunner(unwrap(res, 'setRunnerName'))
+}
+
 // Whether a runner takes only what is put on it (pins and the chats bound to it).
 export async function setRunnerDirected(runnerId: string, directed: boolean): Promise<RunnerOut> {
   const res = await apiV2.PUT('/api/harness/runners/{runner_id}/directed', {

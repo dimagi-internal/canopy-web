@@ -72,7 +72,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (status, facts, alerts, health, readiness checks), Credentials (a cloud box's
   Claude logins, tokens and API keys and its vault — only for its administrators),
   Routing (workspaces it serves, agents it takes, a laptop's repos — add one, see runners.md § Adding a repo to a laptop — each agent's routing), Access
-  (administrators, private), Settings (pause, sessions, flags, egress, runtime,
+  (administrators, private), Settings (name, pause, sessions, flags, egress, runtime,
   retire). Reads `GET /api/harness/runners/{id}/`; a link naming another workspace
   forwards to the runner's own. `/supervisor?tab=runners&runner=<id>` (old mail and
   alerts) forwards here.

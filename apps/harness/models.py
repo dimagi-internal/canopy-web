@@ -73,6 +73,9 @@ class Runner(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
+    # The name the box paired as: what it still sends when it pairs again (a replaced
+    # instance re-attaching). `name` is what people see and may rename; this never changes.
+    paired_as = models.CharField(max_length=100, blank=True, default="", db_default="")
     kind = models.CharField(max_length=10, choices=KIND_CHOICES)
     location = models.CharField(
         max_length=16, choices=LOCATION_CHOICES, default=LOCAL,
@@ -350,6 +353,8 @@ class Runner(models.Model):
         nothing else (`RunnerEnrollment`). Here rather than in the pairing route
         so every way a row comes into being gets the same single enrollment."""
         creating = self._state.adding
+        if creating and not self.paired_as:
+            self.paired_as = self.name
         super().save(*args, **kwargs)
         if creating and self.workspace_id:
             RunnerEnrollment.objects.get_or_create(

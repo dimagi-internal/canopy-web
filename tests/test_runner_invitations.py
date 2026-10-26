@@ -269,6 +269,20 @@ def test_approved_invitation_pairs_once(org):
 
 
 @pytest.mark.usefixtures("sts")
+def test_a_renamed_runner_is_still_reattached_but_another_name_is_refused(org):
+    _approved(org)
+    runner = Runner.objects.get(pk=_pair().json()["runner_id"])
+    # A person renames it; the box still asks as the name it paired as.
+    Runner.objects.filter(pk=runner.pk).update(name="cloud-ec2-live")
+    again = _pair()
+    assert again.status_code == 200 and again.json()["runner_id"] == str(runner.pk)
+    assert Runner.objects.get(pk=runner.pk).name == "cloud-ec2-live"
+    # The same role as some other box is still refused.
+    assert _pair(name="cloud-ec2-other").status_code == 401
+    assert Runner.objects.count() == 1
+
+
+@pytest.mark.usefixtures("sts")
 def test_pending_invitation_waits(org):
     _create(_pat_client(org["pat"]))
     res = _pair()

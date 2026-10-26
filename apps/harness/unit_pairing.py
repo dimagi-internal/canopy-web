@@ -27,6 +27,7 @@ Every refusal is the one uniform 401 of `pair-by-role`; the reason goes to the l
 from __future__ import annotations
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.http import HttpRequest
 from django.utils import timezone
 
@@ -58,13 +59,15 @@ def unit_capability(unit: dict, root: str) -> dict:
 def _machine_runner(machine: str, role_jkt: str, name: str) -> Runner | None:
     """The live runner `name` on this machine: by `machine_id`, or — for a box paired
     before units, whose machine id was never recorded — by its role's aws-iam key."""
-    runner = (Runner.objects.filter(machine_id=machine, name=name, kind=Runner.CLOUD)
+    # `paired_as` keeps the name the box paired as, so a runner a person renamed is still found.
+    named = Q(name=name) | Q(paired_as=name)
+    runner = (Runner.objects.filter(named, machine_id=machine, kind=Runner.CLOUD)
               .exclude(status=Runner.RETIRED).order_by("paired_at").first())
     if runner is not None:
         return runner
     key = (RunnerDeviceKey.objects.select_related("runner")
            .filter(jkt=role_jkt, kind=RunnerDeviceKey.AWS_IAM).first())
-    if key is not None and key.runner.name == name and key.runner.status != Runner.RETIRED:
+    if key is not None and name in (key.runner.name, key.runner.paired_as) and key.runner.status != Runner.RETIRED:
         return key.runner
     return None
 
