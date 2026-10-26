@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 
 from django.apps import apps
-from django.db.models import Exists, F, OuterRef, Q, Subquery, Value
+from django.db.models import Case, CharField, Exists, F, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
 from django.utils import timezone
@@ -144,6 +144,17 @@ def unseen_q() -> Q:
     derived on every read, so one report brings a session back — but it is not free:
     the failure is a live chat vanishing from the list, so the gates above are real.
     """
+    p = _predicates()
+    return (p.runner_unseen | p.web_unseen) & ~p.transferring
+
+
+class _Predicates:
+    """The named checks `unseen_q` is built from, so `open_reason` can say which
+    one holds a session open without restating any of them."""
+
+
+def _predicates() -> _Predicates:
+    p = _Predicates()
     # Its binding stopped being reported. `live_seen_at__isnull=True` also covers
     # having no binding at all (the LEFT JOIN yields NULL), which is why the web leg
     # below requires one explicitly.
@@ -213,7 +224,58 @@ def unseen_q() -> Q:
     )
 
     # A session mid-transfer is unseen by design (see TRANSFER_WINDOW), not gone.
-    return (runner_unseen | web_unseen) & ~transferring_q()
+    p.quiet, p.unobserved, p.cloud_gone = quiet, unobserved, cloud_gone
+    p.first_mode, p.first_origin = first("turn_mode"), first("origin")
+    p.in_flight, p.no_dialog = in_flight, no_dialog
+    p.runner_unseen, p.web_unseen = runner_unseen, web_unseen
+    p.transferring = transferring_q()
+    return p
+
+
+# Why an open session is open: one fixed label per leg of `unseen_q` that can keep
+# a session out of it, checked in this order, first match wins. Each is a condition
+# on stored rows (no inference), so the same data always gives the same reason.
+OPEN_REASONS = (
+    "transferring",       # moved to another box within TRANSFER_WINDOW, not seen there yet
+    "reported_recently",  # a reporting runner named it within SESSION_LIVE_WINDOW
+    "turn_running",       # cloud: a turn that drives it is queued, claimed or running
+    "dialog_up",          # cloud: a question is waiting for an answer
+    "manual_turn",        # cloud: its first claimed turn ran in manual mode
+    "person_started",     # cloud: its first claimed turn was a person's web chat
+    "no_turn_found",      # cloud: no claimed turn drives it, so nothing can finish it
+    "unbound",            # a web chat no runner has picked up yet
+    "unobservable",       # held by a box that has never sent a session report
+)
+#: An open session no reason above matches: the rule and this explanation disagree.
+UNCLASSIFIED = "unclassified"
+
+
+def open_reason():
+    """An expression for `.annotate()` on an `active()` queryset: which of
+    OPEN_REASONS holds each session open. Built from `_predicates()`, the same
+    checks `unseen_q` excludes on, so the two cannot drift; UNCLASSIFIED means they
+    have (`tests/test_open_session_reasons.py` pins that it never happens)."""
+    Turn = apps.get_model("harness", "Turn")
+    p = _predicates()
+    runner = Q(origin="runner")
+    reporting = (runner & ~p.unobserved) | (
+        ~runner & Q(runner_binding__runner__sessions_reported_at__isnull=False)
+    )
+    cloud = p.unobserved & ~p.cloud_gone
+    bound = Q(runner_binding__isnull=False)
+    whens = [
+        When(p.transferring, then=Value("transferring")),
+        When(reporting & bound & ~p.quiet, then=Value("reported_recently")),
+        When(cloud & Q(p.in_flight), then=Value("turn_running")),
+        When(cloud & ~p.no_dialog, then=Value("dialog_up")),
+        When(cloud & Q(Exact(p.first_mode, "manual")), then=Value("manual_turn")),
+        When(cloud & Q(Exact(p.first_origin, Turn.ORIGIN_CANOPY_WEB_CHAT)),
+             then=Value("person_started")),
+        When(cloud & Q(Exact(p.first_mode, "")), then=Value("no_turn_found")),
+        When(~runner & ~bound, then=Value("unbound")),
+        When(~runner & bound & ~reporting & ~p.unobserved, then=Value("unobservable")),
+    ]
+    return Case(*whens, default=Value(UNCLASSIFIED), output_field=CharField())
 
 
 def active(sessions):

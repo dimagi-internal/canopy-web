@@ -75,6 +75,11 @@ def chat_send_origin(value: str | None) -> str | None:
     return value
 
 
+class OpenSessionReason(Schema):
+    count: int
+    oldest_activity_at: dt.datetime | None = None
+
+
 class RunnerIn(Schema):
     name: str
     kind: str  # emdash|cloud|remote|desktop
@@ -347,6 +352,12 @@ class RunnerOut(Schema):
     # pause ("paused · 4 open sessions"): idle sessions on a paused box are not
     # waiting on anybody, so they are counted here rather than on the feed.
     open_sessions: int = 0
+    # The same open sessions by WHY each is open (`staleness.OPEN_REASONS`, plus
+    # `unclassified` if the rule and its explanation ever disagree), each with the
+    # oldest last activity among them. Counts only: no session, title or person,
+    # so it is shown to anyone who sees the runner. Stamped by the fleet list and
+    # the one-runner read; None on a route that does not count.
+    open_sessions_by_reason: dict[str, OpenSessionReason] | None = None
     # What the box reports about its own features (Runner.health), keyed by
     # check name. A map rather than a list on purpose: openapi-fetch's Readable<T>
     # degrades an array of OBJECTS inside a response into an ArrayLike the client
