@@ -335,14 +335,26 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     if fleet is not None:
         # An instance of a fleet's group: it joins on AWS's word that it is the
         # group's, under the fleet a person approved (`fleets.join`).
+        # A member is ONE runner: built as a box of units (runner.cfn.yaml's cloud-init),
+        # that is its one workspace-tree unit, which signs in with its own key.
+        unit = None
         if payload.units:
-            raise _refuse_pairing(f"{role_arn} is fleet {fleet.name}'s role; a member is one runner")
-        joined = fleets.join(fleet=fleet, caller_arn=caller, name=payload.name, host=payload.host,
-                             capabilities=payload.capabilities, ecdh_public_jwk=payload.ecdh_public_jwk,
-                             ecdh_store=payload.ecdh_store, refuse=_refuse_pairing)
+            if len(payload.units) != 1:
+                raise _refuse_pairing(f"{role_arn} is fleet {fleet.name}'s role; a member is one unit")
+            unit = payload.units[0]
+        joined = fleets.join(fleet=fleet, caller_arn=caller, name=unit.name if unit else payload.name,
+                             host=(unit.host if unit else payload.host) or payload.host,
+                             capabilities=unit.capabilities if unit else payload.capabilities,
+                             ecdh_public_jwk=unit.ecdh_public_jwk if unit else payload.ecdh_public_jwk,
+                             ecdh_store=unit.ecdh_store if unit else payload.ecdh_store,
+                             refuse=_refuse_pairing, unit_jwk=unit.public_jwk if unit else None)
         if joined.status == "waiting":
             return Status(202, RunnerPairByRoleOut(status="waiting"))
         code, status = (201, "paired") if joined.status == "joined" else (200, "reattached")
+        if unit is not None:
+            return Status(code, RunnerPairByRoleOut(
+                status=status, runner_id=joined.runner.pk, units={unit.name: joined.runner.pk},
+                device_keys={unit.name: joined.unit_key.pk}))
         return Status(code, RunnerPairByRoleOut(status=status, runner_id=joined.runner.pk))
     if payload.units:
         # A box of isolation units: every unit, one runner each, in one call.
