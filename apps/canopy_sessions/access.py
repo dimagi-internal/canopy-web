@@ -17,8 +17,9 @@ someone merely for being in the same workspace:
 * **Then one of eight legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
-  run; it is a member's conversation with an agent you OWN; you are an agent's own login and its person let that agent review
-  their sessions (`SessionReviewGrant`, read-only, never a sensitive one); or
+  run; it is a member's conversation with an agent you OWN; you are an
+  agent's own login and its person let that agent review their sessions
+  (`SessionReviewGrant`, read-only, never a sensitive one); or
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`); or its box owner shared their laptop sessions
   in this project's repo with the project's team and you are on it
@@ -85,6 +86,7 @@ from apps.agents.models import Agent, AgentProject
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
 from apps.harness.models import Runner
+from apps.workspaces import role_cap
 
 from .models import (
     ProjectSessionShare,
@@ -289,8 +291,6 @@ def _agent_owner_q(user) -> Q:
     `Agent.is_admin` is; membership is the tenant gate every caller applies first."""
     if not getattr(user, "is_authenticated", False):
         return Q(pk__in=[])
-    from apps.workspaces import role_cap
-
     if role_cap.cap_of(user):
         return Q(pk__in=[])
     return Q(agent__owner=user, contact__isnull=True)
