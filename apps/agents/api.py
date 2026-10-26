@@ -69,6 +69,7 @@ from .schemas import (
     AgentCanopyTokenIn,
     AgentCanopyTokenOut,
     AgentCanopyUserIn,
+    AgentClisIn,
     AgentDetailOut,
     AgentIn,
     AgentInterfaceIn,
@@ -973,6 +974,25 @@ def set_repository(request: HttpRequest, slug: str, payload: RepositoryIn) -> Ag
     return _detail(request, agent)
 
 
+@router.patch("/{slug}/clis", response=AgentDetailOut,
+              summary="Set which agent CLIs an agent runs on")
+@gate("agent-admin", setting=True)  # what its boxes run: a DEFINITION_FIELDS change
+def set_agent_clis(request: HttpRequest, slug: str, payload: AgentClisIn) -> AgentDetailOut:
+    """The agent CLIs its turns may run on, preferred first ("claude-code", "codex"),
+    and optionally the model each starts on. A turn runs on the first one its runner
+    has signed in and can confine it on; a conversation keeps the one it started on.
+    The agent's owner or an admin."""
+    agent = agent_for_admin(request, slug)
+    before = {"clis": list(agent.clis or []), "cli_models": dict(agent.cli_models or {})}
+    agent.clis = list(payload.clis)
+    if payload.cli_models is not None:
+        agent.cli_models = dict(payload.cli_models)
+    agent.save(update_fields=["clis", "cli_models", "updated_at"])
+    audit.note_change(scope=f"agent:{agent.slug}/clis", before=before,
+                      after={"clis": agent.clis, "cli_models": agent.cli_models})
+    return _detail(request, agent)
+
+
 @router.patch("/{slug}/credential-source", response=AgentDetailOut,
               summary="Set where an agent's secrets resolve from (1password | canopy-web)")
 @gate("agent-admin", setting=True, step_up=True)
@@ -1109,6 +1129,8 @@ def get_agent_runtime(request: HttpRequest, slug: str) -> AgentRuntimeOut:
         engine=agent.runtime_engine,
         secret_refs=list(agent.runtime_secrets or []),
         workspace=agent.workspace_id,
+        clis=list(agent.clis or []),
+        cli_models=dict(agent.cli_models or {}),
     )
 
 

@@ -22,8 +22,21 @@ from apps.harness.schemas import (
     normalize_origin,
 )
 
-
 # ---- Agent ----
+#: An agent CLI (`harness.clis.CLIS`).
+CliName = Literal["claude-code", "codex"]
+
+
+def _one_list_of_clis(value):
+    if value is None:
+        return value
+    if not value:
+        raise ValueError("name at least one CLI")
+    if len(set(value)) != len(value):
+        raise ValueError("a CLI is named twice")
+    return value
+
+
 class AgentIn(StrictModel):
     """Create or update an agent (upsert by slug)."""
 
@@ -47,6 +60,10 @@ class AgentIn(StrictModel):
     repo_url: str | None = Field(default=None, max_length=300)
     repo_ref: str | None = Field(default=None, max_length=120)
     runtime_engine: Literal["emdash", "cloud_p", "any"] | None = None
+    # The agent CLIs it runs on, preferred first (`harness.clis`); None = unchanged.
+    clis: list[CliName] | None = None
+    # A model per CLI, e.g. {"codex": "gpt-6.1-sol"}; None = unchanged.
+    cli_models: dict[CliName, Annotated[str, Field(max_length=64)]] | None = None
     runtime_secrets: list[str] | None = None
     # WHERE each declared secret's value lives:
     # {"gog-token": {"op": "op://Agent-Ace/gog-token/credential"}}. Without it
@@ -55,6 +72,11 @@ class AgentIn(StrictModel):
     runtime_sources: dict | None = None
     # Ordered runner-kind preference, e.g. ["cloud","emdash"]. None = leave unchanged.
     runner_preference: list[str] | None = None
+
+    @field_validator("clis")
+    @classmethod
+    def _clis_once_each(cls, value):
+        return _one_list_of_clis(value)
 
 
 class AgentMoveIn(StrictModel):
@@ -183,6 +205,19 @@ class TurnModeIn(StrictModel):
     self-publish upsert must never be able to change its own autonomy."""
 
     turn_mode: Literal["manual", "auto"]
+
+
+class AgentClisIn(StrictModel):
+    """The agent CLIs an agent runs on, preferred first, and optionally a model for each."""
+
+    clis: list[CliName]
+    # None leaves the models as they are; {} clears them.
+    cli_models: dict[CliName, Annotated[str, Field(max_length=64)]] | None = None
+
+    @field_validator("clis")
+    @classmethod
+    def _clis_once_each(cls, value):
+        return _one_list_of_clis(value)
 
 
 class RepositoryIn(StrictModel):
@@ -427,6 +462,9 @@ class AgentRuntimeOut(StrictModel):
     engine: str
     secret_refs: list[str]
     workspace: str | None
+    #: The agent CLIs it runs on, preferred first, and a model for each it names.
+    clis: list[str] = ["claude-code"]
+    cli_models: dict[str, str] = {}
 
 
 class AgentPluginOut(StrictModel):
@@ -533,6 +571,10 @@ class AgentOwnerOut(StrictModel):
 
 class AgentDetailOut(AgentOut):
     definition: AgentDefinitionOut | None = None
+    #: The agent CLIs it runs on, preferred first ("claude-code", "codex").
+    clis: list[str] = ["claude-code"]
+    #: A model per CLI; a CLI not named here starts on its own default.
+    cli_models: dict[str, str] = {}
     # The person who operates this agent. Its GitHub-backed features (skill
     # history) read through THIS person's GitHub grant, so it is shown and
     # transferable in the UI. None when nobody has been assigned.

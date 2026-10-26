@@ -50,6 +50,8 @@ def test_runtime_serves_repo_pointer_secrets_engine_and_tenant(client, workspace
         "engine": "cloud_p",
         "secret_refs": ["canopy-pat", "echo-gog"],
         "workspace": "canopy",
+        "clis": ["claude-code"],
+        "cli_models": {},
     }
 
 

@@ -3880,6 +3880,29 @@ export interface paths {
         readonly patch: operations["set_repository"];
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/clis": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Set which agent CLIs an agent runs on
+         * @description The agent CLIs its turns may run on, preferred first ("claude-code", "codex"),
+         *     and optionally the model each starts on. A turn runs on the first one its runner
+         *     has signed in and can confine it on; a conversation keeps the one it started on.
+         *     The agent's owner or an admin.
+         */
+        readonly patch: operations["set_agent_clis"];
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/credential-source": {
         readonly parameters: {
             readonly query?: never;
@@ -18579,6 +18602,11 @@ export interface components {
             /** Rides Turn Id */
             readonly rides_turn_id?: string | null;
             /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
+            /**
              * Provenance
              * @default {}
              */
@@ -21456,6 +21484,12 @@ export interface components {
             readonly repo_ref?: string | null;
             /** Runtime Engine */
             readonly runtime_engine?: ("emdash" | "cloud_p" | "any") | null;
+            /** Clis */
+            readonly clis?: readonly ("claude-code" | "codex")[] | null;
+            /** Cli Models */
+            readonly cli_models?: {
+                readonly [key: string]: string;
+            } | null;
             /** Runtime Secrets */
             readonly runtime_secrets?: readonly string[] | null;
             /** Runtime Sources */
@@ -21720,6 +21754,20 @@ export interface components {
             readonly op_vault: string;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
+            /**
+             * Clis
+             * @default [
+             *       "claude-code"
+             *     ]
+             */
+            readonly clis: readonly string[];
+            /**
+             * Cli Models
+             * @default {}
+             */
+            readonly cli_models: {
+                readonly [key: string]: string;
+            };
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
             readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;
             /**
@@ -22100,6 +22148,18 @@ export interface components {
             readonly repo_ref: string;
         };
         /**
+         * AgentClisIn
+         * @description The agent CLIs an agent runs on, preferred first, and optionally a model for each.
+         */
+        readonly AgentClisIn: {
+            /** Clis */
+            readonly clis: readonly ("claude-code" | "codex")[];
+            /** Cli Models */
+            readonly cli_models?: {
+                readonly [key: string]: string;
+            } | null;
+        };
+        /**
          * CredentialSourceIn
          * @description Choose where `canopy cred` resolves this agent's secrets from (canopy#850).
          *
@@ -22211,6 +22271,20 @@ export interface components {
             readonly secret_refs: readonly string[];
             /** Workspace */
             readonly workspace: string | null;
+            /**
+             * Clis
+             * @default [
+             *       "claude-code"
+             *     ]
+             */
+            readonly clis: readonly string[];
+            /**
+             * Cli Models
+             * @default {}
+             */
+            readonly cli_models: {
+                readonly [key: string]: string;
+            };
         };
         /**
          * AgentRunnerOut
@@ -31286,6 +31360,11 @@ export interface components {
              */
             readonly kind: "login" | "token" | "api_key";
             /**
+             * Cli
+             * @default claude-code
+             */
+            readonly cli: string;
+            /**
              * Name
              * @default
              */
@@ -31369,7 +31448,7 @@ export interface components {
         };
         /**
          * RunnerLoginOut
-         * @description A full Claude login on the box, as the box last reported it.
+         * @description A full login on the box, as the box last reported it.
          */
         readonly RunnerLoginOut: {
             /** Key */
@@ -31384,6 +31463,11 @@ export interface components {
              * @default false
              */
             readonly signed_in: boolean;
+            /**
+             * Cli
+             * @default claude-code
+             */
+            readonly cli: string;
             /** Reported At */
             readonly reported_at?: string | null;
         };
@@ -32482,6 +32566,11 @@ export interface components {
              */
             readonly kind: "login" | "token" | "api_key";
             /**
+             * Cli
+             * @default claude-code
+             */
+            readonly cli: string;
+            /**
              * Vault Secret
              * @default
              */
@@ -32513,7 +32602,7 @@ export interface components {
         };
         /**
          * RunnerLoginRef
-         * @description One full Claude login the box should keep, in cascade order.
+         * @description One full login the box should keep, in cascade order.
          */
         readonly RunnerLoginRef: {
             /** Key */
@@ -32523,6 +32612,11 @@ export interface components {
              * @default
              */
             readonly account: string;
+            /**
+             * Cli
+             * @default claude-code
+             */
+            readonly cli: string;
         };
         /**
          * RunnerCredentialResolveOut
@@ -32616,6 +32710,12 @@ export interface components {
              * @default
              */
             readonly name: string;
+            /**
+             * Cli
+             * @default claude-code
+             * @enum {string}
+             */
+            readonly cli: "claude-code" | "codex";
         };
         /**
          * TurnGitHubTokenOut
@@ -33140,6 +33240,10 @@ export interface components {
              * @default 0
              */
             readonly midturn: number;
+            /** Clis */
+            readonly clis?: {
+                readonly [key: string]: unknown;
+            } | null;
             /**
              * Claude Model
              * @default
@@ -33323,6 +33427,11 @@ export interface components {
             /** Rides Turn Id */
             readonly rides_turn_id?: string | null;
             /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
+            /**
              * Provenance
              * @default {}
              */
@@ -33391,6 +33500,11 @@ export interface components {
             readonly transcript_held: {
                 readonly [key: string]: number;
             };
+            /**
+             * Cli Model
+             * @default
+             */
+            readonly cli_model: string;
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {
@@ -44580,6 +44694,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RepositoryIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentDetailOut"];
+                };
+            };
+        };
+    };
+    readonly set_agent_clis: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentClisIn"];
             };
         };
         readonly responses: {

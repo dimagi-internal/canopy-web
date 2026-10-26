@@ -1376,6 +1376,8 @@ class RunnerLogin(models.Model):
     @property
     def vault_secret_name(self) -> str:
         """The name its value has in a vault attached to the runner; "" for a login."""
+        if self.cli == clis.CODEX and self.kind == self.API_KEY:
+            return f"openai-api-key:{self.key}"
         prefix = self.VAULT_SECRET_PREFIX.get(self.kind)
         return f"{prefix}{self.key}" if prefix else ""
 

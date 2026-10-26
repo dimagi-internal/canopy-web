@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from apps.workspaces.models import MAX_DEPTH
 
+from . import clis
 from .models import (
     Runner,
     RunnerAdmin,
@@ -110,13 +111,19 @@ def _renumber(runner) -> None:
 
 def _would_leave_no_fallback(runner, removing: set[str]) -> bool:
     """True when removing these entries takes away the runner's last token or API key
-    (one whose value a vault serving the runner holds)."""
+    (one whose value a vault serving the runner holds) for any agent CLI: each CLI
+    keeps its own cascade, so a Claude token does not keep a Codex box alive."""
     in_vault = _vault_secret_names(runner)
-    held = {e.key for e in _entries(runner).filter(kind__in=VALUE_KINDS) if e.vault_secret_name in in_vault}
-    return bool(held) and not (held - removing)
+    values = [e for e in _entries(runner).filter(kind__in=VALUE_KINDS) if e.vault_secret_name in in_vault]
+    for cli in {e.cli for e in values if e.key in removing}:
+        held = {e.key for e in values if e.cli == cli}
+        if held and not (held - removing):
+            return True
+    return False
 
 
-def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: str = ""):
+def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: str = "",
+                          cli: str = clis.CLAUDE_CODE):
     """A token or API key, last in the list, with NO value here: its value goes into a
     vault serving the runner (`vault_secret_name`), sealed by whoever holds that vault's
     key — a person's browser, or the box after a sign-in. canopy-web never holds one.
@@ -124,6 +131,11 @@ def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: st
 
     if kind not in VALUE_KINDS:
         raise CredentialRefused(f"a {kind} is not pasted in: sign it in instead")
+    if cli not in clis.CLIS:
+        raise CredentialRefused(f"{cli!r} is not an agent CLI")
+    if cli == clis.CODEX and kind == RunnerLogin.TOKEN:
+        # A setup-token is Claude's; Codex takes a ChatGPT login or an API key.
+        raise CredentialRefused("Codex has no setup-token: add an OpenAI API key, or sign it in")
     if not open_runner_vault(runner):
         raise CredentialRefused(f"{runner.name} has no vault with a key yet: make its key first")
     key = key or secrets.token_hex(4)
@@ -133,7 +145,8 @@ def add_runner_credential(runner, *, kind: str, name: str = "", by=None, key: st
         _lock_list(runner)
         last = _entries(runner).order_by("-position").first()
         entry = RunnerLogin.objects.create(
-            **list_owner(runner), key=key, kind=kind, created_by=by, name=(name or "").strip()[:200],
+            **list_owner(runner), key=key, kind=kind, cli=cli, created_by=by,
+            name=(name or "").strip()[:200],
             position=(last.position + 1) if last else 0)
         _touch(runner, by)
     return entry
@@ -229,8 +242,9 @@ def order_runner_credentials(runner, keys: list[str], *, by=None) -> None:
 def _first_values(runner) -> dict:
     """The old fixed slots, read off the list: the first two tokens and the first
     API key (the entries, never a value)."""
-    tokens = list(_entries(runner, RunnerLogin.TOKEN))
-    api_key = _entries(runner, RunnerLogin.API_KEY).first()
+    # Claude's slots: a Codex API key is not `claude_api_key` (`RunnerLogin.cli`).
+    tokens = list(_entries(runner, RunnerLogin.TOKEN).filter(cli=clis.CLAUDE_CODE))
+    api_key = _entries(runner, RunnerLogin.API_KEY).filter(cli=clis.CLAUDE_CODE).first()
     return {
         "claude_token": tokens[0] if tokens else None,
         "claude_token_secondary": tokens[1] if len(tokens) > 1 else None,
@@ -244,13 +258,17 @@ def get_runner_credential(runner) -> dict:
     its own device key, `…/credential/resolve`), and the logins it should keep. No
     value: canopy-web holds none."""
 
-    entries = list(_entries(runner))
+    # Another CLI's entries go only to a box whose code reports that CLI: code from
+    # before CLIs existed reads every entry as Claude's, and would try a Codex API
+    # key as Anthropic's.
+    has = set(clis.reported(runner))
+    entries = [e for e in _entries(runner) if e.cli == clis.CLAUDE_CODE or e.cli in has]
     cred = getattr(runner, "credential", None)
     held = _vault_secret_names(runner)
     return {
-        "logins": [{"key": e.key, "account": e.account}
+        "logins": [{"key": e.key, "account": e.account, "cli": e.cli}
                    for e in entries if e.kind == RunnerLogin.LOGIN],
-        "cascade": [{"key": e.key, "kind": e.kind,
+        "cascade": [{"key": e.key, "kind": e.kind, "cli": e.cli,
                      "vault_secret": e.vault_secret_name if e.vault_secret_name in held else ""}
                     for e in entries],
         "vault_open": open_runner_vault(runner) is not None,
@@ -319,7 +337,8 @@ def runner_credential_status(runner) -> dict:
     vaults = workspace_vaults.runner_vaults(runner)
     held = _vault_secret_names(runner) if vaults else set()
     return {
-        "credentials": [{"key": e.key, "kind": e.kind, "name": e.name, "account": e.account,
+        "credentials": [{"key": e.key, "kind": e.kind, "cli": e.cli, "name": e.name,
+                         "account": e.account,
                          "signed_in": e.signed_in,
                          "has_value": e.vault_secret_name in held,
                          "in_vault": bool(e.vault_secret_name) and e.vault_secret_name in held,
@@ -327,7 +346,7 @@ def runner_credential_status(runner) -> dict:
                          "reported_at": e.reported_at} for e in entries],
         "vaults": [{"vault_id": str(v.pk), "name": v.name, "kv": v.kv} for v in vaults],
         "credential_set": credential_sets.summary(runner.credential_set) if runner.credential_set_id else None,
-        "logins": [{"key": e.key, "account": e.account, "signed_in": e.signed_in,
+        "logins": [{"key": e.key, "account": e.account, "signed_in": e.signed_in, "cli": e.cli,
                     "reported_at": e.reported_at} for e in entries if e.kind == RunnerLogin.LOGIN],
         "has_claude_token": _held(slots["claude_token"], held),
         "has_claude_token_secondary": _held(slots["claude_token_secondary"], held),

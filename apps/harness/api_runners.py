@@ -396,7 +396,7 @@ def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
     runner = _list_admin_or_404(request, runner_id)
     try:
         entry = harness_runners.add_runner_credential(runner, kind=payload.kind, name=payload.name,
-                                                      by=request.user)
+                                                      by=request.user, cli=payload.cli)
     except harness_runners.CredentialRefused as exc:
         raise HttpError(422, str(exc)) from exc
     vault = harness_runners.open_runner_vault(runner)

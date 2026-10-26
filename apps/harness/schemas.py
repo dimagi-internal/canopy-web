@@ -1513,6 +1513,9 @@ class RunnerVaultEntryIn(Schema):
 
     kind: Literal["token", "api_key"]
     name: str = Field(default="", max_length=200)
+    #: Which agent CLI it is for: a Claude token or API key, or an OpenAI API key for
+    #: Codex (Codex has no setup-token).
+    cli: Literal["claude-code", "codex"] = "claude-code"
 
 
 class RunnerVaultEntryOut(Schema):
@@ -1555,6 +1558,8 @@ class RunnerCascadeItem(Schema):
 
     key: str
     kind: CredentialKind
+    #: The agent CLI it signs in (`harness.clis`): the box keeps one cascade per CLI.
+    cli: str = "claude-code"
     #: The name its value has in a vault serving this runner, when one holds it: the
     #: box reads it from there (`…/credential/resolve`, with its device key) and uses
     #: `value` only when it cannot.
@@ -1562,10 +1567,11 @@ class RunnerCascadeItem(Schema):
 
 
 class RunnerLoginRef(Schema):
-    """One full Claude login the box should keep, in cascade order."""
+    """One full login the box should keep, in cascade order."""
 
     key: str
     account: str = ""
+    cli: str = "claude-code"
 
 
 class RunnerCredentialOut(Schema):
@@ -1584,12 +1590,14 @@ class RunnerCredentialOut(Schema):
 
 
 class RunnerLoginOut(Schema):
-    """A full Claude login on the box, as the box last reported it."""
+    """A full login on the box, as the box last reported it."""
 
     key: str
     #: The account the box says this login belongs to; "" until it has said.
     account: str = ""
     signed_in: bool = False
+    #: The agent CLI it signs in (`harness.clis`).
+    cli: str = "claude-code"
     reported_at: dt.datetime | None = None
 
 
@@ -1598,6 +1606,8 @@ class RunnerCredentialEntryOut(Schema):
 
     key: str
     kind: CredentialKind
+    #: The agent CLI it signs in (`harness.clis`).
+    cli: str = "claude-code"
     #: A token's or API key's name, as a person gave it.
     name: str = ""
     #: A login's account, as the box reported it.
