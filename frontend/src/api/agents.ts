@@ -31,6 +31,7 @@ export type WaitingLineOut = Schemas['WaitingLineOut']
 export type ContributorBriefOut = Schemas['ContributorBriefOut']
 export type ContributorPageOut = Schemas['ContributorPageOut']
 export type AgentRunnerOut = Schemas['AgentRunnerOut']
+export type AgentPinnableRunnerOut = Schemas['AgentPinnableRunnerOut']
 export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // The routable source union, straight off the generated request schema — the
 // picker and the rule rows both key on it, so there is no hand-kept copy.
@@ -443,6 +444,17 @@ export async function getAgentRunners(slug: string, workspace?: string): Promise
     ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
   })
   return Array.from(unwrap(res, 'getAgentRunners'))
+}
+
+// Every runner the caller may start a chat with this agent on — its runner order
+// first (by rank), then any other box they may choose (rank null). Choosing one
+// pins the chat there past the order and any strict source rule.
+export async function getAgentPinnableRunners(slug: string, workspace?: string): Promise<AgentPinnableRunnerOut[]> {
+  const res = await apiV2.GET('/api/agents/{slug}/pinnable-runners', {
+    params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+  })
+  return Array.from(unwrap(res, 'getAgentPinnableRunners'))
 }
 
 // Flip the agent's runtime autonomy posture (manual | auto) — the board-side

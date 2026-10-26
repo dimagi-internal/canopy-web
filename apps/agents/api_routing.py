@@ -15,10 +15,20 @@ from apps.harness import runners as harness_runners
 from apps.harness.actors import actor_of, normalize_actor
 from apps.harness.api import runner_read_q
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
-from apps.harness.routing import agents_with_own_order, default_order_source, inherited_orders, unit_refusal
+from apps.harness import clis, turn_asker
+from apps.harness.routing import (
+    agents_with_own_order,
+    cannot_serve,
+    default_order_source,
+    inherited_orders,
+    prime_machine_units,
+    runner_tenant_slugs_of,
+    unit_refusal,
+)
 from apps.harness.schemas import RoutableSource
 
 from . import services
+from .access import Standings
 from .gates import (
     agent_for_read,
     agent_for_work,
@@ -29,6 +39,7 @@ from .schemas import (
     AgentActorRouteOut,
     AgentActorRouteRunnerOut,
     AgentDefaultOrderOut,
+    AgentPinnableRunnerOut,
     AgentRunnerOut,
     AgentRunnerRowIn,
     AgentRunnerRuleBodyIn,
@@ -182,6 +193,51 @@ def get_agent_default_order(request: HttpRequest, slug: str) -> AgentDefaultOrde
         directed=[r.name for r in inh.directed],
         repo_url=agent.repo_url or "",
     )
+
+
+@router.get("/{slug}/pinnable-runners", response=list[AgentPinnableRunnerOut],
+            summary="The runners you may start a chat with the agent on")
+@gate("member")
+def list_agent_pinnable_runners(request: HttpRequest, slug: str) -> list[AgentPinnableRunnerOut]:
+    """Every box you may choose for a new chat with this agent, in or out of its
+    runner order. Choosing one pins the chat to it, past the order and any strict
+    source rule; the agent's admins may choose any box that can run it, anyone
+    else only a box they administer. Boxes in the order come first, by rank."""
+
+    # The same gates a placement passes (canopy_sessions.placement._placeable_runner
+    # and may_place), read once for the whole fleet rather than per box.
+    agent = agent_for_read(request, slug)
+    who = turn_asker.subject(request.user)
+    runners = [
+        r for r in Runner.objects.filter(owner__isnull=False)
+        .exclude(status=Runner.RETIRED).exclude(kind=Runner.COMPUTER)
+        .select_related("owner").prefetch_related("enrollments")
+        if r.session_capable()
+    ]
+    tenants = runner_tenant_slugs_of(runners)
+    runners = [r for r in runners if agent.workspace_id in tenants[r.pk]]
+    if not agent.is_admin(who):
+        mine = harness_runners.administered_runner_ids(who, runners)
+        runners = [r for r in runners if r.pk in mine]
+    standings = Standings({r.owner for r in runners}, [agent])
+    prime_machine_units(runners)
+    offered = set(clis.offered(agent))
+    runners = [
+        r for r in runners
+        if services.runner_may_hold_agent(r, agent, standings=standings)
+        and not cannot_serve(r, agent.slug)
+        and offered & set(clis.reported(r))
+    ]
+    order = (agent.runner_assignments.filter(source="", enabled=True).values_list("runner_id", flat=True)
+             if agent.pk in agents_with_own_order([agent.pk])
+             else [r.pk for r in getattr(inherited_orders([agent.pk]).get(agent.pk), "runners", [])])
+    rank = {rid: i for i, rid in enumerate(order)}
+    runners.sort(key=lambda r: (rank.get(r.pk, len(rank)), r.live_status != r.ONLINE, r.name))
+    return [
+        AgentPinnableRunnerOut(runner_id=r.pk, runner_name=r.name, kind=r.kind,
+                               online=r.live_status == r.ONLINE, ready=r.ready, rank=rank.get(r.pk))
+        for r in runners
+    ]
 
 
 @router.put("/{slug}/runners", response=list[AgentRunnerOut],

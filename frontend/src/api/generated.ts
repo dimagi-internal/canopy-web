@@ -4190,6 +4190,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/pinnable-runners": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The runners you may start a chat with the agent on
+         * @description Every box you may choose for a new chat with this agent, in or out of its
+         *     runner order. Choosing one pins the chat to it, past the order and any strict
+         *     source rule; the agent's admins may choose any box that can run it, anyone
+         *     else only a box they administer. Boxes in the order come first, by rank.
+         */
+        readonly get: operations["list_agent_pinnable_runners"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runner-rules": {
         readonly parameters: {
             readonly query?: never;
@@ -22829,6 +22852,29 @@ export interface components {
              * @default
              */
             readonly repo_url: string;
+        };
+        /**
+         * AgentPinnableRunnerOut
+         * @description A box the caller may start a chat with this agent on by choosing it. Its
+         *     rank in the agent's default order when it is in it, None when it is not:
+         *     choosing a box pins the chat there whatever the order and source rules say.
+         */
+        readonly AgentPinnableRunnerOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Online */
+            readonly online: boolean;
+            /** Ready */
+            readonly ready: boolean;
+            /** Rank */
+            readonly rank?: number | null;
         };
         /**
          * AgentRunnerRuleOut
@@ -45889,6 +45935,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentDefaultOrderOut"];
+                };
+            };
+        };
+    };
+    readonly list_agent_pinnable_runners: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentPinnableRunnerOut"][];
                 };
             };
         };

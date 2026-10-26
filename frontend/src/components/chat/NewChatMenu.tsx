@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { createSession, type ChatSession } from '@/api/chat'
-import { getAgentDefaultOrder, getAgentRunners, listMyAgents, type AgentOut, type AgentRunnerOut } from '@/api/agents'
+import { getAgentPinnableRunners, listMyAgents, type AgentOut, type AgentPinnableRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 import { scopedPath } from '../../lib/scopedLinks'
@@ -65,7 +65,7 @@ export function NewChatMenu({
   const [creating, setCreating] = useState(false)
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState<NewChatTarget | null>(null)
-  const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentRunnerOut[]>([])
+  const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentPinnableRunnerOut[]>([])
   const [runnersLoading, setRunnersLoading] = useState(false)
   const [selectedRunnerId, setSelectedRunnerId] = useState('')
   // "" = the agent's default CLI; offered only when it is set up for more than one.
@@ -136,18 +136,10 @@ export function NewChatMenu({
     setPending({ kind: 'agent', agent })
     setRunnersLoading(true)
     pickedAgentSlugRef.current = agent.slug
-    // AgentRunnerOut does NOT carry `capabilities` — this list is just the
-    // agent's assigned runners, so it may still list a runner that isn't
-    // sessions-capable. The server is the actual gate: picking one here 422s
-    // the send/place call (canopy_sessions.services._placeable_runner rejects
-    // a non-session-capable runner) rather than pinning a turn no runner can
-    // ever claim.
-    // Its own runners, or — when it has none — the workspace default order it
-    // follows (2026-10-03). Reading only its own left "Auto" as the sole choice
-    // for every agent that follows a default.
-    const workspace = agent.workspace ?? undefined
-    getAgentDefaultOrder(agent.slug, workspace)
-      .then((d) => (d.own ? getAgentRunners(agent.slug, workspace) : Array.from(d.runners ?? [])))
+    // Every box the caller may choose for this agent, not just its runner order:
+    // choosing one pins the chat there past the order and any strict rule, and
+    // the server answers which boxes the placement gates would accept.
+    getAgentPinnableRunners(agent.slug, agent.workspace ?? undefined)
       .then((options) => {
         if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions(options)
       })
@@ -265,11 +257,7 @@ export function NewChatMenu({
               >
                 <option value="">Auto</option>
                 {pending.kind === 'agent'
-                  ? agentRunnerOptions.map((r) => (
-                      <option key={r.runner_id} value={r.runner_id}>
-                        {r.online ? '●' : '○'} {r.runner_name}
-                      </option>
-                    ))
+                  ? <AgentRunnerOptions agent={pending.agent.name} runners={agentRunnerOptions} />
                   : projectRunnerOptions.map((r) => (
                       <option key={r.id} value={r.id}>
                         ● {runnerOptionLabel(r)}
@@ -312,5 +300,25 @@ export function NewChatMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+
+/** The agent's runner order, then the other boxes the caller may choose — each
+ *  group only when it has a box, so an agent with no order reads as one list. */
+function AgentRunnerOptions({ agent, runners }: { agent: string; runners: readonly AgentPinnableRunnerOut[] }) {
+  const option = (r: AgentPinnableRunnerOut) => (
+    <option key={r.runner_id} value={r.runner_id}>
+      {r.online ? '●' : '○'} {r.runner_name}
+    </option>
+  )
+  const ordered = runners.filter((r) => r.rank != null)
+  const others = runners.filter((r) => r.rank == null)
+  if (!ordered.length || !others.length) return <>{runners.map(option)}</>
+  return (
+    <>
+      <optgroup label={`${agent}'s runner order`}>{ordered.map(option)}</optgroup>
+      <optgroup label="Other runners you can use">{others.map(option)}</optgroup>
+    </>
   )
 }
