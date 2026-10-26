@@ -65,10 +65,21 @@ import logging
 import threading
 
 from canopy_sdk import contract, fetch
+from canopy_sdk import site as wire
 from canopy_sdk.host import (
-    ClientKeyResolver, GrantHandler, GrantRefused, HostConfig, HostNotConfigured, PageRegistry,
-    ProbeDisabled, ProbeHandler, ProbeIdentity, ResourceVerifier, authorization_server_metadata,
-    issue_id_jag, protected_resource_metadata,
+    ClientKeyResolver,
+    GrantHandler,
+    GrantRefused,
+    HostConfig,
+    HostNotConfigured,
+    PageRegistry,
+    ProbeDisabled,
+    ProbeHandler,
+    ProbeIdentity,
+    ResourceVerifier,
+    authorization_server_metadata,
+    issue_id_jag,
+    protected_resource_metadata,
 )
 from django.conf import settings
 
@@ -232,6 +243,21 @@ def config(*, with_probe: bool = False) -> HostConfig:
     )
 
 
+def site_document() -> str:
+    """canopy-web's own signed `site.json` — the document every host publishes
+    beside its keys (`canopy_sdk.site`), so the `canopy-web` Connected site is
+    filled and refreshed the one way any site is: "Fill from the site's own
+    documents". Its facts come from this deployment's own address, so a move to
+    a new domain is a re-fill, not four URLs retyped. Raises `HostNotConfigured`."""
+    cfg = config()
+    pages = [{"key": key, "title": "", "scopes": list(scopes)}
+             for key, scopes in PAGE_SCOPES.items()]
+    return wire.sign_site_document(cfg.signing_key, wire.site_document(
+        cfg.app_name, pages=pages,
+        site={"origins": [issuer()], "jwks_url": jwks_url(), "issuer": issuer(),
+              "mcp_resource": resource()}))
+
+
 def is_self_site(app) -> bool:
     """Whether this Connected site's grant settings name THIS deployment."""
     return bool(app is not None and app.issues_host_grants()
@@ -354,6 +380,21 @@ def loopback_get(url: str) -> dict | None:
     return None
 
 
+def site_document_urls() -> set[str]:
+    """Where canopy's own `site.json` is served: beside its host keys, and at the
+    root's `/.well-known/canopy-site.json`."""
+    return {contract.normalize_url(u) for u in (
+        wire.site_document_url(jwks_url()), f"{issuer()}{wire.WELL_KNOWN_PATH}")}
+
+
+def loopback_site_document(url: str) -> str | None:
+    """canopy's own signed `site.json` if `url` is where it is served, else None
+    (go out as usual) — the `loopback_get` of a document that is a token, not JSON."""
+    if not configured() or contract.normalize_url(url) not in site_document_urls():
+        return None
+    return site_document()
+
+
 def loopback_post(url: str, data, headers) -> tuple[int, dict, dict] | None:
     """The token (or probe) endpoint's answer if `url` is canopy-web's own, else None."""
     if not configured():
@@ -409,7 +450,6 @@ def _index_views(app, scopes) -> None:
     first `propose_session_closes` would then render as a plain tool result.
     The tools are canopy's own, so their `_meta` is known here without a call."""
     from apps.mcp.tools.close_review import VIEW_TOOL_META
-
     from apps.mcp_apps_host import mcp_apps
 
     tools = [(name, meta) for scope in scopes for name in SCOPE_TOOLS.get(scope, ())

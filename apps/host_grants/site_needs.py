@@ -33,6 +33,8 @@ from apps.embedding import assertions
 from apps.embedding import jwks as jwks_mod
 from apps.mcp_apps_host.mcp_apps_views import site_app
 
+from . import self_host
+
 FRESH_SECONDS = 600
 STALE_SECONDS = 24 * 60 * 60
 
@@ -49,7 +51,9 @@ class Needs:
 
 
 def _get(url: str) -> str:
-    return sdk_fetch.get_text(url, accept=wire.MEDIA_TYPE)
+    # As jwks.py: canopy's own document is answered in-process, not over the network.
+    own = self_host.loopback_site_document(url)
+    return own if own is not None else sdk_fetch.get_text(url, accept=wire.MEDIA_TYPE)
 
 
 def _fetch(app, url: str) -> wire.SiteNeeds:

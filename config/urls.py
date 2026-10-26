@@ -59,6 +59,10 @@ urlpatterns = [
     path("oauth/authorize", views_mcp_oauth.authorize, name="oauth-authorize"),
     path("oauth/probe", views_oauth.probe, name="oauth-probe"),
     path("oauth/host/jwks.json", views_oauth.host_jwks, name="oauth-host-jwks"),
+    # canopy's own signed site.json, beside its keys and at the root where canopy
+    # looks for any site's (canopy_sdk.site.WELL_KNOWN_PATH).
+    path("oauth/host/site.json", views_oauth.host_site_document, name="oauth-host-site"),
+    path(".well-known/canopy-site.json", views_oauth.host_site_document),
     # The HCP service (apps/contacts/hcp_oauth.py): an OAuth 2.0 authorization
     # server for apps canopy does not operate, issuer <origin>/api/hcp. Bare views
     # (HTML consent, form-encoded token/revoke), declared before the Ninja mount so

@@ -14,7 +14,8 @@ sign: the document names a URL, and the JWKS carries public halves only.
 """
 from __future__ import annotations
 
-from django.http import HttpRequest, JsonResponse
+from canopy_sdk import site as wire
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -92,6 +93,21 @@ def host_jwks(request: HttpRequest) -> JsonResponse:
     return _host_document(lambda: self_host.config().jwks())
 
 
+@require_GET
+def host_site_document(request: HttpRequest) -> HttpResponse:
+    """canopy-web's own signed `site.json` (`self_host.site_document`), beside
+    its host keys and at `/.well-known/canopy-site.json` — where canopy looks
+    for any site's, so canopy's own registration fills from its address alone.
+    Public like the keys: it names public URLs and page keys, never a person."""
+    from . import self_host  # noqa: PLC0415 — as every host view here: loads the SDK host stack per request
+
+    if not self_host.configured():
+        return _host_unconfigured()
+    resp = HttpResponse(self_host.site_document(), content_type=wire.MEDIA_TYPE)
+    resp["Cache-Control"] = _CACHE
+    return resp
+
+
 @require_http_methods(["GET", "OPTIONS"])
 def authorization_server_metadata(request: HttpRequest, rest: str = "") -> JsonResponse:
     """RFC 8414 for canopy-web's issuer, at the RFC location (a deployment at
@@ -146,7 +162,6 @@ def token(request: HttpRequest) -> JsonResponse:
     from canopy_sdk import contract
 
     from apps.common import oauth_core
-
     from apps.oauth_server import mcp_oauth
     from apps.oauth_server.views import cors, preflight
 

@@ -29,6 +29,7 @@ import httpx2
 import pytest
 from asgiref.sync import async_to_sync
 from canopy_sdk import contract
+from canopy_sdk import site as wire
 from canopy_sdk.keys import generate_private_key, private_pem
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
@@ -239,6 +240,25 @@ def test_a_configured_pem_signing_key_is_the_one_published(world):
         published = Client().get("/oauth/host/jwks.json").json()["keys"]
         assert [k["kid"] for k in published] == [public_jwk(key)["kid"]]
         assert _mint(world["visitor"], "agent.tasks").json()["host_grant"] is True
+
+
+def test_canopy_publishes_its_own_site_document_like_any_host(world):
+    """The `canopy-web` Connected site fills from canopy's own signed site.json,
+    found from its address alone, exactly as any other site's is."""
+    from apps.host_grants import site_needs
+
+    c = Client()
+    beside = c.get("/oauth/host/site.json")
+    assert beside.status_code == 200 and beside["Content-Type"] == wire.MEDIA_TYPE
+    well_known = c.get("/.well-known/canopy-site.json")
+    assert well_known.status_code == 200 and well_known["Content-Type"] == wire.MEDIA_TYPE
+    # canopy reads its own document and keys in-process, as it does its other host
+    # documents (`self_host.loopback_*`): the address alone finds them.
+    found = site_needs.discover(BASE)
+    assert found.name == "canopy-web"
+    assert list(found.facts.origins) == [BASE]
+    assert found.facts.jwks_url == f"{BASE}/oauth/host/jwks.json"
+    assert found.facts.issuer == BASE and found.facts.mcp_resource == f"{BASE}/api/mcp/"
 
 
 # --- the public surface ----------------------------------------------------------------------
