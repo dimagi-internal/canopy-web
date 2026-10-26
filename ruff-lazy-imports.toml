@@ -265,7 +265,7 @@
 "apps/slack/location.py" = ["PLC0415"]  # 6
 "apps/slack/management/commands/slack_declare_agent.py" = ["PLC0415"]  # 1
 "apps/slack/relay.py" = ["PLC0415"]  # 21
-"apps/slack/services.py" = ["PLC0415"]  # 31
+"apps/slack/services.py" = ["PLC0415"]  # 28
 "apps/slack/share.py" = ["PLC0415"]  # 11
 "apps/slack/signals.py" = ["PLC0415"]  # 10
 "apps/slack/status.py" = ["PLC0415"]  # 11
