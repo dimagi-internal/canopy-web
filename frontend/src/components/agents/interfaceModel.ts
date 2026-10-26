@@ -23,6 +23,8 @@ export type InterfaceModel = {
   full?: string[]
   capabilities?: Record<string, Capability>
   callers_default?: string
+  // 'confined' sends workspace editors through the capabilities like any member; absent = 'full'.
+  editors?: 'full' | 'confined'
 }
 
 export const CALLER_BASES = [

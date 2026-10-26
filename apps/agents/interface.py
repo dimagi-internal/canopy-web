@@ -104,6 +104,21 @@ WHOLE profile, as its admins do, e.g. `full: [contact@dimagi.com:verified]`:
 staff writing in from a verified company address steer the agent exactly as
 before interfaces existed, while everyone else is confined to a capability.
 
+**`editors:` — confine the workspace's editors too.** By default a workspace
+editor who is not an agent admin gets the whole agent, every turn manual (an
+admin's go-ahead before anything goes out). For an agent meant for everyone —
+a support agent — neither half fits: editors' chats wait on an admin, or a
+`full: [member]` rule hands them the whole agent in its own mode. `editors:
+confined` decides those editors exactly like a viewer member instead: a `full:`
+rule that names them still applies first, else the capability listing them
+(confined, in the agent's normal turn mode), else refused. `editors: full` (or
+no key, which is how it is stored) is the editor tier. Owner and admins are
+unaffected either way:
+
+    editors: confined
+    capabilities:
+      ask: {callers: [member], tools: [Read]}
+
 **Stored on canopy-web, not in the agent's repo.** Who may do what is live
 state an owner changes as people come and go, not code that ships with the
 agent; it is edited on the agent's page (or `canopy agent interface set`).
@@ -140,6 +155,13 @@ PAGE_TOOLS = ("mcp__*canopy-web__page_*",)
 FULL = ""
 
 CALLER_CLASSES = frozenset({"member", "contact", "unknown"})
+
+#: `editors:` — where a workspace editor who is not an agent admin lands. `full`
+#: (the default, never written) is the editor tier: the whole agent, every turn
+#: manual. `confined` decides them exactly like a viewer member: a `full:` rule
+#: that names them, else the capability that lists them (in the agent's own turn
+#: mode, like any confined turn), else refused.
+EDITORS_FULL, EDITORS_CONFINED = "full", "confined"
 
 #: `base[@domain][:verified]` — `contact@dimagi.com:verified` is a contact whose
 #: address is at dimagi.com AND whose message proves it. The domain is matched
@@ -202,7 +224,7 @@ def parse(doc) -> dict:
     """
     if not isinstance(doc, dict):
         raise InterfaceError("the interface must be a mapping")
-    extra = set(doc) - {"capabilities", "callers_default", "version", "full"}
+    extra = set(doc) - {"capabilities", "callers_default", "version", "full", "editors"}
     if extra:
         raise InterfaceError(f"unknown top-level key(s): {sorted(extra)}")
     if doc.get("callers_default", "none") != "none":
@@ -256,7 +278,25 @@ def parse(doc) -> dict:
         if cap.get("data") is not None:
             out[name]["data"] = _data(cap["data"], name, out[name])
     full = _classes(doc.get("full"), "full")
-    return {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
+    parsed = {"version": VERSION, "full": full, "capabilities": out, "callers_default": "none"}
+    editors = doc.get("editors", EDITORS_FULL)
+    if editors not in (EDITORS_FULL, EDITORS_CONFINED):
+        raise InterfaceError(f"editors must be '{EDITORS_FULL}' or '{EDITORS_CONFINED}', "
+                             f"not {editors!r}", "editors")
+    if editors == EDITORS_CONFINED:
+        # Written only when it differs from the default, so every interface
+        # published before the key existed parses to exactly what it did.
+        if not out and not full:
+            raise InterfaceError("editors: 'confined' sends editors to the capabilities, so "
+                                 "publish at least one capability or `full:` rule", "editors")
+        parsed["editors"] = EDITORS_CONFINED
+    return parsed
+
+
+def editors_confined(iface: dict | None) -> bool:
+    """Whether this interface sends workspace editors (who are not agent admins)
+    through the capabilities, like any viewer member, instead of the editor tier."""
+    return (iface or {}).get("editors") == EDITORS_CONFINED
 
 
 _SITE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
@@ -554,9 +594,17 @@ def access_summary(iface: dict) -> list[dict]:
     CLI say the same thing and the English lives beside the rule it describes.
     """
     iface = iface or {}
+    if editors_confined(iface):
+        # Decided like any member: the member rules below, nothing more.
+        doors = sorted(n for n, c in (iface.get("capabilities") or {}).items()
+                       if any(r.startswith("member") for r in c.get("callers") or []))
+        editors = ("only what members reach — the capabilities "
+                   + (", ".join(doors) if doors else "listing members (none do)")
+                   + ", unless a `full:` rule names them")
+    else:
+        editors = "everything (every turn they start needs an admin's go-ahead)"
     out = [{"who": "Owner and admins", "reaches": "everything", "rule": None},
-           {"who": "Workspace editors", "reaches": "everything (every turn they start needs an admin's go-ahead)",
-            "rule": None}]
+           {"who": "Workspace editors", "reaches": editors, "rule": None}]
     reach: dict[str, list[str]] = {}
     for rule in iface.get("full") or []:
         reach.setdefault(rule, [])
