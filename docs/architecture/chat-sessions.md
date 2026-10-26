@@ -413,6 +413,16 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 - Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this; a stale session is reset automatically on its next write.
 - The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the owner's sessions out as `supervisor.sessions` frames (typed in `frontend/src/api/types.ws.ts`; no page consumes them today).
 
+## Secrets shared with a chat: sealed to the machine running it
+
+A person hands one chat a secret from its session menu ("Secrets…", `ShareSecret.tsx`); nothing is posted into the chat. canopy-web cannot read it (`apps/canopy_sessions/secrets.py`, `models.SessionSecret`):
+
+- **Sealed in the browser.** `GET …/secrets/recipients` names the device keys of the runner the chat is bound to (`session.runner_binding.runner`): each ACTIVE key with an approved ECDH key. The browser seals the value to them (`zks1`, zk-v1 §6, bound to `session:<id>` where an agent id goes, at kv 0; targets recomputed from the keys) and sends only `value_zk`. A plaintext `value` is 422 `sealed_only`; a value sealed to a key that machine does not hold is 409 `stale_recipients`.
+- **Refused with a sentence** when nothing can open it: the chat is on no machine yet (409 `no_runner`), or its machine has no approved ECDH key (409 `runner_has_no_ecdh_key`). The form shows the same sentence before anyone types.
+- **Read only by the chat's session.** `canopy secret list|exec` presents the chat key (`X-Canopy-Chat-Key`); `GET /api/session-secrets/key/{name}?sealed=true` returns the sealed value and its binding, and the CLI opens it with the box's own ECDH key (`cred_resolve.open_sealed_for_device`). Without `sealed=true` — a CLI from before sealing — it is 409 `update_canopy`. A chat moved to another machine cannot open what was sealed to the old one: share it again.
+- **Kept:** 30 minutes from sharing (`TTL`, purged on the off-request clock), a `session.secret.resolved` event per read with the name only, never a `Message`.
+- **Honest limit:** canopy-web names the keys at the moment of sharing, so a canopy-web compromised at that moment could name a key of its own; nothing it stores can be read by it afterwards. The form shows the machine and its key's fingerprint.
+
 ## The transcript row contract
 
 - What any agent CLI's producer ships and the server stores is written down once, in `packages/canopy_transcript/canopy_transcript/contract.py` (stdlib-only; ships with both runners): a row is `{index, role, text, content[, cwd, git_branch]}`, `role` one of `user`/`assistant`/`tool_use`/`tool_result`/`system` (= `Message.ROLE_CHOICES`), `index` the ordinal `unit * BLOCK_STRIDE + block` from position in the CLI's own log, or `-1` for a live overlay row. The module docstring lists each role's `content` fields and the two wire envelopes (`session-stream` event, `session-backfill` message).

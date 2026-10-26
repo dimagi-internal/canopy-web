@@ -17,10 +17,15 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import timezone
 
+from cryptography.hazmat.primitives.asymmetric import ec
+
+from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
 from apps.canopy_sessions import chat_keys
-from apps.canopy_sessions.models import ChatKey, Session
-from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.canopy_sessions.models import ChatKey, RunnerBinding, Session
+from apps.harness import device_keys
+from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey, Turn
+from tests.fixtures.vault_zk import ref
 from apps.mcp import page_tools
 from apps.mcp.tools import page as page_tool
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -61,10 +66,28 @@ def world():
 
 
 def _share(world, session, name="GH_TOKEN", value=TOKEN):
+    """Put the chat on a machine with an ECDH key, then seal to it as the browser does."""
+    if "box" not in world:
+        runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=world["owner"], workspace=world["ws"])
+        priv = ec.generate_private_key(ec.SECP256R1())
+        jwk = ref.jwk(priv.public_key())
+        RunnerDeviceKey.objects.create(runner=runner, kind=RunnerDeviceKey.SOFTWARE, status=RunnerDeviceKey.ACTIVE,
+                                       jkt="sig-box", ecdh_public_jwk=jwk, ecdh_jkt=device_keys.thumbprint(jwk),
+                                       ecdh_approved_at=timezone.now())
+        world["box"] = (runner, priv, device_keys.thumbprint(jwk))
+    RunnerBinding.objects.get_or_create(session=session, defaults={"runner": world["box"][0]})
+    rec = world["browser"].get(f"/api/canopy-sessions/{session.id}/secrets/recipients").json()
+    sealed = zk_seal.seal_to(value, agent_id=rec["binding_id"], name=name, kv=rec["kv"],
+                             recipients=[(x["kind"], x["target"], x["public_jwk"]) for x in rec["recipients"]])
     r = world["browser"].post(f"/api/canopy-sessions/{session.id}/secrets",
-                              data=json.dumps({"name": name, "value": value}),
+                              data=json.dumps({"name": name, "value_zk": sealed}),
                               content_type="application/json")
     assert r.status_code == 201, r.content
+
+
+def _opened(world, body) -> str:
+    _, priv, target = world["box"]
+    return ref.open_sealed_value(body["value_zk"], body["binding_id"], body["name"], "device", target, priv)
 
 
 # ---- issued at claim --------------------------------------------------------
@@ -97,8 +120,8 @@ def test_the_key_reaches_its_chats_secrets_and_no_other_chats(world):
 
     names = c.get("/api/session-secrets/key", HTTP_X_CANOPY_CHAT_KEY=key)
     assert names.status_code == 200 and [s["name"] for s in names.json()] == ["GH_TOKEN"]
-    value = c.get("/api/session-secrets/key/GH_TOKEN", HTTP_X_CANOPY_CHAT_KEY=key)
-    assert value.json()["value"] == TOKEN  # this chat's value — not the other chat's
+    value = c.get("/api/session-secrets/key/GH_TOKEN?sealed=true", HTTP_X_CANOPY_CHAT_KEY=key)
+    assert _opened(world, value.json()) == TOKEN  # this chat's value — not the other chat's
 
 
 def test_no_key_a_bad_key_or_an_expired_key_gets_nothing(world):

@@ -815,15 +815,14 @@ class SessionSecret(models.Model):
     The use: "here is a GitHub token, put it in that repo's Actions secrets".
     Typed into the chat, the token lands in the transcript, the runner's
     terminal, the model's context and every copy of all three. Shared here, the
-    chat carries only a REFERENCE (`canopy-secret://<session>/<NAME>`), and the
-    agent spends it with `canopy secret exec`, which injects the value into one
-    command and masks it out of that command's output — so the model never
-    reads it (Jonathan, 2026-09-24).
+    chat carries only its NAME, and the agent spends it with `canopy secret
+    exec`, which injects the value into one command and masks it out of that
+    command's output — so the model never reads it.
 
-    Write-only over the browser, like `AgentCredential`: the list returns names
-    and timestamps, and the one route that returns a value (`services.
-    resolve_secret`) refuses a cookie and admits only a bearer who can act in
-    the session or who IS the session's agent.
+    canopy-web cannot read it: the sharer's browser seals it (`zks1`) to the
+    device keys of the machine running the chat, and canopy-web keeps only that
+    (`secrets.py`). The list returns names and timestamps; the sealed value goes
+    only to the session holding the chat's key.
 
     Scoped to the session on purpose. It is a hand-off, not a store: the agent
     moves the value to where it belongs, and a session-scoped row cannot leak
@@ -834,8 +833,9 @@ class SessionSecret(models.Model):
     #: Upper-case env-var shape, so the reference doubles as the variable
     #: `canopy secret exec` sets by default.
     name = models.CharField(max_length=64)
-    #: Fernet ciphertext (apps/common/encryption.py). Never plaintext.
-    value_enc = models.TextField()
+    #: `zks1:` — sealed in the sharer's browser to the chat's machine (zk-v1 §6,
+    #: bound to `session:<id>` at kv 0). canopy-web cannot open it.
+    value_zk = models.TextField()
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",

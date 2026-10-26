@@ -615,13 +615,32 @@ export interface SharedSecret {
   expires_at: string;
 }
 
+/** Who a secret shared into this chat is sealed to: the device keys of the machine running it. */
+export interface SecretRecipients {
+  binding_id: string;
+  kv: number;
+  runner_id: string | null;
+  runner_name: string | null;
+  recipients: { kind: "device"; target: string; label: string; public_jwk: { x?: string; y?: string } }[];
+  /** Why nothing can be shared yet, as a sentence; null when it can. */
+  refusal: string | null;
+}
+
+export async function getSecretRecipients(id: string): Promise<SecretRecipients> {
+  return unwrap(await apiV2.GET("/api/canopy-sessions/{session_id}/secrets/recipients", {
+    params: { path: { session_id: id } },
+  }), "Could not read who this chat's secrets are sealed to") as SecretRecipients;
+}
+
 /**
- * Hand this chat a secret. Nothing is posted into the chat: mention it by name,
- * and the session bound to this chat finds it with `canopy secret list`.
+ * Hand this chat a secret, already sealed (`zks1`) in this browser to the
+ * recipients above — canopy-web takes nothing it can read. Nothing is posted
+ * into the chat: mention it by name, and the session bound to this chat finds
+ * it with `canopy secret list`.
  */
-export async function shareSecret(id: string, name: string, value: string): Promise<SharedSecret> {
+export async function shareSecret(id: string, name: string, valueZk: string): Promise<SharedSecret> {
   return unwrap(await apiV2.POST("/api/canopy-sessions/{session_id}/secrets", {
-    params: { path: { session_id: id } }, body: { name, value },
+    params: { path: { session_id: id } }, body: { name, value_zk: valueZk },
   }), "Could not share the secret") as SharedSecret;
 }
 

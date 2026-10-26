@@ -1027,9 +1027,15 @@ class PageActionResultIn(Schema):
 
 
 class SessionSecretIn(Schema):
-    """A secret handed to this chat. Nothing is posted into the chat."""
+    """A secret handed to this chat, sealed by the sharer to the machine running it
+    (`GET …/secrets/recipients`). Nothing is posted into the chat."""
+    #: Env-var shaped (`GH_TOKEN`): the seal binds it, so it is not reshaped here.
     name: str
-    value: str
+    #: `zks1:` sealed to the recipients' device keys, bound to `binding_id` at kv 0.
+    value_zk: str = ""
+    # A plaintext `value` is refused (422 `sealed_only`), never stored; it is
+    # accepted here only so the refusal can say why.
+    value: str | None = None
 
 
 class SessionSecretOut(Schema):
@@ -1044,8 +1050,32 @@ class SessionSecretOut(Schema):
 
 
 class SessionSecretValueOut(Schema):
+    """The sealed value, for `canopy secret exec` to open with its device key."""
     name: str
-    value: str
+    value_zk: str
+    binding_id: str
+    kv: int
+
+
+class SessionSecretRecipientOut(Schema):
+    kind: str
+    #: The ECDH key's thumbprint: the `target` its sealed entry carries.
+    target: str
+    label: str
+    public_jwk: dict
+
+
+class SessionSecretRecipientsOut(Schema):
+    """Who a secret shared into this chat is sealed to: the machine running it."""
+    binding_id: str
+    kv: int
+    runner_id: str | None = None
+    runner_name: str | None = None
+    recipients: list[SessionSecretRecipientOut]
+    #: Why nothing can be shared now, as a sentence; null when it can.
+    refusal: str | None = None
+    #: `no_runner` | `runner_has_no_ecdh_key`; null when it can.
+    error: str | None = None
 
 
 class SessionExportOut(Schema):

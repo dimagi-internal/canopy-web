@@ -14156,6 +14156,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/secrets/recipients": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The public keys a secret shared with this chat is sealed to
+         * @description The device keys of the machine running this chat, which a sharer seals the
+         *     value to before it leaves their browser. `refusal` says why nothing can be shared
+         *     yet: the chat is on no machine, or that machine has no approved encryption key.
+         */
+        readonly get: operations["secret_recipients"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/secrets": {
         readonly parameters: {
             readonly query?: never;
@@ -14167,10 +14189,11 @@ export interface paths {
         readonly get: operations["list_secrets"];
         readonly put?: never;
         /**
-         * Share a secret with this chat (write-only)
-         * @description Stores the value encrypted. Posts NOTHING into the chat: the person just
-         *     refers to it by name, and the session finds it with `canopy secret list`.
-         *     A browser needs a passkey step-up.
+         * Share a secret with this chat, sealed to the machine running it (write-only)
+         * @description Takes the value only sealed (`value_zk`, `zks1`) to the keys `…/secrets/recipients`
+         *     names, and keeps that: canopy-web cannot open it. A plaintext `value` is refused
+         *     (422 `sealed_only`). Posts NOTHING into the chat: the person refers to it by name,
+         *     and the session finds it with `canopy secret list`. A browser needs a passkey step-up.
          */
         readonly post: operations["share_secret"];
         readonly delete?: never;
@@ -14435,7 +14458,13 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** PLAINTEXT — for `canopy secret exec` in the session holding this chat's key */
+        /**
+         * The SEALED value — for `canopy secret exec` in the session holding this chat's key
+         * @description `zks1`, sealed to the device keys of the machine running the chat; the CLI
+         *     opens it with its own ECDH key, bound to `binding_id` at `kv`. canopy-web holds
+         *     no plaintext. Without `?sealed=true` (an older CLI, which expects plaintext) a
+         *     409 `update_canopy` says to update.
+         */
         readonly get: operations["value_for_key"];
         readonly put?: never;
         readonly post?: never;
@@ -38350,6 +38379,39 @@ export interface components {
                 readonly [key: string]: unknown;
             };
         };
+        /** SessionSecretRecipientOut */
+        readonly SessionSecretRecipientOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Target */
+            readonly target: string;
+            /** Label */
+            readonly label: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * SessionSecretRecipientsOut
+         * @description Who a secret shared into this chat is sealed to: the machine running it.
+         */
+        readonly SessionSecretRecipientsOut: {
+            /** Binding Id */
+            readonly binding_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Runner Id */
+            readonly runner_id?: string | null;
+            /** Runner Name */
+            readonly runner_name?: string | null;
+            /** Recipients */
+            readonly recipients: readonly components["schemas"]["SessionSecretRecipientOut"][];
+            /** Refusal */
+            readonly refusal?: string | null;
+            /** Error */
+            readonly error?: string | null;
+        };
         /**
          * SessionSecretOut
          * @description What anyone may know about a shared secret: never the value.
@@ -38370,13 +38432,19 @@ export interface components {
         };
         /**
          * SessionSecretIn
-         * @description A secret handed to this chat. Nothing is posted into the chat.
+         * @description A secret handed to this chat, sealed by the sharer to the machine running it
+         *     (`GET …/secrets/recipients`). Nothing is posted into the chat.
          */
         readonly SessionSecretIn: {
             /** Name */
             readonly name: string;
+            /**
+             * Value Zk
+             * @default
+             */
+            readonly value_zk: string;
             /** Value */
-            readonly value: string;
+            readonly value?: string | null;
         };
         /**
          * SessionExportOut
@@ -38441,12 +38509,19 @@ export interface components {
             /** Shared */
             readonly shared: boolean;
         };
-        /** SessionSecretValueOut */
+        /**
+         * SessionSecretValueOut
+         * @description The sealed value, for `canopy secret exec` to open with its device key.
+         */
         readonly SessionSecretValueOut: {
             /** Name */
             readonly name: string;
-            /** Value */
-            readonly value: string;
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Binding Id */
+            readonly binding_id: string;
+            /** Kv */
+            readonly kv: number;
         };
         /**
          * ContactOut
@@ -58192,6 +58267,28 @@ export interface operations {
             };
         };
     };
+    readonly secret_recipients: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SessionSecretRecipientsOut"];
+                };
+            };
+        };
+    };
     readonly list_secrets: {
         readonly parameters: {
             readonly query?: never;
@@ -58575,7 +58672,9 @@ export interface operations {
     };
     readonly value_for_key: {
         readonly parameters: {
-            readonly query?: never;
+            readonly query?: {
+                readonly sealed?: boolean;
+            };
             readonly header?: never;
             readonly path: {
                 readonly name: string;
