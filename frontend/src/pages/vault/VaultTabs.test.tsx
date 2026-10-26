@@ -55,7 +55,7 @@ describe('vault page', () => {
     expect(screen.getByText('runner cloud-ec2-2').getAttribute('href')).toBe('/w/dimagi/runners/r1')
   })
 
-  it('says per runner whether it can open the vault, and gives a copy to that runner only', async () => {
+  it('says per runner whether it has access, and gives that runner access only', async () => {
     const waiting = [
       { kind: 'device', target: 'k2', public_jwk: {}, runner: 'r2', runner_name: 'demo-a' },
       { kind: 'device', target: 'k3', public_jwk: {}, runner: 'r3', runner_name: 'demo-b' },
@@ -69,8 +69,8 @@ describe('vault page', () => {
         { id: 5, runner: 'r2', runner_name: 'demo-a' },
         { id: 6, runner: 'r3', runner_name: 'demo-b' },
       ] })} /></MemoryRouter>)
-    expect(screen.getByTestId('ws-vault-access-4').textContent).toBe('can open it')
-    await waitFor(() => expect(screen.getByTestId('ws-vault-access-5').textContent).toContain('waiting for a copy'))
+    expect(screen.getByTestId('ws-vault-access-4').textContent).toBe('has access')
+    await waitFor(() => expect(screen.getByTestId('ws-vault-access-5').textContent).toContain('waiting for access'))
     // No all-at-once button for runners: each row grants its own.
     expect(screen.queryByTestId('vault-grant')).toBeNull()
     fireEvent.click(screen.getByTestId('ws-vault-grant-5'))
