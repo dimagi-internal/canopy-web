@@ -14,6 +14,7 @@ work, and this package is that work, in one place:
 | `tail` | incremental byte-offset reading of an append-only transcript |
 | `rows` | block → chat row, composite ordinals, payload caps, NUL scrubbing |
 | `batching` | byte-bounded batching for the retained-transcript endpoint |
+| `contract` | the CLI-neutral transcript row contract: shapes, ordinal rule, the server's and a producer's validators |
 
 It exists for the reason `canopy_cron` exists: the laptop runner and the cloud
 runner had independently written the *same functions* (byte-identical project

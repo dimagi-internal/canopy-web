@@ -403,6 +403,14 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 - Transcript ordinals are `record * BLOCK_STRIDE + block` (`BLOCK_STRIDE` = 64; overflow spends the record's last slot on a marker row). `Session.ordinal_scheme` versions this; a stale session is reset automatically on its next write.
 - The runner reports sessions change-driven; `harness.signals.sessions_reported` fans the owner's sessions out as `supervisor.sessions` frames (typed in `frontend/src/api/types.ws.ts`; no page consumes them today).
 
+## The transcript row contract
+
+- What any agent CLI's producer ships and the server stores is written down once, in `packages/canopy_transcript/canopy_transcript/contract.py` (stdlib-only; ships with both runners): a row is `{index, role, text, content[, cwd, git_branch]}`, `role` one of `user`/`assistant`/`tool_use`/`tool_result`/`system` (= `Message.ROLE_CHOICES`), `index` the ordinal `unit * BLOCK_STRIDE + block` from position in the CLI's own log, or `-1` for a live overlay row. The module docstring lists each role's `content` fields and the two wire envelopes (`session-stream` event, `session-backfill` message).
+- Two bars: `row_problems` is the server's (tolerant — missing content or ordinal, as old runners ship, passes; a mistyped field, unknown role or ordinal past `ORDINAL_MAX` fails); `producer_problems` is what a current producer must emit (required fields, non-empty tool ids, durable vs live ordinal).
+- The server checks every incoming row, one at a time: `transcript_ingest.conforming_rows` (inside `persist_transcript_rows`, so stream, backfill and turn-end ships alike) and `session_sync._conforming_events` (so a refused row is not fanned out either). A refused row is logged (`transcript row refused`) and dropped; the rest of its batch lands.
+- Conformance: `packages/canopy_transcript/tests/test_contract.py` runs every producer (a redacted recorded Claude Code transcript, edge cases, hook rows, the wire envelopes) through the contract; the ACP reducer's is `runner/canopy_acp/tests/test_contract_conformance.py`. A new CLI's mapper adds its entry to `DURABLE_PRODUCERS` there (a `codex-app-server-items` placeholder is waiting) and must pass unchanged.
+- Claude-isms the server still reads from `content`: `record` (Claude Code's `isMeta`/`promptSource`/… flags, which tell a typed prompt from injected text), `api_error`/`signed_out`, `usage.context_tokens` (Claude's input + cache counts), tool names in `activity.py` (`Bash`, `Edit`/`Write`/`NotebookEdit` with `input.file_path`, `mcp__*`) and the sensitive-data allowlist, and `transcript_noise`'s harness-marker prefixes. A second CLI maps onto these or goes without them; there is no `thinking` role (a reasoning block consumes its ordinal and emits no row).
+
 ## Live end-to-end check: `scripts/e2e_session_chat.py`
 
 - `tests/*_e2e.py` fake both ends; this script drives the real deployment, a real
