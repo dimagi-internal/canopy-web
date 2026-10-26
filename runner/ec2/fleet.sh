@@ -139,6 +139,11 @@ if [[ "$CMD" == "down" ]]; then
 fi
 
 # ── up ───────────────────────────────────────────────────────────────────────────
+# Only an APPROVED fleet is one to update. A pending one (its approval ran out) is
+# asked for again, which replaces its invitation, and its group stays empty until then.
+FLEET_ID=$(NAME="$NAME" python3 -c 'import json,os,sys
+print(next((f["id"] for f in json.load(open(sys.argv[1]))
+            if f["name"] == os.environ["NAME"] and f.get("status") == "active"), ""))' "$TMPC/fleets.json")
 if [[ -z "$FLEET_ID" ]]; then
   [[ -n "$WORKSPACE" ]] || die "a new fleet needs --workspace <slug>: the workspace its members serve"
   canopy GET "/api/harness/runner-invitations/check?workspace=${WORKSPACE}" > "$TMPC/check.json"
