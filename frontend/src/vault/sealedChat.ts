@@ -57,7 +57,6 @@ export interface SealedKey {
   current?: boolean
   keyset?: { user_id: string; prf_input: string; exists?: boolean; public_jwk: Record<string, unknown>;
              seals: Record<string, unknown>[] } | null
-  needs_migration?: boolean
   /** A fork's copied rows sit this far below the index their envelope names; null
    *  for a fork made before that was recorded (then only the conversation is checked). */
   index_offsets?: number[] | null

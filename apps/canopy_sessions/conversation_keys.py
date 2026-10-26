@@ -36,7 +36,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from django.db import IntegrityError, transaction
 
 from apps.common import ecdh_es
-from apps.common.encryption import decrypt_secret
 from apps.passkeys.api_vault import prf_input
 from apps.passkeys.models import UserVaultKeyset
 from apps.workspaces import links
@@ -321,7 +320,6 @@ def reader_key(session: Session, user) -> dict | None:
         "recipient_jkt": mine.recipient_jkt if mine else "",
         "current": current,
         "keyset": _keyset_out(user, keyset) if keyset else None,
-        "needs_migration": needs_migration(session),
         "index_offsets": index_offsets(session),
     }
 
@@ -508,58 +506,6 @@ def replace_my_copies(user, copies: list[dict]) -> int:
 
 def drop_wrap(session: Session, user_id) -> None:
     SessionKeyWrap.objects.filter(session=session, user_id=user_id).delete()
-
-
-# ── rows sealed before keys were per conversation ──────────────────────────
-
-
-def needs_migration(session: Session) -> bool:
-    """Whether the session still has words under the field key."""
-    return (Message.objects.filter(session_id=session.pk, sealed__isnull=False)
-            .exclude(sealed__startswith=PREFIX).exists())
-
-
-def reseal_legacy(*, Session=Session, Message=Message, SessionKey=SessionKey,
-                  SessionKeyWrap=SessionKeyWrap, UserVaultKeyset=UserVaultKeyset, log_to=log) -> dict:
-    """Move every row still under the field key (`apps/common/encryption.py`) to its
-    conversation's key, wrapped to its starter: the one time canopy-web opens the
-    words, because it can (spec §2, "Existing rows"). A session whose starter has no
-    vault keyset keeps the field key and is logged as needing migration — run
-    `manage.py reseal_sensitive_conversations` once they have set one up.
-
-    Takes its models so the data migration can pass its historical ones."""
-    legacy = Message.objects.filter(sealed__isnull=False).exclude(sealed__startswith=PREFIX)
-    done = {"sessions": 0, "rows": 0, "pending": []}
-    for session_id in legacy.values_list("session_id", flat=True).distinct():
-        session = Session.objects.get(pk=session_id)
-        key = SessionKey.objects.filter(session_id=session_id).first()
-        if key is None:
-            keyset = (UserVaultKeyset.objects.filter(user_id=session.created_by_id).first()
-                      if session.created_by_id else None)
-            if keyset is None:
-                done["pending"].append(str(session_id))
-                log_to.warning("sensitive session %s needs migration: its starter has no vault key",
-                               session_id)
-                continue
-            scalar, public_jwk = ecdh_es.generate()
-            key = SessionKey.objects.create(session_id=session_id, conversation=session_id,
-                                            public_jwk=public_jwk)
-            SessionKeyWrap.objects.create(
-                session_id=session_id, user_id=session.created_by_id,
-                recipient_jkt=ecdh_es.jkt(keyset.public_jwk),
-                wrap=ecdh_es.wrap(scalar, keyset.public_jwk, wrap_info(session_id, session.created_by_id)))
-            del scalar
-        for m in legacy.filter(session_id=session_id).only("pk", "turn_index", "role", "sealed"):
-            try:
-                words = json.loads(decrypt_secret(m.sealed))
-            except Exception:  # noqa: BLE001 — a row no key opens is kept as it is
-                log_to.warning("message %s in %s does not open under the field key", m.pk, session_id)
-                continue
-            Message.objects.filter(pk=m.pk).update(
-                sealed=envelope(key.conversation, key.public_jwk, m.turn_index, words, role=m.role))
-            done["rows"] += 1
-        done["sessions"] += 1
-    return done
 
 
 # ── the cross-language vector ───────────────────────────────────────────────

@@ -12,7 +12,7 @@ import { openSealed, type ConversationKey } from '@/vault/sealedChat'
  * passkey is unavailable or failed) and an unlock error render whenever present.
  */
 export function SealedConversationBanner({
-  state, error, onUnlock, unlockElement, needsMigration, openElsewhere, hasSealed = true, method = 'passkey',
+  state, error, onUnlock, unlockElement, openElsewhere, hasSealed = true, method = 'passkey',
   onSetAside, warning, onDismissWarning,
 }: {
   state: SealedState
@@ -20,7 +20,6 @@ export function SealedConversationBanner({
   onUnlock: () => void
   /** The vault's unlock prompt (passphrase fallback), rendered where it is asked. */
   unlockElement?: ReactNode
-  needsMigration?: boolean
   /** Where else it can be read, for when unlocking cannot work here (a frame that
    *  may not use passkeys); the caller passes it only then. */
   openElsewhere?: ReactNode
@@ -40,9 +39,8 @@ export function SealedConversationBanner({
   const showLocked = hasSealed && lockedish
   const showNoWrap = hasSealed && state === 'no-wrap'
   const showStale = hasSealed && state === 'stale-wrap'
-  const showMigration = Boolean(needsMigration) && state === 'open'
   const showError = Boolean(error) && state === 'error'
-  if (!showLocked && !showNoWrap && !showStale && !showMigration && !unlockElement && !showError && !warning) return null
+  if (!showLocked && !showNoWrap && !showStale && !unlockElement && !showError && !warning) return null
   return (
     <div data-testid="sealed-banner" className="border-b border-border bg-muted/40 px-4 py-2 text-[12px] text-foreground">
       {warning && (
@@ -78,12 +76,6 @@ export function SealedConversationBanner({
         <p className="m-0" data-testid="sealed-stale-wrap">
           Your vault key has changed since you were given this conversation, so your copy of its key no longer
           opens. Ask someone in it to add you again from their browser.
-        </p>
-      )}
-      {showMigration && (
-        <p className="m-0 mt-1 text-muted-foreground">
-          Some earlier messages are still under canopy&apos;s former key and read again once they are moved to this
-          conversation&apos;s own key.
         </p>
       )}
       {showError && (

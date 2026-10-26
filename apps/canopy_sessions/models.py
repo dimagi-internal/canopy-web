@@ -232,8 +232,7 @@ class Message(models.Model):
     # apart from the columns above, which hold metadata only. canopy-web holds no key
     # that opens it: it hands the ciphertext, through `harness.sensitivity.readable`,
     # to the conversation's own people on its own chat surfaces, whose browsers
-    # decrypt it. (A row from before keys were per conversation may still be under
-    # the field key, until `reseal_sensitive_conversations` moves it.)
+    # decrypt it.
     sealed = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

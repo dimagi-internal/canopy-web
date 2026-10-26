@@ -528,10 +528,8 @@ THE predicate; every surface below asks it, one test each in
     A send there claims only a sealed file (see *Files*). A FORK made while it was ordinary holds a copy of the
     same words, so it becomes sensitive with it, recursively (its rows sealed to the key
     its forker carries on); any other child keeps its own state.
-  - *Rows from before keys were per conversation.* Migration 0049 re-sealed field-key rows to their conversation's new
-    key, wrapped to the starter; a session whose starter had no vault key kept the field key,
-    is served to nobody, and is logged — `manage.py reseal_sensitive_conversations` moves it
-    once they have one (`sealed_key.needs_migration` says so meanwhile).
+  - *Every row is a `cc1:` envelope.* No sealed row is under canopy's field key, and canopy-web
+    has no code that would open one; `readable` still hands out only `cc1:` envelopes.
   - *In the browser.* A quiet "Private" line under the header says so on the chat page and
     the panel. The unlock banner shows only when sealed rows are in view (history, scroll-back),
     never for a conversation whose messages all arrived live; its one click goes straight to
