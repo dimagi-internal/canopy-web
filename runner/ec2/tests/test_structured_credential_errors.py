@@ -207,7 +207,7 @@ def test_an_ordinary_failure_with_no_structured_fault_does_not_fail_over(cr, mon
 @pytest.mark.parametrize("evt, expected", [
     ({"type": "assistant", "error": "authentication_failed"}, ("dead", None)),
     ({"type": "assistant", "error": "oauth_org_not_allowed"}, ("dead", None)),
-    ({"type": "assistant", "error": "billing_error"}, ("capped", None)),
+    ({"type": "assistant", "error": "billing_error"}, ("no_credit", None)),
     ({"type": "assistant", "error": "overloaded"}, (None, None)),
     ({"type": "assistant"}, (None, None)),
     ({"type": "system", "subtype": "api_retry", "error": "authentication_failed"}, ("dead", None)),

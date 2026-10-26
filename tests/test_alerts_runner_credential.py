@@ -126,6 +126,16 @@ def test_only_a_signed_out_probe_raises(fleet, check):
     assert src.reconcile(timezone.now()) == []
 
 
+def test_an_account_out_of_credit_raises_its_own_alert(fleet):
+    """An API key with no credit never clears on its own either: the owner hears now."""
+    _set_checks(fleet["runner"], _check(
+        "subscription-1", detail="out of credit — someone has to add credit to its account"))
+    (r,) = src.reconcile(timezone.now())
+    assert r.title == 'The "hal" token on cloud-ec2-2 is out of credit'
+    assert r.body.startswith("Its account has no credit left")
+    assert "Add credit to its account" in r.body
+
+
 def test_fingerprint_ignores_when_it_was_probed(fleet):
     (a,) = src.reconcile(timezone.now())
     _set_checks(fleet["runner"], _check("subscription-1", detail=SIGNED_OUT.replace("10:00", "10:10")))

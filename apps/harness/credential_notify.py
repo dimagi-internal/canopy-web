@@ -1,8 +1,9 @@
 """Tell the people who run a box that its Claude credentials stopped working.
 
-A cloud box posts three credential alerts to `POST /api/events/`: a credential
+A cloud box posts four credential alerts to `POST /api/events/`: a credential
 that needs signing in again (`claude_auth_required`), every credential at its
-usage cap (`claude_usage_exhausted`), and the step onto the metered API key
+usage cap (`claude_usage_exhausted`), a credential whose account is out of
+credit (`claude_credit_exhausted`), and the step onto the metered API key
 (`claude_api_key_fallback`). Recording one tells nobody — only the admin-only
 event log reads `runner.credential` rows — so a box could sit dead for a day
 with its alert filed where no one looks.
@@ -30,7 +31,7 @@ from html import escape
 
 from django.conf import settings
 
-from .alerts_runner_credential import runner_path, signed_out_checks, watches
+from .alerts_runner_credential import out_of_credit_checks, runner_path, signed_out_checks, watches
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 CREDENTIAL_KINDS = {
     "claude_auth_required": "{name} needs a Claude sign-in",
     "claude_usage_exhausted": "{name} is out of Claude usage",
+    "claude_credit_exhausted": "A Claude credential on {name} is out of credit",
     "claude_api_key_fallback": "{name} is on the metered API key",
 }
 
@@ -69,6 +71,8 @@ def notify(runner, item: dict) -> dict:
         return result
     if kind == "claude_auth_required" and alert_covers(runner):
         return result  # the runner_credential alert covers it
+    if kind == "claude_credit_exhausted" and watches(runner) and out_of_credit_checks(runner):
+        return result  # likewise, for an account out of credit
     try:
         link = runner_url(runner)
         subject = "Canopy · " + CREDENTIAL_KINDS[kind].format(name=runner.name)

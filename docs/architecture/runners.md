@@ -1004,8 +1004,8 @@ OK" --output-format json --max-turns 1` in a scratch dir, with that credential's
 environment built as a copy — never `os.environ`, turns run concurrently; 90 s
 timeout) and classifies the answer the way a turn's failure is (below): the
 result's `api_error_status` first (401 = `dead`), then the `_is_usage_cap` /
-`_is_auth_required` text matchers: `ok`, `capped` (+ the reset when readable),
-`dead`, or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
+`_is_auth_required` / `_is_out_of_credit` text matchers: `ok`, `capped` (+ the reset
+when readable), `dead`, `no_credit` (the account has no credit), or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
 (every probe answers `unknown`).
 
 - **When:** after `fetch_and_stage_credential` stages a bundle, synchronously,
@@ -1017,7 +1017,7 @@ result's `api_error_status` first (401 = `dead`), then the `_is_usage_cap` /
   entry's old check in the heartbeat until the new answer replaces it — the
   `runner_credential` alert reads a missing check as fixed. For a capped entry once
   its reset has passed and a dead one every `DEAD_REPROBE_SECONDS` (10 min) — the
-  main loop's poll tick; and when a turn's own failure is ambiguous (below).
+  main loop's poll tick (`no_credit` like dead, so a topped-up account unpauses the box); and when a turn's own failure is ambiguous (below).
   Background requests queue on one prober thread. Each check's detail ends
   `· probed <ISO>`. Never on a plain heartbeat — probes spend usage. A turn's own outcome
   updates the same state for free (a turn that ran marks its credential `ok`; a
@@ -1025,7 +1025,8 @@ result's `api_error_status` first (401 = `dead`), then the `_is_usage_cap` /
 - **Health:** one check per credential, `claude.probe.<label>` (`box-login`,
   `box-login:<key>`, `token:<key>`, `api-key:<key>`): ok / warn "at its
   usage cap — resets <ISO>" / fail "not signed in — someone has to sign it in
-  again" / warn "could not check: …". The runner page colours each token and login
+  again" / fail "out of credit — someone has to add credit to its account" / warn
+  "could not check: …". The runner page colours each token and login
   dot by it (`RunnerCredentials.tsx` `probeLabel`, pinned to
   the box's labels by `tests/test_probe_labels_match.py`); with no check the dot
   says only that a value is set.
@@ -1047,15 +1048,27 @@ result's `api_error_status` first (401 = `dead`), then the `_is_usage_cap` /
 - **A `claude -p` turn's failure is read from the stream, not its text**
   (`cloud_runner._credential_fault`): an assistant message's `error`
   (`authentication_failed`, `oauth_org_not_allowed`, `account_on_hold` → dead;
-  `rate_limit`, `billing_error` → capped), a `system/api_retry` with a dead
+  `rate_limit` → capped; `billing_error` → no credit), a `system/api_retry` with a dead
   category, a result with `api_error_status: 401`, and a `rate_limit_event` whose
   `status` is `rejected` (capped, its `resetsAt` the exact reset). Dead fails over
-  and raises `claude_auth_required`, like a signed-out login. The text matchers
+  and raises `claude_auth_required`, like a signed-out login. **No credit** (an API
+  key whose account is empty, "credit balance is too low") is not a cap — nothing
+  resets it: the box fails over like a cap, raises `claude_credit_exhausted` at once,
+  and when every credential is spent pauses itself (`[box] out of credit`, retried on
+  `CAP_PAUSE_FALLBACK_SECONDS`, lifted by a probe that answers). The text matchers
   decide only when the stream named nothing (ACP, an older CLI): an invalid
   setup-token's "API Error: 401 OAuth access token is invalid" matches none of
   them. An assistant message the stream marked as a credential error is held back
   like a cap sentence. Tests: `runner/ec2/tests/test_structured_credential_errors.py`.
-- **A bare ACP refusal is probed.** Over ACP a capped token and a signed-out one
+- **An ACP turn is read from its transcript.** The adapter can end a turn the API
+  refused with a clean stop and the error as plain text, and refuses a dead token and
+  a capped one with the same bare `auth_required`. Claude Code writes the refusal into
+  the session's transcript as an `isApiErrorMessage` record with its `error` category,
+  so after an ACP turn the runner reads the last record written since the turn began
+  (`_transcript_fault`): an API error there is the turn's fault — dead, capped or no
+  credit, exactly as under `claude -p` — and fails the turn. Tests:
+  `runner/ec2/tests/test_out_of_credit_and_acp_faults.py`.
+- **A bare ACP refusal with no transcript is probed.** Over ACP a capped token and a signed-out one
   both fail with `runner error (acp): authentication required`. When nothing
   earlier in the turn capped, the box probes that credential: capped → it is a cap
   (reset from the probe, the probe's line in the turn note, the out-of-usage park
@@ -1063,16 +1076,18 @@ result's `api_error_status` first (401 = `dead`), then the `_is_usage_cap` /
   sentences (`_AUTH_REQUIRED_MARKERS`) still win without a probe.
 
 **The alerts reach a person.** The box posts `claude_auth_required`,
-`claude_usage_exhausted` and `claude_api_key_fallback` to `POST /api/events/` with
+`claude_usage_exhausted`, `claude_credit_exhausted` and `claude_api_key_fallback` to
+`POST /api/events/` with
 its runner token; with no workspace pinned they file in `Runner.workspace`, and
 each also mails and Web-Pushes the runner's approvers (owner + runner admins)
 once per (runner, alert) per UTC day, linking to the runner on `/supervisor`
 (`apps/harness/credential_notify.py`). The exception: a signed-out credential on
 a box whose health reports a signed-out `claude.probe.<slot>` check is the
-`runner_credential` alert instead (`apps/harness/alerts_runner_credential.py`) —
+`runner_credential` alert instead (`apps/harness/alerts_runner_credential.py`; so is
+an out-of-credit one, "… is out of credit") —
 titled with the token's name or the login's account (never the slot), notified
 once to the owner and runner admins, resolved when the probe passes — and its
-`claude_auth_required` is not also mailed. A laptop (no probe checks) or an
+`claude_auth_required` (or `claude_credit_exhausted`) is not also mailed. A laptop (no probe checks) or an
 inconclusive probe is still mailed. Tests:
 `runner/ec2/tests/test_credential_probe.py`, `runner/ec2/tests/test_auth_required.py`,
 `tests/test_credential_notify.py`, `tests/test_alerts_runner_credential.py`,

@@ -148,6 +148,20 @@ def test_auth_required_is_not_mailed_where_the_alert_covers_it(box):
     assert box["pushed"] == []
 
 
+def test_out_of_credit_mails_the_owner_and_admins(box):
+    _post(box, _alert(kind="claude_credit_exhausted", key="credit-exhausted:cloud-ec2-fork"))
+    assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
+    assert "out of credit" in mail.outbox[0].subject
+
+
+def test_out_of_credit_is_not_mailed_where_the_alert_covers_it(box):
+    box["runner"].health = {"checks": [{"name": "claude.probe.api-key:aa", "status": "fail",
+                                        "detail": "out of credit — someone has to add credit"}]}
+    box["runner"].save(update_fields=["health"])
+    _post(box, _alert(kind="claude_credit_exhausted", key="credit-exhausted:cloud-ec2-fork"))
+    assert mail.outbox == []
+
+
 def test_other_kinds_do_not_mail(box):
     _post(box, {"items": [{"source": "inbound.gmail", "kind": "gmail.push.missed",
                            "level": "error", "key": "eva@dimagi-ai.com", "summary": "x"}]})

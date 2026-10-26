@@ -61,6 +61,9 @@ PROBE_PREFIX = "claude.probe."
 #: in cloud_runner.py), which is how the box's journal printed the outcome on
 #: cloud-ec2-2: `subscription-1 dead (Not logged in · Please run /login)`.
 SIGNED_OUT_MARKERS = ("not signed in", "not logged in", "please run /login")
+#: The box's wording for a credential whose account is out of credit (`_record_probe`,
+#: status `no_credit`). It never resets on its own either, so it raises the same alert.
+OUT_OF_CREDIT_MARKERS = ("out of credit",)
 
 #: The volatile tail the box appends to every probe detail: when it asked.
 _PROBED_AT = re.compile(r"\s*·\s*probed\s+\S+\s*$", re.IGNORECASE)
@@ -90,15 +93,29 @@ def _runners():
     return Runner.objects.exclude(status=Runner.RETIRED).filter(workspace_id__isnull=False)
 
 
+def _probe_checks(runner, matches) -> list[dict]:
+    return [c for c in ((runner.health or {}).get("checks") or [])
+            if isinstance(c, dict) and str(c.get("name", "")).startswith(PROBE_PREFIX) and matches(c)]
+
+
 def signed_out_checks(runner) -> list[dict]:
     """The runner's `claude.probe.*` health checks that say it is signed out."""
-    return [c for c in ((runner.health or {}).get("checks") or [])
-            if isinstance(c, dict) and str(c.get("name", "")).startswith(PROBE_PREFIX) and is_signed_out(c)]
+    return _probe_checks(runner, is_signed_out)
+
+
+def out_of_credit_checks(runner) -> list[dict]:
+    """The runner's `claude.probe.*` health checks that say its account is out of credit."""
+    return _probe_checks(runner, is_out_of_credit)
 
 
 def is_signed_out(check: dict) -> bool:
     detail = str(check.get("detail") or "").lower()
     return check.get("status") == "fail" and any(m in detail for m in SIGNED_OUT_MARKERS)
+
+
+def is_out_of_credit(check: dict) -> bool:
+    detail = str(check.get("detail") or "").lower()
+    return check.get("status") == "fail" and any(m in detail for m in OUT_OF_CREDIT_MARKERS)
 
 
 def _stable(detail: str) -> str:
@@ -158,15 +175,21 @@ def is_login(slot: str) -> bool:
     return slot == _BOX_LOGIN or slot.startswith(_BOX_LOGIN + ":")
 
 
-def title_for(runner, slot: str) -> str:
-    """`The "<label>" token|login|API key on <runner> no longer works` — never the slot."""
-    return f'The "{label_for(runner, slot)}" {_noun(slot)} on {runner.name} no longer works'
+def title_for(runner, slot: str, *, no_credit: bool = False) -> str:
+    """`The "<label>" token|login|API key on <runner> no longer works` (or `is out
+    of credit`) — never the slot."""
+    state = "is out of credit" if no_credit else "no longer works"
+    return f'The "{label_for(runner, slot)}" {_noun(slot)} on {runner.name} {state}'
 
 
-def body_for(runner, slot: str) -> str:
+def body_for(runner, slot: str, *, no_credit: bool = False) -> str:
     """One plain sentence: what is wrong and what fixes it."""
     noun = _noun(slot)
-    if is_login(slot):
+    if no_credit:
+        what = ("Its account has no credit left, so the runner has moved on to its next "
+                "credential, and paused itself if none was left.")
+        fix = f"Add credit to its account, or replace it with a new {noun}"
+    elif is_login(slot):
         what = "Its sign-in has lapsed."
         fix = "Sign it in again"
     else:
@@ -186,21 +209,22 @@ def _routed_slugs(runner) -> list[str]:
 def reconcile(now) -> list[Raise]:
     out: list[Raise] = []
     for runner in _runners():
-        dead = signed_out_checks(runner)
-        if not dead:
+        dead, broke = signed_out_checks(runner), out_of_credit_checks(runner)
+        if not dead and not broke:
             continue
         scopes = (f"runner:{runner.pk}", f"workspace:{runner.workspace_id}",
                   *[f"agent:{s}" for s in _routed_slugs(runner)])
-        for check in dead:
+        for check in dead + broke:
             slot = str(check["name"])[len(PROBE_PREFIX):]
             detail = str(check.get("detail") or "")
+            no_credit = check in broke
             out.append(Raise(
                 subject_key=f"runner:{runner.pk}:cred:{slot}",
                 workspace=runner.workspace_id,
-                title=title_for(runner, slot),
+                title=title_for(runner, slot, no_credit=no_credit),
                 url=runner_path(runner),
                 scopes=scopes,
-                body=body_for(runner, slot),
+                body=body_for(runner, slot, no_credit=no_credit),
                 fingerprint=f"{slot}\n{_stable(detail)}",
             ))
     return out
