@@ -295,6 +295,8 @@ def rows_for_record(rec: dict) -> list[dict]:
     the record's provenance (`record_flags`). `text` is its plaintext.
     """
     kind = rec.get("type")
+    if kind == "attachment":
+        return _rows_for_queued_prompt(rec)
     if kind not in ("user", "assistant"):
         return []
     rows = _rows_for_record(kind, rec)
@@ -323,6 +325,33 @@ def rows_for_record(rec: dict) -> list[dict]:
         if window:
             rows[-1]["content"] = {**rows[-1]["content"], "usage": window}
     return rows
+
+
+def _rows_for_queued_prompt(rec: dict) -> list[dict]:
+    """A person's message Claude Code took MID-TURN, as the user row it is.
+
+    Typed into a busy session, a message is queued and then handed to the model
+    as a `queued_command` ATTACHMENT record, never as a `type: "user"` record
+    (once the turn has ended it arrives as an ordinary user prompt instead, so
+    the two never both appear). Without this the words never reached the
+    transcript: the server could not link the row to its Turn, so the chat kept
+    the send at "sending to agent…" for the whole turn the agent spent working on
+    it, then dropped it from the conversation when the turn ended — or called a
+    stopped one "never read" when the model had read it.
+
+    Only a person's prompt: the same queue carries Claude Code's own
+    background-task notices (`commandMode: "task-notification"`)."""
+    att = rec.get("attachment")
+    if not isinstance(att, dict) or att.get("type") != "queued_command":
+        return []
+    if att.get("commandMode") != "prompt" or (att.get("origin") or {}).get("kind") != "human":
+        return []
+    prompt = att.get("prompt")
+    text = scrub(user_text(prompt) if isinstance(prompt, (str, list)) else "")
+    if not text:
+        return []
+    return [{"block": 0, "role": "user", "text": text,
+             "content": {"record": {"turn_origin": "human", "queued": True}}}]
 
 
 def record_window(rec: dict) -> dict:

@@ -430,3 +430,37 @@ def test_links_are_bounded_and_a_plain_result_has_none():
     assert tool_result_links([{**_LINK, "uri": "labs-result://" + "y" * 242}])
     assert tool_result_links([{**_LINK, "uri": "labs-result://" + "y" * 243}]) == []
     assert "resource_links" not in _result_row("just text")["content"]
+
+
+# --- a message taken mid-turn (queued_command) ------------------------------
+# Shapes from a live transcript (2026-10-26), trimmed: a person's follow-up
+# Claude Code handed to the model mid-turn, and a background-task notice that
+# came through the same queue.
+
+QUEUED_PROMPT = {"type": "attachment", "isSidechain": False, "attachment": {
+    "type": "queued_command", "prompt": "No this should be owner not admin",
+    "commandMode": "prompt", "origin": {"kind": "human"}, "humanTurn": True}}
+QUEUED_TASK_NOTICE = {"type": "attachment", "isSidechain": False, "attachment": {
+    "type": "queued_command", "prompt": "<task-notification>\n<task-id>b1</task-id>",
+    "commandMode": "task-notification",
+    "origin": {"kind": "task-notification", "producer": "session-task"}}}
+
+
+def test_a_message_taken_mid_turn_is_a_user_row():
+    """Mid-turn, Claude Code records a person's message only as a
+    `queued_command` attachment. Dropped, the send never landed: the chat held
+    it at "sending to agent…" while the agent worked on it, then lost it."""
+    records = [_asst("running the suite"), QUEUED_PROMPT, _asst("owner it is")]
+    rows = conversational_messages(records, -1)
+    assert [(r["index"], r["role"], r["text"]) for r in rows] == [
+        (_ix(0), "assistant", "running the suite"),
+        (_ix(1), "user", "No this should be owner not admin"),
+        (_ix(2), "assistant", "owner it is"),
+    ]
+    assert rows[1]["content"]["record"] == {"turn_origin": "human", "queued": True}
+
+
+def test_claude_codes_own_queued_notices_and_other_attachments_are_not_rows():
+    assert ct.rows_for_record(QUEUED_TASK_NOTICE) == []
+    assert ct.rows_for_record({"type": "attachment",
+                               "attachment": {"type": "total_tokens_reminder"}}) == []
