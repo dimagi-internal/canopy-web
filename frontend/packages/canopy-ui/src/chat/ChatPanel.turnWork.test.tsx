@@ -153,6 +153,63 @@ describe("jump to latest", () => {
     expect(scroller.scrollTop).toBe(2000);
     expect(screen.queryByTestId("jump-to-latest")).toBeNull();
   });
+
+  // Reading just above the bottom while a reply streams in: the first pixels
+  // of a scroll-up must already stop the view following, or each new chunk
+  // snaps the reader back down before they get anywhere.
+  function tall(el: HTMLElement) {
+    Object.defineProperty(el, "scrollHeight", { configurable: true, value: 2000 });
+    Object.defineProperty(el, "clientHeight", { configurable: true, value: 500 });
+  }
+  function grow(view: ReturnType<typeof panel>, s: ReturnType<typeof state>, text: string) {
+    view.rerender(
+      <ChatPanel
+        state={{ ...s, messages: [...s.messages, msg({ plaintext: text })] }}
+        connected currentUserId={ME}
+        onSend={vi.fn()} onStop={vi.fn()} onUpdateDraft={vi.fn()} onDiscard={vi.fn()}
+      />,
+    );
+  }
+
+  it("stops following on a small scroll up, even close to the bottom", () => {
+    const s = state({ turn_status: status({ state: "done", settled: true }) });
+    const view = panel(s);
+    const scroller = screen.getByTestId("chat-scroll");
+    tall(scroller);
+    scroller.scrollTop = 1500;
+    fireEvent.scroll(scroller);
+    scroller.scrollTop = 1460;
+    fireEvent.scroll(scroller);
+    grow(view, s, "more text");
+    expect(scroller.scrollTop).toBe(1460);
+    expect(screen.getByTestId("jump-to-latest").textContent).toBe("New messages");
+  });
+
+  it("stops following when the wheel turns up, before the scroll lands", () => {
+    const s = state({ turn_status: status({ state: "done", settled: true }) });
+    const view = panel(s);
+    const scroller = screen.getByTestId("chat-scroll");
+    tall(scroller);
+    scroller.scrollTop = 1500;
+    fireEvent.scroll(scroller);
+    fireEvent.wheel(scroller, { deltaY: -40 });
+    grow(view, s, "more text");
+    expect(scroller.scrollTop).toBe(1500);
+  });
+
+  it("follows again once scrolled back down near the bottom", () => {
+    const s = state({ turn_status: status({ state: "done", settled: true }) });
+    const view = panel(s);
+    const scroller = screen.getByTestId("chat-scroll");
+    tall(scroller);
+    scroller.scrollTop = 800;
+    fireEvent.scroll(scroller);
+    scroller.scrollTop = 1450;
+    fireEvent.scroll(scroller);
+    grow(view, s, "more text");
+    expect(scroller.scrollTop).toBe(2000);
+    expect(screen.queryByTestId("jump-to-latest")).toBeNull();
+  });
 });
 
 describe("find in transcript", () => {
