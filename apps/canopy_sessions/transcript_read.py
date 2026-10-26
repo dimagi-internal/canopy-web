@@ -8,7 +8,7 @@ import datetime as _dt
 import logging
 from dataclasses import dataclass
 
-from canopy_transcript import BLOCK_STRIDE
+from canopy_transcript import BLOCK_STRIDE, contract
 from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 
@@ -496,7 +496,9 @@ def engine_says_running(binding) -> bool:
     return bool(ts and (timezone.now() - ts) <= RUNNING_WINDOW)
 
 
-_BACKFILL_ROLES = {Message.USER, Message.ASSISTANT, Message.TOOL_USE, Message.TOOL_RESULT, Message.SYSTEM}
+#: The roles a transcript row may have — the contract's (`canopy_transcript.contract`),
+#: which `tests/test_transcript_contract.py` holds equal to `Message.ROLE_CHOICES`.
+_BACKFILL_ROLES = contract.ROLES
 
 
 def last_message_at():

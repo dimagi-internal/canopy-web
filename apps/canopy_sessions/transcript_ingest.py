@@ -6,10 +6,11 @@ projection of the dev stub's ledger into Message rows.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import re
 import uuid
 
-from canopy_transcript import BLOCK_STRIDE
+from canopy_transcript import BLOCK_STRIDE, contract
 from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
@@ -22,6 +23,8 @@ from . import activity as session_activity
 from . import attach, authorship, services, transcript_read
 from .models import Message, RunnerBinding, Session
 from .transcript_noise import is_system_noise, scrub_nul
+
+logger = logging.getLogger(__name__)
 
 
 def storage_content(content: dict, text: str) -> dict:
@@ -327,6 +330,29 @@ def fork_if_task_changed(binding, task_uid: str):
     return _move_binding_to_successor(old, binding, successor=previous)
 
 
+def conforming_rows(session, rows) -> list[dict]:
+    """The rows of `rows` that meet the transcript row contract
+    (`canopy_transcript.contract.row_problems`), in order; each one that does not
+    is logged and left out, never the batch around it.
+
+    Per row, deliberately: a batch is one transaction, so a row that reached the
+    insert malformed (an ordinal past the column, say) failed EVERY row with it,
+    and the runner re-shipped the same batch forever. A row with an unknown role
+    was always skipped; it is now also logged. The contract is the server's
+    tolerant bar, so whatever a runner in the field ships today still passes."""
+    out = []
+    for row in rows:
+        problems = contract.row_problems(row)
+        if problems:
+            logger.warning(
+                "transcript row refused: session=%s index=%r role=%r: %s", session.pk,
+                row.get("index") if isinstance(row, dict) else None,
+                row.get("role") if isinstance(row, dict) else None, "; ".join(problems))
+            continue
+        out.append(row)
+    return out
+
+
 def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     """THE durable write path for a runner session's transcript. rows:
     [{"index","role","text"[,"content"]}] chronological.
@@ -404,6 +430,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
     can already be held: a row with none always gets a FRESH one from
     `_next_index`, one past the session's high-water mark, so it can never
     collide — the precomputed set below only needs to check those."""
+    rows = conforming_rows(session, rows)
     offset = _index_offset(session)
     with transaction.atomic():
         locked = Session.objects.select_for_update().get(pk=session.pk)
@@ -461,6 +488,12 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                 # assigns an ABSOLUTE index off the session's own high-water mark,
                 # so offsetting it too would double-count.
                 index += offset
+                if index > contract.ORDINAL_MAX:
+                    # In range as shipped, past the column once shifted: one such
+                    # row would fail the whole insert, so it alone is dropped.
+                    logger.warning("transcript row refused: session=%s index=%s shifted past "
+                                   "ORDINAL_MAX", locked.pk, index)
+                    continue
             # Retention purged everything below the floor. A re-ship of that
             # history (backfill, reset) must not write it back.
             if index < locked.retention_floor_index:

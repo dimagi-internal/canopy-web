@@ -15,7 +15,7 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from canopy_transcript import BLOCK_STRIDE
+from canopy_transcript import BLOCK_STRIDE, contract
 from django.db import transaction
 from django.db.models import F, Max, Q
 from django.utils import timezone
@@ -1391,6 +1391,25 @@ def turn_end_held(session) -> dict[str, int]:
             for i, (key, off, _nxt) in enumerate(bounds) if highs.get(f"e{i}") is not None}
 
 
+def _conforming_events(session, events) -> list:
+    """`events` less each transcript-row event (`kind` a row role) that fails
+    `canopy_transcript.contract.row_problems`, each logged. The durable write
+    checks every row again (`transcript_ingest.conforming_rows`), which is what
+    catches an ordinal-carrying event of a kind that is no role at all."""
+    out = []
+    for e in events:
+        if e.kind in contract.ROLES:
+            problems = contract.row_problems(contract.event_as_row(
+                {"kind": e.kind, "index": e.index, "payload": e.payload or {},
+                 "cwd": e.cwd, "git_branch": e.git_branch}))
+            if problems:
+                logger.warning("transcript event refused: session=%s index=%s kind=%s: %s",
+                               session.pk, e.index, e.kind, "; ".join(problems))
+                continue
+        out.append(e)
+    return out
+
+
 def _ingest(session, *, transcript_id, events, index_offset, live, binding,
             fan_out_held=True) -> int:
     """`fan_out_held=False`: a row the session already held before this batch is
@@ -1400,6 +1419,10 @@ def _ingest(session, *, transcript_id, events, index_offset, live, binding,
     from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
     from apps.realtime import groups
 
+    # A transcript row that breaks the row contract is neither stored nor shown:
+    # shown live and gone on reload is the worst of both. Only that event drops —
+    # the rest of the batch, and every non-row kind (`activity:`, `stop:`), go on.
+    events = _conforming_events(session, events)
     already: set[int] = set()
     if not fan_out_held:
         shift = chat_transcript_ingest._index_offset(session)
