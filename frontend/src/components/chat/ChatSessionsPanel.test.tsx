@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-import type { AgentOut, AgentRunnerOut } from '@/api/agents'
+import type { AgentOut, AgentPinnableRunnerOut } from '@/api/agents'
 import type { RunnerOut } from '@/api/harness'
 import type { ChatSession, CloseResult, TransferResult } from '@/api/chat'
 
@@ -14,13 +14,11 @@ const createSession = vi.fn<(input: unknown) => Promise<ChatSession>>()
 const listSessions = vi.fn<() => Promise<ChatSession[]>>()
 const closeSession = vi.fn<(id: string) => Promise<CloseResult>>()
 const transferSession = vi.fn<(id: string, runner: string, brief?: string) => Promise<TransferResult>>()
-const getAgentRunners = vi.fn<(slug: string) => Promise<AgentRunnerOut[]>>()
+const getAgentPinnableRunners = vi.fn<(slug: string, workspace?: string) => Promise<AgentPinnableRunnerOut[]>>()
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 
 vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession, transferSession }))
-// Default: the agent has runners of its own, so the picker reads getAgentRunners.
-const getAgentDefaultOrder = vi.fn().mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
-vi.mock('@/api/agents', () => ({ getAgentRunners, getAgentDefaultOrder, listAgents: vi.fn() }))
+vi.mock('@/api/agents', () => ({ getAgentPinnableRunners, listAgents: vi.fn() }))
 vi.mock('@/api/harness', () => ({ listRunners, recentRunners: () => null }))
 
 const { ChatSessionsPanel, forgetListed } = await import('./ChatSessionsPanel')
@@ -34,7 +32,7 @@ function agent(overrides: Partial<AgentOut> = {}): AgentOut {
   } as AgentOut
 }
 
-function agentRunner(id: string, overrides: Partial<AgentRunnerOut> = {}): AgentRunnerOut {
+function agentRunner(id: string, overrides: Partial<AgentPinnableRunnerOut> = {}): AgentPinnableRunnerOut {
   return {
     runner_id: id,
     runner_name: `Runner ${id}`,
@@ -42,7 +40,6 @@ function agentRunner(id: string, overrides: Partial<AgentRunnerOut> = {}): Agent
     rank: 1,
     online: true,
     ready: true,
-    enabled: true,
     ...overrides,
   }
 }
@@ -101,7 +98,7 @@ function renderPanel(agents: AgentOut[]) {
 }
 
 // A promise plus its resolve/reject, so a test can control exactly when a
-// getAgentRunners call settles — needed to reproduce the out-of-order-resolve
+// getAgentPinnableRunners call settles — needed to reproduce the out-of-order-resolve
 // race. Mirrors RunnerAssignments.test.tsx's deferred idiom.
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -117,18 +114,16 @@ afterEach(() => {
   cleanup()
   forgetListed()
   vi.clearAllMocks()
-  getAgentDefaultOrder.mockResolvedValue({ own: true, workspace: null, runners: [], missing_repo: [], cannot_hold: [], repo_url: '' })
 })
 
 describe('ChatSessionsPanel — Run on picker', () => {
-  it('offers the runners of the default order an agent follows when it has none of its own', async () => {
+  it('offers the boxes outside the agent’s order it may be pinned to, grouped apart', async () => {
     listSessions.mockResolvedValue([])
     listRunners.mockResolvedValue([])
-    getAgentDefaultOrder.mockResolvedValue({
-      own: false, workspace: 'dimagi', missing_repo: [], cannot_hold: [], repo_url: '',
-      runners: [agentRunner('r1', { runner_name: 'haldimagi-mbp-cdp', online: true }),
-                agentRunner('r2', { runner_name: 'cloud-ec2-1', online: true })],
-    })
+    getAgentPinnableRunners.mockResolvedValue([
+      agentRunner('r1', { runner_name: 'cloud-ec2-2', rank: 0 }),
+      agentRunner('r2', { runner_name: 'jj-mbp-cdp', rank: null }),
+    ])
 
     renderPanel([agent()])
     fireEvent.click(await screen.findByText('New chat'))
@@ -136,15 +131,17 @@ describe('ChatSessionsPanel — Run on picker', () => {
 
     const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
     await waitFor(() => expect(Array.from(select.options).map((o) => o.textContent)).toEqual(
-      ['Auto', '● haldimagi-mbp-cdp', '● cloud-ec2-1'],
+      ['Auto', '● cloud-ec2-2', '● jj-mbp-cdp'],
     ))
-    expect(getAgentRunners).not.toHaveBeenCalled()
+    expect(Array.from(select.querySelectorAll('optgroup')).map((g) => g.label)).toEqual(
+      ['Echo\'s runner order', 'Other runners you can use'],
+    )
   })
 
   it('lists the agent’s assigned runners with an online/offline marker, defaulting to Auto', async () => {
     listSessions.mockResolvedValue([])
     listRunners.mockResolvedValue([])
-    getAgentRunners.mockResolvedValue([
+    getAgentPinnableRunners.mockResolvedValue([
       agentRunner('r1', { runner_name: 'Laptop', online: true }),
       agentRunner('r2', { runner_name: 'Cloud', online: false }),
     ])
@@ -155,7 +152,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
     fireEvent.click(await screen.findByText('Echo'))
 
     const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
-    await waitFor(() => expect(getAgentRunners).toHaveBeenCalledWith('echo', expect.anything()))
+    await waitFor(() => expect(getAgentPinnableRunners).toHaveBeenCalledWith('echo', expect.anything()))
 
     const options = Array.from(select.options).map((o) => o.textContent)
     expect(options).toEqual(['Auto', '● Laptop', '○ Cloud'])
@@ -165,7 +162,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
   it('passes the chosen runnerId to createSession when a specific runner is picked', async () => {
     listSessions.mockResolvedValue([])
     listRunners.mockResolvedValue([])
-    getAgentRunners.mockResolvedValue([agentRunner('r1', { runner_name: 'Laptop', online: true })])
+    getAgentPinnableRunners.mockResolvedValue([agentRunner('r1', { runner_name: 'Laptop', online: true })])
     createSession.mockResolvedValue({
       id: 's1',
       workspace: 'dimagi',
@@ -184,7 +181,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
     fireEvent.click(await screen.findByText('New chat'))
     fireEvent.click(await screen.findByText('Echo'))
     const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
-    await waitFor(() => expect(getAgentRunners).toHaveBeenCalled())
+    await waitFor(() => expect(getAgentPinnableRunners).toHaveBeenCalled())
 
     fireEvent.change(select, { target: { value: 'r1' } })
     await act(async () => {
@@ -201,7 +198,7 @@ describe('ChatSessionsPanel — Run on picker', () => {
   it('omits runnerId when Auto is left selected', async () => {
     listSessions.mockResolvedValue([])
     listRunners.mockResolvedValue([])
-    getAgentRunners.mockResolvedValue([agentRunner('r1', { runner_name: 'Laptop', online: true })])
+    getAgentPinnableRunners.mockResolvedValue([agentRunner('r1', { runner_name: 'Laptop', online: true })])
     createSession.mockResolvedValue({
       id: 's2',
       workspace: 'dimagi',
@@ -230,13 +227,13 @@ describe('ChatSessionsPanel — Run on picker', () => {
     expect(call.runnerId).toBeUndefined()
   })
 
-  it('does not let a stale getAgentRunners response overwrite a later pick', async () => {
+  it('does not let a stale runner-list response overwrite a later pick', async () => {
     listSessions.mockResolvedValue([])
     listRunners.mockResolvedValue([])
 
-    const first = deferred<AgentRunnerOut[]>()
-    const second = deferred<AgentRunnerOut[]>()
-    getAgentRunners
+    const first = deferred<AgentPinnableRunnerOut[]>()
+    const second = deferred<AgentPinnableRunnerOut[]>()
+    getAgentPinnableRunners
       .mockImplementationOnce(() => first.promise)
       .mockImplementationOnce(() => second.promise)
 
@@ -248,12 +245,12 @@ describe('ChatSessionsPanel — Run on picker', () => {
     // Pick Echo — still in flight.
     fireEvent.click(await screen.findByText('New chat'))
     fireEvent.click(await screen.findByText('Echo'))
-    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(1, 'echo', expect.anything()))
+    await waitFor(() => expect(getAgentPinnableRunners).toHaveBeenNthCalledWith(1, 'echo', expect.anything()))
 
     // Before it resolves, go back and pick Hal instead — also in flight.
     fireEvent.click(screen.getByText('Back'))
     fireEvent.click(await screen.findByText('Hal'))
-    await waitFor(() => expect(getAgentRunners).toHaveBeenNthCalledWith(2, 'hal', 'dimagi'))
+    await waitFor(() => expect(getAgentPinnableRunners).toHaveBeenNthCalledWith(2, 'hal', 'dimagi'))
 
     // Resolve the NEWER (Hal) request first.
     await act(async () => {

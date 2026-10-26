@@ -309,6 +309,19 @@ class AgentRunnerOut(StrictModel):
 
 
 
+class AgentPinnableRunnerOut(StrictModel):
+    """A box the caller may start a chat with this agent on by choosing it. Its
+    rank in the agent's default order when it is in it, None when it is not:
+    choosing a box pins the chat there whatever the order and source rules say."""
+
+    runner_id: uuid.UUID
+    runner_name: str
+    kind: str
+    online: bool
+    ready: bool
+    rank: int | None = None
+
+
 class AgentDefaultOrderOut(StrictModel):
     """What an agent's "everything else" runs on. `own` True: `runners` is its
     own ordered list, the same rows as `GET /runners`. Otherwise it follows `workspace`'s default order —

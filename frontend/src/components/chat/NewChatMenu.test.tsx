@@ -7,10 +7,10 @@ import type { AgentOut } from '@/api/agents'
 import type { ChatSession } from '@/api/chat'
 
 const createSession = vi.fn<(args: unknown) => Promise<ChatSession>>()
-const getAgentDefaultOrder = vi.fn(() => Promise.resolve({ own: false, runners: [] }))
+const getAgentPinnableRunners = vi.fn(() => Promise.resolve([]))
 
 vi.mock('@/api/chat', () => ({ createSession }))
-vi.mock('@/api/agents', () => ({ getAgentDefaultOrder, getAgentRunners: vi.fn() }))
+vi.mock('@/api/agents', () => ({ getAgentPinnableRunners }))
 vi.mock('@/api/harness', () => ({ listRunners: vi.fn(() => Promise.resolve([])) }))
 
 const { NewChatMenu } = await import('./NewChatMenu')
