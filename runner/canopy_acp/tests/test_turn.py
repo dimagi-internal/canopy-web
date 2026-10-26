@@ -159,7 +159,39 @@ def test_a_turn_failed_on_its_stop_reason_names_it_after_the_reply():
     # Investigation 12: a failed turn's note was only the agent's last words.
     res, _, _ = run(updates=[chunk("I'll run it in the background.")], stop="refusal")
     assert not res.ok
-    assert res.text == "I'll run it in the background.\n\nturn ended: refusal"
+    assert res.text == ("I'll run it in the background.\n\n"
+                        "turn ended: refusal (adapter version unknown)")
+
+
+class Versioned(Agent):
+    def start(self):
+        super().start()
+        return {"agentInfo": {"name": "claude-agent-acp", "version": "0.93.0"}}
+
+    def stderr_tail(self):
+        return "Session new-sid, stopReason=cancelled"
+
+
+def test_a_cancel_canopy_never_sent_is_named_the_adapters_with_its_version():
+    # Investigation 14 (turn 068076b8, 2026-10-26): "turn ended: cancelled" with no
+    # stop requested could not say who cancelled, or which adapter build the box ran.
+    logged = []
+    res = drive_turn("go", make_agent=lambda cwd, env, on_update: Versioned(
+                         cwd, env, on_update, updates=[chunk("Running it in the background.")],
+                         stop="cancelled"),
+                     reducer=UpdateReducer(), emit=lambda e: None, cwd="/tmp",
+                     release_wait=0, log=logged.append)
+    assert not res.ok and res.cancelled
+    assert res.text.endswith("turn ended: cancelled (the adapter's own: canopy sent no cancel; "
+                             "claude-agent-acp 0.93.0)")
+    # The adapter's stderr goes to the runner's log, never the note.
+    assert "stopReason=cancelled" not in res.text
+    assert any("stopReason=cancelled" in line for line in logged)
+
+
+def test_a_cancel_canopy_sent_says_so_even_with_no_reply():
+    res, _, _ = run(cancelled=lambda: True, stop="cancelled")
+    assert res.text == "turn ended: cancelled (canopy sent the cancel; adapter version unknown)"
 
 
 def test_a_clean_turn_text_is_the_reply_alone():
