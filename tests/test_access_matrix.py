@@ -124,6 +124,17 @@ EXPECT = {
                  "hal": ("confined", "capability:ask", "auto")},
 }
 
+#: `editors: confined` (a support agent meant for everyone): a workspace editor or
+#: admin who is not an agent admin is decided exactly like a viewer — a `full:`
+#: rule still lifts them (eva), else the capability, confined, in the agent's own
+#: mode with no manual cap (hal). Owners, admins and viewers are unchanged.
+IFACES["eva_confined"] = {**EVA, "editors": "confined"}
+IFACES["hal_confined"] = {**HAL, "editors": "confined"}
+for _role, _row in EXPECT.items():
+    _row["eva_confined"] = _row["eva"]
+    _row["hal_confined"] = (("confined", "capability:ask", "auto")
+                            if _role in ("ws_admin", "editor") else _row["hal"])
+
 
 def _check(turn, want):
     profile, basis, mode = want
@@ -177,6 +188,8 @@ CONTACTS = {
     ("someone@partner.org", True): {"none": (None, "refused", None), "eva": (None, "refused", None),
                                     "hal": ("confined", "capability:ask", "auto")},
 }
+for _row in CONTACTS.values():   # `editors:` is about members only
+    _row["eva_confined"], _row["hal_confined"] = _row["eva"], _row["hal"]
 
 
 @pytest.mark.parametrize("iface", list(IFACES))

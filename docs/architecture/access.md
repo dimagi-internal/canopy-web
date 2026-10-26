@@ -138,6 +138,8 @@ canopy-web, never a repo file) says what it offers people who are not its admins
   `contact` (known, not a member), `unknown` (nobody established who); narrowed by
   `@domain.tld` (exactly that domain) and `:verified` (THIS message is verified).
 * `callers_default` is always `none`.
+* **`editors:`** — `full` (default, omitted) or `confined`: whether a workspace editor who
+  is not an agent admin gets the editor tier (row 4) or is decided like a viewer member.
 * **The default interface** (`interface.default_interface()`): no `full:` rule, no capability,
   `callers_default: none`. **Every agent has an interface** — a new agent is created with the
   default (a field default on `Agent.interface`), `GET /interface` never returns `{}`, and
@@ -155,9 +157,9 @@ Asked in this order; the first row that matches decides.
 | 1 | **owner / admin / system** | `full` | the routing ladder | owner/admin, on a verified credential | owner/admin: any runner that may hold the agent |
 | 2 | a writer in an admin's own session (`session_writer`) | `full` | the routing ladder | no | only a runner they administer |
 | 3 | anyone a **`full:`** rule names | `full` | the routing ladder | no | only a runner they administer |
-| 4 | **workspace editor or above** who is not an agent admin | `full` | **always `manual`** | no | only a runner they administer |
+| 4 | **workspace editor or above** who is not an agent admin, unless the interface says `editors: confined` | `full` | **always `manual`** | no | only a runner they administer |
 | 5 | viewer / contact, **no published interface** | `none` | — | — | — |
-| 6 | viewer / contact whose class a capability lists | `confined` to it | the routing ladder | no | — |
+| 6 | viewer / contact (or, under `editors: confined`, an editor) whose class a capability lists | `confined` to it | the routing ladder | no | — |
 | 7 | anyone else | `none` | — | — | — |
 
 * **Over the table: the sensitive-data rule** (`access._sensitive_rule`, spec
@@ -183,6 +185,15 @@ Asked in this order; the first row that matches decides.
   yourself"), but every turn they start runs `manual` — outbound or irreversible
   actions wait for an admin — and they may not set `auto` anywhere: not on a
   dispatch, not on a routing rule or actor route, not on the agent's own switch.
+* **`editors: confined`** (an interface key; default `full`, which is row 4 and is
+  never written) skips row 4: an editor who is not an agent admin is decided exactly
+  like a viewer member — row 3 if a `full:` rule names them, else row 6 (the
+  capability listing `member`, in the routing ladder's mode with no manual cap, as
+  any confined turn), else row 7. For an agent meant for everyone, such as a support
+  agent, where neither "every editor chat waits for an admin" nor "`full: [member]`
+  hands editors the whole agent in auto" fits. Owner and admins (row 1) are
+  unaffected. Unknown values are refused at publish, as is `confined` on an
+  interface with no capability and no `full:` rule.
 * Row 1's `system` is bounded by the person canopy acted FOR: a schedule's
   occurrence (fired, run now, or a one-off) carries its creator as the
   accountable person, and unless they are an agent admin or the agent's own

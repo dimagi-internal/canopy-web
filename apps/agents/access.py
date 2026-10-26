@@ -26,7 +26,8 @@ The tiers, strongest first:
 * **workspace editor or above who is not an agent admin** → `full`, but every
   turn they start runs `manual`: they may edit the agent and dispatch work to it,
   never let it act outbound unreviewed. No `auto`, no `auto` routing rule, and a
-  pin only to a runner they administer.
+  pin only to a runner they administer. An interface with `editors: confined`
+  removes this tier: such an editor is decided like a viewer member, below.
 * **viewer members and contacts** → what the published interface names for
   them: `full` through a `full:` rule, `confined` to a capability, else `none`.
   With NO published interface they get `none`.
@@ -286,7 +287,9 @@ def _decide(agent, who=None, *, verified: bool, origin: str = "", capability: st
             # The owner's chosen domain-wide access (e.g. Eva's `full: [member]`):
             # the whole agent, in whatever mode its routing gives, as before.
             return _full(f"full:{rule}")
-    if editor:
+    if editor and not iface_mod.editors_confined(iface):
+        # `editors: confined` skips this tier: the editor is decided below
+        # exactly like a viewer member (capability, else refused).
         return _full(EDITOR_BASIS, manual=True)
     if not iface_mod.published(iface):
         return Decision(rel, NONE, None, False, False, False, "refused",
