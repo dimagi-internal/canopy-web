@@ -101,6 +101,31 @@
 **Priority:** P2
 **Depends on:** Phase 0 (laptop/emdash runner) in real use beyond a single agent/laptop.
 
+### Agents on Codex — remaining plans and deferred notes
+
+**What:** canopy-web can route a turn to Codex (spec `docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md`, Plan 1 shipped), but no runner runs one yet. Left:
+- **Plan 2, cloud runner Codex executor.** Starts with the live probe (a ChatGPT-signed-in `codex` on a box). Also covers Codex logins on `RunnerLogin`, an "add OpenAI key" UI, and runner copy that still says "Claude is not signed in".
+- **Plan 3, canopy plugin:** guards and caller context read Codex hook payloads; the factory's `skills/turn` and persona fallback (`AGENTS.md`).
+- **Plan 4, laptop headless runner on Codex.**
+- **Deferred minors from the Plan 1 review** (none affect a box that reports only Claude Code):
+  1. The signed-out reason uses `allowed()[0]`, so it can name the wrong CLI (Codex signed in but not confining, Claude confining but signed out).
+  2. "Sign X in" is the wrong advice when X is signed in but cannot confine, or for a sensitive conversation on a Codex-only agent.
+  3. The sensitive-data check still runs inside the `ignore_requirements` counterfactual, so that case is never diagnosed as a requirements problem.
+  4. A heartbeat whose `clis` names only unknown CLIs stores `{}` and the box takes no turns (fails closed; surprising for a newer runner on an older server).
+  5. The unclaimable report runs an `ignore_cli` coverage pass even when every agent in scope is Claude-only.
+  6. The frontend (`lib/clis.ts`, `RunnerOverview.tsx`) hardcodes the profile/envelope versions and the signed-out note; the server should compute them on `RunnerOut`.
+  7. Local turns record `cli=""`; they are always Claude Code.
+
+**Priority:** P2
+**Depends on:** a Codex sign-in on a test box for Plan 2's probe
+
+### Claude Code: use the CLI's first-party mechanisms
+
+**What:** The audit in `docs/superpowers/specs/2026-10-26-claude-code-audit.md`. First: the cloud runner classifies failures by message text, so an invalid or revoked setup-token's 401 ("OAuth access token is invalid") neither fails over to another login nor raises an alert; classify on the structured error and rate-limit fields instead. Then stop `claude -p` with SIGINT, replace the paid "Reply with OK" probe, and the rest in the audit's suggested order.
+
+**Priority:** P1 for the 401 fix (a live failover bug), P2 for the rest
+**Depends on:** None
+
 ## Completed
 
 ### MCP Layer — shipped (PR #71)
