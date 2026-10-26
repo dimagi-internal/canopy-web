@@ -44,6 +44,8 @@ export interface EmbedBootstrap {
 
 export interface HostInit {
   token: string
+  /** When `token` expires, as the host's mint said ("" when it did not). */
+  expiresAt?: string
   agent?: string
   metadata?: Record<string, unknown>
   actions: ActionSpec[]
@@ -66,8 +68,10 @@ export interface HostLink {
    *  says minting failed, so the UI can show why instead of spinning. */
   waitForInit(): Promise<HostInit>
   /** Ask the host to mint a fresh token — the frame cannot, having no cookies
-   *  for the host's origin. This is what `canopy-client`'s `fetchToken` becomes. */
-  requestToken(): Promise<{ token: string; expiresAt: string }>
+   *  for the host's origin. This is what `canopy-client`'s `fetchToken` becomes.
+   *  `grant: true` asks for an act-as-you permission with it: only once the person
+   *  has sent a message in the panel (and until they press Stop). */
+  requestToken(options?: { grant?: boolean }): Promise<{ token: string; expiresAt: string }>
   /** The host page's current state, as the host chose to expose it. */
   requestContext(): Promise<Record<string, unknown>>
   /** Run one of the host's registered actions. Rejects on refusal. */
@@ -215,6 +219,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
       case 'init':
         initResolve?.({
           token: String(data.token ?? ''),
+          expiresAt: typeof data.expires_at === 'string' ? data.expires_at : '',
           agent: data.agent ? String(data.agent) : undefined,
           metadata: (data.metadata as Record<string, unknown> | undefined) ?? {},
           actions: Array.isArray(data.actions) ? (data.actions as ActionSpec[]) : [],
@@ -306,7 +311,8 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
 
   return {
     waitForInit: () => initPromise,
-    requestToken: () => ask<{ token: string; expiresAt: string }>({ type: 'token-request' }),
+    requestToken: (options) =>
+      ask<{ token: string; expiresAt: string }>({ type: 'token-request', grant: options?.grant === true }),
     requestContext: () => ask<Record<string, unknown>>({ type: 'context-request' }),
     runAction: (name, args) => ask({ type: 'action-request', name, args: args ?? {} }),
     actions: () => actionSpecs,

@@ -10,6 +10,7 @@ import { SecurityCard } from '@/components/settings/SecurityCard'
 import { ContactDetailsPanel } from '@/components/settings/ContactDetailsPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
+import { ActAsYouPanel } from '@/components/settings/ActAsYouPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
@@ -60,7 +61,7 @@ export function SettingsPage() {
       <div>
         <h1 className="text-lg font-semibold text-foreground">Settings</h1>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Your account: your contact details, the runners you administer, the repos you use canopy in, presence, security, GitHub, connected apps and access tokens.
+          Your account: your contact details, the runners you administer, the repos you use canopy in, presence, security, GitHub, connected apps, act-as-you permissions and access tokens.
         </p>
         {memoryVisible && (
           <p className="mt-1 text-xs">
@@ -120,6 +121,8 @@ export function SettingsPage() {
       <GitHubPanel />
 
       <ConnectedAppsPanel />
+
+      <ActAsYouPanel />
 
       <TokensPanel />
       </div>

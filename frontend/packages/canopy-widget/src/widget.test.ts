@@ -239,6 +239,20 @@ describe('the credential path', () => {
     expect(init_.method).toBe('POST')
   })
 
+  it('never asks the host for an act-as-you permission on load, only when the frame says so', async () => {
+    const { fromFrame, sent } = widgetHarness()
+    await fromFrame({ source: SOURCE, type: 'ready' })
+    await fromFrame({ source: SOURCE, type: 'token-request', id: 'r1' })
+    await fromFrame({ source: SOURCE, type: 'token-request', id: 'r2', grant: true })
+    await fromFrame({ source: SOURCE, type: 'token-request', id: 'r3', grant: 'yes' })
+
+    const bodies = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1].body)
+    expect(bodies).toEqual(['{}', '{}', '{"grant":true}', '{}'])
+    // The expiry rides with the token, so the frame's client can cache it.
+    expect(sent('init')[0].message).toHaveProperty('expires_at')
+    expect(sent('token')[0].message).toHaveProperty('expires_at')
+  })
+
   it('reads a tokenUrl function on every mint, so a later mint names the page now on screen', async () => {
     // canopy's own single-page app: the widget outlives navigation, and the
     // token endpoint needs the page the visitor is on AT MINT TIME.

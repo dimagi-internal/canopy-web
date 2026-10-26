@@ -69,7 +69,8 @@ def _session(request, session_id):
 def _viewer(request) -> views.Viewer:
     return views.Viewer(user=request.user,
                         chat_surface=sensitivity.request_is_chat_surface(request),
-                        person=acting_person.is_person(request))
+                        person=acting_person.is_person(request),
+                        page_grant_id=getattr(request, "host_grant_id", None))
 
 
 def _run(fn, *args):

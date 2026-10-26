@@ -82,6 +82,11 @@ export interface CanopyWidgetOptions {
    *  Must return `{ token, expires_at }`. Called same-origin with credentials,
    *  so the host's normal session auth applies.
    *
+   *  The body is `{}` until the person sends their first message in the panel,
+   *  then `{"grant": true}` — and stays so while this tab is open, until they press
+   *  Stop. Only then should the host attach an act-as-you permission (an `id_jag`)
+   *  to the mint: the widget never asks for one on page load.
+   *
    *  A function is read on EVERY mint, for a host whose token endpoint wants
    *  to know something that changes while the widget lives — canopy's own
    *  single-page app passes the page the visitor is on NOW, since the widget
@@ -325,20 +330,22 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     chrome.iframe.contentWindow?.postMessage(message, canopyOrigin)
   }
 
-  async function mintToken(): Promise<string> {
+  /** Mint a token at the host. `grant` asks for an act-as-you permission with it —
+   *  only ever because the frame says the person has sent a message in the panel. */
+  async function mintToken(grant = false): Promise<{ token: string; expires_at: string }> {
     const url = typeof options.tokenUrl === 'function' ? options.tokenUrl() : options.tokenUrl
     const response = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-      body: '{}',
+      body: grant ? '{"grant":true}' : '{}',
     })
     if (!response.ok) {
       throw new Error(`token endpoint returned ${response.status}`)
     }
     const body = (await response.json()) as TokenResponse
     if (!body?.token) throw new Error('token endpoint returned no token')
-    return body.token
+    return { token: body.token, expires_at: typeof body.expires_at === 'string' ? body.expires_at : '' }
   }
 
   /** The host's CSRF token, if it has one. Read rather than required, so a host
@@ -391,10 +398,13 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
       case 'ready': {
         frameReady = true
         try {
+          // Never a grant on load: the person has not used the panel yet.
+          const minted = await mintToken(false)
           post({
             source: SOURCE,
             type: 'init',
-            token: await mintToken(),
+            token: minted.token,
+            expires_at: minted.expires_at,
             agent: options.agent,
             metadata: options.metadata,
             actions: actionSpecs(),
@@ -431,7 +441,8 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
       }
       case 'token-request': {
         try {
-          post({ source: SOURCE, type: 'token', id: message.id, token: await mintToken() })
+          const minted = await mintToken(message.grant === true)
+          post({ source: SOURCE, type: 'token', id: message.id, token: minted.token, expires_at: minted.expires_at })
         } catch (error) {
           post({
             source: SOURCE,

@@ -1123,8 +1123,15 @@ canopy accepts.
 In three steps — every claim, lifetime, header and refusal is in
 [the SDK README § Host grant contract v1](../../sdk/python/README.md#host-grant-contract-v1):
 
-1. **Arrival.** Beside `assertion` (§3), send `id_jag` — an ID-JAG (`typ: oauth-id-jag+jwt`)
-   for your own MCP server, scoped by your server to what THIS page offers.
+1. **Arrival — only once the person asks.** Beside `assertion` (§3), send `id_jag` — an ID-JAG
+   (`typ: oauth-id-jag+jwt`) for your own MCP server, scoped by your server to what THIS page
+   offers — **only on a mint whose JSON body is `{"grant": true}`**. This is the person's
+   **act-as-you permission**: a time-limited permission they give in the moment, so the agent
+   acts within their own access on this page. The widget's mint on page load is always `{}`;
+   it sends `{"grant": true}` once the person sends their first message in the panel (or opens a
+   conversation whose live card needs to read your site as them), and on every mint of that tab
+   after, until they press **Stop**. Expect your first grant only after that first send.
+   `canopy_sdk.django`'s `panel_token` already does this.
 2. **Redeem.** canopy (client id `{canopy base}/oauth/client.json`, keys at
    `{canopy base}/oauth/jwks.json`) redeems it at your token endpoint with
    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `private_key_jwt` and DPoP;
@@ -1146,7 +1153,11 @@ In three steps — every claim, lifetime, header and refusal is in
    not handle sensitive data.
 5. **The person's own View? Verify `Canopy-View`, never infer it.** A View's `resources/read`
    carries canopy's signed `Canopy-View` (`actor: "view"`, your id for the person as `sub`, the
-   resource as `uri`, the conversation, 60s, single-use, bound to the DPoP key and token) only
+   resource as `uri`, the conversation, 60s, single-use, bound to the DPoP key and token), and so
+   does a View's own `tools/call` (a card's button) of a tool whose `_meta.ui.resourceUri` is
+   that View — `uri` then the View's `ui://` resource, `rpc` that very call (verify with
+   `rpc=("tools/call", {"name": …, "arguments": …})`). An agent's own tool call never carries
+   one. Either rides only
    when the principal behind the View is a person acting as themselves — never an agent's turn,
    caller token or own login, whatever door it uses (`apps/harness/acting_person.py`) — and only
    in a conversation they are in (`mcp_apps_views.view_facts`). If you give a View more than an
@@ -1165,18 +1176,22 @@ of your site; it only ever narrows what you granted. Your page's `backing_tool`
 tells the agent where to read the rows on screen — it is a hint, not a filter,
 so a page's other tools need not be re-listed in its state.
 
-**No presence, no access, never a fallback.** canopy re-mints the widget's
-token every five minutes while a grant is live, so you issue a fresh ID-JAG on
-that cadence while the visitor is on the page. Once the visitor leaves, the
-access token lapses within minutes, and a call in their turn is REFUSED — the
-agent says it needs them back on the page. It never falls back to the agent's
-own credential. A failed redemption never fails the arrival: the chat opens,
-and the agent simply cannot reach your tools as that visitor.
+**No presence, no access, never a fallback.** Your access token lives at most
+30 minutes (`ACCESS_TOKEN_MAX_LIFETIME`). While the person's tab holds a grant
+the widget re-mints about every five minutes, so you issue a fresh ID-JAG on
+that cadence. A conversation reads ONLY through the grant of the page that last
+acted in it as that person (sent, declared its page, or made a View call) —
+never another of their pages' grants, however recent, and never the agent's own
+credential. Once that grant runs out (or they press Stop, in the panel or on
+canopy's Settings), a call in their turn is REFUSED and the agent tells them:
+"Your permission for <agent> to act as you on this page has ended — send again
+to grant it for another 30 minutes." A failed redemption never fails the
+arrival: the chat opens, and the agent simply cannot reach your tools as them.
 
-**What a compromise of canopy can do**: use unexpired tokens of visitors with a
-live conversation, within their page's scope, for minutes. It cannot mint a
+**What a compromise of canopy can do**: use unexpired tokens of visitors who sent
+from your page in the last half hour, within that page's scope. It cannot mint a
 grant for anyone (there is no user-signing key to steal), reach a visitor who
-never opened the widget, or use a token anywhere but your MCP server (`aud`).
+never sent from the panel, or use a token anywhere but your MCP server (`aud`).
 A token copied from a log is useless without canopy's DPoP key, and no runner
 ever holds either.
 

@@ -48,7 +48,7 @@ def test_an_unknown_token_resolves_to_nothing(world):
 
 def test_an_expired_delegated_token_is_refused(world, token):
     jkt = contract.jwk_thumbprint(ec_jwk(world.client.dpop_key))
-    assert world.verifier.resolve(token, jkt, now=time.time() + 901) is None
+    assert world.verifier.resolve(token, jkt, now=time.time() + contract.ACCESS_TOKEN_MAX_LIFETIME + 1) is None
 
 
 def test_a_token_for_a_deactivated_subject_is_refused(world, token):

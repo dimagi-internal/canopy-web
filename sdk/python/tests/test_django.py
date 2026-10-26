@@ -136,6 +136,12 @@ def _rendered_options(body: str) -> dict:
     return json.loads(body[start:body.index("</script>", start)])
 
 
+def _mint(client, url, *, grant=True):
+    """A panel mint; `grant` is what the panel sends once the person has sent a message."""
+    return client.post(url, data=json.dumps({"grant": True} if grant else {}),
+                       content_type="application/json")
+
+
 def _rendered_token(body: str) -> str:
     from urllib.parse import parse_qs, urlsplit
 
@@ -201,7 +207,7 @@ def test_the_panel_token_endpoint_turns_the_page_token_into_scopes(host, user):
     client.force_login(user)
     token = _rendered_token(client.get("/marketplace/network/").content.decode())
     with mock.patch.object(views, "mint_contact_token", return_value={"token": "t", "expires_at": ""}) as mint:
-        response = client.post(f"/canopy/panel-token/?page={token}")
+        response = _mint(client, f"/canopy/panel-token/?page={token}")
     assert response.json() == {"token": "t", "expires_at": "", "kind": "contact"}
     payload = mint.call_args.args[1]
     assert payload["agent_slug"] == "ace" and payload["id_jag"]
@@ -210,12 +216,33 @@ def test_the_panel_token_endpoint_turns_the_page_token_into_scopes(host, user):
     assert jwt.decode(payload["assertion"], options={"verify_signature": False})["sub"] == str(user.pk)
 
 
+def test_no_grant_is_minted_until_the_panel_asks_for_one(host, user):
+    # On load the panel mints with an empty body: a registered page still gets no
+    # ID-JAG, so canopy holds nothing that acts as the person until they send.
+    client = Client()
+    client.force_login(user)
+    token = _rendered_token(client.get("/marketplace/network/").content.decode())
+    for body in ({}, {"grant": "yes"}, {"grant": 1}, None):
+        with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+            if body is None:
+                client.post(f"/canopy/panel-token/?page={token}", data="not json",
+                            content_type="application/json")
+            else:
+                _mint(client, f"/canopy/panel-token/?page={token}", grant=False) if body == {} else \
+                    client.post(f"/canopy/panel-token/?page={token}", data=json.dumps(body),
+                                content_type="application/json")
+        assert "id_jag" not in mint.call_args.args[1], body
+    with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
+        _mint(client, f"/canopy/panel-token/?page={token}")
+    assert mint.call_args.args[1]["id_jag"]
+
+
 def test_scopes_in_the_body_or_query_are_ignored(host, user):
     client = Client()
     client.force_login(user)
     with mock.patch.object(views, "mint_contact_token", return_value={"token": "t", "expires_at": ""}) as mint:
         client.post("/canopy/panel-token/?scope=admin&page=network",
-                    data=json.dumps({"scope": "marketplace:read", "sub": "someone"}),
+                    data=json.dumps({"scope": "marketplace:read", "sub": "someone", "grant": True}),
                     content_type="application/json")
     assert "id_jag" not in mint.call_args.args[1]
 
@@ -393,7 +420,7 @@ def test_key_mode_mints_with_the_scopes_the_key_selects(spa, user):
     client.force_login(user)
     for page in ("network", "/marketplace/network/"):
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-            client.post(f"/canopy/panel-token/?page={page}")
+            _mint(client, f"/canopy/panel-token/?page={page}")
         payload = mint.call_args.args[1]
         import jwt
 
@@ -405,7 +432,7 @@ def test_key_mode_ignores_an_unknown_key_and_any_scope_sent(spa, user):
     client = Client()
     client.force_login(user)
     with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-        client.post("/canopy/panel-token/?page=admin&scope=marketplace:read")
+        _mint(client, "/canopy/panel-token/?page=admin&scope=marketplace:read")
     assert "id_jag" not in mint.call_args.args[1]
 
 
@@ -571,7 +598,7 @@ def test_a_page_that_chose_its_agent_binds_the_mint_to_it(host, user):
         body = client.get("/data/visits/").content.decode()
         options = _rendered_options(body)
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-            client.post(f"/canopy/panel-token/?page={_rendered_token(body)}")
+            _mint(client, f"/canopy/panel-token/?page={_rendered_token(body)}")
     assert options["agent"] == "labsdata", "the widget preselects the page's agent"
     payload = mint.call_args.args[1]
     assert payload["agent_slug"] == "labsdata"
@@ -587,7 +614,7 @@ def test_the_rest_of_the_site_keeps_its_default_agent_unbound_and_without_sensit
     with override_settings(CANOPY_HOST=_data_host(host)):
         token = _rendered_token(client.get("/marketplace/network/").content.decode())
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-            client.post(f"/canopy/panel-token/?page={token}")
+            _mint(client, f"/canopy/panel-token/?page={token}")
     payload = mint.call_args.args[1]
     assertion = _claims(payload["assertion"])
     assert payload["agent_slug"] == "ace"
@@ -601,7 +628,7 @@ def test_a_page_can_raise_the_sites_requirements_never_lower_them(host, user):
     with override_settings(CANOPY_HOST={**_data_host(host), "RUNNER_REQUIREMENTS": ["sensitive_data"]}):
         token = _rendered_token(client.get("/marketplace/network/").content.decode())
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-            client.post(f"/canopy/panel-token/?page={token}")
+            _mint(client, f"/canopy/panel-token/?page={token}")
     assert _claims(mint.call_args.args[1]["assertion"])[contract.RUNNER_REQUIREMENTS_CLAIM] == ["sensitive_data"]
 
 
@@ -620,7 +647,7 @@ def test_the_choice_is_inside_the_signature(host, user):
         claims.pop("a")
         forged = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-            client.post(f"/canopy/panel-token/?page={forged}.{sig}")
+            _mint(client, f"/canopy/panel-token/?page={forged}.{sig}")
     sent = mint.call_args.args[1]
     assert "id_jag" not in sent and sent["agent_slug"] == "ace"
     assert contract.AGENT_CLAIM not in _claims(sent["assertion"])
@@ -667,7 +694,7 @@ def test_key_mode_reads_the_pages_agent_from_page_agents(spa, user):
     client.force_login(user)
     with override_settings(CANOPY_HOST=settings):
         with mock.patch.object(views, "mint_contact_token", return_value={"token": "t"}) as mint:
-            client.post("/canopy/panel-token/?page=/marketplace/network/")
+            _mint(client, "/canopy/panel-token/?page=/marketplace/network/")
         with pytest.raises(ValueError, match="PAGE_AGENTS"):
             from canopy_sdk.django.pages import panel_context
 

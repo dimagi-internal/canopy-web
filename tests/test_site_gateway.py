@@ -124,7 +124,7 @@ def _refused(w, host, match, name="site_call", args=None):
 
 def test_an_expired_grant_is_a_refusal_never_a_fallback(w, host):
     _grant(w, expires_at=timezone.now() - timedelta(seconds=1))
-    _refused(w, host, "back on the page")
+    _refused(w, host, "act as you on this page has ended")
     assert host.seen == []
 
 
@@ -135,6 +135,7 @@ def test_no_id_jag_at_arrival_means_no_host_tools(w, host):
 
 def test_a_tool_outside_the_ceiling_is_refused(w, host):
     _grant(w)
+    w["session"].refresh_from_db()
     w["session"].page_state = {"backing_tool": "admin_delete_everything"}
     w["session"].save()
     _refused(w, host, "not something you may use", args={"tool": "admin_delete_everything"})
@@ -153,6 +154,7 @@ def test_a_tool_the_page_did_not_name_is_still_reachable_inside_the_grant(w, hos
 
 def test_a_page_that_declares_nothing_still_reaches_its_grant(w, host):
     _grant(w)
+    w["session"].refresh_from_db()
     w["session"].page_state = {}
     w["session"].save()
     with _visitor(w):
@@ -162,6 +164,7 @@ def test_a_page_that_declares_nothing_still_reaches_its_grant(w, host):
 
 def test_a_conversation_on_another_site_is_refused(w, host):
     _grant(w)
+    w["session"].refresh_from_db()
     w["session"].metadata = {"embed_app": "some-other-site"}
     w["session"].save()
     _refused(w, host, "does not let me act for you")
@@ -237,6 +240,7 @@ def test_a_conversation_on_the_site_selects_the_site_capability(w):
     turn = Turn(agent=w["agent"], chat_session=w["session"], prompt="x",
                 initiator_contact=w["contact"], initiator_kind="contact")
     assert capability_for(turn, w["agent"]) == "connect"
+    w["session"].refresh_from_db()
     w["session"].metadata = {}
     assert capability_for(turn, w["agent"]) == "ask"
 
@@ -258,6 +262,7 @@ def test_host_tool_names_normalise(name, expected):
 def _sensitive_turn(w, *, flags=(), runner=True):
     from apps.harness.models import Runner, RunnerFlag
 
+    w["session"].refresh_from_db()
     w["session"].metadata = {**w["session"].metadata, "runner_requirements": ["sensitive_data"]}
     w["session"].save()
     if runner:
@@ -351,6 +356,7 @@ def test_a_malformed_requirement_at_the_gateway_is_refused(w, where):
         _grant(w, runner_requirements=["not-a-flag"])
     else:
         _grant(w)
+        w["session"].refresh_from_db()
         w["session"].metadata = {**w["session"].metadata, "runner_requirements": "sensitive_data"}
         w["session"].save()
     _runner(w, flags=("sensitive_data",))
@@ -406,6 +412,7 @@ def test_a_turn_reaches_the_site_through_its_own_pages_grant_not_the_latest(w):
 
     this_page = _grant(w, scope="data:read")
     note_host_grant(w["session"], this_page.pk, contact=w["contact"])
-    _grant(w, scope="data:read", expires_at=timezone.now() + timedelta(minutes=14))  # another tab, later
+    _grant(w, scope="data:read", acted=False,
+           expires_at=timezone.now() + timedelta(minutes=14))  # another tab, later
     ctx = host_gateway.resolve(str(w["turn"].pk))
     assert ctx._token == HOST_TOKEN and ctx.expires_at == this_page.expires_at

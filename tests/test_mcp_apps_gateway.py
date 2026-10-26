@@ -69,10 +69,12 @@ def w():
     turn = Turn.objects.create(chat_session=session, prompt="coach them",
                                initiator_contact=contact, initiator_kind="contact",
                                capability="connect")
-    HostGrant.objects.create(
+    from tests.fixtures.site_gateway import acted_with
+
+    acted_with(HostGrant.objects.create(
         app=app, subject="u-42", contact=contact, access_token_enc=encrypt_secret(TOKEN),
         scope="workflow:act", resource=RESOURCE, dpop_jkt=client_identity.dpop_jkt(),
-        expires_at=timezone.now() + timedelta(minutes=10))
+        expires_at=timezone.now() + timedelta(minutes=10)))
     return {"app": app, "turn": turn, "session": session}
 
 

@@ -38,6 +38,8 @@ vi.mock('@/api/tokens', () => ({
 vi.mock('@/api/harness', () => ({ listRunners: vi.fn().mockResolvedValue([]) }))
 // DeviceKeysPanel likewise (DeviceKeysTable.test.tsx covers it).
 vi.mock('@/api/deviceKeys', () => ({ listRunnerDeviceKeys: vi.fn().mockResolvedValue([]) }))
+// ActAsYouPanel likewise (ActAsYouPanel.test.tsx covers it).
+vi.mock('@/components/settings/ActAsYouPanel', () => ({ ActAsYouPanel: () => null }))
 // ContactDetailsPanel likewise (ContactDetailsPanel.test.tsx covers it).
 vi.mock('@/components/settings/ContactDetailsPanel', () => ({ ContactDetailsPanel: () => null }))
 

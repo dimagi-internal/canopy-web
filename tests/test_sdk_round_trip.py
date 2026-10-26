@@ -205,6 +205,12 @@ def _turn_for_the_visitor(site, contact):
                                      metadata={"embed_app": "connect-labs"},
                                      page_state={"resource": "labs-marketplace://orgs",
                                                  "backing_tool": "marketplace_orgs_get"})
+    # The visitor sent from the page: its grant is the conversation's.
+    from apps.tokens.models import HostGrant
+    from tests.fixtures.site_gateway import acted_with
+
+    for grant in HostGrant.objects.filter(contact=contact).order_by("pk"):
+        acted_with(grant)
     return Turn.objects.create(chat_session=session, prompt="which orgs?", initiator_contact=contact,
                                initiator_kind="contact", capability="connect")
 

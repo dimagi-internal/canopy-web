@@ -33,7 +33,7 @@ def test_the_lifetime_caps_are_the_contracts():
     assert contract.ASSERTION_MAX_LIFETIME == 120
     assert contract.ID_JAG_MAX_LIFETIME == 300
     assert contract.CLIENT_ASSERTION_MAX_LIFETIME == 60
-    assert contract.ACCESS_TOKEN_MAX_LIFETIME == 900
+    assert contract.ACCESS_TOKEN_MAX_LIFETIME == 1800
     assert contract.DPOP_IAT_WINDOW_SECONDS == 60
 
 

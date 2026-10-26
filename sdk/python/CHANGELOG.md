@@ -2,6 +2,22 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.23.0 — 2026-10-26
+
+**An act-as-you permission lasts 30 minutes, and the panel asks for one only after the person sends.**
+
+- `contract.ACCESS_TOKEN_MAX_LIFETIME` is 1800 (was 900): a host access token lives at
+  most 30 minutes. `HostConfig.access_token_ttl` defaults to it, so an SDK host issues
+  30-minute tokens unless configured lower. A canopy older than this clamps them to 15
+  minutes, which still works; upgrade canopy first to get the full half hour.
+- `canopy_sdk.django`'s `panel_token` issues an ID-JAG only when the mint's JSON body is
+  `{"grant": true}`. canopy's panel sends that once the person has sent a message in it
+  (and while that tab stays open after), never on page load, so the agent acts as the
+  person only after they used the panel. A mint with `{}` (or no body) gets a token and
+  no grant, whatever the page. **Behaviour change** for a host on this view: no grants
+  until canopy's widget sends the flag (canopy-web serves `widget.js`, so it does once
+  canopy is deployed). A host with its own token endpoint should do the same.
+
 ## 0.22.1 — 2026-10-24
 
 **The panel tells its page which conversation is open, and opens one by id.**

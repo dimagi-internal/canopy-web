@@ -235,6 +235,49 @@ being told. The frame asks (`snap`, frame→host); the host answers with
 (`canopy.widget.snap.<app>`). Tests: `widget.test.ts` § snapping,
 `src/embed/{hostLink,EmbedApp}.test.ts(x)`. Tests: `dragging.test.ts` / `widget.test.ts` § resizing.
 
+## Act-as-you permissions (host grants): when, which, and Stop
+
+A host grant (`tokens.HostGrant`) is, to the person, an **act-as-you permission**: a
+time-limited permission they give in the moment, so the agent acts on the host's
+page within their own access. The rules:
+
+- **Minted only when the person acts, never on load.** The widget's load mint is
+  plain (`{}` to the host's token endpoint, `apps/embedding/embed_api.py` for
+  canopy's own pages). The frame (`frontend/src/embed/pageGrant.ts`) asks for one —
+  `token-request` with `grant: true`, which the loader sends to the host as
+  `{"grant": true}` — when the person sends (the opening message, before the
+  conversation is created; or a later one, followed by a page declaration so the
+  conversation is stamped before the turn), when a View sends a `ui/message`, and
+  when a card in a conversation they open loads read-only or is refused `no_grant`
+  (opening their own conversation is their act; the line then shows). From then on
+  every mint of that tab asks again (a granted contact token lives 10 minutes, so
+  about every 5) until they press Stop.
+- **30 minutes** (`canopy_sdk.contract.ACCESS_TOKEN_MAX_LIFETIME`, which
+  `host_grants.MAX_TOKEN_SECONDS` follows).
+- **A conversation reads only through its own page's grant.** `host_grants.lookup`
+  (the gateway's and Views' one lookup): with a session, only the grant
+  `note_host_grant` stamped for that person — by a send, a page-state/actions
+  declaration, the create, or a View call (stamped in `resolve_for_viewer` after the
+  View's gates) — while it lives. Expired/pruned → `EXPIRED`, stopped → `REVOKED`,
+  none → `NONE`; never another page's grant. The agent says
+  `host_gateway.no_grant_message`. Outside a conversation, the latest LIVE grant
+  (bound to the agent first, then unbound). So a turn never reads through a grant
+  the person did not give by acting in that conversation's page.
+- **See and stop.** `host_grants.live_for` lists one row per page
+  (`same_page`: same site, person, agent, scope — the panel re-mints, so a page is
+  several rows); `host_grants.revoke` sets `revoked_at` on every live row of that
+  page and wipes their tokens. Routes (`apps/host_grants/grants_api.py`):
+  `GET/DELETE /api/me/host-grants/` (Settings → Act-as-you permissions; by person,
+  like a token — a site in a workspace you are not in can hold one for you),
+  `GET/DELETE /api/embed/host-grant` (a canopy user's panel line and Stop) and
+  `GET/DELETE /api/contact/host-grant` (a contact's). The panel re-reads its grant
+  every minute and stops asking when it is gone; a Stop pressed on Settings can
+  race one re-mint of an open tab, which then shows in both places to stop again.
+- **A View's card button says it is the person's.** `host_gateway.view_call` carries
+  `Canopy-View` on the View's own `tools/call` (uri = the View's `ui://` resource,
+  when the listed tool's `_meta.ui.resourceUri` is that View; `rpc` = that call), as
+  a View's `resources/read` does. An agent's call never does.
+
 ## Live host-grant probe
 
 Test connection's conformance stops where a visitor starts, because a real grant

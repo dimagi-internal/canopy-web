@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.22.1#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.23.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.22.1/dimagi_canopy-0.22.1-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.23.0/dimagi_canopy-0.23.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -162,7 +162,9 @@ The panel mints at `PANEL_TOKEN_URL` (a literal), else `reverse(PANEL_TOKEN_URL_
 ### Which page is the visitor on? Two modes, one API
 
 A page grants scopes only if it is in `PAGE_SCOPES`, and the registry — not the
-browser — decides which. What differs is how a mint names its page;
+browser — decides which. And only when the panel asks: `panel_token` adds the
+ID-JAG only to a mint whose JSON body is `{"grant": true}`, which canopy's panel
+sends once the person has sent a message in it — never on page load. What differs is how a mint names its page;
 `registry.scopes_for(value, user_id)` (`canopy_sdk.host.PageRegistry` /
 `PageTokens`, or `canopy_sdk.django.conf.page_scopes(value, user)`) answers
 either way.
@@ -705,9 +707,20 @@ base URL, `iat`, `exp` ≤ 120s after `iat`, a single-use `jti`; optional `name`
 | `canopy_workspace` | optional workspace slug (`CANOPY_HOST["WORKSPACE"]`): which canopy workspace's registration of `iss` is meant. canopy selects by it, and refuses with 409 `workspace_mismatch` when the body's `agent_slug` is not an agent of that workspace. Absent = the workspace of `agent_slug`, or the one live site by that name. |
 | `canopy_agent` | optional agent slug: the page BOUND this arrival to one agent. Must equal the body's `agent_slug` (else 400 `agent_mismatch`) and be on the site's allow-list (else 403). canopy holds the minted token and the host grant redeemed with it to that agent. Absent = the site's whole allow-list. |
 
-### 1. Host issues an ID-JAG at arrival
+### 1. Host issues an ID-JAG at arrival — only once the person has asked
 In the SAME call, the body gains one optional field: `"id_jag": "<compact JWS>"`.
 Absent = no grant.
+
+The grant is the person's **act-as-you permission**: a time-limited permission they
+give in the moment, so the agent acts within their own access on the page they are
+on. canopy's panel never asks for one on load. Its mints POST `{}` to the host's
+token endpoint until the person sends their first message in the panel, then
+`{"grant": true}` (and keeps doing so while that tab stays open, until the person
+presses "Stop" in the panel or on canopy's Settings). **A host issues an `id_jag`
+only for a mint whose body says `"grant": true`** — `canopy_sdk.django`'s
+`panel_token` does exactly that. Expect the first mint with a grant only after the
+person's first send, and roughly one every five minutes after that while the tab
+stays open.
 
 ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant):
 - header: `typ: "oauth-id-jag+jwt"`, `alg` EdDSA|ES256, `kid` = the host's
@@ -742,7 +755,7 @@ Host MUST: accept only the configured canopy client_id; fetch its CIMD → `jwks
 verify the ID-JAG with its OWN key; check `aud`==its issuer, `client_id`==authenticated
 client, `resource` matches, `exp`, single-use `jti` (all three JWTs); verify the DPoP
 proof and refuse one signed by the client key.
-Response 200 JSON: `{"access_token": "...", "token_type": "DPoP", "expires_in": ≤900,
+Response 200 JSON: `{"access_token": "...", "token_type": "DPoP", "expires_in": ≤1800,
 "scope": "..."}` — **no refresh_token**. The token is bound to the DPoP key's JWK
 thumbprint (`cnf.jkt`), to `sub` (the visitor), `client_id` (canopy), the scope, and
 carries actor `act: {"sub": "<canopy client_id>"}`. Errors: RFC 6749 JSON

@@ -796,7 +796,11 @@ class HostGrant(models.Model):
 
     There is no refresh token and no fallback: when `expires_at` passes, the
     host is out of reach for that visitor until they are back on the page and
-    the widget re-mints (a fresh ID-JAG arrives with it).
+    the widget re-mints (a fresh ID-JAG arrives with it). The panel asks its host
+    for a grant only once the person has sent a message in it, and the person can
+    see their live grants and stop any of them (`revoked_at`,
+    `host_grants.revoke`): a revoked grant is refused at once by the gateway and
+    by Views, exactly like an expired one.
     """
 
     app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="host_grants")
@@ -829,6 +833,9 @@ class HostGrant(models.Model):
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
                               related_name="+")
     expires_at = models.DateTimeField(db_index=True)
+    #: When the person stopped it (the panel's "Stop", or Settings). A revoked
+    #: grant is never used again; its access token is wiped at the same moment.
+    revoked_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

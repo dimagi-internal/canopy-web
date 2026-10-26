@@ -31,6 +31,7 @@ from .audit import record as audit
 from .rate_limit import MintRateLimitError, check_mint_limit
 from . import defaults as agent_defaults
 from .schemas import (
+    EmbedSelfTokenIn,
     EmbedAgentOut,
     EmbedDefaultAgentIn,
     EmbedDefaultAgentOut,
@@ -208,6 +209,17 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
     )
 
 
+def _asks_for_grant(request: HttpRequest) -> bool:
+    """Whether the panel's mint body is `{"grant": true}` (`EmbedSelfTokenIn`). Read by
+    hand, not as a Ninja body: older callers send no body at all, and that must stay a
+    plain mint rather than a 400."""
+    try:
+        body = EmbedSelfTokenIn.model_validate_json(request.body or b"{}")
+    except ValueError:
+        return False
+    return body.grant
+
+
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
 @gate("self", kind="ephemeral-credential", step_up="the caller's own embed token")
@@ -225,9 +237,10 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     receives is the same short-lived revocable row any host would get.
 
     `page` names the canopy page the panel is on. When it is one canopy lets an
-    agent act on as you (read-only, within your own access), canopy also takes
-    a short grant to its own tools for that page; `host_grant` says whether it
-    did. Any other value, or none, is simply no grant.
+    agent act on as you (read-only, within your own access) AND the body says
+    `"grant": true` — the panel sends it only once you have sent a message in it —
+    canopy also takes a short grant to its own tools for that page; `host_grant`
+    says whether it did. Any other value, or none, is simply no grant.
     """
     # Session-authenticated means ONLY a session. This route sits inside the
     # delegated-token surface (`^/api/embed/`), so without this a connected
@@ -260,13 +273,18 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
               ok=False, reason="rate_limited")
         raise HttpError(429, str(exc))
 
-    raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS)
     # canopy as a HOST of its own MCP (apps/host_grants/self_host.py): the page's
     # scopes come from the server-side registry, never from the browser — the
-    # browser only names which registered page it is on. Never fails the mint.
+    # browser only names which registered page it is on, and asks for a grant only
+    # once the person has sent from the panel. Never fails the mint. The token
+    # points at the grant, so a conversation reads through THIS page's grant
+    # (`host_grants.lookup`), as for any other host.
     from apps.host_grants import self_host
 
-    granted = self_host.grant_for_visitor(app, request.user, page)
+    grant = self_host.grant_for_visitor(app, request.user, page) if _asks_for_grant(request) else None
+    granted = grant is not None
+    raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS,
+                                      host_grant=grant)
     audit(event=EmbedAuditLog.MINT, request=request, app=app, subject=request.user,
           detail=f"ttl={TOKEN_TTL_SECONDS}s host_grant={granted} page={page[:40]!r}")
     return EmbedSelfTokenOut(token=raw, expires_at=token.expires_at.isoformat(), host_grant=granted)

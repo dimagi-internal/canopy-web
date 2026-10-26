@@ -161,13 +161,27 @@ def world():
             "session": session, "turn": turn}
 
 
-def grant(w, **over):
+def grant(w, *, acted=True, **over):
     fields = {"app": w["app"], "subject": "u-42", "contact": w["contact"],
               "access_token_enc": encrypt_secret(HOST_TOKEN), "scope": "marketplace:read",
               "resource": RESOURCE, "dpop_jkt": client_identity.dpop_jkt(),
               "expires_at": timezone.now() + timedelta(minutes=10)}
     fields.update(over)
-    return HostGrant.objects.create(**fields)
+    row = HostGrant.objects.create(**fields)
+    return acted_with(row) if acted else row
+
+
+def acted_with(grant):
+    """The person's page acted, holding `grant`, in every conversation there is (as a
+    send or a page-state declaration does: `note_host_grant`) — a conversation reads
+    only through the grant of the page that last acted in it as that person."""
+    from apps.canopy_sessions.models import Session
+    from apps.canopy_sessions.services import note_host_grant
+
+    for session in Session.objects.all():
+        note_host_grant(session, grant.pk, user=grant.user if grant.contact_id is None else None,
+                        contact=grant.contact)
+    return grant
 
 
 @contextlib.contextmanager

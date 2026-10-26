@@ -97,7 +97,7 @@ class TestTheAssertion:
         with pytest.raises(ValueError):
             HostConfig(signing_key=key, id_jag_ttl=301)
         with pytest.raises(ValueError):
-            HostConfig(signing_key=key, access_token_ttl=901)
+            HostConfig(signing_key=key, access_token_ttl=1801)
 
 
 class TestTheArrival:

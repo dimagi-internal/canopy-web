@@ -37,8 +37,11 @@ export type FrameMessage =
   /** "I exist" — the only message posted before origins are known, and the only
    *  one that carries nothing. See the shell in apps/tokens/views_embed.py. */
   | { source: typeof SOURCE; type: 'ready' }
-  /** The frame's token was rejected or is near expiry; mint another. */
-  | { source: typeof SOURCE; type: 'token-request'; id: string }
+  /** The frame's token was rejected or is near expiry; mint another. `grant: true`
+   *  asks the host for an act-as-you permission (a host grant) with it: the frame
+   *  sets it only once the person has sent a message in the panel (and until they
+   *  press Stop), so a page never grants on load. Absent/false = no grant. */
+  | { source: typeof SOURCE; type: 'token-request'; id: string; grant?: boolean }
   /** Read the host page's current state. */
   | { source: typeof SOURCE; type: 'context-request'; id: string }
   /** Run one of the host's registered actions. */
@@ -97,6 +100,8 @@ export type HostMessage =
       source: typeof SOURCE
       type: 'init'
       token: string
+      /** When `token` expires (ISO-8601), as the host's mint said; "" if it did not. */
+      expires_at?: string
       agent?: string
       metadata?: Record<string, unknown>
       actions: ActionSpec[]
@@ -118,7 +123,7 @@ export type HostMessage =
   /** The panel's size changed: expanded (most of the viewport) or not. Sent
    *  after every `expand` and whenever the host expands or collapses itself. */
   | { source: typeof SOURCE; type: 'display'; expanded: boolean; snapped?: boolean }
-  | { source: typeof SOURCE; type: 'token'; id: string; token: string }
+  | { source: typeof SOURCE; type: 'token'; id: string; token: string; expires_at?: string }
   | { source: typeof SOURCE; type: 'token-error'; id: string; message: string }
   | { source: typeof SOURCE; type: 'context'; id: string; context: Record<string, unknown> }
   | { source: typeof SOURCE; type: 'action-result'; id: string; result: unknown }

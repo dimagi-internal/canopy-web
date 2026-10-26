@@ -229,7 +229,7 @@ def test_an_id_jag_is_redeemed_per_the_contract_and_stored_encrypted(site, host)
     assert grant.expires_at <= timezone.now() + dt.timedelta(seconds=900)
     # The widget re-mints on this cadence, which is what keeps the grant fresh.
     expires = dt.datetime.fromisoformat(r.json()["expires_at"])
-    assert expires <= timezone.now() + dt.timedelta(minutes=5, seconds=5)
+    assert expires <= timezone.now() + dt.timedelta(minutes=10, seconds=5)
     assert Event.objects.filter(kind="host_grant.redeemed").exists()
 
 
@@ -307,10 +307,10 @@ def test_a_bearer_token_is_refused_rather_than_stored(site, host):
     assert not HostGrant.objects.exists()
 
 
-def test_a_host_claiming_a_long_life_is_clamped_to_fifteen_minutes(site, host):
+def test_a_host_claiming_a_long_life_is_clamped_to_thirty_minutes(site, host):
     host.body = {"access_token": "x", "token_type": "DPoP", "expires_in": 86400}
     _arrive(site, id_jag=_id_jag(site["priv"]))
-    assert HostGrant.objects.get().expires_at <= timezone.now() + dt.timedelta(seconds=901)
+    assert HostGrant.objects.get().expires_at <= timezone.now() + dt.timedelta(seconds=1801)
 
 
 def test_a_dpop_nonce_challenge_is_answered_once(site, host):

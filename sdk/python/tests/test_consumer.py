@@ -170,7 +170,7 @@ def test_a_bad_token_response_is_refused(status, doc, code):
 def test_a_long_lived_token_is_clamped_and_never_printed():
     token = consumer.parse_token_response(200, {"access_token": "SECRET", "token_type": "dpop",
                                                 "expires_in": 86400})
-    assert token.expires_in == 900 and "SECRET" not in repr(token)
+    assert token.expires_in == 1800 and "SECRET" not in repr(token)
 
 
 def test_a_nonce_challenge_is_answered_once_with_fresh_statements():
@@ -213,7 +213,7 @@ def test_canopy_redeems_an_sdk_host_grant_in_process(world):
     id_jag = issue_id_jag(world.config, "42", ["marketplace:read"])
     token = consumer.redeem_id_jag(id_jag, issuer=ISSUER, resource=RESOURCE, credentials=world.client,
                                    fetch_json=fetch_json, post_form=post_form)
-    assert token.scope == "marketplace:read" and token.expires_in <= 900
+    assert token.scope == "marketplace:read" and token.expires_in <= 1800
 
     principal = world.verifier.authenticate(
         consumer.dpop_authorization(token.access_token),
