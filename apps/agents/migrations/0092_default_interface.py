@@ -16,7 +16,7 @@ def give_every_agent_an_interface(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('agents', '0090_project_storage_root'),
+        ('agents', '0091_default_agent'),
     ]
 
     operations = [

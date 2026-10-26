@@ -58,7 +58,7 @@ def test_an_unknown_contact_emailing_an_agent_on_the_default_is_still_refused(w)
 def test_the_backfill_gives_empty_agents_the_default_and_leaves_published_ones(w):
     published = Agent.objects.create(slug="ace", name="Ace", workspace=w["agent"].workspace, interface=ACE)
     Agent.objects.filter(pk=w["agent"].pk).update(interface={})
-    mig = importlib.import_module("apps.agents.migrations.0091_default_interface")
+    mig = importlib.import_module("apps.agents.migrations.0092_default_interface")
 
     class _Apps:
         get_model = staticmethod(lambda app, name: Agent)
