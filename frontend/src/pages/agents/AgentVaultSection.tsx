@@ -93,7 +93,7 @@ export function AgentVaultSection({
           had a visible answer and an invisible one. */}
       <p className="mb-2 max-w-2xl text-[11px] text-muted-foreground">
         Secrets only this agent uses. What every agent in the workspace shares — the Google OAuth
-        clients — lives in the workspace&rsquo;s shared vault instead
+        clients — lives in a workspace vault instead
         {workspace ? (
           <>
             {' '}(

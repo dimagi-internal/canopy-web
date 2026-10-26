@@ -1293,10 +1293,10 @@ class RunnerCredential(models.Model):
 
     NO 1PASSWORD KEY. There was one — a box-wide service-account token — and it
     was staged into the runner's own environment, which every turn inherits: one
-    credential that reads EVERY agent's vault, handed to each of them. The key
-    that opens an agent's vault belongs to that agent (`Agent.op_sa_token_enc`)
-    and the tenant's to the workspace (`Workspace.shared_op_sa_token_enc`); the
-    box is handed the right one per agent, at bootstrap, and holds none itself.
+    credential that reads EVERY agent's vault, handed to each of them. Every
+    secret now lives in a canopy vault (the agent's own, and workspace vaults
+    layered under it), opened with this box's device key; it holds no 1Password
+    key.
 
     The credentials themselves are `RunnerLogin` rows, one ordered list. This row
     is the bundle's stamp: `updated_at` moves on every change to that list, and a

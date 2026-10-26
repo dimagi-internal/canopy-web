@@ -22,7 +22,6 @@ from django.contrib.auth import get_user_model
 from django.test import Client
 
 from apps.agents.credentials import vault_import as vi
-from apps.common.encryption import encrypt_secret
 from apps.agents.models import Agent
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -301,143 +300,25 @@ def test_no_assignment_at_all_is_still_refused(fleet):
     assert ev.payload["via"] == "admin"
 
 
-# ---- the tenant's SHARED vault (spec 2026-09-07) ------------------------------
+# ---- no 1Password key for an agent whose secrets live in the canopy vault ----------
 #
-# An agent's own secrets live in Agent-<Slug>; the ones EVERY agent in a tenant
-# needs — the shared gog OAuth clients — live in a shared vault. The box used to
-# compile that vault's name in as "Canopy-Shared" and read it with whatever key
-# was already exported, which is the per-agent key. Both halves are wrong:
-# the name is right for exactly one tenant, and the key structurally cannot read
-# it (Agent.op_vault, 2026-09-06 — a per-agent key is scoped on purpose).
+# What every agent shares (the gog OAuth clients) lives in a workspace vault, and an
+# agent on the canopy vault keeps its own secrets there too: canopy-web holds no
+# 1Password key for either, and resolve carries no shared-vault fields.
 
 
-def test_the_tenants_shared_vault_and_key_reach_the_runner(fleet):
-    """Both halves ride the SAME plaintext route as the per-agent pair.
-
-    A second route would be a second boundary to keep correct, and the reason
-    the per-agent pair rides this one is unchanged for the shared pair."""
-    _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
-    ws = fleet["agent"].workspace
-    ws.shared_op_vault = "Canopy-Shared"
-    ws.shared_op_sa_token_enc = encrypt_secret("shared_tok")
-    ws.save(update_fields=["shared_op_vault", "shared_op_sa_token_enc"])
-
-    res = Client().get(
-        "/api/agents/ace/credentials/resolve",
-        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
-    )
+def test_resolve_carries_no_shared_1password_vault(fleet):
+    res = Client().get("/api/agents/ace/credentials/resolve",
+                       HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}")
     assert res.status_code == 200
-    body = res.json()
-    assert body["shared_op_vault"] == "Canopy-Shared"
-    assert body["shared_op_sa_token"] == "shared_tok"
-    # And it has not disturbed the per-agent pair beside it — the two are
-    # independent credentials for independent vaults, which is the whole point.
-    assert body["op_vault"] == "Agent-Ace"
-    assert body["op_sa_token"] == "ops_tok"
+    assert "shared_op_vault" not in res.json() and "shared_op_sa_token" not in res.json()
 
 
-def test_two_tenants_get_their_own_shared_vault(fleet):
-    """The whole point of moving this off a constant: tenants hold different
-    values under the same names, so the box must be TOLD, never derive."""
-    ws = fleet["agent"].workspace
-    ws.shared_op_vault = "Acme-Shared"
-    ws.shared_op_sa_token_enc = encrypt_secret("acme_tok")
-    ws.save(update_fields=["shared_op_vault", "shared_op_sa_token_enc"])
-
-    body = Client().get(
-        "/api/agents/ace/credentials/resolve",
-        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
-    ).json()
-    assert body["shared_op_vault"] == "Acme-Shared"
-    assert body["shared_op_sa_token"] == "acme_tok"
-
-
-def test_an_unconfigured_tenant_resolves_to_empty_not_an_error(fleet):
-    """Blank-safe, exactly like op_sa_token above: the box falls back to its
-    compiled-in default, so every existing deployment behaves as it does today
-    and this ships without a flag day."""
-    body = Client().get(
-        "/api/agents/ace/credentials/resolve",
-        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
-    ).json()
-    assert body["shared_op_vault"] == ""
-    assert body["shared_op_sa_token"] == ""
-
-
-def test_the_browser_never_sees_the_shared_key(fleet):
-    """Same boundary as the per-agent key — a shared key is still a key."""
-    ws = fleet["agent"].workspace
-    ws.shared_op_sa_token_enc = encrypt_secret("shared_tok")
-    ws.save(update_fields=["shared_op_sa_token_enc"])
-
-    denied = fleet["client"].get("/api/agents/ace/credentials/resolve")
-    assert denied.status_code in (401, 403)
-    assert "shared_tok" not in denied.content.decode()
-    assert "shared_tok" not in fleet["client"].get("/api/agents/ace/vault").content.decode()
-
-
-def test_the_shared_key_is_encrypted_at_rest(fleet):
-    ws = fleet["agent"].workspace
-    ws.shared_op_sa_token_enc = encrypt_secret("shared_tok")
-    ws.save(update_fields=["shared_op_sa_token_enc"])
-    ws.refresh_from_db()
-    assert ws.shared_op_sa_token_enc and "shared_tok" not in ws.shared_op_sa_token_enc
-
-
-# ---- a division inherits its org's shared vault (2026-09-29) -----------------
-
-
-def _division(fleet, *, parent_vault="Canopy-Shared", parent_tok="org_tok"):
-    """Put the agent's workspace UNDER an org that holds the shared vault."""
-    jj = fleet["user"]
-    org = Workspace.objects.create(
-        slug="dimagi", display_name="Dimagi", created_by=jj,
-        shared_op_vault=parent_vault,
-        shared_op_sa_token_enc=encrypt_secret(parent_tok) if parent_tok else "",
-    )
-    ws = fleet["agent"].workspace
-    ws.parent = org
-    ws.save()
-    return org, ws
-
-
-def _resolve(fleet):
-    return Client().get(
-        "/api/agents/ace/credentials/resolve",
-        HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
-    ).json()
-
-
-def test_an_unconfigured_division_uses_its_orgs_shared_vault(fleet):
-    """Jonathan, 2026-09-29: every division points at the SAME Canopy-Shared
-    vault its org uses — one key to rotate, not one per division."""
-    _division(fleet)
-    body = _resolve(fleet)
-    assert body["shared_op_vault"] == "Canopy-Shared"
-    assert body["shared_op_sa_token"] == "org_tok"
-
-
-def test_a_division_with_its_own_vault_keeps_it(fleet):
-    """Nearest wins — a division that set one overrides the org's."""
-    _, ws = _division(fleet)
-    ws.shared_op_vault = "Division-Shared"
-    ws.shared_op_sa_token_enc = encrypt_secret("div_tok")
-    ws.save(update_fields=["shared_op_vault", "shared_op_sa_token_enc"])
-    body = _resolve(fleet)
-    assert (body["shared_op_vault"], body["shared_op_sa_token"]) == ("Division-Shared", "div_tok")
-
-
-def test_vault_and_key_never_come_from_different_workspaces(fleet):
-    """A division that set only a vault NAME does not borrow the org's key for
-    it — that key is scoped to the org's vault and could not read another."""
-    _, ws = _division(fleet)
-    ws.shared_op_vault = "Division-Shared"
-    ws.save(update_fields=["shared_op_vault"])
-    body = _resolve(fleet)
-    assert (body["shared_op_vault"], body["shared_op_sa_token"]) == ("Division-Shared", "")
-
-
-def test_an_unconfigured_org_leaves_the_division_empty(fleet):
-    _division(fleet, parent_vault="", parent_tok="")
-    body = _resolve(fleet)
-    assert (body["shared_op_vault"], body["shared_op_sa_token"]) == ("", "")
+def test_an_agent_on_the_canopy_vault_takes_no_1password_key(fleet):
+    agent = fleet["agent"]
+    agent.credential_source = agent.CANOPY_WEB
+    agent.save(update_fields=["credential_source"])
+    r = _set_vault(fleet["client"], vault="Agent-Ace", service_key="ops_tok")
+    assert r.status_code == 422 and "no 1Password key" in r.json()["detail"]
+    agent.refresh_from_db()
+    assert agent.op_sa_token_enc == ""

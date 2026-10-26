@@ -85,8 +85,7 @@ is safe to run after deploy and again later.
 
 `apps/agents/health.py` composes existing answers — never a second opinion: each
 agent's steps are `setup.setup_steps`, its vault state is
-`vault_health.vault_health` (also what the checklist's vault step reads), each
-workspace's shared vault is `Workspace.shared_vault_source`. Tree walk:
+`vault_health.vault_health` (also what the checklist's vault step reads). Tree walk:
 `wsvc.subtree` + `agents.tree.agents_in_tree` (shared with both topology views).
 
 It asks every (runner, agent) pair which machines may open each vault, so it reads

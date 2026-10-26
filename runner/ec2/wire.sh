@@ -201,7 +201,6 @@ preflight_agent() {  # <slug> -> 0 ok, 1 refused (message printed)
   api GET "/api/agents/${slug}/default-order" > "$TMP/order-of-${slug}.json"
   local ws
   ws=$(python3 -c "import json;print((json.load(open('$TMP/agent-${slug}.json')) or {}).get('workspace') or '')" 2>/dev/null || true)
-  [[ -n "$ws" ]] && api GET "/api/workspaces/${ws}/shared-vault" > "$TMP/shared-${slug}.json"
   SLUG="$slug" WS="$ws" STANDBY="$STANDBY" BASE="$BASE_URL" TMPD="$TMP" python3 - <<'PY'
 import json, os, sys
 slug, ws, tmp, base = os.environ["SLUG"], os.environ["WS"], os.environ["TMPD"], os.environ["BASE"]
@@ -216,15 +215,14 @@ if not isinstance(agent, dict) or not agent.get("slug"):
     print(f"   {slug}: !! no such agent visible to this token")
     sys.exit(1)
 vault = load("vault")
-if not vault.get("vault") or not vault.get("key_set"):
+# Only an agent still on 1Password needs a key here; one on the canopy vault has none.
+on_1password = agent.get("credential_source") == "1password"
+if on_1password and (not vault.get("vault") or not vault.get("key_set")):
     problems.append(f"no agent vault/key registered — {base}/w/{ws}/agents/{slug}/settings (Credentials), "
                     f"or run `canopy agent vault --slug {slug} --workspace {ws}` (needs 1Password rights)")
 gh = load("github")
 if not gh.get("set"):
     problems.append(f"no GitHub delegation — the owner sets it at {base}/w/{ws}/agents/{slug}/settings (Credentials → GitHub)")
-shared = load("shared")
-if ws and not shared.get("key_set"):
-    problems.append(f"workspace {ws} has no shared vault key — {base}/w/{ws}/settings/secrets")
 order = load("order-of")
 if os.environ["STANDBY"] == "1" and order.get("own") is False:
     problems.append(f"follows workspace {order.get('workspace') or ws}'s runner order — a standby row would "
@@ -232,7 +230,8 @@ if os.environ["STANDBY"] == "1" and order.get("own") is False:
 for p in problems:
     print(f"   {slug}: !! {p}")
 if not problems:
-    print(f"   {slug}: ok (vault {vault.get('vault')}, GitHub as {gh.get('login')}, "
+    print(f"   {slug}: ok ({'vault ' + str(vault.get('vault')) if on_1password else 'canopy vault'}, "
+          f"GitHub as {gh.get('login')}, "
           f"{'own runner order' if order.get('own') else 'follows ' + str(order.get('workspace'))})")
 sys.exit(1 if problems else 0)
 PY

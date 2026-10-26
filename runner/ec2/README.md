@@ -157,63 +157,26 @@ every box. `up.sh`/`wire.sh` check each before writing anything and print the fi
 | a Claude credential in the new box's vault | `wire.sh` (waits for a probe) | the box's Credentials tab (`wire.sh` prints it): Make its key, then + Token / + API key |
 | `canopy/cloud-runner/gog-keyring-password` | `up.sh` | any strong password, `./secrets.sh gog <file>` |
 | operator token `~/.claude/canopy/workbench-token` | `wire.sh`, `down.sh` | `/canopy:canopy-web-pat-mint` |
-| per agent: its vault + service-account key | `wire.sh` (refuses in `--standby`) | `canopy agent vault --slug <slug> --workspace <ws>` (the setup checklist's Vault step) |
+| per agent still on 1Password: its vault + service-account key | `wire.sh` (refuses in `--standby`) | `canopy agent vault --slug <slug> --workspace <ws>` (the setup checklist's Vault step) |
 | per agent: GitHub delegation (owner's token) | `wire.sh` | agent Settings → Credentials → GitHub (the owner) |
-| per workspace: shared vault key | `wire.sh` | `/w/<ws>/settings/secrets` (workspace owner) |
 
 ## Where secrets live, and which key reads them
 
-Two levels, each with its OWN 1Password service-account key, both **stored in
-canopy-web** (encrypted) and handed to a box per agent at bootstrap. There is no
-third level and no fallback: a level that is not registered is *not configured*,
-and the box says so instead of reaching for another credential.
+Every secret an agent uses is in a **canopy vault**, zero-knowledge: canopy-web stores
+ciphertext and the copies of each vault's key, wrapped to the people and machines the
+vault lists, and no 1Password key at all.
 
-| level | vault | key stored on | holds | registered with |
-|---|---|---|---|---|
-| **tenant** (workspace) | e.g. `Canopy-Shared` | `Workspace.shared_op_vault` + `shared_op_sa_token_enc` | what every agent in the tenant shares: the `canopy` / `canopy-web` gog OAuth **clients** | `PUT /api/workspaces/<ws>/shared-vault` |
-| **agent** | e.g. `Agent-Hal` | `Agent.op_vault` + `op_sa_token_enc` | that agent's own secrets: its `.env.tpl` values (`CANOPY_WEB_PAT`, mailbox config…), its gmail token (`gog-token`) | `PUT /api/agents/<slug>/vault` |
+| what | vault | the box opens it with |
+|---|---|---|
+| what every agent in a tenant shares (the `canopy` / `canopy-web` gog OAuth **clients**) | a **workspace vault** attached at the tenant's root (Dimagi's is "Shared"), layered under each agent's own | this box's device key's copy of that vault's key |
+| an agent's own secrets (its `canopy-pat`, `gog-token`, its `.env` values) | the **agent's vault** | this box's copy of the agent's vault key |
+| a token a person delegated to the agent (its GitHub token) | the agent's vault, entry marked `delegated`, sealed to the machines that run it | its device key, from the resolve's own `delegated` field |
+| the box's own Claude login | the **runner's vault** | its device key |
 
-The split is the blast radius: an agent's key reads that agent's vault **and
-nothing else**, so a compromise is bounded to one agent. That is also why the
-shared gog clients need the tenant key — using an agent key against the shared
-vault is the 2026-09-07 outage (a good gmail token with no client id+secret
-beside it).
-
-**What the box holds:** no 1Password key of its own for agent work. Every `op`
-call names the key it is made with — the agent's for an agent vault, the
-tenant's for the shared vault — so "which identity read this secret" always has
-an answer. Until 2026-09-22 an unregistered agent silently fell back to a
-derived `Agent-<Slug>` name and the box-wide key staged by `wire.sh`, which made
-four unconfigured agents look provisioned while running on secrets months old.
-
-**Unregistered now looks like this**, in the runner's log and in
-`GET /api/agents/<slug>/readiness` (`env_ok: false` plus the reason):
-
-```
-WARN: hal: NOT registered in canopy-web — no agent vault/key. Register it: PUT /api/agents/hal/vault
-WARN: hal: no vault registered in canopy-web — keeping any existing ~/.hal/.env, which may be stale
-```
-
-**Register both in the UI** — that is what it is for:
-
-| level | where |
-|---|---|
-| tenant | **`/w/<ws>/settings/secrets`** — the workspace's shared vault + its service account |
-| agent | the agent's **Settings → Credentials** (`/w/<ws>/agents/<slug>/settings#credentials`) — its own vault + its own service account; also **Connect Google mailbox** and **GitHub** |
-| the box itself | **`/supervisor` → Runners → the box** — its Claude login (no 1Password key and no GitHub token; it is handed the two above, and each turn its agent owner's GitHub token, per agent) |
-
-The key is a 1Password service account scoped to that one vault, minted in
-1Password, then handed to canopy-web — it is never typed on the box. Name it
-`canopy-web-<slug>`. `PUT /api/agents/<slug>/vault` takes the agent's owner or an
-admin (`_agent_for_admin`), by browser or PAT; the shared vault
-(`PUT /api/workspaces/<ws>/shared-vault`) is workspace-owner only. Never pass the
-key through an agent session's tool arguments or a file it can read — that lands
-it in the transcript. The one path is canopy's `canopy agent vault --slug <slug>`,
-which creates the vault, mints the agent's `canopy-pat` and its read-only key, pipes
-each from `op` / the API straight to where it lives and never prints one (the raw
-alternatives are deny-railed in the fleet gating baseline).
-
-Then press **Refresh** on the runner page; the next bootstrap materializes it.
+Set them on the vault's page (`/w/<ws>/vaults/<id>`), the agent's **Settings →
+Credentials**, and **`/supervisor` → Runners → the box**. An agent still on 1Password
+(`credential_source: 1password`) keeps its own vault key in canopy-web
+(`PUT /api/agents/<slug>/vault`); one on the canopy vault is refused one.
 
 ## Is it healthy? (no shell needed)
 

@@ -122,11 +122,9 @@ def test_an_admin_sees_invite_links_only_for_roles_below_them(adm):
 
 # --- the keys stay the owner's ----------------------------------------------------
 
-def test_an_admin_cannot_delete_the_workspace_or_set_its_shared_vault(adm):
+def test_an_admin_cannot_delete_the_workspace(adm):
     c = _c(adm[M.ADMIN])
     assert c.delete(f"/api/workspaces/{WS}/").status_code == 403
-    assert c.put(f"/api/workspaces/{WS}/shared-vault", {"vault": "op://x"},
-                 content_type="application/json").status_code == 403
 
 
 def test_an_admin_does_not_hold_agents_keys(adm):

@@ -75,8 +75,8 @@ class Workspace(models.Model):
     # an OWNER or ADMIN of an ancestor is an owner or admin of every descendant
     # (`WorkspaceMembership.INHERITS_DOWN`; admin since owner decision,
     # Jonathan, 2026-10-16: "fix it so admin flows down"), and no other ACCESS
-    # flows down (the one config that does is the shared vault — see
-    # `shared_vault_source`; it grants no person anything). A parent's editors
+    # flows down (a workspace vault attached at the root reaches every agent below
+    # it, and grants no person anything). A parent's editors
     # and viewers get no access to a child: the org workspace takes access
     # requests from the whole email domain, so inheriting editor would hand
     # every employee every division's agents, which is the exact isolation a
@@ -92,28 +92,6 @@ class Workspace(models.Model):
         blank=True,
         related_name="children",
     )
-    # The tenant's SHARED 1Password vault, and a service-account token scoped to
-    # it. Sibling of Agent.op_vault / op_sa_token_enc one level up: an agent's
-    # own secrets live in Agent-<Slug>, but the credentials every agent in this
-    # tenant needs — the shared gog OAuth clients, a github token — live here.
-    #
-    # Per TENANT rather than one fleet-wide constant because tenants do not
-    # share secrets: different tenants can hold different values under the same
-    # names, and the box must be TOLD which vault it is reading rather than
-    # deriving one (Jonathan, 2026-09-07). The name was hardcoded as
-    # "Canopy-Shared" in bootstrap_agents.sh, which is correct for exactly one
-    # tenant and silently wrong for the second.
-    #
-    # The token is SEPARATE from any agent key on purpose. Handing the box a key
-    # that reads both this vault and every Agent-* vault would undo the reason
-    # the per-agent split exists (Agent.op_vault, 2026-09-06): a shared-vault-only
-    # key bounds a compromise to credentials that are shared by definition.
-    shared_op_vault = models.CharField(
-        max_length=200, blank=True, default="",
-        help_text="1Password vault holding secrets every agent in this workspace "
-                  "needs, e.g. Canopy-Shared. Blank falls back to the box default.",
-    )
-    shared_op_sa_token_enc = models.TextField(blank=True, default="")
     # Who may REQUEST an invitation (owner decision, 2026-10-04): a person whose
     # login email is at one of these domains sees this workspace in
     # `GET /api/workspaces/requestable` and may `POST .../access-requests`.
@@ -170,27 +148,6 @@ class Workspace(models.Model):
     def ancestor_slugs(self) -> list[str]:
         """Slugs from the direct parent up to the root, nearest first."""
         return ancestor_chains({self.slug: self.parent_id})[self.slug]
-
-    def shared_vault_source(self) -> "Workspace | None":
-        """The workspace whose shared vault this one uses: itself when it has
-        one set, else its nearest ancestor that does, else None.
-
-        The ONE thing besides the owner and admin roles that flows down the tree. A division is
-        part of its org's tenant, and what the shared vault holds (the gog OAuth
-        clients) is shared by definition, so inheriting it grants no person
-        access to anything — unlike editor/viewer, which the tree deliberately
-        withholds. Without it every new division needs the org's key pasted in
-        again, and rotating that key means N edits (Jonathan, 2026-09-29: point
-        every division at the same Canopy-Shared vault Dimagi and Connect use).
-        A division with its own vault or key set keeps it — nearest wins, and
-        vault + key always come from the SAME workspace, never mixed."""
-        if self.shared_op_vault or self.shared_op_sa_token_enc:
-            return self
-        for slug in self.ancestor_slugs():
-            ws = Workspace.objects.filter(slug=slug).first()
-            if ws is not None and (ws.shared_op_vault or ws.shared_op_sa_token_enc):
-                return ws
-        return None
 
     def _check_no_cycle(self) -> None:
         from django.core.exceptions import ValidationError

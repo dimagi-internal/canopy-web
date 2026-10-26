@@ -115,8 +115,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
         <h2 className="mb-2 text-[13px] font-semibold text-foreground">Workspaces</h2>
         <table className="w-full text-[12px] [&_td]:pr-3 [&_th]:pr-3" data-testid="health-workspaces">
           <thead className="text-left text-muted-foreground">
-            <tr><th className="py-1 font-medium">Workspace</th><th className="font-medium">Agents</th>
-              <th className="font-medium">Shared 1Password vault</th></tr>
+            <tr><th className="py-1 font-medium">Workspace</th><th className="font-medium">Agents</th></tr>
           </thead>
           <tbody className="divide-y divide-border">
             {health.workspaces.map((w) => (
@@ -126,14 +125,6 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
                   <span className="ml-1 font-mono text-muted-foreground">{w.slug}</span>
                 </td>
                 <td className="tabular-nums"><CountLink n={w.agents} to={scopedPath(w.slug, '/agents')} label="agents" /></td>
-                <td className="text-foreground-secondary">
-                  <Link to={scopedPath(w.slug, '/settings/secrets')} className="hover:underline">
-                  {w.shared_vault.vault
-                    ? <>{w.shared_vault.vault}{w.shared_vault.key_set ? '' : ' · no key stored'}
-                      {w.shared_vault.inherited_from && <span className="text-muted-foreground"> · from {w.shared_vault.inherited_from}</span>}</>
-                    : <span className="text-muted-foreground">none</span>}
-                  </Link>
-                </td>
               </tr>
             ))}
           </tbody>

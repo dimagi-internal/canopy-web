@@ -2,8 +2,7 @@
 
 Composes the answers that already exist rather than keeping a second opinion:
 each agent's row IS its setup checklist (`setup.setup_steps`) plus its vault
-verdict (`vault_health.vault_health`); each workspace's shared vault is
-`Workspace.shared_vault_source`. So the dashboard, the agent's Settings checklist
+verdict (`vault_health.vault_health`). So the dashboard, the agent's Settings checklist
 and the `agent_setup` MCP tool always agree.
 
 Facts and states only — no "urgent" ranking (objective data, no verdicts). Every
@@ -32,15 +31,6 @@ from .models import Agent, AgentProject, AgentTask
 from .services import waiting_q
 from .setup import DONE, OPTIONAL, setup_steps
 from .tree import agents_in_tree
-
-
-def _shared_vault(ws: Workspace) -> dict:
-    src = ws.shared_vault_source()
-    return {
-        "vault": src.shared_op_vault if src is not None else "",
-        "key_set": bool(src.shared_op_sa_token_enc) if src is not None else False,
-        "inherited_from": src.slug if src is not None and src.slug != ws.slug else "",
-    }
 
 
 def setup_row(agent: Agent, viewer, standings: access_rule.Standings, facts) -> dict:
@@ -186,7 +176,7 @@ def build(root: Workspace, viewer, visible: Callable[[str], bool] = lambda _s: T
         "root": root.slug,
         "workspaces": [{
             "slug": ws.slug, "name": ws.display_name, "depth": depth, "parent": ws.parent_id or "",
-            "agents": per_ws.get(ws.slug, 0), "shared_vault": _shared_vault(ws),
+            "agents": per_ws.get(ws.slug, 0),
         } for ws, depth in tree],
         "agents": rows,
         "runners": runners,

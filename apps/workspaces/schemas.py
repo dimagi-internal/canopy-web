@@ -196,28 +196,6 @@ class InvitePreviewOut(StrictModel):
     role: str | None = None
 
 
-class SharedVaultIn(StrictModel):
-    """Non-clobbering on the KEY, exactly like AgentVaultIn: a blank or omitted
-    service_key leaves the stored one alone, so renaming the vault does not
-    silently wipe the credential that reads it."""
-
-    vault: str | None = None
-    service_key: str | None = None
-
-
-class SharedVaultOut(StrictModel):
-    """Masked. `key_set` is a boolean on purpose — this route never returns the
-    key, and the only reader of the value is a runner that could actually run an
-    agent in this workspace (GET /api/agents/{slug}/credentials/resolve)."""
-
-    vault: str = ""
-    key_set: bool = False
-    # Set when this workspace has no vault of its own and uses an ancestor's
-    # (Workspace.shared_vault_source). `vault`/`key_set` then describe THAT one,
-    # so a division doesn't read as unconfigured when its agents are fine.
-    inherited_from: str = ""
-
-
 class TopologyRouteOut(StrictModel):
     """One `RunnerAssignment` row. `source` "" = the agent's default ordered list
     (`rank` orders it); non-empty = a source rule (optionally narrowed to one
@@ -595,19 +573,12 @@ class WorkspaceHealthSetupOut(StrictModel):
     agents: list[AgentSetupHealthOut]
 
 
-class SharedVaultHealthOut(StrictModel):
-    vault: str
-    key_set: bool
-    inherited_from: str
-
-
 class WorkspaceHealthNodeOut(StrictModel):
     slug: str
     name: str
     depth: int
     parent: str
     agents: int
-    shared_vault: SharedVaultHealthOut
 
 
 class HealthTotalsOut(StrictModel):

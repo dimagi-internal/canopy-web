@@ -28,8 +28,8 @@ function agent(slug: string, over: Partial<AgentHealthOut> = {}): AgentHealthOut
 const HEALTH: WorkspaceHealthOut = {
   root: 'dimagi',
   workspaces: [
-    { slug: 'dimagi', name: 'Dimagi', depth: 0, parent: '', agents: 0, shared_vault: { vault: 'Fleet', key_set: true, inherited_from: '' } },
-    { slug: 'connect', name: 'Connect', depth: 1, parent: 'dimagi', agents: 2, shared_vault: { vault: 'Fleet', key_set: true, inherited_from: 'dimagi' } },
+    { slug: 'dimagi', name: 'Dimagi', depth: 0, parent: '', agents: 0 },
+    { slug: 'connect', name: 'Connect', depth: 1, parent: 'dimagi', agents: 2 },
   ],
   agents: [agent('hal', { turns_30d: 6, done_30d: 4, failed_30d: 2, people_30d: 1,
     ran_on: [{ name: 'shayoni-win-cdp', kind: 'emdash', turns: 5 }, { name: 'cloud-ec2-2', kind: 'cloud', turns: 1 }] }),

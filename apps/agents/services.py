@@ -1963,6 +1963,11 @@ def set_agent_vault(agent, *, vault=None, service_key=None):
     credential write here."""
 
     fields = []
+    if service_key and service_key.strip() and agent.credential_source == agent.CANOPY_WEB:
+        # Its secrets live in the canopy vault: nothing of it may hold a 1Password key,
+        # which would open the whole vault, its canopy login included.
+        raise ValueError(f"{agent.slug}'s secrets live in the canopy vault; canopy-web stores no "
+                         "1Password key for it")
     if vault is not None:
         agent.op_vault = vault.strip()
         fields.append("op_vault")
@@ -2005,25 +2010,6 @@ def resolve_agent_vault(agent) -> tuple[str, str]:
 
     token = decrypt_secret(agent.op_sa_token_enc) if agent.op_sa_token_enc else ""
     return agent.op_vault, token
-
-
-def resolve_shared_vault(agent) -> tuple[str, str]:
-    """PLAINTEXT shared-vault config for this agent's TENANT.
-
-    The sibling of resolve_agent_vault one level up. Returns ("", "") when the
-    workspace has not been configured, which is what keeps this additive: the
-    box falls back to its compiled-in default and behaves exactly as before.
-
-    Deliberately reads the workspace rather than deriving a name, because the
-    whole defect this closes was a derived name — "Canopy-Shared" compiled into
-    bootstrap_agents.sh, correct for one tenant and silently wrong for the next.
-    """
-
-    ws = agent.workspace.shared_vault_source() if agent.workspace else None
-    if ws is None:
-        return "", ""
-    token = decrypt_secret(ws.shared_op_sa_token_enc) if ws.shared_op_sa_token_enc else ""
-    return ws.shared_op_vault, token
 
 
 # ---- what the BOX observed (spec 2026-09-07) ---------------------------------
