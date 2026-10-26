@@ -22,7 +22,6 @@ const chat = vi.hoisted(() => ({
   detachSessionFromSlack: vi.fn(),
   forkSession: vi.fn(),
   getSession: vi.fn(),
-  listMessages: vi.fn(),
   moveSession: vi.fn(),
   placeTurn: vi.fn(),
   requestBackfill: vi.fn(),
@@ -161,17 +160,15 @@ describe('useSessionMeta', () => {
 })
 
 describe('useTranscriptPaging', () => {
-  it('loads an earlier page from the seeded cursor', async () => {
-    chat.listMessages.mockResolvedValue({
-      messages: [{ turn_index: 5, role: 'user', content: {} }],
-      has_more_before: false,
-    })
+  it('loads every server-held message in one read', async () => {
+    chat.getSession.mockResolvedValue(meta({ messages: [], oldest_loaded_turn_index: 0 }))
     const prepend = vi.fn()
     const { result } = renderHook(() => useTranscriptPaging('s1', prepend))
     act(() => result.current.seed(meta()))
     expect(result.current.hasMoreBefore).toBe(true)
-    await act(async () => { await result.current.loadEarlier() })
-    expect(chat.listMessages).toHaveBeenCalledWith('s1', 10)
+    await act(async () => { await result.current.loadAll() })
+    expect(chat.getSession).toHaveBeenCalledTimes(1)
+    expect(chat.getSession).toHaveBeenCalledWith('s1', { full: true })
     expect(prepend).toHaveBeenCalledTimes(1)
     expect(result.current.hasMoreBefore).toBe(false)
   })

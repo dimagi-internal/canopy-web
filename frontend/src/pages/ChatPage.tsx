@@ -300,7 +300,7 @@ function ChatPageInner({
     [loadingTranscript],
   )
 
-  // "Load earlier"/"Load full session" moved into the ⋯ menu (ChatSessionMenu,
+  // "Load all messages"/"Load full session" moved into the ⋯ menu (ChatSessionMenu,
   // below) — Jonathan, 2026-10-05: they used to live here as a strip PINNED
   // above the transcript whenever the server held more history, which on an
   // old session is most of the time, for a control almost never tapped. Only
@@ -467,9 +467,9 @@ function ChatPageInner({
                 await sendMessage(id, command, clientId)
                 socket.noteLocalSend(command, clientId)
               }}
-              showLoadEarlier={paging.hasMoreBefore}
-              onLoadEarlier={() => void paging.loadEarlier()}
-              loadingEarlier={paging.loadingEarlier}
+              showLoadAll={paging.hasMoreBefore}
+              onLoadAll={() => void paging.loadAll()}
+              loadingAll={paging.loadingAll}
               showLoadFull={showLoadFull}
               onLoadFull={() => void paging.loadFull()}
               loadingFull={paging.loadingFull}
