@@ -32,6 +32,7 @@ from apps.api.errors import (
 from apps.api.pagination import Page, clamp_limit, paginate
 from apps.api.route_gates import gate
 from apps.canopy_sessions.control import close_agent_sessions
+from apps.contacts.hcp.sensitive import _context_turn
 from apps.events import audit
 from apps.harness import closeout, turn_access
 from apps.harness import initiator as who
@@ -54,8 +55,7 @@ from .gates import (
     agent_for_work,
     listed_agent_workspaces,
 )
-from .interface import (InterfaceError, access_summary, default_interface, domain_warnings, is_default,
-                        parse, validate)
+from .interface import InterfaceError, access_summary, default_interface, domain_warnings, is_default, parse, validate
 from .models import (
     AgentAdmin,
     AgentCredentialRead,
@@ -143,16 +143,12 @@ def _creating_owner(request: HttpRequest, home):
     taken on trust: it must be live, belong to the caller's own agent, and have been
     asked by a person canopy verified who may create agents in `home`. Anything short of
     that leaves the caller the owner, as before."""
-    from apps.contacts.hcp.sensitive import _context_turn
-    from apps.harness import initiator
-    from apps.harness.models import Turn
-
     caller = request.user
-    slug = initiator._agent_login_of(caller)
+    slug = who._agent_login_of(caller)
     turn = _context_turn() if slug else None
     if (turn is None or turn.agent_id is None or turn.agent.slug != slug
             or turn.status not in (Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN)
-            or turn.initiator_kind != initiator.USER or turn.initiator_user_id is None
+            or turn.initiator_kind != who.USER or turn.initiator_user_id is None
             or turn.initiator_assurance not in _OWNER_ASSURANCES):
         return caller
     person = turn.initiator_user
