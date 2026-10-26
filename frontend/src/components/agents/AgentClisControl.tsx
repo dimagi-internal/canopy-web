@@ -3,23 +3,29 @@ import { useState } from 'react'
 import { setAgentClis } from '@/api/agents'
 import { CLIS, type Cli, cliLabel } from '@/lib/clis'
 
-/** Which agent CLIs the agent is set up for, its default first. A new chat or
- *  schedule may pick any of them; one that picks none runs on the first its runner
- *  has signed in and can confine it on, and a conversation keeps the one it runs
- *  on (`apps/harness/clis.py`). The server refuses a CLI no runner here has, and
- *  taking off one a schedule still runs on — its reason is shown as it comes. */
-export function AgentClisControl({ slug, initialClis, canEdit }: {
+/** Which agent CLIs the agent is set up for, its default first, and the model each
+ *  starts on (blank = the runner's own default). A new chat or schedule may pick any
+ *  of them; one that picks none runs on the first its runner has signed in and can
+ *  confine it on, and a conversation keeps the one it runs on (`apps/harness/clis.py`).
+ *  The server refuses a CLI no runner here has, and taking off one a schedule still
+ *  runs on — its reason is shown as it comes. */
+export function AgentClisControl({ slug, initialClis, initialModels, canEdit }: {
   slug: string
   initialClis: readonly string[]
+  initialModels: Readonly<Record<string, string>>
   canEdit: boolean
 }) {
-  const [saved, setSaved] = useState<string[]>([...initialClis])
+  const [saved, setSaved] = useState({ clis: [...initialClis], models: { ...initialModels } })
   const [order, setOrder] = useState<string[]>([...initialClis])
+  const [models, setModels] = useState<Record<string, string>>({ ...initialModels })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
 
-  const dirty = order.join() !== saved.join()
+  const cleanModels = Object.fromEntries(
+    Object.entries(models).map(([k, v]) => [k, v.trim()]).filter(([k, v]) => v && order.includes(k)),
+  )
+  const dirty = order.join() !== saved.clis.join() || JSON.stringify(cleanModels) !== JSON.stringify(saved.models)
   const touch = () => { setDone(false); setError('') }
   const toggle = (cli: string) => {
     touch()
@@ -35,9 +41,10 @@ export function AgentClisControl({ slug, initialClis, canEdit }: {
     setBusy(true)
     setError('')
     try {
-      const a = await setAgentClis(slug, order as Cli[])
-      setSaved(a.clis)
+      const a = await setAgentClis(slug, order as Cli[], cleanModels)
+      setSaved({ clis: a.clis, models: a.cli_models })
       setOrder(a.clis)
+      setModels(a.cli_models)
       setDone(true)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not save the agent CLIs')
@@ -49,7 +56,12 @@ export function AgentClisControl({ slug, initialClis, canEdit }: {
   if (!canEdit) {
     return (
       <ol className="text-[13px] text-foreground" data-testid="agent-clis">
-        {saved.map((cli, i) => <li key={cli}>{i + 1}. {cliLabel(cli)}</li>)}
+        {saved.clis.map((cli, i) => (
+          <li key={cli}>
+            {i + 1}. {cliLabel(cli)}
+            {saved.models[cli] && <span className="ml-2 font-mono text-[12px] text-muted-foreground">{saved.models[cli]}</span>}
+          </li>
+        ))}
       </ol>
     )
   }
@@ -61,6 +73,7 @@ export function AgentClisControl({ slug, initialClis, canEdit }: {
           <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
             <th className="w-8 py-1 font-normal">On</th>
             <th className="py-1 font-normal">CLI</th>
+            <th className="py-1 font-normal">Model (blank = its default)</th>
             <th className="py-1" />
           </tr>
         </thead>
@@ -74,6 +87,11 @@ export function AgentClisControl({ slug, initialClis, canEdit }: {
                   <input type="checkbox" checked={on} onChange={() => toggle(cli)} aria-label={`Run on ${cliLabel(cli)}`} />
                 </td>
                 <td className="py-1.5 text-foreground">{on ? `${rank + 1}. ` : ''}{cliLabel(cli)}</td>
+                <td className="py-1.5">
+                  <input value={models[cli] ?? ''} disabled={!on} aria-label={`${cliLabel(cli)} model`}
+                         onChange={(e) => { touch(); setModels((m) => ({ ...m, [cli]: e.target.value })) }}
+                         className="min-h-8 w-48 rounded-md border border-border bg-input px-2 font-mono text-[12px] disabled:opacity-50" />
+                </td>
                 <td className="py-1.5 text-right">
                   {on && rank > 0 && (
                     <button type="button" onClick={() => prefer(cli)}
@@ -95,6 +113,10 @@ export function AgentClisControl({ slug, initialClis, canEdit }: {
         {done && <span className="text-[12px] text-success">Saved. New turns follow it; a conversation keeps the CLI it runs on.</span>}
         {error && <span className="text-[12px] text-destructive" data-testid="agent-clis-error">{error}</span>}
       </div>
+      <p className="mt-2 text-[12px] text-muted-foreground" data-testid="agent-clis-model-note">
+        A model applies to the sessions canopy starts on cloud runners and on laptops running
+        headless or in the Claude desktop app. A session emdash opens uses emdash&rsquo;s own model.
+      </p>
     </div>
   )
 }

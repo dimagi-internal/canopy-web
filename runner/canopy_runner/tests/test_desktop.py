@@ -112,6 +112,14 @@ def test_a_new_thread_takes_the_current_runtime(cfg, monkeypatch):
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
+def test_worktree_settings_carry_the_agents_model():
+    """A session the runner opens starts on its agent's model: the worktree's local
+    settings are read by the CLI and the desktop app alike."""
+    assert desktop.worktree_settings(["Bash"], {}, model="opus")["model"] == "opus"
+    assert "model" not in desktop.worktree_settings(["Bash"], {})
+    assert desktop.worktree_settings(["Bash"], {"model": "sonnet"})["model"] == "sonnet"
+
+
 def test_worktree_settings_merge_allow_and_enable_the_mod():
     out = desktop.worktree_settings(["Bash"], {"permissions": {"allow": ["Read"]}, "x": 1})
     assert out["permissions"]["allow"] == ["Bash", "Read"]
@@ -173,9 +181,9 @@ def no_app(monkeypatch):
     opened = []
     monkeypatch.setattr(desktop, "ensure_app", lambda: True)
     monkeypatch.setattr(desktop, "open_session", opened.append)
-    monkeypatch.setattr(desktop, "prepare_settings", lambda cfg, wt: None)
+    monkeypatch.setattr(desktop, "prepare_settings", lambda cfg, wt, **kw: None)
     monkeypatch.setattr(desktop, "seed_session",
-                        lambda cfg, wt, name="": SEEDED_NAMES.append(name) or "sid-1")
+                        lambda cfg, wt, name="", **kw: SEEDED_NAMES.append(name) or "sid-1")
     monkeypatch.setattr(desktop.caller, "write_caller_file", lambda turn: None)
     monkeypatch.setattr(desktop, "app_features", lambda: None)
     SEEDED_NAMES.clear()
@@ -201,6 +209,21 @@ def test_seed_names_the_session_so_the_app_titles_it(cfg, tmp_path, monkeypatch)
     assert seen["argv"][i + 1] == "c-fix-the-login-ab12"
     desktop.seed_session(cfg, tmp_path)
     assert "--name" not in seen["argv"]
+
+
+def test_seed_starts_on_the_agents_model_over_the_boxs(cfg, tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        return SimpleNamespace(stdout=json.dumps({"session_id": "sid-7"}), stderr="")
+
+    monkeypatch.setattr(desktop.subprocess, "run", fake_run)
+    cfg.desktop_model = "sonnet"
+    desktop.seed_session(cfg, tmp_path, "n", model="opus")
+    assert seen["argv"][seen["argv"].index("--model") + 1] == "opus"
+    desktop.seed_session(cfg, tmp_path, "n")
+    assert seen["argv"][seen["argv"].index("--model") + 1] == "sonnet"
 
 
 def _channel_of(cfg, name_part: str) -> Path:

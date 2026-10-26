@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 from . import hooks
@@ -53,3 +54,15 @@ def reset() -> None:
     """Forget the cached value (tests)."""
     global _cache
     _cache = None
+
+
+#: A model name as Claude Code takes one (`opus`, `claude-opus-5-5[1m]`).
+_MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}")
+
+
+def for_turn(turn: dict | None) -> str:
+    """The model canopy-web asks a claimed turn to start on (its agent's model for
+    the turn's CLI, `cli_model`), or "" for the box's own default. Anything not
+    shaped like a model name is ignored rather than handed to Claude Code."""
+    model = str((turn or {}).get("cli_model") or "").strip()
+    return model if _MODEL_NAME.fullmatch(model) else ""
