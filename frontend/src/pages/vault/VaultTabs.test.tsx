@@ -22,7 +22,7 @@ const { vaultTabs } = await import('./VaultPage')
 const SHARED = {
   vault_id: 'v1', workspace: 'dimagi', name: 'Shared', kv: 1, secrets: ['gog-oauth-client'],
   attachments: [{ id: 3, agent: null, workspace: 'dimagi' }], you: 'owner',
-  holders: { members: [1], machines: [] },
+  holders: { has_key: true, people: ['jj@dimagi.com'], keepers: [] },
   members: [
     { user_id: 1, email: 'jj@dimagi.com', role: 'owner', sources: ['workspace_owners:dimagi'], has_vault_key: true },
     { user_id: 2, email: 'st@dimagi.com', role: 'member', sources: ['attached:ace'], has_vault_key: false },
@@ -53,6 +53,30 @@ describe('vault page', () => {
     const serves = screen.getByTestId('ws-vault-serves')
     expect(serves.textContent).toContain('every agent in dimagi and below')
     expect(screen.getByText('runner cloud-ec2-2').getAttribute('href')).toBe('/w/dimagi/runners/r1')
+  })
+
+  it('says per runner whether it can open the vault, and gives a copy to that runner only', async () => {
+    const waiting = [
+      { kind: 'device', target: 'k2', public_jwk: {}, runner: 'r2', runner_name: 'demo-a' },
+      { kind: 'device', target: 'k3', public_jwk: {}, runner: 'r3', runner_name: 'demo-b' },
+    ]
+    api.getWorkspaceVaultZk.mockResolvedValue({ pending: waiting })
+    ops.grantWorkspaceVaultPending.mockResolvedValue({})
+    render(<MemoryRouter><VaultOverviewTab {...ctx({
+      holders: { has_key: true, people: [], keepers: ['cloud-ec2-2'] },
+      attachments: [
+        { id: 4, runner: 'r1', runner_name: 'cloud-ec2-2' },
+        { id: 5, runner: 'r2', runner_name: 'demo-a' },
+        { id: 6, runner: 'r3', runner_name: 'demo-b' },
+      ] })} /></MemoryRouter>)
+    expect(screen.getByTestId('ws-vault-access-4').textContent).toBe('can open it')
+    await waitFor(() => expect(screen.getByTestId('ws-vault-access-5').textContent).toContain('waiting for a copy'))
+    // No all-at-once button for runners: each row grants its own.
+    expect(screen.queryByTestId('vault-grant')).toBeNull()
+    fireEvent.click(screen.getByTestId('ws-vault-grant-5'))
+    await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalled())
+    const only = ops.grantWorkspaceVaultPending.mock.calls[0][2]
+    expect(waiting.filter(only).map((t) => t.runner)).toEqual(['r2'])
   })
 
   it('makes its key in the browser with one unlock', async () => {

@@ -8,6 +8,7 @@ import {
   getWorkspaceVaultZk,
   removeWorkspaceVaultMember,
   type WorkspaceVaultOut,
+  type ZkTargetOut,
 } from '@/api/vault'
 import { Button } from 'canopy-ui/ui'
 import { Section } from '@/components/objectPage/settingsLayout'
@@ -71,18 +72,26 @@ function useRun(onChange: (v: WorkspaceVaultOut) => void) {
 export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOutletContext): JSX.Element {
   const { busy, run, errorLine } = useRun(onChange)
   const manages = managesVault(v)
-  const [waiting, setWaiting] = useState(0)
+  const [pending, setPending] = useState<readonly ZkTargetOut[]>([])
   const [target, setTarget] = useState('')
 
   useEffect(() => {
     let live = true
     if (manages && v.kv > 0) {
       getWorkspaceVaultZk(v.vault_id)
-        .then((z) => { if (live) setWaiting(z.pending.length) })
-        .catch(() => { if (live) setWaiting(0) })
+        .then((z) => { if (live) setPending(z.pending) })
+        .catch(() => { if (live) setPending([]) })
     }
     return () => { live = false }
   }, [manages, v.vault_id, v.kv])
+  // People waiting are granted from the key line; each runner from its own row below.
+  const peopleWaiting = pending.filter((p) => p.kind !== 'device')
+  const runnerWaiting = (runnerId: string) => pending.some((p) => p.kind === 'device' && p.runner === runnerId)
+  const grant = (only: (t: ZkTargetOut) => boolean) => run(async () => {
+    await grantWorkspaceVaultPending(v.vault_id, await unlock(), only)
+    setPending((ps) => ps.filter((p) => !only(p)))
+    reload()
+  })
 
   return (
     <div>
@@ -105,14 +114,10 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
           <div className="flex flex-wrap items-center gap-2 text-[12px]" data-testid="vault-key">
             <span className="text-success">●</span>
             <span className="text-foreground">Key version {v.kv}</span>
-            {waiting > 0 && (
+            {peopleWaiting.length > 0 && (
               <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-grant"
-                onClick={() => void run(async () => {
-                  await grantWorkspaceVaultPending(v.vault_id, await unlock())
-                  setWaiting(0)
-                  reload()
-                })}>
-                Give {waiting === 1 ? 'the one waiting' : `the ${waiting} waiting`} a copy
+                onClick={() => void grant((p) => p.kind !== 'device')}>
+                Give {peopleWaiting.length === 1 ? 'the person waiting' : `the ${peopleWaiting.length} people waiting`} a copy
               </Button>
             )}
             {manages && (
@@ -143,6 +148,26 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
                   </td>
                   <td className="py-1.5 text-muted-foreground">
                     {a.runner ? 'its Claude credentials' : 'layered under each agent’s own secrets'}
+                  </td>
+                  <td className="py-1.5" data-testid={`ws-vault-access-${a.id}`}>
+                    {a.runner && v.kv > 0 && (
+                      v.holders.keepers.includes(a.runner_name ?? '')
+                        ? <span className="text-success">can open it</span>
+                        : runnerWaiting(a.runner)
+                          ? (
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="text-warning">waiting for a copy</span>
+                              {manages && (
+                                <button type="button" disabled={busy} data-testid={`ws-vault-grant-${a.id}`}
+                                  className={buttonClass}
+                                  onClick={() => void grant((p) => p.kind === 'device' && p.runner === a.runner)}>
+                                  Give it a copy
+                                </button>
+                              )}
+                            </span>
+                          )
+                          : <span className="text-muted-foreground">no copy (no approved key on it yet)</span>
+                    )}
                   </td>
                   <td className="py-1.5 text-right">
                     {manages && (
