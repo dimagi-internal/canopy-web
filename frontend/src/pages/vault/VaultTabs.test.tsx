@@ -45,38 +45,39 @@ describe('vault page', () => {
     expect(vaultTabs(SHARED as never)[0].dot).toBe(false)
   })
 
-  it('says what it serves, a runner by a link to its page', () => {
+  it('says which agents it serves; its runners are on Members', () => {
     api.getWorkspaceVaultZk.mockResolvedValue({ pending: [] })
     render(<MemoryRouter><VaultOverviewTab {...ctx({ attachments: [
       { id: 3, agent: null, workspace: 'dimagi' }, { id: 4, agent: null, workspace: null, runner: 'r1', runner_name: 'cloud-ec2-2' },
     ] })} /></MemoryRouter>)
     const serves = screen.getByTestId('ws-vault-serves')
     expect(serves.textContent).toContain('every agent in dimagi and below')
-    expect(screen.getByText('runner cloud-ec2-2').getAttribute('href')).toBe('/w/dimagi/runners/r1')
+    expect(serves.textContent).not.toContain('cloud-ec2-2')
   })
 
-  it('says per runner whether it has access, and gives that runner access only', async () => {
+  it('lists its runners under Members: where each key lives, its access, and Give access for that runner only', async () => {
     const waiting = [
       { kind: 'device', target: 'k2', public_jwk: {}, runner: 'r2', runner_name: 'demo-a' },
       { kind: 'device', target: 'k3', public_jwk: {}, runner: 'r3', runner_name: 'demo-b' },
     ]
-    api.getWorkspaceVaultZk.mockResolvedValue({ pending: waiting })
     ops.grantWorkspaceVaultPending.mockResolvedValue({})
-    render(<MemoryRouter><VaultOverviewTab {...ctx({
-      holders: { has_key: true, people: [], keepers: ['cloud-ec2-2'] },
+    const c = ctx({
       attachments: [
-        { id: 4, runner: 'r1', runner_name: 'cloud-ec2-2' },
-        { id: 5, runner: 'r2', runner_name: 'demo-a' },
-        { id: 6, runner: 'r3', runner_name: 'demo-b' },
-      ] })} /></MemoryRouter>)
+        { id: 3, agent: null, workspace: 'dimagi' },
+        { id: 4, runner: 'r1', runner_name: 'cloud-ec2-2', access: 'has', key_place: 'aws-kms' },
+        { id: 5, runner: 'r2', runner_name: 'demo-a', access: 'waiting', key_place: 'kms-broker' },
+        { id: 6, runner: 'r3', runner_name: 'demo-b', access: 'none', key_place: '' },
+      ] })
+    render(<MemoryRouter><VaultMembersTab {...c} /></MemoryRouter>)
+    expect(screen.getByTestId('ws-vault-runner-4').textContent).toContain('key held by AWS')
     expect(screen.getByTestId('ws-vault-access-4').textContent).toBe('has access')
-    await waitFor(() => expect(screen.getByTestId('ws-vault-access-5').textContent).toContain('waiting for access'))
-    // No all-at-once button for runners: each row grants its own.
-    expect(screen.queryByTestId('vault-grant')).toBeNull()
+    expect(screen.getByTestId('ws-vault-runner-5').textContent).toContain('key held by AWS')
+    expect(screen.getByTestId('ws-vault-access-6').textContent).toContain('no access yet')
     fireEvent.click(screen.getByTestId('ws-vault-grant-5'))
     await waitFor(() => expect(ops.grantWorkspaceVaultPending).toHaveBeenCalled())
     const only = ops.grantWorkspaceVaultPending.mock.calls[0][2]
     expect(waiting.filter(only).map((t) => t.runner)).toEqual(['r2'])
+    expect(c.reload).toHaveBeenCalled()
   })
 
   it('makes its key in the browser with one unlock', async () => {

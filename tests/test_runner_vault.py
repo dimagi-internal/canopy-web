@@ -376,3 +376,18 @@ def test_one_runner_the_list_would_not_show_is_a_404(fleet):
     other = Client()
     other.force_login(sam)
     assert other.get(f"/api/harness/runners/{fleet['runner'].pk}/").status_code == 404
+
+
+def test_the_vault_page_says_where_each_runners_key_lives_and_its_access(fleet, sts):
+    key, v = _held(fleet, sts)
+    RunnerDeviceKey.objects.filter(pk=key.pk).update(ecdh_store="aws-kms")
+    waiting = _other_runner(fleet)
+    workspace_vaults.attach(v, runner=waiting, by=fleet["user"])
+    _ecdh(RunnerDeviceKey.objects.create(runner=waiting, kind=RunnerDeviceKey.SOFTWARE, public_jwk={"kty": "EC"},
+                                         jkt="waiting", status=RunnerDeviceKey.ACTIVE, ecdh_store="kms-broker"))
+    keyless = _other_runner(fleet, name="ec2-box-3")
+    workspace_vaults.attach(v, runner=keyless, by=fleet["user"])
+    res = fleet["client"].get(f"/api/vaults/{v.pk}")
+    assert res.status_code == 200, res.content
+    rows = {a["runner_name"]: (a["access"], a["key_place"]) for a in res.json()["attachments"] if a["runner"]}
+    assert rows == {"ec2-box": ("has", "aws-kms"), "ec2-box-2": ("waiting", "kms-broker"), "ec2-box-3": ("none", "")}

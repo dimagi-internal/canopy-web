@@ -2219,6 +2219,13 @@ class VaultAttachmentOut(StrictModel):
     workspace: str | None = None
     runner: str | None = None
     runner_name: str | None = None
+    #: A runner's standing: "has" a copy of the vault's key, is "waiting" for one (a
+    #: holder's passkey gives it), or "none" (no approved key it could hold one with).
+    #: "" when it is not a runner, or the vault has no key yet.
+    access: str = ""
+    #: Where that runner's key lives: its ECDH key's store ("aws-kms", "kms-broker",
+    #: "secure-enclave", "tpm", "software"), "" when it has none.
+    key_place: str = ""
 
 
 class WorkspaceVaultOut(StrictModel):
