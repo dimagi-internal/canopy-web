@@ -983,7 +983,8 @@ aws sso login --profile labs
 #   → approve: <link>   one passkey touch, once for the whole fleet
 # once its first member has joined: open that member's Credentials tab,
 #   Make its key (one passkey touch), then + Token for each Claude account
-# route work to it: add the members to the workspace runner order / agents' runners
+# route work to it: add any one member to the workspace runner order / agents' runners —
+#   every member, and every member it adds later, is routed the same (the fleet's routing)
 # or read a list your other runners already share (Credentials tab → Make a credential set from this list):
 #   ./fleet.sh up --name dimagi --workspace dimagi --credential-set "jj credentials"
 ./fleet.sh up --name dimagi --max 6     # later: update the stack and the bounds; asks nothing

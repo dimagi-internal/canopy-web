@@ -38,6 +38,7 @@ from apps.harness.models import (
     RunnerInvitation,
     RunnerLogin,
     Turn,
+    WorkspaceRunnerOrder,
 )
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.runner_invitations import PAIR, PAIR_HTU, _pat_client, _proof, make_org
@@ -520,3 +521,53 @@ def test_one_fleets_aws_error_does_not_stop_another(world, monkeypatch):
         raise fleets.AwsError("throttled")
     monkeypatch.setattr(fleets, "get", boom)
     assert fleets.tick() == {}
+
+
+# ---- a member is routed as its fleet ---------------------------------------------------
+
+I3 = "i-0aaaabbbbccccdddd"
+
+
+def _routes(runner):
+    return (sorted(RunnerAssignment.objects.filter(runner=runner).values_list("agent__slug", "source", "enabled")),
+            sorted(WorkspaceRunnerOrder.objects.filter(runner=runner).values_list("workspace_id", "enabled")))
+
+
+def test_a_member_the_scaler_adds_joins_routed_as_the_fleet(world, sts, aws):
+    WorkspaceRunnerOrder.objects.create(workspace=world["org"]["ws"], runner=world["one"], rank=0)
+    fleets.tick()  # the fleet keeps its routing
+    aws.add(I2)
+    res = _join(sts, I2)
+    assert res.status_code == 201, res.content
+    new = Runner.objects.get(pk=res.json()["runner_id"])
+    assert _routes(new) == _routes(world["one"]) == ([("echo", "", True)], [(world["org"]["ws"].slug, True)])
+    # So the work it was added for reaches it.
+    turn = _turn(world["agent"], "k1")
+    assert turn.pk in fleets._covered([new], [turn])[new.pk]
+
+
+def test_a_change_to_one_members_routing_reaches_every_member(world, aws):
+    aws.add(I2)
+    two = _member(world["fleet"], I2)
+    fleets.tick()
+    assert _routes(two) == _routes(world["one"])
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace=world["org"]["ws"], owner=world["org"]["user"])
+    RunnerAssignment.objects.create(agent=eva, runner=two, rank=1)                    # added on one
+    RunnerAssignment.objects.filter(runner=world["one"], agent=world["agent"]).update(enabled=False)  # switched off on one
+    fleets.tick()
+    assert _routes(world["one"]) == _routes(two) == ([("echo", "", False), ("eva", "", True)], [])
+    RunnerAssignment.objects.filter(runner=world["one"], agent=eva).delete()          # taken off one
+    fleets.tick()
+    assert _routes(world["one"]) == _routes(two) == ([("echo", "", False)], [])
+
+
+def test_the_fleets_routing_outlives_every_member(world, sts, aws):
+    fleets.tick()
+    del aws.instances[I1]
+    fleets.tick()
+    # Retired as the retire route retires: its rows go, so no Runners tab lists it.
+    assert _routes(world["one"]) == ([], [])
+    aws.add(I3)
+    res = _join(sts, I3)
+    new = Runner.objects.get(pk=res.json()["runner_id"])
+    assert _routes(new) == ([("echo", "", True)], [])

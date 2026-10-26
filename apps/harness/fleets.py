@@ -39,11 +39,18 @@ RUNNER_SCALER_TICK_S (default 30 s), per active fleet:
    lowered by one, which puts it back in the warm pool. AWS never picks a busy
    member: every member is protected until canopy-web lifts it;
 5. refresh the fleet's copy of each vault key from a member that holds it.
+
+Members are routed AS THE FLEET (`sync_routing`): a member joins with the rows its
+fleet holds in agents' runner lists and workspaces' runner orders, and each tick
+first carries a change made to one member's rows (adding it to an agent, taking it
+off one, switching it off) to every member. Without it a member the scaler added
+would be in no list, and the work it was added for would never reach it.
 """
 from __future__ import annotations
 
 import datetime as dt
 import functools
+import json
 import logging
 import math
 import re
@@ -65,9 +72,11 @@ from .models import (
     Runner,
     RunnerCredentialSet,
     RunnerDeviceKey,
+    RunnerAssignment,
     RunnerFleet,
     RunnerInvitation,
     Turn,
+    WorkspaceRunnerOrder,
 )
 from .routing import EXECUTING, blocking_turn, prime_machine_units, runner_tenant_slugs_of
 
@@ -353,6 +362,7 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
         raise refuse(f"{instance}: a concurrent join won") from None
     _attach_vault(fleet, runner)
     _give_wraps(fleet, key)
+    _put_routes(runner, _current_routing(fleet, exclude=runner))
     activity.emit(activity.RUNNER_PAIRED, workspace=fleet.workspace_id, actor=owner, surface="runner",
                   ref=str(runner.pk), meta={"name": runner.name, "fleet": fleet.name})
     return Joined("joined", runner)
@@ -421,6 +431,86 @@ def refresh_wraps(fleet: RunnerFleet) -> None:
     for key in RunnerDeviceKey.objects.filter(runner__fleet=fleet, status=RunnerDeviceKey.ACTIVE,
                                               ecdh_jkt=jkt).exclude(runner__status=Runner.RETIRED):
         _give_wraps(fleet, key)
+
+
+# ── routing: a member is routed as its fleet ────────────────────────────────
+# A route is one routing row naming a member, keyed without the member:
+# ["a", agent id, source, actor] for an agent's runner list (`RunnerAssignment`),
+# ["w", workspace] for a workspace's runner order (`WorkspaceRunnerOrder`).
+
+_A_FIELDS = ("rank", "enabled", "strict", "turn_mode")
+
+
+def _routes_of(runner: Runner) -> dict:
+    out = {}
+    for a in RunnerAssignment.objects.filter(runner=runner).values("agent_id", "source", "actor", *_A_FIELDS):
+        out[json.dumps(["a", a["agent_id"], a["source"], a["actor"]])] = {f: a[f] for f in _A_FIELDS}
+    for o in WorkspaceRunnerOrder.objects.filter(runner=runner).values("workspace_id", "rank", "enabled"):
+        out[json.dumps(["w", o["workspace_id"]])] = {"rank": o["rank"], "enabled": o["enabled"]}
+    return out
+
+
+def _put_routes(runner: Runner, want: dict) -> int:
+    """Make `runner`'s rows exactly `want`. Returns how many rows it wrote or removed."""
+    have = _routes_of(runner)
+    n = 0
+    for key in set(have) - set(want):
+        kind, *k = json.loads(key)
+        if kind == "a":
+            RunnerAssignment.objects.filter(runner=runner, agent_id=k[0], source=k[1], actor=k[2]).delete()
+        else:
+            WorkspaceRunnerOrder.objects.filter(runner=runner, workspace_id=k[0]).delete()
+        n += 1
+    for key, fields in want.items():
+        if have.get(key) == fields:
+            continue
+        kind, *k = json.loads(key)
+        if kind == "a":
+            RunnerAssignment.objects.update_or_create(
+                runner=runner, agent_id=k[0], source=k[1], actor=k[2], defaults=fields)
+        else:
+            WorkspaceRunnerOrder.objects.update_or_create(runner=runner, workspace_id=k[0], defaults=fields)
+        n += 1
+    return n
+
+
+def _current_routing(fleet: RunnerFleet, *, exclude: Runner | None = None) -> dict:
+    """What a joining member is given: a live member's rows (they may hold a change
+    the next tick has not carried yet), else the fleet's own copy."""
+    sibling = (fleet.members.exclude(status=Runner.RETIRED).exclude(pk=getattr(exclude, "pk", None))
+               .order_by("-power_changed_at").first())
+    return _routes_of(sibling) if sibling is not None else dict(fleet.routing or {})
+
+
+def sync_routing(fleet: RunnerFleet, members: list[Runner]) -> list[str]:
+    """Carry each member's routing changes to every member, against the fleet's copy:
+    a route a member has that the copy lacks or holds differently is added or
+    changed for all; a route the copy has that a member lacks was taken off it, so
+    it is taken off all (a change elsewhere to the same route loses to the removal).
+    A member that joined was given the copy, so it differs only where a person
+    changed something."""
+    if not members:
+        return []
+    base = dict(fleet.routing or {})
+    seen = {m.pk: _routes_of(m) for m in members}
+    want = dict(base)
+    removed = set()
+    for rows in seen.values():
+        for key, fields in rows.items():
+            if base.get(key) != fields:
+                want[key] = fields
+        removed |= set(base) - set(rows)
+    for key in removed:
+        want.pop(key, None)
+    did = []
+    with transaction.atomic():
+        for m in members:
+            if seen[m.pk] != want and _put_routes(m, want):
+                did.append(f"routed {m.name} as the fleet")
+        if want != base:
+            RunnerFleet.objects.filter(pk=fleet.pk).update(routing=want)
+            fleet.routing = want
+    return did
 
 
 # ── the scaler's view of the work ───────────────────────────────────────────
@@ -549,6 +639,8 @@ def tick_fleet(fleet: RunnerFleet, now: dt.datetime) -> list[str]:
             aws.protect(fleet.group_name, m.instance_id, True)
         _set_power(m, power, now)
         live.append(m)
+    # Routing before demand: a member is counted only for work routed to it.
+    did += sync_routing(fleet, live)
     # 2. fail over the chats of members that are gone FIRST: a moved turn is then
     # counted against the member it moved to, not as demand for one more.
     did += fail_over(fleet, now)
@@ -637,9 +729,14 @@ def _retire_gone(m: Runner, now: dt.datetime) -> None:
             close_turn(turn, Turn.LOST, from_states=EXECUTING, event={"reason": "fleet_member_gone"},
                        riders=False, drill_summary="runner lost the turn (its fleet instance is gone)",
                        auto_debug=False)
-    Runner.objects.filter(pk=m.pk).update(
-        status=Runner.RETIRED, power=Runner.POWER_STOPPED, power_changed_at=now,
-        status_note="retired: its instance left the fleet's group")
+    with transaction.atomic():
+        Runner.objects.filter(pk=m.pk).update(
+            status=Runner.RETIRED, power=Runner.POWER_STOPPED, power_changed_at=now,
+            status_note="retired: its instance left the fleet's group")
+        # As the retire route does: a retired runner's rows would be listed by the
+        # Runners tab and 422 its next save. The fleet keeps its routing (`routing`).
+        RunnerAssignment.objects.filter(runner=m).delete()
+        WorkspaceRunnerOrder.objects.filter(runner=m).delete()
 
 
 def requeue_lost(turn: Turn) -> bool:
