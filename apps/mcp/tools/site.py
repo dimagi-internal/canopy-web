@@ -17,11 +17,14 @@ answer with facts plus a `resource_link` to a result it keeps (spec
 2026-10-23-host-held-results), and the agent reads the rows through it only when it
 needs them — so a large result never has to be in context.
 
-**Caller-token only.** These exist for a CONFINED visitor's session, whose token
-names its own conversation: the turn is read from that token, never from an
-argument, so a session cannot point the gateway at somebody else's visitor. A
-PAT (the owner in their own session) gets a refusal — the owner has their own
-login at the site and nothing to borrow.
+**The turn comes from a credential, never an argument.** A confined (or scoped)
+session's caller token names its own conversation; a full-profile turn — the
+owner's, an admin's — reaches canopy as the agent's own login and names its
+conversation with the chat key the runner handed only to that session. So a
+session cannot point the gateway at somebody else's conversation. A chat held on a
+site's page reaches that site only this way, as the person who sent — the owner
+included: the agent's own login there is withheld from the turn
+(`interface.own_login_of`). A PAT with no chat key (no page conversation) is refused.
 """
 from __future__ import annotations
 
@@ -34,19 +37,51 @@ from apps.mcp.server import mcp
 from apps.mcp.turn_scope import caller_turn_ids
 
 
+NOT_ON_A_PAGE = ("site tools exist only in a conversation held on a site's page, where they "
+                 "act as the person who sent")
+
+
+def _chat_turn_id() -> str:
+    """The turn running in the chat this request's chat key names, or "".
+
+    A full-profile turn (the owner's, an admin's) reaches canopy as the agent's own
+    login, which every chat it is in shares; the chat key (`X-Canopy-Chat-Key`, minted
+    when the runner claimed the chat's turn and handed only to the session driving it)
+    is what says WHICH conversation — so the turn is still read from a credential,
+    never from an argument. The chat's latest turn is the one running in it."""
+    from apps.harness.models import Turn  # noqa: PLC0415 — models load with a call
+    from apps.mcp.chat_scope import current_chat_session  # noqa: PLC0415 — as page_tools: reads models, loaded with a call
+
+    try:
+        session = current_chat_session()
+    except Exception:  # noqa: BLE001 — no request in scope
+        return ""
+    if session is None:
+        return ""
+    turn = Turn.objects.filter(chat_session=session).order_by("-created_at").only("pk").first()
+    return str(turn.pk) if turn is not None else ""
+
+
 def _current_turn_id() -> str:
+    """The turn this call is for: a caller token's own (a confined or scoped session),
+    else the turn of the chat its chat key names (a full-profile turn on a page)."""
     from apps.mcp.turn_scope import _turn_claims
 
     claims = _turn_claims()
-    if claims is None or not claims.get("turn_id"):
-        raise ToolError("site tools exist only in a visitor's session")
-    return str(claims["turn_id"])
+    if claims is not None:
+        if not claims.get("turn_id"):
+            raise ToolError(NOT_ON_A_PAGE)
+        return str(claims["turn_id"])
+    turn_id = _chat_turn_id()
+    if not turn_id:
+        raise ToolError(NOT_ON_A_PAGE)
+    return turn_id
 
 
 async def _context(tool: str):
     from apps.host_grants import host_gateway
 
-    turn_id = _current_turn_id()
+    turn_id = await sync_to_async(_current_turn_id, thread_sensitive=True)()
     try:
         return await sync_to_async(host_gateway.resolve, thread_sensitive=True)(turn_id)
     except host_gateway.GatewayRefusal as exc:

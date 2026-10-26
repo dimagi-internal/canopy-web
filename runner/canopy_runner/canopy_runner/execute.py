@@ -27,7 +27,7 @@ import types
 from pathlib import Path
 
 from . import (caller, cdp_control, chat_bridge, chat_key, delivery, dialog, emdash, hooks,
-               native_permissions, readiness, scoped_token, session_naming, startup_watch, transcript)
+               native_permissions, page_site, readiness, scoped_token, session_naming, startup_watch, transcript)
 from . import transfer, whois
 from .client import ClientError
 from .tail import TailReader
@@ -1122,6 +1122,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
         caller.write_pending(task, turn, envelope)
         # Before delivery, so the agent's first `canopy secret` cannot race it.
         chat_key.write(turn, task=task)
+        page_site.write(turn, task=task)
         if _already_typed(client, turn_id, task):
             caller.clear_pending(task)
             return f"failed:{turn_id}"
@@ -1206,6 +1207,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
             return f"failed:{turn_id}"
         caller.write_pending(name, turn, envelope)
         chat_key.write(turn, task=name)
+        page_site.write(turn, task=name)
         try:
             res = cdp_control.create_task(
                 target, prompt, task_name=name, port=cfg.cdp_port
@@ -1246,6 +1248,7 @@ def execute_chat_turn(cfg, client, runner_id: str, turn: dict, cancel_check=None
     # names the Claude session, under that id too — `canopy secret` reads
     # CLAUDE_CODE_SESSION_ID.
     chat_key.write(turn, task=task)
+    page_site.write(turn, task=task)
     path = _wait_for_transcript(target, task, emdash_db=cfg.emdash_db)
     if path is not None:
         chat_key.write(turn, task=task, transcript_id=pathlib.Path(path).stem)

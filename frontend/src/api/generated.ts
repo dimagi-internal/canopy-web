@@ -33461,6 +33461,19 @@ export interface components {
             readonly days?: readonly components["schemas"]["UsageDayIn"][];
         };
         /**
+         * ClaimPageSiteOut
+         * @description A turn held on a Connected site's page (`interface.page_turn`).
+         */
+        readonly ClaimPageSiteOut: {
+            /** Site */
+            readonly site: string;
+            /**
+             * Withheld
+             * @default []
+             */
+            readonly withheld: readonly string[];
+        };
+        /**
          * ClaimedTurnOut
          * @description A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
          *     the caller envelope, so the runner can hand it to the agent without a second
@@ -33590,6 +33603,7 @@ export interface components {
             readonly transcript_held: {
                 readonly [key: string]: number;
             };
+            readonly page_site?: components["schemas"]["ClaimPageSiteOut"] | null;
         };
         /** ForkPlanOut */
         readonly ForkPlanOut: {

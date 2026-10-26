@@ -409,6 +409,13 @@ def build(turn, *, reader_user=None) -> dict:
         # message stays exactly what they typed. Until 2026-09-26 the widget
         # pasted it, and every transcript showed a JSON dump under the question.
         "page": _page(cs),
+        # THE SITE THIS CONVERSATION IS HELD ON, when its agent serves that site on
+        # pages (`interface.page_turn`): the agent reaches it here ONLY through
+        # canopy's `site_tools` / `site_call` / `site_read`, as the person who sent,
+        # under the act-as-you permission they granted from the page — whoever they
+        # are, the agent's owner included. Its own login there (`withheld`) is not in
+        # this turn. null for any other turn.
+        "site": _site(turn, agent),
         # MCP APPS (spec 2026-10-08 §6): what a site's View in this conversation
         # last said about its state (`ui/update-model-context`, latest wins) and
         # canopy's OWN receipts of the calls a person made by clicking in one —
@@ -460,6 +467,29 @@ def _page(session) -> dict | None:
         "backing_tool": backing,
         "path": str(state.get("path") or "")[:500] or None,
         "read_with": "current_page",
+    }
+
+
+def _site(turn, agent) -> dict | None:
+    if agent is None:
+        return None
+    from apps.agents.interface import page_turn  # noqa: PLC0415 — as _profile: the interface reads models, loaded with a call
+
+    block = page_turn(turn, agent)
+    if block is None:
+        return None
+    site = block["site"]
+    return {
+        **block,
+        "reach_with": ["site_tools", "site_call", "site_read"],
+        "as": "the person who sent",
+        "note": (f"This conversation is held on a {site} page. Read or change anything at {site} "
+                 "only through canopy's site_tools / site_call / site_read, which act as the "
+                 "person who sent, under the act-as-you permission they granted from the page — "
+                 f"what they may see at {site} is what you may see. Your own {site} account is "
+                 "not available in this conversation (owners and admins included); never use "
+                 f"another way into {site}. If site_call is refused, say why and ask them to "
+                 "send again from the page."),
     }
 
 

@@ -786,8 +786,28 @@ host* (the header above is canopy-web's own decisions):
   a View in a conversation reads only the grant of the page that last acted in that
   conversation as the person who started the turn / is viewing — expired or stopped
   is a refusal ("…has ended — send again to grant it for another 30 minutes"), never
-  another page's grant or the agent's own credential. Only confined turns whose
-  capability lists the site reach the gateway (see the decision table).
+  another page's grant or the agent's own credential.
+- **A chat on a page reaches that site only as the person, under their act-as-you
+  permission — owners included.** The gateway (`site_tools` / `site_call` /
+  `site_read`) serves every turn in a conversation held on a site's page (the
+  session's `embed_app`) whose agent is set up for that site — some capability of its
+  interface lists it in `sites:` (`interface.page_site_of`) — whatever the turn's
+  profile: a confined visitor's (its capability must list the site), an editor's
+  (scoped token), the owner's or an admin's (found from the chat key the runner gave
+  only that session). Every call uses the SENDER's grant for that page. A full-profile
+  turn is narrowed by the widest ceiling the owner set on that site
+  (`interface.site_ceiling`).
+- **The agent's own login at that site is withheld from such a turn.** A capability
+  names it per site: `own_login: {connect-labs: [LABS_MCP_TOKEN]}` — credential names,
+  never values. The claim carries `page_site: {site, withheld}`
+  (`interface.page_turn`); a cloud runner leaves those names out of the turn's
+  environment and its per-turn env file and sets `CANOPY_PAGE_SITE`; a laptop runner
+  cannot set an emdash session's environment, so it leaves a by-task marker
+  (`~/.canopy/page/task/<task>.json`) for the agent's own MCP headers helper — the
+  agent's `.env` is still on that disk, so there the boundary is the helper and the
+  instructions. The caller envelope's `site` block tells the agent it is on a page,
+  reaches the site only through the gateway as the person, and has no account of its
+  own there in this conversation.
 - **The person sees and stops theirs**: Settings → Act-as-you permissions
   (`/api/me/host-grants/`), and Stop in the panel (`/api/embed/host-grant`, and
   `/api/contact/host-grant` for a contact). Stop takes effect on the next call.

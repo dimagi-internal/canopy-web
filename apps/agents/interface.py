@@ -241,7 +241,8 @@ def parse(doc) -> dict:
         if not isinstance(cap, dict):
             raise InterfaceError(f"{name} must be a mapping")
         bad = set(cap) - {"description", "callers", "entry", "tools", "bash", "read_paths",
-                          "write_paths", "input", "pages", "sites", "ceiling", "data"}
+                          "write_paths", "input", "pages", "sites", "ceiling", "own_login",
+                          "data"}
         if bad:
             raise InterfaceError(f"{name}: unknown key(s) {sorted(bad)}")
         callers = _classes(cap.get("callers"), f"{name}.callers")
@@ -332,7 +333,40 @@ def _sites(cap: dict, name: str) -> dict:
     if ceiling and not sites:
         raise InterfaceError(f"{name}.ceiling needs `sites:` — a ceiling bounds the tools of "
                              "the sites it names")
-    return {"sites": sites, "ceiling": ceiling}
+    out = {"sites": sites, "ceiling": ceiling}
+    own = _own_login(cap.get("own_login"), name, sites)
+    if own:
+        # Written only when present, so every interface published before the key
+        # existed parses to exactly what it did.
+        out["own_login"] = own
+    return out
+
+
+_CREDENTIAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+
+
+def _own_login(value, name: str, sites: list[str]) -> dict[str, list[str]]:
+    """`own_login:` — per site, the names of the agent's OWN credentials that are its
+    login at that site (e.g. `{connect-labs: [LABS_MCP_TOKEN]}`). A turn in a
+    conversation held on that site's page never holds them (`page_site_of`): there
+    the agent reaches the site only through the person's act-as-you permission."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or len(value) > _MAX_ITEMS:
+        raise InterfaceError(f"{name}.own_login must be a mapping of site name to credential names")
+    out: dict[str, list[str]] = {}
+    for site, names in value.items():
+        if site not in sites:
+            raise InterfaceError(f"{name}.own_login: {site!r} is not one of this capability's "
+                                 "`sites:` — it names the agent's login at a site it serves")
+        listed = _strings(names, f"own_login.{site}", name)
+        for n in listed:
+            if not _CREDENTIAL_NAME.match(n):
+                raise InterfaceError(f"{name}.own_login.{site}: {n!r} is not a credential name "
+                                     "(an environment variable name, e.g. LABS_MCP_TOKEN)")
+        if listed:
+            out[site] = sorted(set(listed))
+    return out
 
 
 def _pages(value, cap: str) -> list[str]:
@@ -418,6 +452,70 @@ def _site_capability(turn, iface: dict, classes: set[str]) -> str | None:
         if site in (cap.get("sites") or []) and classes & set(cap.get("callers") or []):
             return name
     return None
+
+
+# --- the sites an agent serves on pages ------------------------------------------
+#
+# An agent is set up for a Connected site when some capability of its published
+# interface lists the site in `sites:`. A conversation held on that site's page
+# (`embed_app`) then reaches the site ONLY as the person who sent, under their
+# act-as-you permission for the page (their host grant, `host_grants.lookup`) —
+# whoever they are, the agent's owner and admins included — and never with the
+# agent's own login there (`own_login:`), which such a turn does not hold.
+
+
+def page_sites(agent) -> set[str]:
+    """The Connected sites `agent` serves on pages: every site some capability of its
+    interface lists in `sites:`."""
+    caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {}).values()
+    return {site for cap in caps for site in (cap.get("sites") or [])}
+
+
+def _caps_for_site(agent, site: str) -> list[dict]:
+    caps = ((getattr(agent, "interface", None) or {}).get("capabilities") or {})
+    return [caps[n] for n in sorted(caps) if site in (caps[n].get("sites") or [])]
+
+
+def page_site_of(turn, agent=None) -> str:
+    """The site this turn's conversation is held on, when its agent serves that site on
+    pages — else "". The one question "is this a page turn for site X" asks, whatever
+    the turn's profile (confined or full)."""
+    agent = agent if agent is not None else getattr(turn, "acting_agent", None)
+    site = _conversation_site(turn)
+    if agent is None or not site:
+        return ""
+    return site if site in page_sites(agent) else ""
+
+
+def site_ceiling(agent, site: str) -> list[str]:
+    """The owner's narrowing of `site`'s tools for a FULL-profile turn on its page: the
+    union of the ceilings of the capabilities that list it, or none (the host's grant
+    decides) when any of them sets none — a full turn gets the widest door the owner
+    opened on that site, never more."""
+    caps = _caps_for_site(agent, site)
+    if not caps or any(not cap.get("ceiling") for cap in caps):
+        return []
+    return list(dict.fromkeys(g for cap in caps for g in cap.get("ceiling") or []))
+
+
+def own_login_of(agent, site: str) -> list[str]:
+    """The names of the agent's own credentials that are its login at `site`
+    (`own_login:` of every capability that lists the site). Withheld from every turn
+    held on that site's page."""
+    return sorted({n for cap in _caps_for_site(agent, site)
+                   for n in (cap.get("own_login") or {}).get(site) or []})
+
+
+def page_turn(turn, agent=None) -> dict | None:
+    """What a turn held on a site's page is told, and what its runner withholds:
+    `{"site", "withheld"}` — the site, and the agent's own credential names for it
+    (`own_login_of`) — or None for any other turn. The claim carries it to the
+    runner (`ClaimedTurnOut.page_site`) and the caller envelope to the agent."""
+    agent = agent if agent is not None else getattr(turn, "acting_agent", None)
+    site = page_site_of(turn, agent)
+    if not site:
+        return None
+    return {"site": site, "withheld": own_login_of(agent, site)}
 
 
 def _classes(value, where: str) -> list[str]:

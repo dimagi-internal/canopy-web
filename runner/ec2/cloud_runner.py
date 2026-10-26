@@ -3221,15 +3221,17 @@ def _turn_env_dir(turn_id: str, *, create: bool = True) -> pathlib.Path | None:
     return root / str(turn_id)
 
 
-def write_turn_env(slug: str, turn_id: str) -> pathlib.Path | None:
+def write_turn_env(slug: str, turn_id: str, *, withheld=frozenset()) -> pathlib.Path | None:
     """`<root>/<turn>/env` (dir 0700, file 0600) holding `slug`'s env for ONE turn.
     The turn gets its path as `CANOPY_AGENT_ENV_FILE`; `remove_turn_env` deletes it in
     the turn's `finally`. None when it cannot be written (the turn still has the
-    values in its environment)."""
+    values in its environment). `withheld` names are left out: a turn held on a site's
+    page never holds the agent's own login there (`page_site`)."""
     d = _turn_env_dir(turn_id)
     values = _turn_values(slug)
     if d is None or values is None:
         return None
+    values = {k: v for k, v in values.items() if k not in withheld}
     try:
         d.mkdir(mode=0o700, exist_ok=True)
         os.chmod(d, 0o700)
@@ -3466,6 +3468,9 @@ def _agent_env(slug: str | None) -> dict:
     env = _child_safe_env()
     for key in _GITHUB_ENV_KEYS:
         env.pop(key, None)
+    withheld = _withheld()
+    for key in withheld:
+        env.pop(key, None)
     # Never the box's credential in a turn. An AGENT acts as itself (its turn login,
     # else CANOPY_WEB_PAT from its ~/.<slug>/.env), and a turn that fell back to this
     # process's CANOPY_TOKEN acted as the box's owner with their whole canopy. An
@@ -3536,6 +3541,8 @@ def _agent_env(slug: str | None) -> dict:
             continue
         if key in _GITHUB_ENV_KEYS:
             continue  # GitHub is the owner's, issued per turn — never the agent's .env
+        if key in withheld:
+            continue  # its own login at the site this page turn is held on (`page_site`)
         value = value.strip().strip('"').strip("'")
         # An agent .env provisioned before canopy moved names its OLD address;
         # left alone it would send every CLI call this turn makes there
@@ -3551,7 +3558,7 @@ def _agent_env(slug: str | None) -> dict:
     env.update(gog_env(slug))
     # LAST, over the agent's own .env: a confined turn's profile is the runner's
     # decision, and nothing an agent provisions may switch it off.
-    return {**env, **extra}
+    return {k: v for k, v in {**env, **extra}.items() if k not in withheld}
 
 
 # Bounded retry for a transient transcript-POST failure (5xx/timeout/URLError).
@@ -5213,6 +5220,39 @@ def _chat_key_env(turn: dict) -> dict:
     except OSError as exc:
         _log(f"warn: could not leave chat {chat_id[:8]}'s key for its MCP helper: {exc}")
     return {"CANOPY_CHAT_KEY": key, "CANOPY_CHAT_SESSION": chat_id}
+
+
+#: Set for a turn held on a Connected site's page (canopy-web `ClaimedTurnOut.page_site`):
+#: the site's name. Not a secret — it lets the agent's own code (an MCP headers helper)
+#: know that here it must not authenticate as the agent at that site.
+PAGE_SITE_ENV = "CANOPY_PAGE_SITE"
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+
+
+def page_site(turn: dict) -> tuple[str, frozenset]:
+    """(site, withheld credential names) for a turn held on a site's page, else ("", ∅).
+
+    canopy-web decides it (`interface.page_turn`): the conversation is on a site the
+    agent serves, so the agent reaches that site only as the person who sent, through
+    canopy's gateway — never with its own login there, which this turn must not hold."""
+    block = turn.get("page_site")
+    if not isinstance(block, dict):
+        return "", frozenset()
+    site = str(block.get("site") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", site):
+        return "", frozenset()
+    names = block.get("withheld") if isinstance(block.get("withheld"), list) else []
+    return site, frozenset(str(n) for n in names if _ENV_NAME.match(str(n)))
+
+
+def _page_site_env(turn: dict) -> dict:
+    site, _withheld = page_site(turn)
+    return {PAGE_SITE_ENV: site} if site else {}
+
+
+def _withheld() -> frozenset:
+    """This thread's turn's withheld credential names (`page_site`)."""
+    return getattr(_TURN_ENV, "withheld", None) or frozenset()
 
 
 SCOPED_TOKEN_ROOT = pathlib.Path.home() / ".canopy" / "scoped"
@@ -10457,10 +10497,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
             _log(f"turn {turn_id[:8]} NOT run — {note}")
             return
+        # A turn held on a site's page never holds the agent's own login there
+        # (canopy-web `page_site`): those names are kept out of every env this turn
+        # builds (`_agent_env`, `write_turn_env`), and CANOPY_PAGE_SITE says why.
+        _TURN_ENV.withheld = page_site(turn)[1]
         if confined:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
+                        **_page_site_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
@@ -10476,6 +10521,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
                         **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV,
+                        **_page_site_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)
@@ -10504,7 +10550,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
                 _log(f"turn {turn_id[:8]} NOT run — {note}")
                 return
-            env_path = write_turn_env(slug, str(turn_id))
+            env_path = write_turn_env(slug, str(turn_id), withheld=_withheld())
             if env_path is None:
                 note = (f"[runner] could not write {slug}'s per-turn credentials file: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no tmpfs root'}")
@@ -10686,6 +10732,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.read_settings = None
         _TURN_ENV.mcp_config = None
         _TURN_ENV.confined = None
+        _TURN_ENV.withheld = frozenset()
         _TURN_ENV.chat_session = ""
         if cli_session_id and cwd is not None:
             _record_session_cwd(cli_session_id, cwd)

@@ -10,7 +10,10 @@ what those tools do:
    argument the agent supplied.
 2. **Refuse** unless every one of these holds, each with a sentence the agent
    can say to the visitor: the conversation was held on a live connected site
-   that issues host grants; the turn's capability names that site in `sites:`;
+   that issues host grants; the turn's capability names that site in `sites:` (or,
+   for a full-profile turn — the owner's, an admin's, an editor's — some capability
+   of the agent does: a chat on a page reaches that site only as the person who
+   sent, owners included);
    this visitor holds a grant for it; the grant is unexpired, for the site's
    current resource, and bound to canopy's current DPoP key; and the tool is
    inside the effective set (below).
@@ -210,10 +213,25 @@ def resolve(turn_id: str) -> SiteContext:
         raise GatewayRefusal("site_not_configured",
                              f"{site} does not let me act for you there")
 
-    cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability or "")
-    if not cap or site not in (cap.get("sites") or []):
-        raise GatewayRefusal("site_not_in_capability",
-                             f"I am not set up to use {site}'s tools in this conversation")
+    from apps.agents import interface  # noqa: PLC0415 — as the model reads above: loads with a call
+
+    if turn.capability:
+        # A confined turn: its own capability must name the site.
+        cap = ((agent.interface or {}).get("capabilities") or {}).get(turn.capability)
+        if not cap or site not in (cap.get("sites") or []):
+            raise GatewayRefusal("site_not_in_capability",
+                                 f"I am not set up to use {site}'s tools in this conversation")
+        ceiling = list(cap.get("ceiling") or [])
+    else:
+        # A FULL-profile turn (the owner, an admin, an editor) in a conversation held
+        # on a site's page: it reaches the site the same way a visitor's does — as the
+        # person who sent, under their act-as-you permission for the page, never with
+        # the agent's own login there (withheld from the turn, `interface.own_login_of`).
+        # Only on a site the agent is set up for (some capability lists it).
+        if interface.page_site_of(turn, agent) != site:
+            raise GatewayRefusal("site_not_in_capability",
+                                 f"I am not set up to use {site}'s tools in this conversation")
+        ceiling = interface.site_ceiling(agent, site)
 
     # WHO ASKED, from the turn — the grant is theirs or there is none. And for
     # WHICH agent: a grant a page bound to another agent is not this one's. And
@@ -253,7 +271,7 @@ def resolve(turn_id: str) -> SiteContext:
             f"{site} gives its sensitive data only to a capability that handles sensitive data "
             "(`data: sensitive`), and this turn's does not; ask the agent's owner to set it")
     ctx = context_for_grant(app, grant, turn_id=str(turn.pk), agent_slug=agent.slug,
-                            ceiling=list(cap.get("ceiling") or []),
+                            ceiling=ceiling,
                             execution=execution.facts_for(turn, agent, session, effective))
     ctx.session_id = str(session.pk)
     return ctx
