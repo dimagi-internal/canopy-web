@@ -1,12 +1,14 @@
 # Audit: how canopy drives Claude Code, and where a first-party mechanism now fits better
 
-Checked against Claude Code **2.1.310** (installed locally), `claude -p --help`, live probes run on this machine (results quoted below), and the current docs at code.claude.com (fetched 2026-10-26). Read-only: no repo files were changed.
+Checked against Claude Code **2.1.310** (installed locally), `claude -p --help`, live probes run on this machine (results quoted below), and the current docs at code.claude.com (fetched 2026-10-26). Read-only when written: no repo files were changed. Each finding carries its status once work lands.
 
 Ranked by value divided by effort. Each finding gives what canopy does now, the better mechanism, the benefit, the risk, and a confidence level.
 
 ---
 
 ## 1. Read the CLI's structured error and rate-limit fields, not its text. This already misses a real dead token.
+
+**Status: done for the cloud runner's `claude -p` turns and its probe** (`_credential_fault`; `runner/ec2/tests/test_structured_credential_errors.py`). Open: utilization-based routing, the duplicate matchers in `canopy_transcript`, the laptop, and ACP.
 
 **What canopy does now.** The `claude -p` stream loop (`runner/ec2/cloud_runner.py:5025-5027`) reads only `result` and `is_error`. Whether a credential is capped or dead is decided by text matching: `_is_usage_cap` / `_is_auth_required` (`cloud_runner.py:7143-7212`), with copies in `packages/canopy_transcript/canopy_transcript/usage_limit.py` and `signed_out.py`. The reset time is parsed out of prose like "resets 2:30am (America/Denver)". The cli path ignores `rate_limit_event` entirely. Only the ACP path reads `_claude/rateLimit` (`canopy_acp/updates.py:223`).
 
@@ -63,6 +65,8 @@ Keep the text matchers only as a fallback.
 ---
 
 ## 3. Stop a `claude -p` turn with SIGINT, not SIGTERM
+
+**Status: done** (`_signal_cli`: SIGINT once, SIGTERM after `STOP_ESCALATE_SECONDS`, SIGKILL after twice that).
 
 **What canopy does now.** `_signal_cli` (`cloud_runner.py:6300-6311`) calls `proc.terminate()` (SIGTERM) for a polite stop, then SIGKILL.
 
