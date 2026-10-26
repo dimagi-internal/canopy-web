@@ -117,7 +117,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
             {peopleWaiting.length > 0 && (
               <Button type="button" size="sm" variant="outline" disabled={busy} data-testid="vault-grant"
                 onClick={() => void grant((p) => p.kind !== 'device')}>
-                Give {peopleWaiting.length === 1 ? 'the person waiting' : `the ${peopleWaiting.length} people waiting`} a copy
+                Give {peopleWaiting.length === 1 ? 'the person waiting' : `the ${peopleWaiting.length} people waiting`} access
               </Button>
             )}
             {manages && (
@@ -152,21 +152,22 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
                   <td className="py-1.5" data-testid={`ws-vault-access-${a.id}`}>
                     {a.runner && v.kv > 0 && (
                       v.holders.keepers.includes(a.runner_name ?? '')
-                        ? <span className="text-success">can open it</span>
+                        ? <span className="text-success">has access</span>
                         : runnerWaiting(a.runner)
                           ? (
                             <span className="flex flex-wrap items-center gap-2">
-                              <span className="text-warning">waiting for a copy</span>
+                              <span className="text-warning">waiting for access</span>
                               {manages && (
                                 <button type="button" disabled={busy} data-testid={`ws-vault-grant-${a.id}`}
                                   className={buttonClass}
+                                  title="Your passkey gives this runner access to what is stored in this vault"
                                   onClick={() => void grant((p) => p.kind === 'device' && p.runner === a.runner)}>
-                                  Give it a copy
+                                  Give access
                                 </button>
                               )}
                             </span>
                           )
-                          : <span className="text-muted-foreground">no copy (no approved key on it yet)</span>
+                          : <span className="text-muted-foreground">no access yet (no approved key on it)</span>
                     )}
                   </td>
                   <td className="py-1.5 text-right">
