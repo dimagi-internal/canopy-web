@@ -2044,6 +2044,10 @@ class AgentCredentialAccessOut(StrictModel):
     may_resolve: bool
     via: Literal["runner", "admin", "license"] | None = None
     reason: str = ""
+    #: The credentials people delegated to this agent (their own account, such as a
+    #: GitHub token): only the machines that run it get them, so someone using the agent
+    #: on their own machine uses their own account for each. Never a value.
+    delegated_withheld: list[DelegatedWithheldOut] = Field(default_factory=list)
 
 
 class ResolveVaultLayerOut(StrictModel):

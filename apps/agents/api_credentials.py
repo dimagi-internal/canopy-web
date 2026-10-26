@@ -33,6 +33,7 @@ from apps.tokens import kinds as token_kinds
 
 from . import services
 from .credentials import (
+    accounts,
     credential_resolve,
     delegations,
     pat_rotation,
@@ -150,12 +151,17 @@ def agent_credential_access(request: HttpRequest, slug: str) -> AgentCredentialA
     Session or bearer: it returns no values, so the browser may ask it too.
     A non-member gets 404, as everywhere else. `may_resolve` does not account
     for resolve's bearer-only rule, which is a property of the request rather
-    than the caller."""
+    than the caller.
+
+    `delegated_withheld` names the credentials people delegated to the agent: a box that
+    runs it gets those, nobody else, so on your own machine you use your own account
+    for each (`canopy agent use` says so)."""
     agent = agent_for_read(request, slug)
     via, reason = credential_resolve.credential_access(request, agent)
     return AgentCredentialAccessOut(
         agent=agent.slug, credential_source=agent.credential_source,
         may_resolve=via is not None, via=via, reason=reason,
+        delegated_withheld=accounts.withheld_payload(agent),
     )
 
 

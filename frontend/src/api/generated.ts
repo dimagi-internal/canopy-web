@@ -4688,6 +4688,10 @@ export interface paths {
          *     A non-member gets 404, as everywhere else. `may_resolve` does not account
          *     for resolve's bearer-only rule, which is a property of the request rather
          *     than the caller.
+         *
+         *     `delegated_withheld` names the credentials people delegated to the agent: a box that
+         *     runs it gets those, nobody else, so on your own machine you use your own account
+         *     for each (`canopy agent use` says so).
          */
         readonly get: operations["agent_credential_access"];
         readonly put?: never;
@@ -24830,6 +24834,31 @@ export interface components {
              * @default
              */
             readonly reason: string;
+            /** Delegated Withheld */
+            readonly delegated_withheld?: readonly components["schemas"]["DelegatedWithheldOut"][];
+        };
+        /**
+         * DelegatedWithheldOut
+         * @description A delegated credential this read does not get, named so the reader uses their own.
+         */
+        readonly DelegatedWithheldOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Provider
+             * @default
+             */
+            readonly provider: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Delegated By Email
+             * @default
+             */
+            readonly delegated_by_email: string;
         };
         /**
          * AgentCredentialsResolveOut
@@ -24956,29 +24985,6 @@ export interface components {
              * @default
              */
             readonly runner_name: string;
-        };
-        /**
-         * DelegatedWithheldOut
-         * @description A delegated credential this read does not get, named so the reader uses their own.
-         */
-        readonly DelegatedWithheldOut: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Provider
-             * @default
-             */
-            readonly provider: string;
-            /**
-             * Label
-             * @default
-             */
-            readonly label: string;
-            /**
-             * Delegated By Email
-             * @default
-             */
-            readonly delegated_by_email: string;
         };
         /** ResolveVaultLayerOut */
         readonly ResolveVaultLayerOut: {
