@@ -97,7 +97,9 @@ def test_a_refused_card_is_asked_again_with_why_and_the_rest_are_kept(tmp_path):
         while not p.exists() or json.loads(p.read_text())["count"] != 1:
             time.sleep(0.01)
         seen.update(json.loads(p.read_text()))
-        (tmp_path / "card.results.json").write_text(json.dumps({kb: CARD}))
+        # Temp file, then rename, as the protocol says: a direct write can be read half-done.
+        (tmp_path / "card.results.json.tmp").write_text(json.dumps({kb: CARD}))
+        (tmp_path / "card.results.json.tmp").rename(tmp_path / "card.results.json")
     t = threading.Thread(target=second)
     t.start()
     with Curation(store) as cur:
