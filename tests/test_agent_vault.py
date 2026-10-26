@@ -23,7 +23,7 @@ from django.test import Client
 
 from apps.agents.credentials import vault_import as vi
 from apps.agents.models import Agent
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -92,6 +92,7 @@ def fleet(client):
         last_heartbeat_at=timezone.now(), capabilities={},
     )
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    give_vault_key(jj)  # someone to seal a stored value to (the agent vault is zero-knowledge)
     client.force_login(jj)
     return {"client": client, "agent": agent, "user": jj}
 
@@ -186,7 +187,8 @@ def test_a_runner_gets_the_vault_and_key_with_the_values(fleet):
     body = res.json()
     assert body["op_vault"] == "Agent-Ace"
     assert body["op_sa_token"] == "ops_tok"
-    assert body["values"]["gog-token"] == "minted-in-the-browser"
+    assert body["values"]["gog-token"].startswith("zks1:")
+    assert "minted-in-the-browser" not in res.content.decode()
 
 
 def test_the_browser_never_sees_the_service_key(fleet):

@@ -3,19 +3,16 @@
 chrome-sales is a delegated identity: since 2026-10-07 the fleet acts in Salesforce
 as Eva's SF user, and agents get no Salesforce accounts of their own. What these pin:
 
-- lending needs the owner of BOTH agents, and a credential Salesforce rejects is
-  refused, never recorded;
-- the row references the lender's credential — a re-mint reaches every borrower,
-  and nothing is copied into the borrower;
-- the delegation in force is the current owners': transfer either agent and it stops;
-- the runner's resolve route carries the borrowed credential, and "" when there is none;
-- the lender sees who borrows it.
+- lending needs the owner of BOTH agents;
+- every agent's vault is zero-knowledge, so canopy-web cannot read a lender's stored
+  credential to lend it: lending is refused, never recorded, and a loan recorded
+  before hands a box nothing;
+- the runner's resolve route carries "" when there is nothing to lend.
 
 Salesforce is never called: `requests` is replaced by a fake.
 """
 from __future__ import annotations
 
-import json
 from unittest import mock
 
 import pytest
@@ -25,7 +22,6 @@ from django.utils import timezone
 
 from apps.agents.credentials import delegations
 from apps.agents.models import Agent, AgentCredential, AgentDelegation
-from apps.common.encryption import encrypt_secret
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import WorkspaceMembership
@@ -83,7 +79,7 @@ def ws(owner):
 @pytest.fixture
 def eva(ws, owner):
     a = Agent.objects.create(slug="eva", name="Eva", workspace=ws, owner=owner)
-    AgentCredential.objects.create(agent=a, name="salesforce", value_enc=encrypt_secret(json.dumps(CREDS)))
+    AgentCredential.objects.create(agent=a, name="salesforce", value_zk="zk1:ciphertext", kv=1)
     return a
 
 
@@ -100,25 +96,11 @@ def _client(user):
 
 # ---- lending --------------------------------------------------------------------
 
-def test_owner_lends_and_the_row_references_rather_than_copies(hal, eva, owner, sf):
-    row = delegations.set_salesforce(hal, owner, "eva")
-    assert row.lender == eva and row.secret_enc == ""           # nothing copied
-    assert row.meta["username"] == "eva@example.com"
-    assert json.loads(delegations.salesforce_creds_for(hal))["refreshToken"] == "r1"
-
-
-def test_a_remint_by_the_lender_reaches_the_borrower(hal, eva, owner, sf):
-    delegations.set_salesforce(hal, owner, "eva")
-    AgentCredential.objects.filter(agent=eva, name="salesforce").update(
-        value_enc=encrypt_secret(json.dumps({**CREDS, "refreshToken": "r2"})))
-    assert json.loads(delegations.salesforce_creds_for(hal))["refreshToken"] == "r2"
-
-
-def test_a_credential_salesforce_rejects_is_refused_not_stored(hal, eva, owner, sf):
-    sf.accept = False
-    with pytest.raises(delegations.DelegationError, match="expired access/refresh token"):
+def test_a_zero_knowledge_lender_is_refused_not_stored(hal, eva, owner, sf):
+    with pytest.raises(delegations.DelegationError, match="zero-knowledge"):
         delegations.set_salesforce(hal, owner, "eva")
     assert not AgentDelegation.objects.filter(agent=hal).exists()
+    assert sf.refreshed_with == []  # Salesforce is never asked
 
 
 def test_a_lender_with_no_credential_is_refused(hal, eva, owner, sf):
@@ -138,48 +120,17 @@ def test_only_the_owner_of_both_can_lend(hal, eva, owner, ws, sf):
         delegations.set_salesforce(hal, owner, "eva")
 
 
-def test_the_lender_may_live_in_another_workspace(hal, owner, sf):
-    # Eva is in one tenant, the agents borrowing her identity in another.
-    other_ws = a_workspace()
-    wsvc.ensure_member(other_ws, owner, WorkspaceMembership.OWNER)
-    lender = Agent.objects.create(slug="eva2", name="Eva", workspace=other_ws, owner=owner)
-    AgentCredential.objects.create(agent=lender, name="salesforce", value_enc=encrypt_secret(json.dumps(CREDS)))
-    delegations.set_salesforce(hal, owner, "eva2")
-    assert json.loads(delegations.salesforce_creds_for(hal))["refreshToken"] == "r1"
-
-
-def test_transferring_the_lender_stops_every_loan(hal, eva, owner, ws, sf):
-    delegations.set_salesforce(hal, owner, "eva")
-    other = User.objects.create_user("x", "x@dimagi.com", "pw")
-    wsvc.ensure_member(ws, other, WorkspaceMembership.EDITOR)
-    eva.owner = other
-    eva.save()
-    assert delegations.salesforce_creds_for(hal) == ""
-    assert delegations.salesforce_status(hal)["set"] is False
-
-
-def test_status_answers_both_directions(hal, eva, owner, sf):
-    delegations.set_salesforce(hal, owner, "eva")
-    assert delegations.salesforce_status(eva)["lent_to"] == ["hal"]
-    st = delegations.salesforce_status(hal)
-    assert st["lender"] == "eva" and st["username"] == "eva@example.com"
-
-
-def test_routes_never_echo_the_credential(hal, eva, owner, sf):
-    c = _client(owner)
-    r = c.put("/api/agents/hal/salesforce", data=json.dumps({"lender": "eva"}),
-              content_type="application/json")
-    assert r.status_code == 200, r.content
-    assert r.json()["lender"] == "eva" and "r1" not in r.content.decode()
-    assert c.get("/api/agents/eva/salesforce").json()["lent_to"] == ["hal"]
-    assert c.delete("/api/agents/hal/salesforce").json()["set"] is False
-
-
-def test_the_route_refuses_with_salesforces_reason(hal, eva, owner, sf):
-    sf.accept = False
-    r = _client(owner).put("/api/agents/hal/salesforce", data=json.dumps({"lender": "eva"}),
+def test_the_route_refuses_with_the_reason(hal, eva, owner, sf):
+    r = _client(owner).put("/api/agents/hal/salesforce", data='{"lender": "eva"}',
                            content_type="application/json")
-    assert r.status_code == 422 and "expired access/refresh token" in r.content.decode()
+    assert r.status_code == 422 and "zero-knowledge" in r.content.decode()
+
+
+def test_a_loan_recorded_before_hands_out_nothing(hal, eva, owner):
+    AgentDelegation.objects.create(user=owner, agent=hal, service=AgentDelegation.SALESFORCE,
+                                   secret_enc="", lender=eva, meta={})
+    assert delegations.salesforce_creds_for(hal) == ""
+    assert delegations.salesforce_status(eva)["lent_to"] == ["hal"]
 
 
 # ---- handing it to a box ----------------------------------------------------------
@@ -192,30 +143,11 @@ def runner(owner, hal):
     return r
 
 
-def _resolve(runner, slug, sign=None):
-    from canopy_sdk.jose import make_dpop_proof
-
+def _resolve(runner, slug):
     from apps.tokens.models import PersonalToken
 
     raw, _ = PersonalToken.create_for_user(user=runner.owner, label="runner")
-    url = f"/api/agents/{slug}/credentials/resolve"
-    proof = {"HTTP_DPOP": make_dpop_proof(sign, "GET", f"http://testserver{url}")} if sign else {}
-    return Client().get(url, HTTP_AUTHORIZATION=f"Bearer {raw}", **proof)
-
-
-def test_resolve_carries_the_borrowed_credential_to_the_box_alone(hal, eva, owner, sf, runner):
-    """Only a box that runs the agent, by its own proof, gets it — never an admin reading
-    by hand (the box's owner included), since it is someone else's account."""
-    from tests.fixtures.machines import a_machine
-
-    delegations.set_salesforce(hal, owner, "eva")
-    r = _resolve(runner, "hal")
-    assert r.status_code == 200, r.content
-    assert r.json()["salesforce_creds"] == ""
-    _, sign, _ = a_machine(runner, owner)
-    r = _resolve(runner, "hal", sign)
-    assert r.status_code == 200, r.content
-    assert json.loads(r.json()["salesforce_creds"])["refreshToken"] == "r1"
+    return Client().get(f"/api/agents/{slug}/credentials/resolve", HTTP_AUTHORIZATION=f"Bearer {raw}")
 
 
 def test_resolve_carries_nothing_when_none_is_lent(hal, runner):

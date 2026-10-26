@@ -64,7 +64,7 @@ from .models import (
     AgentCredentialRead,
     AgentLicense,
 )
-from .route_refusals import refuse_auto_unless_admin, zk_problem
+from .route_refusals import refuse_auto_unless_admin
 from .schemas import (
     AgentAccessOut,
     AgentAdminOut,
@@ -1103,19 +1103,14 @@ def set_credential_source(request: HttpRequest, slug: str,
     agent = agent_for_admin(request, slug)
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    if payload.credential_source == "canopy-web":
-        # Zero-knowledge is the canopy-web vault's only mode (Jonathan,
-        # 2026-10-17): moving here seals every stored value to the agent's
-        # readers and wipes the custodial copies, or refuses when nobody could
-        # read them yet.
-
-        try:
-            services.make_zero_knowledge(agent)
-        except zk.ZkError as exc:
-            raise zk_problem(exc) from exc
-        agent.refresh_from_db()
-    agent.credential_source = payload.credential_source
-    agent.save(update_fields=["credential_source", "updated_at"])
+    with transaction.atomic():
+        agent = zk._locked(agent)
+        if payload.credential_source == "canopy-web":
+            # Zero-knowledge is the agent vault's only mode: an agent moving here
+            # is on it from now, as a new agent is born.
+            services.start_zero_knowledge(agent)
+        agent.credential_source = payload.credential_source
+        agent.save(update_fields=["credential_source", "updated_at"])
     return _detail(request, agent)
 
 

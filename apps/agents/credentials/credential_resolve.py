@@ -293,7 +293,9 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
                            "an admin must grant it",
                            kv=agent.zk_kv, device_key=str(device_key.pk) if device_key else "")
     else:
-        values = services.resolve_agent_credentials(agent, wanted)
+        # A legacy 1Password agent that has never stored a value here: there is
+        # nothing to hand out (a first stored value turns its vault on).
+        values = {}
     vault, op_token = services.resolve_agent_vault(agent)
     if agent.credential_source == agent.CANOPY_WEB:
         op_token = ""

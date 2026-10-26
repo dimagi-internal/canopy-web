@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from django.db import transaction
@@ -51,7 +51,6 @@ class Store:
     #: Message tails.
     device_scope: str = ""
     member_scope: str = ""
-    extra: dict = field(default_factory=dict)
 
     def wraps(self):
         return self.wrap_model.objects.filter(**self.owner_kw)
@@ -191,7 +190,7 @@ def parse_values(store: Store, values: list, *, allow_sealed: bool = False) -> d
 
 def require_coverage(store: Store, names) -> None:
     """Every stored value must be in the body: one left behind would be under a
-    retired key (rotate), or custodial plaintext (an agent's enable)."""
+    retired key (rotate), or sealed to readers the new key replaces (an agent's enable)."""
     # Not a delegated entry: it is sealed to machines, never under the vault key.
     missing = sorted(set(store.secrets().exclude(account="delegated").values_list("name", flat=True))
                      - set(names))
@@ -223,7 +222,7 @@ def _by(user):
 
 
 def write_values(store: Store, values: dict[str, str], kv: int, user) -> None:
-    defaults = {"kv": kv, "updated_by": _by(user), **store.extra.get("value_defaults", {})}
+    defaults = {"kv": kv, "updated_by": _by(user)}
     for name, value_zk in values.items():
         store.secret_model.objects.update_or_create(**store.owner_kw, name=name,
                                                     defaults={**defaults, "value_zk": value_zk})

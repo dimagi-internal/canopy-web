@@ -18,7 +18,8 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-SECRET = "nova-value-not-a-real-token"
+# What canopy-web holds and hands out: ciphertext (the agent vault is zero-knowledge).
+SECRET = "zks1:nova-ciphertext"
 
 
 def _user(name, domain="dimagi.com"):
@@ -50,13 +51,13 @@ def world():
         WorkspaceMembership.objects.create(workspace=ws, user=u, role=role)
     agent = Agent.objects.create(
         slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["nova-api-key"],
-        credential_source=Agent.CANOPY_WEB,
+        # Who may read, not the device layer: a bearer-only read, which a canopy-vault
+        # agent would refuse without a device proof (tests/test_canopy_vault_zk.py).
+        credential_source=Agent.ONEPASSWORD, zk_enabled=True,
         interface={"version": 1, "full": ["member@dimagi.com"], "capabilities": {
             "ask": {"callers": ["member", "contact"], "tools": ["Read"]}}},
     )
-    AgentCredential.objects.create(agent=agent, name="nova-api-key", value_enc="")
-    from apps.agents import services
-    services.set_agent_credentials(agent, {"nova-api-key": SECRET}, user=jj)
+    AgentCredential.objects.create(agent=agent, name="nova-api-key", value_zk=SECRET, kv=0)
     AgentAdmin.objects.create(agent=agent, user=sarvesh, granted_by=jj)
     return {"agent": agent, "owner": jj, "aath": aath, "viewer": vic, "admin": sarvesh, "hal": hal}
 
@@ -193,12 +194,11 @@ def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatc
     from types import SimpleNamespace
 
     from apps.agents import api as agents_api
-    from apps.agents import services
 
     agent = world["agent"]
     agent.runtime_secrets = ["nova-api-key", "canopy-pat"]
     agent.save(update_fields=["runtime_secrets"])
-    services.set_agent_credentials(agent, {"canopy-pat": "agent-own-pat"}, user=world["owner"])
+    AgentCredential.objects.create(agent=agent, name="canopy-pat", value_zk="zks1:agent-own-pat", kv=0)
     monkeypatch.setattr(agents_api.delegations, "delegation_for",
                         lambda a: SimpleNamespace(secret_enc="x"))
     monkeypatch.setattr(agents_api.delegations, "decrypt_secret", lambda s: "owner-github-token")
@@ -210,7 +210,7 @@ def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatc
     assert "github_token" not in body and body["salesforce_creds"] == ""
     # The same agent's admin still gets everything (unchanged path).
     admin = _resolve(world["owner"]).json()
-    assert admin["values"]["canopy-pat"] == "agent-own-pat"
+    assert admin["values"]["canopy-pat"] == "zks1:agent-own-pat"
     # The agent's GitHub token is no read's, an admin's included: a turn's only.
     assert "github_token" not in admin
 

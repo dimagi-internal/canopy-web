@@ -1,6 +1,6 @@
 // Canopy Vault Phase 2 (canopy-web#1550): the zero-knowledge vault's REST calls.
-// Every body here is ciphertext, a wrap or a seal: there is no way back to
-// custodial storage. Its own module so the vault UI can be tested without
+// Every body here is ciphertext, a wrap or a seal: canopy-web holds no agent
+// value it can read. Its own module so the vault UI can be tested without
 // dragging in ./agents.
 import { apiV2 } from './client.v2'
 import type { components } from './generated'

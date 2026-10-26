@@ -239,7 +239,7 @@ def test_migration_turns_zk_off_only_for_1password_agents_holding_nothing(world)
                                 credential_source=Agent.ONEPASSWORD)
     holding = Agent.objects.create(slug="holding", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
                                    credential_source=Agent.ONEPASSWORD)
-    AgentCredential.objects.create(agent=holding, name="x", value_enc="")
+    AgentCredential.objects.create(agent=holding, name="x")
     wrapped = Agent.objects.create(slug="wrapped", workspace=ws, owner=jj, zk_enabled=True, zk_kv=0,
                                    credential_source=Agent.ONEPASSWORD)
     AgentVaultWrap.objects.create(agent=wrapped, kv=1, kind=AgentVaultWrap.RECOVERY, wrap={})
@@ -260,7 +260,7 @@ def test_migration_moves_agents_with_no_1password_vault_onto_canopy_vault(world)
     Agent.objects.create(slug="legacy", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD,
                          op_vault="Agent-Legacy")
     held = Agent.objects.create(slug="held", workspace=ws, owner=jj, credential_source=Agent.ONEPASSWORD)
-    AgentCredential.objects.create(agent=held, name="x", value_enc="")
+    AgentCredential.objects.create(agent=held, name="x")
     mig = importlib.import_module("apps.agents.migrations.0070_vaultless_agents_on_canopy_vault")
     mig.forwards(django_apps, None)
     rows = {a.slug: (a.credential_source, a.zk_enabled, a.zk_kv)

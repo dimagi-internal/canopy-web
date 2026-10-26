@@ -25,6 +25,7 @@ from apps.harness import initiator as who
 from apps.harness import services as hsvc
 from apps.harness import claim
 from apps.harness.models import Runner, RunnerAssignment, Turn
+from apps.passkeys.testing import give_vault_key
 from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.testing import a_member, a_workspace
 
@@ -54,6 +55,7 @@ def esc():
     editor = a_member(ws, email="esc-editor@dimagi.com", role=WorkspaceMembership.EDITOR)
     viewer = a_member(ws, email="esc-viewer@dimagi.com", role=WorkspaceMembership.VIEWER)
     agent = Agent.objects.create(slug="escbot", name="Esc", workspace=ws)
+    give_vault_key(owner)  # someone to seal a stored value to (the agent vault is zero-knowledge)
     return {"ws": ws, "owner": owner, "editor": editor, "viewer": viewer, "agent": agent}
 
 
@@ -100,7 +102,9 @@ def test_an_agent_admins_box_still_resolves(esc):
     res = Client().get("/api/agents/escbot/credentials/resolve",
                        HTTP_AUTHORIZATION=f"Bearer {_pat(esc['editor'])}")
     assert res.status_code == 200, res.content
-    assert res.json()["values"]["canopy-pat"] == "s3cret"
+    # Ciphertext the box's own key opens; canopy-web never hands out the value.
+    assert res.json()["values"]["canopy-pat"].startswith("zks1:")
+    assert "s3cret" not in res.content.decode()
 
 
 def test_an_editor_cannot_pin_an_agent_turn_to_their_own_box(esc):

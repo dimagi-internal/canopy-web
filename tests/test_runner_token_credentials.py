@@ -51,7 +51,8 @@ def test_the_token_stages_an_agent_its_box_serves(fleet, sts):  # noqa: F811 —
 
     res = _get(RESOLVE, raw, HTTP_X_CANOPY_AWS_PROOF=_proof(HTU), HTTP_X_CANOPY_TURN_ID="t-1")
     assert res.status_code == 200, res.content
-    assert res.json()["values"]["CANOPY_WEB_PAT"] == "pat-value"
+    assert res.json()["values"]["CANOPY_WEB_PAT"].startswith("zks1:")
+    assert "pat-value" not in res.content.decode()
     assert AgentCredentialRead.objects.get(name="CANOPY_WEB_PAT").runner_id == fleet["runner"].pk
 
 

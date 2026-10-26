@@ -13,7 +13,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -31,6 +31,7 @@ def world():
     for u, role in ((boss, M.OWNER), (op, M.EDITOR), (ed, M.EDITOR)):
         M.objects.create(user=u, workspace=ws, role=role)
     agent = Agent.objects.create(slug="ace", name="Ace", workspace=ws, owner=op)
+    give_vault_key(op)  # someone to seal a stored value to (the agent vault is zero-knowledge)
     return {"boss": boss, "op": op, "ed": ed, "out": out, "ws": ws, "agent": agent}
 
 

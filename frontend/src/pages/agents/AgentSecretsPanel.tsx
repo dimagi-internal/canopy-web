@@ -5,7 +5,6 @@ import {
   AgentApiError,
   deleteAgentCredential,
   getAgentCredentialStatus,
-  revealAgentCredential,
   setAgentCredentials,
   type AgentCredentialStatusOut,
 } from '@/api/agents'
@@ -26,11 +25,12 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 // The top of the agent's Security tab: where its secrets live, its canopy
 // login, and every secret as one table you change in place (`VaultEditor`).
 //
-// The status route returns booleans and timestamps and never plaintext. A
-// value comes back into a browser only through Reveal (canopy-web#1538): an
-// agent admin, behind a passkey step-up, one at a time, recorded server-side.
-// With zero-knowledge on (canopy-web#1550), Save and Reveal seal and open the
-// value HERE under the agent's vault key — canopy-web never sees it.
+// The status route returns booleans and timestamps and never plaintext. The
+// agent vault is zero-knowledge (canopy-web#1550): Reveal opens a value HERE
+// with the person's own vault key, and canopy-web never holds one it can read.
+// Save seals in the browser once the agent has a vault key; before that it
+// hands the value to the server, which seals it to the agent's readers and
+// keeps no copy.
 //
 // 1Password is the legacy home: its vault form shows only for an agent still
 // set to read from it.
@@ -136,8 +136,7 @@ export function AgentSecretsPanel({
       setRows(await setAgentCredentials(agent.slug, { [name]: value }))
     }
   }
-  const reveal = (name: string) =>
-    zk?.enabled ? revealZkValue(agent.slug, name, unlock) : revealAgentCredential(agent.slug, name)
+  const reveal = (name: string) => revealZkValue(agent.slug, name, unlock)
   const remove = async (name: string) => setRows(await deleteAgentCredential(agent.slug, name))
 
   return (
@@ -187,8 +186,8 @@ export function AgentSecretsPanel({
       )}
 
       <p className="mt-4 text-[11px] text-muted-foreground" data-testid="credentials-note">
-        Every value here is encrypted at rest and handed only to a runner this agent routes to. Saving or revealing
-        one from the browser asks for your passkey, and every reveal is recorded.
+        Every value here is encrypted so that canopy-web cannot read it: only this agent&rsquo;s machines and the
+        people who manage its vault can open one. Saving or revealing one from the browser asks for your passkey.
         {!canEdit && <> Only {agent.name ?? agent.slug}&rsquo;s admins can change or reveal them.</>}
       </p>
       {unlocker.element}

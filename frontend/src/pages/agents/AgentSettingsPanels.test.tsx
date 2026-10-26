@@ -7,7 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom'
 
 const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
-        deleteAgentCredential, startGoogleMint, revealAgentCredential, AgentApiError } = vi.hoisted(() => {
+        deleteAgentCredential, startGoogleMint, revealZkValue, AgentApiError } = vi.hoisted(() => {
   class AgentApiError extends Error {
     status: number
     detail: string
@@ -24,14 +24,14 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
     setAgentCredentials: vi.fn(),
     deleteAgentCredential: vi.fn(),
     startGoogleMint: vi.fn(),
-    revealAgentCredential: vi.fn(),
+    revealZkValue: vi.fn(),
     AgentApiError,
   }
 })
 
 vi.mock('@/api/agents', () => ({
   getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
-  deleteAgentCredential, startGoogleMint, revealAgentCredential, AgentApiError,
+  deleteAgentCredential, startGoogleMint, AgentApiError,
   // The GitHub and Salesforce sections have their own tests; here they only have to not throw.
   getAgentGitHub: () => new Promise(() => {}),
   getAgentSalesforce: () => new Promise(() => {}),
@@ -54,7 +54,13 @@ vi.mock('@/api/deviceKeys', () => ({
   revokeRunnerDeviceKey: vi.fn(),
   getCredentialAlerts, getPatRotation, setPatRotation, rotatePatNow,
 }))
-// Zero-knowledge off: Save and Reveal go through the passkey-gated routes.
+// Reveal opens the value in the browser with the person's vault key (`revealZkValue`,
+// tested in src/vault); here it only has to be called.
+vi.mock('@/vault/operations', async (orig) => ({
+  ...(await orig<typeof import('@/vault/operations')>()),
+  revealZkValue,
+}))
+// No vault key on the agent yet: Save goes through the passkey-gated route.
 vi.mock('@/api/vault', async (orig) => ({
   ...(await orig<typeof import('@/api/vault')>()),
   getZkState: () => Promise.reject(new Error('off')),
@@ -159,11 +165,11 @@ describe('Security — its secrets', () => {
     getAgentCredentialStatus.mockResolvedValue([
       { name: 'nova-api-key', declared: true, set: true, source: 'canopy', updated_at: null },
     ])
-    revealAgentCredential.mockResolvedValue('the-plaintext')
+    revealZkValue.mockResolvedValue('the-plaintext')
     inRouter(<AgentSecretsPanel agent={AGENT} />)
     fireEvent.click(await screen.findByTestId('reveal-nova-api-key'))
     await waitFor(() => expect(screen.getByTestId('revealed-nova-api-key').textContent).toContain('the-plaintext'))
-    expect(revealAgentCredential).toHaveBeenCalledWith('echo', 'nova-api-key')
+    expect(revealZkValue).toHaveBeenCalledWith('echo', 'nova-api-key', expect.any(Function))
     fireEvent.click(screen.getByTestId('reveal-nova-api-key'))
     expect(screen.queryByTestId('revealed-nova-api-key')).toBeNull()
   })
@@ -172,8 +178,8 @@ describe('Security — its secrets', () => {
     getAgentCredentialStatus.mockResolvedValue([
       { name: 'nova-api-key', declared: true, set: true, source: 'canopy', updated_at: null },
     ])
-    revealAgentCredential.mockRejectedValue(
-      new AgentApiError('revealAgentCredential failed: {...}', 403, 'Confirm it’s you with your passkey, then try again.'),
+    revealZkValue.mockRejectedValue(
+      new AgentApiError('getZkState failed: {...}', 403, 'Confirm it’s you with your passkey, then try again.'),
     )
     inRouter(<AgentSecretsPanel agent={AGENT} />)
     fireEvent.click(await screen.findByTestId('reveal-nova-api-key'))

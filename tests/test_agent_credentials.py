@@ -1,4 +1,5 @@
-"""Agent credentials in canopy-web — values write-only, readable only by a runner.
+"""Agent credentials in canopy-web — values write-only, stored only as ciphertext
+canopy-web cannot open (the agent vault is zero-knowledge; tests/test_canopy_vault_zk.py).
 
 Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
@@ -22,7 +23,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.harness.models import Runner, RunnerAssignment
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -51,6 +52,8 @@ def fleet(client):
     # and it is the gate `resolve` checks. A paired runner with no assignment
     # gets nothing, which is the point: plaintext follows routing, not ownership.
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    # Someone to seal a value to: every write is zero-knowledge.
+    give_vault_key(jj)
     client.force_login(jj)
     return {"client": client, "agent": agent, "runner": runner, "user": jj, "ws": ws}
 
@@ -75,13 +78,27 @@ def test_a_value_round_trips_only_through_the_runner_route(fleet):
 
 
 def test_the_stored_column_is_ciphertext_not_plaintext(fleet):
-    """Encrypted at rest, asserted against the column rather than trusted."""
+    """Sealed to the agent's readers, asserted against the column rather than trusted;
+    and the agent is zero-knowledge from its first stored value."""
     from apps.agents.models import AgentCredential
 
     _put(fleet["client"], {"nova-api-key": SECRET})
     row = AgentCredential.objects.get(agent=fleet["agent"], name="nova-api-key")
-    assert row.value_enc and row.value_enc != SECRET
-    assert SECRET not in row.value_enc
+    assert row.value_zk.startswith("zks1:") and SECRET not in row.value_zk
+    fleet["agent"].refresh_from_db()
+    assert fleet["agent"].zk_enabled and fleet["agent"].zk_kv == 0
+
+
+def test_a_write_with_nobody_to_seal_to_stores_nothing(fleet):
+    from apps.agents.models import AgentCredential
+    from apps.passkeys.models import UserVaultKeyset
+
+    UserVaultKeyset.objects.all().delete()
+    res = _put(fleet["client"], {"nova-api-key": SECRET})
+    assert res.status_code == 409 and res.json()["error"] == "zk_no_recipients"
+    assert not AgentCredential.objects.filter(agent=fleet["agent"]).exists()
+    fleet["agent"].refresh_from_db()
+    assert not fleet["agent"].zk_enabled
 
 
 def test_no_browser_route_returns_a_value(fleet):
@@ -110,12 +127,9 @@ def test_status_lists_every_declared_ref_including_the_unset_ones(fleet):
 
 
 def test_status_shows_where_each_value_comes_from(fleet):
-    """The divergence guard. During migration a secret can exist in BOTH stores
-    and the box silently prefers canopy-web, so the screen must say which is
-    live rather than only that something is set."""
     _put(fleet["client"], {"canopy-pat": SECRET})
     rows = {r["name"]: r for r in fleet["client"].get("/api/agents/ace/credentials/status").json()}
-    assert rows["canopy-pat"]["source"] == "canopy-web"
+    assert rows["canopy-pat"]["source"] == "canopy-web-zk"
     assert rows["gog-token"]["source"] == "unset"
 
 
@@ -200,9 +214,9 @@ def test_delete_removes_the_slot(fleet):
     assert rows["canopy-pat"]["set"] is False
 
 
-# --- resolve: the one plaintext route ------------------------------------------
+# --- resolve: ciphertext only ----------------------------------------------------
 
-def test_a_paired_runner_resolves_the_values(fleet):
+def test_resolve_hands_out_ciphertext_never_the_value(fleet):
     _put(fleet["client"], {"canopy-pat": SECRET})
     # A FRESH client: a runner carries a bearer and no session cookie. Reusing
     # the logged-in client would let session auth answer and prove nothing about
@@ -212,7 +226,9 @@ def test_a_paired_runner_resolves_the_values(fleet):
         HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}",
     )
     assert res.status_code == 200
-    assert res.json()["values"]["canopy-pat"] == SECRET
+    body = res.json()
+    assert body["zk"] is True and body["values"]["canopy-pat"].startswith("zks1:")
+    assert SECRET not in res.content.decode()
 
 
 def test_resolve_refuses_a_plain_browser_session(fleet):

@@ -202,8 +202,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
     canopy login, and every secret in `VaultEditor`
     (`components/vault/VaultEditor.tsx`, a table you Change / Add / Reveal /
     Delete in place (a value can be a file from disk, e.g. a service-account
-    JSON), owner-agnostic so other vault pages can reuse it; on a
-    ZK agent Save and Reveal encrypt/decrypt locally; the 1Password vault +
+    JSON), owner-agnostic so other vault pages can reuse it; Reveal decrypts locally with the person's vault key, and Save encrypts
+    locally once the agent has one; the 1Password vault +
     service-account form shows only for an agent still on 1Password); then,
     for its admins, who can open them: the vault's members
     (`docs/architecture/vault.md`), Zero-knowledge — turn on / grant

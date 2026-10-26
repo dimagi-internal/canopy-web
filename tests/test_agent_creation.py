@@ -371,7 +371,7 @@ def test_a_box_that_cannot_read_the_mailbox_outranks_the_stored_token(editor, ws
     """lex, 2026-10-20: canopy-web held its gog-token, cloud-ec2-2 reported it could not
     find one, and the checklist read "done" off the stored token. The box is the answer."""
     agent = _agent(ws, editor)
-    AgentCredential.objects.create(agent=agent, name="gog-token", value_enc="t")
+    AgentCredential.objects.create(agent=agent, name="gog-token", value_zk="zk1:t")
     assert _status(agent)["mailbox"] == "done"
     AgentBootstrapReport.objects.create(
         agent=agent, runner_name="cloud-ec2-2", mailbox_ok=False,
@@ -396,7 +396,7 @@ def test_a_failure_from_before_the_mailbox_was_connected_is_not_the_answer(edito
         detail="gmail check failed: No auth for gmail scout@example.org.")
     AgentBootstrapReport.objects.filter(pk=report.pk).update(
         reported_at=timezone.now() - timedelta(days=7))
-    AgentCredential.objects.create(agent=agent, name="gog-token", value_enc="t")
+    AgentCredential.objects.create(agent=agent, name="gog-token", value_zk="zk1:t")
     mailbox = next(s for s in setup_steps(agent) if s["key"] == "mailbox")
     assert mailbox["status"] == "done"
     # The same box failing again AFTER the sign-in is the answer again.

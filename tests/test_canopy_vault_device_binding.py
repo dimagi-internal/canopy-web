@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.agents.models import Agent, AgentCredentialRead
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment, RunnerDeviceKey
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -58,6 +58,9 @@ def fleet(client):
     runner = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=jj, status=Runner.ONLINE, workspace=ws,
                                    last_heartbeat_at=timezone.now(), capabilities={})
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    # Someone to seal the stored value to: the agent vault is zero-knowledge, so the
+    # first write turns it on (and a resolve then always needs a device proof).
+    give_vault_key(jj)
     client.force_login(jj)
     # Browser credential writes and device-key approvals need a passkey step-up
     # (apps/passkeys); tests/test_canopy_vault_device_binding.py's own step-up
@@ -207,6 +210,10 @@ def test_revoke_is_immediate_and_a_revoked_key_cannot_be_revived(fleet):
 # ---- the device proof on resolve -----------------------------------------------------
 
 def test_without_binding_resolve_needs_no_proof(fleet):
+    """Only an agent whose vault is not in use (a legacy agent that stores nothing
+    here): a zero-knowledge agent always needs a proof, binding or not."""
+    fleet["agent"].credentials.all().delete()
+    Agent.objects.filter(pk=fleet["agent"].pk).update(zk_enabled=False)
     assert _resolve(fleet).status_code == 200
 
 
@@ -232,7 +239,8 @@ def test_a_valid_proof_from_an_active_key_resolves_and_names_the_runner(fleet):
     _bind(fleet)
     _active_key(fleet)
     res = _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU))
-    assert res.status_code == 200 and res.json()["values"]["canopy-pat"] == "pat-value"
+    assert res.status_code == 200 and res.json()["values"]["canopy-pat"].startswith("zks1:")
+    assert "pat-value" not in res.content.decode()
     read = AgentCredentialRead.objects.get(name="canopy-pat")
     assert read.runner_id == fleet["runner"].pk
     assert RunnerDeviceKey.objects.get().last_used_at is not None
@@ -405,8 +413,10 @@ def test_device_binding_is_admin_settable_and_shown(fleet):
 
 
 def test_read_history_and_last_read_on_status(fleet):
-    _resolve(fleet)
-    Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}", HTTP_X_CANOPY_TURN_ID="t-9")
+    _active_key(fleet)  # a zero-knowledge agent's resolve always needs a device proof
+    _resolve(fleet, make_dpop_proof(fleet["key"], "GET", HTU))
+    Client().get(RESOLVE, HTTP_AUTHORIZATION=f"Bearer {fleet['pat']}", HTTP_X_CANOPY_TURN_ID="t-9",
+                 HTTP_DPOP=make_dpop_proof(fleet["key"], "GET", HTU))
     reads = fleet["client"].get("/api/agents/eva/credentials/canopy-pat/reads").json()
     assert len(reads) == 2 and reads[0]["turn_id"] == "t-9"
     assert reads[0]["user_email"] == "jj@dimagi.com"

@@ -162,7 +162,7 @@ def test_the_owner_delegates_a_working_token_sealed_to_the_machines_that_run_the
     entry = _lend(agent, owner, github)
     entry.refresh_from_db()
     assert (entry.name, entry.account, entry.provider) == ("github-token", "delegated", "github")
-    assert entry.delegated_by == owner and entry.value_enc == ""
+    assert entry.delegated_by == owner
     assert entry.value_zk.startswith("zks1:") and "github_pat_olive" not in entry.value_zk
     # Sealed to the machine, and to no person — not even the one it came from (no vault key).
     assert accounts.zk_seal.sealed_targets(entry.value_zk) == {("device", key.ecdh_jkt)}

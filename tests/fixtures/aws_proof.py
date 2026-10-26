@@ -23,7 +23,7 @@ from apps.agents.models import (
     Agent,
 )
 from apps.harness.models import Runner, RunnerAssignment
-from apps.passkeys.testing import grant_step_up
+from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -127,6 +127,7 @@ def fleet(client):
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                    capabilities={})
     RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    give_vault_key(jj)  # someone to seal the stored PAT to (the agent vault is zero-knowledge)
     client.force_login(jj)
     grant_step_up(client)
     client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value"}},

@@ -17,10 +17,10 @@ can rotate without anyone typing anything. An owner or admin opts an agent in
    to the end of the overlap, so it dies even if nothing else runs — and then
    revoke it (`revoked_at`), which the same tick does once `revoke_after` passes.
 
-Only a token the stored value actually IS — a live PersonalToken of the agent's
-own login, found by hashing the value — is ever shortened or revoked; if the
-stored login holds something else (a person's token, a typo), it is replaced
-and the other token is left alone.
+canopy-web cannot read the stored value (the agent's vault is zero-knowledge),
+so the old token is the one this job minted last — a live PersonalToken of the
+agent's own login. Only that one is ever shortened or revoked; a token a person
+stored since is replaced and left alone.
 
 The impersonation guard of `services.mint_agent_canopy_token` is re-checked at
 every rotation against the person who opted in: once the agent's login has
@@ -43,7 +43,6 @@ from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
-from apps.common.token_hash import hash_token
 from apps.events import services as events
 from apps.tokens.models import PersonalToken
 from apps.workspaces import permissions as perms
@@ -79,13 +78,11 @@ def enable_refusal(agent, actor) -> RotationRefused | None:
     standing `mint_agent_canopy_token` asks for, decided at opt-in so a job that
     runs later without anyone present is never the first to find out."""
 
-    # A zero-knowledge agent rotates too: the new token is sealed to its
-    # devices and members (`zks1`, apps/agents/credentials/zk_seal.py), never stored readable.
-    if agent.zk_enabled:
-
-        if not zk_seal.recipients_for(agent):
-            return RotationRefused(f"{agent.slug} is zero-knowledge and nobody can read a new "
-                                   f"{CANOPY_PAT_REF} yet: approve a device or add a member with a vault key", 409)
+    # The new token is sealed to the agent's devices and members (`zks1`,
+    # apps/agents/credentials/zk_seal.py), never stored readable.
+    if not zk_seal.recipients_for(agent):
+        return RotationRefused(f"nobody can read a new {CANOPY_PAT_REF} for {agent.slug} yet: "
+                               "approve a device or add a member with a vault key", 409)
     if agent.user_id is None:
         return RotationRefused(f"{agent.slug} has no canopy login of its own (canopy user); "
                                "mint its canopy token once first, then rotation can take over")
@@ -127,31 +124,20 @@ def max_days() -> int:
 
 
 def _current_token(agent):
-    """The live PersonalToken the stored canopy-pat IS, if it belongs to the
-    agent's own login; else None."""
+    """The live PersonalToken to retire: the one this job minted last for the
+    agent's own login, while a canopy-pat is stored; else None. canopy-web cannot
+    read the stored value, so it goes by its own record (if a person stored
+    another since, that one is superseded anyway)."""
 
-    cred = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).select_related("agent").first()
-    if cred is None or agent.user_id is None:
+    if agent.user_id is None or not AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).exists():
         return None
-    if cred.is_zk:
-        # canopy-web cannot read the stored value; the token it minted last is
-        # the one to retire (if a person stored another since, that one is
-        # superseded anyway).
-
-        last = (AgentPatRotation.objects.filter(agent=agent, status=AgentPatRotation.ROTATED,
-                                                new_token__isnull=False)
-                .order_by("-created_at").first())
-        if last is None:
-            return None
-        return PersonalToken.objects.filter(pk=last.new_token_id, user_id=agent.user_id,
-                                            revoked_at__isnull=True).first()
-    try:
-        raw = cred.plaintext()  # refuses a zero-knowledge value: "not a token we know"
-    except Exception:  # noqa: BLE001 - an undecryptable value is just "not a token we know"
+    last = (AgentPatRotation.objects.filter(agent=agent, status=AgentPatRotation.ROTATED,
+                                            new_token__isnull=False)
+            .order_by("-created_at").first())
+    if last is None:
         return None
-    digest = hash_token(raw)
-    return (PersonalToken.objects.filter(token_hash=digest, user_id=agent.user_id,
-                                         revoked_at__isnull=True).first())
+    return PersonalToken.objects.filter(pk=last.new_token_id, user_id=agent.user_id,
+                                        revoked_at__isnull=True).first()
 
 
 def rotate(agent, *, trigger: str = "scheduler", actor=None, presented_token_id=None):

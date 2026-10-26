@@ -4,10 +4,9 @@
  * (`@/api/vault`). Every secret here — the vault key VK, a person's private
  * scalar, a recovery secret, a decrypted value — lives only in local variables
  * of one call and is never sent anywhere; what goes to canopy-web is
- * ciphertext, wraps and seals. There is no way back to custodial storage:
- * zero-knowledge is the canopy-web vault's only mode (Jonathan, 2026-10-17).
+ * ciphertext, wraps and seals. Zero-knowledge is the agent vault's only mode:
+ * canopy-web holds no value it can read.
  */
-import { revealAgentCredential } from '@/api/agents'
 import { approveRunnerDeviceKey, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { registerThisDevice, type PasskeyOut } from '@/api/passkeys'
 import { defaultLabel } from '@/auth/webauthn'
@@ -503,8 +502,8 @@ async function freshRecovery(vk: Uint8Array, agentId: string, kv: number): Promi
 // ---- the agent flows ------------------------------------------------------------------------
 
 /**
- * Turn on ZK, step by step: generate VK; fetch the custodial values (reveal,
- * behind the passkey step-up this flow already holds); encrypt them; wrap VK
+ * Create the agent's first vault key, step by step: generate VK; open each
+ * value sealed to me (`zks1`, stored before the key existed); encrypt them; wrap VK
  * for me, every eligible device and recovery; then hand the recovery code to
  * `confirm` — which shows it once and resolves when the person has kept it —
  * and only then call enable.
@@ -540,14 +539,10 @@ export async function prepareTurnOnZk(slug: string, storedNames: string[], unloc
   const values: { name: string; value_zk: string }[] = []
   for (const name of storedNames) {
     const stored = state.values?.[name]
-    let plain: string
-    if (stored && isSealed(stored)) {
-      if (!unlock) throw new Error('Unlock your vault key to open the sealed values.')
-      me = me ?? (await unlock())
-      plain = await openSealedValue(stored, state.agent_id, name, 'member', me.userId, me.privateKey)
-    } else {
-      plain = await revealAgentCredential(slug, name)
-    }
+    if (!stored || !isSealed(stored)) throw new Error(`${name} is not sealed to you, so it cannot be moved under a new vault key.`)
+    if (!unlock) throw new Error('Unlock your vault key to open the sealed values.')
+    me = me ?? (await unlock())
+    const plain = await openSealedValue(stored, state.agent_id, name, 'member', me.userId, me.privateKey)
     values.push({ name, value_zk: await encryptValue(vk, state.agent_id, name, kv, plain) })
   }
   const wraps: ZkWrapIn[] = [await wrapTo(vk, state.agent_id, kv,

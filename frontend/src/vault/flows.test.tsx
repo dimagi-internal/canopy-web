@@ -12,8 +12,6 @@ const api = vi.hoisted(() => ({
   putZkValues: vi.fn(), rotateZk: vi.fn(),
 }))
 vi.mock('@/api/vault', () => api)
-const { revealAgentCredential } = vi.hoisted(() => ({ revealAgentCredential: vi.fn() }))
-vi.mock('@/api/agents', () => ({ revealAgentCredential }))
 const passkeysApi = vi.hoisted(() => ({ registerThisDevice: vi.fn(), listPasskeys: vi.fn(), deletePasskey: vi.fn() }))
 vi.mock('@/api/passkeys', () => passkeysApi)
 const prf = vi.hoisted(() => ({ assertWithPrf: vi.fn(), browserSupportsPrf: vi.fn() }))

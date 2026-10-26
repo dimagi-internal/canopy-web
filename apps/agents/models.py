@@ -197,11 +197,18 @@ class Agent(models.Model):
         related_name="+",
     )
     pat_rotated_at = models.DateTimeField(null=True, blank=True)
-    # Canopy Vault Phase 2 (canopy-web#1550): zero-knowledge. When on, every
-    # AgentCredential holds `zk1:` ciphertext under a per-agent vault key (VK)
-    # canopy-web never sees; VK reaches each principal as an AgentVaultWrap.
-    # `zk_kv` is the current vault-key version (0 = never enabled). Formats:
-    # docs/vault/zk-v1/zk_v1_reference.py. Owner/admin only (apps/agents/credentials/zk.py).
+    # Canopy Vault Phase 2 (canopy-web#1550): zero-knowledge, the agent vault's only
+    # mode. Every AgentCredential holds ciphertext (`zk1:` under a per-agent vault
+    # key canopy-web never sees, which reaches each principal as an AgentVaultWrap,
+    # or `zks1` sealed to each reader before that key exists). `zk_kv` is the
+    # current vault-key version (0 = no vault key yet). Formats:
+    # docs/vault/zk-v1/zk_v1_reference.py (apps/agents/credentials/zk.py).
+    #
+    # `zk_enabled` is NOT a choice of storage: there is no other. It is False only
+    # for a legacy 1Password agent that has never held a value here, so its
+    # resolve skips the vault-member and wrap checks it has nothing behind. Every
+    # created agent is born True (`services.born_zk_fields`), and the first value
+    # stored for one that is not, or its move to the canopy vault, turns it on.
     zk_enabled = models.BooleanField(default=False)
     zk_kv = models.PositiveIntegerField(default=0)
 
@@ -489,10 +496,6 @@ class AgentBootstrapReport(models.Model):
         return f"bootstrap:{self.agent_id}@{self.runner_name}"
 
 
-class ZeroKnowledgeValue(ValueError):
-    """A custodial path asked for the plaintext of a zero-knowledge value."""
-
-
 class VaultEntryAccount(models.Model):
     """Whose account a vault entry is, as clear columns beside its ciphertext — the same
     fields on an agent vault's entries (`AgentCredential`) and a workspace vault's
@@ -563,7 +566,7 @@ class VaultEntryAccount(models.Model):
 
 
 class AgentCredential(VaultEntryAccount):
-    """One named secret for one agent, encrypted at rest.
+    """One named secret for one agent, as ciphertext canopy-web cannot open.
 
     Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
 
@@ -572,9 +575,9 @@ class AgentCredential(VaultEntryAccount):
     import source and a per-secret FALLBACK, which is what makes the migration
     reversible: an agent with nothing here keeps working.
 
-    Write-only over the API. The value is readable by exactly one caller — a
-    runner that could actually run this agent — and never by a browser, which is
-    what makes "write-only" a property of the system rather than of the UI.
+    Zero-knowledge only: canopy-web stores `value_zk` and holds no key that opens
+    it. A machine that runs the agent opens it with its own device key, a person
+    with their vault key, in their browser. There is no custodial copy.
 
     NAMED SLOTS, not fixed columns: RunnerCredential has five columns because a
     runner has five credentials; ACE declares 45 refs and echo 12.
@@ -589,12 +592,10 @@ class AgentCredential(VaultEntryAccount):
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credentials")
     #: Matches a name in the agent's declared secrets (Agent.runtime_secrets).
     name = models.CharField(max_length=120)
-    #: Fernet ciphertext (apps/common/encryption.py). Never plaintext. Empty
-    #: for a zero-knowledge value (`value_zk`).
-    value_enc = models.TextField(blank=True, default="")
-    #: Zero-knowledge (canopy-web#1550): `zk1:` AES-GCM ciphertext under the
-    #: agent's vault key at version `kv`. canopy-web cannot decrypt it, so
-    #: `plaintext()` refuses it.
+    #: Zero-knowledge (canopy-web#1550), the only way a value is stored: `zk1:`
+    #: AES-GCM ciphertext under the agent's vault key at version `kv`, or `zks1`
+    #: sealed to each reader before the vault key exists (kv 0). canopy-web holds
+    #: no key that opens either.
     value_zk = models.TextField(blank=True, default="")
     kv = models.PositiveIntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -614,41 +615,6 @@ class AgentCredential(VaultEntryAccount):
 
     def __str__(self) -> str:
         return f"{self.agent.slug}:{self.name}"
-
-    # ---- the one codec for `value_enc` (canopy-web#1538) ---------------------
-    # Fernet by default; `kms1:` envelope when settings.VAULT_KMS_KEY_ID is set
-    # (apps/common/kms_envelope.py). Every reader goes through `plaintext()` so
-    # both formats are always readable, whichever is being written today.
-
-    @staticmethod
-    def kms_context(agent, name: str) -> dict[str, str]:
-        return {"workspace": str(agent.workspace_id), "agent": str(agent.pk), "name": name}
-
-    @classmethod
-    def seal(cls, agent, name: str, plaintext: str) -> str:
-        from apps.common import kms_envelope
-        from apps.common.encryption import encrypt_secret
-
-        if kms_envelope.enabled():
-            return kms_envelope.encrypt(plaintext, context=cls.kms_context(agent, name))
-        return encrypt_secret(plaintext)
-
-    @property
-    def is_zk(self) -> bool:
-        return bool(self.value_zk)
-
-    def plaintext(self) -> str:
-        from apps.common import kms_envelope
-        from apps.common.encryption import decrypt_secret
-
-        if self.is_zk:
-            # canopy-web holds no key for this (canopy-web#1550); a caller that
-            # reaches here has a custodial path a zero-knowledge agent must not.
-            raise ZeroKnowledgeValue(f"{self.name} is a zero-knowledge value; canopy-web cannot read it")
-        if kms_envelope.is_envelope(self.value_enc):
-            return kms_envelope.decrypt(
-                self.value_enc, expect=self.kms_context(self.agent, self.name))
-        return decrypt_secret(self.value_enc)
 
 
 class AgentCredentialRead(models.Model):
