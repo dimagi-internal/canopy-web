@@ -701,6 +701,19 @@ stamps. Its initiator stays the agent: the agent made the call, for that person.
 canopy CLI sends the header with `--on-behalf-of <email>` (or `caller`, the current
 turn's verified asker).
 
+## Who is in a session
+
+A session is visible to the people who were in the conversation where it happened, plus
+whoever they add. A `SessionParticipant` row (EDITOR) is the grant, made at the channel's
+door; the ACL itself stays `apps/canopy_sessions/access.py`. Never a non-member, a contact,
+an agent's login or a system account, and never into a sensitive conversation.
+
+* **Email: everyone on the thread** (`harness.channels.email.admit_thread_people`) — the
+  members among the From, To and Cc of each inbound message whose From is aligned (DMARC,
+  or DKIM signed by the From: domain), joined as each message arrives; an unaligned
+  message admits nobody, so a forged From cannot Cc someone into a thread's history. The
+  agent's own replies admit their To/Cc (`mail.agent_mail._admit_recipients`).
+
 ## Slack threads
 
 Who may write into a Slack thread's conversation is an access decision, so two

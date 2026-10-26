@@ -2,24 +2,30 @@
 door, and which conversation (session) the mail belongs to.
 
 `services.enqueue_turn` asks `arrive` for every email turn with an agent, before
-any generic work, and `log_unproven_member` once the turn exists. Nothing here
-grants anything: an inbound email is an unauthenticated, spoofable identity, and
-the recorded contact only feeds later turns and routing
-(docs/architecture/access.md, docs/architecture/mail.md).
+any generic work, and `log_unproven_member` once the turn exists. An inbound
+email is an unauthenticated, spoofable identity: the recorded contact grants
+nothing and only feeds later turns and routing. The one grant made here is
+session participation for the MEMBERS on a thread, and only on this message's
+proof (`admit_thread_people`; docs/architecture/access.md § Who is in a session,
+docs/architecture/mail.md).
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from email.utils import getaddresses
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.agents.models import SenderTrust
+from apps.agents.models import Agent, SenderTrust
+from apps.canopy_sessions.models import SessionParticipant
+from apps.canopy_sessions.participants import ensure_participant
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
+from apps.workspaces.models import SystemAccount
 
 from .. import initiator as who
 from .. import sensitivity, session_sync
@@ -103,6 +109,12 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
                 if not sensitivity.is_sensitive(bound):
                     session = bound
                     agent = None      # the session now carries the agent
+                    # Everyone on the thread who is a member is in the conversation
+                    # (`admit_thread_people`). Never fatal: mail is answered either way.
+                    try:
+                        admit_thread_people(session, origin_ref, email_contact)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("could not admit the people on an email thread")
             except Exception:  # noqa: BLE001
                 # Degrade to the previous behaviour. A turn that runs without a
                 # session is the status quo; a turn that fails to EXIST because
@@ -111,6 +123,85 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
                 logger.exception("could not bind an email turn to a session")
                 session = None
     return EmailArrival(agent, session, initiator)
+
+
+def admit_thread_people(session, origin_ref, contact) -> list:
+    """Make the canopy members on this message's thread participants of its session.
+
+    A session is visible to the people who were in the conversation where it
+    happened (docs/architecture/access.md § Who is in a session). For mail that is
+    everyone on the thread: the From, To and Cc of each inbound message, admitted as
+    each message arrives, so someone copied in later joins then.
+
+    Only on THIS message's proof. Its From must be aligned (DMARC, or DKIM signed by
+    the From: domain) on our own receiver's verdict — the bar `member_behind_email`
+    links a sender with. An unaligned message admits nobody, not even its To/Cc: a
+    forged From could otherwise Cc a member into a thread they were never on and
+    hand them its history. An aligned message's To/Cc are who its real, proven
+    sender addressed it to — the people email itself shows the thread to — so they
+    are admitted whether that sender is a member or an outside correspondent.
+
+    Each address must resolve to exactly one canopy user who provably holds it
+    (`address_holder`) AND is a member of the session's workspace. A non-member, a
+    contact, an agent's own login or a system account is never added. Never into a
+    sensitive conversation (`admit_addresses`). Returns the users added or already in.
+    """
+    if session is None or contact is None or not contact.email:
+        return []
+    if contact.last_auth_result not in Contact.EMAIL_ALIGNED:
+        return []
+    ref = origin_ref if isinstance(origin_ref, dict) else {}
+    return admit_addresses(session, [contact.email, *_address_list(ref.get("to")),
+                                     *_address_list(ref.get("cc"))])
+
+
+def admit_addresses(session, addresses) -> list:
+    """The members behind `addresses` become EDITOR participants of `session`.
+
+    The caller has already decided these addresses are trustworthy as the thread's
+    people (`admit_thread_people`: an aligned inbound message; `apps/mail` sending:
+    the agent's own reply). This only resolves and admits, by the same rule for
+    every address: one provable holder, a member of the session's workspace, a
+    person (not an agent login or a system account). Never into a sensitive
+    conversation — `ensure_participant` refuses one anyway; this says so first.
+    """
+    if session is None or sensitivity.is_sensitive(session):
+        return []
+    admitted, seen = [], set()
+    for raw in addresses or ():
+        addr = contacts._normalize(str(raw or ""))
+        if not addr or addr in seen:
+            continue
+        seen.add(addr)
+        user, role = address_holder(addr, session.workspace_id)
+        if user is None or role is None or not _is_person(user):
+            continue
+        if ensure_participant(session, user, SessionParticipant.EDITOR) is not None:
+            admitted.append(user)
+    return admitted
+
+
+MAX_THREAD_ADDRESSES = 50
+
+
+def _address_list(value) -> list[str]:
+    """`origin_ref["to"]`/`["cc"]` as a list of addresses: a list, or one header
+    string ("A <a@x>, b@y"). Capped, like a send's recipients."""
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple)):
+        values = [str(v) for v in value if v]
+    else:
+        return []
+    return [a for _, a in getaddresses(values) if a][:MAX_THREAD_ADDRESSES]
+
+
+def _is_person(user) -> bool:
+    """A human account: not an agent's own login, not a workspace system account.
+    Participation is for people; an agent reaches another agent's work through a
+    thread or a dispatch, never as an editor of its conversations."""
+    return not (Agent.objects.filter(user=user).exists()
+                or SystemAccount.objects.filter(user=user).exists())
 
 
 def record_email_contact(agent, origin_ref, *, authserv_id: str | None = None):

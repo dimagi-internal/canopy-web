@@ -180,13 +180,15 @@ def test_bulk_reset_only_touches_sessions_you_may_act_in():
 
 # Who may create a SessionParticipant row. Each is an EXPLICIT act: creating a
 # chat, the owner sharing it, a member joining a Slack thread they can already
-# read in Slack. Adding a caller here is adding a way into other people's
+# read in Slack, a member on an email thread its proven sender addressed to
+# them. Adding a caller here is adding a way into other people's
 # conversations — say why in the module you add it to.
 ALLOWED_GRANTERS = {
     "apps/canopy_sessions/participants.py",  # ensure_participant itself
     "apps/canopy_sessions/services.py",      # create_session: the creator as owner
     "apps/canopy_sessions/api.py",           # add_participant: the owner shares
     "apps/slack/services.py",                # a member in a Slack thread
+    "apps/harness/channels/email.py",        # a member on an (aligned) email thread
 }
 
 

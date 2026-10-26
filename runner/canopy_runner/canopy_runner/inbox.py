@@ -187,6 +187,11 @@ class ThreadFacts(NamedTuple):
     #: wake — then that one's, so a trailing auto-reply can never archive a person's
     #: unanswered mail. `None` is "unknown" — fail open, enqueue.
     verdict: "inbox_rules.Verdict | None" = None
+    #: The newest message's `To` and `Cc` headers, verbatim. Who else is on the
+    #: thread: canopy admits the members among them to the thread's session, and
+    #: only when this same message's From is aligned (canopy decides that too).
+    to_header: str = ""
+    cc_header: str = ""
 
 
 def _decoded_body(msg: dict) -> str:
@@ -258,7 +263,8 @@ def thread_facts(mailbox: str, gog_client: str, thread_id: str, *,
                        auth_results=tuple(auth),
                        automated=is_automated(first) if sender is not None else None,
                        message_id=newest.get("id") or None,
-                       verdict=thread_verdict(msgs, mailbox) if sender is not None else None)
+                       verdict=thread_verdict(msgs, mailbox) if sender is not None else None,
+                       to_header=first.get("to", ""), cc_header=first.get("cc", ""))
 
 
 def thread_verdict(msgs: list[dict], mailbox: str) -> "inbox_rules.Verdict":
@@ -610,6 +616,12 @@ def check_inbox(client, agent: str, *, mailbox: str, gog_client: str,
             origin_ref["message_id"] = facts.message_id
         if verdict is not None:
             origin_ref["inbox_row"] = verdict.row
+        # Who else the newest message was addressed to, as written: canopy parses
+        # them and admits the members among them to the thread's session.
+        if facts.to_header:
+            origin_ref["to"] = facts.to_header
+        if facts.cc_header:
+            origin_ref["cc"] = facts.cc_header
         if facts.auth_results:
             origin_ref["headers"] = [{"name": "Authentication-Results", "value": v}
                                      for v in facts.auth_results]
