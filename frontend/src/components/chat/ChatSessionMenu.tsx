@@ -57,6 +57,7 @@ export function ChatSessionMenu({
   sessionId,
   agentSlug,
   myRole,
+  canAddPeople = false,
   notifyEveryCompletion,
   onToggleNotify,
   shareDisabledReason,
@@ -85,6 +86,7 @@ export function ChatSessionMenu({
   /** The agent this chat is with: Share secret offers its vault for a declared name. */
   agentSlug?: string | null;
   myRole: string | null;
+  canAddPeople?: boolean;
   /** Undefined until the session has loaded: the toggle is hidden until then. */
   notifyEveryCompletion?: boolean;
   onToggleNotify: () => void;
@@ -291,7 +293,7 @@ export function ChatSessionMenu({
               <SessionMemoryPanel memory={memory} />
             </div>
           )}
-          {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} />}
+          {panel === "people" && <ChatPeoplePanel sessionId={sessionId} myRole={myRole} canAddPeople={canAddPeople} />}
           {panel === "info" && <SessionInfoPanel sessionId={sessionId} />}
           {panel === "move" && canMove && (
             <MoveWorkspaceForm

@@ -62,4 +62,17 @@ describe('ChatPeoplePanel', () => {
     expect(screen.queryByLabelText('Remove ed@dimagi.com')).toBeNull()
     expect(screen.getByText(/only the chat's owner can add people/i)).toBeTruthy()
   })
+
+  it("the agent's owner in the chat may add someone, but changes and removes nobody", async () => {
+    listParticipants.mockResolvedValue([OWNER, ED])
+    addParticipant.mockResolvedValue([OWNER, ED, { user_id: 3, email: 'new@dimagi.com', display_name: 'New', role: 'viewer' }])
+    render(<ChatPeoplePanel sessionId="s1" myRole="editor" canAddPeople />)
+    await screen.findByText('Ed')
+    expect(screen.queryByLabelText('Change role for ed@dimagi.com')).toBeNull()
+    expect(screen.queryByLabelText('Remove ed@dimagi.com')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@dimagi.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(addParticipant).toHaveBeenCalledWith('s1', 'new@dimagi.com', 'editor'))
+    expect(await screen.findByText('New')).toBeTruthy()
+  })
 })

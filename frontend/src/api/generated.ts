@@ -13040,8 +13040,9 @@ export interface paths {
         readonly put?: never;
         /**
          * Give a teammate this chat
-         * @description Owner only. The teammate must already be a member of the chat's
-         *     workspace; adding someone again changes their role.
+         * @description The chat's owner, or the owner of the agent it is with when they are in it.
+         *     The teammate must already be a member of the chat's workspace; the chat's owner
+         *     adding someone again changes their role.
          */
         readonly post: operations["add_participant"];
         readonly delete?: never;
@@ -36598,6 +36599,11 @@ export interface components {
             } | null;
             /** My Role */
             readonly my_role?: string | null;
+            /**
+             * Can Add People
+             * @default false
+             */
+            readonly can_add_people: boolean;
             readonly audience?: components["schemas"]["SessionAudienceOut"] | null;
             /**
              * Your Join Request
