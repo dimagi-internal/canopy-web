@@ -6174,11 +6174,15 @@ export interface paths {
         /**
          * Set a pool slot's data (per-key upsert; secret half write-only)
          * @description Per key: a string writes it, null deletes it, a key left out is kept; a
-         *     section left out is untouched. `secret` is encrypted at rest and only ever
-         *     delivered on the lease read of the user holding a ready lease on this slot;
-         *     the response is the MASKED state. 422 unless the capability is a `pool` and
-         *     declares `slot`. For a workspace admin, or the agent's own login; a browser
-         *     needs a fresh passkey step-up (403 `step_up_required` otherwise).
+         *     section left out is untouched. A `secret` value is either already sealed
+         *     (`zks1:`, to the readers `GET /api/agents/{slug}/vault/zk/recipients` names,
+         *     under the name `capability-slot:<capability>/<slot>/<key>`) or plaintext,
+         *     which is sealed to those readers at once and never stored or logged in
+         *     clear; 409 when nobody can read the agent's secrets yet. It is delivered,
+         *     still sealed, only on the lease read of the user holding a ready lease on
+         *     this slot; the response is the MASKED state. 422 unless the capability is a
+         *     `pool` and declares `slot`. For a workspace admin, or the agent's own login;
+         *     a browser needs a fresh passkey step-up (403 `step_up_required` otherwise).
          */
         readonly put: operations["set_capability_slot_data"];
         readonly post?: never;
@@ -6318,8 +6322,9 @@ export interface paths {
          *     failed), re-reading ready.json about once a second, else after `wait_s`.
          *
          *     A ready `pool` lease read by the user who acquired it carries `slot_data`
-         *     (the slot's public and decrypted secret data; each delivery of secret
-         *     values is an event). Null for anyone else, admins included.
+         *     (the slot's public data and its secret data still sealed, which the holder
+         *     opens with its device key; each delivery of secret values is an event).
+         *     Null for anyone else, admins included.
          */
         readonly get: operations["get_capability_lease"];
         readonly put?: never;
@@ -27841,12 +27846,25 @@ export interface components {
             readonly slot: string | null;
             /** Out Prefix */
             readonly out_prefix: string;
-            /** Slot Data */
-            readonly slot_data?: {
-                readonly [key: string]: {
-                    readonly [key: string]: string;
-                };
-            } | null;
+            readonly slot_data?: components["schemas"]["CapabilitySlotDeliveryOut"] | null;
+        };
+        /**
+         * CapabilitySlotDeliveryOut
+         * @description A ready pool lease's slot data, for the user who acquired it. canopy-web
+         *     cannot open `sealed`: the holder opens each value with its device key
+         *     (`canopy vault open-slot-data`).
+         */
+        readonly CapabilitySlotDeliveryOut: {
+            /** Public */
+            readonly public: {
+                readonly [key: string]: string;
+            };
+            /** Sealed */
+            readonly sealed: {
+                readonly [key: string]: string;
+            };
+            /** Agent Id */
+            readonly agent_id: string;
         };
         /**
          * AgentCapabilitiesIn
@@ -27978,6 +27996,11 @@ export interface components {
             };
             /** Secret Keys */
             readonly secret_keys: readonly string[];
+            /**
+             * Secret Awaiting Seal
+             * @default false
+             */
+            readonly secret_awaiting_seal: boolean;
             /** Updated At */
             readonly updated_at: string | null;
             /** Updated By */

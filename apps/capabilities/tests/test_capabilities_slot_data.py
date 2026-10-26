@@ -1,20 +1,28 @@
-"""A `pool` slot's data: public values and an encrypted, write-only secret half.
+"""A `pool` slot's data: public values and a sealed, write-only secret half.
 
 The rules (docs/architecture/capabilities.md § 6, "Slot data"): a workspace admin
 or the agent's own login writes it per key; any member reads it MASKED (secret key
-names, never values — admins included); the secret values leave canopy-web only
-on the lease read of the user who acquired a READY lease on that slot, and each
-such delivery is an event that never carries a value. Nothing — events, the
-settings audit, the MCP call log, errors, the DB column — holds a secret in clear.
+names, never values — admins included); a secret value is stored only SEALED to
+the agent's readers (`zks1`) — canopy-web cannot open it — and leaves canopy-web,
+still sealed, only on the lease read of the user who acquired a READY lease on
+that slot; each such delivery is an event that never carries a value. Nothing —
+events, the settings audit, the MCP call log, errors, the DB column — holds a
+secret in clear.
 """
 from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import importlib.util
+import io
 import json
+import os
+from pathlib import Path
 
 import pytest
 from asgiref.sync import async_to_sync
+from cryptography.hazmat.primitives.asymmetric import ec
+from django.core.management import call_command
 from django.db import connection
 from django.utils import timezone
 from fastmcp.server.auth import AccessToken
@@ -22,7 +30,9 @@ from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_cont
 
 from apps.capabilities import aws, services
 from apps.capabilities.models import CapabilityLease, CapabilitySlotData
+from apps.common.encryption import encrypt_secret
 from apps.events.models import Event, SettingChange
+from apps.passkeys.models import UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member
@@ -41,6 +51,32 @@ PIN = "PIN-73914-sentinel"
 BACKUP = "BACKUP-55102-sentinel"
 SECRETS = (PIN, BACKUP)
 SLOTS = "/api/agents/ace/capabilities/test-worker/slots"
+ZK_DIR = Path(__file__).resolve().parents[3] / "docs" / "vault" / "zk-v1"
+
+
+def _ref():
+    spec = importlib.util.spec_from_file_location("zk_v1_reference", ZK_DIR / "zk_v1_reference.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ref = _ref()
+
+
+def _vault_key(user):
+    """A vault key for `user` (the agent's owner, so a reader of its vault); its private half."""
+    priv = ec.generate_private_key(ec.SECP256R1())
+    UserVaultKeyset.objects.create(user=user, public_jwk=ref.jwk(priv.public_key()), seals=[])
+    return priv
+
+
+def _open(tenancy, delivered: dict, slot="worker-1", cap="test-worker") -> dict:
+    """What the holder's machine does: open each sealed value — here with the owner's key."""
+    owner = tenancy["owner"]
+    return {k: ref.open_sealed_value(v, delivered["agent_id"], f"capability-slot:{cap}/{slot}/{k}",
+                                     "member", str(owner.pk), tenancy["owner_key"])
+            for k, v in delivered["sealed"].items()}
 
 
 def _no_aws(region):
@@ -55,6 +91,7 @@ def pool(tenancy, monkeypatch):
     r = _json(c, "put", "/api/capabilities/grants", {"agent": "ace", "capability": "test-worker"})
     assert r.status_code == 200, r.content
     tenancy["admin"] = a_member(tenancy["ws"], email="ad@dimagi.com", role=M.ADMIN)
+    tenancy["owner_key"] = _vault_key(tenancy["owner"])
     return c
 
 
@@ -178,7 +215,7 @@ def test_every_slot_keeps_its_own_values(pool):
     for i, slot in enumerate(POOL["slots"], 1):
         _put(pool, slot, public={"phone": f"+7426000000{i}"}, secret={"pin": f"{PIN}-{i}"})
     rows = {r.slot: r for r in CapabilitySlotData.objects.all()}
-    assert len(rows) == 4 and len({r.secret_enc for r in rows.values()}) == 4
+    assert len(rows) == 4 and len({r.secret_zk["pin"] for r in rows.values()}) == 4
 
 
 # ---- masked reads ------------------------------------------------------------
@@ -196,7 +233,8 @@ def test_the_listing_is_masked_for_everyone(pool, tenancy, who):
     assert one["secret_keys"] == ["backup_code", "pin"] and "secret" not in one
     assert one["updated_by"] == "jj@dimagi.com" and one["held"] is False
     assert body["slots"][1] == {"slot": "worker-2", "declared": True, "public": {}, "secret_keys": [],
-                                "updated_at": None, "updated_by": None, "held": False, "lease_id": None}
+                                "secret_awaiting_seal": False, "updated_at": None, "updated_by": None,
+                                "held": False, "lease_id": None}
 
 
 def test_the_listing_says_who_holds_a_slot(pool, tenancy):
@@ -219,17 +257,46 @@ def test_the_put_response_is_masked(pool):
     _no_secret_in(r.content.decode())
 
 
-# ---- encryption at rest ------------------------------------------------------
+# ---- sealed at rest ------------------------------------------------------------
 
-def test_the_secret_column_is_ciphertext(pool):
+def test_the_secret_is_stored_sealed_to_the_agents_readers(pool, tenancy):
     _seed(pool)
     with connection.cursor() as cur:
         cur.execute(f"SELECT * FROM {CapabilitySlotData._meta.db_table}")
         raw = json.dumps(cur.fetchall(), default=str)
     _no_secret_in(raw)
-    assert "pin" not in CapabilitySlotData.objects.get().secret_enc
     row = CapabilitySlotData.objects.get()
     _no_secret_in(str(row) + repr(row))
+    assert row.secret_enc == "" and sorted(row.secret_zk) == ["backup_code", "pin"]
+    assert all(v.startswith("zks1:") for v in row.secret_zk.values())
+    # Sealed to the owner's vault key, under the slot's name — not to anything canopy-web holds.
+    opened = _open(tenancy, {"agent_id": str(tenancy["agent"].pk), "sealed": row.secret_zk})
+    assert opened == {"pin": PIN, "backup_code": BACKUP}
+
+
+def test_a_value_sealed_by_the_writer_is_stored_as_sent(pool, tenancy):
+    agent, owner = tenancy["agent"], tenancy["owner"]
+    sealed = ref.seal_value(PIN, str(agent.pk), "capability-slot:test-worker/worker-1/pin", agent.zk_kv,
+                            [("member", str(owner.pk), tenancy["owner_key"].public_key())],
+                            [ec.generate_private_key(ec.SECP256R1())], [os.urandom(12)])
+    r = _put(pool, secret={"pin": sealed})
+    assert r.status_code == 200, r.content
+    assert CapabilitySlotData.objects.get().secret_zk == {"pin": sealed}
+
+
+def test_a_malformed_sealed_value_is_refused(pool):
+    r = _put(pool, secret={"pin": "zks1:not-json"})
+    assert r.status_code == 422, r.content
+    assert not CapabilitySlotData.objects.exists()
+
+
+def test_nobody_to_seal_to_is_409_and_nothing_is_stored(pool, tenancy):
+    UserVaultKeyset.objects.all().delete()
+    r = _put(pool, public={"phone": "+1"}, secret={"pin": PIN})
+    assert r.status_code == 409, r.content
+    _no_secret_in(r.content.decode())
+    assert not CapabilitySlotData.objects.exists()
+    assert _put(pool, public={"phone": "+1"}).status_code == 200  # public data needs no reader
 
 
 # ---- delivery ----------------------------------------------------------------
@@ -239,9 +306,12 @@ def test_the_acquirer_gets_the_slot_data_on_acquire_and_on_get(pool, tenancy):
     bot = _pat(tenancy["bot"])
     lease = _take(bot).json()
     assert lease["status"] == "ready" and lease["slot"] == "worker-1"
-    want = {"public": {"phone": "+74260000001", "name": "Test Worker One"},
-            "secret": {"pin": PIN, "backup_code": BACKUP}}
+    stored = CapabilitySlotData.objects.get().secret_zk
+    want = {"public": {"phone": "+74260000001", "name": "Test Worker One"}, "sealed": stored,
+            "agent_id": str(tenancy["agent"].pk)}
     assert lease["slot_data"] == want
+    _no_secret_in(json.dumps(lease))
+    assert _open(tenancy, lease["slot_data"]) == {"pin": PIN, "backup_code": BACKUP}
     got = _json(bot, "get", f"/api/capabilities/leases/{lease['lease_id']}?wait_s=0").json()
     assert got["slot_data"] == want
     delivered = Event.objects.filter(kind="capability.slot.secret_delivered")
@@ -267,7 +337,7 @@ def test_a_long_poll_that_gets_the_slot_delivers_it(pool, tenancy, monkeypatch):
 
     monkeypatch.setattr(services, "_sleep", _sleep)
     got = _json(bot, "get", f"/api/capabilities/leases/{queued['lease_id']}?wait_s=5").json()
-    assert got["status"] == "ready" and got["slot_data"]["secret"]["pin"] == PIN
+    assert got["status"] == "ready" and _open(tenancy, got["slot_data"])["pin"] == PIN
 
 
 def test_not_to_an_admin_or_another_editor_reading_the_lease(pool, tenancy):
@@ -283,7 +353,7 @@ def test_an_editor_who_acquired_gets_it_and_the_agent_does_not(pool, tenancy):
     _seed(pool)
     ed = _as(tenancy["editor"])
     lease = _take(ed).json()
-    assert lease["slot_data"]["secret"]["pin"] == PIN
+    assert _open(tenancy, lease["slot_data"])["pin"] == PIN
     r = _json(_pat(tenancy["bot"]), "get", f"/api/capabilities/leases/{lease['lease_id']}")
     assert r.json()["slot_data"] is None
 
@@ -329,7 +399,7 @@ def test_a_slot_without_data_delivers_null(pool, tenancy):
 def test_public_only_data_is_delivered_without_a_secret_event(pool, tenancy):
     _put(pool, public={"phone": "+1"})
     lease = _take(_pat(tenancy["bot"])).json()
-    assert lease["slot_data"] == {"public": {"phone": "+1"}, "secret": {}}
+    assert lease["slot_data"] == {"public": {"phone": "+1"}, "sealed": {}, "agent_id": str(tenancy["agent"].pk)}
     assert not Event.objects.filter(kind="capability.slot.secret_delivered").exists()
 
 
@@ -337,7 +407,7 @@ def test_data_for_a_slot_no_longer_declared_is_kept_but_never_delivered(pool, te
     _seed(pool, "worker-4")
     bot = _pat(tenancy["bot"])
     lease = _take(bot, params={"slot": "worker-4"}).json()
-    assert lease["slot_data"]["secret"]["pin"] == PIN
+    assert _open(tenancy, lease["slot_data"], "worker-4")["pin"] == PIN
     assert _publish(pool, {**POOL, "slots": ["worker-1", "worker-2", "worker-3"]}).status_code == 200
     assert CapabilitySlotData.objects.filter(slot="worker-4").exists()  # survives the republish
     r = _json(bot, "get", f"/api/capabilities/leases/{lease['lease_id']}")
@@ -351,7 +421,7 @@ def test_data_for_a_slot_no_longer_declared_is_kept_but_never_delivered(pool, te
 def test_data_survives_a_republish_of_the_same_slots(pool, tenancy):
     _seed(pool)
     assert _publish(pool, {**POOL, "description": "changed"}).status_code == 200
-    assert _take(_pat(tenancy["bot"])).json()["slot_data"]["secret"]["pin"] == PIN
+    assert _open(tenancy, _take(_pat(tenancy["bot"])).json()["slot_data"])["pin"] == PIN
 
 
 # ---- never logged -------------------------------------------------------------
@@ -413,5 +483,61 @@ def test_the_slot_routes_are_mcp_tools_and_the_lease_tool_delivers(pool, tenancy
                                                   "params": {"slot": "worker-2"}})
         got = call("get_capability_lease", {"lease_id": lease["lease_id"]})
     _no_secret_in(json.dumps(listing))
-    assert got["slot_data"] == {"public": {"phone": "+2"}, "secret": {"pin": PIN}}
+    _no_secret_in(json.dumps(got))
+    assert got["slot_data"]["public"] == {"phone": "+2"}
+    assert _open(tenancy, got["slot_data"], "worker-2") == {"pin": PIN}
     _no_secret_in(json.dumps(list(MCPAuditLog.objects.values_list("args_summary", "error"))))
+
+
+# ---- rows from before sealing ----------------------------------------------------
+
+def _legacy(pool, slot="worker-1"):
+    """A row as the Fernet era left it: the secret map under canopy-web's own key."""
+    cap = CapabilitySlotData._meta.get_field("capability").related_model.objects.get(name="test-worker")
+    return CapabilitySlotData.objects.create(
+        capability=cap, slot=slot, public={"phone": "+1"},
+        secret_enc=encrypt_secret(json.dumps({"pin": PIN, "backup_code": BACKUP})))
+
+
+def test_a_legacy_row_is_neither_listed_by_value_nor_delivered_nor_written_until_sealed(pool, tenancy):
+    _legacy(pool)
+    one = pool.get(SLOTS).json()["slots"][0]
+    assert one["secret_keys"] == [] and one["secret_awaiting_seal"] is True
+    lease = _take(_pat(tenancy["bot"])).json()
+    assert lease["slot_data"]["sealed"] == {}
+    _no_secret_in(json.dumps(lease))
+    r = _put(pool, secret={"pin": "NEW"})
+    assert r.status_code == 409 and "seal_slot_secrets" in r.json()["detail"]
+    assert _put(pool, public={"name": "x"}).status_code == 200  # the public half stays writable
+
+
+def test_seal_slot_secrets_seals_legacy_rows_and_clears_the_old_ciphertext(pool, tenancy):
+    _legacy(pool)
+    out, err = io.StringIO(), io.StringIO()
+    call_command("seal_slot_secrets", "--dry-run", stdout=out, stderr=err)
+    assert json.loads(out.getvalue())["sealed"] == [{"slot": "ace/test-worker/worker-1",
+                                                     "keys": ["backup_code", "pin"]}]
+    assert CapabilitySlotData.objects.get().secret_enc != ""  # a dry run writes nothing
+    out = io.StringIO()
+    call_command("seal_slot_secrets", stdout=out, stderr=err)
+    _no_secret_in(out.getvalue() + err.getvalue() + _events_text())
+    row = CapabilitySlotData.objects.get()
+    assert row.secret_enc == "" and sorted(row.secret_zk) == ["backup_code", "pin"]
+    lease = _take(_pat(tenancy["bot"])).json()
+    assert _open(tenancy, lease["slot_data"]) == {"pin": PIN, "backup_code": BACKUP}
+    assert Event.objects.filter(kind="capability.slot.secret_sealed").exists()
+    out = io.StringIO()
+    call_command("seal_slot_secrets", stdout=out)  # idempotent: nothing left
+    assert json.loads(out.getvalue())["sealed"] == []
+
+
+def test_seal_slot_secrets_leaves_a_row_nobody_can_read_and_names_it(pool, tenancy):
+    _legacy(pool)
+    UserVaultKeyset.objects.all().delete()
+    out, err = io.StringIO(), io.StringIO()
+    call_command("seal_slot_secrets", stdout=out, stderr=err)
+    body = json.loads(out.getvalue())
+    assert body["sealed"] == [] and body["skipped"][0]["slot"] == "ace/test-worker/worker-1"
+    assert "left unsealed: ace/test-worker/worker-1" in err.getvalue()
+    _no_secret_in(out.getvalue() + err.getvalue())
+    assert CapabilitySlotData.objects.get().secret_enc != ""

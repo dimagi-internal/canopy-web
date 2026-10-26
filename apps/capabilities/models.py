@@ -178,9 +178,9 @@ class CapabilityLease(models.Model):
 
 class CapabilitySlotData(models.Model):
     """The details of one `pool` slot: a `public` map anyone who may see the
-    agent may read, and a `secret` map that is ENCRYPTED AT REST and delivered
-    only to the user who acquired a ready lease on that slot (docs/architecture/
-    capabilities.md § 6, "Slot data").
+    agent may read, and a `secret` map SEALED to the agent's readers (`zks1`,
+    canopy-web cannot open it), delivered only to the user who acquired a ready
+    lease on that slot (docs/architecture/capabilities.md § 6, "Slot data").
 
     Keyed by the capability ROW and the slot NAME, not by the manifest, so a
     republish (which rewrites `manifest`) never touches it; data for a slot the
@@ -195,8 +195,11 @@ class CapabilitySlotData(models.Model):
     slot = models.CharField(max_length=40)
     #: {key: value} (str → str), readable by the agent's workspace members.
     public = models.JSONField(default=dict, blank=True)
-    #: Fernet ciphertext (apps/common/encryption.py) of a JSON object {key: value}
-    #: (str → str). Never plaintext; "" when there is no secret half.
+    #: {key: "zks1:…"} — each value sealed to the agent's readers under
+    #: `slot_data.sealed_name(capability, slot, key)`. Key names are in clear.
+    secret_zk = models.JSONField(default=dict, blank=True)
+    #: LEGACY: Fernet ciphertext of the pre-sealing secret map. `manage.py
+    #: seal_slot_secrets` seals it into `secret_zk` and clears it; "" after that.
     secret_enc = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
