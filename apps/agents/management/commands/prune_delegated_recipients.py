@@ -7,7 +7,8 @@ from apps.agents.models import AgentCredential, VaultEntryAccount
 
 
 class Command(BaseCommand):
-    help = "Drop machines that may no longer hold a delegated credential from its sealed value (dry run unless --apply)."
+    help = ("Drop machines that may no longer hold a delegated credential from its sealed value "
+            "(dry run unless --apply).")
 
     def add_arguments(self, parser):
         parser.add_argument("--apply", action="store_true")
