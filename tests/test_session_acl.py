@@ -300,3 +300,55 @@ def test_an_agent_thread_belongs_to_whoever_runs_the_agent():
     assert access.role_for(people["owner"], thread) == SessionParticipant.OWNER  # workspace owner
     assert access.role_for(admin, thread) == SessionParticipant.OWNER
     assert access.role_for(people["mate"], thread) is None
+
+
+
+def test_an_agent_s_owner_owns_every_member_s_conversation_with_it():
+    """A member's chat with an agent (a Slack thread, a web chat) is theirs AND
+    the agent's OWNER's: the person answerable for the agent reads it and owns it
+    alongside its creator, so they can bring someone in. Its admins, and a
+    workspace owner who does not own the agent, keep exactly what they had. A
+    sensitive conversation stays sealed, and a contact's stays the contact's."""
+    from apps.agents.models import AgentAdmin
+    from apps.canopy_sessions.models import Session
+    from apps.contacts.models import Contact
+    from apps.harness import runner_requirements as rr
+
+    people, s, ws = _world()
+    agent = s["agent_thread"].agent
+    agent_owner = _user("agent_owner")
+    _member(agent_owner, ws)
+    Agent.objects.filter(pk=agent.pk).update(owner=agent_owner)
+    agent.refresh_from_db()
+    admin = _user("admin")
+    _member(admin, ws)
+    AgentAdmin.objects.create(agent=agent, user=admin)
+    chat = Session.objects.create(workspace=ws, created_by=people["mate"], agent=agent,
+                                  origin=Session.ORIGIN_WEB)
+
+    assert access.role_for(people["mate"], chat) == SessionParticipant.OWNER
+    assert access.role_for(agent_owner, chat) == SessionParticipant.OWNER
+    assert access.can_share(agent_owner, chat)
+    # An admin, a workspace owner who is not the agent's owner, and the rest: out.
+    for user in (admin, people["owner"], people["viewer"], people["outsider"],
+                 people["box_admin"], people["hal_login"]):
+        assert access.can_read(user, chat) is False, user.username
+    # The agent's own thread is unchanged: its admins still own it.
+    assert access.role_for(admin, s["agent_thread"]) == SessionParticipant.OWNER
+
+    resp = _client(agent_owner).post(
+        f"/api/canopy-sessions/{chat.id}/participants",
+        {"email": "admin@dimagi.com", "role": "viewer"}, content_type="application/json")
+    assert resp.status_code == 200
+    assert access.role_for(admin, chat) == SessionParticipant.VIEWER
+
+    sealed = Session.objects.create(workspace=ws, created_by=people["mate"], agent=agent,
+                                    origin=Session.ORIGIN_WEB,
+                                    metadata={rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
+    assert access.role_for(agent_owner, sealed) == SessionParticipant.VIEWER
+    assert access.can_share(agent_owner, sealed) is False
+
+    contact = Contact.objects.create(workspace=ws, email="visitor@example.com")
+    theirs = Session.objects.create(workspace=ws, agent=agent, contact=contact,
+                                    origin=Session.ORIGIN_WEB)
+    assert access.can_read(agent_owner, theirs) is False

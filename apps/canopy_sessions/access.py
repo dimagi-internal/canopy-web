@@ -14,11 +14,12 @@ someone merely for being in the same workspace:
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of seven legs** (`visible_session_q`): you created it; you were
+* **Then one of eight legs** (`visible_session_q`): you created it; you were
   made a participant; it is a runner-discovered session on a box YOU OWN (a
   laptop session is its owner's alone); it is the own thread of an agent you
-  run; you are an agent's own login and its person let that agent review
-  their sessions (`SessionReviewGrant`, read-only, never a sensitive one); or
+  run; it is a member's conversation with an agent you OWN; you are an
+  agent's own login and its person let that agent review their sessions
+  (`SessionReviewGrant`, read-only, never a sensitive one); or
   you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
   can be emptied — `may_move`); or its box owner shared their laptop sessions
   in this project's repo with the project's team and you are on it
@@ -26,8 +27,9 @@ someone merely for being in the same workspace:
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
-  creator, the owner of the box a discovered session runs on, or for an
-  agent's own thread the agent's admins. Only someone already in the
+  creator, the owner of the box a discovered session runs on, for an
+  agent's own thread the agent's admins, and for a member's conversation with
+  an agent the agent's owner. Only someone already in the
   workspace can be added; anyone may remove themselves.
 * **Pulling** — asking a runner to stream a session live (`attach`) or to ship
   its history (`backfill`) — is `may_pull`: someone who may write in it, or
@@ -84,6 +86,7 @@ from apps.agents.models import Agent, AgentProject
 from apps.harness import runner_requirements as rr
 from apps.harness import runners, sensitivity
 from apps.harness.models import Runner
+from apps.workspaces import role_cap
 
 from .models import (
     ProjectSessionShare,
@@ -100,7 +103,7 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Seven ways in, and no eighth:
+    Eight ways in, and no ninth:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
@@ -143,6 +146,15 @@ def visible_session_q(user) -> Q:
        never an agent's own login. The person's explicit, revocable choice, per
        project; you work in it as an editor and may pull. Never a sensitive one,
        never an agent's own work.
+    8. it is a member's conversation with an agent YOU OWN (`Agent.owner`, not
+       its admins): a web chat, a Slack thread, an email thread somebody had
+       with it (`_agent_owner_q`). The person answerable for an agent sees what
+       it is asked to do in their name and owns the conversation alongside its
+       creator (`role_for`), so they can bring someone in — another person, or
+       an agent. Its admins do not: administering an agent is not owning it.
+       Never a contact's conversation (`contact_session_q`): knowing somebody is
+       not being able to read what they said. A sensitive one stays sealed: an
+       owner not in it reads its metadata only (`role_for`).
 
     **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
@@ -161,6 +173,7 @@ def visible_session_q(user) -> Q:
         | _review_grant_q(user)
         | _runner_admin_q(user)
         | _project_share_q(user)
+        | _agent_owner_q(user)
     )
 
 
@@ -272,6 +285,27 @@ def _review_grant_q(user) -> Q:
     return sessions_of_q(granters) & Q(contact__isnull=True) & _not_sensitive_q()
 
 
+def _agent_owner_q(user) -> Q:
+    """Leg 8: members' conversations with an agent `user` owns (`Agent.owner`).
+    Empty for someone acting under a capped role (a turn's `acts_as`), as
+    `Agent.is_admin` is; membership is the tenant gate every caller applies first."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    if role_cap.cap_of(user):
+        return Q(pk__in=[])
+    return Q(agent__owner=user, contact__isnull=True)
+
+
+def is_agent_owner(user, session) -> bool:
+    """Leg 8 for one row already in hand: a member's conversation with an agent
+    `user` owns, and they still hold it (`Agent.is_admin` fails closed for a
+    non-member or a capped role)."""
+    if session is None or not session.agent_id or session.contact_id is not None:
+        return False
+    agent = session.agent
+    return agent.owner_id is not None and agent.owner_id == user.pk and agent.is_admin(user)
+
+
 def _agent_admin_q(user) -> Q:
     """Sessions whose agent `user` is an admin of. The same three ways in as
     `Agent.is_admin`; `tests/test_session_acl.py` checks the two agree.
@@ -351,7 +385,8 @@ def role_for(user, session) -> str | None:
     """The caller's EFFECTIVE role in this session, or None if they cannot read it.
 
     The HIGHER of two sources. The first is what the rule gives you: the creator
-    is the owner, the agent's admins own the agent's own thread, the owner of
+    is the owner, the agent's admins own the agent's own thread, the agent's
+    owner owns a member's conversation with it, the owner of
     the box a discovered session runs on owns it, and the read-only legs (a
     coach's review grant, a runner admin) give a viewer. The second is an explicit
     participant row, which is how someone is made a viewer or an editor of
@@ -369,6 +404,10 @@ def role_for(user, session) -> str | None:
     # An agent's own thread has no creator; the agent's admins stand in for one
     # (leg 4), so there is somebody who can share it.
     elif session.created_by_id is None and session.agent_id and session.agent.is_admin(user):
+        derived = SessionParticipant.OWNER
+    elif is_agent_owner(user, session):
+        # A member's conversation with an agent you own (leg 8): you answer for
+        # what it is asked to do, and decide who else is in it.
         derived = SessionParticipant.OWNER
     elif is_box_owner(user, session):
         # Runner-discovered, on YOUR box: your laptop, your conversation. You

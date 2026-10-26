@@ -716,7 +716,10 @@ turn's verified asker).
 
 A session is visible to the people who were **in the conversation where it
 happened**, plus whoever they explicitly add — never to someone merely for being
-in the same workspace. Multiplayer is always an explicit choice (a participant
+in the same workspace. One exception: an agent's **owner** (`Agent.owner`, not its
+admins) reads every member's conversation with that agent and owns it alongside
+its creator, so they can add a person or an agent to it; a contact's conversation
+and a sensitive one stay sealed (`access._agent_owner_q`). Multiplayer is always an explicit choice (a participant
 row, added by the session's owner). Agents get no implicit access: an agent's own
 login reads a session only if it was made a participant, it is running a live
 turn in it (`access.own_turn_session`), or the person granted it review (a
@@ -730,9 +733,9 @@ chat-session ACL.
 | Where it happened | Who sees it (read + write unless noted) | Who may pull from the machine |
 |---|---|---|
 | **Laptop** (a runner-discovered session) | the box's owner (`Runner.owner`), + people they add, + a project's team if they shared that project's repo with it (`ProjectSessionShare`, opt-in per person × project, `/api/me/session-sharing/`); the box's runner admins read only (to move it off the box) | the box owner, + people they add as editor, + that project's team |
-| **Web chat** | its creator + people they add | the same |
-| **Email** | everyone on the thread who is a verified member (§ Who is in a session) | the agent's admins, + the thread's people |
-| **Slack** | everyone in the Slack channel (a DM: its people), read + write, as in Slack | the agent's admins, + the channel's people |
+| **Web chat** | its creator + people they add; with an agent, + the agent's owner (may add people) | the same |
+| **Email** | everyone on the thread who is a verified member (§ Who is in a session), + the agent's owner | the agent's admins, + the thread's people |
+| **Slack** | everyone in the Slack channel (a DM: its people), read + write, as in Slack, + the agent's owner (may add people; never a contact's thread) | the agent's admins, + the channel's people |
 | **Panel** (an embedded widget) | the visitor (a contact: `contact_session_q`) | the visitor |
 | **An agent's own work** (an alarm, a scheduled turn) | the agent's admins (`Agent.is_admin`) | the agent's admins |
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
