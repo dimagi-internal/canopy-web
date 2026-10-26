@@ -155,13 +155,26 @@ put_secret "$SEED_SECRET" "$TMPC/seed/manifest.json" "cloud_runner.py seed manif
 echo ">> rendering the fleet template (runner.cfn.yaml's own cloud-init)"
 python3 fleet_template.py fleet.cfn.yaml runner.cfn.yaml > fleet.rendered.cfn.yaml
 "${AWS[@]}" cloudformation validate-template --template-body file://fleet.rendered.cfn.yaml >/dev/null
-PARAMS=("FleetName=$NAME" "InstanceType=$INSTANCE_TYPE" "MinMembers=$MIN" "MaxMembers=$MAX" "WarmPoolSize=$WARM")
+PARAMS=("FleetName=$NAME" "InstanceType=$INSTANCE_TYPE" "MaxMembers=$MAX")
 [[ -n "$WORKSPACE" ]] && PARAMS+=("RunnerWorkspace=$WORKSPACE")
 [[ -n "$AGENTS" ]] && PARAMS+=("RunnerAgents=$AGENTS" "AgentSlugs=$AGENTS")
 [[ -n "$PROJECTS" ]] && PARAMS+=("RunnerProjects=$PROJECTS")
-echo ">> deploying $STACK"
-"${AWS[@]}" cloudformation deploy --stack-name "$STACK" --template-file fleet.rendered.cfn.yaml \
-  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides "${PARAMS[@]}" --no-fail-on-empty-changeset
+deploy_group() {  # <min members> <warm pool size>
+  "${AWS[@]}" cloudformation deploy --stack-name "$STACK" --template-file fleet.rendered.cfn.yaml \
+    --capabilities CAPABILITY_NAMED_IAM --parameter-overrides "${PARAMS[@]}" \
+    "MinMembers=$1" "WarmPoolSize=$2" --no-fail-on-empty-changeset
+}
+if [[ -z "$FLEET_ID" ]]; then
+  # A new fleet's group starts EMPTY. An instance reports ready (the group's launch
+  # hook, which the stack waits on) only after it has joined, and it can join only
+  # once canopy-web knows the fleet and you have approved it — so the group is
+  # sized after that, below.
+  echo ">> deploying $STACK (an empty group, until the fleet is approved)"
+  deploy_group 0 0
+else
+  echo ">> deploying $STACK"
+  deploy_group "$MIN" "$WARM"
+fi
 ROLE_ARN=$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
   --query "Stacks[0].Outputs[?OutputKey=='RoleArn'].OutputValue" --output text)
 
@@ -222,6 +235,8 @@ for _ in $(seq 1 $(( APPROVE_MINUTES * 6 ))); do
 done
 [[ "$(json "$TMPC/fleet.json" 'd.get("status")' 2>/dev/null)" == "active" ]] \
   || die "the fleet was not approved within ${APPROVE_MINUTES} min — approve it at $APPROVE_URL; its members join as soon as you do"
+echo ">> approved: sizing $STACK to $MIN member(s) and a warm pool of $WARM"
+deploy_group "$MIN" "$WARM"
 echo "==> UP. fleet $NAME ($FLEET_ID), $MIN–$MAX members of $INSTANCE_TYPE, $MEMBER_TURNS turns each"
 echo "    next, once its first member has joined (a few minutes):"
 echo "      its Credentials tab: Make its key (one passkey touch), then + Token for each Claude account"
