@@ -43,3 +43,8 @@ def test_the_rendered_user_data_fits_ec2s_cap(rendered):
 def test_a_box_template_without_its_name_line_is_refused():
     with pytest.raises(SystemExit):
         fleet_template.member_user_data(["#cloud-config", "RUNNER_WORKSPACE=x"])
+
+
+def test_the_group_launches_only_in_the_zones_it_is_given(rendered):
+    assert "AvailabilityZones: !If [HasZones, !Ref Zones, !GetAZs '']" in rendered
+    assert "HasZones:" in rendered
