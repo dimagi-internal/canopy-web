@@ -395,3 +395,63 @@ def test_running_out_of_usage_posts_an_alert_with_the_reset(cr, monkeypatch):
     assert "out of Claude usage" in item["summary"]
     assert "2026-10-18T22:50:00Z" in item["summary"]
     assert item["key"] == "usage-exhausted:cloud-ec2-2"
+
+
+def _said(events):
+    return [e["payload"]["text"] for batch in events for e in batch if e.get("kind") == "assistant"]
+
+
+def test_a_capped_credential_says_nothing_when_the_next_one_answers(cr, monkeypatch):
+    """connect-kc-ace: ACE's Slack reply opened with "You've hit your weekly limit"
+    and then the answer the next credential gave. The cap is the runner's to handle,
+    not the turn's to say, unless every credential is out."""
+    monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
+    cr._apply_claude_credential(0)
+
+    def fake_once(prompt, turn_id, emit, **kw):
+        if cr._claude_cred_label() == "subscription-1":
+            emit([{"kind": "assistant", "payload": {"text": CAP_TEXT}}])
+            return False, CAP_TEXT, ""
+        emit([{"kind": "assistant", "payload": {"text": "No, I only read the playbook."}}])
+        return True, "No, I only read the playbook.", "sess-1"
+
+    monkeypatch.setattr(cr, "_execute_once", fake_once)
+    events = []
+    ok, _, _ = cr.execute_prompt("do it", "turn-abcdef12", events.append)
+    assert ok is True
+    assert _said(events) == ["No, I only read the playbook."]
+
+
+def test_the_cap_is_shown_once_every_credential_is_out(cr, monkeypatch):
+    monkeypatch.setattr(cr, "_notify_api_key_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(cr, "_notify_out_of_usage", lambda *a, **k: None)
+    monkeypatch.setattr(cr, "_park_until_cap_resets", lambda *a, **k: "9pm")
+    cr._apply_claude_credential(0)
+
+    def fake_once(prompt, turn_id, emit, **kw):
+        emit([{"kind": "assistant", "payload": {"text": CAP_TEXT}}])
+        return False, CAP_TEXT, ""
+
+    monkeypatch.setattr(cr, "_execute_once", fake_once)
+    events = []
+    ok, _, _ = cr.execute_prompt("do it", "turn-abcdef12", events.append)
+    assert ok is False
+    assert _said(events) == [CAP_TEXT]
+
+
+def test_an_agent_writing_about_limits_still_streams(cr, monkeypatch):
+    """Only a short line can be a credential's refusal; the agent's own prose about
+    a limit goes out as it is written, with whatever else it emitted alongside."""
+    cr._apply_claude_credential(0)
+    prose = ("The labs API caps exports, and a big opp has hit its row limit "
+             "before. " * 6).strip()
+    tool = {"kind": "tool_start", "payload": {"id": "t1", "name": "Bash", "input": {}}}
+
+    def fake_once(prompt, turn_id, emit, **kw):
+        emit([{"kind": "assistant", "payload": {"text": prose}}, tool])
+        return True, prose, "sess-1"
+
+    monkeypatch.setattr(cr, "_execute_once", fake_once)
+    events = []
+    cr.execute_prompt("do it", "turn-abcdef12", events.append)
+    assert events[0] == [{"kind": "assistant", "payload": {"text": prose}}, tool]
