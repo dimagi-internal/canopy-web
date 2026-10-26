@@ -139,6 +139,30 @@ def test_storing_a_value_declares_it(fleet):
     assert rows["BAILEY_GH_APP_ID"]["declared"] is True
 
 
+def test_the_backfill_declares_what_an_agent_that_declares_nothing_stores(fleet):
+    """Secrets stored before #2093 left Trellis holding three values and declaring
+    none. The backfill declares them; ACE, which declares some and stores an orphan,
+    keeps its orphan undeclared."""
+    import importlib
+
+    from apps.agents.models import AgentCredential
+
+    trellis = Agent.objects.create(slug="trellis", name="Trellis", workspace=fleet["ws"])
+    for name in ("GOOGLE_PASSWORD", "CANOPY_WEB_PAT", "GOOGLE_ACCOUNT"):
+        AgentCredential.objects.create(agent=trellis, name=name, value_zk="zk1:x")
+    AgentCredential.objects.create(agent=fleet["agent"], name="retired-thing", value_zk="zk1:x")
+    mig = importlib.import_module("apps.agents.migrations.0094_declare_secrets_stored_before_2093")
+
+    class _Apps:
+        get_model = staticmethod(lambda app, name: {"Agent": Agent, "AgentCredential": AgentCredential}[name])
+
+    mig.declare_secrets_of_agents_that_declare_nothing(_Apps, None)
+    trellis.refresh_from_db()
+    fleet["agent"].refresh_from_db()
+    assert trellis.runtime_secrets == ["CANOPY_WEB_PAT", "GOOGLE_ACCOUNT", "GOOGLE_PASSWORD"]
+    assert fleet["agent"].runtime_secrets == ["canopy-pat", "gog-token", "nova-api-key"]
+
+
 def test_an_agent_that_declares_nothing_shows_nothing_rather_than_guessing(fleet):
     Agent.objects.filter(slug="ace").update(runtime_secrets=[])
     assert fleet["client"].get("/api/agents/ace/credentials/status").json() == []
