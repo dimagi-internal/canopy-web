@@ -7,7 +7,7 @@
 **The rule: an agent acts as itself — with its own credentials or ones it borrowed — or as you only under an act-as-you permission you granted.**
 
 - **Agent's own credential.** The agent's own login or account: ACE's labs token for ace@dimagi-ai.com, an agent's own Google account. Most of what is in an agent's vault is this.
-- **Borrowed credential.** A standing credential from a *person's* own account, which they gave the agent to use: Jonathan's GitHub token for ACE. Shown as "GitHub · borrowed from Jonathan Jackson's account · expires 12 Jan".
+- **Borrowed credential.** A standing credential from a *person's* own account, which they gave the agent to use: Jonathan's GitHub token for ACE. Shown as "GitHub · borrowed from Jonathan Jackson's account". canopy gives it no expiry of its own: the external system's expiry, such as GitHub's own token expiry, is the only one.
 - **Act-as-you permission.** A time-limited permission that the person asking grants in the moment, letting the agent act within *that person's* access: a page grant on Connect Labs, minted when they first send, for 30 minutes. It is visible ("Hal can act as you on this page until 3:42 pm · Stop") and can be stopped. It is never stored as a credential.
 
 The first two are used by the same turns and sit in the same vault. They are **distinct in the data and in the code**, and they differ in one thing that matters: **who can read them.** The agent's own credentials have the vault's normal readership. A borrowed credential is readable by **no person** through canopy, not even the agent's admins: only by the machines that run the agent's turns, and, for writing, by the person it was borrowed from (§1.4).
@@ -20,10 +20,10 @@ The two ways today are the **vault** (an agent's own secrets) and **`AgentDelega
 
 ## Goals
 
-1. Every vault entry records whose account it is: `agent` or `borrowed`. A borrowed one also records whose account it comes from, the provider, the external identity and the expiry. Code reads this through one helper, and the vault UI shows it on each entry.
+1. Every vault entry records whose account it is: `agent` or `borrowed`. A borrowed one also records whose account it comes from, the provider and the external identity. Code reads this through one helper, and the vault UI shows it on each entry.
 2. Borrowed credentials live in the vault. `AgentDelegation.secret_enc` goes away, and its GitHub and Salesforce rows migrate as `borrowed`.
-3. The agent's own entries keep the vault's ACL. A borrowed entry is opened only by the machines that run the agent's turns. The person it came from can replace, renew and withdraw it, but cannot view it, and no other person can read it through canopy.
-4. Every borrowed credential expires and is renewed on a reminder. The person whose account it is can withdraw it at any time.
+3. The agent's own entries keep the vault's ACL. A borrowed entry is opened only by the machines that run the agent's turns. The person it came from can replace and withdraw it, but cannot view it, and no other person can read it through canopy.
+4. canopy sets no expiry on a borrowed credential; the provider's own expiry is the only one, shown as information. A machine's failed probe tells the person to replace it. The person whose account it is can withdraw it at any time.
 5. An agent acts within a person's own access only under an act-as-you permission. Every path that does this today becomes one or goes away.
 6. Credentials canopy-web must use itself on the server keep their storage, carry the same fields, and show in the same lists.
 7. No agent loses a credential for a single turn during the move.
@@ -63,7 +63,7 @@ Nothing in the vault today says whose account an entry is. `AgentCredential` and
 | **`X-Canopy-On-Behalf-Of`** (`apps/harness/turn_asker.py`) | An agent declares it acts for the person who started the turn. canopy-web then judges runner pinning (`access.may_pin_runner`) and whether a dispatch may run `auto` (`turn_gates`) on that person's access. | No. The agent declares it, and canopy checks only that the person started the turn. |
 | **Laptop and emdash agent turns** | A turn on a person's laptop reaches canopy's MCP with the canopy plugin's PAT, which is that person's own. The turn-scoped agent token's phase 2 (laptops) is still open (`2026-10-21-turn-scoped-agent-token-design.md`). | No. It is the box owner's standing PAT. |
 
-**Already explicit, and not act-as-you:** an HCP grant (`contacts.PersonGrant`) and a session-review grant (`canopy_sessions.SessionReviewGrant`). Each is a person's own act, revocable, that lets the agent's **own** login read named data of theirs: the agent still acts as itself, with more to see. They stay as they are and appear on `/settings` (§UI). A session-review grant has no expiry today; it gets one (90 days by default, renewed with one click).
+**Already explicit, and not act-as-you:** an HCP grant (`contacts.PersonGrant`) and a session-review grant (`canopy_sessions.SessionReviewGrant`). Each is a person's own act, revocable, that lets the agent's **own** login read named data of theirs: the agent still acts as itself, with more to see. They stay as they are and appear on `/settings` (§UI).
 
 ## Part 1: whose account each vault entry is
 
@@ -83,13 +83,12 @@ Every vault entry carries the same account fields, as clear columns beside its c
 | `identity` | JSON | The external login: `{login, user_id, name}` for GitHub (gives the commit identity and noreply email), `{username, organization_id, instance_url}` for Salesforce, `{email}` for a Claude account. Required when borrowed. |
 | `purpose` | short text | One line, shown everywhere ("ACE opens PRs on ace-web"). |
 | `scopes` | JSON list | What it reaches, as declared (repos, permission names). Shown, not enforced: the provider enforces them. |
-| `expires_at` | datetime, null | When canopy stops serving it. **Required** when borrowed. Optional for the agent's own, and set when the provider says. |
-| `provider_expires_at` | datetime, null | What the provider reports (GitHub's token-expiration header). `expires_at` is never later than it. |
+| `provider_expires_at` | datetime, null | What the provider reports (GitHub's token-expiration header), seen at a check. **Information only**: canopy shows it ("GitHub says this token expires 12 Jan") and never refuses or expires an entry on a date of its own. |
 | `checks`, `checked_at`, `checked_by` | JSON, datetime, text | The last probe and who ran it: `browser`, `server` or a runner id. |
 
 **Database constraints:**
 
-- `account="borrowed"` requires `borrowed_from`, `provider`, `identity` and `expires_at`.
+- `account="borrowed"` requires `borrowed_from`, `provider` and `identity`.
 - `account="agent"` requires `borrowed_from` and `borrowed_from_agent` to be null.
 
 ### 1.2 One helper the code reads
@@ -97,23 +96,23 @@ Every vault entry carries the same account fields, as clear columns beside its c
 `apps/agents/credentials/accounts.py`:
 
 - `is_borrowed(entry, agent) -> bool`: `account == "borrowed"`, except that an entry whose `borrowed_from_agent` is `agent` is that agent's own. Every agent-vault path asks this, never the column directly.
-- `borrowed_from(entry) -> User | None`, and `label(entry, agent)`: "GitHub · borrowed from Jonathan Jackson's account · expires 12 Jan", or "Salesforce · Eva's own account", the one sentence every screen and alert uses.
-- `serves(entry, agent) -> bool`: whether resolve may hand the entry out now. It refuses once `expires_at` has passed. For a borrowed entry it also refuses while `borrowed_from` is not an admin of `agent` (the owner counts as one) or not a member of its workspace, which is today's `delegation_for` rule ("an ex-member's token must stop acting the moment they are out"). For `borrowed_from_agent`, it also refuses while that agent's owner is not `borrowed_from`, which is today's `_in_force_salesforce` rule.
+- `borrowed_from(entry) -> User | None`, and `label(entry, agent)`: "GitHub · borrowed from Jonathan Jackson's account" (plus "GitHub says it expires 12 Jan" when known, or "no longer works — replace it" after a failed probe), or "Salesforce · Eva's own account", the one sentence every screen and alert uses.
+- `serves(entry, agent) -> bool`: whether resolve may hand the entry out now. It never refuses on a date. For a borrowed entry it refuses while `borrowed_from` is not an admin of `agent` (the owner counts as one) or not a member of its workspace, which is today's `delegation_for` rule ("an ex-member's token must stop acting the moment they are out"). For `borrowed_from_agent`, it also refuses while that agent's owner is not `borrowed_from`, which is today's `_in_force_salesforce` rule.
 
-**Readers:** `credential_resolve.resolve` (for the agent's values and each workspace layer), the readiness checks, the per-turn git identity, the vault and Credentials pages, the expiry alerts, and `/settings` → "Your accounts agents borrow".
+**Readers:** `credential_resolve.resolve` (for the agent's values and each workspace layer), the readiness checks, the per-turn git identity, the vault and Credentials pages, the "no longer works" alerts, and `/settings` → "Your accounts agents borrow".
 
 ### 1.3 Writing an entry
 
 - Every value write takes the account fields beside the value: the agent's `PUT /api/agents/{slug}/credentials` and `…/vault/zk/values`, the workspace vault's `/api/vaults/{id}/zk/values` and `secrets/{name}`, and a box's seal (`canopy vault runner-seal`). They are validated server-side against the constraints above.
 - **Only the person themselves can mark an entry as borrowed from their account.** `borrowed_from` must be the writer. The one exception is the Phase 2 migration, which writes `borrowed_from` from `AgentDelegation.user`.
 - A vault admin who finds an existing entry that is really someone's personal account ("Mark as borrowed from…") sends that person a request. The entry becomes `borrowed` when they accept, and then appears in their list.
-- A borrowed entry's fields can be changed only by its `borrowed_from` (renew, extend, withdraw) or, for the agent's side, removed by a vault admin.
+- A borrowed entry's fields can be changed only by its `borrowed_from` (replace, withdraw) or, for the agent's side, removed by a vault admin.
 - Accepting "Mark as borrowed" means the person pastes a fresh token, sealed as in §1.4. The old value has been readable by the whole vault, so it is deleted rather than converted.
-- `resolve` returns, beside `values`, an `accounts` map `{name: {account, borrowed_from_email, provider, identity, expires_at}}`. A box uses it for the git identity and to label what it holds. It contains no secret.
+- `resolve` returns, beside `values`, an `accounts` map `{name: {account, borrowed_from_email, provider, identity, provider_expires_at}}`. A box uses it for the git identity and to label what it holds. It contains no secret.
 
 ### 1.4 Where borrowed credentials live
 
-- **GitHub:** the agent's vault, name `github-token`, `account="borrowed"`, `borrowed_from` = the person, `provider="github"`. One per agent. An owner or admin gives theirs, and giving one replaces the current one ("replaces Jonathan Jackson's, expires 12 Jan").
+- **GitHub:** the agent's vault, name `github-token`, `account="borrowed"`, `borrowed_from` = the person, `provider="github"`. One per agent. An owner or admin gives theirs, and giving one replaces the current one ("replaces the one borrowed from Jonathan Jackson's account").
 - **Salesforce (Eva's user):** a **workspace vault** in `dimagi`, "Salesforce (Eva's account)", attached to Eva and to every agent that uses it. Today that is Echo, in `connect`, below `dimagi`, so inside the vault's own tree. The entry is `account="borrowed"`, `borrowed_from_agent=eva`, `borrowed_from` = Eva's owner. To Echo it is borrowed; to Eva it is her own (`is_borrowed` = False). One secret and one rotation serve every agent that uses it, as today. Eva's box may hold the vault's key, because Eva is attached, so Eva's re-mint writes there. Eva's own vault stops holding a copy.
 - **A Claude account on a box** (a runner's vault) that is a person's own subscription is `borrowed` from them, with `provider="anthropic"`. It is not lent to an agent, but it is a person's account, and it shows in that person's list.
 - **A secret shared into a chat** stops being a server-held hand-off: "share a secret" seals it from the person's browser into the agent's vault, choosing *the agent's own account* or *borrowed from mine*. `SessionSecret` goes away (Phase 4).
@@ -125,7 +124,7 @@ Every vault entry carries the same account fields, as clear columns beside its c
 **A borrowed entry** is readable by:
 
 - **The machines that run the agent's turns, and nothing else.** A device key qualifies under today's machine rule: it is active with an approved ECDH key, its runner serves the agent (`device_keys.runner_serves_agent`), and the runner's owner is an admin of the agent (`runner_may_hold_agent`). For a borrowed entry in a workspace vault (Salesforce), the agent is any agent the vault is attached to, and the same rule applies.
-- **The person it was borrowed from, for writing only.** They can replace, renew or withdraw it. No screen or route returns the value to them. If they need it, they make a new token.
+- **The person it was borrowed from, for writing only.** They can replace or withdraw it. No screen or route returns the value to them. If they need it, they make a new token.
 
 No other person can read it through canopy: not the agent's admins, editors, vault members or license holders. Their browsers' `GET …/vault/zk?values=true` and the workspace vault's value read return the borrowed entry's name and account fields, never its ciphertext. A `license` read and an `admin` read of `/credentials/resolve` omit it, as `LICENSE_WITHHELD_EXTRAS` withholds the GitHub token today. Only a `runner` read with a device proof from an eligible device receives it.
 
@@ -145,7 +144,7 @@ A borrowed value is **not** encrypted under the vault key VK, because every vaul
 ```
 
 - **Storage.** The `zke1` ciphertext sits in the entry's own row (`AgentCredential.value_zk` or `VaultSecret.value_zk`), with its `ekv`. Copies of EK go in a new table, `VaultEntryWrap(vault, name, ekv, kind, target, wrap)`. Writes to it go through `vault_engine`, which re-checks every target against the device rule above.
-- **Recipients.** EK is wrapped to each eligible device key. It is also wrapped to the person it was borrowed from: a write key, so their browser can re-seal (renew) and act as a keeper. canopy-web never returns the value to them (write-only), and it is their own token. EK is wrapped to no other person.
+- **Recipients.** EK is wrapped to each eligible device key. It is also wrapped to the person it was borrowed from: a write key, so their browser can re-seal it (replace) and act as a keeper. canopy-web never returns the value to them (write-only), and it is their own token. EK is wrapped to no other person.
 - **Never under VK.** `vault_engine.enable` / `rotate` leave `zke1` entries alone: they are not "every value re-encrypted" (`require_coverage` skips them), and a VK rotation does not touch them. A browser holding VK can neither settle nor read one.
 - **Sealing.** When a person gives one, their browser makes EK, seals the value and wraps EK to themselves and to each eligible device. Before wrapping, it checks each device against the approver endorsements already kept for the agent (`AgentVaultEndorsement`, `zk_endorse.endorsements`), so a server that added a device of its own would be refused. canopy-web re-checks eligibility at the write. If no machine is eligible yet, the value is still sealed (the person holds an EK copy), and the first box to become eligible gets it from them or from a keeper.
 
@@ -173,15 +172,15 @@ The box resolves the agent's values under the existing runner, device-proof and 
 
 ### 1.6 Checking a borrowed credential
 
-- **When it is given, in the browser.** The browser checks the shape (`_TOKEN_SHAPE`), calls GitHub's `/user`, and, where GitHub allows it from a browser, runs the PR and push probes. It shows the results, then seals. Build step 1 is to measure whether api.github.com allows the POST probes cross-origin and exposes `github-authentication-token-expiration`. Where it doesn't, the person sets `expires_at` and the first box fills in the rest.
+- **When it is given, in the browser.** The browser checks the shape (`_TOKEN_SHAPE`), calls GitHub's `/user`, and, where GitHub allows it from a browser, runs the PR and push probes. It shows the results, then seals. Build step 1 is to measure whether api.github.com allows the POST probes cross-origin and exposes `github-authentication-token-expiration`. Where it doesn't, the first box fills in the rest.
 - **On a box.** A box that opens it runs the probes on each readiness pass, ported to the standard library (`cloud_runner.py` cannot import `apps`). It reports `POST /api/harness/runners/{rid}/credential-checks` `{vault, name, checks, provider_expires_at}`, with a device proof. `runner_github_readiness` and `…/github/check` read what boxes reported instead of decrypting. Salesforce is checked only this way: Salesforce refuses cross-origin calls unless each org allow-lists the origin.
 - canopy-web never checks a borrowed entry itself, since it is `zke1` in every vault; `checked_by: server` remains only for credentials canopy-web uses itself (Part 3).
 
-### 1.7 Expiry, renewal, withdrawal
+### 1.7 Expiry, replacement, withdrawal
 
-- **Expiry.** Required on a borrowed entry, 90 days by default. A GitHub token with no expiry still gets one. From 14 days before (`EXPIRY_WARNING`), the person it is borrowed from and the agent's admins get a Home item and an email: "ACE's GitHub token, borrowed from Jonathan Jackson's account, stops on 12 Jan."
-- **Renewal.** By the person it is borrowed from: paste a new token (their browser makes a new EK, `ekv+1`, and wraps it to them and to every eligible device), or **extend** with one passkey step-up, up to `provider_expires_at`, with no re-paste. An admin who wants it renewed sees "Remind Jonathan". They can also give their own instead, which replaces it.
-- **On expiry** canopy stops serving it, `github.<slug>` readiness goes red, and the agent's Health page names whose account it was. Thirty days later the value is deleted (a job on `apps/common/ticks.py`). Its fields stay as a history row.
+- **No canopy expiry.** canopy gives a borrowed credential no expiry of its own and never refuses one on a date. The external system's expiry is the only one: a GitHub fine-grained token stops working when GitHub says.
+- **What canopy shows.** When a check sees the provider's own expiry (`provider_expires_at`), canopy shows it as information ("GitHub says this token expires 12 Jan"). When a machine's probe fails (rejected, expired at the provider, lost access to the repo), the entry, `github.<slug>` readiness and a Home item for the person it is borrowed from and the agent's admins say: "This token no longer works — replace it." canopy keeps serving the entry; the provider is what refuses it.
+- **Replacement.** By the person it is borrowed from: paste a new token. Their browser makes a new EK (`ekv+1`) and wraps it to them and to every eligible device. An admin who wants it replaced sees "Ask Jonathan to replace it". An admin can also give their own, which replaces it.
 - **Withdrawal.** The person it is borrowed from can withdraw it at any time from `/settings`, even after losing admin of the agent, because it is their account. Vault admins can remove it from the agent (delete the entry and its EK wraps), but never read or change it. Turns that already received it keep it until they finish, and a box that opened it could have kept a copy. So the withdraw screen links to the provider's own revoke page (`https://github.com/settings/personal-access-tokens`), the only true recall.
 
 ## Part 2: act-as-you permissions
@@ -208,7 +207,7 @@ The box resolves the agent's values under the existing runner, device-proof and 
 
 ## Part 3: what canopy-web uses itself
 
-Credentials canopy-web must use itself cannot be zero-knowledge. They keep their storage and take the same account fields: `GitHubConnection` gains `purpose`, and `expires_at` = the refresh token's expiry. They show in the same lists, labelled **"canopy-web uses this itself"**.
+Credentials canopy-web must use itself cannot be zero-knowledge. They keep their storage and take the same account fields: `GitHubConnection` gains `purpose`, and shows the refresh token's own expiry as information. They show in the same lists, labelled **"canopy-web uses this itself"**.
 
 | Credential | Storage | Shown as |
 |---|---|---|
@@ -222,11 +221,11 @@ Credentials canopy-web must use itself cannot be zero-knowledge. They keep their
 
 ## UI
 
-- **The vault page and the agent's Credentials page** show, on every entry, whose account it is: "ACE's own account" or "GitHub · borrowed from Jonathan Jackson's account · expires 12 Jan" (`accounts.label`). They also show the last check and by whom. A borrowed entry also shows "only ACE's machines can open it" with the list of machines, and never offers a reveal or edit, to anyone. Its person gets Renew / Replace / Withdraw; a vault admin gets Remove.
-- **`/settings` → "Your accounts agents borrow"**: one row per borrowed entry from your accounts. Each row shows the provider and identity ("GitHub as @jjackson"), the agent (or box), its purpose, **which machines can open it** and their owners, expiry, last check, last used, and **Renew** / **Withdraw**. canopy-web's own uses (the GitHub App connection) follow, labelled. Expired rows stay greyed for 30 days, with Renew.
+- **The vault page and the agent's Credentials page** show, on every entry, whose account it is: "ACE's own account" or "GitHub · borrowed from Jonathan Jackson's account · expires 12 Jan" (`accounts.label`). They also show the last check and by whom. A borrowed entry also shows "only ACE's machines can open it" with the list of machines, and never offers a reveal or edit, to anyone. Its person gets Replace / Withdraw; a vault admin gets Remove.
+- **`/settings` → "Your accounts agents borrow"**: one row per borrowed entry from your accounts. Each row shows the provider and identity ("GitHub as @jjackson"), the agent (or box), its purpose, **which machines can open it** and their owners, the provider's own expiry when known (as information), last check, last used, and **Replace** / **Withdraw**. canopy-web's own uses (the GitHub App connection) follow, labelled.
 - **`/settings` → "Act-as-you permissions"**: the live ones, in the same line as on the page, with Stop, then the last 30 days of uses. Under it, **"Standing access you've given"**: session-review grants and HCP grants, each with Revoke.
 - **On a page or in a chat**: the act-as-you line with Stop, while live.
-- **Home**: borrowed credentials expiring soon or expired, sent to the person they are borrowed from and to the agent's admins, through the one `<AlertList>`.
+- **Home**: borrowed credentials a machine found no longer work ("replace it"), sent to the person they are borrowed from and to the agent's admins, through the one `<AlertList>`.
 
 ## Migration
 
@@ -237,7 +236,7 @@ No agent loses a credential between steps. Each phase ships alone.
 **Phase 1: the account fields.** Add `VaultEntryAccount` to `AgentCredential` and `VaultSecret`. Every existing row is `account="agent"`. Add the §8 `zke1` format with its vectors (Python, browser and the `canopy` CLI), `VaultEntryWrap`, `accounts.py`, the `serves()` filter and the borrowed-entry withholding in resolve, the `accounts` map in its response, box-reported checks, the per-entry UI, and the runner reading `github-token` and the Salesforce value from the vault. Resolve and the per-turn route keep serving the old source wherever no vault entry exists yet.
 
 **Phase 2: move `AgentDelegation` into the vault as `borrowed`. No person needs to act.**
-- **GitHub, per row in force.** canopy-web decrypts `secret_enc` once and writes it into the agent's vault as `github-token`, `zke1`, with `account="borrowed"`, `borrowed_from` = the row's user, `provider="github"`, `identity` from its `meta`, and `expires_at` = its known expiry, else 90 days from the move. It makes EK itself, seals the value, and wraps EK to the row's user's public key and to every eligible device's public key (ECDH-ES needs public keys only). Then it forgets the plaintext and EK. Whatever the vault's mode, the result is one canopy-web cannot read. `secret_enc` is cleared in the same transaction. Decrypting once is acceptable: canopy-web has held the plaintext all along, and this is the last time. Rows not in force, left by a former owner or admin, are deleted, not moved.
+- **GitHub, per row in force.** canopy-web decrypts `secret_enc` once and writes it into the agent's vault as `github-token`, `zke1`, with `account="borrowed"`, `borrowed_from` = the row's user, `provider="github"`, `identity` from its `meta`, and `provider_expires_at` = its known expiry, as information. It makes EK itself, seals the value, and wraps EK to the row's user's public key and to every eligible device's public key (ECDH-ES needs public keys only). Then it forgets the plaintext and EK. Whatever the vault's mode, the result is one canopy-web cannot read. `secret_enc` is cleared in the same transaction. Decrypting once is acceptable: canopy-web has held the plaintext all along, and this is the last time. Rows not in force, left by a former owner or admin, are deleted, not moved.
 - **Salesforce, per row.** Jonathan, as Eva's owner, makes the `dimagi` workspace vault "Salesforce (Eva's account)" and its key (one passkey touch), and attaches Eva and every agent with a Salesforce row. Eva's box, which holds the plaintext and is attached, seals the value into it as `zke1`, wrapped to every eligible device of an attached agent and to Jonathan, with `account="borrowed"`, `borrowed_from_agent=eva`, `borrowed_from=jjackson`, `provider="salesforce"`, as the runner-credentials migration did. Eva's re-mint path writes there from then on. `salesforce_creds_for` is retired.
 - **Agents with no eligible device** (no box with an approved ECDH key) are listed for their owner. Their old row keeps serving until it is fixed.
 
@@ -254,7 +253,7 @@ No agent loses a credential between steps. Each phase ships alone.
 - A borrowed credential is readable by no person through canopy: not admins (today they read it through `/credentials/resolve`), editors, members or license holders. Only the machines running the agent can open it, and the person giving it sees which ones, and who owns them, before sealing.
 - Every entry says whose account it is, in the data, so screens, alerts and the person's own list cannot disagree.
 - canopy-web can no longer read a borrowed GitHub token or Salesforce refresh token in any vault, so a canopy-web compromise no longer yields them.
-- Every borrowed credential expires, and the person it is borrowed from can renew or withdraw it in one place.
+- Every borrowed credential says whose account it is, and the person it is borrowed from can replace or withdraw it in one place.
 - An agent acts as a person only after that person's own act, for 30 minutes, visibly. Today's four implicit paths are gone.
 
 **Weaker, said plainly**
@@ -262,14 +261,14 @@ No agent loses a credential between steps. Each phase ships alone.
 | Weaker | Mitigation |
 |---|---|
 | A new box can be given a borrowed credential only by a keeper box or by the person it is borrowed from. An agent admin's browser cannot do it, because it holds no EK. | Every eligible box is a keeper; Home asks the person when no keeper is online. |
-| canopy-web cannot check a token in a zero-knowledge vault itself, so a wrong identity or stale check is believed until a box probes. | Boxes probe on first use and on every readiness pass, and record who ran the probe. canopy-web enforces expiry from the clear fields. |
-| A box that opened it can keep it after withdrawal. | The same as a box that got the plaintext per turn today. Withdraw links to the provider's revoke page, and expiry bounds it. |
+| canopy-web cannot check a token in a zero-knowledge vault itself, so a wrong identity or stale check is believed until a box probes. | Boxes probe on first use and on every readiness pass, and record who ran the probe. |
+| A box that opened it can keep it after withdrawal. | The same as a box that got the plaintext per turn today. Withdraw links to the provider's revoke page; the provider's own expiry, where the person set one, bounds it. |
 | Act-as-you permissions add a step: Connect Labs pages and confined chats that worked silently need the person's send before the agent acts as them. | The first send is already the act that starts the work. Refusals are logged for a week before each switch flips. |
 
 ## Testing
 
-- **Schema:** the constraints refuse a borrowed entry without `borrowed_from`, `provider`, `identity` or `expires_at`, and an `agent` entry with a `borrowed_from`. A person can mark only their own account as borrowed.
-- **`accounts`:** `is_borrowed` is false for `borrowed_from_agent`'s own agent and true for every other agent. `serves()` refuses after expiry, while the person is not an admin or has left, and while the lending agent's owner has changed.
+- **Schema:** the constraints refuse a borrowed entry without `borrowed_from`, `provider` or `identity`, and an `agent` entry with a `borrowed_from`. A person can mark only their own account as borrowed.
+- **`accounts`:** `is_borrowed` is false for `borrowed_from_agent`'s own agent and true for every other agent. `serves()` never refuses on a date; it refuses while the person is not an admin or has left, and while the lending agent's owner has changed.
 - **Readership:** the agent's own entries are readable by `vault_members.members` and their machines. A borrowed entry's EK is wrapped only to eligible devices and its own person. No browser read, and no `admin` or `license` resolve, returns its ciphertext. A wrap write to an ineligible device or to another person is refused. A VK rotation leaves `zke1` entries untouched. The §8 vectors pass in Python and in the browser.
 - **New box:** a keeper wraps EK to a newly eligible, endorsed box; an unendorsed one stays pending; a box whose owner lost admin is refused at the next read.
 - **Migration:** GitHub rows land as borrowed `zke1` entries, wrapped to eligible devices and their own person only, with `secret_enc` cleared in one transaction, and a box resolves the same token before and after. Salesforce keeps working for Echo, and Eva sees it as her own.
@@ -278,4 +277,4 @@ No agent loses a credential between steps. Each phase ships alone.
 
 ## Open questions only Jonathan can answer
 
-None. The model, the three kinds and their names, and the 30-minute act-as-you window are Jonathan's, from his review. The 90-day default expiry for a borrowed credential is this design's choice, and anyone giving one can change it.
+None. The model, the three kinds and their names, and the 30-minute act-as-you window are Jonathan's, from his review.
