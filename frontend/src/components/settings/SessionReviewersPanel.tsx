@@ -9,6 +9,13 @@ export function coachLabel(name: string): string {
   return `Have ${name} coach me: it reviews my canopy sessions and sends short feedback; turn off any time`
 }
 
+/** What turning coaching on does on the person's own machine: their runner
+ *  uploads their sessions in full (`ship_full` on the runner's stream list,
+ *  apps/canopy_sessions/coaching.py) — canopy never pulls them. */
+export function coachUploadNote(name: string): string {
+  return `Your computer will upload your synced Claude Code sessions to canopy so ${name} can read them; turning coaching off stops the upload.`
+}
+
 /** "Who can review your sessions": the coach canopy offers (one switch), and any
  *  other agent you let read your sessions, each with Stop. Read-only grants,
  *  enforced by the session ACL (apps/canopy_sessions/access.py, leg 5). */
@@ -60,7 +67,10 @@ export function SessionReviewersPanel() {
               void act(() => (coach.on ? removeMySessionReviewer(coach.agent) : addMySessionReviewer(coach.agent)))
             }
           />
-          <span>{coachLabel(coach.name)}</span>
+          <span>
+            {coachLabel(coach.name)}
+            <span className="block text-xs text-muted-foreground">{coachUploadNote(coach.name)}</span>
+          </span>
         </label>
       )}
       {others.length > 0 && (

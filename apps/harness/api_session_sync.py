@@ -20,6 +20,7 @@ from ninja.errors import HttpError
 from apps.agents.gates import agent_for_read
 from apps.api.route_gates import gate
 from apps.canopy_sessions import handoff
+from apps.canopy_sessions.coaching import full_upload_session_ids
 from apps.canopy_sessions.models import HandoffArchive, RunnerBinding, Session, SessionHandoff
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
@@ -260,11 +261,18 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
     if is_sensitive_data_box(runner):
         # A sensitive-data box keeps its transcripts to itself: nothing to tail.
         return {"streams": []}
+    # The owner's coaching opt-in (a live SessionReviewGrant) tells this box to
+    # ship its owner's own sessions in FULL — including ones no longer active, so
+    # a coach reads whole conversations rather than whatever happened to stream
+    # before they closed. The person's machine choosing to send; canopy never
+    # reaches down for them. Empty for an uncoached owner (the old behaviour).
+    full = full_upload_session_ids(runner)
     bindings = (
         RunnerBinding.objects.select_related("session")
-        .filter(runner=runner, session__status=Session.ACTIVE)
+        .filter(runner=runner)
+        .filter(Q(session__status=Session.ACTIVE) | Q(session_id__in=full))
         .exclude(session_key="")
-        # ACTIVE only. Widening this from `stream_desired` to "every session"
+        # ACTIVE only (bar the coached ones above). Widening this from `stream_desired` to "every session"
         # would otherwise sweep in every session the box has ever held — labs
         # accumulated 71 at one point — and re-ship each one's full history on
         # every runner restart, for conversations that are retired and whose
@@ -317,7 +325,11 @@ def list_streams(request: HttpRequest, runner_id: uuid.UUID):
          # What the markers above are markers INTO. They are per-file ordinals, so
          # a runner reading a different transcript must discard them rather than
          # resume against them (issue #615).
-         "transcript_id": b.transcript_id}
+         "transcript_id": b.transcript_id,
+         # Coaching: ship this session's whole history (once) and keep it current.
+         # `archived` lets the runner stop re-reading a retired one once caught up.
+         "ship_full": b.session_id in full,
+         "archived": b.session.status != Session.ACTIVE}
         for b in bindings if _is_canopys(runner, b)
     ]}
 

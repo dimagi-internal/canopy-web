@@ -33387,6 +33387,16 @@ export interface components {
              * @default
              */
             readonly transcript_id: string;
+            /**
+             * Ship Full
+             * @default false
+             */
+            readonly ship_full: boolean;
+            /**
+             * Archived
+             * @default false
+             */
+            readonly archived: boolean;
         };
         /** StreamSyncOut */
         readonly StreamSyncOut: {

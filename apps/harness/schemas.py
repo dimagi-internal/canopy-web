@@ -1378,6 +1378,14 @@ class StreamDescriptorOut(Schema):
     # id disagrees with this must ignore them and ship the whole history. "" = the
     # server has no provenance for its rows, which is treated the same way.
     transcript_id: str = ""
+    # The box's owner opted in to coaching (a live SessionReviewGrant) and this is
+    # their own, non-sensitive session: ship its whole transcript, even once it is
+    # no longer active (apps/canopy_sessions/coaching.py). Revoking the last grant
+    # clears it on the next poll.
+    ship_full: bool = False
+    # The session is no longer active (only listed when `ship_full`): once its
+    # history has shipped there is nothing more to tail.
+    archived: bool = False
 
 
 class StreamSyncOut(Schema):
