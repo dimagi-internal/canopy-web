@@ -435,6 +435,48 @@ def queued_messages(session: Session) -> list[dict]:
     return out
 
 
+CANCELLED_SENDS_LIMIT = 50
+
+
+def cancelled_sends(session: Session) -> list[dict]:
+    """Human sends withdrawn (or stopped) before the agent read them, newest last.
+
+    A cancelled send never lands in the transcript, and `queued_messages` stops
+    listing it the moment its turn is terminal, so without this the words simply
+    vanish from the conversation — or, worse, linger in a client as an optimistic
+    row that sorts to the tail and looks live (canopy-web#2092). Each entry carries
+    `sent_at` so a client places it where it was sent, and `cancelled_by` so it
+    can say who withdrew it.
+
+    Bounded to the most recent `CANCELLED_SENDS_LIMIT` cancelled turns; a turn whose
+    prompt was wiped (a sensitive conversation) has no words to show and is skipped."""
+    turns = list(
+        Turn.objects.select_related("initiator_user", "initiator_contact")
+        .filter(chat_session=session, status=Turn.CANCELLED)
+        .exclude(initiator_user__isnull=True, initiator_contact__isnull=True)
+        .exclude(prompt="")
+        .order_by("-created_at")[:CANCELLED_SENDS_LIMIT]
+    )
+    turns = [t for t in turns if authorship.is_chat_send(t)]
+    if not turns:
+        return []
+    landed = set(Message.objects.filter(session=session, source_turn_id__in=[t.pk for t in turns])
+                 .values_list("source_turn_id", flat=True))
+    out = []
+    for t in reversed(turns):
+        if t.pk in landed:
+            continue
+        out.append({
+            "turn_id": str(t.pk),
+            "client_id": str((t.origin_ref or {}).get("client_id") or ""),
+            "author": authorship.author_of(t),
+            "text": t.prompt or "",
+            "sent_at": t.created_at.isoformat(),
+            "cancelled_by": harness_services.stopped_by(t),
+        })
+    return out
+
+
 def unqueue_send(session: Session, turn_id, user, *, by: str = "") -> bool:
     """Take back one of YOUR OWN sends that has not reached the agent yet.
     Returns whether it was withdrawn.

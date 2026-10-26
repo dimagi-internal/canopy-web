@@ -40,6 +40,9 @@ function toolInput(use: Message): Record<string, unknown> {
  *  row too, but Claude Code wrote it — it is part of the work, not a new ask. */
 function isPersonLine(row: ChatRow): boolean {
   if (row.kind !== "message" || row.message.role !== "user") return false;
+  // A cancelled send never started anything: it sits in whatever turn it was
+  // sent into, marked, rather than splitting that turn's work around itself.
+  if (row.message.content?.cancelled === true) return false;
   const record = row.message.content?.record as Record<string, unknown> | undefined;
   return !record?.compact_summary;
 }
@@ -79,7 +82,7 @@ export function rowIsInFlight(row: ChatRow): boolean {
 export function mustStayVisible(row: ChatRow): boolean {
   if (isActionableRow(row)) return true;
   if (row.kind === "message") {
-    return Boolean(row.message.app || row.message.secret_request);
+    return Boolean(row.message.app || row.message.secret_request || row.message.content?.cancelled === true);
   }
   return toolName(row.use) === "AskUserQuestion";
 }

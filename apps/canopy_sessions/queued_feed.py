@@ -14,12 +14,13 @@ logger = logging.getLogger(__name__)
 
 def publish_queued(session_id) -> None:
     from .models import Session
-    from .send import queued_messages
+    from .send import cancelled_sends, queued_messages
 
     try:
         session = Session.objects.get(pk=session_id)
         payload = queued_messages(session)
+        cancelled = cancelled_sends(session)
     except Exception:  # noqa: BLE001
         logger.exception("could not derive queued list for %s", session_id)
         return
-    publish(session_group(session_id), {"type": "session.queued", "queued": payload})
+    publish(session_group(session_id), {"type": "session.queued", "queued": payload, "cancelled": cancelled})

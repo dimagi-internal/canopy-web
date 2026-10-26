@@ -142,6 +142,19 @@ export interface QueuedMessage {
   state: "queued" | "delivering" | "midturn";
 }
 
+/** A send withdrawn (or stopped) before the agent read it. It never reaches the
+ *  transcript, so the server lists it here and the client draws it where it was
+ *  sent (`sent_at`), muted and marked cancelled — never at the tail, never live. */
+export interface CancelledSend {
+  turn_id: string;
+  client_id: string;
+  author: MessageAuthor | null;
+  text: string;
+  sent_at: string;
+  /** Who withdrew it; "" when nobody recorded it. */
+  cancelled_by: string;
+}
+
 export interface Participant {
   user_id: number;
   email: string;
@@ -333,6 +346,9 @@ export interface SessionState {
    *  client that just connected has no correct prior to merge a delta into.
    *  Absent on an older server. */
   queued?: QueuedMessage[];
+  /** Sends withdrawn before the agent read them, oldest first, replaced
+   *  wholesale like `queued`. Absent on an older server. */
+  cancelled?: CancelledSend[];
   /** What the session's subagents are doing, one per `Agent` call (matched by
    *  `tool_use_id`), replaced wholesale. In the CONNECT SNAPSHOT for the same
    *  reason as `menu`: a background agent works while nobody is watching.
@@ -477,4 +493,4 @@ export type WsEvent =
   | { event: "presence.left"; data: { user_id: number } }
   // The whole queue, wholesale, like `session.turn_status` — a client that
   // just connected has no correct prior to merge a delta into.
-  | { event: "session.queued"; data: { queued: QueuedMessage[] } };
+  | { event: "session.queued"; data: { queued: QueuedMessage[]; cancelled?: CancelledSend[] } };
