@@ -13782,6 +13782,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/session-sharing/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The projects you could share your laptop sessions with
+         * @description Every project in your workspaces whose repo is one you work in through
+         *     canopy, and whether your laptop sessions in that repo are shared with its
+         *     team. Unset: nothing is shared — a laptop session is yours alone.
+         */
+        readonly get: operations["list_session_sharing"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/session-sharing/{project_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Share (or stop sharing) your laptop sessions with a project's team
+         * @description On: every session discovered on a box you own, in this project's repo and
+         *     workspace, is visible to the project's team — its owner and the people taking
+         *     part in it, never an agent's own login — who read, write and may ask your
+         *     machine for its live stream and history. Never a sensitive one. Off: the next
+         *     read drops it.
+         */
+        readonly put: operations["set_session_sharing"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/me/sessions/": {
         readonly parameters: {
             readonly query?: never;
@@ -37125,6 +37171,52 @@ export interface components {
             /** Markdown */
             readonly markdown: string;
         };
+        /**
+         * ProjectSessionShareOut
+         * @description One project you could share your laptop sessions with (`/api/me/session-sharing/`).
+         */
+        readonly ProjectSessionShareOut: {
+            /**
+             * Project Id
+             * @description The project's id.
+             */
+            readonly project_id: number;
+            /**
+             * Handle
+             * @description The project's handle in its workspace.
+             */
+            readonly handle: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Workspace
+             * @description The workspace the project belongs to.
+             */
+            readonly workspace: string;
+            /**
+             * Repo
+             * @description The repo the project works in; your laptop sessions in it are what is shared.
+             */
+            readonly repo: string;
+            /**
+             * Shared
+             * @description Your sessions in this repo are visible to the project's team.
+             */
+            readonly shared: boolean;
+            /**
+             * Team Size
+             * @description How many people are on the project's team: its owner and its participants.
+             */
+            readonly team_size: number;
+        };
+        /**
+         * ProjectSessionShareIn
+         * @description Turn sharing your laptop sessions with one project's team on or off.
+         */
+        readonly ProjectSessionShareIn: {
+            /** Shared */
+            readonly shared: boolean;
+        };
         /** SessionSecretValueOut */
         readonly SessionSecretValueOut: {
             /** Name */
@@ -56520,6 +56612,52 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SessionExportOut"];
+                };
+            };
+        };
+    };
+    readonly list_session_sharing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ProjectSessionShareOut"][];
+                };
+            };
+        };
+    };
+    readonly set_session_sharing: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly project_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ProjectSessionShareIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ProjectSessionShareOut"];
                 };
             };
         };

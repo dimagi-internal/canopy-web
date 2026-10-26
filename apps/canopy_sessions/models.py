@@ -275,6 +275,37 @@ class SessionReviewGrant(models.Model):
                                                name="session_review_grant_one_live")]
 
 
+class ProjectSessionShare(models.Model):
+    """A person's choice to share their LAPTOP sessions in one project's repo with
+    that project's team — the explicit multiplayer switch for runner-discovered
+    sessions (`access._project_share_q`, leg 7).
+
+    Per person × project, opt-in, revocable. A session is covered when it was
+    discovered on a box `user` owns, in the workspace the project belongs to, and
+    in the project's repo (`AgentProject.repo_slug`, matched against the
+    binding's emdash project, case-insensitive). Its team — the project's owner
+    and the people taking part in it (`ProjectParticipant` → `Person.user`), never
+    an agent's own login — then read and write it as editors, and may pull from
+    the box. Only the person makes or ends it (`sharing.py`, from
+    `/api/me/session-sharing/`), each act audited as a setting change. Revoking
+    sets `revoked_at`; the next read drops it."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="project_session_shares")
+    project = models.ForeignKey("agents.AgentProject", on_delete=models.CASCADE,
+                                related_name="session_shares")
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "canopy_sessions_project_share"
+        ordering = ["-created_at", "-pk"]
+        indexes = [models.Index(fields=["project", "revoked_at"])]
+        constraints = [models.UniqueConstraint(fields=["user", "project"],
+                                               condition=models.Q(revoked_at__isnull=True),
+                                               name="project_session_share_one_live")]
+
+
 class SessionParticipant(models.Model):
     """Durable membership + role in a session (SP3 multiplayer). Presence — who is
     here *right now* — is ephemeral and lives in the cache (apps/canopy_sessions/presence.py);
