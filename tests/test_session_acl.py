@@ -15,81 +15,23 @@ import ast
 import pytest
 from asgiref.sync import async_to_sync
 from channels.testing import WebsocketCommunicator
-from django.contrib.auth.models import User
 from django.test import Client
-from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions import access, attach
 from apps.canopy_sessions.consumers import SessionConsumer
-from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant, SessionReviewGrant
-from apps.harness.models import Runner, RunnerAdmin
-from apps.workspaces.models import Workspace, WorkspaceMembership
+from apps.canopy_sessions.models import SessionParticipant
+from apps.workspaces.models import WorkspaceMembership
 from tests._source import iter_app_sources
+from tests.fixtures.session_world import make_member, make_user, session_world
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 
-def _user(name):
-    return User.objects.create_user(name, f"{name}@dimagi.com", "pw")
-
-
-def _member(user, ws, role=WorkspaceMembership.EDITOR):
-    WorkspaceMembership.objects.create(user=user, workspace=ws, role=role)
-
-
-def _world():
-    """Every session shape, and every kind of person who might knock.
-
-    `owner` owns the workspace AND the laptop `r`; `mate` is a plain editor with a
-    laptop of their own; `box_admin` was made an admin of `r`; `hal_login` is an
-    agent's own login (an editor member, like every agent login); `coach` is
-    Trellis's login, which `owner` let review their sessions (leg 5)."""
-    owner, mate, viewer, outsider = _user("owner"), _user("mate"), _user("viewer"), _user("outsider")
-    box_admin = _user("box_admin")
-    ws = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
-    _member(owner, ws, WorkspaceMembership.OWNER)
-    _member(mate, ws)
-    _member(viewer, ws)
-    _member(box_admin, ws)
-    agent = Agent.objects.create(slug="hal", name="Hal", owner=owner, workspace=ws)
-    agent.user = _user("hal_login")
-    agent.save(update_fields=["user"])
-    _member(agent.user, ws)
-    trellis = Agent.objects.create(slug="trellis", name="Trellis", owner=owner, workspace=ws)
-    trellis.user = _user("coach")
-    trellis.save(update_fields=["user"])
-    _member(trellis.user, ws)
-    SessionReviewGrant.objects.create(user=owner, agent=trellis)
-    runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", owner=owner,
-                                   status=Runner.ONLINE, last_heartbeat_at=timezone.now())
-    RunnerAdmin.objects.create(runner=runner, user=box_admin, granted_by=owner)
-    mates_box = Runner.objects.create(name="m", kind=Runner.EMDASH, host="m", owner=mate,
-                                      status=Runner.ONLINE, last_heartbeat_at=timezone.now())
-
-    def bound(session, key, box=runner):
-        RunnerBinding.objects.create(session=session, runner=box, session_key=key,
-                                     live_seen_at=timezone.now())
-        return session
-
-    shapes = {
-        "own_web": Session.objects.create(workspace=ws, created_by=owner, origin=Session.ORIGIN_WEB),
-        "shared_web": Session.objects.create(workspace=ws, created_by=owner, origin=Session.ORIGIN_WEB),
-        "discovered": bound(Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER), "d"),
-        "mates_laptop": bound(Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER), "ml",
-                              mates_box),
-        "agent_thread": Session.objects.create(workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER),
-        "bound_web": bound(Session.objects.create(workspace=ws, created_by=owner,
-                                                  origin=Session.ORIGIN_WEB), "b"),
-        "unbound_discovered": Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER),
-    }
-    SessionParticipant.objects.create(session=shapes["own_web"], user=owner, role=SessionParticipant.OWNER)
-    SessionParticipant.objects.create(session=shapes["shared_web"], user=viewer,
-                                      role=SessionParticipant.VIEWER)
-    people = {"owner": owner, "mate": mate, "viewer": viewer, "outsider": outsider,
-              "box_admin": box_admin, "hal_login": agent.user, "coach": trellis.user}
-    return people, shapes, ws
+_user = make_user
+_member = make_member
+_world = session_world
 
 
 def _client(user):

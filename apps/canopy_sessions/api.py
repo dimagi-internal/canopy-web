@@ -36,6 +36,7 @@ from apps.workspaces import services as wsvc
 from . import (
     access,
     attachment_storage,
+    audience,
     channel_bindings,
     control,
     conversation_keys,
@@ -1169,6 +1170,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["subagents"] = serializers.session_subagents(session)
     data["turn_status"] = status_feed.status_for_session(session)
     data["my_role"] = access.role_for(request.user, session)
+    data["audience"] = audience.summary(session, request.user)
     data["can_move"] = filing.can_move(request.user, session)
     # A sensitive conversation's key, for the reader's browser to open `sealed` with.
     data["sealed_key"] = sensitivity.sealed_key_for(

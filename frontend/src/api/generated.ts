@@ -36371,6 +36371,27 @@ export interface components {
                 readonly [key: string]: unknown;
             }[];
         };
+        /**
+         * SessionAudienceOut
+         * @description Who can see this session, in one line, from the same pieces as the session ACL.
+         */
+        readonly SessionAudienceOut: {
+            /**
+             * Label
+             * @description Who it is visible to, e.g. "Only you", "Everyone on this email thread (4)".
+             */
+            readonly label: string;
+            /**
+             * Extras
+             * @description Who else may, e.g. "Trellis may review (coaching)".
+             */
+            readonly extras?: readonly string[];
+            /**
+             * Count
+             * @description How many people in the workspace can read it.
+             */
+            readonly count: number;
+        };
         /** SessionDetailOut */
         readonly SessionDetailOut: {
             /**
@@ -36577,6 +36598,7 @@ export interface components {
             } | null;
             /** My Role */
             readonly my_role?: string | null;
+            readonly audience?: components["schemas"]["SessionAudienceOut"] | null;
             /**
              * Your Join Request
              * @default

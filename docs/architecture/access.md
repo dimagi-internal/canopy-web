@@ -727,6 +727,14 @@ chat-session ACL.
 | **Work an agent starts for you** (a dispatched session) | you + the parent conversation's people (`services._inherit_participants`) | the same |
 | **Coaching** | + the agent the person granted (`SessionReviewGrant`), read-only, never a sensitive one | no — it reads what is already uploaded |
 
+**Every session says who can see it.** `GET /api/canopy-sessions/{id}` carries `audience`
+(`{label, extras, count}`, `apps/canopy_sessions/audience.py`) — e.g. "Only you", "You and 2
+people you added", "Everyone on this email thread (4)", "Members of #channel", "Hal's admins
+(the agent's own work)", plus extras like "The Supply project team" or "Trellis may review
+(coaching)". It is built from the same leg pieces as the ACL, and
+`tests/test_session_audience.py` holds its readers equal to `access.can_read` for every
+session shape. The chat page and the embedded panel show it as one line at the top.
+
 The email and Slack rows describe the doors those channels open (participant rows
 written when a person is on the thread or in the channel); the session ACL itself
 only honours the rows.
