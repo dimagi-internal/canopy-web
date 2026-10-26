@@ -4678,7 +4678,68 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
     That was Hal's session f6e30263 on cloud-ec2-2, 2026-10-19: a weekly cap
     erased a 1,000-line build conversation. A turn that had no session to resume
     still retries fresh: that attempt's partial session is never reused.
+
+    A credential's own refusal ("You've hit your weekly limit · resets 9pm") is
+    streamed as an assistant message like any reply, and every channel posts
+    those as they land: a Slack thread opened ACE's answer with ACE's cap before
+    the next credential ran the turn. So an attempt's refusal is held back
+    (`_CredentialNotices`): dropped when the turn fails over, emitted only when
+    the turn ends on that attempt.
     """
+    notices = _CredentialNotices(emit)
+    try:
+        return _execute_down_the_cascade(prompt, turn_id, notices, cwd=cwd,
+                                         agent_slug=agent_slug,
+                                         resume_session_id=resume_session_id)
+    finally:
+        notices.release()
+
+
+#: Longest assistant message that can be a credential's own refusal. The CLI's
+#: cap and sign-in sentences are one line; anything longer is the agent talking
+#: (perhaps about limits) and streams as it always did.
+CREDENTIAL_NOTICE_MAX_CHARS = 300
+
+
+class _CredentialNotices:
+    """Wraps a turn's `emit`, holding back what a refused credential said until
+    `execute_prompt` knows whether another credential will run the turn."""
+
+    def __init__(self, emit):
+        self._emit = emit
+        self._held: list[dict] = []
+
+    @staticmethod
+    def _is_notice(event) -> bool:
+        if not isinstance(event, dict) or event.get("kind") != "assistant":
+            return False
+        text = str((event.get("payload") or {}).get("text") or "").strip()
+        return (0 < len(text) <= CREDENTIAL_NOTICE_MAX_CHARS
+                and (_is_usage_cap(text) or _is_auth_required(text)))
+
+    def emit(self, events) -> None:
+        held = [e for e in events if self._is_notice(e)]
+        rest = [e for e in events if not self._is_notice(e)]
+        self._held.extend(held)
+        if rest or not held:
+            self._emit(rest)
+
+    def drop(self) -> None:
+        """The turn is failing over: the next credential answers instead."""
+        self._held.clear()
+
+    def release(self) -> None:
+        """The turn ends on this attempt: what it said is the turn's to show."""
+        held, self._held = self._held, []
+        if held:
+            self._emit(held)
+
+
+def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNotices,
+                              cwd=None, agent_slug=None,
+                              resume_session_id=None) -> tuple[bool, str, str]:
+    """`execute_prompt`'s loop; it drops `notices` each time it fails over."""
+    emit = notices.emit
     original_resume = resume_session_id
     attempted: list[str] = []
     resets: list[float] = []      # each capped credential's reset, epoch seconds
@@ -4755,6 +4816,7 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
             # invisible, until something bounces the runner.
             if _reload_claude_credentials():
                 _log(f"turn {turn_id[:8]}: picked up new credentials — retrying")
+                notices.drop()
                 resume_session_id = original_resume
                 continue
             # Nothing left to fail over to. Say so in the turn's own text: the
@@ -4783,8 +4845,9 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
                              f"and will NOT clear on its own — someone has to "
                              f"re-authenticate it.")
             return ok, f"{text}\n\n{note}", session_id
+        notices.drop()
         # Resume what the caller asked for, not whatever the failed attempt
-        # opened (see the docstring).
+        # opened (see `execute_prompt`).
         resume_session_id = original_resume
 
 
