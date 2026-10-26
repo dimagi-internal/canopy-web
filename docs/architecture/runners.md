@@ -1084,6 +1084,8 @@ The CLI is *which* agent program runs a turn (`claude-code`, `codex`, `apps/harn
 
 Today: `cli` (`ClaudePrintExecutor`: `claude -p` + stream-json, `run_claude`) and `acp` (`AcpExecutor`: canopy_acp over `claude-agent-acp`, `run_acp`, which runs the turn as `claude -p` when canopy_acp did not import); both drive `claude-code`. A new way of driving a CLI — Codex's `codex app-server`, an Agent SDK executor — is a new subclass, its protocol driver a package off the runner's clone imported lazily as `canopy_acp` is. The classes live in `cloud_runner.py` itself because the box runs that file alone (seeded whole, replaced whole by `update_runner.sh`).
 
+What the claim says about the turn's CLI reaches it: a turn claimed for a CLI the box's executor does not drive (`cli`) is finished `failed` with `cli_mismatch` before anything runs (`_cli_refusal`; no `cli` = Claude Code), and the model its agent names (`cli_model`, shaped like a model name or ignored) is `--model` on `claude -p` (`_turn_model`, `_TURN_ENV.model`). The ACP executor does not pass it yet.
+
 Not on the interface, because both executors share them as `claude-code`'s: the session store (`_resume_target_exists`, `_ship_transcript_rows`, `_TurnTail` read `~/.claude/projects`), forks, the credential cascade and its probe, and reading a cap or a sign-out from a turn's text. A second CLI brings its own of each.
 
 ## Runner fleets (`apps/harness/fleets.py`)

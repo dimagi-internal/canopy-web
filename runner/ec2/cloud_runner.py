@@ -1237,6 +1237,9 @@ def _claude_cmd(prompt: str, resume_session_id: str | None = None) -> list[str]:
     # unlisted tool rather than asking a person who is not there, and the settings
     # disable bypass anyway.
     cmd += ["--permission-mode", "dontAsk"] if SENSITIVE_DATA_MODE else ["--dangerously-skip-permissions"]
+    # The model the turn starts on, when its agent names one (`_turn_model`).
+    if model := getattr(_TURN_ENV, "model", None):
+        cmd += ["--model", model]
     if resume_session_id:
         cmd += ["--resume", resume_session_id]
         session_id = resume_session_id
@@ -10806,6 +10809,29 @@ def _killed_by_shutdown(ok: bool, turn_id: str) -> bool:
     return not ok and _stop and not stop_requested(turn_id) and _system_shutting_down()
 
 
+#: A model name as `--model` takes one (`opus`, `claude-opus-5-5[1m]`, `gpt-6.1-sol`).
+_MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,63}")
+
+
+def _turn_model(turn: dict) -> str:
+    """The model canopy-web asks this turn to start on (the agent's `cli_models`
+    for its CLI), or "" for the CLI's own default. Anything not shaped like a
+    model name is ignored rather than passed to the CLI."""
+    model = str(turn.get("cli_model") or "").strip()
+    return model if _MODEL_NAME.fullmatch(model) else ""
+
+
+def _cli_refusal(turn: dict) -> str | None:
+    """Why this box may not run `turn` on its executor's agent CLI, or None. A turn
+    from a server that names no CLI ran on Claude Code."""
+    want = str(turn.get("cli") or "claude-code")
+    have = _executor().cli
+    if want == have:
+        return None
+    return (f"cli_mismatch: this turn was claimed for {want}, and this box's executor "
+            f"({_executor().name}) runs {have}")
+
+
 def _run_turn(runner_id: str, turn: dict) -> None:
     """Execute one claimed turn to completion. Runs on its own thread."""
     turn_id = turn["id"]
@@ -10817,6 +10843,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
     _TURN_ENV.attachment_dir = None
     _TURN_ENV.mcp_config = None
     _TURN_ENV.fresh_start = None
+    _TURN_ENV.model = _turn_model(turn)
+    # A turn claimed for an agent CLI this box's executor does not drive is never
+    # run on another: canopy-web picked that CLI (`apps/harness/clis.py`), and its
+    # conversation's history lives there. Refused before anything is built.
+    if (refused := _cli_refusal(turn)) is not None:
+        _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": refused})
+        _log(f"turn {turn_id[:8]} NOT run — {refused}")
+        _TURN_ENV.model = None
+        return
     # A sensitive conversation's kept session is never swept while a turn runs in it.
     conversation = _sensitive_conversation(turn)
     _kept_busy(conversation, 1)
@@ -11172,6 +11207,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.attachment_dir = None
         _TURN_ENV.mcp_config = None
         _TURN_ENV.fresh_start = None
+        _TURN_ENV.model = None
         _TURN_ENV.read_settings = None
         _TURN_ENV.read_sessions = None
         _kept_busy(conversation, -1)
