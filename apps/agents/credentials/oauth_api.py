@@ -27,7 +27,7 @@ from .zk import ZkError
 
 router = Router(auth=session_auth, tags=["agents"])
 
-# The credential slot the fleet already names in every runtime.yaml and every
+# The credential slot the fleet already names in every agent's declaration and every
 # 1Password vault. Minting must land in the SAME slot a hand-minted token does,
 # or the box would have two sources of truth for one mailbox.
 GOG_TOKEN_REF = "gog-token"

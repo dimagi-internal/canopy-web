@@ -1,11 +1,10 @@
 [project]
 name = "canopy-runtime"
-version = "0.4.0"
-description = "Django-free schema for an agent's declarative runtime spec (runtime.yaml): the plugins, MCP servers, tools, engine, secret REFERENCES, and preflight that define 'ready to run this agent'. Lives in the agent's repo; validated by canopy-web and by `canopy-runtime publish-capabilities`."
+version = "0.5.0"
+description = "Django-free schema for an agent's capability manifests (capability.yaml), and `canopy-runtime publish-capabilities`, which validates them and sends them to canopy-web."
 readme = "README.md"
 requires-python = ">=3.11"
-# pydantic for validation; pyyaml so a runner can load runtime.yaml straight
-# from the agent's repo. Deliberately NOT depending on Django — an agent's deploy
+# pydantic for validation; pyyaml to load capability.yaml straight from the agent's repo. Deliberately NOT depending on Django — an agent's deploy
 # imports this to publish capabilities without installing canopy-web.
 dependencies = [
     "pydantic>=2.6,<3.0",
@@ -13,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-# `canopy-runtime publish-capabilities --spec runtime.yaml --agent <slug>`.
+# `canopy-runtime publish-capabilities --dir infra/capabilities --agent <slug>`.
 canopy-runtime = "canopy_runtime.cli:main"
 
 [build-system]

@@ -4487,7 +4487,7 @@ export interface paths {
          *
          *     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
          *     always was. With `refs`, `values` holds only the named refs that the
-         *     agent's runtime.yaml also declares, and the secret extras
+         *     agent also declares (`runtime_secrets`), and the secret extras
          *     (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
          *     are included only when named in `refs` too. `op_vault`, `shared_op_vault`
          *     and `mailbox` are not secrets and are always returned.
@@ -4807,7 +4807,7 @@ export interface paths {
         /**
          * Ask a person for one of this agent's declared secrets
          * @description For the agent itself (its own login) or an admin. `name` must be declared
-         *     in the agent's runtime.yaml. The chat this is called from shows the person a
+         *     in the agent's vault (`runtime_secrets`). The chat this is called from shows the person a
          *     card that seals the value in their browser and stores ciphertext only — you
          *     never receive the value, and must not ask for it in the chat. Read the
          *     request back (`get_agent_secret_request`) for `status: fulfilled`, then
@@ -5813,7 +5813,7 @@ export interface paths {
         /**
          * Publish an agent's declared capabilities (its whole list)
          * @description The agent's deploy calls this (`canopy-runtime publish-capabilities`) with
-         *     every capability its runtime.yaml declares. Each ec2-ephemeral stack's
+         *     every capability manifest (`capability.yaml`) the agent ships. Each ec2-ephemeral stack's
          *     Outputs are read now and must meet the contract (422 naming what is
          *     missing); a `pool` has no stack, only its `slots`. Idempotent; a capability
          *     left out is retired and its live leases released. A pool's live leases
@@ -21980,10 +21980,9 @@ export interface components {
         };
         /**
          * AgentRuntimeOut
-         * @description What a runner needs from canopy-web to run this agent: the repo pointer
-         *     (whose runtime.yaml is the declarative spec), the secret-reference names to
-         *     resolve from the env store, the engine preference, and the tenant. The
-         *     declarative spec + secret VALUES live elsewhere (repo / secret store).
+         * @description What a runner needs from canopy-web to run this agent: the repo pointer,
+         *     the secret-reference names to resolve from the env store, the engine
+         *     preference, and the tenant. Secret VALUES live in the secret store.
          */
         readonly AgentRuntimeOut: {
             /** Slug */
@@ -23996,7 +23995,7 @@ export interface components {
          * AgentCredentialStatusOut
          * @description Masked view — booleans and timestamps, NEVER values.
          *
-         *     `declared` distinguishes a ref the agent's runtime.yaml asks for from an
+         *     `declared` distinguishes a ref the agent declares from an
          *     orphan left behind when one was removed; `source` says which store a live
          *     value came from, so a canopy-web/1Password divergence during migration is
          *     visible rather than silent.

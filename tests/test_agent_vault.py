@@ -29,7 +29,7 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
 
-# ACE's real shape, from runtime.yaml (ace#2060).
+# ACE's real shape (ace#2060).
 SOURCES = {
     "canopy-pat": {"op": "op://Agent-Ace/canopy-pat/credential"},
     "gog-token": {"op": "op://Agent-Ace/gog-token/credential"},

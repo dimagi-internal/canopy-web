@@ -17,8 +17,9 @@ def main(argv: list[str] | None = None) -> int:
         from canopy_runtime.publish import main as publish_main
 
         return publish_main(argv[1:])
-    print("usage: canopy-runtime publish-capabilities --spec runtime.yaml --agent <slug> "
-          "[--base-url URL] [--token PAT] [--dry-run]", file=sys.stderr)
+    from canopy_runtime.publish import USAGE
+
+    print(f"usage: canopy-runtime {USAGE.removeprefix('canopy-runtime ')}", file=sys.stderr)
     return 2
 
 

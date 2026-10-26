@@ -1695,7 +1695,7 @@ def agent_credential_status(agent) -> list[dict]:
 
     Declared-but-unset rows appear (that is the question the page answers), and
     so do stored-but-undeclared ones — an orphan left behind when a ref was
-    removed from runtime.yaml is a live secret nothing accounts for, and hiding
+    removed from its declaration is a live secret nothing accounts for, and hiding
     it is how it stays that way.
     """
 
@@ -1742,7 +1742,7 @@ def credential_reads(agent, name: str, *, limit: int = 100) -> list[dict]:
 
 def declared_credential_names(agent) -> set[str]:
     """Every ref the agent declares: `runtime_secrets` (the names, written by
-    `canopy agent vault` — historically mirrored from the repo's runtime.yaml)
+    `canopy agent vault`)
     plus `runtime_sources` (where each lives). The set `?refs=` is scoped to."""
     names = {str(n).strip() for n in (agent.runtime_secrets or []) if str(n).strip()}
     names |= {str(n).strip() for n in (agent.runtime_sources or {}) if str(n).strip()}
@@ -1771,7 +1771,7 @@ def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, 
 
     `refs=None` returns every stored value (the unscoped, original behaviour).
     A set returns only those refs that the agent also DECLARES — a ref the
-    caller names but runtime.yaml does not is never handed out, so a scoped
+    caller names but the agent does not declare is never handed out, so a scoped
     caller cannot widen its read by guessing names."""
 
     qs = AgentCredential.objects.filter(agent=agent).select_related("agent")

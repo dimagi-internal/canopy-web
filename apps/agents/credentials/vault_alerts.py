@@ -23,8 +23,8 @@ request: an email and a Web Push, each linking to the agent's Credentials.
   session there — an `admin` read, not a box (2026-10-18).
 * `undeclared-ref` — a read that asks for, or is handed, a ref the agent does not
   declare: not among its declared secrets on canopy-web (`runtime_secrets`, written by
-  `canopy agent vault` — the vault is the one declaration since 2026-10-22; the repo's
-  runtime.yaml no longer lists secrets) nor supplied by a layered workspace vault.
+  `canopy agent vault` — the vault is the one declaration since 2026-10-22)
+  nor supplied by a layered workspace vault.
 * `burst` — more than CANOPY_VAULT_READ_BURST_LIMIT resolves (default 50) of one
   agent inside a 5-minute window. Counted per resolve request, not per ref: one
   unscoped resolve of ACE hands out 45 refs and is one read.
@@ -181,8 +181,8 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
         logger.exception("unrouted-box event failed for %s", agent.slug)
 
 
-#: The resolve extras (credential_resolve.RESOLVE_SECRET_EXTRAS) are fields, not refs a
-#: runtime.yaml declares, so naming them is never "undeclared".
+#: The resolve extras (credential_resolve.RESOLVE_SECRET_EXTRAS) are fields, not refs an
+#: agent declares, so naming them is never "undeclared".
 _EXTRAS = {"op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds"}
 
 
@@ -271,8 +271,7 @@ _WHY = {
                       "proof: if nobody was checking, treat it as a read outside a turn — "
                       "pause the box and revoke its token."),
     "undeclared-ref": ("Canopy watches for this because an agent should only ask for the "
-                       "secrets declared in its vault on Canopy (its repo's runtime.yaml no "
-                       "longer lists secrets). If the agent needs it, store it in the agent's "
+                       "secrets declared in its vault on Canopy. If the agent needs it, store it in the agent's "
                        "vault (`canopy agent vault`), which declares it. If the agent "
                        "should never use it, find out who asked."),
     "burst": ("Canopy watches for this because a normal turn reads an agent's secrets a "

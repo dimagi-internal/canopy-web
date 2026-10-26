@@ -10,11 +10,11 @@
  *  token uses, so the box never has two sources of truth for one mailbox. */
 export const GOG_TOKEN_REF = 'gog-token'
 
-/** Does this agent have a Google mailbox to connect? Either its runtime.yaml
- *  declares the `gog-token` slot, or the agent simply HAS a mailbox address.
+/** Does this agent have a Google mailbox to connect? Either it declares the
+ *  `gog-token` slot, or the agent simply HAS a mailbox address.
  *
  *  It used to be the declaration alone, so the button rendered only for an agent
- *  with a runtime.yaml — ace — and never for ada/echo/eva/hal (declared: 0), which
+ *  that declared secrets — ace — and never for ada/echo/eva/hal (declared: 0), which
  *  all have mailboxes and all run on the same `gog-token` slot. For those four the
  *  only way to re-mint was a terminal `gog login` plus a 1Password write, which is
  *  the exact trip this button exists to remove (2026-10-04). */

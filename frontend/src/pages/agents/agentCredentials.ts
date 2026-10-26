@@ -48,7 +48,7 @@ export interface CredentialSections {
 
 /** `implied` names refs the agent needs without declaring them — today only
  *  `gog-token` for an agent that HAS a mailbox. "Connect Google mailbox" stores
- *  that slot for an agent with no runtime.yaml (ada/echo/eva/hal), and calling
+ *  that slot for an agent that declares no secrets (ada/echo/eva/hal), and calling
  *  the result an orphan "worth removing" would invite someone to delete the one
  *  working mailbox token. */
 export function sections(rows: readonly CredRow[], implied: readonly string[] = []): CredentialSections {

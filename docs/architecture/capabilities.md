@@ -24,14 +24,8 @@ so no other labs service gets the grant. Pass `BrokerRoleName=canopy-web-task-ro
 
 ## 1. Declare it in your repo
 
-`runtime.yaml`:
-
-```yaml
-capabilities:
-  - manifest: infra/capabilities/android-emulator/capability.yaml   # relative to runtime.yaml
-```
-
-`capability.yaml` (`CapabilityManifest`, version 1; unknown keys are an error):
+One `capability.yaml` per capability, e.g. `infra/capabilities/android-emulator/capability.yaml`
+(`CapabilityManifest`, version 1; unknown keys are an error):
 
 ```yaml
 version: 1
@@ -57,9 +51,13 @@ A param with no `default` is required at acquire.
 **Publish as part of your deploy:**
 
 ```bash
-canopy-runtime publish-capabilities --spec runtime.yaml --agent <slug> \
+canopy-runtime publish-capabilities --dir infra/capabilities --agent <slug> \
   [--base-url https://canopy.dimagi.com] [--token $CANOPY_TOKEN]
 ```
+
+`--dir` takes every `<dir>/*/capability.yaml` (and refuses a directory with none, rather than
+retire everything); `--manifest PATH` names one file and repeats. The old `--spec` form is
+retired and exits 2.
 
 It validates every manifest and sends the whole list in one
 `PUT /api/agents/{slug}/capabilities`. canopy-web validates again (same model), reads

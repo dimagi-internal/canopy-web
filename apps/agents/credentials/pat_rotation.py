@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 #: The name an agent's own canopy login is stored under in canopy-web's vault. A
 #: runner writes each stored value out as the environment variable OF THAT NAME
-#: (`canopy cred sync`, which never reads runtime.yaml's `env:`), and an agent's
+#: (`canopy cred sync`, which writes only stored values), and an agent's
 #: code reads its login from `CANOPY_WEB_PAT` — so that is the name, not the
 #: 1Password item name `canopy-pat` (`.env.tpl`: CANOPY_WEB_PAT=op://…/canopy-pat/…),
 #: which is not even a valid variable name and would be dropped on the way.

@@ -8,7 +8,7 @@ describe('declaresMailbox', () => {
   })
 
   it('offers it to an agent with a mailbox address even when it declares nothing', () => {
-    // ada/echo/eva/hal: no runtime.yaml (declared: 0), but every one has a mailbox.
+    // ada/echo/eva/hal: no declared secrets (declared: 0), but every one has a mailbox.
     expect(declaresMailbox([], 'ada@dimagi-ai.com')).toBe(true)
     expect(declaresMailbox([], '')).toBe(false)
     expect(declaresMailbox([], null)).toBe(false)

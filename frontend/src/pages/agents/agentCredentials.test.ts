@@ -69,7 +69,7 @@ it('never frames a vault-resolved ref as a deficit', () => {
 
 describe('sections — a mailbox implies gog-token', () => {
   it('does not call a minted gog-token an orphan for an agent with a mailbox', () => {
-    // ada after "Connect Google mailbox": stored, never declared (no runtime.yaml).
+    // ada after "Connect Google mailbox": stored, never declared.
     const rows = [{ name: 'gog-token', declared: false, set: true, source: 'canopy-web',
                     updated_at: null, updated_by_email: null }] as never
     expect(sections(rows).orphans).toHaveLength(1)

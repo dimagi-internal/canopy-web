@@ -1,5 +1,4 @@
-"""capability.yaml (CapabilityManifest), runtime.yaml's `capabilities:`, and
-`canopy-runtime publish-capabilities`."""
+"""capability.yaml (CapabilityManifest) and `canopy-runtime publish-capabilities`."""
 from __future__ import annotations
 
 import json
@@ -8,9 +7,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
-from canopy_runtime import CapabilityManifest, load_capability_manifest, load_runtime_yaml
+from canopy_runtime import CapabilityManifest, load_capability_manifest
 from canopy_runtime.cli import main as cli_main
-from canopy_runtime.publish import load_manifests
+from canopy_runtime.publish import find_manifests, load_manifests
 from pydantic import ValidationError
 
 MANIFEST = """
@@ -81,44 +80,80 @@ def test_params_are_checked_and_defaulted():
     assert "param 'fast' is required" in msg
 
 
-def test_runtime_yaml_declares_capabilities_by_relative_path():
-    spec = load_runtime_yaml("capabilities:\n  - manifest: infra/capabilities/x/capability.yaml\n")
-    assert spec.capabilities[0].manifest == "infra/capabilities/x/capability.yaml"
-    with pytest.raises(ValidationError):
-        load_runtime_yaml("capabilities:\n  - manifest: /etc/capability.yaml\n")
-    with pytest.raises(ValidationError):
-        load_runtime_yaml("capabilities:\n  - path: x.yaml\n")
-
-
 def _repo(tmp_path: Path, manifests: dict[str, str]) -> Path:
+    """Write manifests under tmp_path; returns the `infra/capabilities`-style root
+    (tmp_path itself, since the keys carry their own subdirectory)."""
     for rel, body in manifests.items():
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(body)
-    spec = tmp_path / "runtime.yaml"
-    spec.write_text("capabilities:\n" + "".join(f"  - manifest: {rel}\n" for rel in manifests))
-    return spec
+    return tmp_path
 
 
-def test_manifest_paths_resolve_relative_to_the_spec_file(tmp_path, monkeypatch):
-    spec = _repo(tmp_path / "repo", {"infra/capabilities/android-emulator/capability.yaml": MANIFEST})
-    monkeypatch.chdir(tmp_path)  # NOT the repo: the spec file's dir is what counts
-    (m,) = load_manifests(Path("repo/runtime.yaml"))
-    assert m.name == "android-emulator"
-    assert spec.exists()
+def _args(root: Path, rels) -> list[str]:
+    return [a for rel in rels for a in ("--manifest", str(root / rel))]
+
+
+def test_dir_finds_every_capability_manifest_one_level_down(tmp_path):
+    """The failure this guards is silent and expensive: a publish that misses a
+    manifest RETIRES that capability and releases its live leases. ACE has two."""
+    root = _repo(tmp_path, {"android-emulator/capability.yaml": MANIFEST,
+                            "test-worker/capability.yaml": POOL,
+                            "android-emulator/deploy.sh": "#!/bin/sh\n",
+                            "README.md": "not a capability dir\n"})
+    assert [p.parent.name for p in find_manifests(root)] == ["android-emulator", "test-worker"]
+    assert [m.name for m in load_manifests(find_manifests(root))] == ["android-emulator", "test-worker"]
+
+
+def test_dir_refuses_an_empty_or_missing_directory(tmp_path):
+    with pytest.raises(ValueError, match="would retire every capability"):
+        find_manifests(_repo(tmp_path / "empty", {"README.md": "x"}))
+    with pytest.raises(ValueError, match="not a directory"):
+        find_manifests(tmp_path / "nope")
+
+
+def test_dir_refuses_a_misnamed_manifest_it_would_skip(tmp_path):
+    root = _repo(tmp_path, {"a/capability.yaml": MANIFEST, "b/capability.yml": POOL})
+    with pytest.raises(ValueError, match="named capability.yaml"):
+        find_manifests(root)
 
 
 def test_a_duplicate_capability_name_is_refused(tmp_path):
-    spec = _repo(tmp_path, {"a/capability.yaml": MANIFEST, "b/capability.yaml": MANIFEST})
+    root = _repo(tmp_path, {"a/capability.yaml": MANIFEST, "b/capability.yaml": MANIFEST})
     with pytest.raises(ValueError, match="already declared"):
-        load_manifests(spec)
+        load_manifests(find_manifests(root))
 
 
 def test_an_invalid_manifest_exits_2_naming_the_file(tmp_path, capsys):
-    spec = _repo(tmp_path, {"bad/capability.yaml": "version: 1\nname: x\n"})
-    assert cli_main(["publish-capabilities", "--spec", str(spec), "--agent", "ace",
+    root = _repo(tmp_path, {"bad/capability.yaml": "version: 1\nname: x\n"})
+    assert cli_main(["publish-capabilities", "--dir", str(root), "--agent", "ace",
                      "--token", "t"]) == 2
     assert "bad/capability.yaml" in capsys.readouterr().err
+
+
+def test_spec_is_retired_and_fails_loudly_with_the_new_usage(tmp_path, canopy, capsys):
+    base, handler = canopy
+    assert cli_main(["publish-capabilities", "--spec", "spec.yaml", "--agent", "ace",
+                     "--base-url", base, "--token", "t"]) == 2
+    err = capsys.readouterr().err
+    assert "--spec is retired" in err and "--dir infra/capabilities" in err
+    assert handler.seen == []  # nothing was sent: a shim here would have published
+
+
+def test_naming_no_manifests_is_an_error_not_an_empty_publish(canopy, capsys):
+    base, handler = canopy
+    assert cli_main(["publish-capabilities", "--agent", "ace", "--base-url", base, "--token", "t"]) == 2
+    assert "--dir infra/capabilities" in capsys.readouterr().err
+    assert handler.seen == []
+
+
+def test_the_same_file_via_dir_and_manifest_is_one_capability(tmp_path, canopy):
+    base, handler = canopy
+    handler.reply = (200, {"capabilities": []})
+    root = _repo(tmp_path, {"android-emulator/capability.yaml": MANIFEST})
+    assert cli_main(["publish-capabilities", "--dir", str(root), *_args(root, ["android-emulator/capability.yaml"]),
+                     "--agent", "ace", "--base-url", base, "--token", "t"]) == 0
+    assert [c["name"] for c in handler.seen[0][2]["capabilities"]] == ["android-emulator"]
 
 
 class _Canopy(BaseHTTPRequestHandler):
@@ -154,8 +189,8 @@ def test_publish_puts_every_manifest_to_the_agents_route(tmp_path, canopy, capsy
     handler.reply = (200, {"agent": "ace", "retired": ["old-cap"], "capabilities": [
         {"name": "android-emulator", "kind": "ec2-ephemeral",
          "stack": "canopy-cap-ace-android-emulator", "grant": None}]})
-    spec = _repo(tmp_path, {"infra/capabilities/android-emulator/capability.yaml": MANIFEST})
-    rc = cli_main(["publish-capabilities", "--spec", str(spec), "--agent", "ace",
+    root = _repo(tmp_path, {"android-emulator/capability.yaml": MANIFEST})
+    rc = cli_main(["publish-capabilities", "--dir", str(root), "--agent", "ace",
                    "--base-url", base, "--token", "cpat_x"])
     assert rc == 0
     ((path, auth, body),) = handler.seen
@@ -169,16 +204,16 @@ def test_publish_puts_every_manifest_to_the_agents_route(tmp_path, canopy, capsy
 def test_a_refusal_exits_1_with_canopys_reason(tmp_path, canopy, capsys):
     base, handler = canopy
     handler.reply = (422, {"detail": "stack canopy-cap-ace-android-emulator has no LaunchTemplateId output"})
-    spec = _repo(tmp_path, {"c/capability.yaml": MANIFEST})
-    assert cli_main(["publish-capabilities", "--spec", str(spec), "--agent", "ace",
+    root = _repo(tmp_path, {"c/capability.yaml": MANIFEST})
+    assert cli_main(["publish-capabilities", "--dir", str(root), "--agent", "ace",
                      "--base-url", base, "--token", "t"]) == 1
     assert "LaunchTemplateId" in capsys.readouterr().err
 
 
 def test_dry_run_sends_nothing(tmp_path, canopy, capsys):
     base, handler = canopy
-    spec = _repo(tmp_path, {"c/capability.yaml": MANIFEST})
-    assert cli_main(["publish-capabilities", "--spec", str(spec), "--agent", "ace",
+    root = _repo(tmp_path, {"c/capability.yaml": MANIFEST})
+    assert cli_main(["publish-capabilities", "--dir", str(root), "--agent", "ace",
                      "--base-url", base, "--dry-run"]) == 0
     assert handler.seen == []
     assert json.loads(capsys.readouterr().out)["capabilities"][0]["name"] == "android-emulator"
@@ -270,8 +305,8 @@ def test_an_ec2_publish_body_carries_no_pool_keys(tmp_path):
     must not grow `slots: null`."""
     from canopy_runtime.publish import payload
 
-    spec = _repo(tmp_path, {"e/capability.yaml": MANIFEST, "p/capability.yaml": POOL})
-    ec2, pool = payload(load_manifests(spec))["capabilities"]
+    root = _repo(tmp_path, {"e/capability.yaml": MANIFEST, "p/capability.yaml": POOL})
+    ec2, pool = payload(load_manifests(find_manifests(root)))["capabilities"]
     assert "slots" not in ec2 and ec2["aws"]["stack"] == "canopy-cap-ace-android-emulator"
     assert "aws" not in pool and "exec" not in pool and pool["slots"][0] == "worker-1"
     assert CapabilityManifest.model_validate(ec2) and CapabilityManifest.model_validate(pool)

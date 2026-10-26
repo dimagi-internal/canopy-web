@@ -291,10 +291,9 @@ jobs:
         working-directory: packages/canopy_agent_runs
         run: uv run --extra drive --with pytest pytest
 
-      # canopy_runtime defines + validates the agent runtime.yaml schema (the
-      # Agent Runtime Registry), Django-free so an agent deploy can publish capabilities;
-      # its guardrails — extra="forbid" and
-      # "secrets are reference names, never values" — must actually execute.
+      # canopy_runtime defines + validates capability.yaml (CapabilityManifest) and
+      # `publish-capabilities`, Django-free so an agent deploy can publish; its
+      # guardrails (extra="forbid", a --dir that cannot miss a manifest) must execute.
       - name: Run canopy_runtime tests
         working-directory: packages/canopy_runtime
         run: uv run --with pytest pytest -q

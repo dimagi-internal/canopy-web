@@ -37,7 +37,7 @@ def fleet(client):
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
     agent = Agent.objects.create(
         slug="ace", name="ACE", workspace=ws,
-        # The DECLARATION. Shape lives in the agent's runtime.yaml and reaches
+        # The DECLARATION. Shape lives in the agent's vault declaration and reaches
         # canopy-web as the registry's secret refs; canopy-web stores VALUES and
         # never re-declares shape (that duplication is what produced the
         # gog_client drift — three copies, two wrong).
