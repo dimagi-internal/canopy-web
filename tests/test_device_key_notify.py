@@ -1,6 +1,6 @@
 """A pending runner device key tells the people who can approve it
 (apps/harness/device_key_notify.py): the owner and explicit runner admins get an
-email + Web Push linking to Settings → Your machines with the key highlighted —
+email + Web Push linking to Settings → Your runners with the key highlighted —
 once per new key, again only when an active key is sent back to pending — and
 the box's own heartbeat reply says so for as long as the key waits.
 """
@@ -66,9 +66,9 @@ def test_a_new_pending_key_mails_and_pushes_the_owner_and_runner_admins(box, dja
     assert sorted(m.to[0] for m in mail.outbox) == ["ad@dimagi.com", "jj@dimagi.com"]
     msg = mail.outbox[0]
     assert "approve haldimagi-mbp-cdp" in msg.subject
-    assert f"/settings?device_key={kid}#device-keys" in msg.body
+    assert f"/settings?device_key={kid}#your-runners" in msg.body
     assert sorted(u for u, _ in box["pushed"]) == ["ad", "jj"]
-    assert all(url.endswith(f"/settings?device_key={kid}#device-keys") for _, url in box["pushed"])
+    assert all(url.endswith(f"/settings?device_key={kid}#your-runners") for _, url in box["pushed"])
 
 
 def test_re_registering_the_same_key_sends_nothing(box, django_capture_on_commit_callbacks):
@@ -120,11 +120,11 @@ def test_the_heartbeat_tells_the_box_a_key_waits_until_it_is_approved(box):
     assert _heartbeat(box)["key_waiting"] == ""
     key = ec.generate_private_key(ec.SECP256R1())
     kid = _register(box, key).json()["id"]
-    assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#device-keys")
+    assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#your-runners")
     RunnerDeviceKey.objects.filter(pk=kid).update(status=RunnerDeviceKey.ACTIVE, approved_at=timezone.now())
     assert _heartbeat(box)["key_waiting"] == ""
     _register(box, key, ecdh=ec.generate_private_key(ec.SECP256R1()))  # a new ECDH key waits again
-    assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#device-keys")
+    assert _heartbeat(box)["key_waiting"].endswith(f"/settings?device_key={kid}#your-runners")
 
 
 def test_the_notice_names_the_computer_not_its_kernel(box, django_capture_on_commit_callbacks):

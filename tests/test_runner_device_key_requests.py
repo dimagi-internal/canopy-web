@@ -68,7 +68,7 @@ def test_a_stranded_box_gets_a_pending_key_and_its_owner_the_link(box, django_ca
     body = res.json()
     key = RunnerDeviceKey.objects.get(pk=body["id"])
     assert key.status == RunnerDeviceKey.PENDING and key.runner == box["runner"]
-    assert body["approve_url"].endswith(f"device_key={key.pk}#device-keys")
+    assert body["approve_url"].endswith(f"device_key={key.pk}#your-runners")
     # The runner lives in a workspace, so the `device_key_pending` alert (not a
     # direct mail) tells its owner; `body["approve_url"]` is what the box prints.
     assert mail.outbox == []

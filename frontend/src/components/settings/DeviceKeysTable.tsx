@@ -54,7 +54,7 @@ export function DeviceKeysTable({
       const row = keys.find((k) => k.id === g0.key)
       if (row) onChange({ ...row, zk_pending_agents: [] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not give this machine access')
+      setError(e instanceof Error ? e.message : 'Could not give this runner access')
     } finally {
       setBusy(null)
     }
@@ -96,7 +96,7 @@ export function DeviceKeysTable({
   if (keys.length === 0) {
     return (
       <p className="text-[12px] text-muted-foreground" data-testid="device-keys-empty">
-        No machines yet.
+        No runners yet.
       </p>
     )
   }
@@ -199,8 +199,8 @@ export function DeviceKeysTable({
              data-testid="device-key-zk-grant">
           <span className="text-foreground">
             {grant.done.length === grant.agents.length
-              ? `Done: this machine can now open ${grant.agents.join(', ')}.`
-              : `This machine is waiting to open ${grant.agents.join(', ')}.`}
+              ? `Done: this runner can now open ${grant.agents.join(', ')}.`
+              : `This runner is waiting to open ${grant.agents.join(', ')}.`}
           </span>
           {grant.done.length < grant.agents.length && (
             <button type="button" onClick={() => void grantAll()} disabled={busy !== null}

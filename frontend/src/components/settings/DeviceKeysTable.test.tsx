@@ -48,7 +48,7 @@ describe('DeviceKeysTable', () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...KEY, status: 'active' }))
     expect(approveAndGrant).toHaveBeenCalledWith('k1', ['eva'], expect.any(Function))
     expect(approveRunnerDeviceKey).not.toHaveBeenCalled()
-    expect(await screen.findByText(/this machine can now open eva/)).toBeTruthy()
+    expect(await screen.findByText(/this runner can now open eva/)).toBeTruthy()
     expect(screen.queryByTestId('device-key-zk-grant-button')).toBeNull()
   })
 
@@ -76,7 +76,7 @@ describe('DeviceKeysTable', () => {
     expect((await screen.findByTestId('device-key-zk-grant')).textContent).toContain('eva')
     fireEvent.click(screen.getByTestId('device-key-zk-grant-button'))
     await waitFor(() => expect(giveAccess).toHaveBeenCalledWith('eva', expect.any(Function)))
-    expect((await screen.findByText(/this machine can now open eva/))).toBeTruthy()
+    expect((await screen.findByText(/this runner can now open eva/))).toBeTruthy()
   })
 
   it('an approved machine agents still wait on: one click gives it access', async () => {

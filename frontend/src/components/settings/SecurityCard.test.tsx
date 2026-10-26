@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The Security card (canopy-web#1550): one card with You / Your machines /
+// The Security card (canopy-web#1550): one card with You / Your runners /
 // Your agents, and the person's ONE recovery code — made once, used to get back in.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -46,11 +46,11 @@ async function keyset(extra: unknown[] = []) {
 }
 
 describe('SecurityCard', () => {
-  it('is one card with You, Your machines and Your agents', async () => {
+  it('is one card with You, Your runners and Your agents', async () => {
     vault.getKeyset.mockResolvedValue({ user_id: USER, exists: false, passkeys: [], seals: [] })
     render(<SecurityCard machines={<p>machines here</p>} />)
     expect(await screen.findByTestId('security-you')).toBeTruthy()
-    expect(screen.getByTestId('security-your-machines').textContent).toContain('machines here')
+    expect(screen.getByTestId('security-your-runners').textContent).toContain('machines here')
     expect(screen.getByTestId('security-your-agents')).toBeTruthy()
     expect(await screen.findByTestId('security-no-key')).toBeTruthy()
     expect(document.body.textContent).not.toMatch(/PRF|ECDH|wrap|\bkv\b/)

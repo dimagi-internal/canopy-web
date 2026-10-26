@@ -10,7 +10,7 @@ import { machineShortName } from './machineText'
  * keeps its secrets in canopy-web stands — status only. Keeping them private
  * is not a step anyone takes per agent: a new agent's secrets are sealed to
  * its owner and approved machines as they arrive, and approving a machine
- * (one passkey touch, under Your machines) gives it access to every agent it
+ * (one passkey touch, under Your runners) gives it access to every agent it
  * runs, creating an agent's key on the way if it has none. So the only thing
  * that can be waiting here is a machine or a person, and the row says where to
  * let them in.
@@ -34,17 +34,17 @@ function statusText(r: AgentRow): string {
   const pending = waitingOn(r.zk)
   const machines = pending.filter((p) => p.kind === 'device').map((p) => p.runner_name || 'a machine')
   const people = pending.filter((p) => p.kind === 'member').map((p) => p.email || 'someone')
-  if (machines.length) return `${machines.join(', ')} waiting — approve it under Your machines`
+  if (machines.length) return `${machines.join(', ')} waiting — approve it under Your runners`
   if (people.length) return `${people.join(', ')} waiting — let them in on ${r.name}’s page`
   return 'Private ✓'
 }
 
-/** Where to let a waiting machine in: its own row under Your machines, marked
+/** Where to let a waiting machine in: its own row under Your runners, marked
  *  (`?device_key=`), which offers "Give access" — one passkey touch for every
  *  agent that machine waits on. */
 function machinesHref(pending: ZkStateOut['pending']): string {
   const ids = [...new Set(pending.filter((p) => p.kind === 'device').map((p) => p.target))]
-  return ids.length === 1 ? `/settings?device_key=${ids[0]}#your-machines` : '#your-machines'
+  return ids.length === 1 ? `/settings?device_key=${ids[0]}#your-runners` : '#your-runners'
 }
 
 /** Who holds a copy of the agent's key right now, in plain words: "you",
@@ -52,7 +52,7 @@ function machinesHref(pending: ZkStateOut['pending']): string {
  *  key of its own yet (kv 0) seals each secret to its owner and approved
  *  machines as it arrives, so it is said that way. */
 function openedBy(zk: ZkStateOut, me: string, keys: RunnerDeviceKeyOut[]): string {
-  if (!zk.enabled || zk.kv === 0) return 'you and the machines you approve'
+  if (!zk.enabled || zk.kv === 0) return 'you and the runners you approve'
   const byId = new Map(keys.map((k) => [k.id, k]))
   const current = (zk.wraps ?? []).filter((w) => w.kv === zk.kv && w.current !== false)
   const people = current.filter((w) => w.kind === 'member')
