@@ -83,3 +83,54 @@ def reported(runner) -> dict[str, CliReport]:
                 for cli, v in (sanitize(raw) or {}).items()}
     return {CLAUDE_CODE: CliReport(not runner.signed_out, _int(caps.get("profiles")),
                                    _int(caps.get("envelope")))}
+
+
+# ---- the one rule -----------------------------------------------------------
+def allowed(turn) -> list[str]:
+    """The CLIs this turn may run on, preferred first: its conversation's, once it
+    has one (a conversation never changes CLI); else its acting agent's list; else
+    `DEFAULT` (a repo turn, an agentless chat). Unknown values are skipped, and an
+    agent whose list names nothing known runs on the default."""
+    session = getattr(turn, "chat_session", None) if turn.chat_session_id else None
+    if session is not None and session.cli:
+        return [session.cli]
+    agent = turn.acting_agent
+    if agent is not None:
+        listed = [c for c in dict.fromkeys(agent.clis or []) if c in CLIS]
+        if listed:
+            return listed
+    return list(DEFAULT)
+
+
+def confines(report: CliReport) -> bool:
+    """Whether a box can hold a caller's turn to its capability on this CLI: its
+    guard and envelope versions for it are the ones `routing.profile_q` requires."""
+    from .routing import ENVELOPE_VERSION, PROFILES_VERSION
+
+    return report.profiles >= PROFILES_VERSION and report.envelope >= ENVELOPE_VERSION
+
+
+def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
+           ignore_signed_in: bool = False) -> str | None:
+    """The CLI `runner` runs `turn` on, or None when it may not take it at all.
+    THE rule — the claim, coverage and `turn_reach` all ask it, so routing and
+    "why is this waiting" cannot disagree. In order: the CLIs the turn allows
+    (`allowed`), those the box has signed in, then for a caller's turn only those
+    it confines, then for a sensitive conversation only `SENSITIVE_CLIS`; the first
+    left wins. `ignore_signed_in` is the counterfactual `turn_reach` asks to tell
+    "signed out" from "never". Never bypassed by a pin: it is a security property
+    for a confined turn, and a turn on a CLI a box lacks cannot run at all."""
+    from . import runner_requirements as rr
+
+    have = reports if reports is not None else reported(runner)
+    sensitive = rr.SENSITIVE_DATA in rr.requirements_of(turn)
+    for cli in allowed(turn):
+        report = have.get(cli)
+        if report is None or not (report.signed_in or ignore_signed_in):
+            continue
+        if turn.capability and not confines(report):
+            continue
+        if sensitive and cli not in SENSITIVE_CLIS:
+            continue
+        return cli
+    return None
