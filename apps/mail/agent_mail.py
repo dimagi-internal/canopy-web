@@ -13,7 +13,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
 
+from apps.canopy_sessions.models import Session
 from apps.harness import services as harness
+from apps.harness import session_sync
+from apps.harness.channels import email as email_channel
 from apps.harness.models import Turn
 
 from . import domains, ses, storage, threads
@@ -45,6 +48,9 @@ def _wake(route, parsed, msg, thread) -> None:
                     "from": parsed.from_addr,
                     "from_name": parsed.from_name, "subject": parsed.subject,
                     "message_id": parsed.message_id, "discovered_by": "ses",
+                    # Who else is on the thread: the email door admits the members
+                    # among them to its session (`email_channel.admit_thread_people`).
+                    "to": list(parsed.to or []), "cc": list(parsed.cc or []),
                     "message_count": thread.message_count, "headers": _auth_results(parsed)},
         authserv_id=settings.MAIL_SES_AUTHSERV_ID,
         initiator=None,  # email derives its initiator from the sender inside enqueue_turn
@@ -174,7 +180,25 @@ def send(route, *, to, cc=(), subject="", text="", html="", thread=None, attachm
         out = _send_locked(route, domain, to=to, cc=cc, subject=subject, text=text, html=html,
                            thread=thread, attachments=attachments)
     _enforce_cap(out)  # outside the domain lock: eviction is the mailbox's own business
+    _admit_recipients(route, out)
     return out
+
+
+def _admit_recipients(route, out) -> None:
+    """Whoever the agent wrote to on a thread is on that thread: the members among
+    its To and Cc join the thread's session, the same as the people on an inbound
+    message (`email_channel.admit_thread_people`). No proof to check — the agent
+    chose them. Never fails the send that called it."""
+    if not route.agent_id:
+        return
+    try:
+        key = f"{session_sync.EMAIL_THREAD_PREFIX}{out.thread.uuid}"
+        session = (Session.objects.filter(agent_id=route.agent_id,
+                                          **{f"metadata__{session_sync.EMAIL_THREAD_KEY}": key})
+                   .order_by("created_at").first())
+        email_channel.admit_addresses(session, [*(out.to or []), *(out.cc or [])])
+    except Exception:  # noqa: BLE001
+        logger.exception("mail %s: could not admit the recipients to its session", out.pk)
 
 
 def _send_locked(route, domain, *, to, cc, subject, text, html, thread, attachments) -> MailMessage:

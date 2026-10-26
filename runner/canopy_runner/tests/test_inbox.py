@@ -714,6 +714,29 @@ def test_enqueue_ships_the_headers_and_names_the_newest_sender():
     assert "authserv_id" not in ref           # the receiver is canopy's to name
 
 
+def test_the_newest_messages_to_and_cc_ride_along_verbatim():
+    """Who else is on the thread: canopy admits the members among them to its session
+    (and decides whether this message's proof is good enough to)."""
+    payload = json.dumps({"messages": [{"payload": {"headers": [
+        {"name": "From", "value": "Fatima <fatima@llo-foo.org>"},
+        {"name": "To", "value": "Ace <ace@dimagi-ai.com>, sam@dimagi.com"},
+        {"name": "Cc", "value": "Bob <bob@dimagi.com>"},
+    ]}}]})
+
+    def run(cmd, capture_output, text, timeout):
+        return SimpleNamespace(returncode=0, stdout=payload, stderr="")
+    f = inbox.thread_facts("ace@dimagi-ai.com", "canopy", "thr-1", runner=run)
+    assert (f.to_header, f.cc_header) == ("Ace <ace@dimagi-ai.com>, sam@dimagi.com",
+                                          "Bob <bob@dimagi.com>")
+    client = FakeClient()
+    inbox.check_inbox(client, "ace", mailbox="ace@dimagi-ai.com", gog_client="canopy",
+                      runner=_runner([{"id": "thr-1", "from": "x@y.com", "subject": "s",
+                                       "messageCount": 1}]),
+                      facts_of=lambda tid: f)
+    ref = client.enqueued[0]["origin_ref"]
+    assert (ref["to"], ref["cc"]) == (f.to_header, f.cc_header)
+
+
 def test_no_headers_means_no_headers_key_and_the_originator_as_before():
     client = FakeClient()
     r = _runner([{"id": "thr-6", "from": "x@y.com", "subject": "hi", "messageCount": 1}])
