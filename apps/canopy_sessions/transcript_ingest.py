@@ -719,6 +719,14 @@ def seed_stream_desired(binding) -> None:
     transaction.on_commit(lambda: _set_stream_desired(session, True))
 
 
+def stream_desired(session) -> bool:
+    """Whether the session's runner is currently asked to stream it — a READ, for
+    a viewer who may not pull from that box (`access.may_pull`), so it changes
+    nothing and signals no one."""
+    b = RunnerBinding.objects.filter(session=session).only("stream_desired").first()
+    return bool(b and b.stream_desired)
+
+
 def attach_session(session) -> bool:
     """A viewer attached. On the 0->1 edge, mark streaming desired + signal the runner."""
     n = attach.attach(session.id)

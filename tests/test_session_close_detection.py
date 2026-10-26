@@ -90,6 +90,10 @@ def test_another_runners_report_does_not_count_against_it(runner, ws):
 @pytest.fixture
 def shared(slack, linked, alice, runner, ws, django_capture_on_commit_callbacks):
     session = _session(runner, ws)
+    # Alice shares a session from her own laptop: a laptop session is its box
+    # owner's. (Handed to her after filing, which reads the first owner's opt-in.)
+    Runner.objects.filter(pk=runner.pk).update(owner=alice)
+    runner.refresh_from_db()
     assert share.share_session(alice, channel="C1", summary="working on it", mode=share.BIND,
                                session=session).ok
     return session

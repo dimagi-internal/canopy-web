@@ -6,22 +6,36 @@ to a chat. Nothing else decides. `tests/test_session_acl.py` pins that the
 socket and REST agree for every session shape, and that nothing but an
 explicit action creates a `SessionParticipant` row.
 
-The rule, whole:
+The rule, whole — a session is visible to the people who were IN the
+conversation where it happened, plus whoever they explicitly add; never to
+someone merely for being in the same workspace:
 
 * **Tenant first.** You must be a member of the session's workspace. Always —
   a participant removed from the workspace loses the session with it, the
   same as every other tenant surface in canopy. Which workspace that is — the
   filing rule for a new runner session, and moving one — is `filing.py`.
-* **Then one of five legs** (`visible_session_q`): you created it; you were
-  made a participant; it is a runner-discovered emdash session (tenant-visible
-  by design); it is the own thread of an agent you run; or you are an agent's
-  own login and its person let that agent review their sessions
-  (`SessionReviewGrant`, read-only, never a sensitive one).
+* **Then one of six legs** (`visible_session_q`): you created it; you were
+  made a participant; it is a runner-discovered session on a box YOU OWN (a
+  laptop session is its owner's alone); it is the own thread of an agent you
+  run; you are an agent's own login and its person let that agent review
+  their sessions (`SessionReviewGrant`, read-only, never a sensitive one); or
+  you administer the runner it sits on (`RunnerAdmin`, read-only, so a box
+  can be emptied — `may_move`).
 * **Writing** (sending, answering, stopping, archiving, page actions,
   attachments) needs a role of owner or editor. A `viewer` participant reads.
 * **Sharing** — adding or removing a participant — is the OWNER's: the
-  creator, or for an agent's own thread the agent's admins. Only someone
-  already in the workspace can be added; anyone may remove themselves.
+  creator, the owner of the box a discovered session runs on, or for an
+  agent's own thread the agent's admins. Only someone already in the
+  workspace can be added; anyone may remove themselves.
+* **Pulling** — asking a runner to stream a session live (`attach`) or to ship
+  its history (`backfill`) — is `may_pull`: someone who may write in it, or
+  the owner of the box it runs on. Canopy only ever reads what a machine
+  already SENT; it reaches down to a laptop only when its owner, or someone
+  they explicitly added, asks. A reviewer, a runner admin and any agent login
+  read the stored rows and nothing more.
+
+The audience per channel is tabled in `docs/architecture/access.md`
+§ Who can see a session.
 
 A contact is a different principal with a disjoint predicate
 (`contact_session_q`) and never reaches these helpers.
@@ -51,11 +65,13 @@ claim-vs-schedule after those two hand-written predicates drifted
 (`tests/test_claim_schedule_parity.py`): share the predicate, then assert the
 two callers agree, so a re-divergence fails CI instead of production.
 
-Runner-DISCOVERED sessions stay visible to the whole tenant deliberately. They
-are created with no `created_by` and no participant row (`harness/services.py`
-`Session.objects.create(..., origin=ORIGIN_RUNNER)`), so gating them on
-ownership or participation would make them unreachable by *everyone* — that is
-the entire emdash-discovered-session flow, not an edge case.
+A runner-DISCOVERED session has no `created_by` and no participant row
+(`harness/session_sync.py`, `Session.objects.create(..., origin=ORIGIN_RUNNER)`).
+It belongs to the person whose box it runs on (`runner_binding__runner__owner`):
+their machine, their Claude login, their conversation. Sharing one is an
+explicit act — a participant row its owner adds — never a consequence of
+being in the same workspace, and never something an agent login inherits.
+A box with no owner gives the leg to nobody (it fails closed).
 """
 
 from __future__ import annotations
@@ -63,9 +79,10 @@ from __future__ import annotations
 from django.db.models import Q
 
 from apps.harness import runner_requirements as rr
-from apps.harness import sensitivity
+from apps.harness import runners, sensitivity
+from apps.harness.models import Runner
 
-from .models import Session, SessionParticipant, SessionReviewGrant
+from .models import RunnerBinding, Session, SessionParticipant, SessionReviewGrant
 
 
 def visible_session_q(user) -> Q:
@@ -74,14 +91,18 @@ def visible_session_q(user) -> Q:
     Tenancy is a separate and prior gate (`_visible_slugs`) — this narrows
     inside it and must never be used as the only check.
 
-    Five ways in, and no sixth:
+    Six ways in, and no seventh:
 
     1. you created it;
     2. you were made a participant — `SessionParticipant` is what "multiplayer"
        means here, and its docstring already calls itself "the authority for
        access and role";
-    3. it is a runner-discovered session that a runner is actually reporting,
-       which has no creator to belong to;
+    3. it is a runner-discovered session (no creator) on a box YOU OWN
+       (`_box_owner_q`): a laptop session is its owner's, not the tenant's.
+       An agent's turn on that box is included — a box runs an agent only if
+       its owner administers the agent (`runner_may_hold_agent`), so that adds
+       no one leg 4 does not already have, and it keeps a person's own emdash
+       session in an agent's repo theirs;
     4. it is a runner-origin session of an agent YOU RUN, meaning an admin in
        `Agent.is_admin`'s sense: its owner, an owner of its workspace, or an
        explicit `AgentAdmin`. An agent's own work with no creator (an email
@@ -89,8 +110,10 @@ def visible_session_q(user) -> Q:
        agent. Without this leg such a session was readable by nobody, and a
        push for it tapped through to a 404 (2026-09-23, a hal alarm thread).
        "Owner" alone was not enough: on labs every agent's `owner` is null, so
-       it matched no one. Narrower than leg 3 on purpose: the agent's admins,
-       not the whole tenant.
+       it matched no one. The agent's admins, not the whole tenant. The
+       agent's OWN login also reads its own work (`_own_work_q`: no creator,
+       its agent) — read-only, no pull; never a conversation a person started
+       with it, which has a creator.
     5. you are an agent's own login (`Agent.user`) and the session's person let
        THAT agent review their sessions (a live `SessionReviewGrant`, the
        person's own act). Their sessions are the ones they created and the
@@ -100,35 +123,89 @@ def visible_session_q(user) -> Q:
        `sensitivity.is_sensitive`, failing closed). Another agent's login, or a
        person who administers the agent, gains nothing from the grant; revoking
        it drops the next read.
+    6. you administer the runner it is bound to (`RunnerAdmin`, an explicit
+       per-box grant its owner made) and it is a runner-discovered session
+       (`_runner_admin_q`). READ-ONLY (`role_for` gives a viewer) and no pull
+       (`may_pull`): it exists so the person trusted with a box can see what is
+       on it and move it off (`may_move`, `transfer-all`), not to work in it.
 
-    Leg 3 keeps `runner_binding__isnull=False` alongside the origin check
-    rather than dropping it: origin alone would newly expose runner-origin rows
-    that no runner has ever bound (e.g. an email-thread session), which is a
-    widening nobody asked for. Both conditions together reproduce exactly
-    today's runner-session visibility.
-
-    **Known consequence — an orphaned WEB session becomes invisible.**
+    **Known consequence — an orphaned session becomes invisible.**
     `Session.created_by` is `on_delete=SET_NULL`, so deleting a user leaves
-    their web sessions with no creator and no participant, and leg 3 does not
-    catch them because their origin is `web`. They stay in the database and
+    their web sessions with no creator and no participant; a laptop whose owner
+    is gone leaves its sessions with no box owner. They stay in the database and
     remain reachable through the admin, but they drop out of the API for
-    everyone.
-
-    That is deliberate: the alternative rule — leg 3 as
-    `Q(created_by__isnull=True) & Q(runner_binding__isnull=False)`, i.e. "nobody
-    owns it, so the tenant may see it" — would hand a departed colleague's
-    private conversations to every co-tenant the moment they were offboarded.
-    Losing them from a list is the cheaper mistake than publishing them. Switch
-    that one leg if the trade should go the other way; nothing else depends on
-    the choice.
+    everyone. Losing them from a list is the cheaper mistake than handing a
+    departed colleague's conversations to every co-tenant.
     """
     return (
         Q(created_by=user)
         | Q(participants__user=user)
-        | (Q(origin=Session.ORIGIN_RUNNER) & Q(runner_binding__isnull=False))
+        | _box_owner_q(user)
         | (Q(origin=Session.ORIGIN_RUNNER) & _agent_admin_q(user))
+        | _own_work_q(user)
         | _review_grant_q(user)
+        | _runner_admin_q(user)
     )
+
+
+def _discovered_q() -> Q:
+    """A runner-discovered session: runner-origin, nobody in-app created it."""
+    return Q(origin=Session.ORIGIN_RUNNER, created_by__isnull=True)
+
+
+def _own_work_q(user) -> Q:
+    """Leg 4's other half: an agent's own login reads the agent's own work."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    return _discovered_q() & Q(agent__isnull=False, agent__user=user)
+
+
+def _box_owner_q(user) -> Q:
+    """Leg 3: runner-discovered sessions on a box `user` owns.
+
+    The binding's live `runner` FK first. A session that has fallen off its
+    box's report has that FK cleared, so it is recovered by the binding's `host`
+    — the same identity the report loop and `filing._runner_owned_by` recover it
+    by (never a blank host, which any un-heartbeated runner shares). Without it a
+    laptop's finished sessions would vanish from their own owner."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    hosts = Runner.objects.filter(owner=user).exclude(host="").values("host")
+    return _discovered_q() & (
+        Q(runner_binding__runner__owner=user)
+        | Q(runner_binding__runner__isnull=True, runner_binding__host__in=hosts)
+    )
+
+
+def _runner_admin_q(user) -> Q:
+    """Leg 6: runner-discovered sessions on a box `user` was made an admin of."""
+    if not getattr(user, "is_authenticated", False):
+        return Q(pk__in=[])
+    return _discovered_q() & Q(runner_binding__runner__admins__user=user)
+
+
+def is_box_owner(user, session) -> bool:
+    """Whether `session` is a runner-discovered session on a box `user` owns —
+    leg 3, for one row already in hand."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if session.origin != Session.ORIGIN_RUNNER or session.created_by_id is not None:
+        return False
+    binding = _binding(session)
+    if binding is None:
+        return False
+    if binding.runner_id is not None:
+        return binding.runner.owner_id is not None and binding.runner.owner_id == user.pk
+    if not binding.host:
+        return False
+    return Runner.objects.filter(host=binding.host, owner=user).exists()
+
+
+def _binding(session):
+    try:
+        return session.runner_binding
+    except RunnerBinding.DoesNotExist:
+        return None
 
 
 def sessions_of_q(user_ids) -> Q:
@@ -202,7 +279,7 @@ def _tenant_slugs(user) -> set:
 
 
 def readable_sessions(user, *, workspace_slugs=None):
-    """Every session `user` may read — the tenant gate AND the five legs.
+    """Every session `user` may read — the tenant gate AND the six legs.
 
     `workspace_slugs` narrows further (a pinned `/api/w/{ws}/` route); it can
     never widen past the caller's own workspaces.
@@ -236,9 +313,9 @@ def role_for(user, session) -> str | None:
     """The caller's EFFECTIVE role in this session, or None if they cannot read it.
 
     The HIGHER of two sources. The first is what the rule gives you: the creator
-    is the owner, the agent's admins own the agent's own thread, and every other
-    leg is an editor, because a runner-discovered session and an agent's thread
-    are meant to be worked in, not only watched. The second is an explicit
+    is the owner, the agent's admins own the agent's own thread, the owner of
+    the box a discovered session runs on owns it, and the read-only legs (a
+    coach's review grant, a runner admin) give a viewer. The second is an explicit
     participant row, which is how someone is made a viewer or an editor of
     somebody else's chat. A row can raise you but never demote what the rule
     already gives you. Old auto-join rows made an agent's owner a mere "editor"
@@ -255,24 +332,22 @@ def role_for(user, session) -> str | None:
     # (leg 4), so there is somebody who can share it.
     elif session.created_by_id is None and session.agent_id and session.agent.is_admin(user):
         derived = SessionParticipant.OWNER
+    elif is_box_owner(user, session):
+        # Runner-discovered, on YOUR box: your laptop, your conversation. You
+        # work in it and decide who else is in it.
+        derived = SessionParticipant.OWNER
     elif session.origin == Session.ORIGIN_RUNNER and session.created_by_id is None:
-        # Runner-discovered: tenant-visible, and workable by the tenant's EDITORS.
-        # Typing into one is typing into somebody's live emdash session, which
-        # runs with permissions bypassed — a workspace VIEWER was handed that by
-        # this leg alone. They still read it.
-        from apps.workspaces import permissions as perms
-
-        derived = (
-            SessionParticipant.EDITOR
-            if perms.can(user, session.workspace_id, perms.SESSION_DRIVE)
-            else SessionParticipant.VIEWER
-        )
+        # Seen through a read-only leg (a coach's review grant, a runner admin,
+        # an agent's own login on its own work):
+        # they read what is stored. Typing into it would be typing into somebody
+        # else's live session; a participant row is the only way to be let in.
+        derived = SessionParticipant.VIEWER
     else:
         derived = None  # a web chat you did not create: only a row gets you in
     if derived is not None and row is None and session.created_by_id != user.pk:
         # A SENSITIVE conversation's words are sealed to its own people: a leg that
-        # lets someone see it exists (an agent's admin, a co-tenant of a
-        # runner-discovered one) does not make them able to drive, share or copy
+        # lets someone see it exists (an agent's admin, the owner of the box a
+        # discovered one runs on) does not make them able to drive, share or copy
         # it — they read its metadata. Only being in it does
         # (`sensitivity.is_conversation_person`: its creator, or a participant row).
         if sensitivity.is_sensitive(session):
@@ -288,6 +363,44 @@ def can_share(user, session) -> bool:
 
 def can_write(user, session) -> bool:
     return role_for(user, session) in _WRITE_ROLES
+
+
+#: What a caller who may read a session but not pull from its runner is told.
+PULL_REFUSED = ("Only the person whose machine this session runs on, or someone they "
+                "added to it, can ask that machine for more. You can read what it has "
+                "already sent.")
+
+
+def may_pull(user, session) -> bool:
+    """May `user` make canopy ask the session's runner for something — stream it
+    live (`attach`) or ship its history (`backfill`)?
+
+    Canopy only ever operates on what a machine already SENT; it reaches down to
+    a box only when its owner, or someone they explicitly let in, asks. So: the
+    owner of the box a discovered session runs on (even of a sensitive one, whose
+    words still go only to its own people), and anyone the rule lets write in it
+    — its creator, an agent's admins for the agent's own thread, a participant
+    added as owner or editor. A coach reading under a review grant, a runner
+    admin, a viewer, and any agent login not explicitly added read the stored
+    rows and nothing more."""
+    if not getattr(user, "is_authenticated", False) or not can_read(user, session):
+        return False
+    return is_box_owner(user, session) or can_write(user, session)
+
+
+def may_move(user, session) -> bool:
+    """May `user` move this session to another runner (`transfer`, `transfer-all`)?
+    Anyone who may write in it, or an admin of the box it is on — the person
+    trusted with emptying that box. Where it may land is the transfer's own rule
+    (`transfer_requests.request`)."""
+    if not can_read(user, session):
+        return False
+    if can_write(user, session):
+        return True
+    binding = _binding(session)
+    if binding is None or binding.runner_id is None:
+        return False
+    return runners.can_administer_runner(user, binding.runner)
 
 
 def own_turn_session(user, turn_id):

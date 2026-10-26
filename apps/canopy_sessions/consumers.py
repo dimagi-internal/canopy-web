@@ -209,7 +209,13 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.user_group, self.channel_name)
         await self.accept()
         await database_sync_to_async(presence.touch)(session.id, user.id)
-        await database_sync_to_async(chat_transcript_ingest.attach_session)(session)
+        # Streaming is asked of the session's runner only for someone who may
+        # pull from that box (`access.may_pull`) — the same rule REST's
+        # `/attach` applies. Anyone else hears what others' pulls deliver and
+        # reads the stored rows; their socket asks the machine for nothing.
+        self.attached = await database_sync_to_async(access.may_pull)(user, session)
+        if self.attached:
+            await database_sync_to_async(chat_transcript_ingest.attach_session)(session)
         await self.send_json(await self._snapshot())
         # Carry WHO joined, not just their id.
         #
@@ -247,7 +253,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         if user_group:
             await self.channel_layer.group_discard(user_group, self.channel_name)
         await database_sync_to_async(presence.leave)(self.session.id, self.user.id)
-        await database_sync_to_async(chat_transcript_ingest.detach_session)(self.session)
+        if getattr(self, "attached", False):
+            await database_sync_to_async(chat_transcript_ingest.detach_session)(self.session)
         await self._broadcast({"type": "presence.left", "user_id": self.user.id})
         await self.channel_layer.group_discard(group, self.channel_name)
 
@@ -265,7 +272,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
             await database_sync_to_async(presence.touch)(self.session.id, self.user.id)
             # Keep the attach count alive for as long as the socket is open, so a
             # >1h session doesn't lose it and miscount the detach edge (Plan 4 Task 1).
-            await database_sync_to_async(attach.renew)(self.session.id)
+            if getattr(self, "attached", False):
+                await database_sync_to_async(attach.renew)(self.session.id)
             return
         if action == "chat.stop" or action in _EDIT_ACTIONS:
             # Re-asked on EVERY acting frame, never trusted from connect: a

@@ -15,9 +15,9 @@ import asyncio
 import pytest
 
 from apps.agents.models import Agent
-from apps.canopy_sessions.models import RunnerBinding, Session
+from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
 from apps.events.models import Event
-from apps.harness.models import Turn
+from apps.harness.models import Runner, Turn
 from apps.slack import share
 from apps.slack.models import SlackUserLink
 from apps.workspaces import services as wsvc
@@ -41,18 +41,21 @@ def _share(user, **kw):
 
 @pytest.fixture
 def repo_session(ws, alice):
-    """A runner-discovered emdash session with no agent — the Claude Code case."""
+    """A runner-discovered emdash session with no agent — the Claude Code case,
+    on Alice's own laptop (a laptop session is its box owner's)."""
     session = Session.objects.create(workspace=ws, project="canopy-web", origin=Session.ORIGIN_RUNNER,
                                      title="slack")
-    RunnerBinding.objects.create(session=session, session_key="slack", emdash_project="canopy-web",
-                                 transcript_id="claude-abc")
+    box = Runner.objects.create(name="alice-mbp", kind=Runner.EMDASH, host="alice-mac", owner=alice)
+    RunnerBinding.objects.create(session=session, runner=box, session_key="slack",
+                                 emdash_project="canopy-web", transcript_id="claude-abc")
     return session
 
 
 @pytest.fixture
 def hal_session(ws, alice, hal):
     session = Session.objects.create(workspace=ws, agent=hal, origin=Session.ORIGIN_RUNNER, title="t")
-    RunnerBinding.objects.create(session=session, session_key="t", emdash_project="hal",
+    box = Runner.objects.create(name="alice-hal-box", kind=Runner.EMDASH, host="alice-hal", owner=alice)
+    RunnerBinding.objects.create(session=session, runner=box, session_key="t", emdash_project="hal",
                                  transcript_id="claude-hal")
     return session
 
@@ -260,7 +263,9 @@ def test_resolve_never_crosses_a_workspace(alice, repo_session):
 
 def test_an_ambiguous_task_name_is_not_guessed(alice, repo_session, ws):
     twin = Session.objects.create(workspace=ws, project="canopy-web", origin=Session.ORIGIN_RUNNER, title="s")
-    RunnerBinding.objects.create(session=twin, session_key="slack", emdash_project="canopy-web", host="other")
+    other_box = Runner.objects.create(name="alice-mini", kind=Runner.EMDASH, host="other", owner=alice)
+    RunnerBinding.objects.create(session=twin, runner=other_box, session_key="slack",
+                                 emdash_project="canopy-web", host="other")
     with pytest.raises(share.Ambiguous):
         share.resolve_session(alice, emdash_task="slack", emdash_project="canopy-web")
 
@@ -495,6 +500,7 @@ def test_a_viewer_cannot_detach(slack, linked, alice, ws, repo_session):
     _share(alice, session=repo_session, mode=share.BIND)
     viewer = a_user("vic@dimagi.com")
     wsvc.ensure_member(ws, viewer, WorkspaceMembership.VIEWER)
+    SessionParticipant.objects.create(session=repo_session, user=viewer, role=SessionParticipant.VIEWER)
     assert _detach(viewer, session_id=str(repo_session.id)).status_code == 403
     repo_session.refresh_from_db()
     assert "slack_thread" in repo_session.metadata

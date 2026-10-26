@@ -20,10 +20,10 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
-from apps.canopy_sessions import access
+from apps.canopy_sessions import access, attach
 from apps.canopy_sessions.consumers import SessionConsumer
-from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant
-from apps.harness.models import Runner
+from apps.canopy_sessions.models import RunnerBinding, Session, SessionParticipant, SessionReviewGrant
+from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests._source import iter_app_sources
 
@@ -40,17 +40,36 @@ def _member(user, ws, role=WorkspaceMembership.EDITOR):
 
 
 def _world():
+    """Every session shape, and every kind of person who might knock.
+
+    `owner` owns the workspace AND the laptop `r`; `mate` is a plain editor with a
+    laptop of their own; `box_admin` was made an admin of `r`; `hal_login` is an
+    agent's own login (an editor member, like every agent login); `coach` is
+    Trellis's login, which `owner` let review their sessions (leg 5)."""
     owner, mate, viewer, outsider = _user("owner"), _user("mate"), _user("viewer"), _user("outsider")
+    box_admin = _user("box_admin")
     ws = Workspace.objects.create(slug="acme", display_name="Acme", created_by=owner)
     _member(owner, ws, WorkspaceMembership.OWNER)
     _member(mate, ws)
     _member(viewer, ws)
+    _member(box_admin, ws)
     agent = Agent.objects.create(slug="hal", name="Hal", owner=owner, workspace=ws)
+    agent.user = _user("hal_login")
+    agent.save(update_fields=["user"])
+    _member(agent.user, ws)
+    trellis = Agent.objects.create(slug="trellis", name="Trellis", owner=owner, workspace=ws)
+    trellis.user = _user("coach")
+    trellis.save(update_fields=["user"])
+    _member(trellis.user, ws)
+    SessionReviewGrant.objects.create(user=owner, agent=trellis)
     runner = Runner.objects.create(name="r", kind=Runner.EMDASH, host="h", owner=owner,
                                    status=Runner.ONLINE, last_heartbeat_at=timezone.now())
+    RunnerAdmin.objects.create(runner=runner, user=box_admin, granted_by=owner)
+    mates_box = Runner.objects.create(name="m", kind=Runner.EMDASH, host="m", owner=mate,
+                                      status=Runner.ONLINE, last_heartbeat_at=timezone.now())
 
-    def bound(session, key):
-        RunnerBinding.objects.create(session=session, runner=runner, session_key=key,
+    def bound(session, key, box=runner):
+        RunnerBinding.objects.create(session=session, runner=box, session_key=key,
                                      live_seen_at=timezone.now())
         return session
 
@@ -58,14 +77,19 @@ def _world():
         "own_web": Session.objects.create(workspace=ws, created_by=owner, origin=Session.ORIGIN_WEB),
         "shared_web": Session.objects.create(workspace=ws, created_by=owner, origin=Session.ORIGIN_WEB),
         "discovered": bound(Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER), "d"),
+        "mates_laptop": bound(Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER), "ml",
+                              mates_box),
         "agent_thread": Session.objects.create(workspace=ws, agent=agent, origin=Session.ORIGIN_RUNNER),
         "bound_web": bound(Session.objects.create(workspace=ws, created_by=owner,
                                                   origin=Session.ORIGIN_WEB), "b"),
+        "unbound_discovered": Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER),
     }
     SessionParticipant.objects.create(session=shapes["own_web"], user=owner, role=SessionParticipant.OWNER)
     SessionParticipant.objects.create(session=shapes["shared_web"], user=viewer,
                                       role=SessionParticipant.VIEWER)
-    return {"owner": owner, "mate": mate, "viewer": viewer, "outsider": outsider}, shapes, ws
+    people = {"owner": owner, "mate": mate, "viewer": viewer, "outsider": outsider,
+              "box_admin": box_admin, "hal_login": agent.user, "coach": trellis.user}
+    return people, shapes, ws
 
 
 def _client(user):
@@ -83,6 +107,25 @@ def _socket_role(user, session):
         connected, _ = await comm.connect()
         await comm.disconnect()
         return connected
+    return async_to_sync(go)()
+
+
+def _socket_pulls(user, session):
+    """Whether opening the chat socket asked the runner to stream (the attach
+    count went up while connected), and whether closing it put the count back."""
+    from channels.db import database_sync_to_async
+
+    async def go():
+        comm = WebsocketCommunicator(SessionConsumer.as_asgi(), f"/ws/canopy-sessions/{session.id}/")
+        comm.scope["user"] = user
+        comm.scope["url_route"] = {"kwargs": {"session_id": str(session.id)}}
+        before = await database_sync_to_async(attach.count)(session.id)
+        connected, _ = await comm.connect()
+        await comm.receive_json_from()   # the snapshot: sent once the attach decision is made
+        during = await database_sync_to_async(attach.count)(session.id)
+        await comm.disconnect()
+        after = await database_sync_to_async(attach.count)(session.id)
+        return connected, during - before, after - before
     return async_to_sync(go)()
 
 
@@ -104,6 +147,72 @@ def test_rest_the_socket_and_the_list_agree_for_every_shape_and_person():
                 f"opening {label} as {who} wrote a participant row"
 
 
+def test_rest_and_the_socket_agree_on_who_may_pull_from_a_machine():
+    """Asking a runner for something — live streaming (`attach`, REST or the
+    socket) or history (`backfill`) — is `access.may_pull`, at every door. Nobody
+    else's open tab makes canopy reach down to a laptop."""
+    people, shapes, _ws = _world()
+    for who, user in people.items():
+        c = _client(user)
+        for label, s in shapes.items():
+            if not access.can_read(user, s):
+                continue
+            pulls = access.may_pull(user, s)
+            before = attach.count(s.id)
+            c.post(f"/api/canopy-sessions/{s.id}/attach")
+            assert (attach.count(s.id) - before == 1) is pulls, f"REST attach: {who}/{label}"
+            c.post(f"/api/canopy-sessions/{s.id}/detach")
+            assert attach.count(s.id) == before, f"REST detach unbalanced: {who}/{label}"
+            backfill = c.post(f"/api/canopy-sessions/{s.id}/backfill")
+            assert (backfill.status_code != 403) is pulls, f"backfill: {who}/{label}"
+            if access.role_for(user, s) is not None and _socket_role(user, s):
+                connected, during, after = _socket_pulls(user, s)
+                assert connected
+                assert (during == 1) is pulls, f"socket attach: {who}/{label}"
+                assert after == 0, f"socket detach unbalanced: {who}/{label}"
+
+
+def test_a_laptop_session_is_its_box_owner_s_alone():
+    """A runner-discovered session belongs to the person whose machine it runs
+    on — not the workspace, not its owner, not any agent login."""
+    people, s, _ws = _world()
+    laptop = s["mates_laptop"]
+    assert access.role_for(people["mate"], laptop) == SessionParticipant.OWNER
+    assert access.may_pull(people["mate"], laptop)
+    for who in ("owner", "viewer", "box_admin", "hal_login", "coach", "outsider"):
+        assert access.can_read(people[who], laptop) is False, who
+    # The owner adds a colleague explicitly: now they read, write and may pull.
+    resp = _client(people["mate"]).post(
+        f"/api/canopy-sessions/{laptop.id}/participants",
+        {"email": "viewer@dimagi.com", "role": "editor"}, content_type="application/json")
+    assert resp.status_code == 200
+    assert access.can_write(people["viewer"], laptop) and access.may_pull(people["viewer"], laptop)
+    # A session no runner reports yet is nobody's (no box owner to belong to).
+    assert all(not access.can_read(u, s["unbound_discovered"]) for u in people.values())
+
+
+def test_a_coach_and_a_runner_admin_read_what_was_sent_and_nothing_more():
+    people, s, _ws = _world()
+    for who in ("coach", "box_admin"):
+        user = people[who]
+        assert access.role_for(user, s["discovered"]) == SessionParticipant.VIEWER, who
+        assert access.can_write(user, s["discovered"]) is False, who
+        assert access.may_pull(user, s["discovered"]) is False, who
+        r = _client(user).post(f"/api/canopy-sessions/{s['discovered'].id}/backfill")
+        assert r.status_code == 403 and "already sent" in r.json()["detail"], who
+    # The runner admin may move what is on the box they were trusted with...
+    assert access.may_move(people["box_admin"], s["discovered"])
+    # ...the coach may not, and neither sees the web chats a review grant does not cover.
+    assert access.may_move(people["coach"], s["discovered"]) is False
+    assert access.can_read(people["box_admin"], s["own_web"]) is False
+    assert access.can_read(people["coach"], s["agent_thread"]) is False
+    assert access.can_read(people["hal_login"], s["discovered"]) is False
+    # An agent's own login reads its own work, read-only, and pulls nothing.
+    assert access.role_for(people["hal_login"], s["agent_thread"]) == SessionParticipant.VIEWER
+    assert access.may_pull(people["hal_login"], s["agent_thread"]) is False
+    assert access.can_read(people["coach"], s["agent_thread"]) is False   # another agent's
+
+
 def test_the_rule_itself():
     people, s, _ws = _world()
     owner, mate, viewer, outsider = (people[k] for k in ("owner", "mate", "viewer", "outsider"))
@@ -111,7 +220,8 @@ def test_the_rule_itself():
     assert access.role_for(mate, s["own_web"]) is None            # a co-tenant is not in it
     assert access.role_for(mate, s["bound_web"]) is None          # nor once a runner picks it up
     assert access.role_for(viewer, s["shared_web"]) == SessionParticipant.VIEWER
-    assert access.role_for(mate, s["discovered"]) == SessionParticipant.EDITOR  # tenant-visible
+    assert access.role_for(mate, s["discovered"]) is None         # someone else's laptop
+    assert access.role_for(owner, s["discovered"]) == SessionParticipant.OWNER  # your laptop
     assert access.role_for(owner, s["agent_thread"]) == SessionParticipant.OWNER  # your agent's
     assert access.role_for(mate, s["agent_thread"]) is None
     assert all(access.role_for(outsider, x) is None for x in s.values())
@@ -216,10 +326,14 @@ def test_a_participant_row_never_demotes_what_the_rule_gives():
     SessionParticipant.objects.create(session=s["agent_thread"], user=people["owner"],
                                       role=SessionParticipant.VIEWER)
     assert access.role_for(people["owner"], s["agent_thread"]) == SessionParticipant.OWNER
-    # ...while a row still RAISES: made an editor of a discovered session stays one.
-    SessionParticipant.objects.create(session=s["discovered"], user=people["mate"],
+    # ...nor the box owner's of their own laptop session...
+    SessionParticipant.objects.create(session=s["discovered"], user=people["owner"],
                                       role=SessionParticipant.VIEWER)
-    assert access.role_for(people["mate"], s["discovered"]) == SessionParticipant.EDITOR
+    assert access.role_for(people["owner"], s["discovered"]) == SessionParticipant.OWNER
+    # ...while a row still RAISES: the coach, a viewer by its leg, made an editor is one.
+    SessionParticipant.objects.create(session=s["discovered"], user=people["coach"],
+                                      role=SessionParticipant.EDITOR)
+    assert access.role_for(people["coach"], s["discovered"]) == SessionParticipant.EDITOR
 
 
 def test_an_agent_thread_belongs_to_whoever_runs_the_agent():

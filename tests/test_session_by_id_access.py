@@ -85,13 +85,14 @@ def test_invited_participant_can_read_a_web_session():
     assert _client(other).get(f"/api/canopy-sessions/{s.id}").status_code == 200
 
 
-def test_cotenant_can_still_read_a_runner_discovered_session():
-    """Deliberately visible: created with no created_by and no participant row,
-    so anything stricter makes it unreachable by everyone."""
+def test_a_runner_discovered_session_is_its_box_owner_s_not_the_tenant_s():
+    """Created with no created_by and no participant row, it belongs to the
+    person whose box it runs on; a co-tenant holding the id cannot read it."""
     owner, other, ws = _ws_with_two_members()
     s = Session.objects.create(workspace=ws, origin=Session.ORIGIN_RUNNER, title="disc")
     _bind(s, ws, owner)
-    assert _client(other).get(f"/api/canopy-sessions/{s.id}").status_code == 200
+    assert _client(owner).get(f"/api/canopy-sessions/{s.id}").status_code == 200
+    assert _client(other).get(f"/api/canopy-sessions/{s.id}").status_code == 404
 
 
 def test_non_member_still_404s():

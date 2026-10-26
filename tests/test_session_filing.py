@@ -252,7 +252,8 @@ def test_detail_says_who_may_move(runner, jj, dimagi):
     assert _client(jj).get(f"/api/canopy-sessions/{s.id}").json()["can_move"] is True
     colleague = _user("colleague")
     _join(colleague, dimagi)
-    assert _client(colleague).get(f"/api/canopy-sessions/{s.id}").json()["can_move"] is False
+    # A colleague cannot even see someone else's laptop session.
+    assert _client(colleague).get(f"/api/canopy-sessions/{s.id}").status_code == 404
 
 
 def test_a_re_report_does_not_move_it_back(runner, jj, family):
@@ -286,7 +287,7 @@ def test_a_colleague_cannot_move_someone_elses_runner_session(runner, jj, dimagi
     _join(colleague, dimagi)
     _join(colleague, family)
     r = _move(colleague, _session("t1"), "marshellis")
-    assert r.status_code == 403
+    assert r.status_code == 404   # someone else's laptop session: not even visible
     assert _session("t1").workspace_id == "dimagi"
 
 

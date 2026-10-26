@@ -1059,7 +1059,7 @@ One request, from a signed-in user on your page.
 | 8 | Frame calls canopy | **Every** request re-resolves the token against the database, with expiry checked, and records which app is acting. The token reaches only **your site ∩ the user** (below): the chat routes and a read-only view of your agents' turns and runners — anything else is a 403 `not_delegable` |
 | 9 | `GET /api/embed/agents` | The app comes from the **token**, not a parameter. Returns allowlisted agents **∩** workspaces this user belongs to. Both required |
 | 10 | Session create | Workspace from the user's memberships; the agent must belong to it; the user becomes the owner; the acting app is stamped server-side |
-| 11 | Reading a session | Workspace membership **and** (you created it, or you are a participant, or it is runner-discovered). A co-tenant holding the id cannot read your chat |
+| 11 | Reading a session | Workspace membership **and** (you created it, or you are a participant, or it is runner-discovered on a box you own). A co-tenant holding the id cannot read your chat |
 | 12 | WebSocket | The same token, on the query string, since a WS handshake carries no headers. It opens only a chat stream, and only for an agent your site offers |
 | 13 | Page state | Computed in the user's browser, in their session, so it names only what that user can see. It carries a SELECTION (ids + the tool that resolves them); the agent re-reads the rows through that tool — as the **agent**, or as the visitor when your site issued a grant (§8a) |
 | 14 | Invalidation | Sent only to sessions whose declared `resource` matches, and carries the URI alone — never row data. A page that declared nothing is told nothing |
