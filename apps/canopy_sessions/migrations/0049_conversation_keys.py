@@ -1,34 +1,15 @@
 """A sensitive conversation's key pair (public half) and each person's wrap of its
-private half; then every row still sealed under the field key is re-sealed to its
-conversation's new key, wrapped to its starter (spec
-2026-10-23-sensitive-conversations-sealed-to-their-people §2, "Existing rows").
-
-A session whose starter has no vault keyset keeps the field key and is logged as
-needing migration: `manage.py reseal_sensitive_conversations` moves it once they have
-one. Until then its words are not served to anyone (`sensitivity.readable` hands out
-only `cc1:` envelopes) — canopy-web no longer opens them to show them."""
-import logging
-
+private half (spec 2026-10-23-sensitive-conversations-sealed-to-their-people §2)."""
 import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
 
 def reseal(apps, schema_editor):
-    from apps.canopy_sessions.conversation_keys import reseal_legacy
-
-    done = reseal_legacy(
-        Session=apps.get_model("canopy_sessions", "Session"),
-        Message=apps.get_model("canopy_sessions", "Message"),
-        SessionKey=apps.get_model("canopy_sessions", "SessionKey"),
-        SessionKeyWrap=apps.get_model("canopy_sessions", "SessionKeyWrap"),
-        UserVaultKeyset=apps.get_model("passkeys", "UserVaultKeyset"),
-        log_to=logging.getLogger("canopy_sessions.migrations.0049"),
-    )
-    if done["pending"]:
-        logging.getLogger("canopy_sessions.migrations.0049").warning(
-            "%d sensitive session(s) still need migration (starter has no vault key): %s",
-            len(done["pending"]), ", ".join(done["pending"]))
+    # This re-sealed every row still under the field key to its conversation's own key.
+    # Every row was re-sealed in production, and the function that did it is gone; the
+    # operation stays so the migration graph is unchanged.
+    pass
 
 
 class Migration(migrations.Migration):

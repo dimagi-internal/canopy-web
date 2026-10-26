@@ -37458,11 +37458,6 @@ export interface components {
             readonly current: boolean;
             readonly keyset?: components["schemas"]["SealedKeysetOut"] | null;
             /**
-             * Needs Migration
-             * @default false
-             */
-            readonly needs_migration: boolean;
-            /**
              * Index Offsets
              * @default []
              */

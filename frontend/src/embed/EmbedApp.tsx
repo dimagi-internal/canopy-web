@@ -1506,7 +1506,6 @@ function EmbedChat({
         onDismissWarning={sealed.dismissWarning}
         onUnlock={() => void sealed.unlock()}
         unlockElement={unlocker.element}
-        needsMigration={Boolean(sealedKey?.needs_migration)}
         hasSealed={sealed.hasSealed}
         method={unlockMethod}
         // Only when unlocking cannot work in this frame — the browser will not let it

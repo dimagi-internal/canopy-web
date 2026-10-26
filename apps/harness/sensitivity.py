@@ -599,8 +599,8 @@ def readable(messages, session, *, chat_surface: bool, user=None, contact=None) 
     `readable_sealed`: the row's sealed words (ciphertext — the reader's browser
     decrypts them with the conversation key, `conversation_keys.reader_key`) for the
     conversation's own people on its chat surfaces; None for everyone else, who read
-    the metadata columns. Only a `cc1:` envelope is handed out: a row still under the
-    field key waits for `reseal_sensitive_conversations`."""
+    the metadata columns. Only a `cc1:` envelope is handed out (every row is one; the
+    check is defensive)."""
     from apps.canopy_sessions import conversation_keys  # noqa: PLC0415 — harness ↛ chat at import
 
     rows = list(messages)

@@ -352,9 +352,6 @@ class SealedKeyOut(Schema):
     #: False when `wrap` was made for a vault key you have since replaced.
     current: bool = False
     keyset: SealedKeysetOut | None = None
-    #: Some of its words are still under canopy's earlier field key and read again
-    #: once `manage.py reseal_sensitive_conversations` moves them.
-    needs_migration: bool = False
     #: How far a fork's copied rows sit below the index their envelopes name: an
     #: envelope at row `turn_index` must say `i == turn_index + d` for d in [0, *these].
     #: Null for a fork made before this was recorded.

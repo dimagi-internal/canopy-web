@@ -15,7 +15,6 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.asymmetric import ec
 from django.apps import apps as django_apps
 from django.contrib.auth.models import User
-from django.core.management import call_command
 from django.db import connection
 from django.test import Client
 
@@ -305,41 +304,18 @@ def test_a_fork_carries_the_same_key_and_wraps_and_its_rows_still_open(w):
     assert open_sealed(row.sealed, fork, w["key"], w["user"])["plaintext"] == REPLY
 
 
-# --- rows from before keys were per conversation -------------------------------------
+# --- a row that is not an envelope -----------------------------------------------
 
 
-def _legacy_row(session, index, words):
-    return Message.objects.create(session=session, turn_index=index, role=Message.USER, plaintext="",
-                                  content={"redacted": "sensitive"},
-                                  sealed=encryption.encrypt_secret(json.dumps(words)))
-
-
-def test_a_legacy_row_is_not_served_until_it_is_resealed(w):
+def test_a_row_that_is_not_an_envelope_is_never_served(w):
+    """`readable` hands out only `cc1:` envelopes: a row under any other seal (the field
+    key once held some) reaches nobody, and canopy-web has no code that opens it."""
     SessionKeyWrap.objects.filter(session=w["hot"]).delete()
     SessionKey.objects.filter(session=w["hot"]).delete()
-    _legacy_row(w["hot"], 0, {"plaintext": ASKED, "content": {"text": ASKED}})
+    Message.objects.create(session=w["hot"], turn_index=0, role=Message.USER, plaintext="",
+                           content={"redacted": "sensitive"},
+                           sealed=encryption.encrypt_secret(json.dumps({"plaintext": ASKED, "content": {}})))
     body = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()
     assert body["sealed_key"] is None and body["messages"][0]["sealed"] is None
     assert ASKED not in json.dumps(body)
-
-    call_command("reseal_sensitive_conversations")
-    body = w["c"].get(f"/api/canopy-sessions/{w['hot'].pk}").json()
-    assert not body["sealed_key"]["needs_migration"]
-    assert browser_said(body["messages"], body["sealed_key"], w["key"], w["user"].pk) == ASKED
-
-
-def test_a_legacy_row_whose_starter_has_no_vault_key_waits(w, capsys):
-    s = Session.objects.create(workspace=w["ws"], agent=w["agent"], metadata=dict(SENSITIVE))
-    _legacy_row(s, 0, {"plaintext": ASKED, "content": {}})
-    call_command("reseal_sensitive_conversations")
-    assert f"still needs migration (its starter has no vault key): {s.pk}" in capsys.readouterr().out
-    assert not conversation_keys.is_envelope(Message.objects.get(session=s).sealed)
-
-
-def test_an_existing_key_is_reused_when_resealing(w):
-    _legacy_row(w["hot"], 5, {"plaintext": REPLY, "content": {}})
-    before = SessionKey.objects.get(session=w["hot"]).public_jwk
-    done = conversation_keys.reseal_legacy()
-    assert done["rows"] == 1 and SessionKey.objects.get(session=w["hot"]).public_jwk == before
-    assert open_sealed(Message.objects.get(session=w["hot"], turn_index=5).sealed, w["hot"], w["key"],
-                       w["user"])["plaintext"] == REPLY
+    assert not hasattr(conversation_keys, "reseal_legacy")
