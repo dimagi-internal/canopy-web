@@ -10,13 +10,11 @@ Both are FIXED TEXT, never written by a model — no session ever ran.
   workspace admin turns it on (`AdmissionSettings`, on the Admission rules
   page): the notice is still recorded, as `held`, so turning it on later
   changes nothing else. A canopy-hosted (SES) thread is answered from the
-  thread's own address through the mail app (`agents.mailbox.reply`). On Gmail
-  canopy-web sends it
-  itself when it can (`gmail.py`); when it cannot — the mailbox's token is on
-  the desktop `canopy` client, or Google refuses — the notice is left PENDING
-  and the agent's runner sends it on its next mailbox poll
-  (`runner_notices.py`). A notice never ends `failed` while a runner could
-  still send it.
+  thread's own address through the mail app (`agents.mailbox.reply`). A Gmail
+  thread's notice is left PENDING and the agent's runner sends it on its next
+  mailbox poll (`runner_notices.py`): canopy-web never holds a mailbox token it
+  can open, so it never sends from an agent's Gmail itself. A notice never ends
+  `failed` while a runner could still send it.
 * **Owner** — separate from the thread, and owner-only: an email (SES,
   `apps/common/email.py`) plus a "Waiting on you" ask on the agent's board,
   both naming who wrote, the rule that fired and why, and links to fix it.
@@ -168,29 +166,11 @@ def _sender_notice(turn, rule, agent) -> None:
                           f"not known to be sent: the send failed ({type(exc).__name__}) and "
                           "is not retried, so the sender is never answered twice")
         return record(AdmissionNotice.SENT, f"replied on the thread (message {sent_id})")
-    from . import gmail
-
-    try:
-        sent_id = gmail.send_reply(agent, thread_id=thread_id, message_id=message_id,
-                                   to=sender, subject=subject, body=body)
-    except gmail.Automated as exc:
-        return record(AdmissionNotice.SKIPPED, f"not replied to: {exc}")
-    except gmail.Unavailable as exc:
-        # Nothing went out, and the agent's runner reads this mailbox with a
-        # client it CAN send from: leave the reply to it rather than give up.
-        return record(AdmissionNotice.PENDING,
-                      f"canopy-web could not send it ({exc}); left for the agent's runner",
-                      mailbox=str(ref.get("mailbox") or agent.email or "")[:320],
-                      message_id=message_id[:64],
-                      subject=subject[:998], body=body)
-    except Exception as exc:  # noqa: BLE001
-        # The send call itself failed in a way that does not say whether Gmail
-        # delivered. Not retried, so the sender is never answered twice.
-        logger.exception("admission: Gmail send failed for turn %s", turn.pk)
-        return record(AdmissionNotice.FAILED,
-                      f"not known to be sent: the Gmail send failed ({type(exc).__name__}) and "
-                      "is not retried, so the sender is never answered twice")
-    return record(AdmissionNotice.SENT, f"replied on the thread (gmail message {sent_id})")
+    # Gmail: the agent's runner reads this mailbox with a client it can send from.
+    return record(AdmissionNotice.PENDING, "left for the agent's runner, which reads this mailbox",
+                  mailbox=str(ref.get("mailbox") or agent.email or "")[:320],
+                  message_id=message_id[:64],
+                  subject=subject[:998], body=body)
 
 
 def fix_links(turn, rule, agent) -> list[dict]:

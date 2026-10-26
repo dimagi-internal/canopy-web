@@ -521,11 +521,8 @@ and waits for a human yes, and a cloud session that ends cannot receive one.
 * **The notices** (`AdmissionNotice`, one row per notice, sent or not). They
   are fixed text and never model-written:
   * The **sender** gets an automatic reply on their email thread, from the
-    agent's own mailbox. canopy-web sends it with the agent's `gog-token`
-    credential when that token was minted on canopy-web's own Google client;
-    the thread is then marked read. When it cannot — most agents' tokens are on
-    the desktop `canopy` client, which only a box with gog can refresh, or
-    Google refuses the refresh or the send — the notice is left `pending`, and
+    agent's own mailbox. On a Gmail thread canopy-web never sends it itself (it
+    holds no mailbox token it can open): the notice is left `pending`, and
     the runner that reads the agent's mailbox leases it on its next mailbox poll
     (`POST /api/harness/runners/{id}/admission-notices`, only for agents it may
     hold and only from the mailbox the sender wrote to), sends the same fixed

@@ -11,7 +11,6 @@ owner notice recorded, and no debugger turn.
 from __future__ import annotations
 
 import datetime as dt
-import urllib.error
 from unittest import mock
 
 import pytest
@@ -20,7 +19,7 @@ from django.core import mail
 from django.test import Client
 from django.utils import timezone
 
-from apps.admission import defaults, gmail, notices, runner_notices
+from apps.admission import defaults, notices, runner_notices
 from apps.admission.models import AdmissionNotice, AdmissionRule, AdmissionSettings
 from apps.agents.interface import parse
 from apps.agents.models import Agent
@@ -266,53 +265,30 @@ def test_another_agents_address_gets_no_notice_however_the_turn_was_typed(
     assert notice.status == AdmissionNotice.SKIPPED and "another agent" in notice.detail
 
 
-@pytest.fixture
-def sending(fleet):
+def test_with_replies_on_the_sender_is_answered_once_per_thread(fleet, django_capture_on_commit_callbacks):
+    # A Gmail thread's reply is the runner's to send: canopy-web holds no mailbox token it can open.
     _replies_on(fleet)
-    with mock.patch.object(gmail, "send_reply", return_value="g-1") as send:
-        yield send
-
-
-def test_with_replies_on_the_sender_is_answered_once_per_thread(
-        fleet, sending, django_capture_on_commit_callbacks):
     first = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-9", count=1)
-    assert first.status == AdmissionNotice.SENT
-    kwargs = sending.call_args.kwargs
-    assert kwargs["to"] == VIKRAM and kwargs["thread_id"] == "t-9" and kwargs["message_id"] == "m-1"
-    assert "automatic reply" in kwargs["body"] and "Jonathan Jackson" in kwargs["body"]
-    assert f"Reply:   an automatic reply was sent to {VIKRAM} on the thread" in mail.outbox[-1].body
+    assert first.status == AdmissionNotice.PENDING
+    assert first.message_id == "m-1"
+    assert "automatic reply" in first.body and "Jonathan Jackson" in first.body
 
     # The same poll again: the same idempotency key, so no new turn and no notice.
     assert _mail(fleet["hal"], thread="t-9", count=1).pk == first.turn_id
     # A new message on the thread inside 24h: rejected again, but not re-answered.
     second = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-9", count=2)
     assert second.status == AdmissionNotice.SKIPPED and "24 hours" in second.detail
-    assert sending.call_count == 1
-
-
-def test_an_automated_message_is_never_answered(fleet, sending, django_capture_on_commit_callbacks):
-    sending.side_effect = gmail.Automated("the message carries automation headers")
-    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
-    assert notice.status == AdmissionNotice.SKIPPED and "automation" in notice.detail
-
-
-def test_gmail_refuses_an_auto_submitted_message():
-    assert gmail._is_automated({"auto-submitted": "auto-replied"})
-    assert gmail._is_automated({"precedence": "bulk"})
-    assert gmail._is_automated({"list-id": "<x.list>"})
-    assert not gmail._is_automated({"auto-submitted": "no"})
 
 
 def test_a_mailbox_canopy_cannot_send_from_is_left_for_the_agents_runner(
         fleet, django_capture_on_commit_callbacks):
-    # canopy-web#1416: hal's token is on the desktop `canopy` client (here: no
-    # token at all), so canopy-web cannot send. The notice is not given up on —
-    # it waits for the runner that reads hal's mailbox, carrying what it needs.
+    # canopy-web never sends from an agent's Gmail: the notice waits for the runner
+    # that reads hal's mailbox, carrying what it needs.
     _replies_on(fleet)
     fleet["hal"].email = "hal@dimagi-ai.com"
     fleet["hal"].save(update_fields=["email"])
-    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)  # no gog-token stored
-    assert notice.status == AdmissionNotice.PENDING and "gog-token" in notice.detail
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
+    assert notice.status == AdmissionNotice.PENDING and "runner" in notice.detail
     assert (notice.mailbox, notice.message_id, notice.subject) == ("hal@dimagi-ai.com", "m-1", "Can Hal help?")
     assert notice.body == notices.sender_text(fleet["hal"])
 
@@ -341,9 +317,7 @@ def test_a_canopy_hosted_thread_is_answered_from_its_own_address_not_gmail(
         origin_ref={"from": VIKRAM, "subject": "Can Hal help?", "thread_id": str(t.uuid),
                     "backend": "ses", "mailbox": r.address, "message_id": "<in-1@dimagi.com>",
                     "headers": VERIFIED})
-    with mock.patch.object(gmail, "send_reply") as gmail_send:
-        _claim(fleet["cloud"], django_capture_on_commit_callbacks)
-    gmail_send.assert_not_called()
+    _claim(fleet["cloud"], django_capture_on_commit_callbacks)
     notice = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
     assert notice.status == AdmissionNotice.SENT, notice.detail
     assert sent[0]["from_addr"] == "hal@dimagi.ai" and sent[0]["to"] == [VIKRAM]
@@ -361,9 +335,7 @@ def test_a_hosted_reply_the_mail_app_refuses_is_failed_not_left_for_a_runner(
         agent=fleet["hal"], origin=Turn.ORIGIN_EMAIL, idempotency_key="email-hal-x-1",
         origin_ref={"from": VIKRAM, "subject": "s", "backend": "ses", "headers": VERIFIED,
                     "thread_id": "00000000-0000-0000-0000-000000000000"})
-    with mock.patch.object(gmail, "send_reply") as gmail_send:
-        _claim(fleet["cloud"], django_capture_on_commit_callbacks)
-    gmail_send.assert_not_called()
+    _claim(fleet["cloud"], django_capture_on_commit_callbacks)
     notice = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
     assert notice.status == AdmissionNotice.FAILED and "no such thread" in notice.detail
 
@@ -378,8 +350,7 @@ def test_a_pending_gmail_notice_keeps_the_mailbox_the_turn_came_in_on(
         agent=fleet["hal"], origin=Turn.ORIGIN_EMAIL, idempotency_key="email-hal-g-1",
         origin_ref={"from": VIKRAM, "subject": "s", "thread_id": "g-1", "message_id": "m-1",
                     "backend": "gmail", "mailbox": "hal.alt@dimagi-ai.com", "headers": VERIFIED})
-    with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
-        _claim(fleet["cloud"], django_capture_on_commit_callbacks)
+    _claim(fleet["cloud"], django_capture_on_commit_callbacks)
     notice = AdmissionNotice.objects.get(turn=turn, kind=AdmissionNotice.SENDER)
     assert notice.status == AdmissionNotice.PENDING and notice.mailbox == "hal.alt@dimagi-ai.com"
 
@@ -391,8 +362,7 @@ def pending(fleet, django_capture_on_commit_callbacks):
     _replies_on(fleet)
     fleet["hal"].email = "hal@dimagi-ai.com"
     fleet["hal"].save(update_fields=["email"])
-    with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
-        notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-5")
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-5")
     assert notice.status == AdmissionNotice.PENDING
     return notice
 
@@ -471,35 +441,9 @@ def test_a_failed_send_is_retried_after_the_lease_and_given_up_on_after_a_day(fl
 
 def test_a_pending_notice_silences_the_thread_like_a_sent_one(
         fleet, pending, django_capture_on_commit_callbacks):
-    with mock.patch.object(gmail, "send_reply", side_effect=gmail.Unavailable("desktop client")):
-        second = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-5", count=2)
+    second = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-5", count=2)
     assert second.status == AdmissionNotice.SKIPPED and "24 hours" in second.detail
 
-
-def test_gmail_raises_unavailable_only_when_nothing_was_sent():
-    agent = mock.Mock(name="agent")
-    agent.name = "Hal"
-    meta = {"payload": {"headers": [{"name": "Message-ID", "value": "<m@x>"}]}}
-    refused = urllib.error.HTTPError("u", 400, "bad", {}, None)
-    with mock.patch.object(gmail, "access_token", return_value=("tok", "hal@dimagi-ai.com")), \
-            mock.patch.object(gmail, "_call", side_effect=[meta, refused]):
-        with pytest.raises(gmail.Unavailable, match="HTTP 400"):
-            gmail.send_reply(agent, thread_id="t", message_id="m", to=VIKRAM, subject="s", body="b")
-    # Sent, then marking it read failed: that is a sent reply, never a retry.
-    with mock.patch.object(gmail, "access_token", return_value=("tok", "hal@dimagi-ai.com")), \
-            mock.patch.object(gmail, "_call", side_effect=[meta, {"id": "g-1"}, urllib.error.URLError("x")]):
-        assert gmail.send_reply(agent, thread_id="t", message_id="m", to=VIKRAM,
-                                subject="s", body="b") == "g-1"
-
-
-def test_a_send_that_may_have_gone_is_not_retried(fleet, django_capture_on_commit_callbacks):
-    _replies_on(fleet)
-    with mock.patch.object(gmail, "send_reply", side_effect=TimeoutError("read timed out")):
-        notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks)
-    assert notice.status == AdmissionNotice.FAILED and "never answered twice" in notice.detail
-
-
-# --- the refusals canopy always makes, as rules (canopy-web#1416, #1400 item 6) ----------
 
 def _block(fleet, email=VIKRAM):
     from apps.contacts.models import Contact
@@ -619,10 +563,9 @@ def test_automatic_replies_are_a_workspace_switch_only_an_admin_flips(
     # Another workspace's switch is its own: a new one starts off.
     other = Workspace.objects.create(slug="other", display_name="Other", created_by=fleet["jj"])
     assert not AdmissionSettings.sender_notices_on(other.pk)
-    # On, the reply is attempted rather than held.
-    with mock.patch.object(gmail, "send_reply", return_value="g-2"):
-        notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-s")
-    assert notice.status == AdmissionNotice.SENT
+    # On, the reply is queued for the runner rather than held.
+    notice = _reject_on_cloud(fleet, django_capture_on_commit_callbacks, thread="t-s")
+    assert notice.status == AdmissionNotice.PENDING
 
 
 def test_a_rule_cannot_name_another_workspaces_agent(fleet):

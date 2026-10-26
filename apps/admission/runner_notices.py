@@ -1,9 +1,7 @@
-"""Sender notices canopy-web could not send, sent by the agent's runner instead.
+"""Sender notices on a Gmail thread, sent by the agent's runner.
 
-canopy-web sends a rejected turn's automatic reply itself only when it holds a
-token it can refresh (`gmail.py`): one minted on its own Google client. Most
-agents' mailboxes are on the fleet's desktop `canopy` client, so for them the
-notice is left PENDING (canopy-web#1416, option b of #1400). The runner that
+canopy-web holds no mailbox token it can open (an agent's vault is
+zero-knowledge), so a Gmail thread's notice is left PENDING. The runner that
 reads the agent's mailbox already holds a client that can send from it:
 
 1. On its mailbox poll it CLAIMS the pending notices for the agents it reads
