@@ -60,6 +60,9 @@ close).
 
 ## Recording: one path, keyed on whether a transcript exists
 
+- A conversation runs on one agent CLI for life (`Session.cli`, set by its first claim;
+  `runners.md` § Which CLI runs a turn): its transcript lives in that CLI's own store.
+
 - `services.transcript_sourced(session)` is the one question: is a real runner
   driving this, so does a transcript exist? `Session.origin` means only "how this
   started" and never decides recording.
