@@ -4756,8 +4756,8 @@ export interface paths {
          *
          *     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
          *     always was. With `refs`, `values` holds only the named refs that the
-         *     agent also declares (`runtime_secrets`), and the secret extras
-         *     (`op_sa_token`, `salesforce_creds`) are included
+         *     agent also declares (`runtime_secrets`), and the secret extra
+         *     `op_sa_token` is included
          *     only when named in `refs` too. `op_vault` and `mailbox`
          *     are not secrets and are always returned.
          *
@@ -4765,7 +4765,7 @@ export interface paths {
          *     account, such as its GitHub token) never ride `values`. They come only in
          *     `delegated`, sealed (`zks1:`) to the machines that run the agent, and only to a
          *     box that runs it reading with its own device proof — never to an admin or a
-         *     license holder. `salesforce_creds` likewise goes only to such a box.
+         *     license holder.
          *
          *     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
          *     service-account token (`op_sa_token` is ""): its values come from here, so
@@ -5296,46 +5296,6 @@ export interface paths {
          *     (`checked_by`), and this returns what they last found.
          */
         readonly post: operations["check_agent_github"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/salesforce": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Whose Salesforce identity this agent borrows (masked — never the credential) */
-        readonly get: operations["get_agent_salesforce"];
-        /**
-         * Lend this agent another agent's Salesforce identity (owner of both)
-         * @description Checked before it is stored: the lender must hold a Salesforce credential
-         *     and Salesforce must accept it. Refused with the reason otherwise.
-         */
-        readonly put: operations["set_agent_salesforce"];
-        readonly post?: never;
-        /** Stop lending this agent a Salesforce identity */
-        readonly delete: operations["delete_agent_salesforce"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/agents/{slug}/salesforce/check": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Re-check the Salesforce identity this agent borrows */
-        readonly post: operations["check_agent_salesforce"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -24917,11 +24877,6 @@ export interface components {
              */
             readonly op_sa_token: string;
             /**
-             * Salesforce Creds
-             * @default
-             */
-            readonly salesforce_creds: string;
-            /**
              * Mailbox
              * @default
              */
@@ -25805,49 +25760,6 @@ export interface components {
         readonly AgentGitHubIn: {
             /** Token */
             readonly token: string;
-        };
-        /**
-         * AgentSalesforceOut
-         * @description Whose Salesforce identity this agent borrows, and who borrows its own.
-         *     Never the credential.
-         */
-        readonly AgentSalesforceOut: {
-            /**
-             * Set
-             * @default false
-             */
-            readonly set: boolean;
-            /**
-             * Owner Email
-             * @default
-             */
-            readonly owner_email: string;
-            /**
-             * Lender
-             * @default
-             */
-            readonly lender: string;
-            /**
-             * Username
-             * @default
-             */
-            readonly username: string;
-            /**
-             * Error
-             * @default
-             */
-            readonly error: string;
-            /** Checked At */
-            readonly checked_at?: string | null;
-            /** Updated At */
-            readonly updated_at?: string | null;
-            /** Lent To */
-            readonly lent_to?: readonly string[];
-        };
-        /** AgentSalesforceIn */
-        readonly AgentSalesforceIn: {
-            /** Lender */
-            readonly lender: string;
         };
         /**
          * AgentCredentialReadOut
@@ -47462,98 +47374,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
-                };
-            };
-        };
-    };
-    readonly get_agent_salesforce: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentSalesforceOut"];
-                };
-            };
-        };
-    };
-    readonly set_agent_salesforce: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["AgentSalesforceIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentSalesforceOut"];
-                };
-            };
-        };
-    };
-    readonly delete_agent_salesforce: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentSalesforceOut"];
-                };
-            };
-        };
-    };
-    readonly check_agent_salesforce: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["AgentSalesforceOut"];
                 };
             };
         };

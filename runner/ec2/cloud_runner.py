@@ -1512,9 +1512,10 @@ _AGENT_OP_TTL_SECONDS = float(os.environ.get("AGENT_OP_TTL_SECONDS", "300"))
 _AGENT_VAULT: dict[str, str] = {}
 
 
-#: The chrome-sales Salesforce credential each agent BORROWS (canopy-web#1291),
-#: fetched on the same resolve call as its 1Password key and cached with it.
-_AGENT_SF: dict[str, str] = {}
+#: The vault value an agent's chrome-sales Salesforce credential (`.sf-creds.json`) comes
+#: from: a workspace vault holding Eva's Salesforce login, attached to each agent that
+#: uses it, so it arrives among the agent's resolved values under this name.
+SALESFORCE_VALUE = "salesforce"
 
 #: Credentials people delegated to each agent (their own account, given for the agent
 #: to use): {slug: {name: plaintext}}. Opened by the canopy CLI with this box's own key
@@ -1529,13 +1530,31 @@ def _delegated_chrome_sales_home(slug: str) -> pathlib.Path:
     return pathlib.Path.home() / ".canopy" / "delegated" / slug / "chrome-sales"
 
 
+def _salesforce_value(slug: str) -> str:
+    """The agent's `salesforce` vault value (a vault attached to it holds it), or ""."""
+    if secrets_off_disk():
+        return str((_turn_values(slug) or {}).get(SALESFORCE_VALUE) or "")
+    try:
+        lines = (pathlib.Path.home() / f".{slug}" / ".env").read_text().splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        name, sep, value = line.partition("=")
+        if sep and name.strip() == SALESFORCE_VALUE:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            return value
+    return ""
+
+
 def _stage_salesforce(slug: str) -> pathlib.Path | None:
-    """Write the borrowed `.sf-creds.json` for this agent (0600), or REMOVE a stale
-    one when canopy-web says it borrows none — a withdrawn loan must stop on the
-    box, not linger in a file. Returns the dir to point CHROME_SALES_HOME at."""
+    """Write this agent's `.sf-creds.json` (0600) from its `salesforce` vault value, or
+    REMOVE a stale one when it has none — a vault detached from the agent must stop on
+    the box, not linger in a file. Returns the dir to point CHROME_SALES_HOME at."""
     home = _delegated_chrome_sales_home(slug)
     target = home / ".sf-creds.json"
-    creds = _AGENT_SF.get(slug, "")
+    creds = _salesforce_value(slug)
     try:
         if not creds:
             target.unlink(missing_ok=True)
@@ -1548,7 +1567,7 @@ def _stage_salesforce(slug: str) -> pathlib.Path | None:
         os.replace(tmp, target)
         return home
     except OSError as exc:
-        _log(f"warn: could not stage {slug}'s borrowed Salesforce credential ({exc})")
+        _log(f"warn: could not stage {slug}'s Salesforce credential ({exc})")
         return None
 
 
@@ -3116,7 +3135,7 @@ _TURN_VALUES_LOCK = threading.Lock()
 #: keys, same names as the resolve response). canopy 0.2.736 prints only
 #: {agent, source, values}; until it adds these, a unit's own (proofless) resolve
 #: stands, which a device-bound or zero-knowledge agent refuses.
-RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds", "delegated")
+RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "delegated")
 #: slug -> why its env could not be had (the turn's failure note says it).
 _TURN_ENV_ERRORS: dict = {}
 
@@ -3197,8 +3216,6 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
         _AGENT_OP[slug] = (now, extras.get("op_sa_token", ""))
         if "op_vault" in extras:
             _AGENT_VAULT[slug] = extras["op_vault"].strip()
-        if "salesforce_creds" in extras:
-            _AGENT_SF[slug] = extras["salesforce_creds"]
     with _TURN_VALUES_LOCK:
         _TURN_VALUES[slug] = (now, values)
     _set_check(f"env.{slug}", "ok", f"{len(values)} var(s) from {doc.get('source') or 'canopy'}, "
@@ -3378,7 +3395,6 @@ def _agent_op_token(slug: str) -> str:
                            "by the canopy CLI on this box")
             token = str(payload.get("op_sa_token") or "")
             _AGENT_VAULT[slug] = str(payload.get("op_vault") or "").strip()
-            _AGENT_SF[slug] = str(payload.get("salesforce_creds") or "")
     except Exception as exc:  # noqa: BLE001
         _log(f"warn: could not resolve {slug}'s 1Password key ({exc}); the turn runs without one")
     _AGENT_OP[slug] = (now, token)
@@ -3538,10 +3554,10 @@ def _agent_env(slug: str | None) -> dict:
         env["AGENT_VAULT"] = vault
     else:
         env.pop("AGENT_VAULT", None)
-    # chrome-sales in an agent turn acts in Salesforce only as the identity this
-    # agent BORROWS (canopy-web#1291), never as whatever sits in the box's
-    # ~/.chrome-sales/. No loan → no CHROME_SALES_HOME, and chrome-sales finds no
-    # Salesforce creds for an agent session at all.
+    # chrome-sales in an agent turn acts in Salesforce only as the identity in its
+    # `salesforce` vault value (a vault attached to the agent), never as whatever sits
+    # in the box's ~/.chrome-sales/. None → no CHROME_SALES_HOME, and chrome-sales finds
+    # no Salesforce creds for an agent session at all.
     env.pop("CHROME_SALES_HOME", None)
     sf_home = _stage_salesforce(slug)
     if sf_home is not None:

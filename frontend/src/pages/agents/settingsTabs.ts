@@ -27,7 +27,6 @@ const ANCHORS: Record<string, SettingsTab> = {
   operators: 'roles',
   reach: 'channels',
   'cred-github': 'accounts',
-  'cred-salesforce': 'accounts',
   'cred-mailbox': 'accounts',
   credentials: 'security',
   secrets: 'security',

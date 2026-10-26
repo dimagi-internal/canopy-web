@@ -46,7 +46,7 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 //   Overview           — what is left to set up, what it is, where it runs, delete
 //   Roles              — owner, its canopy user, roles, who runs it locally
 //   Channels           — callers, Slack, email, Google account
-//   External accounts  — GitHub, Salesforce, its Google mailbox
+//   External accounts  — GitHub, its Google mailbox
 //   Security           — its secrets (the vault), then who and what can open them
 export function AgentSettingsSection() {
   const { agent, hold, setHold } = useOutletContext<AgentOutletContext>()

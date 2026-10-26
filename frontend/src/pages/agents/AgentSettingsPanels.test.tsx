@@ -32,9 +32,8 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
 vi.mock('@/api/agents', () => ({
   getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
   deleteAgentCredential, startGoogleMint, AgentApiError,
-  // The GitHub and Salesforce sections have their own tests; here they only have to not throw.
+  // The GitHub section has its own tests; here it only has to not throw.
   getAgentGitHub: () => new Promise(() => {}),
-  getAgentSalesforce: () => new Promise(() => {}),
 }))
 
 // Device keys + the read log have their own tests (DeviceKeysTable.test.tsx).

@@ -1158,13 +1158,10 @@ class AgentDelegation(models.Model):
     """
 
     GITHUB = "github"
-    #: Salesforce is lent by an AGENT, not a person: chrome-sales acts in Salesforce
-    #: as one delegated identity (Eva's SF user, since 2026-10-07), and the other
-    #: agents borrow it. The row holds no secret (`secret_enc` is ""): it names the
-    #: `lender`, and the credential is resolved from the lender's own
-    #: `AgentCredential` named `salesforce` at use time — so a re-mint by the lender
-    #: reaches every borrower, and deleting one row stops one borrower. A copy per
-    #: borrower would be N secrets to rotate (canopy-web#1291).
+    #: Retired: an agent once borrowed another agent's Salesforce credential through a
+    #: row of this service (naming the `lender`). Nothing reads or writes such rows now
+    #: — Salesforce for agents lives in a workspace vault holding `salesforce`,
+    #: attached to each agent that uses it. The choice stays so old rows still load.
     SALESFORCE = "salesforce"
     SERVICE_CHOICES = [(GITHUB, "GitHub"), (SALESFORCE, "Salesforce")]
 
@@ -1174,8 +1171,8 @@ class AgentDelegation(models.Model):
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="delegations")
     service = models.CharField(max_length=32, choices=SERVICE_CHOICES)
     secret_enc = models.TextField(blank=True, default="")
-    #: The agent whose OWN credential is lent (Salesforce). Null for a person's
-    #: own secret held in `secret_enc` (GitHub).
+    #: Retired with Salesforce lending (see `SALESFORCE`): the agent whose own
+    #: credential was lent. Always null for GitHub; nothing reads it now.
     lender = models.ForeignKey(
         "agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
         related_name="lent_delegations",

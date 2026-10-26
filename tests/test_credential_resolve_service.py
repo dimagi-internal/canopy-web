@@ -174,11 +174,10 @@ def test_a_license_read_never_gets_the_agents_login_or_the_extras(monkeypatch, o
     monkeypatch.setattr(cr, "license_for_read", lambda request, agent: None)
     _values(monkeypatch, agent, {"api-key": "v", "canopy-pat": "pat"})
     monkeypatch.setattr(cr.services, "resolve_agent_vault", lambda a: ("Agent-Eva", "ops-key"))
-    monkeypatch.setattr(cr.delegations, "salesforce_creds_for", lambda a: "lent-sf")
     out = cr.resolve(_request(owner), agent, None)
     assert out.via == "license"
     assert out.values == {"api-key": "v"}
-    assert (out.op_sa_token, out.salesforce_creds) == ("", "")
+    assert out.op_sa_token == ""
     assert not hasattr(out, "github_token")
 
 

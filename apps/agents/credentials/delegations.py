@@ -1,8 +1,5 @@
 """A person lending their GitHub identity to one agent — see `AgentDelegation`.
 
-Also Salesforce, lent by an AGENT (its own credential) to other agents — see the
-Salesforce section at the end.
-
 Request-free service layer: the agent routes (set / check / clear), the harness
 runner route (issue one token to one turn) and the runner-readiness route all
 call these, so they cannot drift about which delegation is in force.
@@ -26,7 +23,6 @@ shows both the credential and the person who caused the change.
 from __future__ import annotations
 
 import datetime as dt
-import json
 import re
 from urllib.parse import urlencode
 
@@ -236,30 +232,28 @@ def _expires(meta: dict) -> dt.datetime | None:
 
 # ---- the delegation itself ---------------------------------------------------
 
-def delegation_for(agent: Agent, service: str = AgentDelegation.GITHUB) -> AgentDelegation | None:
-    """The delegation IN FORCE for this agent: its current owner's. A row left
-    behind by a previous owner is not it.
+def delegation_for(agent: Agent) -> AgentDelegation | None:
+    """The GitHub delegation IN FORCE for this agent: its current owner's. A row
+    left behind by a previous owner is not it.
 
     Nor is an owner's who has left the workspace: lending a GitHub identity is
     something a member does for their tenant's agent, and an ex-member's token
     must stop acting the moment they are out — not when someone notices the
     `owner` field still names them.
 
-    For GitHub only, when the owner has lent nothing, an ADMIN's delegation is
-    in force — the most recently saved one whose person is still an admin
-    (`Agent.is_admin`, which already fails closed on ex-members). An agent set
-    up on its owner's behalf by an admin should not wait on the owner to paste
-    a token (Jonathan, 2026-10-21). The owner's own token always wins, and
-    someone who stops being an admin stops lending at once. Salesforce stays
-    owner-only: its lender must belong to the same person (`_in_force_salesforce`)."""
+    When the owner has lent nothing, an ADMIN's delegation is in force — the
+    most recently saved one whose person is still an admin (`Agent.is_admin`,
+    which already fails closed on ex-members). An agent set up on its owner's
+    behalf by an admin should not wait on the owner to paste a token (Jonathan,
+    2026-10-21). The owner's own token always wins, and someone who stops being
+    an admin stops lending at once."""
 
+    service = AgentDelegation.GITHUB
     if agent.owner_id is not None and wsvc.is_member(agent.owner, agent.workspace_id):
         row = AgentDelegation.objects.filter(
             agent=agent, user_id=agent.owner_id, service=service).first()
-        if row is not None or service != AgentDelegation.GITHUB:
+        if row is not None:
             return row
-    elif service != AgentDelegation.GITHUB:
-        return None
     for row in (AgentDelegation.objects.filter(agent=agent, service=service)
                 .exclude(user_id=agent.owner_id).select_related("user").order_by("-updated_at")):
         if agent.is_admin(row.user):
@@ -569,152 +563,3 @@ def _issued(turn, agent: Agent, *, token: str, login: str, user_id, name: str, e
         "repo": agent_repo(agent),
         "requested_by": requested_by(turn),
     }
-
-
-# ---- Salesforce: an AGENT's own credential, lent to other agents ---------------
-# chrome-sales acts in Salesforce as ONE delegated identity. Since 2026-10-07 that
-# is Eva's Salesforce user: agents get no Salesforce accounts of their own, they
-# borrow hers (Jonathan, canopy-web#1291). Humans keep their own creds on their own
-# machine (~/.chrome-sales/); none of this touches them.
-#
-# The shape GitHub's is, with one difference: the lender is an agent, and the row
-# REFERENCES the lender's credential rather than holding a copy. The credential is
-# the lender's own `AgentCredential` named SALESFORCE_CREDENTIAL (the chrome-sales
-# `.sf-creds.json`: clientId, refreshToken, instanceUrl, myDomain, …), which the
-# lender rewrites when it re-mints. One secret, N borrowers, one rotation.
-
-SALESFORCE_CREDENTIAL = "salesforce"
-
-
-def lender_salesforce_creds(lender: Agent) -> dict:
-    """The lender's own chrome-sales credential, parsed — which canopy-web can no
-    longer produce: every agent's vault is zero-knowledge, so the stored value is
-    ciphertext it holds no key for. Always DelegationError, naming why. Lending a
-    credential to another agent needs it shared to that agent's machines instead (a
-    delegated entry, `accounts`), which this path does not do yet."""
-
-    if not AgentCredential.objects.filter(agent=lender, name=SALESFORCE_CREDENTIAL).exists():
-        raise DelegationError(
-            f"{lender.slug} holds no Salesforce credential to lend — it stores one as its "
-            f"own credential '{SALESFORCE_CREDENTIAL}' (PUT /api/agents/{lender.slug}/credentials)")
-    raise DelegationError(
-        f"{lender.slug}'s vault is zero-knowledge: canopy-web cannot read its Salesforce "
-        "credential to lend it (canopy-web#1550)")
-
-
-def probe_salesforce(creds: dict) -> dict:
-    """Refresh with the credential and ask Salesforce who it is. Writes nothing."""
-    host = f"https://{creds['myDomain']}" if creds.get("myDomain") else (
-        "https://test.salesforce.com" if creds.get("isSandbox") else "https://login.salesforce.com")
-    form = {"grant_type": "refresh_token", "refresh_token": creds["refreshToken"],
-            "client_id": creds["clientId"]}
-    if creds.get("clientSecret"):
-        form["client_secret"] = creds["clientSecret"]
-    try:
-        tok = requests.post(f"{host}/services/oauth2/token", data=form, timeout=HTTP_TIMEOUT)
-    except requests.RequestException as exc:
-        raise DelegationError(f"Salesforce did not answer: {exc}") from exc
-    if tok.status_code != 200:
-        body = tok.json() if tok.content else {}
-        raise DelegationError(
-            f"Salesforce refused the credential: {body.get('error_description') or tok.status_code}")
-    t = tok.json()
-    try:
-        info = requests.get(f"{t['instance_url']}/services/oauth2/userinfo",
-                            headers={"Authorization": f"Bearer {t['access_token']}"},
-                            timeout=HTTP_TIMEOUT)
-    except requests.RequestException as exc:
-        raise DelegationError(f"Salesforce did not answer: {exc}") from exc
-    if info.status_code != 200:
-        raise DelegationError(f"Salesforce userinfo answered {info.status_code}")
-    u = info.json()
-    return {"username": u.get("preferred_username", ""), "user_id": u.get("user_id", ""),
-            "organization_id": u.get("organization_id", ""), "instance_url": t["instance_url"],
-            "checked_at": timezone.now().isoformat()}
-
-
-def _in_force_salesforce(agent: Agent) -> AgentDelegation | None:
-    """The Salesforce delegation in force: the agent owner's (as for GitHub), AND
-    the lender must still be that same person's agent. Lending is something you
-    do with what is yours; transfer the lender and every loan of it stops."""
-    row = delegation_for(agent, AgentDelegation.SALESFORCE)
-    if row is None or row.lender is None or row.lender.owner_id != row.user_id:
-        return None
-
-    if not wsvc.is_member(row.user, row.lender.workspace_id):
-        return None   # left the lender's tenant: its identity stops lending, as GitHub's does
-    return row
-
-
-def set_salesforce(agent: Agent, user, lender_slug: str) -> AgentDelegation:
-    """Lend `lender_slug`'s Salesforce credential to `agent`, after proving it works.
-
-    The caller must own BOTH agents: the borrower (only its owner's delegations
-    are ever used) and the lender (you can only lend what is yours). Refused, not
-    stored, when the lender holds no credential or Salesforce rejects it."""
-
-    if agent.owner_id != getattr(user, "pk", None):
-        raise DelegationError(f"only {agent.slug}'s owner can lend it a Salesforce identity")
-    # Across workspaces on purpose: the lender lives where it lives (Eva in one
-    # tenant, the agents borrowing her identity in another). The gate is
-    # ownership, which is per person, not per tenant — and `delegation_for` /
-    # `_in_force_salesforce` re-check it at every use. Slugs are globally unique.
-    lender = Agent.objects.filter(slug=(lender_slug or "").strip()).first()
-    if lender is None or lender.owner_id != user.pk:
-        # One message for both: a stranger must not learn which slugs exist.
-        raise DelegationError(f"you own no agent '{lender_slug}' to lend")
-    meta = probe_salesforce(lender_salesforce_creds(lender))
-    row, _ = AgentDelegation.objects.update_or_create(
-        user=user, agent=agent, service=AgentDelegation.SALESFORCE,
-        defaults={"secret_enc": "", "lender": lender, "meta": meta, "expires_at": None},
-    )
-    return row
-
-
-def check_salesforce(agent: Agent) -> AgentDelegation | None:
-    row = _in_force_salesforce(agent)
-    if row is None:
-        return None
-    try:
-        meta = probe_salesforce(lender_salesforce_creds(row.lender))
-    except DelegationError as exc:
-        meta = {**row.meta, "checked_at": timezone.now().isoformat(), "error": str(exc)}
-    row.meta = meta
-    row.save(update_fields=["meta", "updated_at"])
-    return row
-
-
-def clear_salesforce(agent: Agent, user) -> bool:
-    deleted, _ = AgentDelegation.objects.filter(
-        agent=agent, user=user, service=AgentDelegation.SALESFORCE).delete()
-    return bool(deleted)
-
-
-def salesforce_status(agent: Agent) -> dict:
-    """Both directions, never the credential: whose Salesforce identity this agent
-    borrows, and which agents borrow THIS agent's ("what have I lent")."""
-    row = _in_force_salesforce(agent)
-    lent_to = sorted(
-        d.agent.slug for d in AgentDelegation.objects.filter(
-            lender=agent, service=AgentDelegation.SALESFORCE).select_related("agent")
-        if _in_force_salesforce(d.agent) == d)
-    base = {"set": row is not None, "owner_email": agent.owner.email if agent.owner else "",
-            "lent_to": lent_to}
-    if row is None:
-        return base
-    meta = row.meta or {}
-    return {**base, "lender": row.lender.slug, "username": meta.get("username", ""),
-            "error": meta.get("error", ""), "checked_at": meta.get("checked_at"),
-            "updated_at": row.updated_at}
-
-
-def salesforce_creds_for(agent: Agent) -> str:
-    """PLAINTEXT `.sf-creds.json` for a box that runs `agent`, or "" when it borrows
-    none. The lender's CURRENT credential — never a copy taken at lending time."""
-    row = _in_force_salesforce(agent)
-    if row is None:
-        return ""
-    try:
-        return json.dumps(lender_salesforce_creds(row.lender))
-    except DelegationError:
-        return ""

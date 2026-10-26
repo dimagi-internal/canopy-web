@@ -189,7 +189,7 @@ def test_the_access_check_says_license(world):
 
 
 def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatch):
-    """Never the owner's GitHub delegation, a lent credential, or the agent's own canopy
+    """Never the owner's GitHub delegation or the agent's own canopy
     login — the holder runs the agent's tools, not the agent."""
     from types import SimpleNamespace
 
@@ -202,12 +202,11 @@ def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatc
     monkeypatch.setattr(agents_api.delegations, "delegation_for",
                         lambda a: SimpleNamespace(secret_enc="x"))
     monkeypatch.setattr(agents_api.delegations, "decrypt_secret", lambda s: "owner-github-token")
-    monkeypatch.setattr(agents_api.delegations, "salesforce_creds_for", lambda a: "lent-sf")
 
     turn_id = _open(world["aath"]).json()["turn_id"]
     body = _resolve(world["aath"], turn_id).json()
     assert body["values"] == {"nova-api-key": SECRET}
-    assert "github_token" not in body and body["salesforce_creds"] == ""
+    assert "github_token" not in body
     # The same agent's admin still gets everything (unchanged path).
     admin = _resolve(world["owner"]).json()
     assert admin["values"]["canopy-pat"] == "zks1:agent-own-pat"
