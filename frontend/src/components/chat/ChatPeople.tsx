@@ -122,13 +122,19 @@ export interface PeopleApi {
 
 const APP_PEOPLE_API: PeopleApi = { getSession, participantRecipient, addParticipant, giveKeyCopy };
 
-export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRole: string | null }) {
+export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
+  sessionId: string;
+  myRole: string | null;
+  /** The chat's owner, or the agent's owner who is in it (`access.can_add_people`). */
+  canAddPeople?: boolean;
+}) {
   const vault = useVaultUnlock();
   const trust = usePersonTrust();
   const [giving, setGiving] = useState<number | null>(null);
   const [people, setPeople] = useState<Participant[] | null>(null);
   const [error, setError] = useState("");
   const isOwner = myRole === "owner";
+  const mayAdd = isOwner || canAddPeople;
 
   useEffect(() => {
     let cancelled = false;
@@ -193,7 +199,7 @@ export function ChatPeoplePanel({ sessionId, myRole }: { sessionId: string; myRo
           ))}
         </div>
       )}
-      {isOwner ? (
+      {mayAdd ? (
         <div className="space-y-1">
           <AddPersonForm
             autoFocus

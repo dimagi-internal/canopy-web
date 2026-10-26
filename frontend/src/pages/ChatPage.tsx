@@ -452,6 +452,7 @@ function ChatPageInner({
               sessionId={id}
               agentSlug={meta?.agent_slug ?? null}
               myRole={meta?.my_role ?? null}
+              canAddPeople={meta?.can_add_people ?? false}
               notifyEveryCompletion={meta ? meta.notify_every_completion : undefined}
               onToggleNotify={() => void actions.toggleNotify()}
               shareDisabledReason={meta?.sensitive ? SENSITIVE_NO_SHARE : disabledReason}

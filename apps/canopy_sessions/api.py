@@ -1170,6 +1170,7 @@ def get_session(request: HttpRequest, session_id: uuid.UUID, full: bool = False)
     data["subagents"] = serializers.session_subagents(session)
     data["turn_status"] = status_feed.status_for_session(session)
     data["my_role"] = access.role_for(request.user, session)
+    data["can_add_people"] = access.can_add_people(request.user, session)
     data["audience"] = audience.summary(session, request.user)
     data["can_move"] = filing.can_move(request.user, session)
     # A sensitive conversation's key, for the reader's browser to open `sealed` with.
@@ -1487,16 +1488,17 @@ def list_participants(request: HttpRequest, session_id: uuid.UUID):
 
 @router.post("/{session_id}/participants", response=list[ParticipantOut],
              summary="Give a teammate this chat")
-@gate("session-acl", setting=True)  # can_share (chat owner)
+@gate("session-acl", setting=True)  # can_add_people (chat owner, or the agent's owner in it)
 def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: ParticipantAddIn):
-    """Owner only. The teammate must already be a member of the chat's
-    workspace; adding someone again changes their role."""
+    """The chat's owner, or the owner of the agent it is with when they are in it.
+    The teammate must already be a member of the chat's workspace; the chat's owner
+    adding someone again changes their role."""
     from django.contrib.auth import get_user_model
 
     from .models import SessionParticipant
 
     session = _session_or_404(request, session_id)
-    if not access.can_share(request.user, session):
+    if not access.can_add_people(request.user, session):
         raise HttpError(403, "only the chat's owner can share it")
     _in_it_or_403(request, session)
     target = get_user_model().objects.filter(email__iexact=payload.email.strip()).first()
@@ -1504,6 +1506,10 @@ def add_participant(request: HttpRequest, session_id: uuid.UUID, payload: Partic
         raise HttpError(404, "nobody with that email is in this workspace")
     if target.pk == session.created_by_id:
         raise HttpError(409, "that person owns this chat")
+    # The agent's owner brings someone NEW in; changing a role stays the chat owner's.
+    if (not access.can_share(request.user, session)
+            and SessionParticipant.objects.filter(session=session, user=target).exists()):
+        raise HttpError(409, "they are already in this chat; only its owner can change their role")
     with transaction.atomic():
         # In it first, then their copy of the key: a copy goes only to someone in the
         # conversation (an agent login's test key is held to that, `add_wrap`). A

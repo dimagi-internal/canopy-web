@@ -575,6 +575,9 @@ class SessionDetailOut(SessionOut):
     # (canopy_sessions.access). The page reads it to decide whether to offer
     # sharing and the composer — the server enforces both regardless.
     my_role: str | None = None
+    # Whether you may bring someone new in (`access.can_add_people`): the chat's
+    # owner, or the agent's owner when they are in it.
+    can_add_people: bool = False
     # Who can see this, from the same pieces as the ACL (`canopy_sessions.audience`).
     audience: SessionAudienceOut | None = None
     #: A private conversation you are not in: your latest request to be added
