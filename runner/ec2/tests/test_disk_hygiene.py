@@ -158,6 +158,41 @@ def test_an_unreadable_disk_is_a_warning_not_a_lost_beat(cloud_runner, monkeypat
     assert by["disk"]["status"] == "warn"
 
 
+def _at(cloud_runner, monkeypatch, pct: int, record: dict | None, tmp_path) -> dict:
+    total = 40 * 2**30
+    monkeypatch.setattr(cloud_runner.shutil, "disk_usage",
+                        lambda p: Usage(total, total * pct // 100, total - total * pct // 100))
+    monkeypatch.setattr(cloud_runner, "_slow_checks", lambda: None)
+    path = tmp_path / "disk-usage.json"
+    if record is not None:
+        path.write_text(json.dumps(record))
+    monkeypatch.setattr(cloud_runner, "DISK_USAGE_FILE", path)
+    return {c["name"]: c for c in cloud_runner.health_report()["checks"]}["disk"]
+
+
+def test_a_full_disk_says_where_the_space_is(cloud_runner, monkeypatch, tmp_path):
+    """A unit cannot read the other homes; root's update tick measured them."""
+    import time
+    record = {"at": time.time(), "pct": 89,
+              "largest": [["/home/ubuntu", 35 * 2**30], ["/tmp", 12 * 2**30], ["/home/cu-dimagi", 8 * 2**30]]}
+    disk = _at(cloud_runner, monkeypatch, 89, record, tmp_path)
+    assert disk["status"] == "warn"
+    assert "largest: /home/ubuntu 35.0 GiB, /tmp 12.0 GiB, /home/cu-dimagi 8.0 GiB" in disk["detail"]
+
+
+def test_a_stale_or_missing_record_is_not_quoted(cloud_runner, monkeypatch, tmp_path):
+    assert "largest" not in _at(cloud_runner, monkeypatch, 89, None, tmp_path)["detail"]
+    old = {"at": 1, "pct": 89, "largest": [["/home/ubuntu", 35 * 2**30]]}
+    assert "largest" not in _at(cloud_runner, monkeypatch, 89, old, tmp_path)["detail"]
+
+
+def test_a_disk_below_warn_does_not_read_the_record(cloud_runner, monkeypatch, tmp_path):
+    import time
+    record = {"at": time.time(), "pct": 89, "largest": [["/home/ubuntu", 35 * 2**30]]}
+    disk = _at(cloud_runner, monkeypatch, 50, record, tmp_path)
+    assert disk["status"] == "ok" and "largest" not in disk["detail"]
+
+
 def test_the_volume_is_a_parameter_defaulting_to_40():
     text = (EC2 / "runner.cfn.yaml").read_text()
     assert "VolumeSize: !Ref VolumeSize" in text
