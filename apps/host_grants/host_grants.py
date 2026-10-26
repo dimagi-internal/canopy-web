@@ -167,7 +167,7 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     """
     from apps.common.encryption import encrypt_secret
 
-    from apps.tokens.models import HostGrant
+    from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
     if not app.issues_host_grants():
         raise HostGrantError("not_configured",
@@ -229,7 +229,7 @@ def live(rows):
 
 
 def _principal_rows(app, *, contact=None, user=None):
-    from apps.tokens.models import HostGrant
+    from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
     if contact is not None:
         return HostGrant.objects.filter(app=app, contact=contact)
@@ -259,7 +259,7 @@ def lookup(app, *, agent, contact=None, user=None, session=None) -> Lookup:
 
     Never a grant bound to a DIFFERENT agent — a data page's grant, minted for
     `labsdata`, is not ACE's to spend however recently it was redeemed."""
-    from django.db.models import Q
+    from django.db.models import Q  # noqa: PLC0415 — as the model reads below
 
     rows = _principal_rows(app, contact=contact, user=user)
     if rows is None:
@@ -303,7 +303,7 @@ def same_page(grant):
     the same site, for the same agent (or none), with the same scopes. The panel
     re-mints while its tab is open, so one page's permission is several rows; a
     person sees and stops it as one."""
-    from apps.tokens.models import HostGrant
+    from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
     rows = HostGrant.objects.filter(app_id=grant.app_id, agent_id=grant.agent_id, scope=grant.scope)
     if grant.contact_id is not None:
@@ -322,7 +322,7 @@ def live_for(*, user=None, contact=None) -> list:
     """The person's live grants, one per page (`same_page`) — the newest row of each,
     newest first. A user's are every grant redeemed for their account, whichever
     site and workspace; a contact's are their own."""
-    from apps.tokens.models import HostGrant
+    from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
     if contact is not None:
         rows = HostGrant.objects.filter(contact=contact)

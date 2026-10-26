@@ -18042,18 +18042,6 @@ export interface components {
              */
             readonly host_grant: boolean;
         };
-        /**
-         * EmbedSelfTokenIn
-         * @description `POST /api/embed/token`'s body. The panel sends `{}` on load and
-         *     `{"grant": true}` once the person has sent a message in it.
-         */
-        readonly EmbedSelfTokenIn: {
-            /**
-             * Grant
-             * @default false
-             */
-            readonly grant: boolean;
-        };
         /** WsTicketOut */
         readonly WsTicketOut: {
             /** Ticket */
@@ -41477,11 +41465,7 @@ export interface operations {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["EmbedSelfTokenIn"];
-            };
-        };
+        readonly requestBody?: never;
         readonly responses: {
             /** @description OK */
             readonly 200: {

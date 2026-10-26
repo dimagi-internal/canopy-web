@@ -31,6 +31,8 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_NOT_FOUND, ProblemError
 from apps.api.route_gates import gate
 from apps.contacts.contact_api import contact_auth
+from apps.events import audit
+from apps.tokens.models import HostGrant
 
 from . import host_grants
 
@@ -70,8 +72,6 @@ def _out(grant) -> HostGrantOut:
 
 def _stop(grant) -> int:
     """Revoke `grant`'s page, reported to the settings audit."""
-    from apps.events import audit
-
     stopped = host_grants.revoke(grant)
     audit.note_change(scope="host_grant",
                       before={"site": grant.app.name, "agent": grant.agent.slug if grant.agent_id else "",
@@ -101,8 +101,6 @@ def list_my_host_grants(request: HttpRequest) -> list[HostGrantOut]:
 def revoke_my_host_grant(request: HttpRequest, grant_id: int) -> Status:
     """Stop this grant, and every live grant of the same page, at once: an agent
     can no longer read that site as you until you send from its page again."""
-    from apps.tokens.models import HostGrant
-
     grant = HostGrant.objects.filter(pk=grant_id, user=request.user).select_related("app", "agent").first()
     if grant is None:
         raise ProblemError(404, "No such grant", type_=TYPE_NOT_FOUND)
@@ -118,8 +116,6 @@ def _token_grant(request):
     grant_id = getattr(request, "host_grant_id", None)
     if not grant_id:
         return None
-    from apps.tokens.models import HostGrant
-
     rows = HostGrant.objects.filter(pk=grant_id).select_related("app", "agent")
     contact = getattr(request, "contact", None)
     rows = rows.filter(contact=contact) if contact is not None else rows.filter(user=request.user)

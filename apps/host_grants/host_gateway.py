@@ -84,7 +84,7 @@ def page_grant_stopped(agent_name: str) -> str:
 
 def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> str:
     """What to tell the person when `host_grants.lookup` found no grant, by its reason."""
-    from .host_grants import EXPIRED, REVOKED
+    from .host_grants import EXPIRED, REVOKED  # noqa: PLC0415 — as `resolve`: host_grants reads models, loaded with a call
 
     if reason == EXPIRED:
         return page_grant_expired(agent_name)
@@ -219,7 +219,7 @@ def resolve(turn_id: str) -> SiteContext:
     # WHICH agent: a grant a page bound to another agent is not this one's. And
     # from WHICH page: the one that last acted in this conversation as them, while
     # it lives — never another page's, never their latest.
-    from .host_grants import EXPIRED, REVOKED, lookup
+    from .host_grants import EXPIRED, REVOKED, lookup  # noqa: PLC0415 — host_grants reads models, loaded with a call
 
     found = lookup(app, agent=agent, contact=turn.initiator_contact,
                    user=turn.initiator_user if not turn.initiator_contact_id else None,
@@ -392,7 +392,7 @@ def _capped_transport(inner, cap: _ByteCap):
 PROOF_MODES = ("dpop", "no_proof", "stranger_key", "bearer")
 
 
-def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: "ViewTool | None" = None):
+def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: ViewTool | None = None):
     import httpx2
 
     from . import client_identity

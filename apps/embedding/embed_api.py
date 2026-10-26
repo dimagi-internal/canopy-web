@@ -209,10 +209,21 @@ def embed_self(request: HttpRequest) -> EmbedSelfOut:
     )
 
 
+def _asks_for_grant(request: HttpRequest) -> bool:
+    """Whether the panel's mint body is `{"grant": true}` (`EmbedSelfTokenIn`). Read by
+    hand, not as a Ninja body: older callers send no body at all, and that must stay a
+    plain mint rather than a 400."""
+    try:
+        body = EmbedSelfTokenIn.model_validate_json(request.body or b"{}")
+    except ValueError:
+        return False
+    return body.grant
+
+
 @embed_router.post("/token", response=EmbedSelfTokenOut,
                    summary="Mint a delegated token for the caller, for canopy's own widget")
 @gate("self", kind="ephemeral-credential", step_up="the caller's own embed token")
-def embed_self_token(request: HttpRequest, payload: EmbedSelfTokenIn, page: str = "") -> EmbedSelfTokenOut:
+def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     """The host-side token endpoint every embedder needs — for the host that is
     canopy itself.
 
@@ -270,7 +281,7 @@ def embed_self_token(request: HttpRequest, payload: EmbedSelfTokenIn, page: str 
     # (`host_grants.lookup`), as for any other host.
     from apps.host_grants import self_host
 
-    grant = self_host.grant_for_visitor(app, request.user, page) if payload.grant else None
+    grant = self_host.grant_for_visitor(app, request.user, page) if _asks_for_grant(request) else None
     granted = grant is not None
     raw, token = DelegatedToken.issue(app=app, user=request.user, ttl_seconds=TOKEN_TTL_SECONDS,
                                       host_grant=grant)
