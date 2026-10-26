@@ -312,6 +312,15 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   paused/offline runner is not parked and not on the Feed; Supervisor → Runners
   counts it on the runner's row (`RunnerOut.open_sessions`). The Feed banner says
   what is held up ("2 sessions need you, but X is paused"), never a bare "waiting".
+- Why a session is open is `staleness.open_reason()`: one fixed label from
+  `OPEN_REASONS` (`transferring`, `reported_recently`, `turn_running`, `dialog_up`,
+  `manual_turn`, `person_started`, `no_turn_found`, `unbound`, `unobservable`), read
+  off the same named checks `unseen_q` excludes on, first match wins. The runner row
+  carries the counts (`RunnerOut.open_sessions_by_reason`: count and oldest
+  activity per reason, no session or person), and they sum to `open_sessions`.
+  `unclassified` means the rule and the explanation disagree, which is a bug;
+  `no_turn_found` is a cloud session nothing can finish. Add a leg to `unseen_q`
+  → add its reason.
 - `GET /api/canopy-sessions/?reply=true` stamps every row with `feed_status`; the
   Feed only sorts and counts that verdict. The "is asking" / "is done" pushes go to
   the first candidate the session is on the Feed for

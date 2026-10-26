@@ -32286,6 +32286,13 @@ export interface components {
              */
             readonly detail: string;
         };
+        /** OpenSessionReason */
+        readonly OpenSessionReason: {
+            /** Count */
+            readonly count: number;
+            /** Oldest Activity At */
+            readonly oldest_activity_at?: string | null;
+        };
         /** RunnerOut */
         readonly RunnerOut: {
             /**
@@ -32364,6 +32371,10 @@ export interface components {
              * @default 0
              */
             readonly open_sessions: number;
+            /** Open Sessions By Reason */
+            readonly open_sessions_by_reason?: {
+                readonly [key: string]: components["schemas"]["OpenSessionReason"];
+            } | null;
             /** Health Checks */
             readonly health_checks?: {
                 readonly [key: string]: components["schemas"]["HealthCheck"];
