@@ -322,6 +322,36 @@ class AgentPinnableRunnerOut(StrictModel):
     rank: int | None = None
 
 
+class AgentRoutePreviewRunnerOut(StrictModel):
+    """One box in the composed list, in cascade order. `rung` is the rule that
+    put it there: `person` (a rule for this person), `source` (a rule for this
+    source) or `default` (the agent's runner order, or the workspace order it
+    follows). `status` is `online`, `paused`, `offline` or `not ready`."""
+
+    runner_id: uuid.UUID
+    runner_name: str
+    kind: str
+    rung: str
+    available: bool
+    status: str
+
+
+class AgentRoutePreviewOut(StrictModel):
+    """Where this agent's work from `actor` on `source` would go right now, with
+    no runner chosen. `picks` is the box that would claim it now (the first
+    available one), None when it waits; `strict` when a rule says "these runners
+    or nothing"; `follows_workspace` names the workspace order the agent follows
+    when it has none of its own. `summary` says it in one line."""
+
+    source: str
+    actor: str
+    runners: list[AgentRoutePreviewRunnerOut]
+    picks: uuid.UUID | None = None
+    strict: bool = False
+    follows_workspace: str | None = None
+    summary: str
+
+
 class AgentDefaultOrderOut(StrictModel):
     """What an agent's "everything else" runs on. `own` True: `runners` is its
     own ordered list, the same rows as `GET /runners`. Otherwise it follows `workspace`'s default order —

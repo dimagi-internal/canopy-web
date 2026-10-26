@@ -32,6 +32,7 @@ export type ContributorBriefOut = Schemas['ContributorBriefOut']
 export type ContributorPageOut = Schemas['ContributorPageOut']
 export type AgentRunnerOut = Schemas['AgentRunnerOut']
 export type AgentPinnableRunnerOut = Schemas['AgentPinnableRunnerOut']
+export type AgentRoutePreviewOut = Schemas['AgentRoutePreviewOut']
 export type AgentRunnerRuleOut = Schemas['AgentRunnerRuleOut']
 // The routable source union, straight off the generated request schema — the
 // picker and the rule rows both key on it, so there is no hand-kept copy.
@@ -455,6 +456,16 @@ export async function getAgentPinnableRunners(slug: string, workspace?: string):
     ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
   })
   return Array.from(unwrap(res, 'getAgentPinnableRunners'))
+}
+
+// Where a canopy-web chat from you with this agent would go right now with no
+// runner chosen — what "Auto" means for it.
+export async function getAgentRoutePreview(slug: string, workspace?: string): Promise<AgentRoutePreviewOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/route-preview', {
+    params: { path: { slug } },
+    ...(workspace ? { headers: { [WORKSPACE_HEADER]: workspace } } : {}),
+  })
+  return unwrap(res, 'getAgentRoutePreview') as unknown as AgentRoutePreviewOut
 }
 
 // Flip the agent's runtime autonomy posture (manual | auto) — the board-side

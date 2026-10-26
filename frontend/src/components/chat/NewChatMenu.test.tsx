@@ -8,9 +8,10 @@ import type { ChatSession } from '@/api/chat'
 
 const createSession = vi.fn<(args: unknown) => Promise<ChatSession>>()
 const getAgentPinnableRunners = vi.fn(() => Promise.resolve([]))
+const getAgentRoutePreview = vi.fn(() => Promise.resolve({ summary: 'Goes to cloud-2, from ACE\'s runner order' }))
 
 vi.mock('@/api/chat', () => ({ createSession }))
-vi.mock('@/api/agents', () => ({ getAgentPinnableRunners }))
+vi.mock('@/api/agents', () => ({ getAgentPinnableRunners, getAgentRoutePreview }))
 vi.mock('@/api/harness', () => ({ listRunners: vi.fn(() => Promise.resolve([])) }))
 
 const { NewChatMenu } = await import('./NewChatMenu')
@@ -98,5 +99,25 @@ describe('NewChatMenu agent CLI choice', () => {
     fireEvent.click(screen.getByText('Start chat'))
     await waitFor(() => expect(createSession).toHaveBeenCalledWith(
       { agentSlug: 'ace', workspace: 'dimagi', runnerId: undefined, cli: 'codex' }))
+  })
+})
+
+describe('NewChatMenu says what Auto does', () => {
+  it('shows where the chat would go with Auto, and drops it once a runner is picked', async () => {
+    getAgentPinnableRunners.mockResolvedValueOnce([
+      { runner_id: 'r1', runner_name: 'jj-mbp', kind: 'emdash', online: true, ready: true, rank: null },
+    ] as never)
+    render(
+      <MemoryRouter>
+        <NewChatMenu agents={[ace]} runners={[]} target={{ kind: 'agent', agent: ace }} label=""
+                     title="New chat" onError={vi.fn()} onCreated={vi.fn()} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByLabelText('New chat'))
+    expect((await screen.findByTestId('run-on-auto')).textContent).toBe('Auto: Goes to cloud-2, from ACE\'s runner order')
+    const select = screen.getByTestId('run-on-select') as HTMLSelectElement
+    await waitFor(() => expect(select.options.length).toBe(2))
+    fireEvent.change(select, { target: { value: 'r1' } })
+    expect(screen.queryByTestId('run-on-auto')).toBeNull()
   })
 })

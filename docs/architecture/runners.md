@@ -567,6 +567,9 @@ Tests set `TICK_BASE_S = 0` and call a job's function directly.
   **`strict`** rule truncates — "these runners or nothing", the turn waits, and the
   grace has nobody below to promote. A rule whose rows are all disabled
   disappears (its strictness with it). Ranks are renumbered over the composed list.
+  `routing.labelled_assignment_rows` is the one implementation and also says which
+  rung put each runner there; `GET /api/agents/{slug}/route-preview` reads it to
+  answer "where would this go now" (what Auto means in the New chat picker).
   Rule writes: `replace_agent_runner_rules`, `set_agent_runner_rule`,
   `set_agent_actor_route` (`tests/test_source_rules.py`,
   `tests/test_claim_source_routing.py`, `tests/test_agent_runner_rules_api.py`).

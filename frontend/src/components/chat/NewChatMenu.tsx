@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { createSession, type ChatSession } from '@/api/chat'
-import { getAgentPinnableRunners, listMyAgents, type AgentOut, type AgentPinnableRunnerOut } from '@/api/agents'
+import { getAgentPinnableRunners, getAgentRoutePreview, listMyAgents, type AgentOut, type AgentPinnableRunnerOut } from '@/api/agents'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 import { scopedPath } from '../../lib/scopedLinks'
@@ -67,6 +67,8 @@ export function NewChatMenu({
   const [pending, setPending] = useState<NewChatTarget | null>(null)
   const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentPinnableRunnerOut[]>([])
   const [runnersLoading, setRunnersLoading] = useState(false)
+  // What "Auto" does for this chat right now, in one line (null until read).
+  const [autoSummary, setAutoSummary] = useState<string | null>(null)
   const [selectedRunnerId, setSelectedRunnerId] = useState('')
   // "" = the agent's default CLI; offered only when it is set up for more than one.
   const [selectedCli, setSelectedCli] = useState('')
@@ -139,6 +141,10 @@ export function NewChatMenu({
     // Every box the caller may choose for this agent, not just its runner order:
     // choosing one pins the chat there past the order and any strict rule, and
     // the server answers which boxes the placement gates would accept.
+    setAutoSummary(null)
+    getAgentRoutePreview(agent.slug, agent.workspace ?? undefined)
+      .then((p) => { if (pickedAgentSlugRef.current === agent.slug) setAutoSummary(p.summary) })
+      .catch(() => {})
     getAgentPinnableRunners(agent.slug, agent.workspace ?? undefined)
       .then((options) => {
         if (pickedAgentSlugRef.current === agent.slug) setAgentRunnerOptions(options)
@@ -265,6 +271,11 @@ export function NewChatMenu({
                     ))}
               </select>
             </label>
+            {pending.kind === 'agent' && selectedRunnerId === '' && autoSummary && (
+              <div className="text-[11px] text-muted-foreground" data-testid="run-on-auto">
+                Auto: {autoSummary}
+              </div>
+            )}
             {pending.kind === 'agent' && (pending.agent.clis ?? []).length > 1 && (
               <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
                 Agent CLI

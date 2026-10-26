@@ -10,12 +10,11 @@ from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
-from apps.harness import routing_audit
+from apps.harness import clis, routing, routing_audit, turn_asker
 from apps.harness import runners as harness_runners
 from apps.harness.actors import actor_of, normalize_actor
 from apps.harness.api import runner_read_q
 from apps.harness.models import Runner, RunnerAssignment, Turn, agent_turns_q
-from apps.harness import clis, turn_asker
 from apps.harness.routing import (
     agents_with_own_order,
     cannot_serve,
@@ -40,6 +39,8 @@ from .schemas import (
     AgentActorRouteRunnerOut,
     AgentDefaultOrderOut,
     AgentPinnableRunnerOut,
+    AgentRoutePreviewOut,
+    AgentRoutePreviewRunnerOut,
     AgentRunnerOut,
     AgentRunnerRowIn,
     AgentRunnerRuleBodyIn,
@@ -238,6 +239,62 @@ def list_agent_pinnable_runners(request: HttpRequest, slug: str) -> list[AgentPi
                                online=r.live_status == r.ONLINE, ready=r.ready, rank=rank.get(r.pk))
         for r in runners
     ]
+@router.get("/{slug}/route-preview", response=AgentRoutePreviewOut,
+            summary="Where the agent's work would go right now")
+@gate("member")
+def get_agent_route_preview(
+    request: HttpRequest, slug: str, source: RoutableSource = Turn.ORIGIN_CANOPY_WEB_CHAT,
+    actor: str = "",
+) -> AgentRoutePreviewOut:
+    """The runners a turn from `actor` (default: you) on `source` (default: a
+    canopy-web chat) would be offered, in order, with the rule that put each
+    there, and the one that would take it now. What "Auto" means for that work."""
+
+    # The claim's own ladder (routing.labelled_assignment_rows over
+    # load_assignment_rows) with no pin, binding or turn requirements: a new turn.
+    agent = agent_for_read(request, slug)
+    me = normalize_actor(getattr(turn_asker.subject(request.user), "email", ""))
+    who = normalize_actor(actor) if actor else me
+    if actor and not who:
+        raise HttpError(422, f"not an email address: {actor!r}")
+    defaults, priorities = routing.load_assignment_rows([agent.pk])
+    rows = routing.labelled_assignment_rows(agent.pk, source, who, defaults, priorities, serves=agent.slug)
+    ladder = [priorities.get((agent.pk, source, who)) if who else None, priorities.get((agent.pk, source, ""))]
+    strict = next((rule[0].strict for rule in ladder if rule), False)
+    follows = (None if agent.pk in agents_with_own_order([agent.pk])
+               else getattr(inherited_orders([agent.pk]).get(agent.pk), "workspace", None))
+    runners = [
+        AgentRoutePreviewRunnerOut(runner_id=r.pk, runner_name=r.name, kind=r.kind, rung=rung,
+                                   available=r.is_available, status=_runner_state(r))
+        for r, rung in rows
+    ]
+    picks = next((r for r in runners if r.available), None)
+    return AgentRoutePreviewOut(
+        source=source, actor=who, runners=runners, picks=picks.runner_id if picks else None,
+        strict=strict, follows_workspace=follows,
+        summary=_route_summary(agent, runners, picks, strict, follows,
+                               person="your route" if who == me else f"the route for {who}"),
+    )
+
+
+def _runner_state(runner) -> str:
+    live = runner.live_status
+    if live != Runner.ONLINE:
+        return "paused" if live == Runner.PAUSED else "offline"
+    return "online" if runner.ready else "not ready"
+
+
+def _route_summary(agent, runners, picks, strict, follows, *, person: str) -> str:
+    default = f"the {follows} workspace order" if follows else f"{agent.name}'s runner order"
+    if not runners:
+        return ("Nothing can take it: the strict rule names no runner that can run "
+                f"{agent.name}" if strict else f"Nothing can take it: {agent.name} has no runner that can run it")
+    if picks is None:
+        return f"Waits: no runner is available ({', '.join(f'{r.runner_name} is {r.status}' for r in runners)})"
+    why = {routing.RUNG_PERSON: person, routing.RUNG_SOURCE: "the rule for this source"}.get(picks.rung, default)
+    skipped = runners[:runners.index(picks)]
+    tail = f" ({', '.join(f'{r.runner_name} is {r.status}' for r in skipped)})" if skipped else ""
+    return f"Goes to {picks.runner_name}, from {why}{tail}"
 
 
 @router.put("/{slug}/runners", response=list[AgentRunnerOut],

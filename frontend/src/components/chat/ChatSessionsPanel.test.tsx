@@ -18,7 +18,8 @@ const getAgentPinnableRunners = vi.fn<(slug: string, workspace?: string) => Prom
 const listRunners = vi.fn<() => Promise<RunnerOut[]>>()
 
 vi.mock('@/api/chat', () => ({ createSession, listSessions, closeSession, transferSession }))
-vi.mock('@/api/agents', () => ({ getAgentPinnableRunners, listAgents: vi.fn() }))
+const getAgentRoutePreview = vi.fn(() => Promise.resolve({ summary: '' }))
+vi.mock('@/api/agents', () => ({ getAgentPinnableRunners, getAgentRoutePreview, listAgents: vi.fn() }))
 vi.mock('@/api/harness', () => ({ listRunners, recentRunners: () => null }))
 
 const { ChatSessionsPanel, forgetListed } = await import('./ChatSessionsPanel')
