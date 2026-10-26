@@ -13051,6 +13051,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/canopy-sessions/{session_id}/participants/candidates": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who you could add to this chat
+         * @description The workspace's members you may add: not in it yet, not its creator, no
+         *     system account. Agents' own logins carry their agent's slug. 403 unless you
+         *     may add people (`access.can_add_people`).
+         */
+        readonly get: operations["participant_candidates"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/canopy-sessions/{session_id}/participants/recipient": {
         readonly parameters: {
             readonly query?: never;
@@ -36867,6 +36889,23 @@ export interface components {
             readonly recipient_jkt: string;
         };
         /**
+         * ParticipantCandidateOut
+         * @description Someone you could add to this chat: a member of its workspace not yet in it.
+         */
+        readonly ParticipantCandidateOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /** Display Name */
+            readonly display_name: string;
+            /**
+             * Agent Slug
+             * @default
+             */
+            readonly agent_slug: string;
+        };
+        /**
          * ParticipantRecipientOut
          * @description The vault key to wrap a sensitive conversation's key to, for the person you
          *     are about to add.
@@ -55798,6 +55837,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["ParticipantOut"][];
+                };
+            };
+        };
+    };
+    readonly participant_candidates: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ParticipantCandidateOut"][];
                 };
             };
         };
