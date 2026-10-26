@@ -11002,6 +11002,13 @@ def _finish_turn(ws, turn_id: str, ok: bool, text: str, turn: dict | None = None
     on an already-terminal turn), so this fallback is safe even if the WS finish
     partially landed.
     """
+    if not ok and _stop and _system_shutting_down():
+        # The turn did not fail: the box it ran on is powering off (a fleet member
+        # terminated, an instance stopped), which killed it. Left running, it is
+        # queued again for another box — at once on a fleet (`fleets.requeue_lost`,
+        # when the instance leaves the group), else by the lease sweep.
+        _log(f"stopping: the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
+        return
     body = {"status": "done" if ok else "failed",
             "result_note": _result_note(text, turn or {"id": turn_id})}
     reason = ""
