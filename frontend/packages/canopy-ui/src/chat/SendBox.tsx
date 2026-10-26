@@ -52,6 +52,10 @@ interface Props {
    *  button that asked for it, because that is where the person who pressed it
    *  is looking. Undefined = no stop has been asked for on this turn. */
   stopState?: "requested" | "stopped" | "failed";
+  /** A stop is under way — asked for here (Esc) or on the turn's live line —
+   *  and not yet answered. The host decides it (ChatPanel's `requestStop`), so
+   *  every control that stops says so the same way. */
+  stopping?: boolean;
   /** Optional app-supplied banner rendered above the composer (e.g. an
    *  imported-session note). The kit itself has no CLI-auth banners. */
   banner?: ReactNode;
@@ -113,6 +117,7 @@ export function SendBox({
   onSend,
   onStop,
   stopState,
+  stopping: stoppingProp = false,
   banner,
   peers,
   disabledReason,
@@ -129,20 +134,9 @@ export function SendBox({
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // A stop you asked for (Esc) shows AT ONCE, before the server says anything —
-  // "stopping the agent…" beside Send. Held until the server's verdict arrives
-  // or the turn ends. The button to click lives on the turn's live line
-  // (ActivityLine), not here.
-  const [stopAsked, setStopAsked] = useState(false);
-  useEffect(() => {
-    if (stopState !== undefined && stopState !== "requested") setStopAsked(false);
-  }, [stopState]);
-  const [wasStreaming, setWasStreaming] = useState(isStreaming);
-  if (wasStreaming !== isStreaming) {
-    setWasStreaming(isStreaming);
-    if (!isStreaming && stopAsked) setStopAsked(false);
-  }
-  const stopping = stopState === "requested" || (stopAsked && stopState === undefined);
+  // "stopping the agent…" beside Send, from the host's one answer (`stopping`).
+  // The button to click lives on the turn's live line (ActivityLine), not here.
+  const stopping = stoppingProp || stopState === "requested";
 
   // LOCAL-FIRST: the textarea's value is local state, never server state.
   // Rendering `draft.body` directly made every inbound frame a chance to
@@ -374,7 +368,6 @@ export function SendBox({
   const handleStopClick = () => {
     // Fires even with no streamingMessageId: while a turn sits QUEUED there is
     // no assistant message to name, and that is exactly when you want out.
-    setStopAsked(true);
     onStop(streamingMessageId);
   };
 

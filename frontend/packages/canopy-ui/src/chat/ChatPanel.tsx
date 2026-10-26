@@ -227,9 +227,38 @@ export function ChatPanel({
   // word on a host with no status.
   const pendingWorking = status ? status.state === "working" : state.activity === "working";
   const canStop = state.active_draft != null && !disabledReason;
+  // The same answer the "Thinking…" bubble and the header give. Gating Stop
+  // (and Esc) on a streaming ROW alone hid it for most of a runner turn:
+  // that row only exists once the reply's first text does, so a turn busy
+  // in tools had a bubble saying it was working and no way to stop it.
+  const isStreaming = inFlightMessage != null || awaitingReply || agentHasFloor;
+
+  // ONE way to stop, whichever control asked — Esc in the composer or Stop on
+  // the turn's live line — and one "stopping…" both of them show. A stop you
+  // asked for shows AT ONCE, before the server says anything, and is held
+  // until the server's verdict arrives or the turn ends.
+  const [stopAsked, setStopAsked] = useState(false);
+  const [stopVerdict, setStopVerdict] = useState(state.stopState);
+  if (stopVerdict !== state.stopState) {
+    setStopVerdict(state.stopState);
+    if (state.stopState !== undefined && state.stopState !== "requested") setStopAsked(false);
+  }
+  const [wasStreaming, setWasStreaming] = useState(isStreaming);
+  if (wasStreaming !== isStreaming) {
+    setWasStreaming(isStreaming);
+    if (!isStreaming && stopAsked) setStopAsked(false);
+  }
+  const stopping = state.stopState === "requested" || (stopAsked && state.stopState === undefined);
+  const requestStop = useCallback(
+    (messageId: string | null) => {
+      setStopAsked(true);
+      onStop(messageId);
+    },
+    [onStop],
+  );
   const stopTurn = useCallback(
-    () => onStop(inFlightMessage?.id ?? null),
-    [onStop, inFlightMessage],
+    () => requestStop(inFlightMessage?.id ?? null),
+    [requestStop, inFlightMessage],
   );
 
   // A running agent's own row, from the strip above the composer.
@@ -463,7 +492,7 @@ export function ChatPanel({
             pendingRunner={status?.claimed_by ?? null}
             pendingStartedAt={pendingWorking ? status?.claimed_at ?? null : null}
             onStopTurn={canStop ? stopTurn : undefined}
-            stopping={state.stopState === "requested"}
+            stopping={stopping}
             liveTurn={listLiveTurn}
             currentUserId={currentUserId}
             currentContactId={currentContactId}
@@ -500,20 +529,17 @@ export function ChatPanel({
       <SendBox
         draft={state.active_draft}
         connected={connected}
-        // The same answer the "Thinking…" bubble and the header give. Gating Stop
-        // (and Esc) on a streaming ROW alone hid it for most of a runner turn:
-        // that row only exists once the reply's first text does, so a turn busy
-        // in tools had a bubble saying it was working and no way to stop it.
-        isStreaming={inFlightMessage != null || awaitingReply || agentHasFloor}
+        isStreaming={isStreaming}
         streamingMessageId={inFlightMessage?.id ?? null}
         // What happens to a message sent now: typed into the running turn,
         // or waiting — and behind what (`composerPlaceholder`).
         waitingPlaceholder={composerPlaceholder(status)}
         onUpdate={onUpdateDraft}
         onSend={onSend}
-        onStop={onStop}
+        onStop={requestStop}
         slashCommands={slashCommands}
         stopState={state.stopState}
+        stopping={stopping}
         peers={<PeerComposers peers={peerDrafts} />}
         banner={
           notice ? (
