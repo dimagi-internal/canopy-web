@@ -25,7 +25,9 @@ from apps.tokens.models import PersonalToken
 from apps.workspaces.models import Workspace, WorkspaceMembership
 from tests.fixtures import kb as kb_fixtures
 
-pytestmark = pytest.mark.django_db
+# Committed, not rolled back: a knowledge-base call runs on a worker thread with its own
+# DB connection (projects.off_the_shared_thread), which must see the test's rows.
+pytestmark = pytest.mark.django_db(transaction=True)
 
 s3, world = kb_fixtures.s3, kb_fixtures.world
 
