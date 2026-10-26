@@ -387,8 +387,10 @@ def notify_closed(session_ids) -> int:
 
     Only a shared thread: there a person chose to point colleagues at a session,
     and after the close their replies reach nothing, so silence would read as
-    being ignored. A Slack-born conversation is not told — replying there asks
-    the agent again, which still works.
+    being ignored. A Slack-born conversation is not told at close time: its next
+    plain reply goes nowhere either, and is answered then, in the thread, with a
+    notice and a button that starts a new session with the thread's context
+    (`services._closed_notice`); a reply that names the agent asks it again.
 
     `sessions_closed` fires only for a real close (archived in emdash, closed
     from canopy, or absent from consecutive complete runner reports), never for

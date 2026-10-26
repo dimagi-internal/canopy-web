@@ -19,19 +19,22 @@ What this module decides, and nothing else:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
+from django.db import transaction
 
+from apps.agents import access
 from apps.agents.models import Agent
+from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions import doors
 from apps.canopy_sessions import services as session_services
-from apps.canopy_sessions import control as session_control
 from apps.canopy_sessions.models import Session
 from apps.harness import clis
 from apps.harness import initiator as who
@@ -150,8 +153,15 @@ ANSWERED, NOT_AN_ANSWER, ANSWER_UNDELIVERABLE = "answered", "not_an_answer", "an
 STALE = "stale"
 #: A contact replying in a thread a repo session was shared into.
 MEMBERS_ONLY = "members_only"
-#: A reply in a thread whose shared session has since been closed.
+#: A reply in a thread whose session has since been closed (shared, or Slack-born).
 SESSION_CLOSED = "session_closed"
+#: The button on a Slack-born thread's "this conversation was closed" notice.
+RESTART_CLOSED = "restart_closed"
+RESTART_LABEL = "Start a new session with this thread's context"
+#: On a closed Slack-born session: the ts of the public notice posted into its
+#: thread (said once per closed session), and the latest message it turned away
+#: ({"ts", "user", "text"}) — what the button sends when it starts a new session.
+RESTART_NOTICE, RESTART_ASK = "slack_restart_notice", "slack_restart_ask"
 #: A message into a thread whose conversation is private (sensitive): never sent.
 PRIVATE = "private"
 #: The agent's interface offers this caller nothing; the turn was written cancelled.
@@ -496,13 +506,26 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
     the session. A contact gains nothing in canopy: they see the thread in Slack,
     which is all a contact is ever given.
     """
-    existing = (Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
-                .order_by("created_at").first())
+    ours = Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
+    # A thread whose closed conversation was restarted from its notice holds two
+    # sessions; the live one is the thread's. A closed one is still found when it
+    # is all there is (naming the agent asks it again).
+    existing = (ours.exclude(status=Session.ARCHIVED).order_by("created_at").first()
+                or ours.order_by("created_at").first())
     if existing is not None:
         # Never into a private conversation: replying is not being let in
         # (`private_refusal`, which every caller asks next; `audience.sync` skips one).
         _sync_audience(existing, inbound, principal)
         return existing, False
+    session = _new_thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
+                                  title=title)
+    _sync_audience(session, inbound, principal)
+    return session, True
+
+
+def _new_thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
+                        title: str) -> Session:
+    """A new Session for this (agent, Slack thread), owned by `principal`. No Slack calls."""
     metadata = {
         SLACK_THREAD_KEY: key,
         "slack_team": inbound.team_id,
@@ -518,8 +541,7 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
         contact=principal.contact if principal.user is None else None,
         title=title[:200], metadata=metadata, cli=cli,
     )
-    _sync_audience(session, inbound, principal)
-    return session, True
+    return session
 
 
 def _sync_audience(session: Session, inbound: Inbound, principal: Principal) -> None:
@@ -563,19 +585,12 @@ def handle_message(inbound: Inbound) -> Outcome:
     named = named_agent(installation, text)[0] is not None
     if not named:
         closed = _closed_thread_session(agent, key)
-        if closed is not None and inbound.follow and not _first_closed_notice(closed, inbound.slack_user_id):
-            # People keep talking in a thread after its agent is gone; each
-            # person is told once, not on every line of their own conversation.
-            return Outcome(STALE, "", session=closed, agent=agent)
         if closed is not None:
             # Nothing named, and the conversation this would continue is over:
-            # say so rather than silently re-waking it — the sender may not even
-            # know there was an agent here, let alone that it was closed.
-            return Outcome(SESSION_CLOSED, (
-                f"This thread's conversation with `{agent.slug}` was closed, so your message "
-                f"wasn't sent anywhere. To ask `{agent.slug}` again, start with its name: "
-                f"`@canopy {agent.slug} <your ask>`. {NOT_AN_AGENT}"),
-                session=closed, agent=agent)
+            # say so in the thread rather than silently re-waking it — the sender
+            # may not even know there was an agent here, let alone that it was
+            # closed — and offer to start a new one. Never silence.
+            return _closed_notice(installation, closed, agent, inbound, text)
     # The tenant is the agent's — decided by what the message is about, never
     # by the Slack it arrived through, which may serve several tenants.
     principal, refusal = resolve_principal(installation, inbound.slack_user_id, agent.workspace_id)
@@ -660,11 +675,16 @@ def _confined_elsewhere(session: Session, agent: Agent, principal: Principal, in
     """
     if inbound.is_dm or not inbound.thread_ts or _owns(session, principal):
         return False
-    from apps.agents import access
+    return _access_in(session, agent, principal, inbound.team_id) == access.CONFINED
 
+
+def _access_in(session: Session, agent: Agent, principal: Principal, team_id: str) -> str:
+    """What a Slack message from `principal` into `session` would reach (`access.FULL`,
+    `CONFINED` or `NONE`), asked of an unsaved probe turn through THE rule
+    (`access.decide_for_turn`), so it cannot disagree with the real turn's stamp."""
     probe = Turn(chat_session=session, origin=Turn.ORIGIN_SLACK, origin_ref={},
-                 **principal.initiator(inbound.team_id).fields())
-    return access.decide_for_turn(probe, agent).access == access.CONFINED
+                 **principal.initiator(team_id).fields())
+    return access.decide_for_turn(probe, agent).access
 
 
 def _principal_name(principal: Principal, slack_user_id: str) -> str:
@@ -692,8 +712,6 @@ def _fork_confined(installation: SlackInstallation, parent: Session, agent: Agen
     One fork per (thread, person): writing in the original thread again
     continues the same fork.
     """
-    from dataclasses import replace
-
     token = installation.bot_token
     origin_key = (parent.metadata or {}).get(SLACK_THREAD_KEY, "")
     who_name = _principal_name(principal, inbound.slack_user_id)
@@ -740,26 +758,174 @@ def _fork_confined(installation: SlackInstallation, parent: Session, agent: Agen
 
 
 def _closed_thread_session(agent: Agent, key: str) -> Session | None:
-    """This agent's session for the thread, if there is one and it was closed."""
-    return (Session.objects.filter(agent=agent, status=Session.ARCHIVED,
-                                   **{f"metadata__{SLACK_THREAD_KEY}": key})
-            .order_by("created_at").first())
+    """This agent's conversation in the thread, if it is over: its newest closed
+    session — unless a live one has taken the thread over since (a restart)."""
+    ours = Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
+    if ours.exclude(status=Session.ARCHIVED).exists():
+        return None
+    return ours.filter(status=Session.ARCHIVED).order_by("-created_at").first()
 
 
-def _first_closed_notice(session: Session, slack_user_id: str) -> bool:
-    """Record that this person was told the thread's session is closed; True the first time."""
-    from django.db import transaction
+def _restart_blocks(text: str, closed: Session) -> list[dict]:
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}},
+        {"type": "actions", "block_id": "restart_closed", "elements": [{
+            "type": "button", "action_id": RESTART_CLOSED, "style": "primary",
+            "value": json.dumps({"s": str(closed.pk)}),
+            "text": {"type": "plain_text", "text": RESTART_LABEL},
+        }]},
+    ]
 
+
+def _closed_notice(installation: SlackInstallation, closed: Session, agent: Agent,
+                   inbound: Inbound, text: str) -> Outcome:
+    """A message (naming no agent) into a thread whose conversation was closed.
+
+    Nothing is sent and no session is started on its own. The FIRST such message
+    gets a public notice in the thread, with a button that starts a new session
+    with this thread's context (`restart_from_click`) — so the thread does not
+    read as silence to everyone in it. Every later one gets a private pointer to
+    that notice. The message is remembered on the closed session as the ask the
+    button sends: always the latest, as the earlier ones are in the thread it reads.
+    """
+    refused = private_refusal(closed, agent=agent)
+    if refused is not None:
+        return refused
+    token = installation.bot_token
+    channel = inbound.channel_id
+    thread_ts = inbound.reply_thread_ts
+    ask = {"ts": inbound.ts, "user": inbound.slack_user_id, "text": (text or "")[:4000]}
+    notice_text = (f":lock: This conversation with `{agent.slug}` was closed, so "
+                   f"<@{inbound.slack_user_id}>'s message didn't reach it. To pick it back up, start "
+                   f"a new session with `{agent.slug}` that reads this thread so far — or name the "
+                   f"agent: `@canopy {agent.slug} <your ask>`.")
+    posted_ts = ""
     with transaction.atomic():
-        locked = Session.objects.select_for_update().get(pk=session.pk)
+        # Locked: two replies racing in must post ONE notice between them.
+        locked = Session.objects.select_for_update().get(pk=closed.pk)
         meta = dict(locked.metadata or {})
-        told = list(meta.get("slack_closed_told") or [])
-        if slack_user_id in told:
-            return False
-        meta["slack_closed_told"] = told + [slack_user_id]
+        meta[RESTART_ASK] = ask
+        notice_ts = str(meta.get(RESTART_NOTICE) or "")
+        if not notice_ts:
+            try:
+                posted_ts = client.post_message(token, channel=channel, thread_ts=thread_ts,
+                                                text=notice_text, blocks=_restart_blocks(notice_text, locked))
+            except client.SlackApiError:
+                logger.exception("could not post a Slack closed-conversation notice")
+            if posted_ts:
+                meta[RESTART_NOTICE] = posted_ts
         locked.metadata = meta
         locked.save(update_fields=["metadata", "updated_at"])
-    return True
+    if posted_ts:
+        # The public notice IS the answer; nothing private to add.
+        return Outcome(SESSION_CLOSED, "", session=closed, agent=agent,
+                       workspace_id=closed.workspace_id,
+                       extra={"notice_ts": posted_ts,
+                              "log": f"posted a closed-conversation notice for `{agent.slug}`"})
+    if notice_ts:
+        where = _link(client.permalink(token, channel=channel, ts=notice_ts), "the notice in this thread")
+        return Outcome(SESSION_CLOSED, (
+            f"This thread's conversation with `{agent.slug}` was closed, so your message didn't reach "
+            f"it. Press *{RESTART_LABEL}* on {where} to pick it back up, or start with its name: "
+            f"`@canopy {agent.slug} <your ask>`."),
+            session=closed, agent=agent, workspace_id=closed.workspace_id)
+    # The notice could not be posted (e.g. canopy was removed from the channel):
+    # the sender is still told, privately.
+    return Outcome(SESSION_CLOSED, (
+        f"This thread's conversation with `{agent.slug}` was closed, so your message wasn't sent "
+        f"anywhere. To ask `{agent.slug}` again, start with its name: "
+        f"`@canopy {agent.slug} <your ask>`. {NOT_AN_AGENT}"),
+        session=closed, agent=agent, workspace_id=closed.workspace_id)
+
+
+def _resolve_restart_notice(installation: SlackInstallation, channel_id: str, message_ts: str,
+                            text: str) -> None:
+    """Rewrite the notice without its button, so it cannot start anything again."""
+    if not message_ts:
+        return
+    try:
+        client.update_message(installation.bot_token, channel=channel_id, ts=message_ts, text=text,
+                              blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": text[:3000]}}])
+    except Exception:  # noqa: BLE001 — the session started; a stale-looking button is cosmetic
+        logger.exception("could not rewrite a Slack closed-conversation notice")
+
+
+def restart_from_click(installation: SlackInstallation, *, slack_user_id: str, channel_id: str,
+                       message_ts: str, action: dict) -> Outcome:
+    """The **Start a new session with this thread's context** button on a closed notice.
+
+    Starts a NEW session for the CLICKER with the closed conversation's agent, in
+    the same thread, seeded with the thread so far (`_with_thread`) and the latest
+    message the closed conversation turned away. Everything the click names is
+    re-checked: the session must be this workspace's and this channel's closed
+    Slack session, and the clicker is judged exactly as if they had written the
+    message — `resolve_principal`, `private_refusal`, and the access rule (no
+    access: nothing starts; confined in someone else's conversation: the
+    separate-thread fork a confined reply gets). One session per thread: a second
+    click, by anyone, finds the first one's session and starts nothing.
+    """
+    try:
+        value = json.loads(action.get("value") or "{}")
+    except ValueError:
+        value = {}
+    closed = _slack_session(installation, value.get("s"), channel_id)
+    if closed is None or closed.agent is None or closed.status != Session.ARCHIVED:
+        return Outcome(STALE, "That conversation is no longer here.")
+    agent = closed.agent
+    meta = closed.metadata or {}
+    key = str(meta.get(SLACK_THREAD_KEY) or "")
+    if not agent.slack_enabled or not key:
+        return Outcome(STALE, f"`{agent.slug}` can't be reached from Slack any more.")
+    refused = private_refusal(closed, agent=agent)
+    if refused is not None:
+        return refused
+    principal, refusal = resolve_principal(installation, slack_user_id, agent.workspace_id)
+    if refusal is not None:
+        return refusal
+    is_dm = key.endswith(f":{DM_ANCHOR}")
+    thread_ts = str(meta.get("slack_thread_ts") or "")
+    ask = meta.get(RESTART_ASK) or {}
+    prompt = str(ask.get("text") or "")
+    inbound = Inbound(team_id=installation.team_id, channel_id=channel_id, slack_user_id=slack_user_id,
+                      text=prompt, ts=str(ask.get("ts") or message_ts), thread_ts=thread_ts, is_dm=is_dm)
+    reach = _access_in(closed, agent, principal, installation.team_id)
+    if reach == access.NONE:
+        return Outcome(REFUSED, (
+            f"`{agent.slug}` didn't start a new session: it only takes requests from the people its "
+            f"owner has opened it to, and that doesn't include you here. If you think you should "
+            f"have access, ask `{agent.slug}`'s owner."), session=closed, agent=agent,
+            workspace_id=agent.workspace_id)
+    if reach == access.CONFINED and thread_ts and not is_dm and not _owns(closed, principal):
+        # The same as a confined reply into someone else's conversation: answered
+        # in a separate thread of the clicker's own; the button stays for others.
+        return _fork_confined(installation, closed, agent, principal, inbound, prompt, named=True)
+    started = (f":arrow_forward: <@{slack_user_id}> started a new session with `{agent.slug}` "
+               "from this thread. Reply in the thread to continue it.")
+    with transaction.atomic():
+        # Locked: a double click, or two people clicking, start one session.
+        Session.objects.select_for_update().get(pk=closed.pk)
+        live = (Session.objects.filter(agent=agent, **{f"metadata__{SLACK_THREAD_KEY}": key})
+                .exclude(status=Session.ARCHIVED).order_by("created_at").first())
+        session = None
+        if live is None:
+            session = _new_thread_session(agent=agent, principal=principal, key=key,
+                                          inbound=replace(inbound, follow=False),
+                                          title=prompt or "Slack thread")
+    if session is None:
+        _resolve_restart_notice(installation, channel_id, message_ts,
+                                f":arrow_forward: A new session with `{agent.slug}` was started from "
+                                "this thread. Reply in the thread to continue it.")
+        return Outcome(STALE, f"A new session with `{agent.slug}` is already going in this thread — "
+                       "reply in the thread to continue it.", session=live, agent=agent)
+    _sync_audience(session, inbound, principal)
+    if thread_ts and not is_dm:
+        prompt = _with_thread(installation, principal, agent, inbound, prompt)
+    elif not prompt:
+        prompt = window.DEFAULT_ASK
+    outcome = _send(session, True, agent, principal, prompt, inbound, named=True)
+    if outcome.status in (SENT, REFUSED):
+        _resolve_restart_notice(installation, channel_id, message_ts, started)
+    return outcome
 
 
 def deliver_channel_read(inbound: Inbound, agent: Agent, material: str, ask: str) -> Outcome:
@@ -934,8 +1100,9 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
     if refused is not None:
         return refused
     # A SHARED session that has been closed has no one left to answer: say so
-    # instead of queueing a turn nothing will ever take. (A Slack-born one is
-    # simply asked again, which still works.)
+    # instead of queueing a turn nothing will ever take. (A closed Slack-born one
+    # reaches here only when a message NAMES its agent, which asks it again; an
+    # unnamed reply gets `_closed_notice` and never gets this far.)
     if session.status == Session.ARCHIVED and (session.metadata or {}).get("slack_shared_by"):
         return Outcome(SESSION_CLOSED, "This session was closed, so replies here no longer reach it. "
                        "Ask its owner to share a new one.", session=session, agent=agent)

@@ -81,6 +81,9 @@ class FakeSlack:
         # channel id -> who is in it, for conversations.members. A channel not here
         # answers like Slack with no list (`{"ok": true}`), which canopy reads as unknown.
         self.members: dict[str, list[str]] = {}
+        # thread ts -> its messages (parent first), for conversations.replies. A thread
+        # not here answers like an empty one.
+        self.threads: dict[str, list[dict]] = {}
 
     def __call__(self, url, headers=None, json=None, data=None, timeout=None):
         method = url.rsplit("/", 1)[-1]
@@ -105,6 +108,8 @@ class FakeSlack:
             body = {"ok": True, "permalink": f"{self.permalink_base}/archives/{payload.get('channel')}/p{ts}"}
         elif method == "conversations.members" and payload.get("channel") in self.members:
             body = {"ok": True, "members": list(self.members[payload["channel"]])}
+        elif method == "conversations.replies" and payload.get("ts") in self.threads:
+            body = {"ok": True, "messages": list(self.threads[payload["ts"]])}
         elif method == "users.list":
             body = {"ok": True, "members": [{"id": uid, **info} for uid, info in self.users.items()]}
         elif method == "users.lookupByEmail":

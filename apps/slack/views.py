@@ -222,8 +222,12 @@ def events(request: HttpRequest) -> HttpResponse:
         _tell(installation, inbound, "Something went wrong handing that to canopy. It has been logged.")
         return JsonResponse({"ok": True})
     if outcome.status not in services.OK_STATUSES:
-        _record(installation, inbound, outcome.status, outcome.message, outcome=outcome)
-        _tell(installation, inbound, outcome.message)
+        _record(installation, inbound, outcome.status, outcome.message or outcome.extra.get("log", ""),
+                outcome=outcome)
+        # No message: the answer was said publicly in the thread (a closed
+        # conversation's notice), so there is nothing private to add.
+        if outcome.message:
+            _tell(installation, inbound, outcome.message)
     elif outcome.status in (services.ANSWERED, services.MOVED, services.NOTHING_QUEUED, services.READING_CHANNEL):
         _tell(installation, inbound, outcome.message)
     # A SENT message is acknowledged by its public status line in the thread
@@ -324,7 +328,8 @@ def commands(request: HttpRequest) -> HttpResponse:
 @csrf_exempt
 @require_POST
 def interactions(request: HttpRequest) -> HttpResponse:
-    """Button presses on a question post (Block Kit `block_actions`).
+    """Button presses on canopy's posts (Block Kit `block_actions`): a question
+    post, a status line's Run-on-cloud, a closed conversation's Start-a-new-session.
 
     Signed exactly like the other two doors. Only OUR buttons are acted on: a
     checkbox or radio toggle also arrives here, one payload per click, and is
@@ -350,7 +355,7 @@ def interactions(request: HttpRequest) -> HttpResponse:
     if action_id in checkins.ACTIONS:
         return _group_run_click(payload, action_id, action)
     if not (action_id.startswith(menus.PICK)
-            or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD)):
+            or action_id in (menus.SUBMIT, menus.DISMISS, status.ROUTE_CLOUD, services.RESTART_CLOSED)):
         return HttpResponse(status=200)
     installation = services.installation_for(str((payload.get("team") or {}).get("id") or ""))
     if installation is None:
@@ -365,7 +370,12 @@ def interactions(request: HttpRequest) -> HttpResponse:
         thread_ts=str(message.get("thread_ts") or ""),
     )
     try:
-        if action_id == status.ROUTE_CLOUD:
+        if action_id == services.RESTART_CLOSED:
+            outcome = services.restart_from_click(
+                installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
+                message_ts=inbound.ts, action=action,
+            )
+        elif action_id == status.ROUTE_CLOUD:
             outcome = services.route_from_click(
                 installation, slack_user_id=inbound.slack_user_id, channel_id=inbound.channel_id,
                 action=action,
