@@ -10775,6 +10775,8 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # what tells the server a FAILED turn did reach an agent, so it is
             # never re-run blind as "sessionless" (services.finish_turn).
             finish_body["session_key"] = cli_session_id
+        if _killed_by_shutdown(ok, turn_id):
+            return
         fstatus, _ = _api("POST", f"/turns/{turn_id}/finish", finish_body)
         if ok and off_disk_env:
             # Proven: this agent works off disk, so its legacy files can go.
@@ -10979,6 +10981,19 @@ def _ws_request(ws, frame: dict, want_type: str, timeout: float = 120.0):
     return None
 
 
+def _killed_by_shutdown(ok: bool, turn_id: str) -> bool:
+    """True for a turn that did not finish because the box it ran on is powering off
+    (a fleet member terminated, an instance stopped): it did not fail, so it is not
+    reported. Left running, it is queued again for another box — at once on a fleet
+    (`fleets.requeue_lost`, when the instance leaves the group), else by the lease
+    sweep. Asked of the box, not of this process's stop flag: the turn's Claude
+    process can die of the shutdown before the runner's own SIGTERM lands."""
+    if ok or not _system_shutting_down():
+        return False
+    _log(f"the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
+    return True
+
+
 def _finish_turn(ws, turn_id: str, ok: bool, text: str, turn: dict | None = None) -> None:
     """Finish the turn, falling back to REST when the WebSocket is gone.
 
@@ -11002,12 +11017,7 @@ def _finish_turn(ws, turn_id: str, ok: bool, text: str, turn: dict | None = None
     on an already-terminal turn), so this fallback is safe even if the WS finish
     partially landed.
     """
-    if not ok and _stop and _system_shutting_down():
-        # The turn did not fail: the box it ran on is powering off (a fleet member
-        # terminated, an instance stopped), which killed it. Left running, it is
-        # queued again for another box — at once on a fleet (`fleets.requeue_lost`,
-        # when the instance leaves the group), else by the lease sweep.
-        _log(f"stopping: the box is shutting down — leaving turn {turn_id[:8]} to be queued again")
+    if _killed_by_shutdown(ok, turn_id):
         return
     body = {"status": "done" if ok else "failed",
             "result_note": _result_note(text, turn or {"id": turn_id})}
