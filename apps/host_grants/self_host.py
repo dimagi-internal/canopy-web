@@ -374,31 +374,33 @@ def scopes_for_page(page: str) -> tuple[str, ...]:
     return PAGES.scopes_for(page)
 
 
-def grant_for_visitor(app, user, page: str) -> bool:
+def grant_for_visitor(app, user, page: str):
     """Issue and redeem a grant for `user` on `page`, if this site and page get
-    one. Returns whether a grant is now held. Never raises: no grant is a
-    working panel (the agent simply cannot act as the visitor on canopy)."""
+    one. Returns the `HostGrant`, or None. Never raises: no grant is a working
+    panel (the agent simply cannot act as the visitor on canopy). The panel asks
+    for one only once the person has sent from it (`POST /api/embed/token`'s
+    `grant`), never on load."""
     from . import host_grants
 
     scopes = scopes_for_page(page)
     if not scopes or user is None or not getattr(user, "is_authenticated", False):
-        return False
+        return None
     if not is_self_site(app) or not configured():
-        return False
+        return None
     subject = str(user.pk)
     try:
         id_jag = issue_id_jag(config(), subject, scopes)
         grant = host_grants.redeem(app, id_jag, subject=subject, user=user)
     except host_grants.HostGrantError as exc:
         host_grants.record_outcome(app, ok=False, subject=subject, code=exc.code, detail=exc.message)
-        return False
+        return None
     except Exception as exc:  # noqa: BLE001 - never fail the mint; the type only, never a token
         log.warning("canopy-web could not grant itself access for user %s: %s", user.pk, type(exc).__name__)
         host_grants.record_outcome(app, ok=False, subject=subject, code="error", detail=type(exc).__name__)
-        return False
+        return None
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
     _index_views(app, scopes)
-    return True
+    return grant
 
 
 def _index_views(app, scopes) -> None:

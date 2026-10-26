@@ -168,10 +168,10 @@ def _grant(app, token, user):
 
     from django.utils import timezone
 
-    return HostGrant.objects.create(
+    return sg.acted_with(HostGrant.objects.create(
         app=app, subject=token, user=user, access_token_enc=encrypt_secret(token), scope="data:read",
         resource=sg.RESOURCE, dpop_jkt=client_identity.dpop_jkt(),
-        expires_at=timezone.now() + timedelta(minutes=10))
+        expires_at=timezone.now() + timedelta(minutes=10)))
 
 
 @pytest.fixture()
@@ -958,6 +958,37 @@ def test_a_view_statement_is_bound_to_its_person_resource_token_and_use(w, host)
     verify_view({k.title(): v for k, v in headers.items()}, **once)
     with pytest.raises(ViewRefused, match="already been used"):
         verify_view({k.title(): v for k, v in headers.items()}, **once)
+
+
+def test_a_views_own_tool_call_carries_a_view_statement_for_that_call(w, host):
+    """A card's button (labs: preview, apply, a commit through `workflow_run_action`) is
+    admitted by the host only on canopy's word that it is the person's own View, for THIS
+    `tools/call`, the View's `ui://` resource as its uri."""
+    _converse(w, host, sensitive=False)
+    host.seen.clear()
+    args = {"sql": "select 1"}
+    r = through(host, lambda: post(client_for(w["owner"]), base(w) + "/call",
+                                   {"name": "data_query", "arguments": args}))
+    assert r.status_code == 200, r.content
+    stated = [h for h in host.seen if VIEW_H in h]
+    assert len(stated) == 1, "the call — and only the call, not initialize or the listing — carries it"
+    assert not any(EXEC_H in h for h in host.seen), "a View is never an agent's call"
+    call = ("tools/call", {"name": "data_query", "arguments": args})
+    view = _view_of(stated[0], uri=VIEW, subject="grant-owner", token="grant-owner", rpc=call)
+    assert view.session == str(w["mine"].pk) and view.viewer == f"user:{w['owner'].pk}"
+    # Bound to that very call: not another tool, not other arguments.
+    for rpc in (("tools/call", {"name": "big_query", "arguments": args}),
+                ("tools/call", {"name": "data_query", "arguments": {"sql": "drop"}})):
+        with pytest.raises(ViewRefused, match="different request"):
+            _view_of(stated[0], uri=VIEW, subject="grant-owner", token="grant-owner", rpc=rpc)
+
+
+def test_an_agents_own_tool_call_never_carries_a_view_statement(w, host):
+    sg.grant(w)
+    host.seen.clear()
+    _visitor_call(w, host, "site_call", {"tool": "data_query", "arguments": {"sql": "x"}})
+    assert host.seen and not any(VIEW_H in h for h in host.seen)
+    assert all(EXEC_H in h for h in host.seen)
 
 
 def test_a_colleague_in_the_conversation_gets_a_statement_naming_them(w, host):

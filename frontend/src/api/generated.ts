@@ -1683,9 +1683,10 @@ export interface paths {
          *     receives is the same short-lived revocable row any host would get.
          *
          *     `page` names the canopy page the panel is on. When it is one canopy lets an
-         *     agent act on as you (read-only, within your own access), canopy also takes
-         *     a short grant to its own tools for that page; `host_grant` says whether it
-         *     did. Any other value, or none, is simply no grant.
+         *     agent act on as you (read-only, within your own access) AND the body says
+         *     `"grant": true` — the panel sends it only once you have sent a message in it —
+         *     canopy also takes a short grant to its own tools for that page; `host_grant`
+         *     says whether it did. Any other value, or none, is simply no grant.
          */
         readonly post: operations["embed_self_token"];
         readonly delete?: never;
@@ -1739,6 +1740,76 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/host-grant": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What this panel's page lets the agent read as me
+         * @description The live grant the panel's own token carries — the page it is on — or
+         *     null. The panel shows it as "can read what this page shows, as you, until …".
+         */
+        readonly get: operations["panel_host_grant"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop this panel's page letting the agent read as me
+         * @description Stop the grant the panel's token carries, and every live grant of the same
+         *     page. The panel then asks for none until you send again.
+         */
+        readonly delete: operations["stop_panel_host_grant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The sites that may let an agent read as me, right now
+         * @description Every live host grant held for you: which site, which agent, what it may
+         *     read, and until when — one row per page you sent from. A grant is taken only
+         *     once you send a message in a site's panel, and lasts 30 minutes unless that
+         *     page grants again.
+         */
+        readonly get: operations["list_my_host_grants"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/host-grants/{grant_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop a site letting an agent read as me
+         * @description Stop this grant, and every live grant of the same page, at once: an agent
+         *     can no longer read that site as you until you send from its page again.
+         */
+        readonly delete: operations["revoke_my_host_grant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -2385,6 +2456,31 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/contact/host-grant": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * What this panel's page lets the agent read as me
+         * @description The live grant your panel's token carries — the page it is on — or null.
+         */
+        readonly get: operations["contact_host_grant"];
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Stop this panel's page letting the agent read as me
+         * @description Stop the grant your panel's token carries, and every live grant of the
+         *     same page. The panel asks for none until you send again.
+         */
+        readonly delete: operations["contact_stop_host_grant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -17946,6 +18042,18 @@ export interface components {
              */
             readonly host_grant: boolean;
         };
+        /**
+         * EmbedSelfTokenIn
+         * @description `POST /api/embed/token`'s body. The panel sends `{}` on load and
+         *     `{"grant": true}` once the person has sent a message in it.
+         */
+        readonly EmbedSelfTokenIn: {
+            /**
+             * Grant
+             * @default false
+             */
+            readonly grant: boolean;
+        };
         /** WsTicketOut */
         readonly WsTicketOut: {
             /** Ticket */
@@ -18050,6 +18158,42 @@ export interface components {
              * @default
              */
             readonly reach: string;
+        };
+        /** HostGrantOut */
+        readonly HostGrantOut: {
+            /** Id */
+            readonly id: number;
+            /** Site */
+            readonly site: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Agent Name
+             * @default
+             */
+            readonly agent_name: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
+            /**
+             * Granted At
+             * Format: date-time
+             */
+            readonly granted_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+        };
+        /** PanelGrantOut */
+        readonly PanelGrantOut: {
+            readonly grant?: components["schemas"]["HostGrantOut"] | null;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -41333,7 +41477,11 @@ export interface operations {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly requestBody?: never;
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["EmbedSelfTokenIn"];
+            };
+        };
         readonly responses: {
             /** @description OK */
             readonly 200: {
@@ -41385,6 +41533,86 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["EmbedSessionMemoryOut"];
                 };
+            };
+        };
+    };
+    readonly panel_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PanelGrantOut"];
+                };
+            };
+        };
+    };
+    readonly stop_panel_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PanelGrantOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_host_grants: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["HostGrantOut"][];
+                };
+            };
+        };
+    };
+    readonly revoke_my_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -42192,6 +42420,46 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readonly contact_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PanelGrantOut"];
+                };
+            };
+        };
+    };
+    readonly contact_stop_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PanelGrantOut"];
+                };
             };
         };
     };

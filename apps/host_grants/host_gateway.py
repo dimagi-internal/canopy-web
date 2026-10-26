@@ -68,6 +68,29 @@ EXPIRY_MARGIN = timedelta(seconds=10)
 ACTOR_HEADER = contract.ACTOR_HEADER
 BACK_ON_THE_PAGE = ("I need you back on the page to do that — ask again from the site "
                     "and I will try once more.")
+#: The person's act-as-you permission for this page (its host grant) ran out
+#: (`host_grants.EXPIRED`): no other page's grant stands in. Sending again from the
+#: page grants it afresh (the panel asks its host for a grant before that send).
+def page_grant_expired(agent_name: str) -> str:
+    return (f"Your permission for {agent_name} to act as you on this page has ended — send "
+            "again to grant it for another 30 minutes.")
+
+
+#: The person stopped it (`host_grants.REVOKED`).
+def page_grant_stopped(agent_name: str) -> str:
+    return (f"You stopped {agent_name}'s permission to act as you on this page — send again "
+            "to grant it for another 30 minutes.")
+
+
+def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> str:
+    """What to tell the person when `host_grants.lookup` found no grant, by its reason."""
+    from .host_grants import EXPIRED, REVOKED
+
+    if reason == EXPIRED:
+        return page_grant_expired(agent_name)
+    if reason == REVOKED:
+        return page_grant_stopped(agent_name)
+    return f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE
 
 
 class GatewayRefusal(Exception):
@@ -194,15 +217,17 @@ def resolve(turn_id: str) -> SiteContext:
 
     # WHO ASKED, from the turn — the grant is theirs or there is none. And for
     # WHICH agent: a grant a page bound to another agent is not this one's. And
-    # from WHICH page: the one this conversation is on, not their latest.
-    from .host_grants import grant_for
+    # from WHICH page: the one that last acted in this conversation as them, while
+    # it lives — never another page's, never their latest.
+    from .host_grants import EXPIRED, REVOKED, lookup
 
-    grant = grant_for(app, agent=agent, contact=turn.initiator_contact,
-                      user=turn.initiator_user if not turn.initiator_contact_id else None,
-                      session=session)
+    found = lookup(app, agent=agent, contact=turn.initiator_contact,
+                   user=turn.initiator_user if not turn.initiator_contact_id else None,
+                   session=session)
+    grant = found.grant
     if grant is None:
-        raise GatewayRefusal("no_grant",
-                             f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE)
+        code = {EXPIRED: "expired", REVOKED: "revoked"}.get(found.reason, "no_grant")
+        raise GatewayRefusal(code, no_grant_message(site, found.reason, agent.name or agent.slug))
 
     # The grant is per arrival, not per conversation: a visitor who
     # arrived under `sensitive_data` can reach it from an OLDER conversation that no
@@ -245,8 +270,10 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
 
     from . import client_identity
 
+    if grant.revoked_at is not None:
+        raise GatewayRefusal("revoked", page_grant_stopped(agent_slug))
     if grant.expires_at <= timezone.now() + EXPIRY_MARGIN:
-        raise GatewayRefusal("expired", BACK_ON_THE_PAGE)
+        raise GatewayRefusal("expired", page_grant_expired(agent_slug))
     if grant.resource.rstrip("/") != app.host_mcp_resource.rstrip("/"):
         raise GatewayRefusal("stale_grant", BACK_ON_THE_PAGE)
     try:
@@ -365,7 +392,7 @@ def _capped_transport(inner, cap: _ByteCap):
 PROOF_MODES = ("dpop", "no_proof", "stranger_key", "bearer")
 
 
-def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = ""):
+def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = "", view_tool: "ViewTool | None" = None):
     import httpx2
 
     from . import client_identity
@@ -409,7 +436,8 @@ def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = ""):
     def _state(request):
         # canopy vouches for THIS request: a fresh, single-use statement each time. An
         # agent's turn says which agent (`Canopy-Execution`); the person's own View says
-        # so, for the one resource it reads (`Canopy-View`). Never both, and nothing for
+        # so (`Canopy-View`), for the one resource it reads, or for the one tool its card
+        # calls (`uri` then the View's own `ui://` resource). Never both, and nothing for
         # anything else — a host must treat no statement as no one it may trust.
         # Each is bound to THIS JSON-RPC request too (`rpc`: its method and params), so a
         # statement lifted off one call cannot ride another on the same token.
@@ -424,8 +452,29 @@ def _auth(ctx: SiteContext, mode: str = "dpop", view_uri: str = ""):
         elif ctx.view is not None and view_uri and _reads(body, view_uri):
             request.headers[contract.VIEW_HEADER] = client_identity.view_statement(
                 ctx.resource, uri=view_uri, access_token=token, rpc=rpc, **ctx.view)
+        elif ctx.view is not None and view_tool is not None and view_tool.uri \
+                and _calls(body, view_tool.name):
+            request.headers[contract.VIEW_HEADER] = client_identity.view_statement(
+                ctx.resource, uri=view_tool.uri, access_token=token, rpc=rpc, **ctx.view)
 
     return _DPoP()
+
+
+class ViewTool:
+    """The one `tools/call` a person's View is making (`view_call`): the tool, and the
+    View it belongs to — its `uri`, set once the listing shows the tool's
+    `_meta.ui.resourceUri` is the card's own View. Empty, no statement rides."""
+
+    __slots__ = ("name", "uri")
+
+    def __init__(self, name: str):
+        self.name, self.uri = name, ""
+
+
+def _calls(body: bytes, name: str) -> bool:
+    """Whether this request body is the `tools/call` of `name`."""
+    rpc = contract.rpc_of_body(body)
+    return bool(rpc and rpc[0] == "tools/call" and str(rpc[1].get("name") or "") == name)
 
 
 def _reads(body: bytes, uri: str) -> bool:
@@ -436,7 +485,7 @@ def _reads(body: bytes, uri: str) -> bool:
 
 
 def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = None,
-            view_uri: str = "", cap: _ByteCap | None = None):
+            view_uri: str = "", cap: _ByteCap | None = None, view_tool: ViewTool | None = None):
     import httpx2
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
@@ -459,7 +508,7 @@ def _client(ctx: SiteContext, *, mode: str = "dpop", statuses: list | None = Non
         return httpx2.AsyncClient(**kwargs)
 
     transport = StreamableHttpTransport(
-        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode, view_uri),
+        ctx.resource, headers={ACTOR_HEADER: ctx.agent_slug}, auth=_auth(ctx, mode, view_uri, view_tool),
         httpx_client_factory=factory)
     # MCP Apps (SEP-1865): canopy renders a host's Views, so it says so in
     # `initialize` (§Client<>Server Capability Negotiation). A host that does not
@@ -634,16 +683,27 @@ def _unreachable(ctx: SiteContext, exc: Exception) -> GatewayRefusal:
     return GatewayRefusal("host_unreachable", f"{ctx.site} did not answer ({type(exc).__name__})")
 
 
-async def view_call(ctx: SiteContext, name: str, arguments: dict, *, check) -> dict:
+async def view_call(ctx: SiteContext, name: str, arguments: dict, *, check, view_uri: str = "") -> dict:
     """List as the viewer, let `check(tool_or_None)` refuse (it raises a
     GatewayRefusal), then call — one MCP session, so the visibility decided is
-    the visibility of the server the call goes to (§Visibility gate 3-4)."""
+    the visibility of the server the call goes to (§Visibility gate 3-4).
+
+    `view_uri` is the card's own View (`ui://…`). When `ctx.view` says this is the
+    person's own View and the listed tool belongs to that same View
+    (`_meta.ui.resourceUri`), the call carries `Canopy-View` for THIS `tools/call` —
+    what a host needs before it lets a card's button commit. An agent's turn never
+    reaches here (`call_tool`), and its context carries no `view`."""
     await _check_target(ctx)
     cap = _ByteCap()
+    target = ViewTool(name)
     try:
-        async with _client(ctx, cap=cap) as client:
+        async with _client(ctx, cap=cap, view_tool=target) as client:
             tools = await _listing(ctx, client)
-            check(next((t for t in tools if t.name == name), None))
+            listed = next((t for t in tools if t.name == name), None)
+            check(listed)
+            ui = ((getattr(listed, "meta", None) or {}).get("ui") or {}) if listed is not None else {}
+            if view_uri and str(ui.get("resourceUri") or "") == view_uri:
+                target.uri = view_uri
             result = await client.call_tool(name, arguments or {}, raise_on_error=False)
     except GatewayRefusal:
         raise

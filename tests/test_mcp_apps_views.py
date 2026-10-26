@@ -56,10 +56,12 @@ def _member(ws, name, role=WorkspaceMembership.EDITOR):
 
 
 def _grant(app, *, token, user=None, contact=None, minutes=10):
-    return HostGrant.objects.create(
+    from tests.fixtures.site_gateway import acted_with
+
+    return acted_with(HostGrant.objects.create(
         app=app, subject=token, user=user, contact=contact, access_token_enc=encrypt_secret(token),
         scope="workflow:act", resource=RESOURCE, dpop_jkt=client_identity.dpop_jkt(),
-        expires_at=timezone.now() + timedelta(minutes=minutes))
+        expires_at=timezone.now() + timedelta(minutes=minutes)))
 
 
 def _tool_pair(session, *, call_id=CALL_ID, name="mcp__claude_ai_connect_labs__workflow_run_action",

@@ -62,11 +62,13 @@ log = logging.getLogger(__name__)
 CONTACT_TOKEN_TTL_SECONDS = 30 * 60
 
 #: When the arrival carried a host grant, the token lives only this long, so
-#: the widget re-mints — and the host issues a fresh ID-JAG — on this cadence
-#: while the visitor is using it (host grant contract v1, "Freshness"). A host
-#: access token lives at most 15 minutes and is never refreshed, so a visitor's
-#: host access ends within minutes of them leaving the page.
-HOST_GRANT_REMINT_SECONDS = 5 * 60
+#: the widget re-mints — and the host issues a fresh ID-JAG — while the visitor is
+#: using it (host grant contract v1, "Freshness"). The panel's client refetches a
+#: token 5 minutes before it expires, so ten minutes means a fresh grant about every
+#: five. The panel asks for a grant only once the person has sent a message in it;
+#: a host access token lives at most 30 minutes and is never refreshed, so a
+#: visitor's host access ends within half an hour of their page last acting.
+HOST_GRANT_REMINT_SECONDS = 10 * 60
 
 
 class ContactAuth(HttpBearer):
@@ -890,7 +892,8 @@ def _app_viewer(request):
 
     return mcp_apps_views.Viewer(contact=request.contact,
                                  chat_surface=sensitivity.request_is_chat_surface(request),
-                                 person=acting_person.is_person(request))
+                                 person=acting_person.is_person(request),
+                                 page_grant_id=getattr(request, "host_grant_id", None))
 
 
 def _app_run(fn, *args):

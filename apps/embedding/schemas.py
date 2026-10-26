@@ -56,6 +56,15 @@ class EmbedSelfOut(StrictModel):
     agent: str
 
 
+class EmbedSelfTokenIn(StrictModel):
+    """`POST /api/embed/token`'s body. The panel sends `{}` on load and
+    `{"grant": true}` once the person has sent a message in it."""
+
+    #: Ask for a grant to canopy's own tools for `?page=` as well. Only the panel's
+    #: own mint after the person sent sets it; no grant is ever taken on load.
+    grant: bool = False
+
+
 class EmbedSelfTokenOut(StrictModel):
     """`POST /api/embed/token` — a delegated token for the caller.
 

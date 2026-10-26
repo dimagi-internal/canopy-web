@@ -68,12 +68,30 @@ def _visitor_turn(w, backing="list_fleet_tasks"):
     session = Session.objects.create(workspace=w["ws"], agent=w["agent"], created_by=w["visitor"],
                                      metadata={"embed_app": "canopy-web"},
                                      page_state={"resource": "task://", "backing_tool": backing})
+    # The visitor sent from the panel: the page's grant is stamped on the conversation.
+    latest = HostGrant.objects.filter(user=w["visitor"]).order_by("-pk").first()
+    if latest is not None:
+        from tests.fixtures.site_gateway import acted_with
+
+        acted_with(latest)
     return Turn.objects.create(chat_session=session, prompt="which are stale?",
                                initiator_user=w["visitor"], initiator_kind="member",
                                capability="workbench")
 
 
 # --- the whole round trip ---------------------------------------------------------------
+
+
+def test_the_panel_takes_no_grant_until_the_person_sends(world):
+    r = _mint(world["visitor"], "agent.tasks", grant=False)
+    assert r.status_code == 200 and r.json()["host_grant"] is False
+    assert not HostGrant.objects.exists()
+    r = _mint(world["visitor"], "agent.tasks")
+    assert r.json()["host_grant"] is True
+    from apps.tokens.models import DelegatedToken
+
+    assert DelegatedToken.lookup(r.json()["token"]).host_grant == HostGrant.objects.get(), \
+        "the token points at its page's grant"
 
 
 def test_a_member_on_the_tasks_page_gets_an_agent_that_reads_as_them(world, gateway_to_self):

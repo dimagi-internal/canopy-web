@@ -94,6 +94,11 @@ class Viewer:
     #: then, and only in a conversation they are in, does canopy tell the host this is
     #: the person's own View (`Canopy-View`, `view_facts`). False unless the route says so.
     person: bool = False
+    #: The host grant of the page the request came from (its token's arrival), or
+    #: None. A View call from a page holding one is that page acting in the
+    #: conversation, so it is stamped there (`note_host_grant`) once the View's own
+    #: gates have passed, and the call reads through it.
+    page_grant_id: int | None = None
 
     @property
     def name(self) -> str:
@@ -403,21 +408,29 @@ def resolve_for_viewer(session, viewer: Viewer, row: ViewRow) -> host_gateway.Si
     app = row.app
     if not app.issues_host_grants():
         raise ViewRefusal("site_not_configured", f"{app.name} does not let canopy act for you there")
-    # The viewer's grant for THIS conversation's agent, from the page it is on
-    # (`host_grants.grant_for`).
-    from apps.host_grants.host_grants import grant_for
+    if viewer.page_grant_id:
+        from apps.canopy_sessions.services import note_host_grant  # noqa: PLC0415 — as Message here
 
-    grant = grant_for(app, agent=session.agent if session.agent_id else None,
-                      contact=viewer.contact, user=viewer.user if viewer.contact is None else None,
-                      session=session)
+        note_host_grant(session, viewer.page_grant_id, user=viewer.user if viewer.contact is None else None,
+                        contact=viewer.contact)
+    # The viewer's grant for THIS conversation's agent, from the page that last
+    # acted in it as them (`host_grants.lookup`) — the View's own call stamped it
+    # first, when it came from a page holding one.
+    from apps.host_grants.host_grants import lookup
+
+    found = lookup(app, agent=session.agent if session.agent_id else None,
+                   contact=viewer.contact, user=viewer.user if viewer.contact is None else None,
+                   session=session)
+    grant = found.grant
     if grant is None:
-        raise ViewRefusal(GATES[6], host_gateway.BACK_ON_THE_PAGE)
+        raise ViewRefusal(GATES[6], host_gateway.no_grant_message(
+            app.name, found.reason, (session.agent.name or session.agent.slug) if session.agent_id else "the agent"))
     try:
         return host_gateway.context_for_grant(
             app, grant, turn_id="", agent_slug=(session.agent.slug if session.agent_id else "canopy"),
             ceiling=_ceiling(session, row), view=view_facts(session, viewer, grant))
     except host_gateway.GatewayRefusal as exc:
-        raise ViewRefusal(GATES[6] if exc.code in ("expired", "stale_grant") else exc.code,
+        raise ViewRefusal(GATES[6] if exc.code in ("expired", "revoked", "stale_grant") else exc.code,
                           exc.message) from None
 
 
@@ -559,7 +572,8 @@ def call(session, viewer: Viewer, tool_call_id: str, name: str, arguments: dict)
         )
 
     try:
-        result = async_to_sync(host_gateway.view_call)(ctx, tool, arguments or {}, check=check)
+        result = async_to_sync(host_gateway.view_call)(ctx, tool, arguments or {}, check=check,
+                                                       view_uri=row.ref.get("resource_uri") or "")
     except host_gateway.GatewayRefusal as exc:
         status = 502 if exc.code == "host_unreachable" else 403
         _refuse(session, viewer, ref, "call", tool, ViewRefusal(exc.code, exc.message, status))

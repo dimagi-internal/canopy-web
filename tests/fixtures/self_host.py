@@ -89,10 +89,12 @@ def gateway_to_self(mcp_app, monkeypatch):
     return mcp_app
 
 
-def _mint(user, page):
+def _mint(user, page, *, grant=True):
+    """The panel's mint; `grant` is what it sends once the person has sent from it."""
     client = Client()
     client.force_login(user)
-    return client.post(f"/api/embed/token?page={page}", data={}, content_type="application/json")
+    return client.post(f"/api/embed/token?page={page}", data={"grant": True} if grant else {},
+                       content_type="application/json")
 
 
 def _in_lifespan(inner, fn):

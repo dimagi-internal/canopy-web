@@ -11,6 +11,7 @@ conversation remembers the grant of the page that last acted in it.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 
 import jwt
@@ -191,14 +192,66 @@ def test_the_page_that_acts_in_a_conversation_moves_it_to_its_grant(site, host):
                      session=conversation).pk == grant_b.pk
 
 
-def test_once_its_pages_grant_has_expired_a_conversation_reads_through_the_latest(site, host):
+def test_once_its_pages_grant_has_expired_a_conversation_falls_back_to_nothing(site, host):
+    # No other page's grant stands in — not even a live one minted later: the
+    # agent tells the person the page's permission ran out.
+    from apps.host_grants.host_grants import EXPIRED, lookup
+
     token_a, grant_a = _page(site)
     conversation = _start(token_a)
     _, grant_b = _page(site)
     HostGrant.objects.filter(pk=grant_a.pk).update(expires_at=timezone.now() - dt.timedelta(seconds=1))
     conversation.refresh_from_db()
-    assert grant_for(site["app"], agent=site["agent"], contact=grant_a.contact,
-                     session=conversation).pk == grant_b.pk
+    found = lookup(site["app"], agent=site["agent"], contact=grant_a.contact, session=conversation)
+    assert found.grant is None and found.reason == EXPIRED
+
+
+def test_a_pruned_page_grant_is_expired_not_replaced(site, host):
+    from apps.host_grants.host_grants import EXPIRED, lookup
+
+    token_a, grant_a = _page(site)
+    conversation = _start(token_a)
+    HostGrant.objects.filter(pk=grant_a.pk).delete()
+    _page(site)
+    conversation.refresh_from_db()
+    assert lookup(site["app"], agent=site["agent"], contact=grant_a.contact,
+                  session=conversation).reason == EXPIRED
+
+
+def test_a_conversation_no_page_has_acted_in_has_no_grant(site, host):
+    from apps.canopy_sessions.services import HOST_GRANTS_KEY
+    from apps.host_grants.host_grants import NONE, lookup
+
+    token_a, grant_a = _page(site)
+    conversation = _start(token_a)
+    Session.objects.filter(pk=conversation.pk).update(metadata={})
+    conversation.refresh_from_db()
+    assert HOST_GRANTS_KEY not in conversation.metadata
+    found = lookup(site["app"], agent=site["agent"], contact=grant_a.contact, session=conversation)
+    assert found.grant is None and found.reason == NONE
+
+
+def test_a_stopped_page_grant_is_revoked_and_no_other_stands_in(site, host):
+    from apps.host_grants.host_grants import REVOKED, lookup, revoke
+
+    token_a, grant_a = _page(site)
+    conversation = _start(token_a)
+    _, grant_b = _page(site)
+    assert revoke(grant_a) == 2, "the page's permission is every live row of it"
+    grant_a.refresh_from_db()
+    assert grant_a.revoked_at is not None and grant_a.access_token_enc == ""
+    conversation.refresh_from_db()
+    found = lookup(site["app"], agent=site["agent"], contact=grant_a.contact, session=conversation)
+    assert found.grant is None and found.reason == REVOKED
+    assert grant_for(site["app"], agent=site["agent"], contact=grant_a.contact) is None
+
+
+def test_outside_a_conversation_an_expired_bound_grant_never_sorts_ahead_of_a_live_one(site, host):
+    _, unbound = _page(site)
+    _, bound = _page(site)
+    HostGrant.objects.filter(pk=bound.pk).update(agent=site["agent"],
+                                                 expires_at=timezone.now() - dt.timedelta(seconds=1))
+    assert grant_for(site["app"], agent=site["agent"], contact=unbound.contact).pk == unbound.pk
 
 
 def test_someone_elses_stamp_on_a_conversation_is_not_their_grant(site, host):
@@ -208,8 +261,10 @@ def test_someone_elses_stamp_on_a_conversation_is_not_their_grant(site, host):
     r = _arrive(site, id_jag=_id_jag(site["priv"], sub="u-99"), sub="u-99")
     other = ContactToken.lookup(r.json()["token"]).host_grant
     conversation.refresh_from_db()
+    # Their page never acted in this conversation: nothing, and never the owner's.
     assert grant_for(site["app"], agent=site["agent"], contact=other.contact,
-                     session=conversation).pk == other.pk
+                     session=conversation) is None
+    assert grant_for(site["app"], agent=site["agent"], contact=other.contact).pk == other.pk
 
 
 def test_a_visitors_expired_grants_go_at_their_next_arrival(site, host):
@@ -230,3 +285,97 @@ def test_a_stamped_grant_bound_to_another_agent_is_never_this_agents(site, host)
     note_host_grant(conversation, grant_a.pk, contact=grant_a.contact)
     assert grant_for(site["app"], agent=site["agent"], contact=grant_a.contact,
                      session=conversation) is None
+
+
+# --- seeing and stopping one's own act-as-you permissions ------------------------------
+
+
+def test_a_contact_sees_their_panels_grant_and_stops_it(site, host):
+    token, grant = _page(site)
+    _, other_tab = _page(site)  # the same page re-minted: one permission, two rows
+    r = _as(token).get("/api/contact/host-grant")
+    assert r.status_code == 200, r.content
+    body = r.json()["grant"]
+    assert body["id"] == grant.pk and body["site"] == "connect-labs" and body["scope"] == "marketplace:read"
+    assert "token" not in json.dumps(body).lower().replace("host-grant", "")
+
+    r = _as(token).delete("/api/contact/host-grant")
+    assert r.status_code == 200 and r.json() == {"grant": None}
+    assert HostGrant.objects.filter(revoked_at__isnull=True).count() == 0
+    assert all(g.access_token_enc == "" for g in HostGrant.objects.all())
+    assert _as(token).get("/api/contact/host-grant").json() == {"grant": None}
+
+
+def test_a_contact_with_no_grant_on_their_token_sees_none(site, host):
+    r = _arrive(site)
+    token = r.json()["token"]
+    assert _as(token).get("/api/contact/host-grant").json() == {"grant": None}
+    assert _as(token).delete("/api/contact/host-grant").json() == {"grant": None}
+
+
+def _user_page(site, user):
+    """An arrival that resolves to `user` (an existing canopy account)."""
+    from apps.contacts import services as contact_services
+
+    import unittest.mock as mock
+
+    with mock.patch.object(contact_services, "resolve_arrival", return_value=user):
+        r = _arrive(site, id_jag=_id_jag(site["priv"]))
+    assert r.status_code == 200 and r.json()["kind"] == "user", r.content
+    return r.json()["token"]
+
+
+def test_a_person_lists_and_stops_their_grants_in_settings(site, host):
+    person = User.objects.create_user("gill", "gill@x.org", "pw")
+    _user_page(site, person)
+    _user_page(site, person)
+    browser = Client()
+    browser.force_login(person)
+    rows = browser.get("/api/me/host-grants/").json()
+    assert len(rows) == 1, "one row per page, however often it re-minted"
+    assert rows[0]["site"] == "connect-labs" and rows[0]["scope"] == "marketplace:read"
+
+    # Someone else's grant is not theirs to see or stop.
+    stranger = User.objects.create_user("stranger", "s@x.org", "pw")
+    other = Client()
+    other.force_login(stranger)
+    assert other.get("/api/me/host-grants/").json() == []
+    assert other.delete(f"/api/me/host-grants/{rows[0]['id']}").status_code == 404
+
+    assert browser.delete(f"/api/me/host-grants/{rows[0]['id']}").status_code == 204
+    assert browser.get("/api/me/host-grants/").json() == []
+    assert not HostGrant.objects.filter(user=person, revoked_at__isnull=True).exists()
+    from apps.events.models import SettingChange
+
+    assert SettingChange.objects.filter(operation__icontains="revoke_my_host_grant").exists()
+
+
+def test_the_users_panel_sees_and_stops_its_own_pages_grant(site, host):
+    person = User.objects.create_user("gill", "gill@x.org", "pw")
+    token = _user_page(site, person)
+    r = _as(token).get("/api/embed/host-grant")
+    assert r.status_code == 200, r.content
+    assert r.json()["grant"]["site"] == "connect-labs"
+    assert _as(token).delete("/api/embed/host-grant").json() == {"grant": None}
+    assert _as(token).get("/api/embed/host-grant").json() == {"grant": None}
+
+
+def test_a_turn_after_the_grant_ran_out_tells_the_person_to_send_again(site, host):
+    from apps.harness.models import Turn
+    from apps.host_grants import host_gateway
+
+    token, grant = _page(site)
+    conversation = _start(token)
+    HostGrant.objects.filter(pk=grant.pk).update(expires_at=timezone.now() - dt.timedelta(seconds=1))
+    _page(site)  # a later page's grant never stands in
+    from apps.agents.interface import parse
+
+    site["agent"].interface = parse({"capabilities": {"connect": {"callers": ["contact"],
+                                                                  "sites": ["connect-labs"]}}})
+    site["agent"].save()
+    turn = Turn.objects.create(chat_session=conversation, prompt="hi", initiator_contact=grant.contact,
+                               initiator_kind="contact", capability="connect")
+    with pytest.raises(host_gateway.GatewayRefusal) as refused:
+        host_gateway.resolve(str(turn.pk))
+    assert refused.value.code == "expired"
+    assert "act as you on this page has ended" in refused.value.message and "ACE" in refused.value.message

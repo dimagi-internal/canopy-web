@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 #: The contract caps an ID-JAG at 300s after `iat`.
 MAX_ID_JAG_LIFETIME = contract.ID_JAG_MAX_LIFETIME
 LEEWAY_SECONDS = contract.LEEWAY_SECONDS
-#: The contract caps a host access token at 900s; a longer claim is clamped,
+#: The contract caps a host access token (30 minutes); a longer claim is clamped,
 #: never trusted — a host bug must not make a visitor's token outlive the visit.
 MAX_TOKEN_SECONDS = contract.ACCESS_TOKEN_MAX_LIFETIME
 ID_JAG_TYP = contract.ID_JAG_TYP
@@ -209,45 +209,134 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     )
 
 
-def grant_for(app, *, agent, contact=None, user=None, session=None):
-    """The visitor's grant at `app` that `agent` may use, or None — the ONE
-    lookup the gateway (a turn) and MCP Apps Views (a viewer) share.
+#: Why `lookup` found no grant: the person has none this conversation may use, the
+#: page's grant ran out, or the person stopped it.
+NONE, EXPIRED, REVOKED = "none", "expired", "revoked"
 
-    With `session`: the grant of the PAGE that last acted in that conversation as
-    this visitor (`canopy_sessions.services.note_host_grant`, stamped by a send, a
-    page-state declaration and the create), while it lives. A host may hold a
-    page's grant to what that page shows, so a conversation on one page must not
-    read through the grant another of the visitor's pages minted more recently.
 
-    Otherwise (no page has acted in it as them, or that grant has expired — no page
-    has acted in it for as long as a grant lives): their latest. A grant bound to
-    `agent` first: the page that chose this agent granted those scopes for it. Then
-    an unbound one (an arrival that named no binding). Never a grant bound to a
-    DIFFERENT agent — a data page's grant, minted for `labsdata`, is not ACE's to
-    spend however recently it was redeemed."""
-    from django.db.models import Q
+class Lookup:
+    """`lookup`'s answer: the grant, or why there is none (`NONE`/`EXPIRED`/`REVOKED`)."""
 
+    __slots__ = ("grant", "reason")
+
+    def __init__(self, grant=None, reason: str = ""):
+        self.grant, self.reason = grant, ("" if grant is not None else (reason or NONE))
+
+
+def live(rows):
+    """The rows of `rows` that can still be used: not expired, not revoked."""
+    return rows.filter(expires_at__gt=timezone.now(), revoked_at__isnull=True)
+
+
+def _principal_rows(app, *, contact=None, user=None):
     from apps.tokens.models import HostGrant
 
     if contact is not None:
-        rows = HostGrant.objects.filter(app=app, contact=contact)
-    elif user is not None:
-        rows = HostGrant.objects.filter(app=app, user=user)
-    else:
-        return None
+        return HostGrant.objects.filter(app=app, contact=contact)
+    if user is not None:
+        return HostGrant.objects.filter(app=app, user=user)
+    return None
+
+
+def lookup(app, *, agent, contact=None, user=None, session=None) -> Lookup:
+    """The visitor's grant at `app` that `agent` may use — the ONE lookup the gateway
+    (a turn) and MCP Apps Views (a viewer) share — or why there is none.
+
+    **In a conversation (`session`): the grant of the PAGE that last acted in it as
+    this person, while it lives, and nothing else.** A page acts by sending, by
+    declaring its page state or actions, by starting the conversation, or by a View
+    call it makes (`canopy_sessions.services.note_host_grant`). A host may hold a
+    page's grant to what that page shows, so a conversation on one page must never
+    read through the grant another of their pages minted — not even once its own
+    has run out: then the answer is `EXPIRED` ("reload the page"), and a stopped
+    grant is `REVOKED`. A page only holds a grant once the person sent from it (the
+    panel asks its host for one then, never on load), so a turn never reaches a
+    grant the person did not trigger.
+
+    **Outside one (`session=None`)**: their latest LIVE grant — one bound to `agent`
+    first (the page that chose this agent granted those scopes for it), then an
+    unbound one (an arrival that named no binding); expired and stopped rows never.
+
+    Never a grant bound to a DIFFERENT agent — a data page's grant, minted for
+    `labsdata`, is not ACE's to spend however recently it was redeemed."""
+    from django.db.models import Q
+
+    rows = _principal_rows(app, contact=contact, user=user)
+    if rows is None:
+        return Lookup(reason=NONE)
     agent_id = getattr(agent, "pk", agent)
-    rows = rows.filter(Q(agent_id=agent_id) | Q(agent__isnull=True)) if agent_id else \
+    usable = rows.filter(Q(agent_id=agent_id) | Q(agent__isnull=True)) if agent_id else \
         rows.filter(agent__isnull=True)
     if session is not None:
         from apps.canopy_sessions.services import page_host_grant_id  # noqa: PLC0415 — as this module's other model reads: loads with a call, never at import
 
         pinned = page_host_grant_id(session, user=user if contact is None else None, contact=contact)
-        if pinned:
-            grant = rows.filter(pk=pinned, expires_at__gt=timezone.now()).first()
-            if grant is not None:
-                return grant
-    # Bound before unbound (NULLs last), then the latest arrival.
-    return rows.order_by(models.F("agent_id").asc(nulls_last=True), "-updated_at").first()
+        if not pinned:
+            return Lookup(reason=NONE)
+        grant = rows.filter(pk=pinned).first()
+        if grant is None:
+            # Pruned: a visitor's expired grants go at their next arrival.
+            return Lookup(reason=EXPIRED)
+        if not usable.filter(pk=pinned).exists():
+            return Lookup(reason=NONE)
+        if grant.revoked_at is not None:
+            return Lookup(reason=REVOKED)
+        if grant.expires_at <= timezone.now():
+            return Lookup(reason=EXPIRED)
+        return Lookup(grant)
+    # Bound before unbound (NULLs last), then the latest arrival — live rows only,
+    # so an expired bound grant can never sort ahead of a live unbound one.
+    grant = live(usable).order_by(models.F("agent_id").asc(nulls_last=True), "-created_at", "-pk").first()
+    return Lookup(grant)
+
+
+def grant_for(app, *, agent, contact=None, user=None, session=None):
+    """`lookup(...).grant`: the grant, or None."""
+    return lookup(app, agent=agent, contact=contact, user=user, session=session).grant
+
+
+# --- seeing and stopping one's own grants -----------------------------------------
+
+
+def same_page(grant):
+    """Every grant that is the same page's permission as `grant`: the same person at
+    the same site, for the same agent (or none), with the same scopes. The panel
+    re-mints while its tab is open, so one page's permission is several rows; a
+    person sees and stops it as one."""
+    from apps.tokens.models import HostGrant
+
+    rows = HostGrant.objects.filter(app_id=grant.app_id, agent_id=grant.agent_id, scope=grant.scope)
+    if grant.contact_id is not None:
+        return rows.filter(contact_id=grant.contact_id)
+    return rows.filter(user_id=grant.user_id, contact__isnull=True)
+
+
+def revoke(grant) -> int:
+    """Stop `grant` and every live grant of the same page (`same_page`), at once: the
+    gateway and Views refuse them from now on (`lookup` → `REVOKED`), and their
+    access tokens are wiped. Returns how many rows it stopped."""
+    return live(same_page(grant)).update(revoked_at=timezone.now(), access_token_enc="")
+
+
+def live_for(*, user=None, contact=None) -> list:
+    """The person's live grants, one per page (`same_page`) — the newest row of each,
+    newest first. A user's are every grant redeemed for their account, whichever
+    site and workspace; a contact's are their own."""
+    from apps.tokens.models import HostGrant
+
+    if contact is not None:
+        rows = HostGrant.objects.filter(contact=contact)
+    elif user is not None and getattr(user, "is_authenticated", False):
+        rows = HostGrant.objects.filter(user=user)
+    else:
+        return []
+    out, seen = [], set()
+    for grant in live(rows).select_related("app", "agent").order_by("-expires_at", "-pk"):
+        key = (grant.app_id, grant.agent_id, grant.scope)
+        if key not in seen:
+            seen.add(key)
+            out.append(grant)
+    return out
 
 
 def record_outcome(app, *, ok: bool, subject: str, code: str = "", detail: str = "",
