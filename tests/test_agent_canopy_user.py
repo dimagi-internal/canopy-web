@@ -40,7 +40,12 @@ def owner(ws):
 
 @pytest.fixture
 def ace_user(ws):
+    """An account at ace's email that someone has signed in to: it may be a person's."""
+    from django.utils import timezone
+
     u = _user("ace", "ace@dimagi-ai.com")
+    u.last_login = timezone.now()
+    u.save(update_fields=["last_login"])
     wsvc.ensure_member(ws, u, WorkspaceMembership.EDITOR)
     return u
 
@@ -72,6 +77,19 @@ def test_with_no_account_at_its_email_canopy_creates_its_login_and_links_it(ws, 
     agent.refresh_from_db()
     assert agent.user.email == "muse@dimagi-ai.com" and agent.user.last_login is None
     assert _put(c, "muse", link=False).json()["canopy_user"] is None
+
+
+def test_an_existing_account_nobody_signed_in_to_links_directly(ws, owner):
+    """No person is behind it to accept: the agent's mailbox account."""
+    agent = _agent(ws, owner, "muse", "muse@dimagi-ai.com")
+    acct = _user("muse-acct", "muse@dimagi-ai.com")
+    wsvc.ensure_member(ws, acct, WorkspaceMembership.EDITOR)
+    raw, _ = PersonalToken.create_for_user(user=owner, label="t")
+    r = _put(Client(), "muse", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 200, r.content
+    assert r.json()["canopy_user_request"] is None
+    agent.refresh_from_db()
+    assert agent.user == acct
 
 
 def test_an_agent_with_no_email_has_no_login(ws, owner):

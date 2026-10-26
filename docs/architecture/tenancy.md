@@ -158,7 +158,8 @@ failure again.
   and never mints.
 - **An agent's own login (`Agent.user`) is an account the agent IS** — its token signs in
   as that account — and it is ALWAYS the account at the agent's own email. canopy creates it
-  when there is none; an existing account there is linked only when its person accepts, in
+  when there is none, and links one nobody has ever signed in to; an account there that has
+  signed in is linked only when its person accepts, in
   their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
   reads as its asker and never writes (`access.md` → "Whose authority an agent acts with").
 - `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a

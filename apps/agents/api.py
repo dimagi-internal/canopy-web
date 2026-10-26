@@ -508,9 +508,11 @@ def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn
     """`link: true` links the agent to its canopy login, which is ALWAYS the canopy
     account at the agent's own email — never any other. With no account there yet,
     canopy creates it (an account nobody signs in to, made a member of the agent's
-    workspace — which takes an admin who may invite) and links it. When the account
-    is yours, it links after a passkey step-up (so only from a browser). When it is
-    anyone else's existing account, it is NOT linked: a request goes to that person
+    workspace — which takes an admin who may invite) and links it. An existing
+    account there that nobody has ever signed in to interactively links at once.
+    When the account is yours, it links after a passkey step-up (so only from a
+    browser). When it is anyone else's account that has signed in, it is NOT
+    linked: a request goes to that person
     (`canopy_user_request` in the answer), who accepts it in their own browser
     (`POST /api/me/agent-login-requests/{id}/accept`), since canopy can't tell an
     agent's mailbox from a person's. `link: false` unlinks. The owner or an admin,

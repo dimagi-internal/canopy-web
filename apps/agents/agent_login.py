@@ -93,10 +93,12 @@ def link_by_email(agent, actor):
 
     - No account at that email: canopy creates it as the agent's login (never signed in
       interactively, `create_agent_login`) and links it.
+    - An existing account nobody has ever signed in to interactively: linked — there
+      is no person behind it to accept.
     - The actor's OWN account (the route stepped them up): linked.
-    - Anyone else's existing account: canopy can't tell an agent mailbox from a
-      person's, so the person holding it must accept, in their browser behind a
-      passkey (`decide_link`)."""
+    - Anyone else's account that HAS signed in: canopy can't tell an agent mailbox
+      from a person's, so the person holding it must accept, in their browser behind
+      a passkey (`decide_link`)."""
     address = (agent.email or "").strip().lower()
     if "@" not in address:
         raise AgentUserLinkError(f"{agent.slug} has no email: its canopy login is the account at "
@@ -112,7 +114,10 @@ def link_by_email(agent, actor):
         create_agent_login(agent, actor, address)
         return None
     _check_linkable(agent, target)
-    if target.pk == getattr(actor, "pk", None):
+    if target.last_login is None or target.pk == getattr(actor, "pk", None):
+        # Nobody has ever signed in to it interactively (tokens never set `last_login`):
+        # there is no person behind it to accept, so it is the agent's mailbox account
+        # (the same rule as migration agents/0096). Or it is the actor's own (stepped up).
         withdraw_pending(agent)
         link_canopy_user(agent, target.pk)
         return None

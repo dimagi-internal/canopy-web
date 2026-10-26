@@ -58,8 +58,10 @@ only under an act-as-you permission you granted.** Three kinds, one meaning each
     never any other (`agent_login.link_by_email`; `services.link_canopy_user` refuses
     any other account). An admin links it, browser or token — gated by role: with no
     account at that email canopy creates one (never signed in interactively) and links
-    it; when the account is the admin's own, after a passkey step-up; when it is anyone
-    else's existing account, canopy can't tell an agent's mailbox from a person's, so a
+    it; an existing account there that nobody has ever signed in to interactively links
+    directly (no person is behind it to accept); when the account is the admin's own,
+    after a passkey step-up; when it is anyone else's account that has signed in, canopy
+    can't tell an agent's mailbox from a person's, so a
     request (`AgentLoginRequest`, 7 days) waits for the person holding it to accept, in
     their own browser behind a passkey step-up (Settings → "Agents asking to use your
     account", `POST /api/me/agent-login-requests/{id}/accept`; a token is refused). A new
