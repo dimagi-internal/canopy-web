@@ -24,6 +24,7 @@ from django.utils import timezone
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
+from .models import Agent, AgentLoginRequest
 from .services import AgentUserLinkError, link_canopy_user
 
 
@@ -87,10 +88,6 @@ def link_or_request(agent, actor, user_id: int | None):
     account (or the actor's OWN account) at once, or for anyone else's existing account
     open a request THAT person must accept (`accept_link`). Returns the pending
     `AgentLoginRequest`, or None when it linked or unlinked. Raises AgentUserLinkError."""
-    from django.contrib.auth import get_user_model
-
-    from .models import AgentLoginRequest
-
     if user_id is None:
         withdraw_pending(agent)
         link_canopy_user(agent, None)
@@ -112,8 +109,6 @@ def link_or_request(agent, actor, user_id: int | None):
 
 def _check_linkable(agent, target) -> None:
     """The same refusals `link_canopy_user` makes, asked BEFORE a request goes to a person."""
-    from .models import Agent
-
     other = Agent.objects.filter(user=target).exclude(pk=agent.pk).first()
     if other is not None:
         raise AgentUserLinkError(f"{target.email} is already the canopy user of '{other.slug}' — "
@@ -123,16 +118,12 @@ def _check_linkable(agent, target) -> None:
 
 
 def withdraw_pending(agent) -> None:
-    from .models import AgentLoginRequest
-
     AgentLoginRequest.objects.filter(agent=agent, status=AgentLoginRequest.PENDING).update(
         status=AgentLoginRequest.WITHDRAWN, decided_at=timezone.now())
 
 
 def pending_request(agent):
     """The agent's open, unexpired request, or None."""
-    from .models import AgentLoginRequest
-
     return (AgentLoginRequest.objects.select_related("user", "requested_by")
             .filter(agent=agent, status=AgentLoginRequest.PENDING, expires_at__gt=timezone.now())
             .first())
@@ -140,8 +131,6 @@ def pending_request(agent):
 
 def pending_for(user):
     """Requests waiting on `user` to make their account an agent's."""
-    from .models import AgentLoginRequest
-
     return list(AgentLoginRequest.objects.select_related("agent", "requested_by")
                 .filter(user=user, status=AgentLoginRequest.PENDING, expires_at__gt=timezone.now()))
 
@@ -150,8 +139,6 @@ def decide_link(request_row, user, *, accept: bool):
     """`user` accepts or declines a request addressed to them. Accepting links their
     account to the agent — re-checked now: the asker must still be an admin of it, and
     the account still linkable. Raises AgentUserLinkError."""
-    from .models import AgentLoginRequest
-
     if request_row.user_id != user.pk or request_row.status != AgentLoginRequest.PENDING \
             or request_row.expires_at <= timezone.now():
         raise AgentUserLinkError("this request is not open, or not yours")

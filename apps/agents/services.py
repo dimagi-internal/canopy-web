@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q
 from django.utils import timezone
@@ -237,8 +238,6 @@ class AgentTokenRefused(Exception):
 
 def agent_token_ttl_days() -> int:
     """How long an agent's own canopy token lives: the PAT default (180 days)."""
-    from django.conf import settings
-
     return int(getattr(settings, "PAT_DEFAULT_TTL_DAYS", 180))
 
 
