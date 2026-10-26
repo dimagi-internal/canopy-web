@@ -211,7 +211,7 @@ export function ChatPanel({
     messages.length > 0 ? messages[messages.length - 1].plaintext.length : 0;
   const queuedCount = state.queued?.length ?? 0;
   const scrollDep = `${messages.length}:${lastMessageLen}:${showPendingReply}:${queuedCount}`;
-  const { containerRef, onScroll, scrollToBottom, away, unseen } = useStickyBottom(scrollDep);
+  const { containerRef, onScroll, onWheel, scrollToBottom, away, unseen } = useStickyBottom(scrollDep);
 
   // Is the newest turn still running? Then its work shows as it happens;
   // once it isn't, the list folds that work into one line above the reply.
@@ -447,6 +447,7 @@ export function ChatPanel({
       <div
         ref={containerRef}
         onScroll={onScroll}
+        onWheel={onWheel}
         tabIndex={-1}
         data-testid="chat-scroll"
         className="h-full overflow-x-hidden overflow-y-auto outline-none"

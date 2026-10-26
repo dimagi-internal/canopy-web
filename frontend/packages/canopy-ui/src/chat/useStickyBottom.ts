@@ -8,14 +8,19 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
  *    scroll container, growth of `dep` (e.g. messages array, streaming
  *    text length) snaps the view to the new bottom.
  *  - When the user has scrolled up to read history, growth does NOT
- *    yank them back. Auto-follow resumes once they scroll back near
- *    the bottom themselves.
+ *    yank them back. Auto-follow resumes once they scroll back down
+ *    near the bottom themselves.
  *
- * The "near bottom" predicate is updated in two places:
- *  - on the user's `scroll` event (so manual scroll-up disables follow)
- *  - immediately after an auto-scroll write (so we stay sticky even
- *    though the scroll event for our own write would temporarily make
- *    `scrollHeight - scrollTop - clientHeight` larger by a few pixels)
+ * ANY move up stops following, however small. Being within `thresholdPx`
+ * is only how close counts when coming back DOWN: if it also counted on
+ * the way up, the first few pixels of a scroll-up still read as "at the
+ * bottom", and a streaming reply snapped the reader back down before
+ * their gesture ever got clear of the zone. For the same reason a wheel
+ * turned upward stops following at once (`onWheel`), before the scroll
+ * event for that gesture has arrived.
+ *
+ * Exactly at the bottom always follows — that is also where the browser
+ * clamps the view when content above shrinks, which is not a move up.
  *
  * Use "instant" scroll behavior for streaming chunks — smooth scroll
  * cannot keep up with high-frequency updates and the view drifts.
@@ -23,6 +28,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
  * Returns:
  *  - `containerRef`: attach to the scrollable element.
  *  - `onScroll`: attach to `onScroll` on the same element.
+ *  - `onWheel`: attach to `onWheel` on the same element.
  *  - `scrollToBottom`: force a snap (e.g. on send).
  *  - `away`: the user has scrolled up off the bottom (offer "Jump to latest").
  *  - `unseen`: and something new arrived since (say "New messages").
@@ -33,6 +39,7 @@ export function useStickyBottom<T>(
 ): {
   containerRef: RefObject<HTMLDivElement | null>;
   onScroll: () => void;
+  onWheel: (e: { deltaY: number }) => void;
   scrollToBottom: () => void;
   away: boolean;
   unseen: boolean;
@@ -41,42 +48,50 @@ export function useStickyBottom<T>(
   const containerRef = useRef<HTMLDivElement>(null);
   // Default true: when the container first mounts there's no history
   // to read, so the user is "at the bottom" by definition.
-  const wasNearBottomRef = useRef(true);
+  const followRef = useRef(true);
+  // Where the last scroll event left the view, to tell a move up from down.
+  const lastTopRef = useRef(0);
   const [away, setAway] = useState(false);
   const [unseen, setUnseen] = useState(false);
 
-  const isNearBottom = useCallback(
-    (el: HTMLElement): boolean =>
-      el.scrollHeight - el.scrollTop - el.clientHeight < thresholdPx,
-    [thresholdPx],
-  );
+  const setFollow = useCallback((follow: boolean) => {
+    followRef.current = follow;
+    setAway(!follow);
+    if (follow) setUnseen(false);
+  }, []);
 
   const onScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const near = isNearBottom(el);
-    wasNearBottomRef.current = near;
-    setAway(!near);
-    if (near) setUnseen(false);
-  }, [isNearBottom]);
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const movedUp = el.scrollTop < lastTopRef.current;
+    lastTopRef.current = el.scrollTop;
+    if (fromBottom <= 1) setFollow(true);
+    else if (movedUp) setFollow(false);
+    else setFollow(fromBottom < thresholdPx);
+  }, [thresholdPx, setFollow]);
+
+  const onWheel = useCallback((e: { deltaY: number }) => {
+    if (e.deltaY < 0) setFollow(false);
+  }, [setFollow]);
 
   const scrollToBottom = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    wasNearBottomRef.current = true;
-    setAway(false);
-    setUnseen(false);
-  }, []);
+    lastTopRef.current = el.scrollTop;
+    setFollow(true);
+  }, [setFollow]);
 
   useEffect(() => {
     if (!enabled) return;
     const el = containerRef.current;
     if (!el) return;
-    if (wasNearBottomRef.current) {
+    if (followRef.current) {
       // "instant" by direct scrollTop write — smooth scroll falls
       // behind during streaming and the view drifts.
       el.scrollTop = el.scrollHeight;
+      lastTopRef.current = el.scrollTop;
     } else {
       // Not followed, so say it: the person is reading history and something
       // new landed below them.
@@ -87,5 +102,5 @@ export function useStickyBottom<T>(
     // the last message's content length).
   }, [dep, enabled]);
 
-  return { containerRef, onScroll, scrollToBottom, away, unseen };
+  return { containerRef, onScroll, onWheel, scrollToBottom, away, unseen };
 }
