@@ -59,6 +59,10 @@ a box's own agent unit and is asked in the same places (`routing.unit_refusal`,
 `turn_unit_refusal`, `runner_target_q`), so the claim, turn status, the unclaimable
 report, the vault and what the box prepares all agree.
 
+**A runner's name** is what people see, changed on its Settings tab (`PUT /api/harness/runners/{id}/name`,
+owner or runner admin). The box keeps the name it paired as (`Runner.paired_as`); pair-by-role and unit
+pairing match on either, so a replaced instance still re-attaches to a renamed runner.
+
 **Directed only** is a runner setting (`Runner.directed`; the runner page,
 `PUT /api/harness/runners/{id}/directed`, owner or runner admin), never something the
 box declares. A test box (`up.sh --test`) pairs with it on: its invitation carries

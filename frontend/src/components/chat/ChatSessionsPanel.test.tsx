@@ -51,6 +51,7 @@ function fleetRunner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut 
   return {
     id,
     name: `Runner ${id}`,
+    paired_as: `Runner ${id}`,
     kind: 'emdash',
     engine: 'emdash',
     status: 'online',

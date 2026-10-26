@@ -5,6 +5,7 @@ import { Section } from '@/components/objectPage/settingsLayout'
 import { RunnerAdmins } from '@/components/supervisor/RunnerAdmins'
 import { boxLoginAccount, RunnerCredentials } from '@/components/supervisor/RunnerCredentials'
 import { RunnerDirected } from '@/components/supervisor/RunnerDirected'
+import { RunnerName } from '@/components/supervisor/RunnerName'
 import { RunnerEgress } from '@/components/supervisor/RunnerEgress'
 import { RunnerEngine } from '@/components/supervisor/RunnerEngine'
 import { RunnerFlags } from '@/components/supervisor/RunnerFlags'
@@ -128,6 +129,7 @@ export function RunnerSettingsTab({ runner, onChanged, onRetired }: RunnerOutlet
     <div>
       <Section id="settings" title="Settings">
         <div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-card px-3" data-testid="runner-settings">
+          {runner.can_administer && <RunnerName runner={runner} onChange={onChanged} />}
           {runner.can_manage && <RunnerPause runner={runner} onChanged={onChanged} />}
           <RunnerSessions runner={runner} onChanged={onChanged} />
           {runner.can_administer && <RunnerFlags runner={runner} onChange={onChanged} />}

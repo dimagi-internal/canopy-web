@@ -10466,6 +10466,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/name": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Rename this runner
+         * @description The name people see for this runner everywhere in canopy. Owner or a runner
+         *     administrator. Routing, pins and the vault follow the runner, not its name, so
+         *     nothing else changes. The box keeps the name it paired as (`paired_as`).
+         */
+        readonly put: operations["set_runner_name"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/only-agents": {
         readonly parameters: {
             readonly query?: never;
@@ -32545,6 +32567,11 @@ export interface components {
             readonly id: string;
             /** Name */
             readonly name: string;
+            /**
+             * Paired As
+             * @default
+             */
+            readonly paired_as: string;
             /** Kind */
             readonly kind: string;
             /**
@@ -33433,6 +33460,11 @@ export interface components {
         readonly RunnerDirectedIn: {
             /** Directed */
             readonly directed: boolean;
+        };
+        /** RunnerNameIn */
+        readonly RunnerNameIn: {
+            /** Name */
+            readonly name: string;
         };
         /** RunnerAgentChoiceOut */
         readonly RunnerAgentChoiceOut: {
@@ -53674,6 +53706,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["RunnerDirectedIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOut"];
+                };
+            };
+        };
+    };
+    readonly set_runner_name: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerNameIn"];
             };
         };
         readonly responses: {

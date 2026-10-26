@@ -198,6 +198,10 @@ class RunnerDirectedIn(Schema):
     directed: bool
 
 
+class RunnerNameIn(Schema):
+    name: str = Field(min_length=1, max_length=100)
+
+
 class RunnerAgentChoiceOut(Schema):
     slug: str
     name: str
@@ -316,6 +320,8 @@ def _enrolled_roots(obj) -> list[str]:
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
+    # The name the box paired as; differs from `name` once a person renames it.
+    paired_as: str = ""
     kind: str
     # The session runtime this (laptop) runner opens NEW sessions in — emdash,
     # claude-desktop or claude-cli. The runner reads it off its own heartbeat response, so this

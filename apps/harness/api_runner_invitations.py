@@ -368,7 +368,8 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
         # The same role, a new instance (`up.sh --allow-instance-change`): the role
         # IS the box's identity and a person already approved it. Only as the name
         # it was approved for — a role cannot pair as a second runner.
-        if existing.runner.name != payload.name:
+        # A person may have renamed it since; the box still asks as `paired_as`.
+        if payload.name not in (existing.runner.name, existing.runner.paired_as):
             raise _refuse_pairing(f"{role_arn} is already {existing.runner.name}, not {payload.name}")
         # The verified role IS the machine (`Runner.machine_id`): a runner paired
         # before the field existed learns it here.

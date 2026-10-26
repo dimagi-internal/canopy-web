@@ -81,6 +81,7 @@ from .schemas import (
     RunnerCredentialResolveOut,
     RunnerCredentialStatusOut,
     RunnerDirectedIn,
+    RunnerNameIn,
     RunnerEgressIn,
     RunnerEngineIn,
     RunnerEnrollmentIn,
@@ -1044,6 +1045,33 @@ def set_runner_directed(request: HttpRequest, runner_id: uuid.UUID, payload: Run
         runner.save(update_fields=["directed"])
     events_audit.note_change(scope=f"runner-directed:{runner.name}", before=before,
                              after={"directed": runner.directed}, workspace=runner.workspace)
+    out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
+           .prefetch_related("declared_flags").get(pk=runner.pk))
+    out.can_manage = out.owner_id in (request.user.id, None)
+    out.can_administer = harness_runners.can_administer_runner(request.user, out)
+    return _with_roots(request, out)
+
+
+@router.put("/runners/{runner_id}/name", response=RunnerOut,
+            summary="Rename this runner")
+@gate("runner-admin", setting=True)
+def set_runner_name(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerNameIn):
+    """The name people see for this runner everywhere in canopy. Owner or a runner
+    administrator. Routing, pins and the vault follow the runner, not its name, so
+    nothing else changes. The box keeps the name it paired as (`paired_as`)."""
+    # Pairing matches on `paired_as` as well as `name` (api_runner_invitations
+    # pair_by_role, unit_pairing._machine_runner), so a replaced instance still
+    # re-attaches to a renamed runner.
+    runner = runner_admin_or_404(request, runner_id)
+    name = payload.name.strip()
+    if not name:
+        raise HttpError(422, "a runner's name cannot be blank")
+    before = {"name": runner.name}
+    if runner.name != name:
+        runner.name = name
+        runner.save(update_fields=["name"])
+    events_audit.note_change(scope=f"runner-name:{runner.pk}", before=before,
+                             after={"name": runner.name}, workspace=runner.workspace)
     out = (Runner.objects.select_related("owner", "paused_by", "private_runner")
            .prefetch_related("declared_flags").get(pk=runner.pk))
     out.can_manage = out.owner_id in (request.user.id, None)
