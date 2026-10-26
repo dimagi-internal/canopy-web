@@ -10273,6 +10273,56 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/sessions/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The sessions open on this runner, facts only (owner and admins)
+         * @description Every session counted in this runner's `open_sessions`, whoever's it is: who
+         *     started it and how, its turns, when it last did anything, and `open_reason` —
+         *     the check that holds it open (`staleness.OPEN_REASONS`). Never a title, prompt
+         *     or message: the words stay with the people in the conversation, and this is what
+         *     the people who keep the box need to understand and tidy it. Longest-quiet first,
+         *     at most 500. See `apps/harness/runner_sessions.py`.
+         */
+        readonly get: operations["list_runner_sessions"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/sessions/{session_id}/close": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Close an idle session on this runner (owner and admins)
+         * @description Close one session open on this box, as housekeeping: the same close as the
+         *     session's own `/close`, for the people trusted with emptying the box (who may
+         *     already move it off, `access.may_move`). Refuses one in use — a turn running, a
+         *     question waiting, or mid-transfer (`reason: "in_use:<open reason>"`) — since that
+         *     would end somebody's live conversation. `not_open` when it is not open here.
+         *     A cloud session's close is an archive, which `/unarchive` undoes.
+         */
+        readonly post: operations["close_runner_session"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/admins/{user_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -33229,6 +33279,103 @@ export interface components {
             readonly email: string;
         };
         /**
+         * RunnerOpenSessionOut
+         * @description One open session on a runner, for the box's owner and admins: facts only —
+         *     no title, prompt or message (`apps/harness/runner_sessions.py`).
+         */
+        readonly RunnerOpenSessionOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Origin */
+            readonly origin: string;
+            /** Open Reason */
+            readonly open_reason: string;
+            readonly started_by?: components["schemas"]["RunnerOpenSessionStarter"] | null;
+            /**
+             * First Turn Origin
+             * @default
+             */
+            readonly first_turn_origin: string;
+            /**
+             * First Turn Mode
+             * @default
+             */
+            readonly first_turn_mode: string;
+            /**
+             * Turns
+             * @default 0
+             */
+            readonly turns: number;
+            /**
+             * Question Waiting
+             * @default false
+             */
+            readonly question_waiting: boolean;
+            /** Transferred At */
+            readonly transferred_at?: string | null;
+            /**
+             * Sensitive
+             * @default false
+             */
+            readonly sensitive: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Last Activity At */
+            readonly last_activity_at?: string | null;
+        };
+        /**
+         * RunnerOpenSessionStarter
+         * @description Who started a session: `kind` is `initiator.KINDS` (user, contact, system,
+         *     agent). An agent's own login is reported as `agent`, with its slug.
+         */
+        readonly RunnerOpenSessionStarter: {
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Email
+             * @default
+             */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+        };
+        /** RunnerOpenSessionCloseOut */
+        readonly RunnerOpenSessionCloseOut: {
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Closing
+             * @default false
+             */
+            readonly closing: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+        };
+        /**
          * RunnerEnrollmentOut
          * @description One workspace this runner has opted in to serving (`RunnerEnrollment`).
          *
@@ -53324,6 +53471,51 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerAdminOut"];
+                };
+            };
+        };
+    };
+    readonly list_runner_sessions: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["RunnerOpenSessionOut"][];
+                };
+            };
+        };
+    };
+    readonly close_runner_session: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly session_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerOpenSessionCloseOut"];
                 };
             };
         };
