@@ -15,6 +15,8 @@ from django.db import models
 from django.utils import timezone
 from apps.common.token_hash import hash_token
 
+from . import clis
+
 # Owned here (not services.py) so Runner.live_status can use it without a
 # models -> services import cycle (services already imports models). services.py
 # imports this constant from here rather than declaring a second one.
@@ -744,6 +746,9 @@ class Turn(models.Model):
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/interface.py::capability_for`.
     capability = models.CharField(max_length=48, blank=True, default="")
+    # The agent CLI this turn ran on (`clis.CLIS`), chosen once at the claim by
+    # `clis.choose`; "" until claimed.
+    cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     # A follow-up DELIVERED INTO a conversation's running turn rather than queued
     # behind it (canopy-web#1153): the runner holding that turn typed it into the
     # live session, where Claude Code takes it mid-turn or right after, as it
@@ -1334,6 +1339,10 @@ class RunnerLogin(models.Model):
     # db_default as well: code from before the list, still serving mid-deploy,
     # inserts login rows without these columns.
     kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=LOGIN, db_default=LOGIN)
+    #: Which agent CLI this credential signs in (`clis.CLIS`). The box keeps one
+    #: cascade per CLI, in this list's order.
+    cli = models.CharField(max_length=32, choices=clis.CHOICES, default=clis.CLAUDE_CODE,
+                           db_default=clis.CLAUDE_CODE)
     position = models.PositiveIntegerField(default=0)
     #: A token's or API key's name, as a person gave it. Not a secret.
     name = models.CharField(max_length=200, blank=True, default="", db_default="")
