@@ -54,13 +54,17 @@ only under an act-as-you permission you granted.** Three kinds, one meaning each
     keep their capability's own tool list. A **repo chat** (no agent: a person's own
     Claude Code session on a repo they chose) is that person's own tool, and its token
     keeps every tool, as them.
-  - **A person's account becomes an agent's login only when they say so.** An admin
-    (browser or token — gated by role) links a fresh account made for the agent (one
-    nobody has signed in to) directly, or their own after a passkey step-up (so only
-    from a browser); anyone else's existing account gets a request
-    (`AgentLoginRequest`, 7 days) that ONLY that person accepts, in their own browser
-    behind a passkey step-up (Settings → "Agents asking to use your account",
-    `POST /api/me/agent-login-requests/{id}/accept`; a token is refused).
+  - **An agent's canopy login is always the account at its own email** (`Agent.email`),
+    never any other (`agent_login.link_by_email`; `services.link_canopy_user` refuses
+    any other account). An admin links it, browser or token — gated by role: with no
+    account at that email canopy creates one (never signed in interactively) and links
+    it; when the account is the admin's own, after a passkey step-up; when it is anyone
+    else's existing account, canopy can't tell an agent's mailbox from a person's, so a
+    request (`AgentLoginRequest`, 7 days) waits for the person holding it to accept, in
+    their own browser behind a passkey step-up (Settings → "Agents asking to use your
+    account", `POST /api/me/agent-login-requests/{id}/accept`; a token is refused). A new
+    `Agent.email` unlinks the old account and derives the link again; an agent with no
+    email has no login.
   - **An agent's 1Password-held token is watched.** canopy cannot rotate a token it does
     not store, so within 14 days of its expiry (with no automatic rotation) the agent's
     admins get an alert naming how to re-mint it (`alerts_agent_token.py`).

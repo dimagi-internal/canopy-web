@@ -1,4 +1,5 @@
-"""An agent is linked to the canopy user it IS (`Agent.user`); one user, one instance.
+"""An agent's canopy login (`Agent.user`) is ALWAYS the account at its own email; one
+user, one instance. An existing account there is linked only when its person accepts.
 
 It was only ever set by migration `agents/0022`, matching on `Agent.email`, so
 echo, ace and eva — created with a blank email — had no link and no way to get
@@ -44,162 +45,151 @@ def ace_user(ws):
     return u
 
 
-def _agent(ws, owner, slug):
-    return Agent.objects.create(slug=slug, name=slug, workspace=ws, owner=owner)
+def _agent(ws, owner, slug, email=""):
+    return Agent.objects.create(slug=slug, name=slug, workspace=ws, owner=owner, email=email)
 
 
-def _put(client, slug, user):
-    body = {"user_id": user.pk if user is not None else None}
-    return client.put(f"/api/agents/{slug}/canopy-user", body, content_type="application/json")
+def _put(client, slug, link=True, **headers):
+    return client.put(f"/api/agents/{slug}/canopy-user", {"link": link},
+                      content_type="application/json", **headers)
 
 
-def test_the_owner_links_the_agents_canopy_user_and_its_blank_email_is_filled(ws, owner, ace_user):
-    agent = _agent(ws, owner, "ace")
+def _signed_in(user):
+    from django.utils import timezone
+
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
+    return user
+
+
+def test_with_no_account_at_its_email_canopy_creates_its_login_and_links_it(ws, owner):
+    agent = _agent(ws, owner, "muse", "muse@dimagi-ai.com")
     c = Client()
     c.force_login(owner)
-    r = _put(c, "ace", ace_user)
+    r = _put(c, "muse")
     assert r.status_code == 200, r.content
-    assert r.json()["canopy_user"]["email"] == "ace@dimagi-ai.com"
+    assert r.json()["canopy_user"]["email"] == "muse@dimagi-ai.com"
     agent.refresh_from_db()
-    assert agent.user == ace_user and agent.email == "ace@dimagi-ai.com"
-
-    assert _put(c, "ace", None).json()["canopy_user"] is None
-    agent.refresh_from_db()
-    assert agent.user is None
+    assert agent.user.email == "muse@dimagi-ai.com" and agent.user.last_login is None
+    assert _put(c, "muse", link=False).json()["canopy_user"] is None
 
 
-def test_one_canopy_user_is_one_instance(ws, owner, ace_user):
-    """Of several ACE instances, exactly one can BE ace@dimagi-ai.com — and the
-    refusal says which one already is."""
-    _agent(ws, owner, "ace")
-    _agent(ws, owner, "ace-staging")
+def test_an_agent_with_no_email_has_no_login(ws, owner):
+    _agent(ws, owner, "labsdata")
     c = Client()
     c.force_login(owner)
-    assert _put(c, "ace", ace_user).status_code == 200
-    r = _put(c, "ace-staging", ace_user)
-    assert r.status_code == 422
-    assert "already the canopy user of 'ace'" in r.content.decode()
+    r = _put(c, "labsdata")
+    assert r.status_code == 422 and "no email" in r.content.decode()
 
 
-def test_a_login_from_another_workspace_is_refused(ws, owner):
-    _agent(ws, owner, "ace")
-    outsider = _user("stranger", "stranger@elsewhere.org")
-    wsvc.ensure_member(a_workspace("elsewhere"), outsider, WorkspaceMembership.OWNER)
-    c = Client()
-    c.force_login(owner)
-    r = _put(c, "ace", outsider)
-    assert r.status_code == 422 and "not a member" in r.content.decode()
+def test_a_token_links_by_role_too(ws, owner):
+    _agent(ws, owner, "muse", "muse@dimagi-ai.com")
+    raw, _ = PersonalToken.create_for_user(user=owner, label="t")
+    r = _put(Client(), "muse", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 200, r.content
+    assert Agent.objects.get(slug="muse").user.email == "muse@dimagi-ai.com"
 
 
-def test_only_the_owner_or_an_admin(ws, owner, ace_user):
-    _agent(ws, owner, "ace")
+def test_only_the_owner_or_an_admin(ws, owner):
+    _agent(ws, owner, "muse", "muse@dimagi-ai.com")
     member = _user("mo")
     wsvc.ensure_member(ws, member, WorkspaceMembership.EDITOR)
     c = Client()
     c.force_login(member)
-    assert _put(c, "ace", ace_user).status_code == 403
-
-    # The owner's own TOKEN may do it too (MCP does everything; gated by role).
-    raw, _ = PersonalToken.create_for_user(user=owner, label="t")
-    r = Client().put("/api/agents/ace/canopy-user", {"user_id": ace_user.pk},
-                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 200, r.content
-    assert Agent.objects.get(slug="ace").user == ace_user
+    assert _put(c, "muse").status_code == 403
 
 
-def test_a_token_asks_for_a_persons_account_but_never_links_it(ws, owner):
-    _agent(ws, owner, "ace")
-    pat = _person(ws, "pat")
-    raw, _ = PersonalToken.create_for_user(user=owner, label="t")
-    r = Client().put("/api/agents/ace/canopy-user", {"user_id": pat.pk},
-                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 200, r.content
-    assert r.json()["canopy_user"] is None
-    assert r.json()["canopy_user_request"]["user_email"] == "pat@dimagi.com"
-    # Linking the admin's OWN signed-in account needs a passkey, which a token never has.
-    from django.utils import timezone
-
-    owner.last_login = timezone.now()
-    owner.save(update_fields=["last_login"])
-    r = Client().put("/api/agents/ace/canopy-user", {"user_id": owner.pk},
-                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 403
-    assert Agent.objects.get(slug="ace").user is None
-
-
-def _person(ws, name):
-    """An account someone has signed in to — it may be a person's."""
-    from django.utils import timezone
-
-    u = _user(name, f"{name}@dimagi.com")
-    u.last_login = timezone.now()
-    u.save(update_fields=["last_login"])
-    wsvc.ensure_member(ws, u, WorkspaceMembership.EDITOR)
-    return u
-
-
-def test_a_persons_account_is_linked_only_when_they_accept(ws, owner):
+def test_an_existing_account_at_its_email_is_linked_only_when_its_person_accepts(ws, owner, ace_user):
     from apps.passkeys.testing import grant_step_up
 
-    agent = _agent(ws, owner, "ace")
-    pat = _person(ws, "pat")
+    agent = _agent(ws, owner, "ace", "ace@dimagi-ai.com")
     c = Client()
     c.force_login(owner)
-    r = _put(c, "ace", pat)
+    r = _put(c, "ace")
     assert r.status_code == 200, r.content
-    body = r.json()
-    assert body["canopy_user"] is None
-    assert body["canopy_user_request"]["user_email"] == "pat@dimagi.com"
-    agent.refresh_from_db()
-    assert agent.user is None
+    assert r.json()["canopy_user"] is None
+    assert r.json()["canopy_user_request"]["user_email"] == "ace@dimagi-ai.com"
 
-    # Pat sees it; a token cannot accept for them, and a browser needs a step-up.
     me = Client()
-    me.force_login(pat)
+    me.force_login(ace_user)
     [req] = me.get("/api/me/agent-login-requests/").json()
-    raw, _ = PersonalToken.create_for_user(user=pat, label="t")
+    raw, _ = PersonalToken.create_for_user(user=ace_user, label="t")
     assert Client().post(f"/api/me/agent-login-requests/{req['id']}/accept",
                          HTTP_AUTHORIZATION=f"Bearer {raw}").status_code == 403
     assert me.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code == 403
-    # Nobody else can accept it.
     other = Client()
     other.force_login(owner)
     grant_step_up(other)
     assert other.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code == 404
     grant_step_up(me)
-    r = me.post(f"/api/me/agent-login-requests/{req['id']}/accept")
-    assert r.status_code == 200, r.content
+    assert me.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code == 200
     agent.refresh_from_db()
-    assert agent.user == pat
-    assert me.get("/api/me/agent-login-requests/").json() == []
+    assert agent.user == ace_user
 
 
-def test_a_declined_request_links_nothing(ws, owner):
-    agent = _agent(ws, owner, "ace")
-    pat = _person(ws, "pat")
+def test_a_declined_request_links_nothing(ws, owner, ace_user):
+    agent = _agent(ws, owner, "ace", "ace@dimagi-ai.com")
     c = Client()
     c.force_login(owner)
-    _put(c, "ace", pat)
+    _put(c, "ace")
     me = Client()
-    me.force_login(pat)
+    me.force_login(ace_user)
     [req] = me.get("/api/me/agent-login-requests/").json()
     assert me.post(f"/api/me/agent-login-requests/{req['id']}/decline").status_code == 200
     agent.refresh_from_db()
     assert agent.user is None
-    assert me.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code in (403, 422)
 
 
-def test_an_admin_links_their_own_signed_in_account_after_a_step_up(ws, owner):
-    from apps.passkeys.testing import grant_step_up
-
-    agent = _agent(ws, owner, "ace")
+def test_one_canopy_user_is_one_instance(ws, owner, ace_user):
+    _agent(ws, owner, "ace", "ace@dimagi-ai.com")
+    Agent.objects.filter(slug="ace").update(user=ace_user)
+    _agent(ws, owner, "ace-staging", "ace@dimagi-ai.com")
     c = Client()
     c.force_login(owner)
-    assert _put(c, "ace", owner).status_code == 403  # step_up_required
+    r = _put(c, "ace-staging")
+    assert r.status_code == 422
+    assert "already the canopy user of 'ace'" in r.content.decode()
+
+
+def test_an_admin_whose_own_account_is_at_the_email_steps_up(ws, owner):
+    from apps.passkeys.testing import grant_step_up
+
+    agent = _agent(ws, owner, "olive-bot", owner.email)
+    _signed_in(owner)
+    raw, _ = PersonalToken.create_for_user(user=owner, label="t")
+    assert _put(Client(), "olive-bot", HTTP_AUTHORIZATION=f"Bearer {raw}").status_code == 403
+    c = Client()
+    c.force_login(owner)
+    assert _put(c, "olive-bot").status_code == 403  # step_up_required
     grant_step_up(c)
-    assert _put(c, "ace", owner).status_code == 200
+    assert _put(c, "olive-bot").status_code == 200
     agent.refresh_from_db()
     assert agent.user == owner
+
+
+def test_a_new_email_unlinks_the_old_login_and_derives_the_new_one(ws, owner, ace_user):
+    agent = _agent(ws, owner, "ace", "ace@dimagi-ai.com")
+    Agent.objects.filter(pk=agent.pk).update(user=ace_user)
+    c = Client()
+    c.force_login(owner)
+    r = c.post("/api/agents/", {"slug": "ace", "name": "ace", "email": "ace2@dimagi-ai.com"},
+               content_type="application/json")
+    assert r.status_code == 201, r.content
+    agent.refresh_from_db()
+    assert agent.user is not None and agent.user.email == "ace2@dimagi-ai.com"
+    # A re-upsert with no email leaves the login alone.
+    r = c.post("/api/agents/", {"slug": "ace", "name": "ace", "email": ""},
+               content_type="application/json")
+    agent.refresh_from_db()
+    assert agent.user is not None
+
+
+def test_another_accounts_link_is_refused_by_the_service(ws, owner, ace_user):
+    from apps.agents import services
+
+    _agent(ws, owner, "muse", "muse@dimagi-ai.com")
+    with pytest.raises(services.AgentUserLinkError, match="account at its own email"):
+        services.link_canopy_user(Agent.objects.get(slug="muse"), ace_user.pk)
 
 
 def test_the_agents_token_expires():
@@ -219,3 +209,24 @@ def test_the_agents_token_expires():
     assert token.expires_at is not None
     days = (token.expires_at - timezone.now()).days
     assert abs(days - settings.PAT_DEFAULT_TTL_DAYS) <= 1
+
+
+def test_the_migration_links_only_unambiguous_never_signed_in_accounts(ws, owner, ace_user):
+    import importlib
+
+    from django.apps import apps as global_apps
+
+    mig = importlib.import_module("apps.agents.migrations.0096_link_logins_at_agent_email")
+    muse = _agent(ws, owner, "muse", "Muse@dimagi-ai.com")
+    _user("muse-acct", "muse@dimagi-ai.com")
+    person = _agent(ws, owner, "pal", "pal@dimagi.com")
+    _signed_in(_user("pal", "pal@dimagi.com"))
+    taken = _agent(ws, owner, "ace2", "ace@dimagi-ai.com")
+    Agent.objects.create(slug="ace", name="ace", workspace=ws, owner=owner, email="ace@dimagi-ai.com",
+                         user=ace_user)
+    mig.link(global_apps, None)
+    for a in (muse, person, taken):
+        a.refresh_from_db()
+    assert muse.user.email == "muse@dimagi-ai.com"
+    assert person.user is None      # signed in interactively: may be a person's
+    assert taken.user is None       # already another agent's login

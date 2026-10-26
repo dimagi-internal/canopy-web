@@ -705,8 +705,9 @@ class AgentInterfaceOut(StrictModel):
 
 
 class AgentCanopyUserIn(StrictModel):
-    # None unlinks.
-    user_id: int | None
+    #: True links the agent to the canopy account at its own email (the only account
+    #: that can be its login); false unlinks it.
+    link: bool
 
 
 class AgentLoginRequestOut(StrictModel):

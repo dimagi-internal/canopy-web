@@ -470,15 +470,14 @@ export async function transferAgentOwner(slug: string, userId: number | null): P
   return unwrap(res, 'transferAgentOwner') as unknown as AgentDetailOut
 }
 
-/** Link this agent to the canopy user it IS (null unlinks). The agent's owner or
- *  an admin, in the browser. A fresh account made for the agent (or your own) links
- *  at once; anyone else's existing account gets a request THEY accept
- *  (`canopy_user_request` on the answer). A refusal carries its reason (already
- *  another instance's user, not a workspace member), which is what the control shows. */
-export async function linkAgentCanopyUser(slug: string, userId: number | null): Promise<AgentDetailOut> {
+/** Link this agent to its canopy login — always the account at its own email — or
+ *  unlink it. The agent's owner or an admin. With no account at that email canopy
+ *  creates one; an existing account there gets a request its person accepts
+ *  (`canopy_user_request` on the answer). A refusal carries its reason. */
+export async function linkAgentCanopyUser(slug: string, link: boolean): Promise<AgentDetailOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/canopy-user', {
     params: { path: { slug } },
-    body: { user_id: userId },
+    body: { link },
   })
   return unwrap(res, 'Could not change the canopy user') as unknown as AgentDetailOut
 }

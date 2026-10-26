@@ -3576,15 +3576,17 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Link this agent to the canopy user it is
-         * @description The canopy user account this agent's own token signs in as. `user_id`
-         *     null unlinks it. A fresh account made for the agent (one nobody has ever
-         *     signed in to) is linked at once. Your own signed-in account is linked after a
-         *     passkey step-up, so only from a browser. Anyone else's existing account is
-         *     NOT linked: a request goes to that person (`canopy_user_request` in the
-         *     answer), who accepts it in their own browser
-         *     (`POST /api/me/agent-login-requests/{id}/accept`), since the agent would then
-         *     act as them. The owner or an admin, from the browser or with a token.
+         * Link this agent to the canopy account at its own email
+         * @description `link: true` links the agent to its canopy login, which is ALWAYS the canopy
+         *     account at the agent's own email — never any other. With no account there yet,
+         *     canopy creates it (an account nobody signs in to, made a member of the agent's
+         *     workspace — which takes an admin who may invite) and links it. When the account
+         *     is yours, it links after a passkey step-up (so only from a browser). When it is
+         *     anyone else's existing account, it is NOT linked: a request goes to that person
+         *     (`canopy_user_request` in the answer), who accepts it in their own browser
+         *     (`POST /api/me/agent-login-requests/{id}/accept`), since canopy can't tell an
+         *     agent's mailbox from a person's. `link: false` unlinks. The owner or an admin,
+         *     from the browser or with a token. 422 when the agent has no email.
          */
         readonly put: operations["link_canopy_user"];
         readonly post?: never;
@@ -21887,8 +21889,8 @@ export interface components {
         };
         /** AgentCanopyUserIn */
         readonly AgentCanopyUserIn: {
-            /** User Id */
-            readonly user_id: number | null;
+            /** Link */
+            readonly link: boolean;
         };
         /** AgentCanopyTokenOut */
         readonly AgentCanopyTokenOut: {

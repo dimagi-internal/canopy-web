@@ -44,7 +44,8 @@ def create_agent_login(agent, actor, address: str):
     if get_user_model().objects.filter(email__iexact=address).exists():
         raise AgentLoginRefused(
             f"{address} is already a canopy user. This only CREATES an agent's login; to use "
-            f"that account, link it on {agent.slug}'s settings (canopy user) first", 409)
+            f"that account, link it on {agent.slug}'s settings (canopy user) — the person "
+            "holding it accepts", 409)
     with transaction.atomic():
         user = get_user_model().objects.create_user(username=address, email=address)
         user.set_unusable_password()
@@ -76,27 +77,42 @@ def follow_agent(agent, actor, dest) -> bool:
 LINK_REQUEST_TTL = dt.timedelta(days=7)
 
 
-def is_fresh_login(user) -> bool:
-    """An account nobody has signed in to interactively — one made for an agent
-    (`create_agent_login`, `create_token --create-user`). Tokens never set `last_login`;
-    only a browser sign-in does, so an account with it set may be a person's."""
-    return user.last_login is None
-
-
-def link_or_request(agent, actor, user_id: int | None):
-    """What an admin's "link this canopy user" does: unlink (None), link a fresh agent
-    account (or the actor's OWN account) at once, or for anyone else's existing account
-    open a request THAT person must accept (`accept_link`). Returns the pending
-    `AgentLoginRequest`, or None when it linked or unlinked. Raises AgentUserLinkError."""
-    if user_id is None:
-        withdraw_pending(agent)
-        link_canopy_user(agent, None)
+def account_at_email(agent):
+    """The active canopy account at the agent's own email (`Agent.email`), or None."""
+    address = (agent.email or "").strip()
+    if "@" not in address:
         return None
-    target = get_user_model().objects.filter(pk=user_id, is_active=True).first()
+    return get_user_model().objects.filter(email__iexact=address, is_active=True).order_by("pk").first()
+
+
+def link_by_email(agent, actor):
+    """Link the agent to its canopy login: ALWAYS the account at its own email
+    (`Agent.email`), never any other. Returns the pending `AgentLoginRequest` when the
+    person holding that account must accept, else None (linked). Raises
+    AgentUserLinkError, or AgentLoginRefused when creating the account is refused.
+
+    - No account at that email: canopy creates it as the agent's login (never signed in
+      interactively, `create_agent_login`) and links it.
+    - The actor's OWN account (the route stepped them up): linked.
+    - Anyone else's existing account: canopy can't tell an agent mailbox from a
+      person's, so the person holding it must accept, in their browser behind a
+      passkey (`decide_link`)."""
+    address = (agent.email or "").strip().lower()
+    if "@" not in address:
+        raise AgentUserLinkError(f"{agent.slug} has no email: its canopy login is the account at "
+                                 "its own email, so set the agent's email first")
+    if agent.user_id is not None and (agent.user.email or "").lower() == address:
+        withdraw_pending(agent)
+        return None
+    target = account_at_email(agent)
     if target is None:
-        raise AgentUserLinkError("no such canopy user")
+        withdraw_pending(agent)
+        if agent.user_id is not None:
+            link_canopy_user(agent, None)
+        create_agent_login(agent, actor, address)
+        return None
     _check_linkable(agent, target)
-    if is_fresh_login(target) or target.pk == getattr(actor, "pk", None):
+    if target.pk == getattr(actor, "pk", None):
         withdraw_pending(agent)
         link_canopy_user(agent, target.pk)
         return None
@@ -105,6 +121,30 @@ def link_or_request(agent, actor, user_id: int | None):
         return AgentLoginRequest.objects.create(
             agent=agent, user=target, requested_by=actor,
             expires_at=timezone.now() + LINK_REQUEST_TTL)
+
+
+def unlink(agent) -> None:
+    withdraw_pending(agent)
+    link_canopy_user(agent, None)
+
+
+def rederive_after_email_change(agent, actor=None) -> None:
+    """`Agent.email` changed: a login at the old address is no longer the agent's, so it
+    is unlinked; then, when someone is acting, the link is derived again from the new
+    email (`link_by_email`) — best-effort: a refusal leaves the agent unlinked."""
+    login = agent.user if agent.user_id else None
+    if login is not None and (login.email or "").lower() == (agent.email or "").strip().lower():
+        return
+    if login is not None:
+        unlink(agent)
+    else:
+        withdraw_pending(agent)
+    if actor is None or "@" not in (agent.email or ""):
+        return
+    try:
+        link_by_email(agent, actor)
+    except (AgentUserLinkError, AgentLoginRefused):
+        pass
 
 
 def _check_linkable(agent, target) -> None:

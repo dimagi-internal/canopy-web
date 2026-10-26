@@ -98,6 +98,15 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
         slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner,
                                                             **born_zk_fields(owner)}
     )
+    new_email = (agent.email or "").strip().lower()
+    if agent.user_id is not None and new_email and (agent.user.email or "").lower() != new_email:
+        # Its login is the account at its email: a NEW email unlinks the old account
+        # (the API view derives the new link, `agent_login.rederive_after_email_change`).
+        # A blank one does not: a re-upsert that omits the email must not cut an agent
+        # off from its login.
+        from .agent_login import unlink  # noqa: PLC0415 — cycle: agent_login imports services
+
+        unlink(agent)
     return agent
 
 
@@ -218,6 +227,10 @@ def link_canopy_user(agent: Agent, user_id: int | None) -> Agent:
                                  "one user is one agent instance; unlink it there first")
     if not wsvc.is_member(linked, agent.workspace_id):
         raise AgentUserLinkError(f"{linked.email} is not a member of this agent's workspace")
+    # An agent's login is ALWAYS the account at its own email, never any other.
+    if agent.email and (linked.email or "").lower() != agent.email.strip().lower():
+        raise AgentUserLinkError(f"{agent.slug}'s canopy login is the account at its own email "
+                                 f"({agent.email}), not {linked.email}")
     agent.user = linked
     fields = ["user", "updated_at"]
     if not agent.email:

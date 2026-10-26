@@ -1,55 +1,41 @@
 import { useState } from 'react'
 import { linkAgentCanopyUser, type AgentDetailOut } from '@/api/agents'
-import { listMembers, type MemberOut } from '@/api/workspaces'
 
 type CanopyUser = AgentDetailOut['canopy_user']
 type LinkRequest = AgentDetailOut['canopy_user_request']
 
-// Which canopy user this agent IS — the account its own token signs in as
-// (`ace@dimagi-ai.com` for ACE). Picked from the workspace's members, because
-// the link is to a real account, not to an address. One user is one agent
-// instance; the server says which instance already holds one. The agent's
-// owner or an admin may change it, here (a token is refused). Someone else's
-// existing account is not linked on the spot: the agent would act as them, so a
-// request goes to that person, who accepts it under Settings in their browser.
+// Which canopy account this agent IS — the account its own token signs in as. It is
+// ALWAYS the account at the agent's own email, never any other, so there is nothing to
+// pick: "Link" links that account (canopy creates it when there is none), "Unlink"
+// unlinks it. An existing account at that email is not linked on the spot — canopy
+// can't tell an agent's mailbox from a person's, so its person accepts under Settings.
+// The agent's owner or an admin, here or over MCP.
 export function AgentCanopyUserControl({
   agentSlug,
-  workspace,
+  agentEmail = '',
   initialUser,
   initialRequest = null,
   canEdit,
 }: {
   agentSlug: string
-  workspace: string
+  agentEmail?: string
+  workspace?: string
   initialUser: CanopyUser
   initialRequest?: LinkRequest
   canEdit: boolean
 }) {
   const [linked, setLinked] = useState<CanopyUser>(initialUser)
   const [pending, setPending] = useState<LinkRequest>(initialRequest)
-  const [members, setMembers] = useState<MemberOut[] | null>(null)
-  const [choice, setChoice] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const open = async () => {
-    setError(null)
-    try {
-      setMembers(await listMembers(workspace))
-      setChoice(linked ? String(linked.user_id) : '')
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Could not load workspace members')
-    }
-  }
-
-  const save = async (userId: number | null) => {
+  const save = async (link: boolean) => {
     setBusy(true)
     setError(null)
     try {
-      const detail = await linkAgentCanopyUser(agentSlug, userId)
+      const detail = await linkAgentCanopyUser(agentSlug, link)
       setLinked(detail.canopy_user)
       setPending(detail.canopy_user_request ?? null)
-      setMembers(null)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not change the canopy user')
     } finally {
@@ -63,20 +49,21 @@ export function AgentCanopyUserControl({
         <span data-testid="agent-canopy-user" className={linked ? 'text-foreground' : 'text-muted-foreground'}>
           {linked ? linked.email : 'Not linked'}
         </span>
-        {canEdit && members === null && (
+        {canEdit && !linked && (
           <button
             type="button"
-            onClick={() => void open()}
-            className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-primary"
+            disabled={busy || !agentEmail}
+            onClick={() => void save(true)}
+            className="rounded-md border border-border bg-input px-3 py-1 text-[12px] font-medium text-foreground hover:border-primary disabled:opacity-40"
           >
-            {linked ? 'Change' : 'Link canopy user'}
+            {agentEmail ? `Link ${agentEmail}` : 'Set its email to link a login'}
           </button>
         )}
-        {canEdit && members === null && linked && (
+        {canEdit && linked && (
           <button
             type="button"
             disabled={busy}
-            onClick={() => void save(null)}
+            onClick={() => void save(false)}
             className="text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-40"
           >
             Unlink
@@ -85,46 +72,9 @@ export function AgentCanopyUserControl({
       </div>
       {pending && (
         <p data-testid="agent-canopy-user-pending" className="text-[12px] text-muted-foreground">
-          Waiting for {pending.user_email} to accept — the agent would sign in as their account,
-          so only they can say yes (Settings, in their browser).
+          Waiting for {pending.user_email} to accept — the agent would sign in as that account,
+          so only its person can say yes (Settings, in their browser).
         </p>
-      )}
-      {members !== null && (
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor={`canopy-user-${agentSlug}`} className="text-[12px] text-muted-foreground">
-            Canopy user
-          </label>
-          <select
-            id={`canopy-user-${agentSlug}`}
-            value={choice}
-            onChange={(e) => setChoice(e.target.value)}
-            className="rounded-md border border-input bg-input px-2 py-1 text-[13px] text-foreground"
-          >
-            <option value="" disabled>
-              Choose a member…
-            </option>
-            {members.map((m) => (
-              <option key={m.user_id} value={m.user_id}>
-                {m.email}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={busy || !choice}
-            onClick={() => void save(Number(choice))}
-            className="rounded-md bg-primary px-3 py-1 text-[12px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
-          >
-            Link
-          </button>
-          <button
-            type="button"
-            onClick={() => setMembers(null)}
-            className="text-[12px] text-muted-foreground hover:text-foreground"
-          >
-            Cancel
-          </button>
-        </div>
       )}
       {error && (
         <p className="text-[12px] text-destructive" role="alert">

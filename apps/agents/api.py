@@ -252,7 +252,12 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # (`delegations.set_github` is for its owner and admins) and no box may hold it unless a workspace
     # owner pairs one, so leaving it unset left every new agent stuck until someone ran
     # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
+    old_email = (existing.email or "").strip().lower() if existing is not None else ""
     agent = services.upsert_agent(payload, workspace=home, owner=_creating_owner(request, home))
+    new_email = (agent.email or "").strip().lower()
+    if existing is not None and new_email and new_email != old_email and agent.is_admin(request.user):
+        # Its canopy login is the account at its email: derived again from the new one.
+        agent_login.rederive_after_email_change(agent, request.user)
     if existing is None or (payload.repo_url is not None and payload.repo_url != existing.repo_url):
         # A cloud box only learns of an agent (or its new repo) by re-running its
         # bootstrap; ask the ones that will take its turns to do that now.
@@ -490,34 +495,42 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     return _detail(request, agent)
 
 
-# Linking a canopy user makes it count as the agent itself (never confined against
-# itself — agents/access.py), and the agent's token then signs in AS that account. Gated
-# by role (MCP does everything): an admin links a fresh account made for the agent, or
-# asks; someone's existing account is linked only when THEY accept, in their browser
-# behind a passkey (agent_login, /api/me/agent-login-requests/).
+# An agent's canopy login is ALWAYS the account at its own email (`Agent.email`), never
+# any other: linking it makes that account count as the agent itself (never confined
+# against itself — agents/access.py), and the agent's token then signs in AS it. Gated by
+# role (MCP does everything): an admin links, or unlinks; an existing account at the
+# email is linked only when the person holding it accepts, in their browser behind a
+# passkey (agent_login, /api/me/agent-login-requests/).
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
-            summary="Link this agent to the canopy user it is")
-@gate("agent-admin", setting=True, step_up=True)  # step-up only to link your own signed-in account
+            summary="Link this agent to the canopy account at its own email")
+@gate("agent-admin", setting=True, step_up=True)  # step-up only when the account at its email is yours
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
-    """The canopy user account this agent's own token signs in as. `user_id`
-    null unlinks it. A fresh account made for the agent (one nobody has ever
-    signed in to) is linked at once. Your own signed-in account is linked after a
-    passkey step-up, so only from a browser. Anyone else's existing account is
-    NOT linked: a request goes to that person (`canopy_user_request` in the
-    answer), who accepts it in their own browser
-    (`POST /api/me/agent-login-requests/{id}/accept`), since the agent would then
-    act as them. The owner or an admin, from the browser or with a token."""
+    """`link: true` links the agent to its canopy login, which is ALWAYS the canopy
+    account at the agent's own email — never any other. With no account there yet,
+    canopy creates it (an account nobody signs in to, made a member of the agent's
+    workspace — which takes an admin who may invite) and links it. When the account
+    is yours, it links after a passkey step-up (so only from a browser). When it is
+    anyone else's existing account, it is NOT linked: a request goes to that person
+    (`canopy_user_request` in the answer), who accepts it in their own browser
+    (`POST /api/me/agent-login-requests/{id}/accept`), since canopy can't tell an
+    agent's mailbox from a person's. `link: false` unlinks. The owner or an admin,
+    from the browser or with a token. 422 when the agent has no email."""
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
-    if payload.user_id is not None and payload.user_id == request.user.pk \
-            and not agent_login.is_fresh_login(request.user):
+    target = agent_login.account_at_email(agent) if payload.link else None
+    if target is not None and target.pk == request.user.pk and agent.user_id != target.pk:
         stepup.require_recent_step_up(request)
     before = agent.user.email if agent.user_id else None
     try:
-        agent_login.link_or_request(agent, request.user, payload.user_id)
+        if payload.link:
+            agent_login.link_by_email(agent, request.user)
+        else:
+            agent_login.unlink(agent)
     except services.AgentUserLinkError as exc:
         raise HttpError(422, str(exc)) from exc
+    except agent_login.AgentLoginRefused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
     agent.refresh_from_db()
     audit.note_change(scope=f"agent:{agent.slug}/canopy-user", before=before,
                       after=agent.user.email if agent.user_id else None)
