@@ -673,10 +673,11 @@ def tick_fleet(fleet: RunnerFleet, now: dt.datetime) -> list[str]:
     did: list[str] = []
     aws = get(fleet.region)
     group = aws.group(fleet.group_name)
-    if group is None:
+    if group is None and fleet.status != RunnerFleet.RETIRED:
         logger.warning("fleet %s: no group %s in %s", fleet.name, fleet.group_name, fleet.region)
         return did
-    in_group = {i["id"]: i for i in group["instances"]}
+    # A retired fleet's group is deleted by `fleet.sh down`: every member left with it.
+    in_group = {i["id"]: i for i in group["instances"]} if group else {}
     members = list(fleet.members.exclude(status=Runner.RETIRED)
                    .select_related("owner", "fleet").prefetch_related("declared_flags", "enrollments"))
 

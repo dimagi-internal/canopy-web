@@ -94,6 +94,18 @@ def test_workspace_with_agents_is_refused_with_409_naming_them():
     assert Workspace.objects.filter(slug="acme").exists()
 
 
+def test_workspace_holding_turn_history_is_refused_with_409_not_500():
+    from apps.harness.models import Turn
+
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    Turn.objects.create(project="canopy-web", workspace=ws, origin=Turn.ORIGIN_API, idempotency_key="t1")
+    r = _client(owner).delete("/api/workspaces/acme/")
+    assert r.status_code == 409
+    assert "1 turns" in r.json()["detail"]
+    assert Workspace.objects.filter(slug="acme").exists()
+
+
 def test_workspace_delete_succeeds_once_its_agents_are_gone():
     """The documented recovery path in the 409 actually works."""
     owner = _user("a@dimagi.com")
