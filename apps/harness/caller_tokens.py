@@ -208,6 +208,11 @@ def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | No
 PAGE_DRIVE_TOOLS = frozenset({"invoke_page_action", "read_page_state", "list_page_actions"})
 #: The page's own declared actions, as MCP tools (`apps/mcp/page_tools.TOOL_PREFIX`).
 PAGE_TOOL_PREFIX = "page_"
+#: canopy's gateway to the page's site (`apps/mcp/tools/site.py`). A read-only scoped
+#: session (an editor's turn) may call it: every call runs as the asker at the site,
+#: under the act-as-you permission THEY granted from the page (their host grant), so it
+#: is exactly the asker acting, never the agent acting for them.
+SITE_GATEWAY_TOOLS = frozenset({"site_tools", "site_call", "site_read"})
 _PAGE_INVOKE = re.compile(r"^/api/(w/[^/]+/)?canopy-sessions/[0-9a-f-]{36}/page-actions/invoke/?$")
 
 

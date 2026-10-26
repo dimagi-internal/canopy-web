@@ -202,7 +202,7 @@ def test_a_pat_session_cannot_use_the_gateway(w, host):
 
     _grant(w)
     raw, _ = PersonalToken.create_for_user(user=w["owner"], label="t")
-    with as_token(raw), pytest.raises(Exception, match="visitor's session"):
+    with as_token(raw), pytest.raises(Exception, match="held on a site.s page"):
         _call(host, "site_call", {"tool": "marketplace_orgs_get"})
     assert host.calls == []
 

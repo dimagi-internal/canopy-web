@@ -620,6 +620,28 @@ retries, and its live tail ticks once more as it stops.
   end by `tests/test_sdk_round_trip.py` and `tests/test_runner_requirements*.py`.
   Spec: `docs/superpowers/specs/2026-09-30-zdr-runners-design.md`.
 
+## A turn on a site's page withholds the agent's own login there
+
+A turn whose conversation is held on a Connected site's page that its agent serves
+carries `page_site: {site, withheld}` in its claim (`interface.page_turn`; the
+names come from `own_login:` in the agent's interface). There the agent reaches the
+site only through canopy's gateway, as the person who sent (`access.md` § Acting as
+the person on a connected site), so:
+
+- **Cloud runner** (`runner/ec2/cloud_runner.py`, `page_site`): the withheld names
+  are dropped from the turn's environment (`_agent_env`) and its per-turn env file
+  (`write_turn_env`, `CANOPY_AGENT_ENV_FILE`), and `CANOPY_PAGE_SITE=<site>` is set —
+  confined turns too. The box still holds the values for the agent's other turns
+  (the in-memory resolve is per agent), so the boundary is the turn's own process.
+- **Laptop runner** (`runner/canopy_runner/canopy_runner/page_site.py`): emdash, not
+  the runner, starts the session, so it writes `~/.canopy/page/task/<task>.json` for
+  the agent's MCP headers helper (found from `EMDASH_TASK_NAME`). The agent's own
+  `.env` stays on that disk: on a laptop the helper and the caller envelope's `site`
+  block are the boundary, not the environment.
+- An agent whose secrets come from 1Password still gets its own
+  `OP_SERVICE_ACCOUNT_TOKEN` in a full turn, which can read the withheld value from
+  its vault; keep the site login in canopy-web's vault for the withholding to bind.
+
 ## Scheduled turns
 
 The scheduler is a producer of turns, not an execution engine (no celery/beat).

@@ -1074,6 +1074,17 @@ class CallerContextOut(Schema):
     envelope: dict
 
 
+class ClaimPageSiteOut(Schema):
+    """A turn held on a Connected site's page (`interface.page_turn`)."""
+
+    # The site's name (the conversation's `embed_app`), which the agent serves.
+    site: str
+    # The agent's own credential names that are its login at that site
+    # (`own_login:` in its interface). The runner leaves them out of this turn's
+    # environment: on a page the agent reaches the site only as the person who sent.
+    withheld: list[str] = []
+
+
 class ClaimedTurnOut(TurnOut):
     """A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
     the caller envelope, so the runner can hand it to the agent without a second
@@ -1099,6 +1110,10 @@ class ClaimedTurnOut(TurnOut):
     # earlier turn of it shipped (`session_sync.turn_end_held`). A runner resuming one
     # ships what comes after, so a ship that failed before is sent again.
     transcript_held: dict[str, int] = {}
+    # For a turn whose conversation is held on a Connected site's page that its agent
+    # serves: the site, and the agent's own credentials for it that the runner must
+    # leave out of the turn (`interface.page_turn`). Null for every other turn.
+    page_site: ClaimPageSiteOut | None = None
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -1125,6 +1140,12 @@ class ClaimedTurnOut(TurnOut):
         if session is None or not sensitivity.any_sensitive(session, obj):
             return {}
         return session_sync.turn_end_held(session)
+
+    @staticmethod
+    def resolve_page_site(obj) -> dict | None:
+        from apps.agents.interface import page_turn  # noqa: PLC0415 — as resolve_caller_context: the interface reads models, loaded with a call
+
+        return page_turn(obj)
 
     @staticmethod
     def resolve_caller_context(obj) -> dict:

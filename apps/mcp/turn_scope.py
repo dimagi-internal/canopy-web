@@ -23,7 +23,7 @@ from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from apps.agents.sensitive_data import sensitive_tool
-from apps.harness.caller_tokens import PAGE_DRIVE_TOOLS, PAGE_TOOL_PREFIX
+from apps.harness.caller_tokens import PAGE_DRIVE_TOOLS, PAGE_TOOL_PREFIX, SITE_GATEWAY_TOOLS
 from apps.tokens import kinds
 
 
@@ -84,6 +84,10 @@ def _allowed(name: str, claims: dict, tool=None) -> bool:
         # their own open page (`caller_tokens.PAGE_DRIVE_TOOLS`). Never a write: the
         # asker granted the agent no act-as-you permission, so it may not act as them.
         if name in PAGE_DRIVE_TOOLS or name.startswith(PAGE_TOOL_PREFIX):
+            return True
+        # The page's site, as the asker under their own act-as-you permission for the
+        # page (`caller_tokens.SITE_GATEWAY_TOOLS`): they granted it from the page.
+        if name in SITE_GATEWAY_TOOLS:
             return True
         return tool is not None and read_only(tool)
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
