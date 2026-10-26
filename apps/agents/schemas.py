@@ -540,6 +540,9 @@ class AgentDetailOut(AgentOut):
     #: The canopy user this agent IS (`Agent.user`) — the account its own token
     #: signs in as. None when unlinked.
     canopy_user: AgentOwnerOut | None = None
+    #: A request to make someone's existing account this agent's login, waiting for
+    #: THAT person to accept it in their own browser. None when none is open.
+    canopy_user_request: "AgentLoginRequestOut | None" = None
     # Whether the CALLER may transfer ownership (a workspace owner, or the
     # agent's current owner). Drives whether the UI offers the control.
     can_transfer_owner: bool = False
@@ -704,6 +707,20 @@ class AgentInterfaceOut(StrictModel):
 class AgentCanopyUserIn(StrictModel):
     # None unlinks.
     user_id: int | None
+
+
+class AgentLoginRequestOut(StrictModel):
+    """An open request to make a person's existing canopy account an agent's own login."""
+
+    id: int
+    agent_slug: str
+    agent_name: str
+    workspace_id: str
+    #: The account to be linked — the only person who may accept.
+    user_email: str
+    requested_by_email: str = ""
+    created_at: datetime
+    expires_at: datetime
 
 
 class AgentCanopyTokenIn(StrictModel):
@@ -3253,3 +3270,4 @@ class ProjectProgressOut(StrictModel):
 
 
 AgentProjectDetailOut.model_rebuild()
+AgentDetailOut.model_rebuild()

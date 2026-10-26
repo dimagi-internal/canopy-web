@@ -99,10 +99,104 @@ def test_only_the_owner_or_an_admin(ws, owner, ace_user):
     c.force_login(member)
     assert _put(c, "ace", ace_user).status_code == 403
 
-    # The owner's own TOKEN may do it too: a token acts as its user (MCP can do
-    # whatever the web app can).
+    # Not with a token, the owner's own included: the agent's token would sign in as
+    # the linked account, so linking is done by people in the canopy web app.
     raw, _ = PersonalToken.create_for_user(user=owner, label="t")
     r = Client().put("/api/agents/ace/canopy-user", {"user_id": ace_user.pk},
                      content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 403, r.content
+    assert Agent.objects.get(slug="ace").user is None
+
+
+def _person(ws, name):
+    """An account someone has signed in to — it may be a person's."""
+    from django.utils import timezone
+
+    u = _user(name, f"{name}@dimagi.com")
+    u.last_login = timezone.now()
+    u.save(update_fields=["last_login"])
+    wsvc.ensure_member(ws, u, WorkspaceMembership.EDITOR)
+    return u
+
+
+def test_a_persons_account_is_linked_only_when_they_accept(ws, owner):
+    from apps.passkeys.testing import grant_step_up
+
+    agent = _agent(ws, owner, "ace")
+    pat = _person(ws, "pat")
+    c = Client()
+    c.force_login(owner)
+    r = _put(c, "ace", pat)
     assert r.status_code == 200, r.content
-    assert Agent.objects.get(slug="ace").user == ace_user
+    body = r.json()
+    assert body["canopy_user"] is None
+    assert body["canopy_user_request"]["user_email"] == "pat@dimagi.com"
+    agent.refresh_from_db()
+    assert agent.user is None
+
+    # Pat sees it; a token cannot accept for them, and a browser needs a step-up.
+    me = Client()
+    me.force_login(pat)
+    [req] = me.get("/api/me/agent-login-requests/").json()
+    raw, _ = PersonalToken.create_for_user(user=pat, label="t")
+    assert Client().post(f"/api/me/agent-login-requests/{req['id']}/accept",
+                         HTTP_AUTHORIZATION=f"Bearer {raw}").status_code == 403
+    assert me.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code == 403
+    # Nobody else can accept it.
+    other = Client()
+    other.force_login(owner)
+    grant_step_up(other)
+    assert other.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code == 404
+    grant_step_up(me)
+    r = me.post(f"/api/me/agent-login-requests/{req['id']}/accept")
+    assert r.status_code == 200, r.content
+    agent.refresh_from_db()
+    assert agent.user == pat
+    assert me.get("/api/me/agent-login-requests/").json() == []
+
+
+def test_a_declined_request_links_nothing(ws, owner):
+    agent = _agent(ws, owner, "ace")
+    pat = _person(ws, "pat")
+    c = Client()
+    c.force_login(owner)
+    _put(c, "ace", pat)
+    me = Client()
+    me.force_login(pat)
+    [req] = me.get("/api/me/agent-login-requests/").json()
+    assert me.post(f"/api/me/agent-login-requests/{req['id']}/decline").status_code == 200
+    agent.refresh_from_db()
+    assert agent.user is None
+    assert me.post(f"/api/me/agent-login-requests/{req['id']}/accept").status_code in (403, 422)
+
+
+def test_an_admin_links_their_own_signed_in_account_after_a_step_up(ws, owner):
+    from apps.passkeys.testing import grant_step_up
+
+    agent = _agent(ws, owner, "ace")
+    c = Client()
+    c.force_login(owner)
+    assert _put(c, "ace", owner).status_code == 403  # step_up_required
+    grant_step_up(c)
+    assert _put(c, "ace", owner).status_code == 200
+    agent.refresh_from_db()
+    assert agent.user == owner
+
+
+def test_the_agents_token_expires():
+    """An agent's own canopy token is minted with the PAT default lifetime, never forever."""
+    from django.conf import settings
+    from django.utils import timezone
+
+    from apps.agents import services
+
+    ws = a_workspace("t2")
+    o = _user("own2", "own2@dimagi.com")
+    wsvc.ensure_member(ws, o, WorkspaceMembership.OWNER)
+    login = _user("bot2", "bot2@dimagi-ai.com")
+    wsvc.ensure_member(ws, login, WorkspaceMembership.EDITOR)
+    agent = Agent.objects.create(slug="bot2", name="b", workspace=ws, owner=o, user=login)
+    _, token, _, _ = services.mint_agent_canopy_token(agent, o)
+    assert token.expires_at is not None
+    days = (token.expires_at - timezone.now()).days
+    assert abs(days - settings.PAT_DEFAULT_TTL_DAYS) <= 1

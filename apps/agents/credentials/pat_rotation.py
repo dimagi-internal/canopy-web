@@ -6,7 +6,9 @@ can rotate without anyone typing anything. An owner or admin opts an agent in
 (PATCH /api/agents/{slug}/pat-rotation, default every 30 days); then, when due:
 
 1. mint a new PersonalToken for the agent's own login (`Agent.user`), with the
-   same never-expiring lifetime `mint_agent_canopy_token` gives it;
+   same lifetime `mint_agent_canopy_token` gives it (`agent_token_ttl_days`, the PAT
+   default) — so the interval is capped below it (`max_days`) and a rotating agent's
+   token never lapses;
 2. write it to the agent's login AgentCredential — a runner picks it up
    at its next `canopy cred sync`, because the values' fingerprint it keeps in
    `~/.<slug>/.env.stamp` changes (canopy-web keeps no separate
@@ -110,7 +112,18 @@ def due_at(agent):
     if base is None:
         cred = AgentCredential.objects.filter(agent=agent, name=CANOPY_PAT_REF).first()
         base = cred.updated_at if cred else timezone.now()
-    return base + dt.timedelta(days=max(MIN_DAYS, int(agent.pat_rotation_days or 30)))
+    days = min(max(MIN_DAYS, int(agent.pat_rotation_days or 30)), max_days())
+    return base + dt.timedelta(days=days)
+
+
+#: Rotate at least this long before the token expires.
+EXPIRY_MARGIN_DAYS = 14
+
+
+def max_days() -> int:
+    """The longest rotation interval: the agent token's lifetime less a margin, so a
+    rotating agent's token is replaced before it expires."""
+    return max(MIN_DAYS, min(MAX_DAYS, services.agent_token_ttl_days() - EXPIRY_MARGIN_DAYS))
 
 
 def _current_token(agent):
@@ -177,7 +190,8 @@ def _rotate_locked(agent, *, now, trigger: str, actor, presented_token_id=None):
         old = PersonalToken.objects.filter(pk=presented_token_id, user_id=agent.user_id,
                                            revoked_at__isnull=True).first()
     raw, new = PersonalToken.create_for_user(
-        user=agent.user, label=f"{agent.slug} agent (rotated {now:%Y-%m-%d})"[:100], ttl_days=0)
+        user=agent.user, label=f"{agent.slug} agent (rotated {now:%Y-%m-%d})"[:100],
+        ttl_days=services.agent_token_ttl_days())
     services.set_agent_credentials(agent, {CANOPY_PAT_REF: raw}, user=actor, minted=True)
     revoke_after = None
     if old is not None:

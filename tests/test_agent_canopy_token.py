@@ -45,7 +45,7 @@ def _post(user, body=None):
     return c.post(URL, body or {}, content_type="application/json")
 
 
-def test_an_agent_with_no_login_gets_a_new_one_and_a_non_expiring_token(owner, agent, ws):
+def test_an_agent_with_no_login_gets_a_new_one_and_an_expiring_token(owner, agent, ws):
     resp = _post(owner)
     assert resp.status_code == 201, resp.content
     body = resp.json()
@@ -55,7 +55,8 @@ def test_an_agent_with_no_login_gets_a_new_one_and_a_non_expiring_token(owner, a
     assert login.email == "scout@dimagi-ai.com" and not login.has_usable_password()
     assert WorkspaceMembership.objects.get(workspace=ws, user=login).role == WorkspaceMembership.EDITOR
     token = PersonalToken.objects.get(pk=body["token_id"])
-    assert token.user == login and token.expires_at is None
+    # It expires like any PAT (180 days): never a login that outlives everyone's attention.
+    assert token.user == login and token.expires_at is not None
     assert body["raw"] and body["raw"] not in (token.label, str(token.pk))
 
 

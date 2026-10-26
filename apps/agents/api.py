@@ -45,7 +45,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, mailbox, sensitive_data, services
+from . import access, agent_login, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key, zk
@@ -464,9 +464,18 @@ def _may_manage_admins(request: HttpRequest, agent) -> bool:
     return _may_transfer_owner(request, agent)
 
 
+def login_request_out(row) -> dict:
+    return {"id": row.pk, "agent_slug": row.agent.slug, "agent_name": row.agent.name,
+            "workspace_id": row.agent.workspace_id, "user_email": row.user.email,
+            "requested_by_email": getattr(row.requested_by, "email", "") or "",
+            "created_at": row.created_at, "expires_at": row.expires_at}
+
+
 def _detail(request: HttpRequest, agent) -> AgentDetailOut:
+    pending = agent_login.pending_request(agent) if agent.is_admin(request.user) else None
     return AgentDetailOut.model_validate({
         **services.agent_detail(agent),
+        "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
         "can_manage_admins": _may_manage_admins(request, agent),
@@ -481,22 +490,38 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     return _detail(request, agent)
 
 
-# Browser-only, like owner and admin changes: linking a canopy user makes it
-# count as the agent itself (never confined against itself — agents/access.py),
-# so it is a decision a PERSON makes in the canopy UI. The owner or an admin.
+# Browser-only (a token is refused): linking a canopy user makes it count as the
+# agent itself (never confined against itself — agents/access.py), and its token
+# then signs in AS that account, so it is a decision people make in the canopy UI.
+# Someone's existing account is linked only when THEY accept (agent_login).
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
             summary="Link this agent to the canopy user it is")
-@gate("agent-admin", setting=True)
+@gate("agent-admin", setting=True, step_up=True)  # step-up only to link your own signed-in account
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
     """The canopy user account this agent's own token signs in as. `user_id`
-    null unlinks it."""
+    null unlinks it. A fresh account made for the agent (one nobody has ever
+    signed in to) is linked at once; so is your own account, after a passkey
+    step-up. Anyone else's existing account is NOT linked: a request goes to that
+    person (`canopy_user_request` in the answer), who accepts it in their own
+    browser (`POST /api/me/agent-login-requests/{id}/accept`), since the agent
+    would then act as them. A browser session only: a token is refused (403)."""
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
+    if not stepup.is_browser(request):
+        raise HttpError(403, "linking an agent's canopy user is done in the canopy web app, "
+                             "not with a token")
+    if payload.user_id is not None and payload.user_id == request.user.pk \
+            and not agent_login.is_fresh_login(request.user):
+        stepup.require_recent_step_up(request)
+    before = agent.user.email if agent.user_id else None
     try:
-        services.link_canopy_user(agent, payload.user_id)
+        agent_login.link_or_request(agent, request.user, payload.user_id)
     except services.AgentUserLinkError as exc:
         raise HttpError(422, str(exc)) from exc
+    agent.refresh_from_db()
+    audit.note_change(scope=f"agent:{agent.slug}/canopy-user", before=before,
+                      after=agent.user.email if agent.user_id else None)
     return _detail(request, agent)
 
 

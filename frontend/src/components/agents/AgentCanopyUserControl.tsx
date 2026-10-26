@@ -3,24 +3,30 @@ import { linkAgentCanopyUser, type AgentDetailOut } from '@/api/agents'
 import { listMembers, type MemberOut } from '@/api/workspaces'
 
 type CanopyUser = AgentDetailOut['canopy_user']
+type LinkRequest = AgentDetailOut['canopy_user_request']
 
 // Which canopy user this agent IS — the account its own token signs in as
 // (`ace@dimagi-ai.com` for ACE). Picked from the workspace's members, because
 // the link is to a real account, not to an address. One user is one agent
 // instance; the server says which instance already holds one. The agent's
-// owner or an admin may change it (from here or over MCP).
+// owner or an admin may change it, here (a token is refused). Someone else's
+// existing account is not linked on the spot: the agent would act as them, so a
+// request goes to that person, who accepts it under Settings in their browser.
 export function AgentCanopyUserControl({
   agentSlug,
   workspace,
   initialUser,
+  initialRequest = null,
   canEdit,
 }: {
   agentSlug: string
   workspace: string
   initialUser: CanopyUser
+  initialRequest?: LinkRequest
   canEdit: boolean
 }) {
   const [linked, setLinked] = useState<CanopyUser>(initialUser)
+  const [pending, setPending] = useState<LinkRequest>(initialRequest)
   const [members, setMembers] = useState<MemberOut[] | null>(null)
   const [choice, setChoice] = useState('')
   const [busy, setBusy] = useState(false)
@@ -42,6 +48,7 @@ export function AgentCanopyUserControl({
     try {
       const detail = await linkAgentCanopyUser(agentSlug, userId)
       setLinked(detail.canopy_user)
+      setPending(detail.canopy_user_request ?? null)
       setMembers(null)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Could not change the canopy user')
@@ -76,6 +83,12 @@ export function AgentCanopyUserControl({
           </button>
         )}
       </div>
+      {pending && (
+        <p data-testid="agent-canopy-user-pending" className="text-[12px] text-muted-foreground">
+          Waiting for {pending.user_email} to accept — the agent would sign in as their account,
+          so only they can say yes (Settings, in their browser).
+        </p>
+      )}
       {members !== null && (
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor={`canopy-user-${agentSlug}`} className="text-[12px] text-muted-foreground">
