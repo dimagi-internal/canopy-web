@@ -245,7 +245,7 @@ def test_secret_columns_are_discovered_not_listed():
     found = {f"{m._meta.label}.{f}" for m, f in secret_columns()}
     assert {
         "agents.AgentCredential.value_enc", "agents.Agent.op_sa_token_enc",
-        "agents.AgentDelegation.secret_enc", "workspaces.Workspace.shared_op_sa_token_enc",
+        "agents.AgentDelegation.secret_enc",
         "slack.SlackInstallation.bot_token_enc",
         "contacts.HcpClient.webhook_secret_encrypted",
     } <= found

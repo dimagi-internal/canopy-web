@@ -297,5 +297,4 @@
 "apps/workspaces/services.py" = ["PLC0415"]  # 7
 "apps/workspaces/system_accounts.py" = ["PLC0415"]  # 5
 "apps/workspaces/testing.py" = ["PLC0415"]  # 2
-"apps/workspaces/vault.py" = ["PLC0415"]  # 2
 "config/views.py" = ["PLC0415"]  # 1

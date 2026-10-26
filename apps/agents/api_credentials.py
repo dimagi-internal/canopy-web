@@ -170,8 +170,8 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
     always was. With `refs`, `values` holds only the named refs that the
     agent also declares (`runtime_secrets`), and the secret extras
-    (`op_sa_token`, `shared_op_sa_token`, `salesforce_creds`) are included
-    only when named in `refs` too. `op_vault`, `shared_op_vault` and `mailbox`
+    (`op_sa_token`, `salesforce_creds`) are included
+    only when named in `refs` too. `op_vault` and `mailbox`
     are not secrets and are always returned.
 
     **Delegated credentials** (a token a person gave the agent from their own
@@ -267,7 +267,8 @@ def get_agent_vault(request: HttpRequest, slug: str) -> AgentVaultOut:
             summary="Set the vault + its service-account token (write-only)")
 @gate("agent-admin", setting=True, step_up=True)
 def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> AgentVaultOut:
-    """The key is scoped to ONE agent's vault by design.
+    """The key is scoped to ONE agent's vault by design. Refused (422) for an agent whose
+    secrets live in the canopy vault: canopy-web holds no 1Password key for it.
 
     A single fleet-wide token would be simpler to operate and would make
     canopy-web worth attacking for every agent's secrets at once; this bounds a
@@ -277,9 +278,12 @@ def set_agent_vault(request: HttpRequest, slug: str, payload: AgentVaultIn) -> A
     # as `set_agent_credentials` does; a token write has no browser to ask.
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
-    return services.set_agent_vault(
-        agent, vault=payload.vault, service_key=payload.service_key,
-    )
+    try:
+        return services.set_agent_vault(
+            agent, vault=payload.vault, service_key=payload.service_key,
+        )
+    except ValueError as exc:   # its secrets are in the canopy vault: no 1Password key
+        raise HttpError(422, str(exc)) from exc
 
 
 # ---- zero-knowledge vault (Canopy Vault Phase 2, canopy-web#1550) ------------------

@@ -184,7 +184,7 @@ def unrouted_box_refused(agent, request, *, runner) -> None:
 #: The resolve extras (credential_resolve.RESOLVE_SECRET_EXTRAS) are fields, not refs an
 #: agent declares, so naming them is never "undeclared". `github_token` was one, and an
 #: older canopy CLI still names it (it is never returned now): not undeclared either.
-_EXTRAS = {"op_sa_token", "shared_op_sa_token", "github_token", "salesforce_creds"}
+_EXTRAS = {"op_sa_token", "github_token", "salesforce_creds"}
 
 
 def _count_read(agent) -> int:

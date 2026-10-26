@@ -39,8 +39,7 @@ def _get(user, path):
 @pytest.fixture
 def tree():
     ceo, staff, builder = _user("ceo@dimagi.com"), _user("staff@dimagi.com"), _user("b@dimagi.com")
-    dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=ceo,
-                                      shared_op_vault="Fleet")
+    dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=ceo)
     connect = Workspace.objects.create(slug="connect", display_name="Connect", created_by=ceo, parent=dimagi)
     WorkspaceMembership.objects.create(workspace=dimagi, user=ceo, role=WorkspaceMembership.OWNER)
     WorkspaceMembership.objects.create(workspace=dimagi, user=staff, role=WorkspaceMembership.EDITOR)
@@ -93,8 +92,6 @@ def test_owner_sees_every_agent_in_the_tree_with_its_checklist(tree):
     assert r.status_code == 200, r.content
     body = r.json()
     assert [(w["slug"], w["depth"]) for w in body["workspaces"]] == [("dimagi", 0), ("connect", 1)]
-    assert body["workspaces"][1]["shared_vault"] == {"vault": "Fleet", "key_set": False,
-                                                     "inherited_from": "dimagi"}
     rows = {a["slug"]: a for a in body["agents"]}
     assert set(rows) == {"eva", "hal"}
     # The rows ARE the checklist: same keys, same order, same statuses.

@@ -15,7 +15,6 @@ export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
 export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
 export type InvitePreviewOut = components['schemas']['InvitePreviewOut']
-export type SharedVaultOut = components['schemas']['SharedVaultOut']
 export type RetentionOut = components['schemas']['RetentionOut']
 export type RetentionRuleOut = components['schemas']['RetentionRuleOut']
 export type RetentionRuleIn = components['schemas']['RetentionRuleIn']
@@ -229,25 +228,6 @@ export async function createWorkspace(
 // undo the split that bounds a compromise to one agent.
 //
 // Owner-only on the server; the key is write-only and never comes back.
-export async function getSharedVault(slug: string): Promise<SharedVaultOut> {
-  const res = await apiV2.GET('/api/workspaces/{slug}/shared-vault', {
-    params: { path: { slug } },
-  })
-  ensureOk(res, 'Failed to load the shared vault')
-  return res.data as unknown as SharedVaultOut
-}
-
-export async function setSharedVault(
-  slug: string, body: { vault?: string; service_key?: string },
-): Promise<SharedVaultOut> {
-  const res = await apiV2.PUT('/api/workspaces/{slug}/shared-vault', {
-    params: { path: { slug } },
-    body,
-  })
-  ensureOk(res, 'Failed to save the shared vault')
-  return res.data as unknown as SharedVaultOut
-}
-
 export type RunnerTopologyOut = components['schemas']['RunnerTopologyOut']
 export type TopologyRunnerOut = components['schemas']['TopologyRunnerOut']
 export type TopologyAgentOut = components['schemas']['TopologyAgentOut']

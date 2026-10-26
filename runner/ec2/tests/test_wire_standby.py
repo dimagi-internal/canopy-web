@@ -23,7 +23,7 @@ LAPTOP = "33333333-3333-3333-3333-333333333333"
 
 
 def _fleet(tmp: pathlib.Path, *, follows: set[str] = frozenset(),
-           missing_vault: set[str] = frozenset()) -> pathlib.Path:
+           missing_vault: set[str] = frozenset(), source: str = "1password") -> pathlib.Path:
     state = tmp / "state"
     state.mkdir()
     (state / "calls").write_text("")
@@ -35,6 +35,7 @@ def _fleet(tmp: pathlib.Path, *, follows: set[str] = frozenset(),
                      if own else []),
             "own": own,
             "vault": slug not in missing_vault,
+            "source": source,
         }
     (state / "agents.json").write_text(json.dumps(agents))
     (state / "drills").write_text("[]")
@@ -58,7 +59,7 @@ if path.startswith("/api/agents/") and path.count("/") >= 4:
     if ag is None:
         out({{"detail": "Not Found"}})
     elif rest == "":
-        out({{"slug": slug, "workspace": "dimagi"}})
+        out({{"slug": slug, "workspace": "dimagi", "credential_source": ag["source"]}})
     elif rest == "vault":
         out({{"vault": "Agent-" + slug, "key_set": ag["vault"]}})
     elif rest == "github":
@@ -152,6 +153,13 @@ def test_standby_refuses_an_agent_with_no_vault(tmp_path):
     assert res.returncode != 0
     assert "no agent vault" in res.stdout
     assert not list(state.glob("put-*.json"))
+
+
+def test_an_agent_on_the_canopy_vault_needs_no_1password_key(tmp_path):
+    _fleet(tmp_path, missing_vault={"eva"}, source="canopy-web")
+    res = _wire(tmp_path, "--standby", "--agents", "eva")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "canopy vault" in res.stdout
 
 
 def test_standby_requires_agents(tmp_path):

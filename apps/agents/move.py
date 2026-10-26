@@ -438,12 +438,6 @@ def _runtime(p: Plan, apply: bool) -> None:
         p.breaks("runner_order", f"{agent.slug} has no runner list of its own; it runs on "
                                  f"'{dest.slug}''s default runner order from now on")
 
-    src_vault, dst_vault = p.source.shared_vault_source(), dest.shared_vault_source()
-    if (src_vault and src_vault.slug) != (dst_vault and dst_vault.slug):
-        p.breaks("shared_vault",
-                 f"the shared vault comes from {_vault_name(dst_vault)} instead of "
-                 f"{_vault_name(src_vault)}; credentials inherited from it may differ")
-
     if agent.slack_enabled:
 
         before, now = installation_for_workspace(p.source.slug), installation_for_workspace(dest.slug)

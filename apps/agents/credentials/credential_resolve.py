@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 #: handed out, like a ref. A credential a person delegated to the agent is not one of
 #: them: it rides `delegated`, sealed to the machines that run the agent, and only a
 #: runner read proved by one of them gets it (`accounts.resolve_payload`).
-RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "salesforce_creds")
+RESOLVE_SECRET_EXTRAS = ("op_sa_token", "salesforce_creds")
 
 #: Handed only to a `runner` read — a box that runs the agent, by its own proof — never
 #: to an admin's or a license holder's: a credential lent to the agent from someone
@@ -43,15 +43,15 @@ RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "salesforce_creds"
 RUNNER_ONLY_EXTRAS = ("salesforce_creds",)
 
 #: What a `license` read (a person's local turn, canopy-web#1704) never gets (nor does
-#: any read: the agent OWNER's GitHub delegation): a credential LENT to the agent, the shared vault's
-#: key — none of them is the agent's own — and the agent's own canopy login, which would
+#: any read: a credential a person delegated to the agent): a credential LENT to the
+#: agent — not the agent's own — and the agent's own canopy login, which would
 #: let the holder act AS the agent (graded `system`, past the editor tier's manual cap).
 #: Nor the agent's 1Password service-account key (`op_sa_token`): it reads the WHOLE
 #: vault, the agent's `canopy-pat` included, so handing it out would undo withholding
 #: that login. A non-admin using a 1Password-backed agent locally therefore gets no
 #: secrets from 1Password; an agent whose secrets live in the canopy-web vault serves
 #: them value by value, as `values`.
-LICENSE_WITHHELD_EXTRAS = ("op_sa_token", "shared_op_sa_token", "salesforce_creds")
+LICENSE_WITHHELD_EXTRAS = ("op_sa_token", "salesforce_creds")
 LICENSE_WITHHELD_REFS = frozenset({"canopy-pat", "canopy-web-pat"})
 
 BEARER_REQUIRED = "bearer_required"
@@ -82,8 +82,6 @@ class Resolved:
     values: dict[str, str]
     op_vault: str
     op_sa_token: str
-    shared_op_vault: str
-    shared_op_sa_token: str
     salesforce_creds: str
     mailbox: str
     mailbox_backend: str
@@ -299,7 +297,6 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     vault, op_token = services.resolve_agent_vault(agent)
     if agent.credential_source == agent.CANOPY_WEB:
         op_token = ""
-    shared_vault, shared_token = services.resolve_shared_vault(agent)
 
     def extra(name: str) -> bool:
         if via == "license" and name in LICENSE_WITHHELD_EXTRAS:
@@ -330,8 +327,6 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     out = Resolved(
         values=values, op_vault=vault,
         op_sa_token=op_token if extra("op_sa_token") else "",
-        shared_op_vault=shared_vault,
-        shared_op_sa_token=shared_token if extra("shared_op_sa_token") else "",
         salesforce_creds=delegations.salesforce_creds_for(agent) if extra("salesforce_creds") else "",
         mailbox=agent.email or "",
         mailbox_backend=mailbox_backend(agent),
