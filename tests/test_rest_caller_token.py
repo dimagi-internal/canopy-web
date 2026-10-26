@@ -189,13 +189,22 @@ def test_a_browser_session_keeps_its_own_identity(client, w):
 
 # -- it never mints a credential ----------------------------------------------
 
-def test_a_caller_token_cannot_mint_an_agents_never_expiring_token(client, w):
-    """`mint_agent_canopy_token` is an MCP tool, so a caller token reaches it over
-    REST; the minting gate is an allowlist (browser session, PAT), so a token that
-    lives as long as its conversation cannot trade itself for one that never dies."""
+def test_a_caller_token_cannot_mint_an_agents_token(client, w):
+    """`mint_agent_canopy_token` is an MCP tool, so a caller token reaches its route
+    over REST — and is refused: a caller token only reads."""
     Agent.objects.create(slug="echo", name="Echo", workspace=w["ws"], owner=w["jj"])
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
     resp = client.post("/api/agents/echo/canopy-token", data={},
                        content_type="application/json", **_bearer(raw))
     assert resp.status_code == 403
-    assert "caller_token" in resp.json()["detail"]
+    assert "act-as-you permission" in resp.json()["detail"]
+
+
+def test_a_caller_token_reads_but_never_writes_as_its_asker(client, w):
+    """Its asker granted the agent no act-as-you permission: any write is refused,
+    saying so, while reads go on as the asker."""
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **_bearer(raw))
+    assert resp.status_code == 403
+    assert "haven't granted it an act-as-you permission" in resp.json()["detail"]
+    assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 200

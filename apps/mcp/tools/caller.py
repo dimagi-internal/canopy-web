@@ -74,7 +74,7 @@ def _envelope_sync(user_id, turn_id: str) -> dict:
     return build(turn, reader_user=user)
 
 
-@mcp.tool
+@mcp.tool(annotations={"readOnlyHint": True})
 async def who_is_asking(turn_id: str) -> dict:
     """Who asked for this turn, how sure canopy is, and what it knows about them.
 

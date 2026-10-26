@@ -303,6 +303,8 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
     * only on a route the MCP server serves as a tool (`caller_token_routes`)
       — what MCP leaves out (minting a PAT, the person's own memory switches and
       grants, the runner protocol) is refused, never quietly reachable over REST;
+    * only to READ (GET): the asker granted no act-as-you permission, so a write is
+      refused, as MCP refuses it;
     * with the caller's acting cap, as `_authenticate_mcp_call` applies it."""
     from apps.api.errors import problem_response  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
     from apps.harness import caller_tokens  # noqa: PLC0415 — only a caller-token request pays for it, like the file's other door-specific imports
@@ -317,6 +319,13 @@ def _authenticate_caller_token(request: HttpRequest, raw: str) -> HttpResponse |
         return problem_response(403, detail=(
             "a caller token reaches only the routes canopy's MCP server serves as tools, "
             "and this is not one"))
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        # Read-only, as on MCP (`mcp.turn_scope.READ_ONLY_REFUSAL`): the asker granted
+        # the agent no act-as-you permission, so it may read as them and never write.
+        return problem_response(403, detail=(
+            "this session reaches canopy as the person who asked only to read: the agent "
+            "can't act as them here, because they haven't granted it an act-as-you "
+            "permission. Do it as the agent's own login, or ask them to do it."))
     turn_id = str(grant.turn.pk)
     request.user = grant.user
     request.auth_method = kinds.CALLER_TOKEN
