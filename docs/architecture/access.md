@@ -712,6 +712,30 @@ stamps. Its initiator stays the agent: the agent made the call, for that person.
 canopy CLI sends the header with `--on-behalf-of <email>` (or `caller`, the current
 turn's verified asker).
 
+## Acting as the person on a connected site (act-as-you permissions)
+
+The **act-as-you permission** is the person's word for a **host grant**
+(`tokens.HostGrant`): a time-limited permission, given in the moment, that lets an
+agent call a connected site's tools as that person, within their own access on that
+site, for the page they are on. It is the only way an agent acts as a person *on a
+host* (the header above is canopy-web's own decisions):
+
+- **Given by acting, never by loading.** The panel asks the site for one only when
+  the person sends from it (or opens a conversation whose live card needs it), and
+  then shows "<agent> can act as you on this page until <time> · Stop". 30 minutes.
+- **Read by one lookup, with no fallback.** `host_grants.lookup`: a turn (gateway) or
+  a View in a conversation reads only the grant of the page that last acted in that
+  conversation as the person who started the turn / is viewing — expired or stopped
+  is a refusal ("…has ended — send again to grant it for another 30 minutes"), never
+  another page's grant or the agent's own credential. Only confined turns whose
+  capability lists the site reach the gateway (see the decision table).
+- **The person sees and stops theirs**: Settings → Act-as-you permissions
+  (`/api/me/host-grants/`), and Stop in the panel (`/api/embed/host-grant`, and
+  `/api/contact/host-grant` for a contact). Stop takes effect on the next call.
+
+Mechanics: [`embedding-internals.md`](embedding-internals.md) § Act-as-you
+permissions; the wire contract: `sdk/python/README.md` § Host grant contract v1.
+
 ## Who can see a session
 
 A session is visible to the people who were **in the conversation where it
