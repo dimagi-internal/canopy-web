@@ -448,6 +448,7 @@ def heartbeat(
     health: dict | None = None, mailboxes_readable: list[str] | None = None,
     envelope: int = 0, midturn: int = 0, agents_unprepared: list[str] | None = None,
     data_mode: str = "", data_mode_hash: str = "", claude_model: str = "",
+    clis: dict | None = None,
 ) -> Runner:
     """A runner's liveness and what it reports, nothing else: the beat renews the
     leases of the turns it holds and answers with the stops it owes. Periodic
@@ -539,6 +540,19 @@ def heartbeat(
     # the same reply twice, so it must never be handed one.
     if int(runner.capabilities.get("midturn") or 0) != int(midturn or 0):
         runner.capabilities = {**runner.capabilities, "midturn": int(midturn or 0)}
+        if "capabilities" not in fields:
+            fields.append("capabilities")
+    # Which agent CLIs the box has (`harness.clis`). A level, like `envelope`:
+    # written every beat, and a beat without it removes it, so a box whose code
+    # stops reporting a CLI is read as Claude Code alone on its next beat.
+    from . import clis as cli_vocab
+
+    reported_clis = cli_vocab.sanitize(clis)
+    if runner.capabilities.get("clis") != reported_clis:
+        caps = {k: v for k, v in runner.capabilities.items() if k != "clis"}
+        if reported_clis is not None:
+            caps["clis"] = reported_clis
+        runner.capabilities = caps
         if "capabilities" not in fields:
             fields.append("capabilities")
     # The model the box's sessions start on (`opus[1m]`), for the chat's context

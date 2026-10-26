@@ -45,3 +45,60 @@ def test_runner_login_cli_defaults_to_claude_code():
     assert login.cli == clis.CLAUDE_CODE == "claude-code"
     assert clis.CLIS == ("claude-code", "codex")
     assert clis.SENSITIVE_CLIS == frozenset({"claude-code"})
+
+
+# ---- what a runner reports (Task 2) ----
+from canopy_transcript import SIGNED_OUT_NOTE  # noqa: E402
+
+from apps.harness import runner_protocol  # noqa: E402
+from apps.harness.schemas import HeartbeatIn  # noqa: E402
+
+
+def _runner(**kw):
+    return Runner.objects.create(name="r", kind=Runner.CLOUD, status=Runner.ONLINE,
+                                 last_heartbeat_at=timezone.now(), **kw)
+
+
+def test_reported_legacy_box_is_claude_code_only():
+    runner = _runner(capabilities={"profiles": 3, "envelope": 2})
+    assert clis.reported(runner) == {"claude-code": clis.CliReport(True, 3, 2)}
+
+
+def test_reported_legacy_signed_out_box():
+    runner = _runner(capabilities={}, ready=False, ready_note=f"{SIGNED_OUT_NOTE} (x)")
+    assert clis.reported(runner) == {"claude-code": clis.CliReport(False, 0, 0)}
+
+
+def test_heartbeat_stores_sanitized_clis():
+    runner = _runner(capabilities={})
+    beat = {"codex": {"signed_in": True, "profiles": 3, "envelope": 2, "version": "0.164.0"},
+            "gpt": {"signed_in": True}, "claude-code": "yes"}
+    runner_protocol.heartbeat(runner, HeartbeatIn(clis=beat))
+    runner.refresh_from_db()
+    assert runner.capabilities["clis"] == {
+        "codex": {"signed_in": True, "profiles": 3, "envelope": 2, "version": "0.164.0"}}
+    assert clis.reported(runner) == {"codex": clis.CliReport(True, 3, 2, "0.164.0")}
+
+
+def test_heartbeat_without_clis_drops_report():
+    runner = _runner(capabilities={"clis": {"codex": {"signed_in": True}}})
+    runner_protocol.heartbeat(runner, HeartbeatIn())
+    runner.refresh_from_db()
+    assert "clis" not in runner.capabilities
+    assert set(clis.reported(runner)) == {"claude-code"}
+
+
+def test_ws_beat_carries_clis():
+    runner = _runner(capabilities={})
+    frame = {"type": "heartbeat", "clis": {"codex": {"signed_in": True}}, "ready": True}
+    runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame))
+    runner.refresh_from_db()
+    assert clis.reported(runner)["codex"].signed_in is True
+
+
+def test_ws_beat_with_malformed_clis_keeps_the_beat():
+    runner = _runner(capabilities={})
+    frame = {"clis": ["codex"], "note": "still here"}
+    runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame))
+    runner.refresh_from_db()
+    assert set(clis.reported(runner)) == {"claude-code"}

@@ -618,6 +618,11 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
+    # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
+    # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
+    # A level like `profiles`: absent (older code) means the box is read as Claude
+    # Code alone (`clis.reported`).
+    clis: dict | None = None
     # The Claude model this box's sessions start on, as its settings name it
     # (`opus[1m]`): the only place the 1M-window `[1m]` is written down — the
     # transcript records the bare API id. The chat's context meter sizes the
