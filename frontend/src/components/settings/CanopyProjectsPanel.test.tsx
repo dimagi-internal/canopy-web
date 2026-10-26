@@ -4,7 +4,11 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 
 const getCanopyProjects = vi.fn()
 const setCanopyProjects = vi.fn()
-vi.mock('@/api/canopyProjects', () => ({ getCanopyProjects, setCanopyProjects }))
+const getSessionSharing = vi.fn().mockResolvedValue([])
+const setSessionSharing = vi.fn()
+vi.mock('@/api/canopyProjects', () => ({
+  getCanopyProjects, setCanopyProjects, getSessionSharing, setSessionSharing,
+}))
 
 const { CanopyProjectsPanel } = await import('./CanopyProjectsPanel')
 
@@ -12,6 +16,27 @@ describe('CanopyProjectsPanel', () => {
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
+    getSessionSharing.mockResolvedValue([])
+  })
+
+  it('shares your sessions with a project team only when you tick it', async () => {
+    getCanopyProjects.mockResolvedValue({ everything: true, projects: [], available: ['connect-labs'] })
+    const row = {
+      project_id: 7, handle: 'supply', name: 'Supply', workspace: 'dimagi', repo: 'connect-labs',
+      shared: false, team_size: 3,
+    }
+    getSessionSharing.mockResolvedValue([row])
+    setSessionSharing.mockResolvedValue({ ...row, shared: true })
+    render(<CanopyProjectsPanel />)
+    const box = (await screen.findByTestId('session-sharing-7')) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    expect(screen.getByText(/team of 3/)).toBeTruthy()
+    await act(async () => {
+      fireEvent.click(box)
+      await Promise.resolve()
+    })
+    expect(setSessionSharing).toHaveBeenCalledWith(7, true)
+    expect(((await screen.findByTestId('session-sharing-7')) as HTMLInputElement).checked).toBe(true)
   })
 
   it('says canopy is off everywhere when nothing is chosen', async () => {

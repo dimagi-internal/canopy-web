@@ -12,6 +12,22 @@ from pydantic import AliasChoices, Field, field_validator
 from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_origin
 
 
+class ProjectSessionShareOut(Schema):
+    """One project you could share your laptop sessions with (`/api/me/session-sharing/`)."""
+    project_id: int = Field(description="The project's id.")
+    handle: str = Field(description="The project's handle in its workspace.")
+    name: str
+    workspace: str = Field(description="The workspace the project belongs to.")
+    repo: str = Field(description="The repo the project works in; your laptop sessions in it are what is shared.")
+    shared: bool = Field(description="Your sessions in this repo are visible to the project's team.")
+    team_size: int = Field(description="How many people are on the project's team: its owner and its participants.")
+
+
+class ProjectSessionShareIn(Schema):
+    """Turn sharing your laptop sessions with one project's team on or off."""
+    shared: bool
+
+
 class ConversationKeyWrapIn(Schema):
     """A conversation key's private half wrapped to a vault key: `{alg: "ecdh-es", epk,
     n, ct}`."""
