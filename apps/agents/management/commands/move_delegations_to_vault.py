@@ -38,7 +38,7 @@ def move(row: AgentDelegation, *, apply: bool) -> str:
             row.delete()
         return f"{label}: not in force — row deleted, not moved"
     if not apply:
-        machines = sorted({k.runner.name for k in accounts.delegated_devices(agent)})
+        machines = sorted({k.runner.name for k in accounts.delegated_devices(agent, row.user)})
         if not machines:
             return f"{label}: KEPT — no machine that runs {agent.slug} can open one yet"
         return f"{label}: would move, sealed to {', '.join(machines)}"

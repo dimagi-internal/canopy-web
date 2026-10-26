@@ -2780,7 +2780,8 @@ class AgentGitHubOut(StrictModel):
     #: machine that holds it to seal it to them.
     machines: list[str] = Field(default_factory=list)
     waiting_machines: list[str] = Field(default_factory=list)
-    #: The machines a token given now would be sealed to: those that run the agent.
+    #: The machines a token YOU gave now would be sealed to: the cloud boxes that run the
+    #: agent, and runners of your own that do.
     eligible_machines: list[str] = Field(default_factory=list)
     #: Who ran the last check: "server" (when it was given) or a machine's name.
     checked_by: str = ""

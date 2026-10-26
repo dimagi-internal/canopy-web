@@ -380,7 +380,7 @@ def clear_github(agent: Agent, user) -> bool:
     return bool(deleted or more)
 
 
-def status(agent: Agent, *, machines: bool = False) -> dict:
+def status(agent: Agent, *, machines: bool = False, viewer=None) -> dict:
     """Everything the settings screen shows. Never the token. `machines`: also which
     machines can open it — read for the agent's own GitHub panel only, never by the
     health checks that ask this of every agent in a tree."""
@@ -396,8 +396,8 @@ def status(agent: Agent, *, machines: bool = False) -> dict:
             RepoIdentity.objects.filter(agent=agent).values_list("repo_slug", flat=True)),
     }
     if machines:
-        # Who could open a token given now: said before anyone pastes one.
-        base["eligible_machines"] = sorted({k.runner.name for k in accounts.delegated_devices(agent)})
+        # Who could open a token `viewer` gave now: said before they paste one.
+        base["eligible_machines"] = sorted({k.runner.name for k in accounts.delegated_devices(agent, viewer)})
     now = timezone.now()
     entry = github_entry(agent)
     if entry is not None:

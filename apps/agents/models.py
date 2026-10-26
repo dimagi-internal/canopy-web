@@ -501,7 +501,8 @@ class VaultEntryAccount(models.Model):
     - `agent`: the agent's own credential (its own login or account). Most entries.
     - `delegated`: a standing credential from a PERSON's own account, which they gave
       the agent to use (Jonathan's GitHub token for ACE). Sealed so that only the
-      machines that run the agent can open it (`accounts.delegated_devices`), never
+      cloud boxes that run the agent, and machines of that person's own, can open it
+      (`accounts.delegated_devices`), never
       under the vault key, and readable by no person through canopy: not the agent's
       admins, not even the person it came from (they replace or withdraw it).
       canopy gives it no expiry of its own; `provider_expires_at` is what the provider

@@ -8,9 +8,10 @@ asks this module, never the columns:
 
 - `is_delegated(entry, agent)`: a person's (or another agent's) account, used by
   `agent`. An entry whose `delegated_by_agent` IS `agent` is that agent's own.
-- `delegated_devices(agent)`: the only machines a delegated entry is sealed to — the
-  machines that run the agent's turns. Not the vault's members, not its admins, not a
-  license holder's box, and not the person it came from.
+- `delegated_devices(agent, person)`: the only machines `person`'s delegated entry is
+  sealed to — the cloud boxes that run the agent's turns, and machines of `person`'s
+  own that do. Not the vault's members, not its admins, not another admin's laptop,
+  not a license holder's box.
 - `serves(entry, agent)`: may a resolve hand it out now. Never refuses on a date.
 - `label(entry, agent)`: the one sentence every screen and alert uses.
 
@@ -76,23 +77,39 @@ def own_entries(agent):
 
 # ---- the machines that may open a delegated entry --------------------------------
 
-def delegated_devices(agent, facts=None) -> list:
-    """ACTIVE device keys with an APPROVED ECDH key, on a runner that serves `agent` and
-    whose owner is one of its admins (`runner_may_hold_agent`) — the machines that run
-    its turns. A person's computer without the runner app runs no turn, so it is not one."""
+def delegated_devices(agent, person, facts=None) -> list:
+    """The machines a credential `person` delegated to `agent` is sealed to: ACTIVE device
+    keys with an APPROVED ECDH key, on a runner that serves `agent` and whose owner is one
+    of its admins (`runner_may_hold_agent`), and that is a cloud box or `person`'s own
+    (`may_hold_for`). A person's computer without the runner app runs no turn, so it is
+    not one."""
 
     keys = (device_keys.keys_for_agent(agent, facts)
             .filter(status=RunnerDeviceKey.ACTIVE, ecdh_approved_at__isnull=False)
             .exclude(ecdh_jkt="").exclude(runner__kind=Runner.COMPUTER)
             .select_related("runner__owner"))
-    return [k for k in keys if runner_may_hold_agent(k.runner, agent)]
+    return [k for k in keys if may_hold_for(k.runner, person) and runner_may_hold_agent(k.runner, agent)]
+
+
+def may_hold_for(runner, person) -> bool:
+    """May `runner` hold a credential `person` delegated? A cloud box, or a machine of
+    their own. A laptop's device key sits in its owner's home directory, so its owner
+    can open anything sealed to it: another admin's laptop would hand them `person`'s
+    token. Being an admin of the agent is trust to run it, not to read its people's
+    credentials."""
+    return runner.kind == Runner.CLOUD or (person is not None and runner.owner_id == person.pk)
+
+
+def entry_devices(entry, agent, facts=None) -> list:
+    """`delegated_devices` for the person `entry` came from."""
+    return delegated_devices(agent, entry.delegated_by, facts)
 
 
 def recipients(agent, person) -> list[tuple[str, str, dict]]:
     """Who a delegated value is sealed to: each machine that runs `agent`, and the person
     it came from when they have a vault key (so a browser of theirs could re-seal it)."""
 
-    out = [("device", k.ecdh_jkt, k.ecdh_public_jwk) for k in delegated_devices(agent)]
+    out = [("device", k.ecdh_jkt, k.ecdh_public_jwk) for k in delegated_devices(agent, person)]
     ks = UserVaultKeyset.objects.filter(user=person).first() if person is not None else None
     if ks is not None:
         out.append(("member", str(ks.user_id), ks.public_jwk))
@@ -104,11 +121,12 @@ def seal(agent, name: str, plaintext: str, person) -> tuple[str, list[str]]:
     machine that runs `agent` can open one yet: a credential nobody can use is a
     credential nobody notices is missing."""
     to = recipients(agent, person)
-    machines = sorted({k.runner.name for k in delegated_devices(agent)})
+    machines = sorted({k.runner.name for k in delegated_devices(agent, person)})
     if not machines:
         raise ZkError(409, "no_machine_can_open",
-                      f"no machine that runs {agent.slug} can open a delegated credential yet: a runner "
-                      f"that serves {agent.slug}, owned by one of its admins, needs an approved device key")
+                      f"no machine that runs {agent.slug} can open a credential of yours yet: a cloud "
+                      f"runner that serves {agent.slug}, or a runner of your own, needs an approved "
+                      "device key")
     return zk_seal.seal_to(plaintext, agent_id=str(agent.pk), name=name, kv=agent.zk_kv,
                            recipients=to), machines
 
@@ -142,7 +160,7 @@ def waiting_machines(entry, agent) -> list:
     """Machines that run `agent` and could open `entry`, but it was not sealed to them
     yet: a machine that holds it re-seals it to them (`reseal`)."""
     have = {t for kind, t in zk_seal.sealed_targets(entry.value_zk) if kind == "device"}
-    return [k for k in delegated_devices(agent) if k.ecdh_jkt not in have]
+    return [k for k in entry_devices(entry, agent) if k.ecdh_jkt not in have]
 
 
 def resolve_payload(agent, device_key) -> dict:
@@ -152,13 +170,15 @@ def resolve_payload(agent, device_key) -> dict:
     so it can re-seal for them. Empty for any machine that does not run the agent."""
     if device_key is None or not device_key.ecdh_jkt:
         return {}
-    if device_key.pk not in {k.pk for k in delegated_devices(agent)}:
-        return {}
     out = {}
     for entry in delegated_entries(agent):
         if not serves(entry, agent):
             continue
         if ("device", device_key.ecdh_jkt) not in zk_seal.sealed_targets(entry.value_zk):
+            continue
+        # Sealed to it once is not enough: it must still be a machine this entry's person
+        # lets hold it (a laptop of someone else's never is, whatever it was sealed to).
+        if device_key.pk not in {k.pk for k in entry_devices(entry, agent)}:
             continue
         out[entry.name] = {
             "value_zk": entry.value_zk,
@@ -228,7 +248,7 @@ def _recipient_rows(entry, agent) -> list[dict]:
     run `agent`, and its person when they have a vault key."""
 
     out = [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
-            "runner_name": k.runner.name} for k in delegated_devices(agent)]
+            "runner_name": k.runner.name} for k in entry_devices(entry, agent)]
     ks = UserVaultKeyset.objects.filter(user_id=entry.delegated_by_id).first() if entry.delegated_by_id else None
     if ks is not None:
         out.append({"kind": "member", "target": str(ks.user_id), "public_jwk": ks.public_jwk,
@@ -246,10 +266,10 @@ def keeper_work(runner) -> list[dict]:
     out = []
     for agent in Agent.objects.filter(pk__in=AgentCredential.objects.filter(account="delegated")
                                       .values("agent_id")):
-        mine = [k for k in delegated_devices(agent) if k.runner_id == runner.pk]
-        if not mine:
-            continue
         for entry in delegated_entries(agent):
+            mine = [k for k in entry_devices(entry, agent) if k.runner_id == runner.pk]
+            if not mine:
+                continue
             sealed = zk_seal.sealed_targets(entry.value_zk)
             holder = next((k for k in mine if ("device", k.ecdh_jkt) in sealed), None)
             waiting = [k.ecdh_jkt for k in waiting_machines(entry, agent)]
@@ -283,7 +303,7 @@ def reseal(agent, name: str, *, value_zk: str, expect: str, runner) -> list[str]
             raise ZkError(404, "not_found", f"{agent.slug} has no delegated credential {name}")
         if vault_engine.value_digest(entry.value_zk) != (expect or "").strip().lower():
             raise ZkError(409, "zk_value_changed", f"{name} changed since you read it")
-        eligible = delegated_devices(agent)
+        eligible = entry_devices(entry, agent)
         allowed = {("device", k.ecdh_jkt) for k in eligible}
         if entry.delegated_by_id:
             allowed.add(("member", str(entry.delegated_by_id)))
@@ -300,3 +320,33 @@ def reseal(agent, name: str, *, value_zk: str, expect: str, runner) -> list[str]
         entry.value_zk = value_zk
         entry.save(update_fields=["value_zk", "updated_at"])
     return machines_that_can_open(entry)
+
+
+# ---- dropping machines that may no longer hold it ------------------------------------
+
+def prune(entry, agent) -> list[str]:
+    """Drop from `entry`'s sealed value every recipient that may no longer hold it: a
+    machine that is not one of `entry_devices` (retired, its owner no longer an admin,
+    or a laptop of someone other than its person) and any person but its own. Each
+    recipient has its own ciphertext, so this edits the envelope and decrypts nothing.
+    A machine that opened it before keeps what it saw: its person replaces the token at
+    the provider for that. Returns the runner names dropped; empty when nothing changed."""
+
+    allowed = {("device", k.ecdh_jkt) for k in entry_devices(entry, agent)}
+    if entry.delegated_by_id:
+        allowed.add(("member", str(entry.delegated_by_id)))
+    kept, dropped = zk_seal.keep_only(entry.value_zk, allowed)
+    if not dropped:
+        return []
+    with transaction.atomic():
+        zk._locked(agent)
+        fresh = type(entry).objects.select_for_update().get(pk=entry.pk)
+        if fresh.value_zk != entry.value_zk:
+            return prune(fresh, agent)
+        # Even when that leaves no machine: the panel then says nothing can open it, which
+        # is true, and is better than a copy only a machine that may not hold it opens.
+        fresh.value_zk = kept
+        fresh.save(update_fields=["value_zk", "updated_at"])
+    jkts = [t for kind, t in dropped if kind == "device"]
+    names = dict(RunnerDeviceKey.objects.filter(ecdh_jkt__in=jkts).values_list("ecdh_jkt", "runner__name"))
+    return sorted({names.get(t, t) for t in jkts} | {f"person {t}" for kind, t in dropped if kind == "member"})
