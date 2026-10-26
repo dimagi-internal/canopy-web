@@ -106,6 +106,17 @@ if [[ "$CMD" == "down" ]]; then
       "${AWS[@]}" autoscaling set-instance-protection --auto-scaling-group-name "$STACK" \
         --instance-ids $ids --no-protected-from-scale-in
     fi
+    # One still waiting on the launch hook (it never joined: a fleet that was never
+    # approved) is held there for an hour, and the stack delete waits on it.
+    waiting=$( { "${AWS[@]}" autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$STACK" \
+                   --query 'AutoScalingGroups[0].Instances[?ends_with(LifecycleState, `Pending:Wait`)].InstanceId' --output text
+                 "${AWS[@]}" autoscaling describe-warm-pool --auto-scaling-group-name "$STACK" \
+                   --query 'Instances[?ends_with(LifecycleState, `Pending:Wait`)].InstanceId' --output text; } 2>/dev/null || true)
+    for i in $waiting; do
+      [[ "$i" == "None" ]] && continue
+      "${AWS[@]}" autoscaling complete-lifecycle-action --auto-scaling-group-name "$STACK" \
+        --lifecycle-hook-name canopy-ready --instance-id "$i" --lifecycle-action-result ABANDON >/dev/null 2>&1 || true
+    done
     "${AWS[@]}" autoscaling update-auto-scaling-group --auto-scaling-group-name "$STACK" \
       --min-size 0 --max-size 0 --desired-capacity 0
     "${AWS[@]}" autoscaling delete-warm-pool --auto-scaling-group-name "$STACK" --force-delete >/dev/null 2>&1 || true
