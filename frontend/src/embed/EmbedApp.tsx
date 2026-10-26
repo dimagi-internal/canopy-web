@@ -11,6 +11,7 @@ import { Markdown } from '@/components/Markdown'
 import { SessionMemoryToggles } from '@/components/chat/SessionMemoryToggles'
 import { SealedConversationBanner, sealedAppHost } from '@/components/chat/SealedConversationBanner'
 import { PrivateConversationNote } from '@/components/chat/PrivateConversationNote'
+import { SessionAudienceLine, type SessionAudience } from '@/components/SessionAudienceLine'
 import { unlockLocally } from '@/vault/localUnlock'
 import type { SealedKey } from '@/vault/sealedChat'
 import { offeredKey } from './offeredKey'
@@ -1208,12 +1209,15 @@ function EmbedChat({
   const [sealedKey, setSealedKey] = useState<SealedKey | null>(null)
   // Its owner answers a request to join (`can_share`); its other people see it.
   const [myRole, setMyRole] = useState<string | null>(null)
+  // Who can see this conversation (`audience`, the same pieces as the session ACL).
+  const [audience, setAudience] = useState<SessionAudience | null>(null)
   const sealedRows = socket.state.messages.some((m) => typeof m.sealed === 'string')
   useEffect(() => {
     if (isContact) return
     let live = true
     void client.rest.json<{
       sealed_key?: SealedKey | null; sensitive?: boolean; my_role?: string | null; origin_resource?: string
+      audience?: SessionAudience | null
     }>(
       `/api/canopy-sessions/${encodeURIComponent(sessionId)}`)
       .then((d) => {
@@ -1225,6 +1229,7 @@ function EmbedChat({
         })
         setSealedKey(d.sealed_key ?? null)
         setMyRole(d.my_role ?? null)
+        setAudience(d.audience ?? null)
         setSensitive(Boolean(d.sensitive || d.sealed_key))
       })
       .catch(() => live && setSensitive((v) => v ?? false))
@@ -1458,6 +1463,7 @@ function EmbedChat({
         </span>
       </header>
       <AskingAbout pageName={pageName} />
+      <SessionAudienceLine audience={audience} className="px-3 py-1" />
       {sensitive && <PrivateConversationNote />}
       <SealedConversationBanner
         state={sealed.state}

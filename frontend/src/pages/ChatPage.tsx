@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { SessionAudienceLine } from '@/components/SessionAudienceLine'
 import { clsx } from 'clsx'
 import { useParams } from 'react-router-dom'
 import {
@@ -494,6 +495,7 @@ function ChatPageInner({
           )}
         </div>
       </div>
+      <SessionAudienceLine audience={meta?.audience} className="px-4 pb-1" />
       {meta?.sensitive && <PrivateConversationNote />}
       {meta?.sensitive && (
         <JoinRequests sessionId={id} actions={joinActions} live={liveJoinRequests}

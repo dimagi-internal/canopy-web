@@ -547,6 +547,14 @@ class SessionSearchPageOut(Schema):
     next_cursor: str | None = None
 
 
+class SessionAudienceOut(Schema):
+    """Who can see this session, in one line, from the same pieces as the session ACL."""
+    label: str = Field(description='Who it is visible to, e.g. "Only you", "Everyone on this email thread (4)".')
+    extras: list[str] = Field(default_factory=list,
+                              description='Who else may, e.g. "Trellis may review (coaching)".')
+    count: int = Field(description="How many people in the workspace can read it.")
+
+
 class SessionDetailOut(SessionOut):
     messages: list[MessageOut]
     # The dialog itself, when `waiting_on_you`. Same payload shape whichever
@@ -567,6 +575,8 @@ class SessionDetailOut(SessionOut):
     # (canopy_sessions.access). The page reads it to decide whether to offer
     # sharing and the composer — the server enforces both regardless.
     my_role: str | None = None
+    # Who can see this, from the same pieces as the ACL (`canopy_sessions.audience`).
+    audience: SessionAudienceOut | None = None
     #: A private conversation you are not in: your latest request to be added
     #: (`pending` / `declined` / …), or "" when you have not asked.
     your_join_request: str = ""
