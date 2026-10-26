@@ -75,6 +75,8 @@ PUBLIC_PATH_PREFIXES = (
     # probe user, for canopy's own client only (same private_key_jwt + DPoP).
     "/oauth/probe",
     "/oauth/host/jwks.json",
+    "/oauth/host/site.json",
+    "/.well-known/canopy-site.json",
     "/.well-known/oauth-authorization-server",
     "/.well-known/oauth-protected-resource",
     # The Human Context Protocol discovery document (HCP v1 Appendix C) — what

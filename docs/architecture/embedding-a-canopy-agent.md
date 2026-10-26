@@ -1389,7 +1389,11 @@ cases live: an agent inbox that has gone stale, and a feature set you decide to
 deprecate while looking at it and have forgotten a minute later.
 
 **Setup is the ordinary setup, plus one tick.** Connect a site as in step 1 and
-tick **"Show this panel on canopy's own pages"**. There is no separate flow, no
+tick **"Show this panel on canopy's own pages"**. canopy publishes its own signed
+`site.json` like any host (`/oauth/host/site.json`, beside its host keys, and
+`/.well-known/canopy-site.json`), so typing canopy's address and **Fill from the
+site** fills the registration, and after a move to a new address **Fill from the
+site's own documents** refreshes it — no URL is typed by hand. There is no separate flow, no
 reserved name and no deployment setting: canopy's own panel is whichever
 connected site an owner ticked that box on, and usually that site is canopy
 itself. Only one app may have it at a time, and the refusal names the one that
