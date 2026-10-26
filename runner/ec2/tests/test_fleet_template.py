@@ -48,3 +48,9 @@ def test_a_box_template_without_its_name_line_is_refused():
 def test_the_group_launches_only_in_the_zones_it_is_given(rendered):
     assert "AvailabilityZones: !If [HasZones, !Ref Zones, !GetAZs '']" in rendered
     assert "HasZones:" in rendered
+
+
+def test_the_warm_pool_holds_exactly_its_size(rendered):
+    # Uncapped, AWS prepares MaxSize - desired: a new, empty group's pool would launch
+    # instances the stack waits on before the fleet even exists.
+    assert "MaxGroupPreparedCapacity: !Ref WarmPoolSize" in rendered

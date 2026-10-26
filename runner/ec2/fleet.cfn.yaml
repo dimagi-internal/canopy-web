@@ -221,6 +221,11 @@ Resources:
       AutoScalingGroupName: !Ref Group
       PoolState: Stopped
       MinSize: !Ref WarmPoolSize
+      # Without a cap AWS prepares MaxSize - desired instances, not WarmPoolSize: a
+      # warm pool of 1 held 2, and an empty new group's pool launched 3 that the stack
+      # then waited on (each reports ready only once it has joined the fleet, which
+      # fleet.sh registers after the stack completes). The pool is exactly WarmPoolSize.
+      MaxGroupPreparedCapacity: !Ref WarmPoolSize
       InstanceReusePolicy: { ReuseOnScaleIn: true }
 
   # What canopy-web may do to THIS group: set its desired capacity and its members'
