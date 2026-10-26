@@ -80,6 +80,42 @@ class OpenSessionReason(Schema):
     oldest_activity_at: dt.datetime | None = None
 
 
+class RunnerOpenSessionStarter(Schema):
+    """Who started a session: `kind` is `initiator.KINDS` (user, contact, system,
+    agent). An agent's own login is reported as `agent`, with its slug."""
+
+    kind: str
+    agent: str = ""
+    email: str = ""
+    name: str = ""
+
+
+class RunnerOpenSessionOut(Schema):
+    """One open session on a runner, for the box's owner and admins: facts only —
+    no title, prompt or message (`apps/harness/runner_sessions.py`)."""
+
+    id: uuid.UUID
+    agent: str = ""
+    workspace: str
+    origin: str
+    open_reason: str
+    started_by: RunnerOpenSessionStarter | None = None
+    first_turn_origin: str = ""
+    first_turn_mode: str = ""
+    turns: int = 0
+    question_waiting: bool = False
+    transferred_at: dt.datetime | None = None
+    sensitive: bool = False
+    created_at: dt.datetime
+    last_activity_at: dt.datetime | None = None
+
+
+class RunnerOpenSessionCloseOut(Schema):
+    ok: bool
+    closing: bool = False
+    reason: str = ""
+
+
 class RunnerIn(Schema):
     name: str
     kind: str  # emdash|cloud|remote|desktop

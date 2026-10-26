@@ -324,6 +324,11 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   `unclassified` means the rule and the explanation disagree, which is a bug;
   `no_turn_found` is a cloud session nothing can finish. Add a leg to `unseen_q`
   → add its reason.
+- The box's owner and admins list the sessions open on it, facts only
+  (`apps/harness/runner_sessions.py`, `GET /runners/{id}/sessions/`): who started
+  each (the first driving turn's initiator; an agent's own login reads as that
+  agent), how, its turns, last activity and `open_reason`; and close an idle one.
+  The runner row's count and this list are the same `active()` set.
 - `GET /api/canopy-sessions/?reply=true` stamps every row with `feed_status`; the
   Feed only sorts and counts that verdict. The "is asking" / "is done" pushes go to
   the first candidate the session is on the Feed for

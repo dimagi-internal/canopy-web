@@ -25,7 +25,7 @@ from apps.agents.models import Agent
 from apps.agents.route_refusals import zk_problem
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
-from apps.canopy_sessions import transcript_read
+from apps.canopy_sessions import control, transcript_read
 from apps.canopy_sessions.models import Attachment, Session
 from apps.canopy_sessions.staleness import active, open_reason
 from apps.events import audit as events_audit
@@ -33,7 +33,17 @@ from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
-from . import claim, credential_sets, egress, routing, runner_credential_resolve, runner_projects, sensitivity, services
+from . import (
+    claim,
+    credential_sets,
+    egress,
+    routing,
+    runner_credential_resolve,
+    runner_projects,
+    runner_sessions,
+    sensitivity,
+    services,
+)
 from . import runners as harness_runners
 
 # The one harness router and the helpers every harness route shares; api.py
@@ -89,6 +99,8 @@ from .schemas import (
     RunnerMintUrlIn,
     RunnerOnlyAgentsIn,
     RunnerOnlyAgentsOut,
+    RunnerOpenSessionCloseOut,
+    RunnerOpenSessionOut,
     RunnerOut,
     RunnerPrivateIn,
     RunnerVaultEntryIn,
@@ -788,6 +800,41 @@ def list_runner_admins(request: HttpRequest, runner_id: uuid.UUID):
     "who else can fix this", which is the question a stuck box raises."""
     runner = runner_admin_or_404(request, runner_id)
     return [_admin_row(a) for a in harness_runners.list_runner_admins(runner)]
+
+
+@router.get("/runners/{runner_id}/sessions/", response=list[RunnerOpenSessionOut],
+            summary="The sessions open on this runner, facts only (owner and admins)")
+@gate("runner-admin")
+def list_runner_sessions(request: HttpRequest, runner_id: uuid.UUID):
+    """Every session counted in this runner's `open_sessions`, whoever's it is: who
+    started it and how, its turns, when it last did anything, and `open_reason` —
+    the check that holds it open (`staleness.OPEN_REASONS`). Never a title, prompt
+    or message: the words stay with the people in the conversation, and this is what
+    the people who keep the box need to understand and tidy it. Longest-quiet first,
+    at most 500. See `apps/harness/runner_sessions.py`."""
+    runner = runner_admin_or_404(request, runner_id)
+    return runner_sessions.open_sessions(runner)
+
+
+@router.post("/runners/{runner_id}/sessions/{session_id}/close", response=RunnerOpenSessionCloseOut,
+             summary="Close an idle session on this runner (owner and admins)")
+@gate("runner-admin", kind="conversation")
+def close_runner_session(request: HttpRequest, runner_id: uuid.UUID, session_id: uuid.UUID):
+    """Close one session open on this box, as housekeeping: the same close as the
+    session's own `/close`, for the people trusted with emptying the box (who may
+    already move it off, `access.may_move`). Refuses one in use — a turn running, a
+    question waiting, or mid-transfer (`reason: "in_use:<open reason>"`) — since that
+    would end somebody's live conversation. `not_open` when it is not open here.
+    A cloud session's close is an archive, which `/unarchive` undoes."""
+    runner = runner_admin_or_404(request, runner_id)
+    session, reason = runner_sessions.open_session(runner, session_id)
+    if session is None:
+        return {"ok": False, "reason": "not_open"}
+    if reason in runner_sessions.IN_USE:
+        return {"ok": False, "reason": f"in_use:{reason}"}
+    outcome = control.close_session(session=session)
+    ok = outcome in ("closing", "closed")
+    return {"ok": ok, "closing": outcome == "closing", "reason": "" if ok else outcome}
 
 
 @router.post("/runners/{runner_id}/admins", response=RunnerAdminOut,
