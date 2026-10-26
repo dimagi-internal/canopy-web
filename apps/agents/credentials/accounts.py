@@ -171,6 +171,15 @@ def resolve_payload(agent, device_key) -> dict:
     return out
 
 
+def withheld_payload(agent) -> list[dict]:
+    """What a read that gets no delegated credential is told about them: each one in force,
+    whose it is and which provider — never a value — so someone using the agent on their
+    own machine knows to use their own account for it (`canopy agent use` says so)."""
+    return [{"name": e.name, "provider": e.provider, "label": label(e, agent),
+             "delegated_by_email": e.delegated_by.email if e.delegated_by_id else ""}
+            for e in delegated_entries(agent) if serves(e, agent)]
+
+
 def label(entry, agent) -> str:
     """"GitHub · delegated by Jonathan Jackson" — or "the agent's own" — plus what the
     provider said about expiry, or that a machine found it no longer works."""

@@ -380,8 +380,10 @@ def clear_github(agent: Agent, user) -> bool:
     return bool(deleted or more)
 
 
-def status(agent: Agent) -> dict:
-    """Everything the settings screen shows. Never the token."""
+def status(agent: Agent, *, machines: bool = False) -> dict:
+    """Everything the settings screen shows. Never the token. `machines`: also which
+    machines can open it — read for the agent's own GitHub panel only, never by the
+    health checks that ask this of every agent in a tree."""
     owner = agent.owner
     base = {
         "repo": agent_repo(agent),
@@ -392,13 +394,18 @@ def status(agent: Agent) -> dict:
         # Repos whose agentless project turns borrow this identity (RepoIdentity).
         "identity_for_repos": list(
             RepoIdentity.objects.filter(agent=agent).values_list("repo_slug", flat=True)),
-        # Who could open a token given now: said before anyone pastes one.
-        "eligible_machines": sorted({k.runner.name for k in accounts.delegated_devices(agent)}),
     }
+    if machines:
+        # Who could open a token given now: said before anyone pastes one.
+        base["eligible_machines"] = sorted({k.runner.name for k in accounts.delegated_devices(agent)})
     now = timezone.now()
     entry = github_entry(agent)
     if entry is not None:
-        about = accounts.describe(entry, agent)
+        about = (accounts.describe(entry, agent) if machines else
+                 {"in_force": accounts.serves(entry, agent), "label": accounts.label(entry, agent),
+                  "delegated_by_email": entry.delegated_by.email if entry.delegated_by_id else "",
+                  "identity": entry.identity or {}, "checks": entry.checks or [],
+                  "machines": [], "waiting": []})
         failed = next((c for c in about["checks"] if not c.get("ok", True)), None)
         expires = entry.provider_expires_at
         return {

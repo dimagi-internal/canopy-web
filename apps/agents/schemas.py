@@ -2098,6 +2098,15 @@ class DelegatedWaitingOut(StrictModel):
     runner_name: str = ""
 
 
+class DelegatedWithheldOut(StrictModel):
+    """A delegated credential this read does not get, named so the reader uses their own."""
+
+    name: str
+    provider: str = ""
+    label: str = ""
+    delegated_by_email: str = ""
+
+
 class DelegatedEntryOut(StrictModel):
     """One delegated credential, as a runner's resolve hands it out: ciphertext only."""
 
@@ -2179,6 +2188,10 @@ class AgentCredentialsResolveOut(StrictModel):
     #: opened with this device's own key. Only to a box that runs the agent, reading
     #: with its own proof; never to an admin or a license holder.
     delegated: dict[str, DelegatedEntryOut] = Field(default_factory=dict)
+    #: For every read that does NOT get them — an admin or license holder using the agent
+    #: on their own machine — the delegated credentials that are someone's own and so not
+    #: theirs: name, provider and whose. Never a value. Use your own account for these.
+    delegated_withheld: list[DelegatedWithheldOut] = Field(default_factory=list)
 
 
 class ZkWrapMissingOut(StrictModel):

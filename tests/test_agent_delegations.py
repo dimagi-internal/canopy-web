@@ -250,7 +250,7 @@ def _admin(agent, username="ada"):
 def test_an_admin_delegates_and_a_later_delegation_replaces_it(agent, owner, github, machine):
     ada = _admin(agent)
     delegations.set_github(agent, ada, "github_pat_ada")
-    st = delegations.status(agent)
+    st = delegations.status(agent, machines=True)
     assert st["set"] and st["lent_by_email"] == "ada@dimagi-ai.com" and st["in_vault"]
     assert st["machines"] == ["cloud-ec2-1"]
     _lend(agent, owner, github)
@@ -379,11 +379,17 @@ def test_only_a_machine_that_runs_the_agent_gets_it_from_resolve(agent, owner, g
     assert ref.open_sealed_value(got["value_zk"], str(agent.pk), "github-token", "device",
                                  key.ecdh_jkt, ecdh) == "github_pat_olive"
     assert "github-token" not in r.json()["values"]
-    # An admin's read — the owner by hand, a box's owner without its proof — never.
+    assert r.json()["delegated_withheld"] == []
+    # An admin's read — the owner by hand, a box's owner without its proof — never; they
+    # are told it is someone's own, so they use their own account on their machine.
     for who, proof in ((owner, None), (runner.owner, None)):
         r = _resolve(agent, who, proof)
         assert r.status_code == 200, r.content
         assert r.json()["delegated"] == {} and "github_pat" not in r.content.decode()
+        [w] = r.json()["delegated_withheld"]
+        assert (w["name"], w["provider"], w["delegated_by_email"]) == ("github-token", "github",
+                                                                       "olive@dimagi.com")
+        assert w["label"].startswith("GitHub · delegated by Olive")
 
 
 def test_resolve_never_hands_out_a_github_token_in_the_clear(agent, owner, github, machine, runner):
@@ -458,7 +464,7 @@ def test_a_machine_reports_its_probe_and_a_failed_one_says_replace_it(agent, own
     assert r.json()["label"].endswith("no longer works — replace it")
     verdict, detail = delegations.readiness(agent)
     assert verdict == "fail" and "replace it" in detail
-    st = delegations.status(agent)
+    st = delegations.status(agent, machines=True)
     assert st["checked_by"] == "cloud-ec2-1" and st["no_longer_works"]
 
     r = c.post(url, {"agent": "echo", "name": "github-token",

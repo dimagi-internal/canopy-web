@@ -24907,6 +24907,8 @@ export interface components {
             readonly delegated?: {
                 readonly [key: string]: components["schemas"]["DelegatedEntryOut"];
             };
+            /** Delegated Withheld */
+            readonly delegated_withheld?: readonly components["schemas"]["DelegatedWithheldOut"][];
         };
         /**
          * DelegatedEntryOut
@@ -24954,6 +24956,29 @@ export interface components {
              * @default
              */
             readonly runner_name: string;
+        };
+        /**
+         * DelegatedWithheldOut
+         * @description A delegated credential this read does not get, named so the reader uses their own.
+         */
+        readonly DelegatedWithheldOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Provider
+             * @default
+             */
+            readonly provider: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Delegated By Email
+             * @default
+             */
+            readonly delegated_by_email: string;
         };
         /** ResolveVaultLayerOut */
         readonly ResolveVaultLayerOut: {

@@ -96,6 +96,7 @@ class Resolved:
     #: Credentials people delegated to the agent, sealed to this machine: {name:
     #: {value_zk, provider, identity, delegated_by_email, waiting}} (`accounts`).
     delegated: dict = field(default_factory=dict)
+    delegated_withheld: list = field(default_factory=list)
     via: str = field(default="", compare=False)
 
     def response_fields(self) -> dict:
@@ -313,6 +314,9 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
                    and _classify_read(request, via, runner=device_key.runner, device_key=device_key,
                                       rtok=rtok) == "runner")
     delegated = accounts.resolve_payload(agent, device_key) if runner_read else {}
+    # Anyone else (an admin or license holder using the agent on their own machine) is
+    # told which credentials are someone's own and not theirs to use.
+    withheld = [] if runner_read else accounts.withheld_payload(agent)
 
     if via == "license":
         # A license holder runs the agent's TOOLS, not the agent: never its own canopy
@@ -333,6 +337,7 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         mailbox_backend=mailbox_backend(agent),
         google_account=agent.google_identity(),
         delegated=delegated,
+        delegated_withheld=withheld,
         zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
         agent_id=str(agent.pk) if agent.zk_enabled else "",
         vaults=layers,

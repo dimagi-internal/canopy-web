@@ -162,6 +162,12 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
             .
           </p>
         )}
+        {gh.set && (
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="github-local-use">
+            Someone using {slug} on their own machine does not get this token: there it pushes and
+            opens pull requests as their own GitHub account.
+          </p>
+        )}
         {(gh.identity_for_repos ?? []).length > 0 && (
           <p className="mt-1 text-[11px] text-muted-foreground" data-testid="github-identity-for-repos">
             Agentless turns on{' '}

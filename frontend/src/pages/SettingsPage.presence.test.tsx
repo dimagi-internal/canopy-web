@@ -40,6 +40,8 @@ vi.mock('@/api/harness', () => ({ listRunners: vi.fn().mockResolvedValue([]) }))
 vi.mock('@/api/deviceKeys', () => ({ listRunnerDeviceKeys: vi.fn().mockResolvedValue([]) }))
 // ActAsYouPanel likewise (ActAsYouPanel.test.tsx covers it).
 vi.mock('@/components/settings/ActAsYouPanel', () => ({ ActAsYouPanel: () => null }))
+// And DelegatedCredentialsPanel (DelegatedCredentialsPanel.test.tsx covers it).
+vi.mock('@/components/settings/DelegatedCredentialsPanel', () => ({ DelegatedCredentialsPanel: () => null }))
 // ContactDetailsPanel likewise (ContactDetailsPanel.test.tsx covers it).
 vi.mock('@/components/settings/ContactDetailsPanel', () => ({ ContactDetailsPanel: () => null }))
 
