@@ -132,7 +132,7 @@ export function VaultOverviewTab({ vault: v, onChange, reload, unlock }: VaultOu
         <VaultWaitingNote members={v.members} holders={v.holders} testId={`ws-vault-waiting-${v.vault_id}`} />
       </Section>
 
-      <Section id="serves" title="What it serves">
+      <Section id="serves" title="Access">
         {v.attachments.length === 0 && <p className="text-[12px] text-muted-foreground">Serves nothing yet.</p>}
         {v.attachments.length > 0 && (
           <table className="w-full text-[12px]" data-testid="ws-vault-serves">
