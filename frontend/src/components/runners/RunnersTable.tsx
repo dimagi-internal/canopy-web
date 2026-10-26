@@ -7,7 +7,6 @@ import type { TopologyRunnerOut } from '@/api/workspaces'
 import { relativeAge } from '@/lib/relativeAge'
 import { statusTone } from '@/pages/runnerTopology'
 import { fixHref } from '@/components/supervisor/RunnerHealth'
-import { MissingSessions } from './MissingSessions'
 import { runnerHref, scopedPath } from '../../lib/scopedLinks'
 
 // THE RUNNER TABLE — one table for Health and Topology → Runners, over the
@@ -45,7 +44,7 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
           <tr><th className="py-1 font-medium">Runner</th><th className="font-medium">Owner</th>
             <th className="font-medium">Status</th><th className="font-medium" title="Running the code the deployed server expects">Code</th>
             <th className="font-medium">Its own checks</th><th className="font-medium text-right">Agents</th>
-            <th className="font-medium" title="Sessions in repos canopy knows that this box has and canopy does not">Missing sessions</th>
+            <th className="font-medium" title="When the box last sent the token counts of its sessions">Usage report</th>
             <th className="font-medium">Last heartbeat</th></tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -93,9 +92,8 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                   <CheckCounts problems={r.problems} />
                 </td>
                 <td className="text-right tabular-nums">{r.agent_count}</td>
-                <td className="whitespace-nowrap">
-                  <span className={clsx('tabular-nums', r.missing_sessions ? 'text-primary' : 'text-foreground-secondary')}>{r.missing_sessions}</span>
-                  {!r.usage_reported_at && <span className="text-muted-foreground"> · no report</span>}
+                <td className="whitespace-nowrap text-foreground-secondary">
+                  {r.usage_reported_at ? relativeAge(r.usage_reported_at, now, { seconds: false }) : 'no report'}
                 </td>
                 <td className="whitespace-nowrap text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}</td>
               </tr>
@@ -128,7 +126,7 @@ function CheckCounts({ problems }: { problems: TopologyRunnerOut['problems'] }):
 /** One runner, each column spelled out: its status in its own words and the fix
  *  for a known cause, the code it runs against what the server expects, every
  *  check that is not ok with its detail, the agents it serves, and its usage
- *  report (with the missing-session review for its admins). */
+ *  report. */
 function RunnerDetail({ runner: r, workspace }: { runner: TopologyRunnerOut; workspace: string }): JSX.Element {
   const now = new Date()
   const short = (sha: string) => sha ? sha.slice(0, 8) : 'unknown'
@@ -154,65 +152,57 @@ function RunnerDetail({ runner: r, workspace }: { runner: TopologyRunnerOut; wor
           {r.can_administer ? 'Manage runner' : 'Open runner'} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </Link>
       </div>
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 rounded-lg border border-border bg-card p-3">
-          <dt className="text-muted-foreground">Status</dt>
-          <dd>
-            <span className="text-foreground">{r.status}{r.paused ? ' · paused' : ''}{r.ready ? '' : ' · not ready'}</span>
-            {(r.status_note || r.ready_note) && (
-              <span className="block text-foreground-secondary" data-testid="runner-note">
-                It says: {[...new Set([r.status_note, r.ready_note].filter(Boolean))].join(' · ')}
-              </span>
-            )}
-            {r.remedy && <span className="mt-1 block text-foreground" data-testid="runner-remedy">To fix: {r.remedy}</span>}
-            {r.status === 'stale' && <span className="block text-muted-foreground">No heartbeat lately: the machine is asleep, offline, or its runner stopped.</span>}
-          </dd>
-          <dt className="text-muted-foreground">Code</dt>
-          <dd className="text-foreground-secondary">
-            runs <span className="font-mono">{short(r.code_sha)}</span>, server expects <span className="font-mono">{short(r.expected_code_sha)}</span>
-            {r.code_current === false && <span className="block text-muted-foreground">It updates itself within about 30 minutes, after any turn in flight; still behind after that, it raises an alert.</span>}
-          </dd>
-          <dt className="text-muted-foreground">Its own checks</dt>
-          <dd>
-            {r.problems.length === 0 ? <span className="text-foreground-secondary">all ok</span> : (
-              <ul className="space-y-1">
-                {r.problems.map((p) => {
-                  const fix = fixFor(p.name)
-                  return (
-                    <li key={p.name}>
-                      <span className={clsx('font-mono', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>{p.name}</span>
-                      {fix && <Link to={fix} className="ml-2 text-primary hover:underline">Fix →</Link>}
-                      {p.detail && <span className="block text-foreground-secondary">{p.detail}</span>}
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </dd>
-          <dt className="text-muted-foreground">Agents</dt>
-          <dd className="text-foreground-secondary">
-            {r.agents.length === 0 ? 'none in this tree' : r.agents.map((a, i) => (
-              <span key={a.slug}>{i > 0 && ', '}
-                <Link to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)} className="text-primary hover:underline">{a.name}</Link>
-              </span>
-            ))}
-          </dd>
-          <dt className="text-muted-foreground">Last heartbeat</dt>
-          <dd className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}{r.host && <> · {r.host}</>}</dd>
-          <dt className="text-muted-foreground">Usage report</dt>
-          <dd className="text-foreground-secondary">
-            {r.usage_reported_at ? `last sent ${relativeAge(r.usage_reported_at, now, { seconds: false })}` : 'not sent yet — it sends one on current code'}
-          </dd>
-          <dt className="text-muted-foreground">Lives in</dt>
-          <dd className="text-foreground-secondary">{r.workspace ?? '—'}{!r.in_tree && ' (outside this tree)'}</dd>
-        </dl>
-        <div className="rounded-lg border border-border bg-card p-3">
-          <p className="mb-1 font-semibold text-foreground">Missing sessions · {r.missing_sessions}</p>
-          {r.can_administer
-            ? <MissingSessions runnerId={r.id} />
-            : <p className="text-muted-foreground">Sessions on this box in repos canopy knows, that canopy has no record of. Only the runner's admins see the list{r.owner_email ? ` (${r.owner_email})` : ''}.</p>}
-        </div>
-      </div>
+      <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1.5 rounded-lg border border-border bg-card p-3">
+        <dt className="text-muted-foreground">Status</dt>
+        <dd>
+          <span className="text-foreground">{r.status}{r.paused ? ' · paused' : ''}{r.ready ? '' : ' · not ready'}</span>
+          {(r.status_note || r.ready_note) && (
+            <span className="block text-foreground-secondary" data-testid="runner-note">
+              It says: {[...new Set([r.status_note, r.ready_note].filter(Boolean))].join(' · ')}
+            </span>
+          )}
+          {r.remedy && <span className="mt-1 block text-foreground" data-testid="runner-remedy">To fix: {r.remedy}</span>}
+          {r.status === 'stale' && <span className="block text-muted-foreground">No heartbeat lately: the machine is asleep, offline, or its runner stopped.</span>}
+        </dd>
+        <dt className="text-muted-foreground">Code</dt>
+        <dd className="text-foreground-secondary">
+          runs <span className="font-mono">{short(r.code_sha)}</span>, server expects <span className="font-mono">{short(r.expected_code_sha)}</span>
+          {r.code_current === false && <span className="block text-muted-foreground">It updates itself within about 30 minutes, after any turn in flight; still behind after that, it raises an alert.</span>}
+        </dd>
+        <dt className="text-muted-foreground">Its own checks</dt>
+        <dd>
+          {r.problems.length === 0 ? <span className="text-foreground-secondary">all ok</span> : (
+            <ul className="space-y-1">
+              {r.problems.map((p) => {
+                const fix = fixFor(p.name)
+                return (
+                  <li key={p.name}>
+                    <span className={clsx('font-mono', p.status === 'fail' ? 'text-destructive' : 'text-warning')}>{p.name}</span>
+                    {fix && <Link to={fix} className="ml-2 text-primary hover:underline">Fix →</Link>}
+                    {p.detail && <span className="block text-foreground-secondary">{p.detail}</span>}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </dd>
+        <dt className="text-muted-foreground">Agents</dt>
+        <dd className="text-foreground-secondary">
+          {r.agents.length === 0 ? 'none in this tree' : r.agents.map((a, i) => (
+            <span key={a.slug}>{i > 0 && ', '}
+              <Link to={scopedPath(a.workspace, `/agents/${a.slug}/settings#running`)} className="text-primary hover:underline">{a.name}</Link>
+            </span>
+          ))}
+        </dd>
+        <dt className="text-muted-foreground">Last heartbeat</dt>
+        <dd className="text-foreground-secondary">{r.last_heartbeat_at ? relativeAge(r.last_heartbeat_at, now, { seconds: false }) : 'never'}{r.host && <> · {r.host}</>}</dd>
+        <dt className="text-muted-foreground">Usage report</dt>
+        <dd className="text-foreground-secondary">
+          {r.usage_reported_at ? `last sent ${relativeAge(r.usage_reported_at, now, { seconds: false })}` : 'not sent yet — it sends one on current code'}
+        </dd>
+        <dt className="text-muted-foreground">Lives in</dt>
+        <dd className="text-foreground-secondary">{r.workspace ?? '—'}{!r.in_tree && ' (outside this tree)'}</dd>
+      </dl>
     </div>
   )
 }

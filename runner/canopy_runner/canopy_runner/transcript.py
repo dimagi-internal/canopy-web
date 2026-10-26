@@ -148,9 +148,9 @@ def resolve_transcript(
 
     from . import desktop as _desktop
 
-    sent_up = transcript_for_key(task, claude_home=claude_home)
-    if sent_up is not None:
-        return sent_up
+    by_key = transcript_for_key(task, claude_home=claude_home)
+    if by_key is not None:
+        return by_key
     desktop_path = _desktop.transcript_for(task, home=home, claude_home=claude_home)
     if desktop_path is not None:
         return desktop_path

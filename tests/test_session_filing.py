@@ -141,22 +141,6 @@ def test_session_home_reads_the_tenant_once_per_runner(jj, dimagi, family, djang
         session_sync.session_home(box, "other-repo")
 
 
-def test_missing_sessions_skip_another_trees_agent(jj, dimagi, family):
-    from apps.events import usage
-    from apps.events.models import SessionUsage
-
-    connect = _ws("connect", jj, parent=dimagi)
-    Agent.objects.create(slug="hal", name="Hal", workspace=connect)
-    box = Runner.objects.create(name="cloud-ec2-2-marshellis", kind=Runner.CLOUD, host="ec2",
-                                owner=jj, workspace=family)
-    for cs, repo in (("cs-hal", "hal"), ("cs-mine", "canopy-web")):
-        SessionUsage.objects.create(runner=box, claude_session=cs, repo=repo, day="2026-10-18")
-    rows = _client(jj).get(f"/api/harness/runners/{box.pk}/missing-sessions").json()["sessions"]
-    assert [r["claude_session"] for r in rows] == ["cs-mine"]
-    assert usage.send_up(box, ["cs-hal"]) == []
-    assert not Session.objects.filter(runner_binding__session_key="claude:cs-hal").exists()
-
-
 def test_an_agent_project_still_follows_the_agent(runner, jj, family):
     """The default is the PERSON's; an agent's project is the agent's tenant."""
     connect = _ws("connect", jj, parent=runner.workspace)

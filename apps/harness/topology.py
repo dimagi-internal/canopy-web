@@ -25,7 +25,6 @@ from collections.abc import Callable
 
 from django.db.models import prefetch_related_objects
 
-from apps.events.models import SessionUsage
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace, ancestor_chains
 
@@ -68,21 +67,14 @@ def problems(runner) -> list[dict]:
 
 
 def _usage(rows: list[dict], boxes: dict, viewer) -> None:
-    """Each box's usage report on its row: when it last sent one, how many of its
-    local sessions canopy has no record of (a count — the list is its admins'
-    alone), and whether the viewer administers it."""
-    from django.db.models import Count
-
+    """Each box's usage report on its row: when it last sent one, and whether the
+    viewer administers it."""
     from .runners import administered_runner_ids
 
-    missing = dict(SessionUsage.objects.filter(runner_id__in=list(boxes), workspace__isnull=True)
-                   .order_by().values("runner_id").annotate(n=Count("claude_session", distinct=True))
-                   .values_list("runner_id", "n"))
     administered = administered_runner_ids(viewer, boxes.values()) if viewer is not None else set()
     for row in rows:
         box = boxes.get(row["id"])
         row["usage_reported_at"] = box.usage_reported_at if box else None
-        row["missing_sessions"] = missing.get(row["id"], 0)
         row["can_administer"] = row["id"] in administered
 
 

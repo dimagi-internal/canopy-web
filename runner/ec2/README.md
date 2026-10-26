@@ -715,9 +715,8 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   crashed turn left (envelopes, profiles, every transcript but a kept conversation's).
 - **No transcript leaves the box** except a confined turn's turn-end rows, which
   canopy-web seals: no live stream, no backfill, and the usage report carries token
-  counts with blank titles. canopy-web refuses the rest too: a session it has no
-  record of is not kept or listed as missing, and send-up, backfill and reset are
-  refused (409).
+  counts only. canopy-web refuses the rest too: a session it has no record of is
+  not kept, and backfill and reset are refused (409).
 - **The claim log** names who and where a turn came from, never its prompt.
 - **Egress locked** (below): sensitive-data mode locks every unit. A unit whose lock is not
   holding reports `ready: false`.

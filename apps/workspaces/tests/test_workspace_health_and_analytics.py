@@ -431,10 +431,10 @@ def test_health_and_topology_serve_one_runner_row_with_its_reason_and_fix(tree):
                 if r["name"] == "laptop")
     assert health == topo
     assert health["status"] == "degraded" and "Emdash CDP" in health["remedy"]
-    assert health["can_administer"] is True and health["missing_sessions"] == 0
+    assert health["can_administer"] is True and "missing_sessions" not in health
 
 
-# ---- the box's usage report and missing sessions ------------------------------
+# ---- the box's usage report ----------------------------------------------------
 
 
 def _box(tree, name="laptop"):
@@ -447,11 +447,11 @@ def _box(tree, name="laptop"):
         last_heartbeat_at=timezone.now(), host=name))[0]
 
 
-def _report(cs, repo, *, day=None, inp=1, out=2, cache=3, title="Fix the login"):
+def _report(cs, repo, *, day=None, inp=1, out=2, cache=3):
     from django.utils import timezone
 
     day = day or str(timezone.now().date())
-    return {"claude_session": cs, "repo": repo, "title": title, "first_at": f"{day}T09:00:00Z",
+    return {"claude_session": cs, "repo": repo, "first_at": f"{day}T09:00:00Z",
             "last_at": f"{day}T10:00:00Z", "days": [{"day": day, "input_tokens": inp, "output_tokens": out,
                                                      "cache_read_tokens": cache, "messages": 4, "model": "m"}]}
 
@@ -466,52 +466,34 @@ def test_a_report_is_matched_to_the_turn_that_ran_it_and_replaces_itself(tree):
     assert (row.workspace_id, row.agent_slug, row.user, row.output_tokens) == ("connect", "hal", tree["builder"], 12)
 
 
-def test_an_unknown_session_is_missing_until_its_admin_sends_it_up(tree, settings):
+def test_a_session_canopy_has_no_record_of_is_not_kept(tree):
+    """canopy counts only what a person's machine sent it; it never keeps, lists or
+    asks for a session it was not sent."""
     box = _box(tree)
-    usage.record(box, [_report("claude-lost", "canopy-web")])
-    body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
-    assert body["totals"]["sessions_with_usage"] == 0  # not counted anywhere until it has a home
-    lst = _get(tree["ceo"], f"/api/harness/runners/{box.pk}/missing-sessions").json()
-    assert [(m["claude_session"], m["repo"], m["files_in"]) for m in lst["sessions"]] == [
-        ("claude-lost", "canopy-web", "dimagi")]
-    assert _get(tree["staff"], f"/api/harness/runners/{box.pk}/missing-sessions").status_code in (403, 404)
-
-    c = Client()
-    c.force_login(tree["ceo"])
-    r = c.post(f"/api/harness/runners/{box.pk}/missing-sessions", data=json.dumps({"claude_sessions": ["claude-lost"]}),
-               content_type="application/json")
-    assert r.status_code == 200, r.content
-    from apps.canopy_sessions.models import RunnerBinding, Session
-
-    s = Session.objects.get(pk=r.json()["sessions"][0])
-    b = RunnerBinding.objects.get(session=s)
-    assert (s.project, s.workspace_id, b.session_key, b.transcript_id, b.backfill_requested) == (
-        "canopy-web", "dimagi", "claude:claude-lost", "claude-lost", True)
-    assert SessionUsage.objects.get().workspace_id == "dimagi"
-    assert _get(tree["ceo"], f"/api/harness/runners/{box.pk}/missing-sessions").json()["sessions"] == []
+    assert usage.record(box, [_report("claude-lost", "canopy-web")]) == {"stored": 0, "matched": 0}
+    assert not SessionUsage.objects.exists()
+    box.refresh_from_db()
+    assert box.usage_reported_at is not None
 
 
-def test_checking_for_missing_sessions_asks_the_box_for_a_full_rescan(tree):
+def test_the_missing_sessions_routes_are_gone(tree):
     box = _box(tree)
     c = Client()
     c.force_login(tree["ceo"])
-    assert c.post(f"/api/harness/runners/{box.pk}/usage-scan").status_code == 200
-    box.refresh_from_db()
-    assert box.usage_scan_requested_at is not None
-    usage.record(box, [], full=True)
-    box.refresh_from_db()
-    assert box.usage_scan_requested_at is None and box.usage_scanned_at is not None
+    assert c.get(f"/api/harness/runners/{box.pk}/missing-sessions").status_code == 404
+    assert c.post(f"/api/harness/runners/{box.pk}/missing-sessions", data=json.dumps({"claude_sessions": ["x"]}),
+                  content_type="application/json").status_code == 404
+    assert c.post(f"/api/harness/runners/{box.pk}/usage-scan").status_code == 404
 
 
-def test_health_shows_a_boxes_missing_count_and_who_may_send_them(tree):
+def test_health_shows_when_a_box_last_reported(tree):
     from apps.harness.models import RunnerAssignment
 
     box = _box(tree)
     RunnerAssignment.objects.create(agent=tree["eva"], runner=box, rank=0)
-    usage.record(box, [_report("claude-lost", "canopy-web")])
+    usage.record(box, [])
     row = next(r for r in _get(tree["ceo"], "/api/workspaces/dimagi/health").json()["runners"] if r["name"] == "laptop")
-    assert (row["missing_sessions"], row["can_administer"]) == (1, True)
-    assert row["usage_reported_at"] is not None
+    assert row["can_administer"] is True and row["usage_reported_at"] is not None
 
 
 def test_a_box_scans_only_the_repos_canopy_knows_for_it(tree):

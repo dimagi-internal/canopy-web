@@ -10607,8 +10607,8 @@ export interface paths {
         };
         /**
          * Runner Usage Scope
-         * @description The repos this box scans for its usage report (its declared projects and the
-         *     agents it serves), and whether a person asked for a full rescan.
+         * @description The repos this box scans for its usage report: its declared projects and the
+         *     agents it serves.
          */
         readonly get: operations["runner_usage_scope"];
         readonly put?: never;
@@ -10632,60 +10632,10 @@ export interface paths {
          * Post Runner Usage
          * @description The box's usage report: per Claude Code session, per UTC day, tokens and a
          *     little identity — never content. Each session's days replace what was held.
-         *     Matched to canopy's own record of each session; one that matches nothing is
-         *     kept as missing, visible only to the box's admins.
+         *     Matched to canopy's own record of each session and counted there; one canopy
+         *     has no record of is not kept.
          */
         readonly post: operations["post_runner_usage"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/harness/runners/{runner_id}/usage-scan": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /**
-         * Request Usage Scan
-         * @description Check for missing sessions: ask the box for a FULL rescan of its transcripts
-         *     (a durable ask it reads off `usage-scope` within a minute or so); the result
-         *     arrives as its next report. The runner's admins.
-         */
-        readonly post: operations["request_usage_scan"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/harness/runners/{runner_id}/missing-sessions": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * List Missing Sessions
-         * @description Sessions in known repos this box has on disk and canopy has no record of,
-         *     newest first, each with where sending it up would file it. The runner's
-         *     admins only: titles of a person's local sessions are theirs.
-         */
-        readonly get: operations["list_missing_sessions"];
-        readonly put?: never;
-        /**
-         * Send Up Missing Sessions
-         * @description Send the chosen missing sessions up: each is filed as a session (where the
-         *     report sweep files this box's sessions) and its transcript is requested from
-         *     the box; its usage counts from then on. The runner's admins.
-         */
-        readonly post: operations["send_up_missing_sessions"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -29085,11 +29035,6 @@ export interface components {
             /** Usage Reported At */
             readonly usage_reported_at?: string | null;
             /**
-             * Missing Sessions
-             * @default 0
-             */
-            readonly missing_sessions: number;
-            /**
              * Can Administer
              * @default false
              */
@@ -32952,8 +32897,6 @@ export interface components {
         readonly UsageScopeOut: {
             /** Repos */
             readonly repos: readonly string[];
-            /** Full */
-            readonly full: boolean;
         };
         /** UsageReportOut */
         readonly UsageReportOut: {
@@ -33001,11 +32944,6 @@ export interface components {
         readonly UsageReportIn: {
             /** Sessions */
             readonly sessions?: readonly components["schemas"]["UsageSessionIn"][];
-            /**
-             * Full
-             * @default false
-             */
-            readonly full: boolean;
         };
         /**
          * UsageSessionIn
@@ -33026,11 +32964,6 @@ export interface components {
              */
             readonly cwd: string;
             /**
-             * Title
-             * @default
-             */
-            readonly title: string;
-            /**
              * First At
              * @default
              */
@@ -33042,59 +32975,6 @@ export interface components {
             readonly last_at: string;
             /** Days */
             readonly days?: readonly components["schemas"]["UsageDayIn"][];
-        };
-        /** MissingSessionOut */
-        readonly MissingSessionOut: {
-            /** Claude Session */
-            readonly claude_session: string;
-            /** Repo */
-            readonly repo: string;
-            /** Title */
-            readonly title: string;
-            /** First At */
-            readonly first_at?: string | null;
-            /** Last At */
-            readonly last_at?: string | null;
-            /** Days */
-            readonly days: number;
-            /** Input Tokens */
-            readonly input_tokens: number;
-            /** Output Tokens */
-            readonly output_tokens: number;
-            /** Cache Read Tokens */
-            readonly cache_read_tokens: number;
-            /** Cache Creation Tokens */
-            readonly cache_creation_tokens: number;
-            /** Files In */
-            readonly files_in: string;
-            /**
-             * Agent
-             * @default
-             */
-            readonly agent: string;
-        };
-        /** MissingSessionsOut */
-        readonly MissingSessionsOut: {
-            /** Runner */
-            readonly runner: string;
-            /** Usage Reported At */
-            readonly usage_reported_at?: string | null;
-            /** Usage Scan Requested At */
-            readonly usage_scan_requested_at?: string | null;
-            /** Usage Scanned At */
-            readonly usage_scanned_at?: string | null;
-            /** Sessions */
-            readonly sessions: readonly components["schemas"]["MissingSessionOut"][];
-        };
-        /** SendUpOut */
-        readonly SendUpOut: {
-            /** Sessions */
-            readonly sessions: readonly string[];
-        };
-        /** SendUpIn */
-        readonly SendUpIn: {
-            /** Claude Sessions */
-            readonly claude_sessions: readonly string[];
         };
         /**
          * ClaimedTurnOut
@@ -53014,76 +52894,6 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["UsageReportOut"];
-                };
-            };
-        };
-    };
-    readonly request_usage_scan: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly runner_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MissingSessionsOut"];
-                };
-            };
-        };
-    };
-    readonly list_missing_sessions: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly runner_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MissingSessionsOut"];
-                };
-            };
-        };
-    };
-    readonly send_up_missing_sessions: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly runner_id: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SendUpIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SendUpOut"];
                 };
             };
         };

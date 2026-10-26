@@ -91,7 +91,7 @@ the rule, its claim/schedule parity test and the routing hint:
   (`harness.session_sync._agent_for_project`: `Agent.slug` is global). A session whose
   project names an agent OUTSIDE that tenant is filed nowhere — not in the agent's
   tree, and not in the runner's as a plain project (`session_home` → None; the
-  report's `skipped` counts it, missing-sessions omits it) — and the owner's default session
+  report's `skipped` counts it) — and the owner's default session
   workspace applies only when it is in that tenant, else the runner's workspace
   (`canopy_sessions.filing.filing_workspace`). Tests: `tests/test_session_filing.py`.
 
@@ -669,7 +669,7 @@ THE predicate; every surface below asks it, one test each in
   and hands it; a receipt keeps no excerpt;
   `ui/update-model-context` is accepted and not kept (`apps/mcp_apps_host/mcp_apps_views.py`).
 - **Never re-exposed:** share-link upload (403), Slack share / new thread (403) and
-  mirroring (`slack.relay`), export (403), the usage scan's title.
+  mirroring (`slack.relay`), export (403).
 - **Never re-processed:** auto-debug starts nothing for a turn with any requirement; the
   fleet's transcript readers find none to read.
 - **A sensitive turn's token reaches a fixed few tools:** its caller token's tools are the

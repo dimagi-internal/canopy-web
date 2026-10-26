@@ -232,11 +232,10 @@ answer is nothing. Every repo outside the choice is plain Claude Code.
   (`canopy_runner/sessions.py`, held in `server_status`). An older server sends
   none, and the box reports everything as before.
 - **Mirroring.** `session_sync.session_home` files no new session from a repo
-  outside the opt-in, both in the ~10s report sweep and when missing sessions are
-  sent up. `/streams` and `/backfills` stop listing such a session's transcript.
-  A session mirrored before its repo left the opt-in stays, but nothing more of it
-  ships. `usage.record` keeps no unmatched usage from such a repo, whatever an
-  older box sends.
+  outside the opt-in in the ~10s report sweep. `/streams` and `/backfills` stop
+  listing such a session's transcript. A session mirrored before its repo left the
+  opt-in stays, but nothing more of it ships. `usage.record` keeps the usage of
+  sessions canopy has a record of and nothing else, from any repo.
 - **Agents are always canopy.** An agent's own repo is checked against
   `observed_projects()` (`cannot_serve`, the inherited order), never the opt-in.
 - **`everything`** also covers a task emdash could not place in a repo (blank

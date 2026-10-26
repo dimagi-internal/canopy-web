@@ -228,8 +228,9 @@ def emdash_task_candidates(task: str) -> list[str]:
     return out
 
 
-#: A session key that names a Claude Code session directly — a local session sent
-#: up from Health → Runners (canopy-web `events.usage.send_up`): `claude:<uuid>`.
+#: A session key that names a Claude Code session directly: `claude:<uuid>`. The
+#: sessions keyed so were filed by the retired "send up missing sessions"; they are
+#: ordinary canopy sessions now, and stream and backfill like any other.
 CLAUDE_SESSION_PREFIX = "claude:"
 
 
@@ -243,7 +244,7 @@ def transcript_for_session_id(session_id: str, *, claude_home: Path) -> Path | N
 
 def transcript_for_key(session_key: str, *, claude_home: Path) -> Path | None:
     """The transcript of a `claude:<uuid>` session key, or None for any other key —
-    both runners ask this first, so a sent-up session streams and backfills with no
+    both runners ask this first, so such a session streams and backfills with no
     other change."""
     if not session_key.startswith(CLAUDE_SESSION_PREFIX):
         return None

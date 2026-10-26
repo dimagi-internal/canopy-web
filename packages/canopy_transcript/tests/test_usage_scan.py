@@ -31,11 +31,11 @@ def test_a_session_in_a_known_repo_is_reported_per_day_and_never_twice(tmp_path)
     reports, seen = scan_usage(projects, home=home, repos={"canopy-web", "hal"})
     assert [r["claude_session"] for r in reports] == ["11111111-aaaa"]  # nothing outside known repos
     r = reports[0]
-    assert (r["repo"], r["title"], r["first_at"][:10]) == ("canopy-web", "Fix the login bug", "2026-10-01")
+    assert (r["repo"], r["first_at"][:10]) == ("canopy-web", "2026-10-01")
+    assert "title" not in r  # no words: not even the first prompt
     assert [(d["day"], d["output_tokens"], d["cache_read_tokens"], d["messages"]) for d in r["days"]] == [
         ("2026-10-01", 10, 1000, 1), ("2026-10-02", 5, 1000, 1)]
     assert scan_usage(projects, home=home, repos={"canopy-web"}, seen=seen)[0] == []  # unchanged: not re-read
-    assert len(scan_usage(projects, home=home, repos={"canopy-web"}, seen=seen, full=True)[0]) == 1
 
 
 def test_repo_for_cwd_reads_agent_checkouts_and_clones(tmp_path):
@@ -54,17 +54,16 @@ def test_send_report_remembers_only_what_was_taken(tmp_path):
                                          _assistant("m1", "2026-10-01", 3)])
     sent = []
 
-    def refuse(chunk, full):
+    def refuse(chunk):
         raise RuntimeError("down")
 
     try:
-        send_usage_report(refuse, home=tmp_path, repos=["hal"], full=False)
+        send_usage_report(refuse, home=tmp_path, repos=["hal"])
     except RuntimeError:
         pass
-    assert send_usage_report(lambda c, f: sent.append((len(c), f)), home=tmp_path, repos=["hal"], full=False) == 1
-    assert send_usage_report(lambda c, f: sent.append((len(c), f)), home=tmp_path, repos=["hal"], full=False) == 0
-    send_usage_report(lambda c, f: sent.append((len(c), f)), home=tmp_path, repos=["hal"], full=True)
-    assert sent == [(1, False), (1, True)]  # nothing re-sent until a full rescan; full rides the last chunk
+    assert send_usage_report(lambda c: sent.append(len(c)), home=tmp_path, repos=["hal"]) == 1
+    assert send_usage_report(lambda c: sent.append(len(c)), home=tmp_path, repos=["hal"]) == 0
+    assert sent == [1]  # a failed post is sent again; a taken one never
 
 
 def test_a_claude_session_key_names_its_transcript(tmp_path):

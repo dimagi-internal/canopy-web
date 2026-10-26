@@ -9562,7 +9562,7 @@ def _session_transcript_path(session_id: str, session_key: str, project: str = "
     ct = _transcript_core()
     if ct is None or not (session_id and session_key):
         return None
-    # A local session sent up from Health (`claude:<uuid>`) names its file.
+    # A session keyed `claude:<uuid>` names its file.
     sent_up = getattr(ct, "transcript_for_key", None)
     if sent_up is not None and (path := sent_up(session_key, claude_home=CLAUDE_PROJECTS_HOME)) is not None:
         return path
@@ -9937,43 +9937,35 @@ def _sync_session_views(runner_id: str, *, with_backfills: bool = True) -> None:
 # ── usage report (canopy-web events.usage) ───────────────────────────────────
 # What this box's Claude Code sessions spent, per session per UTC day, no content
 # — `canopy_transcript.send_usage_report`, the same report the laptop runner makes.
-# The scope is read every USAGE_SCOPE_SECONDS so a requested full rescan ("Check for
-# missing sessions" on Health) is answered within about a minute.
-USAGE_SCOPE_SECONDS = 60
+# A failure is retried after USAGE_RETRY_SECONDS.
 USAGE_INTERVAL_SECONDS = 600
-_USAGE = {"scope_at": 0.0, "scan_at": 0.0}
+USAGE_RETRY_SECONDS = 60
+_USAGE = {"scan_at": 0.0}
 
 
 def _maybe_report_usage(runner_id: str) -> None:
     ct = _transcript_core()
     now = time.monotonic()
-    if ct is None or not hasattr(ct, "send_usage_report") or now < _USAGE["scope_at"]:
+    if ct is None or not hasattr(ct, "send_usage_report") or now < _USAGE["scan_at"]:
         return
-    _USAGE["scope_at"] = now + USAGE_SCOPE_SECONDS
+    _USAGE["scan_at"] = now + USAGE_RETRY_SECONDS
     status, scope = _api("GET", f"/runners/{runner_id}/usage-scope")
     if status != 200 or not isinstance(scope, dict):
         return
-    full = bool(scope.get("full"))
-    if not full and now < _USAGE["scan_at"]:
-        return
 
-    def post(chunk, last):
-        if SENSITIVE_DATA_MODE:
-            # A session's title is its first prompt: in sensitive-data mode the report carries
-            # what was spent, never words (canopy-web blanks it too).
-            chunk = [{**row, "title": ""} for row in chunk]
-        code, _ = _api("POST", f"/runners/{runner_id}/usage", {"sessions": chunk, "full": last})
+    def post(chunk):
+        code, _ = _api("POST", f"/runners/{runner_id}/usage", {"sessions": chunk})
         if code != 200:
             raise RuntimeError(f"usage report refused: {code}")
 
     try:
-        n = ct.send_usage_report(post, home=pathlib.Path.home(), repos=scope.get("repos") or [], full=full)
+        n = ct.send_usage_report(post, home=pathlib.Path.home(), repos=scope.get("repos") or [])
     except Exception as exc:  # noqa: BLE001
         _log(f"usage report failed, will retry: {exc}")
         return
     _USAGE["scan_at"] = now + USAGE_INTERVAL_SECONDS
-    if n or full:
-        _log(f"usage report: {n} session(s){' (full rescan)' if full else ''}")
+    if n:
+        _log(f"usage report: {n} session(s)")
 
 
 # ── slash commands (the chat composer's `/` autocomplete) ───────────────────

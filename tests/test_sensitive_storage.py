@@ -17,8 +17,6 @@ from django.utils import timezone
 
 from apps.canopy_sessions import transcript_ingest as chat_transcript_ingest
 from apps.canopy_sessions.models import Message, RunnerBinding, Session
-from apps.events import usage
-from apps.events.models import SessionUsage
 from apps.harness import ledger, sensitivity
 from apps.harness.models import Runner, Turn, TurnEvent, TurnTranscript
 from apps.retention import services as retention
@@ -332,16 +330,6 @@ def test_a_share_link_upload_is_refused(w):
     assert r.status_code == 403, r.content
     assert sensitivity.claude_session_is_sensitive("cli-abc")
     assert not sensitivity.claude_session_is_sensitive("cli-other")
-
-
-def test_the_usage_scan_keeps_no_title(w):
-    _turn(w["hot"], session_key="cs-hot")
-    _turn(w["cold"], session_key="cs-cold")
-    usage.record(w["runner"], [
-        {"claude_session": cs, "title": ROW, "days": [{"day": "2026-10-22", "input_tokens": 1}]}
-        for cs in ("cs-hot", "cs-cold")])
-    assert SessionUsage.objects.get(claude_session="cs-hot").title == ""
-    assert SessionUsage.objects.get(claude_session="cs-cold").title == ROW
 
 
 # --- refuse re-processing ---------------------------------------------------------------
