@@ -514,7 +514,7 @@ def test_a_due_rotation_mints_writes_overlaps_then_revokes(fleet, agent_login):
     new_raw = _stored_pat(agent)
     assert new_raw != agent_login["raw"]
     new = PersonalToken.lookup(new_raw)
-    assert new is not None and new.user_id == agent_login["login"].pk and new.expires_at is None
+    assert new is not None and new.user_id == agent_login["login"].pk and new.expires_at is not None
     # The old one still works, but only for the overlap.
     old = PersonalToken.objects.get(pk=agent_login["token"].pk)
     assert PersonalToken.lookup(agent_login["raw"]) is not None

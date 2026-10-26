@@ -45,7 +45,7 @@ from apps.tokens.middleware import minting_refusal
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import access, creation, mailbox, sensitive_data, services
+from . import access, agent_login, creation, mailbox, sensitive_data, services
 from . import move as agent_move
 from .creation import repo_url
 from .credentials import delegations, licenses, login_test_key, zk
@@ -252,7 +252,12 @@ def upsert_agent(request: HttpRequest, payload: AgentIn) -> Status:
     # (`delegations.set_github` is for its owner and admins) and no box may hold it unless a workspace
     # owner pairs one, so leaving it unset left every new agent stuck until someone ran
     # `transfer_owner`. Applied on create only; an existing agent keeps its owner.
+    old_email = (existing.email or "").strip().lower() if existing is not None else ""
     agent = services.upsert_agent(payload, workspace=home, owner=_creating_owner(request, home))
+    new_email = (agent.email or "").strip().lower()
+    if existing is not None and new_email and new_email != old_email and agent.is_admin(request.user):
+        # Its canopy login is the account at its email: derived again from the new one.
+        agent_login.rederive_after_email_change(agent, request.user)
     if existing is None or (payload.repo_url is not None and payload.repo_url != existing.repo_url):
         # A cloud box only learns of an agent (or its new repo) by re-running its
         # bootstrap; ask the ones that will take its turns to do that now.
@@ -464,9 +469,18 @@ def _may_manage_admins(request: HttpRequest, agent) -> bool:
     return _may_transfer_owner(request, agent)
 
 
+def login_request_out(row) -> dict:
+    return {"id": row.pk, "agent_slug": row.agent.slug, "agent_name": row.agent.name,
+            "workspace_id": row.agent.workspace_id, "user_email": row.user.email,
+            "requested_by_email": getattr(row.requested_by, "email", "") or "",
+            "created_at": row.created_at, "expires_at": row.expires_at}
+
+
 def _detail(request: HttpRequest, agent) -> AgentDetailOut:
+    pending = agent_login.pending_request(agent) if agent.is_admin(request.user) else None
     return AgentDetailOut.model_validate({
         **services.agent_detail(agent),
+        "canopy_user_request": login_request_out(pending) if pending is not None else None,
         "can_transfer_owner": _may_transfer_owner(request, agent),
         "is_admin": agent.is_admin(request.user),
         "can_manage_admins": _may_manage_admins(request, agent),
@@ -481,22 +495,47 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     return _detail(request, agent)
 
 
-# Browser-only, like owner and admin changes: linking a canopy user makes it
-# count as the agent itself (never confined against itself — agents/access.py),
-# so it is a decision a PERSON makes in the canopy UI. The owner or an admin.
+# An agent's canopy login is ALWAYS the account at its own email (`Agent.email`), never
+# any other: linking it makes that account count as the agent itself (never confined
+# against itself — agents/access.py), and the agent's token then signs in AS it. Gated by
+# role (MCP does everything): an admin links, or unlinks; an existing account at the
+# email is linked only when the person holding it accepts, in their browser behind a
+# passkey (agent_login, /api/me/agent-login-requests/).
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
-            summary="Link this agent to the canopy user it is")
-@gate("agent-admin", setting=True)
+            summary="Link this agent to the canopy account at its own email")
+@gate("agent-admin", setting=True, step_up=True)  # step-up only when the account at its email is yours
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
-    """The canopy user account this agent's own token signs in as. `user_id`
-    null unlinks it."""
+    """`link: true` links the agent to its canopy login, which is ALWAYS the canopy
+    account at the agent's own email — never any other. With no account there yet,
+    canopy creates it (an account nobody signs in to, made a member of the agent's
+    workspace — which takes an admin who may invite) and links it. An existing
+    account there that nobody has ever signed in to interactively links at once.
+    When the account is yours, it links after a passkey step-up (so only from a
+    browser). When it is anyone else's account that has signed in, it is NOT
+    linked: a request goes to that person
+    (`canopy_user_request` in the answer), who accepts it in their own browser
+    (`POST /api/me/agent-login-requests/{id}/accept`), since canopy can't tell an
+    agent's mailbox from a person's. `link: false` unlinks. The owner or an admin,
+    from the browser or with a token. 422 when the agent has no email."""
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
+    target = agent_login.account_at_email(agent) if payload.link else None
+    if target is not None and target.pk == request.user.pk and agent.user_id != target.pk:
+        stepup.require_recent_step_up(request)
+    before = agent.user.email if agent.user_id else None
     try:
-        services.link_canopy_user(agent, payload.user_id)
+        if payload.link:
+            agent_login.link_by_email(agent, request.user)
+        else:
+            agent_login.unlink(agent)
     except services.AgentUserLinkError as exc:
         raise HttpError(422, str(exc)) from exc
+    except agent_login.AgentLoginRefused as exc:
+        raise HttpError(exc.status, str(exc)) from exc
+    agent.refresh_from_db()
+    audit.note_change(scope=f"agent:{agent.slug}/canopy-user", before=before,
+                      after=agent.user.email if agent.user_id else None)
     return _detail(request, agent)
 
 

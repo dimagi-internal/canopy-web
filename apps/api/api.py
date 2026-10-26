@@ -241,6 +241,7 @@ from apps.agents.kb_api import router as kb_router  # noqa: E402
 from apps.agents.proposals_api import router as proposals_router  # noqa: E402
 from apps.attention.alerts_api import router as alerts_router  # noqa: E402
 from apps.attention.api import router as attention_router  # noqa: E402
+from apps.agents.api_login_requests import router as agent_login_requests_router  # noqa: E402
 from apps.beta_requests.api import router as beta_requests_router  # noqa: E402
 from apps.canopy_sessions.api import me_router as my_sessions_router  # noqa: E402
 from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E402
@@ -418,6 +419,7 @@ api.add_router("/runner-sessions", runner_sessions_router)
 api.add_router("/runner-device-key-requests", device_key_requests_router)
 api.add_router("/huddles", huddles_router)
 api.add_router("/me/attention", attention_router)
+api.add_router("/me/agent-login-requests", agent_login_requests_router)
 api.add_router("/me/alerts", alerts_router)
 api.add_router("/engagement", engagement_router)  # what people do with projects + huddles
 # Project check-ins across projects, and their runs (apps/huddles/checkins.py).

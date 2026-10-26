@@ -119,7 +119,7 @@ def _page_out(session) -> dict:
 # canopy's own. A static tool sitting inside that namespace inverts the same
 # collision — a host action named `state` would be silently shadowed by this —
 # and blurs a boundary that exists to be sharp.
-@mcp.tool
+@mcp.tool(annotations={"readOnlyHint": True})
 async def current_page() -> list[dict]:
     """What the user is currently looking at, in their open canopy pages.
 

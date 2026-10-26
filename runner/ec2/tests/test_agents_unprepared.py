@@ -29,7 +29,63 @@ def test_a_failed_lazy_prepare_is_reported(cloud_runner, tmp_path, monkeypatch):
     monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
     cloud_runner._ensure_agent_clone("fizzy")  # the test bootstrapper clones nothing
     assert cloud_runner.agents_unprepared() == ["fizzy"]
-    monkeypatch.setattr(cloud_runner, "_LAZY_BOOTSTRAPPER", lambda s: _clone(tmp_path, s))
+    monkeypatch.setattr(cloud_runner, "_LAZY_BOOTSTRAPPER", lambda s, env=None: _clone(tmp_path, s))
     cloud_runner._LAZY_BOOTSTRAP_TRIED.clear()
     cloud_runner._ensure_agent_clone("eva")
     assert cloud_runner.agents_unprepared() == []
+
+
+def test_a_new_agent_is_cloned_with_its_turns_github_identity(cloud_runner, tmp_path, monkeypatch):
+    """canopy-web never hands the agent's GitHub token to a read outside a turn, so the
+    box-wide prepare cannot clone a private agent repo: the first turn clones it with
+    ITS token, then prepare runs."""
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    seen = []
+    monkeypatch.setattr(cloud_runner, "_LAZY_CLONER", lambda s, env: seen.append((s, dict(env or {}))))
+    env = {"GH_TOKEN": "t", cloud_runner.AGENT_REPO_ENV: "dimagi-internal/fizzy"}
+    cloud_runner._ensure_agent_clone("fizzy", env)
+    assert seen == [("fizzy", env)]
+
+
+def test_the_cloner_needs_the_turns_token_and_a_plain_repo(cloud_runner, tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    ran = []
+    monkeypatch.setattr(cloud_runner.subprocess, "run", lambda *a, **k: ran.append(a) or None)
+    cloud_runner._clone_agent_repo("fizzy", {cloud_runner.AGENT_REPO_ENV: "dimagi-internal/fizzy"})
+    cloud_runner._clone_agent_repo("fizzy", {"GH_TOKEN": "t", cloud_runner.AGENT_REPO_ENV: "../evil"})
+    assert ran == []
+
+
+def test_an_agentless_turn_never_inherits_the_boxs_canopy_token(cloud_runner, monkeypatch):
+    """A repo chat routed to this box may be anyone's; it reaches canopy as its asker
+    (caller token), never as whoever paired the box."""
+    monkeypatch.setenv("CANOPY_TOKEN", "box-owners-pat")
+    assert "CANOPY_TOKEN" not in cloud_runner._agent_env(None)
+    assert "CANOPY_TOKEN" not in cloud_runner._agent_env("")
+
+
+def test_after_a_box_wide_bootstrap_the_first_turn_prepares_again_with_its_token(
+        cloud_runner, tmp_path, monkeypatch):
+    """The box-wide pass has no GitHub token, so private plugin repos would go stale:
+    the first turn after it prepares the agent again, handing the CLI its GitHub env."""
+    monkeypatch.setattr(cloud_runner, "AGENT_ROOT", str(tmp_path))
+    _clone(tmp_path, "hal")
+    seen = []
+    monkeypatch.setattr(cloud_runner, "_LAZY_BOOTSTRAPPER", lambda s, env=None: seen.append((s, env)))
+    env = {"GH_TOKEN": "t"}
+    cloud_runner._BOOTSTRAPPED_AT = 100.0
+    cloud_runner._ensure_agent_clone("hal", env)
+    cloud_runner._ensure_agent_clone("hal", env)      # once per bootstrap
+    cloud_runner._ensure_agent_clone("hal", None)     # never without a token
+    assert seen == [("hal", env)]
+
+
+def test_prepare_hands_the_cli_the_turns_github_identity(cloud_runner, monkeypatch):
+    got = {}
+    monkeypatch.setattr(cloud_runner, "_bearer", lambda **k: "rt")
+    monkeypatch.setattr(cloud_runner, "_run_teed", lambda cmd, env, timeout: got.update(env) or (0, []))
+    monkeypatch.setenv("GH_TOKEN", "leftover")
+    cloud_runner.prepare_agent("hal", {"GH_TOKEN": "t", "OTHER": "x"})
+    # Only the CLI's own git calls get it, under a name of its own; never GH_TOKEN.
+    assert got[cloud_runner.TURN_GITHUB_TOKEN_ENV] == "t"
+    assert "GH_TOKEN" not in got and got.get("OTHER") != "x"

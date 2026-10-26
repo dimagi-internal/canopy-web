@@ -540,6 +540,9 @@ class AgentDetailOut(AgentOut):
     #: The canopy user this agent IS (`Agent.user`) — the account its own token
     #: signs in as. None when unlinked.
     canopy_user: AgentOwnerOut | None = None
+    #: A request to make someone's existing account this agent's login, waiting for
+    #: THAT person to accept it in their own browser. None when none is open.
+    canopy_user_request: "AgentLoginRequestOut | None" = None
     # Whether the CALLER may transfer ownership (a workspace owner, or the
     # agent's current owner). Drives whether the UI offers the control.
     can_transfer_owner: bool = False
@@ -702,8 +705,23 @@ class AgentInterfaceOut(StrictModel):
 
 
 class AgentCanopyUserIn(StrictModel):
-    # None unlinks.
-    user_id: int | None
+    #: True links the agent to the canopy account at its own email (the only account
+    #: that can be its login); false unlinks it.
+    link: bool
+
+
+class AgentLoginRequestOut(StrictModel):
+    """An open request to make a person's existing canopy account an agent's own login."""
+
+    id: int
+    agent_slug: str
+    agent_name: str
+    workspace_id: str
+    #: The account to be linked — the only person who may accept.
+    user_email: str
+    requested_by_email: str = ""
+    created_at: datetime
+    expires_at: datetime
 
 
 class AgentCanopyTokenIn(StrictModel):
@@ -2006,12 +2024,9 @@ class AgentCredentialsResolveOut(StrictModel):
     # them, and the box then behaves exactly as it does today.
     shared_op_vault: str = ""
     shared_op_sa_token: str = ""
-    # The agent OWNER's GitHub token for this agent (`AgentDelegation`), so a box
-    # can clone the agent's private repo and its private plugin repos. "" when
-    # the owner has lent none. A turn does NOT read it from here: it asks for
-    # its own, bound to the turn it claimed
-    # (`POST /api/harness/runners/{id}/turns/{id}/github-token`).
-    github_token: str = ""
+    # No GitHub token: the agent's (a borrowed credential, `AgentDelegation`) leaves
+    # canopy-web only for ONE turn a runner holds
+    # (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never here.
     # The chrome-sales `.sf-creds.json` this agent BORROWS (an `AgentDelegation`
     # of service salesforce: the lender's own credential, resolved now, not a
     # copy). "" when it borrows none. The box writes it to
@@ -3256,3 +3271,4 @@ class ProjectProgressOut(StrictModel):
 
 
 AgentProjectDetailOut.model_rebuild()
+AgentDetailOut.model_rebuild()

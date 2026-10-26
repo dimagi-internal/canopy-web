@@ -214,6 +214,8 @@ export function AgentSettingsSection() {
                 agentSlug={agent.slug}
                 workspace={agent.workspace ?? ''}
                 initialUser={agent.canopy_user ?? null}
+                initialRequest={agent.canopy_user_request ?? null}
+                agentEmail={agent.email ?? ''}
                 canEdit={isAdmin}
               />
             </Setting>

@@ -3576,9 +3576,19 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Link this agent to the canopy user it is
-         * @description The canopy user account this agent's own token signs in as. `user_id`
-         *     null unlinks it.
+         * Link this agent to the canopy account at its own email
+         * @description `link: true` links the agent to its canopy login, which is ALWAYS the canopy
+         *     account at the agent's own email — never any other. With no account there yet,
+         *     canopy creates it (an account nobody signs in to, made a member of the agent's
+         *     workspace — which takes an admin who may invite) and links it. An existing
+         *     account there that nobody has ever signed in to interactively links at once.
+         *     When the account is yours, it links after a passkey step-up (so only from a
+         *     browser). When it is anyone else's account that has signed in, it is NOT
+         *     linked: a request goes to that person
+         *     (`canopy_user_request` in the answer), who accepts it in their own browser
+         *     (`POST /api/me/agent-login-requests/{id}/accept`), since canopy can't tell an
+         *     agent's mailbox from a person's. `link: false` unlinks. The owner or an admin,
+         *     from the browser or with a token. 422 when the agent has no email.
          */
         readonly put: operations["link_canopy_user"];
         readonly post?: never;
@@ -4584,9 +4594,13 @@ export interface paths {
          *     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
          *     always was. With `refs`, `values` holds only the named refs that the
          *     agent also declares (`runtime_secrets`), and the secret extras
-         *     (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
-         *     are included only when named in `refs` too. `op_vault`, `shared_op_vault`
-         *     and `mailbox` are not secrets and are always returned.
+         *     (`op_sa_token`, `shared_op_sa_token`, `salesforce_creds`) are included
+         *     only when named in `refs` too. `op_vault`, `shared_op_vault` and `mailbox`
+         *     are not secrets and are always returned.
+         *
+         *     **Never the agent's GitHub token.** That borrowed credential (the token its owner
+         *     or an admin gave it from their own GitHub account) leaves canopy-web only for one turn a runner holds
+         *     (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never from here.
          *
          *     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
          *     service-account token (`op_sa_token` is ""): its values come from here, so
@@ -5260,6 +5274,8 @@ export interface paths {
          *     30) canopy-web mints a new token for the agent's own canopy login, writes
          *     it to the agent's `canopy-pat` credential (a runner picks it up at its next
          *     `canopy cred sync`), keeps the old token valid for 24 h and then revokes it.
+         *     The agent's token expires (the PAT default, 180 days), so `period_days` is
+         *     capped 14 days short of that and the token is always replaced first.
          *     Turning it on needs the agent to have its own login and a stored
          *     `canopy-pat`, and — when that login has ever signed in interactively — a
          *     workspace owner (422/403 otherwise). The owner or an admin.
@@ -12009,6 +12025,72 @@ export interface paths {
         readonly post?: never;
         /** Put something you hid back on your list */
         readonly delete: operations["unhide_attention"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/agent-login-requests/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Requests to make your canopy account an agent's own login
+         * @description Open requests, from an agent's admin, to make your existing canopy account
+         *     that agent's own login — after which the agent's token signs in as you. Only
+         *     you can accept one, in the canopy web app.
+         */
+        readonly get: operations["list_my_agent_login_requests"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/agent-login-requests/{request_id}/accept": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Make your canopy account this agent's own login (browser, passkey)
+         * @description Link your account to the agent that asked: from then on the agent's own
+         *     token signs in as you. Only in your own browser, after a passkey step-up; a
+         *     token is refused (403), so no agent or script can say yes for you. 422 when
+         *     the request is closed, expired, or whoever asked is no longer the agent's
+         *     admin.
+         */
+        readonly post: operations["accept_agent_login_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/agent-login-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline making your canopy account an agent's login
+         * @description Say no: the agent is not linked to your account. 422 when it is no longer open.
+         */
+        readonly post: operations["decline_agent_login_request"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -21722,6 +21804,7 @@ export interface components {
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
             readonly owner?: components["schemas"]["AgentOwnerOut"] | null;
             readonly canopy_user?: components["schemas"]["AgentOwnerOut"] | null;
+            readonly canopy_user_request?: components["schemas"]["AgentLoginRequestOut"] | null;
             /**
              * Can Transfer Owner
              * @default false
@@ -21766,6 +21849,37 @@ export interface components {
              */
             readonly latest_turn_at?: string | null;
         };
+        /**
+         * AgentLoginRequestOut
+         * @description An open request to make a person's existing canopy account an agent's own login.
+         */
+        readonly AgentLoginRequestOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Agent Name */
+            readonly agent_name: string;
+            /** Workspace Id */
+            readonly workspace_id: string;
+            /** User Email */
+            readonly user_email: string;
+            /**
+             * Requested By Email
+             * @default
+             */
+            readonly requested_by_email: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+        };
         /** AgentOwnerOut */
         readonly AgentOwnerOut: {
             /** User Id */
@@ -21777,8 +21891,8 @@ export interface components {
         };
         /** AgentCanopyUserIn */
         readonly AgentCanopyUserIn: {
-            /** User Id */
-            readonly user_id: number | null;
+            /** Link */
+            readonly link: boolean;
         };
         /** AgentCanopyTokenOut */
         readonly AgentCanopyTokenOut: {
@@ -24312,11 +24426,6 @@ export interface components {
              * @default
              */
             readonly shared_op_sa_token: string;
-            /**
-             * Github Token
-             * @default
-             */
-            readonly github_token: string;
             /**
              * Salesforce Creds
              * @default
@@ -54888,6 +54997,70 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["HideOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_agent_login_requests: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["AgentLoginRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly accept_agent_login_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentLoginRequestOut"];
+                };
+            };
+        };
+    };
+    readonly decline_agent_login_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentLoginRequestOut"];
                 };
             };
         };

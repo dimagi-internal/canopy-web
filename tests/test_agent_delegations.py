@@ -437,15 +437,20 @@ def test_the_fleet_view_answers_github_from_the_rows_not_the_boot_report(agent, 
     assert now["claude.version"]["status"] == "ok"  # the box's own checks are untouched
 
 
-def test_bootstrap_resolve_carries_the_owners_token_for_private_clones(agent, owner, github, runner):
+def test_resolve_never_hands_out_the_agents_github_token(agent, owner, github, runner):
+    """The agent's GitHub token leaves canopy-web only for one turn a runner
+    holds — never to a read outside a turn, an admin's own PAT included."""
     from apps.tokens.models import PersonalToken
 
     _lend(agent, owner, github)
-    # Bearer only, like the box: a browser session is never given values.
-    raw, _ = PersonalToken.create_for_user(user=runner.owner, label="runner")
-    r = Client().get("/api/agents/echo/credentials/resolve", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 200, r.content
-    assert r.json()["github_token"] == "github_pat_olive"
+    for who in (runner.owner, owner):
+        raw, _ = PersonalToken.create_for_user(user=who, label="t")
+        for path in ("", "?refs=github_token"):
+            r = Client().get(f"/api/agents/echo/credentials/resolve{path}",
+                             HTTP_AUTHORIZATION=f"Bearer {raw}")
+            assert r.status_code == 200, r.content
+            assert "github_token" not in r.json()
+            assert "github_pat_olive" not in r.content.decode()
 
 
 # ---- the drill proves shipping, not login ---------------------------------------

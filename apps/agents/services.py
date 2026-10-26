@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Q
 from django.utils import timezone
@@ -97,6 +98,15 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
         slug=data.slug, defaults=defaults, create_defaults={**defaults, "workspace": workspace, "owner": owner,
                                                             **born_zk_fields(owner)}
     )
+    new_email = (agent.email or "").strip().lower()
+    if agent.user_id is not None and new_email and (agent.user.email or "").lower() != new_email:
+        # Its login is the account at its email: a NEW email unlinks the old account
+        # (the API view derives the new link, `agent_login.rederive_after_email_change`).
+        # A blank one does not: a re-upsert that omits the email must not cut an agent
+        # off from its login.
+        from .agent_login import unlink  # noqa: PLC0415 — cycle: agent_login imports services
+
+        unlink(agent)
     return agent
 
 
@@ -217,6 +227,10 @@ def link_canopy_user(agent: Agent, user_id: int | None) -> Agent:
                                  "one user is one agent instance; unlink it there first")
     if not wsvc.is_member(linked, agent.workspace_id):
         raise AgentUserLinkError(f"{linked.email} is not a member of this agent's workspace")
+    # An agent's login is ALWAYS the account at its own email, never any other.
+    if agent.email and (linked.email or "").lower() != agent.email.strip().lower():
+        raise AgentUserLinkError(f"{agent.slug}'s canopy login is the account at its own email "
+                                 f"({agent.email}), not {linked.email}")
     agent.user = linked
     fields = ["user", "updated_at"]
     if not agent.email:
@@ -235,6 +249,11 @@ class AgentTokenRefused(Exception):
         self.status = status
 
 
+def agent_token_ttl_days() -> int:
+    """How long an agent's own canopy token lives: the PAT default (180 days)."""
+    return int(getattr(settings, "PAT_DEFAULT_TTL_DAYS", 180))
+
+
 def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str = ""):
     """Mint a PAT for the agent's OWN canopy login (`Agent.user`), creating that login
     first when the agent has none (`agent_login.create_agent_login`). Returns
@@ -248,8 +267,10 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
     has might be a person's, so only a workspace OWNER may, and a workspace owner can
     already make themselves the agent's owner.
 
-    Non-expiring, like the agent's vault key: nothing watches either for expiry, and a
-    lapsed one fails every turn silently."""
+    It expires like any PAT (`settings.PAT_DEFAULT_TTL_DAYS`): a login that signs in as
+    an account must not outlive everyone's attention. Automatic rotation
+    (`credentials/pat_rotation.py`) replaces it well before then; an agent that keeps
+    its token in 1Password is re-minted by hand (`canopy agent vault`)."""
 
     from .agent_login import (  # cycle: agents.agent_login -> agents.services  # noqa: PLC0415
         AgentLoginRefused,
@@ -274,7 +295,7 @@ def mint_agent_canopy_token(agent: Agent, actor, *, email: str = "", label: str 
             f"{user.email} has signed in to canopy, so it may be a person's account; only a "
             "workspace owner may mint a token for it", 403)
     raw, token = PersonalToken.create_for_user(
-        user=user, label=(label or f"{agent.slug} agent").strip()[:100], ttl_days=0)
+        user=user, label=(label or f"{agent.slug} agent").strip()[:100], ttl_days=agent_token_ttl_days())
     return raw, token, user, created
 
 

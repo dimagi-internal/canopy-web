@@ -207,11 +207,12 @@ def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatc
     turn_id = _open(world["aath"]).json()["turn_id"]
     body = _resolve(world["aath"], turn_id).json()
     assert body["values"] == {"nova-api-key": SECRET}
-    assert body["github_token"] == "" and body["salesforce_creds"] == ""
+    assert "github_token" not in body and body["salesforce_creds"] == ""
     # The same agent's admin still gets everything (unchanged path).
     admin = _resolve(world["owner"]).json()
     assert admin["values"]["canopy-pat"] == "agent-own-pat"
-    assert admin["github_token"] == "owner-github-token"
+    # The agent's GitHub token is no read's, an admin's included: a turn's only.
+    assert "github_token" not in admin
 
 
 def test_a_license_read_never_gets_the_agents_1password_key(world, monkeypatch):

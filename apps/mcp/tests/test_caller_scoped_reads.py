@@ -154,11 +154,24 @@ def test_a_members_session_still_reads_its_own_turn(w):
         _call("read_turn_messages", {"turn_id": str(mine.pk)})   # own turn: no 404
 
 
-def test_a_scoped_token_lists_every_tool_but_runs_each_as_the_asker(w):
+def test_a_scoped_token_lists_every_read_and_runs_each_as_the_asker(w):
     raw = caller_tokens.mint(_asked_by(w["matt"], w["agent"], "m1"), scoped=True)
     with as_token(raw):
-        names = {t.name for t in async_to_sync(mcp.list_tools)()}
+        tools = async_to_sync(mcp.list_tools)()
+    names = {t.name for t in tools}
     assert {"harness_list_turns", "read_turn_messages", "who_is_asking"} <= names
+    # Reads only: the asker granted the agent no act-as-you permission.
+    page = {"invoke_page_action", "read_page_state", "list_page_actions"}
+    assert all((t.annotations and t.annotations.readOnlyHint) or t.name in page for t in tools)
+    assert not {"enqueue_turn", "create_tasks", "canopy_sessions_send", "site_call"} & names
+    # Driving the asker's own open page is allowed: it runs in their tab, as them.
+    assert {"invoke_page_action", "read_page_state", "list_page_actions"} <= names
+
+
+def test_a_scoped_token_is_refused_a_write_and_told_why(w):
+    raw = caller_tokens.mint(_asked_by(w["matt"], w["agent"], "m1"), scoped=True)
+    with as_token(raw), pytest.raises(ToolError, match="haven't granted it an act-as-you permission"):
+        async_to_sync(mcp.call_tool)("create_tasks", {})
 
 
 # -- the token fails closed -------------------------------------------------

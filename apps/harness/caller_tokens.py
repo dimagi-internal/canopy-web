@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import fnmatch
+import re
 import secrets
 from dataclasses import dataclass, field
 
@@ -107,6 +108,11 @@ class Grant:
     token_id: int | None = None
     #: The turn holds a host's sensitive data (`_sensitive_grant`).
     sensitive: bool = False
+    #: A full-profile token for an AGENT's turn asked by someone who is not its owner,
+    #: an admin or canopy: it READS as the asker and never writes — they granted the
+    #: agent no act-as-you permission (`mcp.turn_scope`). A repo chat's token is not:
+    #: a repo chat is the person's own tool, not an agent acting for them.
+    read_only: bool = False
 
     def allows_tool(self, name: str) -> bool:
         return any(fnmatch.fnmatchcase(name, g) for g in self.tool_globs)
@@ -165,8 +171,9 @@ def resolve(raw: str) -> Grant | None:
         return None
     if not current.capability:
         # Full profile: nothing to list, but still the asker's identity — never
-        # the runner's.
-        return Grant(turn=current, user=user, all_tools=True, turn_ids=turn_ids, token_id=tok.pk)
+        # the runner's — and only to read: an agent acting for someone else.
+        return Grant(turn=current, user=user, all_tools=True, turn_ids=turn_ids, token_id=tok.pk,
+                     read_only=True)
     globs = canopy_tool_globs(profile(agent, current.capability))
     if sensitivity.is_sensitive(current):
         return _sensitive_grant(current, agent, globs, user=user, turn_ids=turn_ids,
@@ -191,3 +198,19 @@ def _sensitive_grant(current: Turn, agent, globs: list[str], **kw) -> Grant | No
     if any(fnmatch.fnmatchcase(sensitive_data.PAGE_TOOL_GLOB, g) for g in globs):
         allowed.append(sensitive_data.PAGE_TOOL_GLOB)
     return Grant(turn=current, tool_globs=allowed, sensitive=True, **kw)
+
+
+#: A read-only caller token may still drive the asker's OWN open page: its actions run
+#: in their browser tab, as them, and anything that commits there waits for their click
+#: (canopy's own page actions only navigate and read — `selectSkill`, `showCommit`,
+#: `setTimeline`, `reviewCloseCandidates`; closing a session is `propose_session_closes`,
+#: which only shows them a review). So driving it acts within what they are watching.
+PAGE_DRIVE_TOOLS = frozenset({"invoke_page_action", "read_page_state", "list_page_actions"})
+#: The page's own declared actions, as MCP tools (`apps/mcp/page_tools.TOOL_PREFIX`).
+PAGE_TOOL_PREFIX = "page_"
+_PAGE_INVOKE = re.compile(r"^/api/(w/[^/]+/)?canopy-sessions/[0-9a-f-]{36}/page-actions/invoke/?$")
+
+
+def drives_the_page(method: str, path: str) -> bool:
+    """Whether a REST write only drives the asker's open page (`PAGE_DRIVE_TOOLS`)."""
+    return method.upper() == "POST" and bool(_PAGE_INVOKE.match(path))

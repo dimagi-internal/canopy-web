@@ -74,7 +74,7 @@ def _page_action_named(tool: str) -> str:
     return name if name.startswith(page_tools.TOOL_PREFIX) and name in declared else ""
 
 
-@mcp.tool
+@mcp.tool(annotations={"readOnlyHint": True})
 async def site_tools() -> dict:
     """The tools of the site this visitor is on that you may use for them.
 
@@ -148,7 +148,7 @@ async def site_call(tool: str, arguments: dict | None = None) -> dict:
     return out
 
 
-@mcp.tool
+@mcp.tool(annotations={"readOnlyHint": True})
 async def site_read(uri: str) -> dict:
     """Read a resource at the visitor's site, as the visitor — the rows behind a
     result a site tool returned as a link.

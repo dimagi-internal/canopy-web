@@ -156,6 +156,12 @@ failure again.
   `kinds.kind_of(cred).may_mint`); `tests/test_token_kinds.py` fails a comparison against a
   kind's name written out anywhere else. A type the table does not know is never the person
   and never mints.
+- **An agent's own login (`Agent.user`) is an account the agent IS** — its token signs in
+  as that account — and it is ALWAYS the account at the agent's own email. canopy creates it
+  when there is none, and links one nobody has ever signed in to; an account there that has
+  signed in is linked only when its person accepts, in
+  their browser behind a passkey step-up (`AgentLoginRequest`, `apps/agents/agent_login.py`). Its stored token expires (`PAT_DEFAULT_TTL_DAYS`); an agent turn's caller token
+  reads as its asker and never writes (`access.md` → "Whose authority an agent acts with").
 - `POST /api/debug/mint-session/` (`apps/common/views_debug.py`) trades a PAT for a
   short-lived browser session (the macOS menubar's web view). A minted session is still a
   machine (`views_debug.is_machine`), and the MCP OAuth consent page refuses it, so a token
