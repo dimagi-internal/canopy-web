@@ -319,3 +319,37 @@ def test_a_claimed_rider_is_listed_as_in_the_turn_not_queued():
     states = {q["text"]: q["state"] for q in session_send.queued_messages(session)}
     assert states["skip the checks"] == "midturn"
     assert states["go"] == "delivering"
+
+
+def test_a_follow_up_the_agent_took_mid_turn_lands_and_leaves_the_queue():
+    """Claude Code records a message it takes mid-turn only as a `queued_command`
+    attachment. The runner ships that as the user row; the server links it to
+    its Turn, so the send stops reading "sending to agent…" and stays in the
+    conversation after the turn ends."""
+    from canopy_transcript import conversational_messages
+
+    from apps.canopy_sessions import send as session_send
+    from apps.canopy_sessions import services as chat
+    from apps.canopy_sessions.models import Message
+    from apps.canopy_sessions.transcript_ingest import persist_transcript_rows
+
+    user, _ws, _agent, session, runner = _ctx()
+    session.metadata = {**(session.metadata or {}), chat.TRANSCRIPT_SOURCED: True}
+    session.save(update_fields=["metadata"])
+    _m, first = session_send.send_message(session=session, text="go", user=user, client_id="c1")
+    assert claim.claim_next_turn(runner) == first
+    _m, follow = session_send.send_message(session=session, text="owner, not admin", user=user,
+                                           client_id="c2")
+    assert claim.claim_next_turn(runner) == follow
+    records = [
+        {"type": "user", "promptSource": "typed", "message": {"content": "go"}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "on it"}]}},
+        {"type": "attachment", "attachment": {
+            "type": "queued_command", "prompt": "owner, not admin", "commandMode": "prompt",
+            "origin": {"kind": "human"}, "humanTurn": True}},
+    ]
+    persist_transcript_rows(session, conversational_messages(records, -1))
+
+    assert session_send.queued_messages(session) == []
+    row = Message.objects.get(session=session, source_turn_id=follow.pk)
+    assert (row.role, row.plaintext, row.author["user_id"]) == (Message.USER, "owner, not admin", user.pk)
