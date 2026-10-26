@@ -213,4 +213,48 @@ describe('a send carries its own text and waits for a receipt', () => {
     act(() => FakeSocket.last!.receive({ ...SNAPSHOT, data: { ...SNAPSHOT.data, messages: [reply] } }))
     expect(hook.result.current.state.messages.map((m) => m.id)).toEqual(['m2'])
   })
+
+  it('a line the server says has landed is not carried below its reply, echo matched or not', () => {
+    // This page never matched the live echo (the turn was long, or the echo
+    // came while the page was elsewhere), so the row is still "unconfirmed".
+    // The snapshot is only the tail and holds just the reply. Its `queued` is
+    // the server's word that the line has landed: nothing is waiting.
+    const hook = user()
+    act(() => hook.result.current.updateDraft('stop all calls to ACE'))
+    act(() => hook.result.current.sendChat())
+    act(() => FakeSocket.last!.receive({
+      event: 'draft.committed',
+      data: { draft_id: 'd1', user_message_id: 'transient:abc', client_id: sentSend().client_id },
+    }))
+    const reply = {
+      id: 'm2', turn_index: 90048, role: 'assistant', content: {}, plaintext: 'Built an agent hold.',
+      status: 'complete', error_detail: null, started_at: null, completed_at: null, created_at: '',
+    }
+    act(() => FakeSocket.last!.receive({
+      ...SNAPSHOT, data: { ...SNAPSHOT.data, messages: [reply], queued: [] },
+    }))
+    expect(hook.result.current.state.messages.map((m) => m.id)).toEqual(['m2'])
+  })
+
+  it('a line the server still lists as waiting is kept across a reconnect', () => {
+    const hook = user()
+    act(() => hook.result.current.updateDraft('queued behind a running turn'))
+    act(() => hook.result.current.sendChat())
+    const clientId = sentSend().client_id
+    act(() => FakeSocket.last!.receive({
+      event: 'draft.committed',
+      data: { draft_id: 'd1', user_message_id: 'transient:abc', client_id: clientId },
+    }))
+    act(() => FakeSocket.last!.receive({
+      ...SNAPSHOT,
+      data: {
+        ...SNAPSHOT.data,
+        queued: [{ turn_id: 't1', client_id: clientId, author: null, text: 'queued behind a running turn',
+                   sent_at: '', state: 'queued' }],
+      },
+    }))
+    expect(hook.result.current.state.messages.map((m) => m.plaintext)).toEqual([
+      'queued behind a running turn',
+    ])
+  })
 })
