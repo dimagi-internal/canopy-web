@@ -297,7 +297,7 @@ ALLOWED_GRANTERS = {
     "apps/canopy_sessions/participants.py",  # ensure_participant itself
     "apps/canopy_sessions/services.py",      # create_session: the creator as owner
     "apps/canopy_sessions/api.py",           # add_participant: the owner shares
-    "apps/slack/services.py",                # a member in a Slack thread
+    "apps/slack/audience.py",                # a member in the Slack conversation
     "apps/harness/channels/email.py",        # a member on an (aligned) email thread
 }
 

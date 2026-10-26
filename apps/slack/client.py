@@ -243,6 +243,36 @@ def is_channel_member(token: str, channel: str, slack_user_id: str) -> bool:
     return False
 
 
+def conversation_members(token: str, channel: str) -> list[str]:
+    """Everyone in a conversation now (channel, private channel, DM) — `conversations.members`,
+    paged. Raises on failure: the caller must tell "nobody" from "Slack did not say"."""
+    out: list[str] = []
+    cursor = ""
+    for _ in range(100):
+        data = {"channel": channel, "limit": 1000, **({"cursor": cursor} if cursor else {})}
+        body = call("conversations.members", token=token, data=data)
+        out.extend(str(m) for m in body.get("members") or [])
+        cursor = (body.get("response_metadata") or {}).get("next_cursor") or ""
+        if not cursor:
+            break
+    return out
+
+
+def team_users(token: str) -> list[dict]:
+    """Every user of the Slack (`users.list`, paged) — the same objects `users.info` returns.
+    Raises on failure."""
+    out: list[dict] = []
+    cursor = ""
+    for _ in range(100):
+        data = {"limit": 200, **({"cursor": cursor} if cursor else {})}
+        body = call("users.list", token=token, data=data)
+        out.extend(m for m in body.get("members") or [] if isinstance(m, dict))
+        cursor = (body.get("response_metadata") or {}).get("next_cursor") or ""
+        if not cursor:
+            break
+    return out
+
+
 def user_email(token: str, slack_user_id: str) -> str:
     return str((user_info(token, slack_user_id).get("profile") or {}).get("email") or "")
 

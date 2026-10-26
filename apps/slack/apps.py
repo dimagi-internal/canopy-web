@@ -22,6 +22,13 @@ class SlackConfig(AppConfig):
 
         ingest_scheduler.register()
 
+        # Slack-bound sessions' people follow their channel's (apps/slack/audience.py).
+        from apps.common import ticks  # noqa: PLC0415 — app registry: only once apps are ready
+
+        from . import audience  # noqa: PLC0415 — app registry: only once apps are ready
+
+        ticks.register("slack.audience_sweep", audience.sweep, audience.SWEEP_EVERY_S)
+
         # Every session row says which Slack thread it is bound to, read from
         # session metadata only (no Slack call) — registered here so
         # canopy_sessions needs no Slack import.
