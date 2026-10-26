@@ -97,6 +97,15 @@ if [[ "$CMD" == "down" ]]; then
   if "${AWS[@]}" autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$STACK" \
        --query 'AutoScalingGroups[0].AutoScalingGroupName' --output text 2>/dev/null | grep -q "$STACK"; then
     echo ">> emptying group $STACK (each member's chats move as it goes)"
+    # canopy-web protects every member from scale-in and lifts it only while the
+    # fleet is live; once retired nothing lifts it, and a protected member never leaves.
+    ids=$("${AWS[@]}" autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$STACK" \
+            --query 'AutoScalingGroups[0].Instances[?ProtectedFromScaleIn].InstanceId' --output text 2>/dev/null || true)
+    if [[ -n "$ids" && "$ids" != "None" ]]; then
+      # shellcheck disable=SC2086
+      "${AWS[@]}" autoscaling set-instance-protection --auto-scaling-group-name "$STACK" \
+        --instance-ids $ids --no-protected-from-scale-in
+    fi
     "${AWS[@]}" autoscaling update-auto-scaling-group --auto-scaling-group-name "$STACK" \
       --min-size 0 --max-size 0 --desired-capacity 0
     "${AWS[@]}" autoscaling delete-warm-pool --auto-scaling-group-name "$STACK" --force-delete >/dev/null 2>&1 || true
