@@ -12,7 +12,19 @@ from __future__ import annotations
 import datetime as dt
 
 from django.apps import apps
-from django.db.models import Case, CharField, Exists, F, OuterRef, Q, Subquery, Value, When
+from django.db.models import (
+    BooleanField,
+    Case,
+    CharField,
+    Exists,
+    ExpressionWrapper,
+    F,
+    OuterRef,
+    Q,
+    Subquery,
+    Value,
+    When,
+)
 from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
 from django.utils import timezone
@@ -59,6 +71,16 @@ SESSION_LIVE_WINDOW = dt.timedelta(minutes=3)
 # sessions keep the open-until-closed rule above, and a session with a dialog up
 # (`pending_question`) is never retired whatever its mode.
 
+#
+# And a PERSON's web chat on the cloud closes once it has been idle for
+# CLOUD_CHAT_IDLE: no turn on it created or finished in that long, nothing in
+# flight, no dialog up, started in auto mode. Held open until closed, these were
+# 106 of cloud-ec2-2's 110 open sessions on 2026-10-26, none needing anyone —
+# a web chat left alone is far more often abandoned than waiting (Jonathan,
+# 2026-10-26). Sending to it again is a new turn, which reopens it. A session an
+# AGENT started (its first turn's initiator is an agent, or an agent's own login)
+# ran on its own whatever channel it came in on.
+CLOUD_CHAT_IDLE = dt.timedelta(hours=24)
 
 # How long a transferred session stays listed while its NEW box has not reported it
 # yet. A transfer clears the source's identity off the binding, waits up to
@@ -189,14 +211,28 @@ def _predicates() -> _Predicates:
     def first(field):
         return Coalesce(Subquery(driving.values(field)[:1]), Value(""))
 
-    ran_on_its_own = Q(Exact(first("turn_mode"), "auto")) & ~Q(
-        Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT)
-    )
+    # Started by an agent: the first turn's initiator is one, or is an agent's own
+    # login (an agent calling the API as itself records `kind="user"`).
+    Agent = apps.get_model("agents", "Agent")
+    by_agent = driving.annotate(_by_agent=ExpressionWrapper(
+        Q(initiator_kind="agent") | Q(Exists(Agent.objects.filter(user=OuterRef("initiator_user")))),
+        output_field=BooleanField(),
+    ))
+    started_by_agent = Coalesce(Subquery(by_agent.values("_by_agent")[:1]), Value(False))
+    auto = Q(Exact(first("turn_mode"), "auto"))
+    web_chat = Q(Exact(first("origin"), Turn.ORIGIN_CANOPY_WEB_CHAT))
+    ran_on_its_own = auto & (~web_chat | Q(Exact(started_by_agent, True)))
+    # Idle: no driving turn created or finished within CLOUD_CHAT_IDLE. Turn times,
+    # not the binding's: a cloud binding's `live_seen_at` is stamped per turn and
+    # its `last_interacted_at` is never reported.
+    idle_cutoff = timezone.now() - CLOUD_CHAT_IDLE
+    recent = driving_turns().filter(Q(created_at__gte=idle_cutoff) | Q(finished_at__gte=idle_cutoff))
+    chat_idle = auto & web_chat & ~Q(Exists(recent))
     in_flight = Exists(driving_turns().filter(status__in=Turn.NON_TERMINAL))
     no_dialog = Q(runner_binding__pending_question__isnull=True) | Q(
         runner_binding__pending_question={}
     )
-    cloud_finished = ran_on_its_own & ~Q(in_flight) & no_dialog
+    cloud_finished = (ran_on_its_own | chat_idle) & ~Q(in_flight) & no_dialog
     cloud_done = cloud_gone | cloud_finished
 
     runner_unseen = Q(origin="runner") & (
@@ -212,7 +248,8 @@ def _predicates() -> _Predicates:
     # rather than a freshness window.
     #
     # And held by the cloud runner, the same rule the runner leg uses: open until it
-    # is closed, or its runner is retired. (Labs once listed a hal chat 67 days after
+    # is closed, its runner is retired, or (a person's auto-mode chat) it has been
+    # idle for CLOUD_CHAT_IDLE. (Labs once listed a hal chat 67 days after
     # its last word, on a cloud runner long since gone — the retired gate ends that.)
     web_unseen = (
         ~Q(origin="runner")
@@ -241,7 +278,7 @@ OPEN_REASONS = (
     "turn_running",       # cloud: a turn that drives it is queued, claimed or running
     "dialog_up",          # cloud: a question is waiting for an answer
     "manual_turn",        # cloud: its first claimed turn ran in manual mode
-    "person_started",     # cloud: its first claimed turn was a person's web chat
+    "person_started",     # cloud: a person's web chat with a turn within CLOUD_CHAT_IDLE
     "no_turn_found",      # cloud: no claimed turn drives it, so nothing can finish it
     "unbound",            # a web chat no runner has picked up yet
     "unobservable",       # held by a box that has never sent a session report
