@@ -672,7 +672,15 @@ def tick(now: dt.datetime | None = None) -> dict[str, list[str]]:
 def tick_fleet(fleet: RunnerFleet, now: dt.datetime) -> list[str]:
     did: list[str] = []
     aws = get(fleet.region)
-    group = aws.group(fleet.group_name)
+    try:
+        group = aws.group(fleet.group_name)
+    except AwsError:
+        if fleet.status != RunnerFleet.RETIRED:
+            raise
+        # Its stack carried canopy-web's permission to read the group, so once
+        # `fleet.sh down` deletes it the read is refused rather than empty.
+        logger.info("fleet %s: retired and its group is unreadable: treating it as gone", fleet.name)
+        group = None
     if group is None and fleet.status != RunnerFleet.RETIRED:
         logger.warning("fleet %s: no group %s in %s", fleet.name, fleet.group_name, fleet.region)
         return did

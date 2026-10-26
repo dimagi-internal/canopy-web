@@ -68,6 +68,7 @@ class FakeAws:
         self.desired = 1
         self.calls: list[tuple] = []
         self.deleted = False  # `fleet.sh down` deleted the stack, and the group with it
+        self.refused = False  # ... and the stack's policy that let canopy-web read it
 
     def add(self, iid, *, lifecycle="InService", state="running", group=GROUP):
         self.instances[iid] = {"state": state, "group": group, "lifecycle": lifecycle, "protected": True}
@@ -77,6 +78,8 @@ class FakeAws:
         return None if i is None else {"state": i["state"], "group": i["group"], "lifecycle": i["lifecycle"]}
 
     def group(self, name):
+        if self.refused:
+            raise fleets.AwsError("describe group: AccessDenied")
         if name != GROUP or self.deleted:
             return None
         return {"desired": self.desired, "instances": [
@@ -485,6 +488,19 @@ def test_a_retired_fleets_members_are_retired_once_its_group_is_deleted(world, a
     assert Runner.objects.get(pk=world["one"].pk).status == Runner.RETIRED
     # Nothing is left to read: the fleet drops out of the tick.
     assert fleets.tick() == {}
+
+
+def test_a_retired_fleet_whose_group_can_no_longer_be_read_retires_its_members(world, aws):
+    fleets.retire(world["fleet"])
+    aws.refused = True
+    fleets.tick()
+    assert Runner.objects.get(pk=world["one"].pk).status == Runner.RETIRED
+
+
+def test_an_active_fleets_unreadable_group_retires_no_one(world, aws):
+    aws.refused = True
+    fleets.tick()  # logged as a failed tick, never raised
+    assert Runner.objects.get(pk=world["one"].pk).status != Runner.RETIRED
 
 
 def test_an_active_fleets_missing_group_retires_no_one(world, aws):
