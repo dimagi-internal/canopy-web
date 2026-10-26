@@ -41,7 +41,7 @@ const ops = vi.hoisted(() => ({
 vi.mock('@/vault/operations', () => ops)
 
 function entry(over: Partial<RunnerCredentialEntry> & Pick<RunnerCredentialEntry, 'key' | 'kind'>): RunnerCredentialEntry {
-  return { name: '', account: '', signed_in: false, has_value: false, in_vault: false, vault_secret: '', reported_at: null, ...over }
+  return { cli: 'claude-code', name: '', account: '', signed_in: false, has_value: false, in_vault: false, vault_secret: '', reported_at: null, ...over }
 }
 
 function status(credentials: RunnerCredentialEntry[]): CredentialStatus {

@@ -20,7 +20,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import actors
+from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
@@ -139,7 +139,8 @@ def _may_hold(r: Runner, t: Turn, holds: dict | None) -> bool:
 def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
                     *, ignore_requirements: bool = False, orders: dict | None = None,
                     ignore_hold: bool = False, holds: dict | None = None,
-                    ignore_serve: bool = False, admins: dict | None = None) -> bool:
+                    ignore_serve: bool = False, admins: dict | None = None,
+                    ignore_cli: bool = False) -> bool:
     """The per-candidate refinements claim_next_turn applies after the coarse
     target match — same checks, same ORDER, so coverage can't overstate what
     claiming will do.
@@ -148,7 +149,9 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     if the conversation required nothing?" — only ever asked to decide whether
     a requirement is what BLOCKS a turn, never to route one. `ignore_hold` is
     the same counterfactual for `runner_may_hold_agent`, and `ignore_serve` for a
-    box's own report that it cannot run the agent (`routing.cannot_serve`)."""
+    box's own report that it cannot run the agent (`routing.cannot_serve`), and
+    `ignore_cli` for the agent CLI (`clis.choose`). Sign-in is not asked here: like
+    a box's liveness, `turn_reach` reads it on top (a signed-out box still covers)."""
     reqs = frozenset() if ignore_requirements else rr.requirements_of(t)
     if not rr.runner_satisfies(r, reqs):
         return False  # above the pin and the binding, as in claim_next_turn
@@ -156,6 +159,8 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         return False  # likewise above the pin and the binding
     if not ignore_serve and turn_unit_refusal(r, t):
         return False  # the box's isolation unit: above the pin and the binding too
+    if not ignore_cli and clis.choose(t, r, ignore_signed_in=True) is None:
+        return False  # the agent CLI: above the pin, as in claim_next_turn
     # A pin trumps everything below it (claim_next_turn's `pinned_here`).
     if t.pinned_runner_id == r.id:
         return True
@@ -203,7 +208,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
 
 def _coverage(ids, runners, defaults: dict, priorities: dict,
               *, ignore_requirements: bool = False, ignore_hold: bool = False,
-              ignore_serve: bool = False) -> dict:
+              ignore_serve: bool = False, ignore_cli: bool = False) -> dict:
     """{runner: {turn pk it could claim}} over `ids` — the coverage half of both
     `unclaimable_queued_turns` and `turn_reach`, one implementation so the web
     warning and the Slack acknowledgement cannot disagree about the same turn.
@@ -243,7 +248,8 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
             if _refined_allows(r, t, defaults, priorities,
                                ignore_requirements=ignore_requirements, orders=orders,
                                ignore_hold=ignore_hold, holds=holds,
-                               ignore_serve=ignore_serve, admins=admins):
+                               ignore_serve=ignore_serve, admins=admins,
+                               ignore_cli=ignore_cli):
                 covered.add(t.pk)
         out[r] = covered
     return out
@@ -289,6 +295,8 @@ class Reach:
     #: "no runner" — an unbound project chat names its workspace's order and the
     #: person (`routing.project_session_waits_why`).
     reason: str = ""
+    #: For SIGNED_OUT: the agent CLI none of its runners has signed in ("codex").
+    cli: str = ""
 
 
 def _orders_for(turns) -> dict:
@@ -344,7 +352,10 @@ def turn_reach(turn: Turn) -> Reach:
     defaults, priorities = _assignment_rows_for_turns([turn])
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
     online = [r for r in covering if r.live_status == Runner.ONLINE]
-    live = [r for r in online if not r.signed_out]
+    # Signed in to a CLI this turn may run on (`clis.choose`, which coverage asked
+    # without the sign-in): an online box whose Codex login is gone does not pick
+    # up a Codex conversation, whatever its Claude login says.
+    live = [r for r in online if clis.choose(turn, r) is not None]
     # A fleet member that is in the warm pool (or coming into service) is on its
     # way: the scaler grows the fleet for this turn (`fleets.tick`), so it is a
     # taker, not "offline".
@@ -354,7 +365,9 @@ def turn_reach(turn: Turn) -> Reach:
     if online:
         # Up, heartbeating, and unable to run Claude: "Picking this up on X" over
         # a box that will answer "Not logged in" is the lie this state replaces.
-        return Reach(SIGNED_OUT, online)
+        cli = clis.allowed(turn)[0]
+        return Reach(SIGNED_OUT, online, cli=cli,
+                     reason=f"no runner has {clis.label(cli)} signed in")
 
     def blocked_by_requirements(*, live_only: bool) -> bool:
         # Would a runner take it if the conversation required nothing? Only
@@ -381,7 +394,7 @@ def turn_reach(turn: Turn) -> Reach:
 
 
 def _when(at: dt.datetime | None) -> str:
-    return timezone.localtime(at, dt.timezone.utc).strftime("%b %-d %H:%M UTC") if at else "never"
+    return timezone.localtime(at, dt.UTC).strftime("%b %-d %H:%M UTC") if at else "never"
 
 
 def runner_situation(r: Runner) -> str:
@@ -522,6 +535,10 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
     unserved = {t.pk for t in queued if t.pk not in claimable_ever}
     by_unserving = _coverage(unserved, runners, defaults, priorities,
                              ignore_serve=True) if unserved else {}
+    # And for the agent CLI: a turn only boxes without the CLI it runs on would
+    # take is a box to set that CLI up on, not routing to fix (`clis.choose`).
+    blocked_by_cli = set().union(*_coverage(unserved, runners, defaults, priorities,
+                                            ignore_cli=True).values()) if unserved else set()
     orders = _orders_for(queued)
 
     out = []
@@ -570,6 +587,12 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
             reason = (f"the runners {what} are owned by people who are not admins of "
                       f"'{t.acting_agent.slug}', so they may not run as it — make the "
                       "runner's owner an admin of the agent")
+        elif t.pk in blocked_by_cli:
+            kind = "config"
+            wants = " or ".join(clis.label(c) for c in clis.allowed(t))
+            reason = (f"it runs on {wants}, and none of the runners that {what} has it "
+                      "set up" + (" to confine a caller's turn" if t.capability else "")
+                      + f" — sign {wants} in on one of them")
         elif t.capability and t.pk not in claimable_ever:
             kind = "config"
             reason = (f"this is a caller's turn, confined to '{t.capability}', and no runner "
@@ -673,7 +696,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # three messages that way). Not every not-ready note means that — a box with
     # no Claude desktop CLI still runs turns in emdash — so only this one gates.
     # Above the pin, like the pause: a pin cannot make a signed-out box work.
-    if runner.signed_out:
+    # Per CLI (`harness.clis`): a box with Codex signed in still takes Codex turns
+    # while its Claude login is gone, and `clis.choose` below keeps each turn to a
+    # CLI the box has signed in. A box with none signed in takes nothing.
+    reports = clis.reported(runner)
+    if not any(r.signed_in for r in reports.values()):
         return None
     # A computer used in plain Claude Code has no runner app to run a claimed turn;
     # it never heartbeats, so the guard above already stops it — this says so.
@@ -834,6 +861,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # agent's secrets (`device_keys.runner_serves_agent`).
         if turn_unit_refusal(runner, turn):
             continue
+        # The agent CLI it runs on (`clis.choose`), above the pin like the hold: a
+        # pin cannot put a turn on a CLI the box lacks, or a caller's turn on one
+        # that cannot confine it.
+        cli = clis.choose(turn, runner, reports=reports)
+        if cli is None:
+            continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not kind_allows(runner, turn.routing):
@@ -894,6 +927,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             # A confined turn never rides into the owner's session; one whose
             # mid-turn delivery already failed waits for the turn to end.
             continue
+        if rides is not None and cli != (Turn.objects.filter(pk=rides).values_list(
+                "cli", flat=True).first() or clis.CLAUDE_CODE):
+            # A rider is typed into the running session, so it runs on that session's
+            # CLI or not at all (a turn claimed before CLIs ran on Claude Code); it
+            # waits for the turn to end rather than switch the conversation's CLI.
+            continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
@@ -907,16 +946,22 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     turn_mode=mode.mode if mode else "",
                     turn_mode_basis=mode.basis[:320] if mode else "",
                     rides_turn_id=rides,
+                    cli=cli,
                     **({"origin_ref": turn.origin_ref} if stamp else {}),
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update
         if updated:
+            # A conversation keeps the CLI its first claim chose: its history
+            # lives in that CLI's store (`clis.allowed` reads it back).
+            Session.objects.filter(pk__in=[pk for pk in (turn.chat_session_id,
+                                                         turn.canopy_session_id) if pk],
+                                   cli="").update(cli=cli)
             turn.refresh_from_db()
             if auto is not None:
                 admission.record_auto(turn, auto, runner)
             append_events(turn, [{"kind": "status", "payload": {
-                "status": Turn.CLAIMED, "runner": runner.name,
+                "status": Turn.CLAIMED, "runner": runner.name, "cli": cli,
                 **_routing_basis(turn, runner, priorities),
                 **({"rides_turn": str(rides)} if rides else {}),
             }}])

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
+import { cliLabel } from '@/lib/clis'
 import {
   addRunnerLogin,
   addVaultedRunnerCredential,
@@ -343,6 +344,10 @@ export function RunnerCredentials({ runnerId, workspace = null, signedIn = null,
                   >
                     {KIND_LABEL[e.kind]}
                   </span>
+                  {e.cli && e.cli !== 'claude-code' && (
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-foreground-secondary"
+                      data-testid={`cred-cli-${e.key}`}>{cliLabel(e.cli)}</span>
+                  )}
                   {e.in_vault && (
                     <span className="text-[11px] text-foreground-subtle" title="Sealed in the runner's vault: only the box's own key opens it"
                       data-testid={`cred-in-vault-${e.key}`}>vault</span>

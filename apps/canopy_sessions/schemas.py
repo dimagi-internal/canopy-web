@@ -69,6 +69,10 @@ class SessionCreateIn(Schema):
     parent: ParentIn | None = None
     # A key pair the starter's browser made (`conversation_keys.check_offer`).
     conversation_key: ConversationKeyIn | None = None
+    # The agent CLI this conversation runs on, for its whole life (one the agent is
+    # set up for, `clis.refusal`). None = its first turn's claim picks the agent's
+    # default.
+    cli: Literal["claude-code", "codex"] | None = None
 
 
 class SendIn(Schema):
@@ -463,6 +467,9 @@ class SessionOut(Schema):
     # by. "" when unbound, or the box does not report it.
     runner_model: str = ""
     session_key: str = ""
+    #: The agent CLI this conversation runs on ("claude-code", "codex"), chosen by its
+    #: first claim and never changed; "" until then.
+    cli: str = ""
     #: Moved onto `runner_name` and not reported there yet (`staleness.TRANSFER_WINDOW`):
     #: listed, but nothing to drive until the new box picks it up.
     transferring: bool = False

@@ -70,8 +70,8 @@ def test_the_bundle_names_vault_secrets_and_carries_no_value(client, runner):
     got = client.get(_cred_url(runner)).json()
     assert [lg["key"] for lg in got["logins"]] == ["aaaa1111"]
     assert got["cascade"] == [
-        {"key": "aaaa1111", "kind": "login", "vault_secret": ""},
-        {"key": key, "kind": "api_key", "vault_secret": f"anthropic-api-key:{key}"},
+        {"key": "aaaa1111", "kind": "login", "cli": "claude-code", "vault_secret": ""},
+        {"key": key, "kind": "api_key", "cli": "claude-code", "vault_secret": f"anthropic-api-key:{key}"},
     ]
     assert got["vault_open"] is True
     assert not ({"claude_token", "claude_token_secondary", "claude_api_key"} & set(got))

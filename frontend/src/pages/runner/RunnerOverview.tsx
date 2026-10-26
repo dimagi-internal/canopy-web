@@ -4,7 +4,21 @@ import { AlertList } from '@/components/alerts/AlertList'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
+import { cliLabel, runnerClis } from '@/lib/clis'
 import type { RunnerOutletContext } from './RunnerPage'
+
+/** The agent CLIs the box has, as it reports them. */
+export function runnerClisText(runner: RunnerOut): string {
+  // `Runner.signed_out`: the box said its Claude login is gone.
+  const claudeSignedIn = !(runner.ready === false && (runner.ready_note ?? '').startsWith('Claude is not signed in'))
+  return runnerClis(runner.capabilities as Record<string, unknown>, claudeSignedIn)
+    .map((c) => {
+      const state = [c.signedIn ? 'signed in' : 'not signed in']
+      if (c.signedIn && !c.confines && c.cli !== 'claude-code') state.push('cannot confine a caller\u2019s turn yet')
+      return `${cliLabel(c.cli)}${c.version ? ` ${c.version}` : ''} (${state.join(', ')})`
+    })
+    .join(' · ')
+}
 
 /** Real availability, not last-known ready: a stale runner's ready flag is
  *  whatever it reported on its final heartbeat. */
@@ -19,10 +33,11 @@ export function runnerBadge(runner: RunnerOut): { text: string; cls: string } {
  *  panel, which links here for the rest. */
 export function RunnerFacts({ runner }: { runner: RunnerOut }): JSX.Element {
   const caps = (runner.capabilities ?? {}) as { agents?: string[]; projects?: string[] }
-  const rows: [string, string][] = [
+  const rows: [string, string, string?][] = [
     ['agents', (caps.agents ?? []).join(', ') || '—'],
     ['projects', (caps.projects ?? []).join(', ') || '—'],
     ['kind', runner.kind ?? ''],
+    ['agent CLIs', runnerClisText(runner), 'runner-clis'],
   ]
   if (runner.kind !== 'cloud') rows.push(['runtime', runner.engine === 'claude-desktop' ? 'Claude desktop' : 'emdash'])
   rows.push(['owner', runner.owner_email ?? '—'])
@@ -37,12 +52,12 @@ export function RunnerFacts({ runner }: { runner: RunnerOut }): JSX.Element {
   return (
     <table className="w-full text-[13px]" data-testid="runner-facts">
       <tbody>
-        {rows.map(([label, value]) => (
+        {rows.map(([label, value, testId]) => (
           <tr key={label} className="border-b border-border last:border-b-0">
             <th scope="row" className="w-32 py-1.5 pr-3 text-left text-[11px] font-normal uppercase tracking-wide text-muted-foreground">
               {label}
             </th>
-            <td className="min-w-0 truncate py-1.5 text-foreground">{value}</td>
+            <td className="min-w-0 truncate py-1.5 text-foreground" data-testid={testId}>{value}</td>
           </tr>
         ))}
       </tbody>

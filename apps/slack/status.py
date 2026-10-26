@@ -34,6 +34,7 @@ import logging
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.harness import clis
 from apps.harness import runner_requirements as rr
 from apps.harness import turn_status as _ts
 from apps.harness.models import Turn
@@ -171,9 +172,11 @@ def render(turn: Turn, *, reach=None, cloud=None) -> tuple[str, list | None]:
         if st.requires:
             line += f" (it needs a {rr.describe(st.requires)} runner)"
     elif st.state == ts.SIGNED_OUT:
-        line = (f":warning: Queued — Claude is not signed in on {agent}'s runner "
+        cli = clis.allowed(turn)[0]
+        login = "`codex login`" if cli == clis.CODEX else "`claude /login`"
+        line = (f":warning: Queued — {clis.label(cli)} is not signed in on {agent}'s runner "
                 f"{_runner_names(st.runners)}, so nothing will run this until someone signs in "
-                "there (`claude /login`).")
+                f"there ({login}).")
     elif st.state == ts.UNROUTED and st.requires:
         need = rr.describe(st.requires)
         line = (f":warning: Queued — this conversation needs a {need} runner, "

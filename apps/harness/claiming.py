@@ -18,7 +18,10 @@ from __future__ import annotations
 
 def issue_credentials(turn):
     """Mint what only the claiming runner may hold, onto the turn object:
-    a chat's key, and a confined turn's caller token. Returns the turn."""
+    a chat's key, and a confined turn's caller token — plus the model its CLI
+    starts on (`cli_model`), which both claim channels send. Returns the turn."""
+    agent = turn.acting_agent
+    turn.cli_model = str((agent.cli_models or {}).get(turn.cli) or "")[:64] if agent else ""
     if turn.chat_session_id:
         # The chat's key (canopy_sessions.ChatKey): the one credential that lets
         # the session driving this chat reach the chat's own secrets and page.

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { getSessionInfo, type SessionInfo, type SessionInfoTurn } from "@/api/chat";
 import { relativeAge } from "@/lib/relativeAge";
 import { CopyButton } from "canopy-ui/ui";
+import { cliLabel } from "@/lib/clis";
 
 /**
  * "Session info", opened from the chat's ⋯ menu and the /ide row menu:
@@ -106,6 +107,11 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
           </Section>
 
           <Section title="Where it runs">
+            {s.cli && (
+              <div data-testid="session-info-cli">
+                <Row label="Agent CLI" value={cliLabel(s.cli)} />
+              </div>
+            )}
             {b ? (
               <>
                 <Row

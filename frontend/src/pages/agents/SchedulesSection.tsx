@@ -168,6 +168,7 @@ export function SchedulesSection(): JSX.Element {
       {editing && (
         <ScheduleEditor
           agentSlug={agent.slug}
+          agentClis={agent.clis}
           schedule={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => {

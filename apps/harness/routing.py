@@ -20,7 +20,7 @@ from django.db.models import Q, prefetch_related_objects
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding
-from apps.harness import actors
+from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -1112,8 +1112,9 @@ def profile_q(runner) -> Q:
     cloud runner today) never sees one. Deliberately NOT bypassable by a pin:
     a pin is a placement, never a way past a security property.
     """
-    if (int(runner.capabilities.get("profiles") or 0) >= PROFILES_VERSION
-            and int(runner.capabilities.get("envelope") or 0) >= ENVELOPE_VERSION):
+    # Per CLI (`harness.clis`): admitted here when ANY CLI on the box confines;
+    # `clis.choose` then keeps the turn to one that does.
+    if any(clis.confines(r) for r in clis.reported(runner).values()):
         return Q()
     return Q(capability="")
 

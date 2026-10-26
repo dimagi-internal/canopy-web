@@ -8,6 +8,7 @@ import { AgentInterfaceView } from '@/components/agents/AgentInterfaceView'
 import { AgentHowItRuns } from '@/components/agents/AgentHowItRuns'
 import { AgentLicenses } from '@/components/agents/AgentLicenses'
 import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
+import { AgentClisControl } from '@/components/agents/AgentClisControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
 import { AgentHoldControl } from '@/components/agents/AgentHold'
@@ -184,6 +185,13 @@ export function AgentSettingsSection() {
                          description="The GitHub repository its runners clone and run, and the branch.">
                   <AgentRepositoryControl slug={agent.slug} initialUrl={agent.definition?.repo_url ?? ''}
                                           initialRef={agent.definition?.repo_ref ?? ''} canEdit={isAdmin} />
+                </Setting>
+              </div>
+              <div id="clis" className="scroll-mt-6 border-t border-border">
+                <Setting title="Agent CLIs" who={admins} canEdit={isAdmin}
+                         description="The agent CLIs it is set up for — Claude Code, Codex — its default first, and the model each starts on. A new chat or schedule can pick any of them.">
+                  <AgentClisControl slug={agent.slug} initialClis={agent.clis ?? ['claude-code']}
+                                    initialModels={agent.cli_models ?? {}} canEdit={isAdmin} />
                 </Setting>
               </div>
             </div>

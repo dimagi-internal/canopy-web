@@ -369,7 +369,7 @@ def recheck_sockets(session_id, *, user_ids=()) -> None:
 
 def create_session(*, workspace, created_by=None, agent=None, project: str = "", title: str = "",
                    metadata: dict | None = None, contact=None, parent=None,
-                   conversation_key: dict | None = None) -> Session:
+                   conversation_key: dict | None = None, cli: str = "") -> Session:
     """One way to start a conversation, whoever starts it. A USER owns it (a
     participant row, SP3 multiplayer); a CONTACT has no account, so the session
     records them on `contact` instead and has no creator — which is what keeps
@@ -393,7 +393,7 @@ def create_session(*, workspace, created_by=None, agent=None, project: str = "",
     with transaction.atomic():
         session = Session(
             workspace=workspace, agent=agent, project=project, created_by=created_by,
-            title=title, metadata=meta, contact=contact,
+            title=title, metadata=meta, contact=contact, cli=cli,
             # What opened it (request + `parent`): apps/harness/provenance.py.
             **provenance.session_fields(parent=parent),
         )

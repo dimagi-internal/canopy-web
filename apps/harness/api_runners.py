@@ -398,7 +398,7 @@ def add_vaulted_runner_credential(request: HttpRequest, runner_id: uuid.UUID,
     runner = _list_admin_or_404(request, runner_id)
     try:
         entry = harness_runners.add_runner_credential(runner, kind=payload.kind, name=payload.name,
-                                                      by=request.user)
+                                                      by=request.user, cli=payload.cli)
     except harness_runners.CredentialRefused as exc:
         raise HttpError(422, str(exc)) from exc
     vault = harness_runners.open_runner_vault(runner)
@@ -1273,7 +1273,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     # Slack & chat toggle round-trips the capabilities it read. Only a value that
     # differs from what the box reported is a hand edit to refuse.
     reported = ("projects", "profiles", "envelope", "midturn", "unprepared", "data_mode",
-                "data_mode_hash", "claude_model")
+                "data_mode_hash", "claude_model", "clis")
     payload.capabilities = {k: v for k, v in payload.capabilities.items()
                             if not (k in reported and runner.capabilities.get(k) == v)}
     if "projects" in payload.capabilities:
@@ -1285,11 +1285,12 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
     for key in ("profiles", "envelope", "midturn", "unprepared", "data_mode", "data_mode_hash",
-                "claude_model"):
+                "claude_model", "clis"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand
             # edit claiming a runner can confine a caller's session would route
-            # confined turns to a box that runs them in the full profile.
+            # confined turns to a box that runs them in the full profile. `clis`
+            # carries the same numbers per agent CLI (`clis.reported` prefers it).
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
     caps = dict(payload.capabilities)

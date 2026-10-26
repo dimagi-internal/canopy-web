@@ -15,6 +15,8 @@ from django.db import models
 from django.utils import timezone
 from apps.common.token_hash import hash_token
 
+from . import clis
+
 # Owned here (not services.py) so Runner.live_status can use it without a
 # models -> services import cycle (services already imports models). services.py
 # imports this constant from here rather than declaring a second one.
@@ -503,7 +505,10 @@ class Runner(models.Model):
         unclaimable report) counts it as on its way, so work for a fleet whose
         members are in its warm pool is neither refused by an admission rule nor
         reported stuck while one starts."""
-        if self.fleet_id is None or self.paused or self.status == self.RETIRED or self.signed_out:
+        if self.fleet_id is None or self.paused or self.status == self.RETIRED:
+            return False
+        # Signed out of every agent CLI, as the claim reads it (`clis.reported`).
+        if not any(r.signed_in for r in clis.reported(self).values()):
             return False
         if self.fleet.status != RunnerFleet.ACTIVE:
             return False
@@ -744,6 +749,10 @@ class Turn(models.Model):
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/interface.py::capability_for`.
     capability = models.CharField(max_length=48, blank=True, default="")
+    # The agent CLI this turn runs on (`clis.CLIS`): the one it was started on, if
+    # its starter or schedule chose one; else picked once at the claim by
+    # `clis.choose` ("" until then).
+    cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     # A follow-up DELIVERED INTO a conversation's running turn rather than queued
     # behind it (canopy-web#1153): the runner holding that turn typed it into the
     # live session, where Claude Code takes it mid-turn or right after, as it
@@ -1211,6 +1220,9 @@ class AgentSchedule(models.Model):
         default=_default_notify, blank=True,
         help_text='Channel ids resolved through the notify registry, e.g. ["inbox"].',
     )
+    # The agent CLI its turns run on (`clis.refusal` checks it is one the agent is
+    # set up for); "" = the agent's default, as for any turn that names none.
+    cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     last_slot = models.DateTimeField(
         null=True, blank=True,
         help_text="Newest slot fired. The supersede + no-backfill anchor.",
@@ -1334,6 +1346,10 @@ class RunnerLogin(models.Model):
     # db_default as well: code from before the list, still serving mid-deploy,
     # inserts login rows without these columns.
     kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=LOGIN, db_default=LOGIN)
+    #: Which agent CLI this credential signs in (`clis.CLIS`). The box keeps one
+    #: cascade per CLI, in this list's order.
+    cli = models.CharField(max_length=32, choices=clis.CHOICES, default=clis.CLAUDE_CODE,
+                           db_default=clis.CLAUDE_CODE)
     position = models.PositiveIntegerField(default=0)
     #: A token's or API key's name, as a person gave it. Not a secret.
     name = models.CharField(max_length=200, blank=True, default="", db_default="")
@@ -1367,6 +1383,8 @@ class RunnerLogin(models.Model):
     @property
     def vault_secret_name(self) -> str:
         """The name its value has in a vault attached to the runner; "" for a login."""
+        if self.cli == clis.CODEX and self.kind == self.API_KEY:
+            return f"openai-api-key:{self.key}"
         prefix = self.VAULT_SECRET_PREFIX.get(self.kind)
         return f"{prefix}{self.key}" if prefix else ""
 

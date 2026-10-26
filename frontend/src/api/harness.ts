@@ -295,11 +295,11 @@ export async function setRunnerCredentialSet(runnerId: string, setId: string | n
 /** A token or API key whose value the caller seals into the runner's vault: the entry
  *  comes back with the name to seal it under, and holds no value on canopy-web. */
 export async function addVaultedRunnerCredential(
-  runnerId: string, kind: 'token' | 'api_key', name = '',
+  runnerId: string, kind: 'token' | 'api_key', name = '', cli: 'claude-code' | 'codex' = 'claude-code',
 ): Promise<RunnerVaultEntry> {
   const res = await apiV2.POST('/api/harness/runners/{runner_id}/vault/entries', {
     params: { path: { runner_id: runnerId } },
-    body: { kind, name },
+    body: { kind, name, cli },
   })
   return unwrap(res, 'addVaultedRunnerCredential') as unknown as RunnerVaultEntry
 }

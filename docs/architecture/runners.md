@@ -361,6 +361,55 @@ The refresh itself (`agent prepare --runner --credentials-only`)
 asks only for what that pass uses: the gog token (if declared) and the two vault
 keys. Each turn's claim refreshes the agent's full env, naming its turn.
 
+## Which CLI runs a turn (`apps/harness/clis.py`)
+
+A turn runs in an **agent CLI**: `claude-code` or `codex`. A CLI is not a surface:
+`Runner.engine` says where a laptop opens a session (emdash, the Claude desktop app,
+headless); `claude-desktop` and `emdash` run Claude Code only.
+
+- **An agent lists the CLIs it is set up for**, `Agent.clis` (default `["claude-code"]`),
+  its default first, and optionally a model per CLI, `Agent.cli_models`
+  (`{"codex": "gpt-6.1-sol"}`). Both are definition fields: its admins set them
+  (`PATCH /api/agents/{slug}/clis`, or the upsert, where an editor's change is refused like
+  a repo change); Settings → Where it runs → Agent CLIs. `AgentOut` carries `clis`.
+- **A conversation, turn or schedule may choose one of them**: `cli` on
+  `POST /api/canopy-sessions/` (stored as `Session.cli` from birth), on
+  `POST /api/harness/turns/` (stored as `Turn.cli` at enqueue), and on a schedule
+  (`AgentSchedule.cli`, carried onto each turn it fires). `clis.refusal` refuses — 422 —
+  a CLI the agent is not set up for, any CLI but Claude Code for an agentless or repo turn,
+  and Codex for a sensitive site's conversation. The new-chat menu and the schedule editor
+  offer the choice only for an agent set up for more than one. Without a choice the claim
+  picks from the agent's list.
+- **A box reports what it has** on every heartbeat, `clis`:
+  `{"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}`, stored as
+  `capabilities.clis` after `clis.sanitize` (unknown CLIs and malformed values dropped). It is
+  a level: a beat without it removes it. A box that reports none is read as Claude Code alone
+  — signed in unless `Runner.signed_out`, confining at the box-wide `profiles`/`envelope`
+  (`clis.reported`). So nothing changes for a box until its code says it has more.
+- **One rule picks**, `clis.choose(turn, runner)`: the CLIs the turn allows
+  (`clis.allowed`: its conversation's `Session.cli` once it has one, else the `Turn.cli` it
+  was started on, else its acting agent's list, else the default), keep those the box has signed in, for a caller's turn (`Turn.capability`) those
+  it confines (`clis.confines`: the box's `profiles`/`envelope` for that CLI), for a
+  sensitive conversation only `SENSITIVE_CLIS` (Claude Code); the first left wins, `None` =
+  this box does not take it. The claim, coverage (`_refined_allows`) and `turn_reach` all ask
+  it, above the pin: a pin never puts a turn on a CLI the box lacks or a caller's turn on one
+  that cannot confine it.
+- **The claim records it**: `Turn.cli`, and `Session.cli` on a conversation's first claim —
+  never changed after, because its history lives in that CLI's own store. The claimed turn
+  carries `cli` and `cli_model`; the `status` event records `cli`.
+- **Sign-in is per CLI.** A box claims nothing only when no CLI is signed in. Coverage asks
+  `choose` without the sign-in (a signed-out box still covers, like an offline one);
+  `turn_reach` adds it, so a Codex conversation on a box whose Codex login is gone reads
+  `signed_out` with `reason` "no runner has Codex signed in" (`Reach.cli`). A turn only boxes
+  without its CLI would take is reported unclaimable with "it runs on Codex, and none of the
+  runners … has it set up".
+- **Credentials name their CLI**, `RunnerLogin.cli`; each CLI keeps its own cascade, and the
+  last-fallback refusal is per CLI. Codex has no setup-token (an OpenAI API key, vault secret
+  `openai-api-key:<key>`, or a login). A box's credential bundle carries another CLI's
+  entries only once the box reports that CLI — older code reads every entry as Claude's.
+
+Spec: `docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md`.
+
 ## The claim (`claim.claim_next_turn`)
 
 In order, each a hard stop:

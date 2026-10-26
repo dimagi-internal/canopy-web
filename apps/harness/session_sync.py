@@ -446,9 +446,13 @@ def link_turn_session(turn, session) -> bool:
     True if a row was linked."""
     if turn is None or session is None or turn.chat_session_id:
         return False
-    return bool(
+    linked = bool(
         Turn.objects.filter(pk=turn.pk, canopy_session__isnull=True).update(canopy_session=session)
     )
+    if linked and turn.cli:
+        # A follow-up into it runs on the CLI that holds its history (`clis.allowed`).
+        Session.objects.filter(pk=session.pk, cli="").update(cli=turn.cli)
+    return linked
 
 
 def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:

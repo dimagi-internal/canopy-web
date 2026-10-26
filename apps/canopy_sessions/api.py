@@ -27,6 +27,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
+from apps.harness import clis
 from apps.harness import initiator as who
 from apps.harness import provenance, sensitivity
 from apps.harness import runner_requirements as rr
@@ -141,6 +142,15 @@ def _runner_online(runner) -> bool | None:
     return runner.live_status == Runner.ONLINE
 
 
+def _runner_signed_out(runner, session) -> bool:
+    """The bound box cannot run this conversation's agent CLI: its login for it is
+    gone (`harness.clis.reported`). A conversation with no CLI yet reads Claude Code's."""
+    if runner is None:
+        return False
+    report = clis.reported(runner).get(session.cli or clis.CLAUDE_CODE)
+    return report is not None and not report.signed_in
+
+
 def _runner_status(runner) -> str | None:
     """The bound runner's live_status verbatim — see SessionOut.runner_status.
 
@@ -238,12 +248,14 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # went away. None when unbound — nothing to be offline.
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
-        "runner_signed_out": bool(runner and runner.signed_out),
+        "runner_signed_out": _runner_signed_out(runner, session),
         # The model its runner's sessions start on (`opus[1m]`), as the box
         # reports it: how the chat's context meter sizes the window, since the
         # transcript never records the `[1m]`. "" when unbound or unreported.
         "runner_model": str((runner.capabilities or {}).get("claude_model") or "") if runner else "",
         "session_key": binding.session_key if binding else "",
+        # The agent CLI this conversation runs on (`harness.clis`); "" until its first claim.
+        "cli": session.cli,
         "transferring": staleness.is_transferring(binding),
         # Is this session blocked on a human? A bool on the LIST (the menu
         # itself rides the detail read) — a list carrying every session's full
@@ -404,6 +416,11 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     # sentence the panel shows them (`conversation_keys.CannotHold`).
     if sensitivity.is_sensitive(Session(metadata=metadata)):
         _holder_or_422(user=request.user)
+        if payload.cli and payload.cli not in clis.SENSITIVE_CLIS:
+            raise HttpError(422, "a conversation holding this site's sensitive data runs on "
+                                 "Claude Code only")
+    if (refused := clis.refusal(agent, payload.cli or "")) is not None:
+        raise HttpError(422, refused)
     # A key pair made in the starter's browser: if this conversation is (or becomes)
     # sensitive its words are sealed to it, and canopy-web never sees its private half.
     offered = None
@@ -441,7 +458,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     session = services.create_session(
         workspace=workspace, created_by=request.user, agent=agent,
         project=payload.project, title=payload.title, metadata=metadata,
-        parent=payload.parent, conversation_key=offered,
+        parent=payload.parent, conversation_key=offered, cli=payload.cli or "",
     )
     return _out(session)
 

@@ -15,6 +15,7 @@ import { getAgentDefaultOrder, getAgentRunners, listMyAgents, type AgentOut, typ
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { onlineSessionCapableRunners, repoChoices, reportedRepos, runnerOptionLabel, type RepoChoice } from './runnerEligibility'
 import { scopedPath } from '../../lib/scopedLinks'
+import { cliLabel } from '../../lib/clis'
 
 // The "Run on" picker's pending target — set when the user picks an agent or
 // project from the menu, before they've confirmed a runner + Start.
@@ -67,6 +68,8 @@ export function NewChatMenu({
   const [agentRunnerOptions, setAgentRunnerOptions] = useState<AgentRunnerOut[]>([])
   const [runnersLoading, setRunnersLoading] = useState(false)
   const [selectedRunnerId, setSelectedRunnerId] = useState('')
+  // "" = the agent's default CLI; offered only when it is set up for more than one.
+  const [selectedCli, setSelectedCli] = useState('')
 
   useEffect(() => {
     if (runnersProp !== undefined) return
@@ -117,6 +120,7 @@ export function NewChatMenu({
   const resetPending = useCallback(() => {
     setPending(null)
     setSelectedRunnerId('')
+    setSelectedCli('')
   }, [])
 
   // pickAgent is an event handler, not an effect, so there's no cleanup
@@ -128,6 +132,7 @@ export function NewChatMenu({
 
   const pickAgent = useCallback((agent: AgentOut) => {
     setSelectedRunnerId('')
+    setSelectedCli('')
     setPending({ kind: 'agent', agent })
     setRunnersLoading(true)
     pickedAgentSlugRef.current = agent.slug
@@ -163,11 +168,16 @@ export function NewChatMenu({
     if (!pending) return
     const runnerId = selectedRunnerId || undefined
     if (pending.kind === 'agent') {
-      start({ agentSlug: pending.agent.slug, workspace: pending.agent.workspace ?? undefined, runnerId })
+      start({
+        agentSlug: pending.agent.slug,
+        workspace: pending.agent.workspace ?? undefined,
+        runnerId,
+        cli: selectedCli || undefined,
+      })
     } else {
       start({ project: pending.project.slug, workspace: pending.project.workspace ?? undefined, runnerId })
     }
-  }, [pending, selectedRunnerId, start])
+  }, [pending, selectedRunnerId, selectedCli, start])
 
   // Project chats route through the fleet-wide runner list, filtered to
   // online + sessions-capable (only those can execute a chat turn at all), to
@@ -267,6 +277,23 @@ export function NewChatMenu({
                     ))}
               </select>
             </label>
+            {pending.kind === 'agent' && (pending.agent.clis ?? []).length > 1 && (
+              <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
+                Agent CLI
+                <select
+                  value={selectedCli}
+                  onChange={(e) => setSelectedCli(e.target.value)}
+                  className="rounded-md border border-input bg-input px-1.5 py-1 text-[12px] text-foreground"
+                  data-testid="new-chat-cli"
+                >
+                  {(pending.agent.clis ?? []).map((cli, i) => (
+                    <option key={cli} value={i === 0 ? '' : cli}>
+                      {cliLabel(cli)}{i === 0 ? ' (default)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="flex items-center gap-2">
               <Button size="sm" disabled={creating} onClick={confirmStart}>
                 Start chat

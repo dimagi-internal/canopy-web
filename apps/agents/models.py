@@ -14,6 +14,8 @@ from django.db import models
 from django.db.models.functions import Lower
 from pgvector.django import HalfVectorField
 
+from apps.harness import clis as clis_vocab
+
 from .interface_default import default_interface
 
 #: An argument not passed, so read from the database. `None` is an answer (not
@@ -122,6 +124,12 @@ class Agent(models.Model):
     )
     repo_ref = models.CharField(max_length=120, blank=True, default="main")
     runtime_engine = models.CharField(max_length=10, choices=ENGINE_CHOICES, default=ANY_ENGINE)
+    # The agent CLIs this agent may run on, preferred first (`harness.clis`): the
+    # claim picks the first one the box has signed in and can confine the turn on.
+    # Part of the agent's definition, like its repo (agents.services.DEFINITION_FIELDS).
+    clis = models.JSONField(default=clis_vocab.default_list, blank=True)
+    # An optional model per CLI, e.g. {"codex": "gpt-6.1-sol"}; absent = the CLI's own default.
+    cli_models = models.JSONField(default=dict, blank=True)
     runtime_secrets = models.JSONField(
         default=list, blank=True,
         help_text="Secret-reference NAMES this agent needs (never values), e.g. "

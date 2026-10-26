@@ -57,7 +57,7 @@ def _aware(value):
 #: What an agent IS on its boxes: the code they clone and what they install with
 #: it. Changing one on an existing agent is its admins' (agents/api.py upsert).
 DEFINITION_FIELDS = ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets",
-                     "runtime_sources")
+                     "runtime_sources", "clis", "cli_models")
 
 
 def upsert_agent(data, *, workspace, owner=None) -> Agent:
@@ -86,7 +86,7 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
     # with these fields absent (None) — a plain default would clobber runtime
     # config back to empty on each heartbeat. Configure once, keep it.
     for field in ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets",
-                  "runtime_sources", "runner_preference"):
+                  "runtime_sources", "runner_preference", "clis", "cli_models"):
         value = getattr(data, field, None)
         if value is not None:
             defaults[field] = value
@@ -356,6 +356,8 @@ def agent_detail(agent: Agent) -> dict:
         "owner": _owner_summary(agent),
         "canopy_user": _canopy_user_summary(agent),
         "runner_preference": list(agent.runner_preference or []),
+        "clis": list(agent.clis or []),
+        "cli_models": dict(agent.cli_models or {}),
         "turn_mode": agent.turn_mode,
         "slack_enabled": agent.slack_enabled,
         "credential_source": agent.credential_source,

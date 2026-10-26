@@ -630,6 +630,11 @@ class HeartbeatIn(Schema):
     # turn (`Turn.rides_turn`, canopy-web#1153). Absent (older code) means 0:
     # it is never handed one, because it would bridge the same reply twice.
     midturn: int = 0
+    # Which agent CLIs this box has, signed in and confining (`clis.sanitize`):
+    # {"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}.
+    # A level like `profiles`: absent (older code) means the box is read as Claude
+    # Code alone (`clis.reported`).
+    clis: dict | None = None
     # The Claude model this box's sessions start on, as its settings name it
     # (`opus[1m]`): the only place the 1M-window `[1m]` is written down — the
     # transcript records the bare API id. The chat's context meter sizes the
@@ -887,6 +892,9 @@ class TurnIn(Schema):
     acts_as: Literal["", "editor", "viewer"] | None = None
     # What this request was made from (see ParentIn). Optional.
     parent: ParentIn | None = None
+    # The agent CLI to run it on: one the agent is set up for (`clis.refusal`), or
+    # Claude Code for a project turn. Omit for the agent's default.
+    cli: Literal["claude-code", "codex"] | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -954,6 +962,9 @@ class TurnOut(Schema):
     # running turn (that turn's id) rather than run on its own: the runner types
     # it into the live session and it finishes when that turn does.
     rides_turn_id: uuid.UUID | None = None
+    # The agent CLI the claim chose for it (`harness.clis`): "claude-code" or
+    # "codex"; "" until claimed.
+    cli: str = ""
     # WHAT created this turn (apps/harness/provenance.py): credential, client,
     # user_agent, request_id, mcp_tool, parent (raw), clicked_by. The client ip
     # is recorded but not served.
@@ -1110,6 +1121,9 @@ class ClaimedTurnOut(TurnOut):
     # earlier turn of it shipped (`session_sync.turn_end_held`). A runner resuming one
     # ships what comes after, so a ship that failed before is sent again.
     transcript_held: dict[str, int] = {}
+    # The model to start that CLI on, from the agent's `cli_models`; "" = the
+    # CLI's own default.
+    cli_model: str = ""
     # For a turn whose conversation is held on a Connected site's page that its agent
     # serves: the site, and the agent's own credentials for it that the runner must
     # leave out of the turn (`interface.page_turn`). Null for every other turn.
@@ -1250,6 +1264,9 @@ class ScheduleIn(Schema):
     grace_minutes: int = 120
     always_run: bool = False
     notify: list[str] = ["inbox"]
+    # The agent CLI its turns run on (one the agent is set up for); "" = the
+    # agent's default.
+    cli: Literal["", "claude-code", "codex"] = ""
 
     @field_validator("cron")
     @classmethod
@@ -1291,6 +1308,7 @@ class SchedulePatch(Schema):
     grace_minutes: int | None = None
     always_run: bool | None = None
     notify: list[str] | None = None
+    cli: Literal["", "claude-code", "codex"] | None = None
 
     @field_validator("cron")
     @classmethod
@@ -1318,6 +1336,8 @@ class ScheduleOut(Schema):
     grace_minutes: int
     always_run: bool = False
     notify: list[str]
+    # The agent CLI its turns run on; "" = the agent's default.
+    cli: str = ""
     last_slot: dt.datetime | None = None
     # The anchor the runner MUST pass as due_slot(after=...). Server-computed as
     # `last_slot or created_at` so the runner cannot get the fallback wrong.
@@ -1535,6 +1555,9 @@ class RunnerVaultEntryIn(Schema):
 
     kind: Literal["token", "api_key"]
     name: str = Field(default="", max_length=200)
+    #: Which agent CLI it is for: a Claude token or API key, or an OpenAI API key for
+    #: Codex (Codex has no setup-token).
+    cli: Literal["claude-code", "codex"] = "claude-code"
 
 
 class RunnerVaultEntryOut(Schema):
@@ -1577,6 +1600,8 @@ class RunnerCascadeItem(Schema):
 
     key: str
     kind: CredentialKind
+    #: The agent CLI it signs in (`harness.clis`): the box keeps one cascade per CLI.
+    cli: str = "claude-code"
     #: The name its value has in a vault serving this runner, when one holds it: the
     #: box reads it from there (`…/credential/resolve`, with its device key) and uses
     #: `value` only when it cannot.
@@ -1584,10 +1609,11 @@ class RunnerCascadeItem(Schema):
 
 
 class RunnerLoginRef(Schema):
-    """One full Claude login the box should keep, in cascade order."""
+    """One full login the box should keep, in cascade order."""
 
     key: str
     account: str = ""
+    cli: str = "claude-code"
 
 
 class RunnerCredentialOut(Schema):
@@ -1606,12 +1632,14 @@ class RunnerCredentialOut(Schema):
 
 
 class RunnerLoginOut(Schema):
-    """A full Claude login on the box, as the box last reported it."""
+    """A full login on the box, as the box last reported it."""
 
     key: str
     #: The account the box says this login belongs to; "" until it has said.
     account: str = ""
     signed_in: bool = False
+    #: The agent CLI it signs in (`harness.clis`).
+    cli: str = "claude-code"
     reported_at: dt.datetime | None = None
 
 
@@ -1620,6 +1648,8 @@ class RunnerCredentialEntryOut(Schema):
 
     key: str
     kind: CredentialKind
+    #: The agent CLI it signs in (`harness.clis`).
+    cli: str = "claude-code"
     #: A token's or API key's name, as a person gave it.
     name: str = ""
     #: A login's account, as the box reported it.

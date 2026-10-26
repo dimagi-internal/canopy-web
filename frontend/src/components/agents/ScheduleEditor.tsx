@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { Schedule } from '@/api/schedules'
 import { createSchedule, deleteSchedule, previewCron, updateSchedule } from '@/api/schedules'
+import { cliLabel, type Cli } from '@/lib/clis'
 
 const PRESETS: { label: string; cron: string }[] = [
   { label: 'Weekly — Friday 9am', cron: '0 9 * * 5' },
@@ -44,15 +45,21 @@ function tomorrowNineAm(): string {
  */
 export function ScheduleEditor({
   agentSlug,
+  agentClis,
   schedule,
   onClose,
   onSaved,
 }: {
   agentSlug: string
+  // The CLIs the agent is set up for, its default first. A choice is offered only
+  // when there are several; without them the schedule's own CLI is left as it is.
+  agentClis?: readonly string[]
   schedule: Schedule | null
   onClose: () => void
   onSaved: () => void
 }) {
+  const cliChoices = (agentClis ?? []).length > 1 ? (agentClis ?? []) : []
+  const [cli, setCli] = useState<'' | Cli>((schedule?.cli ?? '') as '' | Cli)
   const [name, setName] = useState(schedule?.name ?? '')
   const [prompt, setPrompt] = useState(schedule?.prompt ?? '')
   const [cron, setCron] = useState(schedule?.cron ?? '0 9 * * 5')
@@ -110,15 +117,16 @@ export function ScheduleEditor({
     // A one-off sends run_once_at (wall clock, read in `tz` server-side) and no
     // cron; the server derives the cron and disables it after it fires.
     const when = once ? { run_once_at: runOnceAt } : { cron }
+    const onCli = cliChoices.length > 0 ? { cli } : {}
     try {
       if (schedule) {
-        await updateSchedule(agentSlug, schedule.id, { name, prompt, ...when, timezone: tz })
+        await updateSchedule(agentSlug, schedule.id, { name, prompt, ...when, timezone: tz, ...onCli })
       } else {
         // enabled / routing / grace_minutes / notify are omitted deliberately:
         // the server's schema owns those defaults, and restating them here would
         // fork them. Not exposed as knobs yet — a schedule you can't reason
         // about is worse than one with fewer knobs.
-        await createSchedule(agentSlug, { name, prompt, ...when, timezone: tz })
+        await createSchedule(agentSlug, { name, prompt, ...when, timezone: tz, ...onCli })
       }
       onSaved()
     } catch (err) {
@@ -188,6 +196,24 @@ export function ScheduleEditor({
           placeholder="/echo:manager-report"
           className="mb-3 w-full rounded border border-input bg-input px-2 py-1 font-mono text-[13px] text-foreground"
         />
+
+        {cliChoices.length > 0 && (
+          <>
+            <label className="mb-1 block text-[11px] text-muted-foreground">Agent CLI</label>
+            <select
+              value={cli}
+              onChange={(e) => setCli(e.target.value as '' | Cli)}
+              className="mb-3 w-full rounded border border-input bg-input px-2 py-1 text-[13px] text-foreground"
+              data-testid="schedule-cli"
+            >
+              {cliChoices.map((c, i) => (
+                <option key={c} value={i === 0 ? '' : c}>
+                  {cliLabel(c)}{i === 0 ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
 
         <label className="mb-1 block text-[11px] text-muted-foreground">When</label>
         <div className="mb-2 flex gap-1" role="group" aria-label="Repeat">

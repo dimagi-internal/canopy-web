@@ -20,7 +20,7 @@ from apps.api.route_gates import gate
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import claim, ledger, sensitivity, services, session_sync, turn_access, turn_asker, turn_gates
+from . import claim, clis, ledger, sensitivity, services, session_sync, turn_access, turn_asker, turn_gates
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -102,6 +102,8 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
     on_behalf = turn_asker.of(request.user)
     if on_behalf is not None:
         origin_ref["on_behalf_of"] = on_behalf.record()
+    if (refused := clis.refusal(agent, payload.cli or "")) is not None:
+        raise HttpError(422, refused)
 
     turn, created = services.enqueue_turn(
         agent=agent,
@@ -123,6 +125,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         requested_turn_mode_by=turn_asker.subject(request.user) if payload.turn_mode else None,
         # What the caller was running inside (overrides X-Canopy-Parent-*).
         parent=payload.parent,
+        cli=payload.cli or "",
     )
     from . import turn_access
 

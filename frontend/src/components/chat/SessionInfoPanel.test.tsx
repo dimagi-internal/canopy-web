@@ -97,6 +97,17 @@ describe('SessionInfoPanel', () => {
     expect(screen.getAllByText('26a71d4e-9b49-4333-ba8c-ea8a1c697845').length).toBeGreaterThan(0)
   })
 
+  it('names the agent CLI a Codex conversation runs on, and says nothing for a blank one', async () => {
+    getSessionInfo.mockResolvedValue({ ...INFO, session: { ...INFO.session, cli: 'codex' } })
+    render(<SessionInfoPanel sessionId="s1" />)
+    expect((await screen.findByTestId('session-info-cli')).textContent).toContain('Codex')
+    cleanup()
+    getSessionInfo.mockResolvedValue({ ...INFO, session: { ...INFO.session, cli: '' } })
+    render(<SessionInfoPanel sessionId="s1" />)
+    await screen.findByTestId('session-info')
+    expect(screen.queryByTestId('session-info-cli')).toBeNull()
+  })
+
   it('Raw shows the whole stored record', async () => {
     getSessionInfo.mockResolvedValue(INFO)
     render(<SessionInfoPanel sessionId="s1" />)

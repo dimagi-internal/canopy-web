@@ -141,6 +141,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
             origin_ref={"schedule_id": schedule.id, "slot": slot.isoformat(),
                         "schedule_name": schedule.name},
             routing=schedule.routing,
+            cli=schedule.cli,
             # canopy fired it; the schedule's creator is the person accountable
             # for it (spec D3), recorded so a later phase can bound the turn.
             initiator=schedule_initiator(schedule),
@@ -191,6 +192,7 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
             origin_ref={"schedule_id": schedule.id, "manual": True,
                         "schedule_name": schedule.name},
             routing=schedule.routing,
+            cli=schedule.cli,
             initiator=schedule_initiator(schedule, manual=True),
             # The schedule's creator is who it is FOR; this is who pressed the
             # button, which is the reason it ran now.

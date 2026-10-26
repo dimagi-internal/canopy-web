@@ -88,6 +88,9 @@ class Session(models.Model):
     # Continuity hint for the real subprocess runner (SP2b): the claude CLI
     # session to --resume. Unused by the stub.
     cli_session_id = models.CharField(max_length=64, blank=True, default="")
+    # The agent CLI this conversation runs on (`harness.clis`), set by its first
+    # claim and never changed: its history lives in that CLI's own store.
+    cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     # Which transcript-ordinal scheme this session's Message rows were written
     # under. 0 = the original "turn_index == raw .jsonl record ordinal"; 1 = the
     # composite `record * BLOCK_STRIDE + block` that made a multi-block record's
