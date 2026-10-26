@@ -49,10 +49,10 @@ def test_refusal_names_what_the_agent_is_not_set_up_for():
 
 def test_a_turns_own_cli_beats_the_agents_default():
     _user, _ws, agent, runner = _ctx()
-    turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, agent=agent, cli="codex",
+    turn, _ = harness.enqueue_turn(initiator=_BY_CANOPY, agent=agent, requested_cli="codex",
                                    origin=Turn.ORIGIN_CANOPY_SCHEDULER, idempotency_key="k",
                                    prompt="/ace:turn")
-    assert turn.cli == "codex"
+    assert (turn.requested_cli, turn.cli) == ("codex", "")
     assert clis.allowed(turn) == ["codex"]
     assert claim.claim_next_turn(runner).cli == "codex"
 
@@ -110,7 +110,7 @@ def test_an_api_turn_may_name_its_cli(client):
         "agent_slug": "ace", "origin": "api", "idempotency_key": "x", "cli": "codex"},
         content_type="application/json")
     assert resp.status_code in (200, 201), resp.content
-    assert Turn.objects.get(idempotency_key="x").cli == "codex"
+    assert Turn.objects.get(idempotency_key="x").requested_cli == "codex"
     resp = client.post("/api/w/w1/harness/turns/", data={
         "project": "canopy-web", "origin": "api", "idempotency_key": "y", "cli": "codex"},
         content_type="application/json")
@@ -128,9 +128,9 @@ def test_a_schedule_fires_on_its_cli(client):
     assert resp.json()["cli"] == "codex"
     schedule = AgentSchedule.objects.get(name="Weekly post")
     turn, _ = schedule_turns.fire_schedule(schedule, timezone.now().replace(microsecond=0))
-    assert turn.cli == "codex"
+    assert turn.requested_cli == "codex"
     turn = schedule_turns.run_schedule_now(schedule)
-    assert turn.cli == "codex"
+    assert turn.requested_cli == "codex"
 
 
 def test_a_schedule_on_a_cli_the_agent_lacks_is_refused(client):

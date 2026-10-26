@@ -9,6 +9,7 @@ import uuid
 from ninja import Schema
 from pydantic import AliasChoices, Field, field_validator
 
+from apps.harness import clis
 from apps.harness.schemas import ChatSendOrigin, ParentIn, TurnOut, chat_send_origin
 
 
@@ -72,7 +73,7 @@ class SessionCreateIn(Schema):
     # The agent CLI this conversation runs on, for its whole life (one the agent is
     # set up for, `clis.refusal`). None = its first turn's claim picks the agent's
     # default.
-    cli: Literal["claude-code", "codex"] | None = None
+    cli: clis.CliName | None = None
 
 
 class SendIn(Schema):

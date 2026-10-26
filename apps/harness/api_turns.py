@@ -122,7 +122,7 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
         requested_turn_mode_by=turn_asker.subject(request.user) if payload.turn_mode else None,
         # What the caller was running inside (overrides X-Canopy-Parent-*).
         parent=payload.parent,
-        cli=payload.cli or "",
+        requested_cli=payload.cli or "",
     )
     from . import turn_access
 

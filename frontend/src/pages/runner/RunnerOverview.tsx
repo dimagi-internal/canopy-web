@@ -4,20 +4,18 @@ import { AlertList } from '@/components/alerts/AlertList'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
-import { cliLabel, runnerClis } from '@/lib/clis'
 import type { RunnerOutletContext } from './RunnerPage'
 
-/** The agent CLIs the box has, as it reports them. */
+/** The agent CLIs the box has, as the server reads its report (`RunnerOut.agent_clis`). */
 export function runnerClisText(runner: RunnerOut): string {
-  // `Runner.signed_out`: the box said its Claude login is gone.
-  const claudeSignedIn = !(runner.ready === false && (runner.ready_note ?? '').startsWith('Claude is not signed in'))
-  return runnerClis(runner.capabilities as Record<string, unknown>, claudeSignedIn)
-    .map((c) => {
-      const state = [c.signedIn ? 'signed in' : 'not signed in']
-      if (c.signedIn && !c.confines && c.cli !== 'claude-code') state.push('cannot confine a caller\u2019s turn yet')
-      return `${cliLabel(c.cli)}${c.version ? ` ${c.version}` : ''} (${state.join(', ')})`
+  return Object.entries(runner.agent_clis ?? {})
+    .map(([, c]) => {
+      const state = [c.signed_in ? 'signed in' : 'not signed in']
+      if (!c.known) state.push('not known to this server')
+      else if (c.signed_in && !c.confines) state.push('cannot confine a caller\u2019s turn yet')
+      return `${c.label}${c.version ? ` ${c.version}` : ''} (${state.join(', ')})`
     })
-    .join(' · ')
+    .join(' · ') || '—'
 }
 
 /** Real availability, not last-known ready: a stale runner's ready flag is

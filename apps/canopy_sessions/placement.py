@@ -11,7 +11,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.harness import routing
+from apps.harness import clis, routing
 from apps.harness.models import Turn
 
 from . import activity as session_activity
@@ -29,6 +29,10 @@ def _placeable_runner(session: Session, runner_id):
     # A box the conversation's host does not allow is no placement at all: a pin
     # to it would sit unclaimable forever (claim_next_turn refuses it above pins).
     if not rr.runner_satisfies(runner, rr.requirements_of_session(session)):
+        return None
+    # Likewise a box without the agent CLI the conversation is held to
+    # (`harness.clis`): no claim on it could ever run the conversation's turns.
+    if session.cli and session.cli not in clis.reported(runner):
         return None
     # A chat WITH an agent runs as that agent on the box it lands on, so the box
     # must be one that may hold the agent (agents.services.runner_may_hold_agent:
@@ -52,7 +56,11 @@ def _placement_refused(session: Session, runner_id, default: str) -> ValueError:
     nonexistent one)."""
     from apps.harness import runner_requirements as rr
 
-    if _eligible_runner(session, runner_id) is not None:
+    runner = _eligible_runner(session, runner_id)
+    if runner is not None:
+        if session.cli and session.cli not in clis.reported(runner):
+            return ValueError(f"this conversation runs on {clis.label(session.cli)}, and "
+                              f"{runner.name} does not have it")
         reqs = rr.requirements_of_session(session)
         return ValueError(f"this conversation requires a {rr.describe(reqs)} runner")
     return ValueError(default)
@@ -397,7 +405,9 @@ def fork_session(*, session: Session, turn_index: int, user) -> Session:
         fork.parent_session = session
         fork.parent_claude_session = binding.session_key
         fork.ordinal_scheme = session.ordinal_scheme
-        fork.save(update_fields=["parent_session", "parent_claude_session", "ordinal_scheme"])
+        # The cut is of the source's own store, so the fork runs on its CLI.
+        fork.cli = session.cli
+        fork.save(update_fields=["parent_session", "parent_claude_session", "ordinal_scheme", "cli"])
         Message.objects.bulk_create([
             Message(session=fork, turn_index=m.turn_index - offset, role=m.role, content=m.content,
                     plaintext=m.plaintext, author=m.author, source_turn_id=m.source_turn_id,

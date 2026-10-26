@@ -18829,6 +18829,11 @@ export interface components {
              */
             readonly cli: string;
             /**
+             * Requested Cli
+             * @default
+             */
+            readonly requested_cli: string;
+            /**
              * Provenance
              * @default {}
              */
@@ -32577,6 +32582,28 @@ export interface components {
             /** Oldest Activity At */
             readonly oldest_activity_at?: string | null;
         };
+        /**
+         * RunnerCliOut
+         * @description One agent CLI on a box, as the server reads its report (`clis.reported`).
+         */
+        readonly RunnerCliOut: {
+            /** Label */
+            readonly label: string;
+            /** Signed In */
+            readonly signed_in: boolean;
+            /** Confines */
+            readonly confines: boolean;
+            /**
+             * Version
+             * @default
+             */
+            readonly version: string;
+            /**
+             * Known
+             * @default true
+             */
+            readonly known: boolean;
+        };
         /** RunnerOut */
         readonly RunnerOut: {
             /**
@@ -32747,6 +32774,13 @@ export interface components {
             readonly key_waiting: string;
             /** Report Projects */
             readonly report_projects?: readonly string[] | null;
+            /**
+             * Agent Clis
+             * @default {}
+             */
+            readonly agent_clis: {
+                readonly [key: string]: components["schemas"]["RunnerCliOut"];
+            };
             /**
              * Known Flags
              * @default []
@@ -33871,6 +33905,11 @@ export interface components {
              * @default
              */
             readonly cli: string;
+            /**
+             * Requested Cli
+             * @default
+             */
+            readonly requested_cli: string;
             /**
              * Provenance
              * @default {}

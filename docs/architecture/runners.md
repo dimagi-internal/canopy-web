@@ -371,49 +371,72 @@ A turn runs in an **agent CLI**: `claude-code` or `codex`. A CLI is not a surfac
 `Runner.engine` says where a laptop opens a session (emdash, the Claude desktop app,
 headless); `claude-desktop` and `emdash` run Claude Code only.
 
+- **The vocabulary lives in one place.** `clis.CLIS`, labels in `clis.CHOICES`; every schema
+  types a CLI as `clis.CliName` (or `CliOrDefault`), Slack's flags are `--<cli>` plus
+  `--claude`, and the frontend's `lib/clis.ts` types its labels against the generated union,
+  so a new CLI fails the frontend type check until it has a label.
 - **An agent lists the CLIs it is set up for**, `Agent.clis` (default `["claude-code"]`),
-  its default first, and optionally a model per CLI, `Agent.cli_models`
-  (`{"codex": "gpt-6.1-sol"}`). Both are definition fields: its admins set them
-  (`PATCH /api/agents/{slug}/clis`, or the upsert, where an editor's change is refused like
-  a repo change); Settings → Where it runs → Agent CLIs. `AgentOut` carries `clis`.
+  its default first. It is a definition field: its admins set it (`PATCH
+  /api/agents/{slug}/clis`, or the upsert, where an editor's change is refused like a repo
+  change); Settings → Where it runs → Agent CLIs. `clis.list_refusal` refuses — 422 — adding a
+  CLI no runner serving the workspace has (`clis.available`: any non-retired box whose tenant
+  covers it and that reports the CLI, signed in or not), and removing one a schedule still
+  runs on. `Agent.cli_models` (a model per CLI) is stored and sent on the claim
+  (`cli_model`), but no runner reads it yet, so no screen offers it.
 - **A conversation, turn or schedule may choose one of them**: `cli` on
   `POST /api/canopy-sessions/` (stored as `Session.cli` from birth), on
-  `POST /api/harness/turns/` (stored as `Turn.cli` at enqueue), and on a schedule
-  (`AgentSchedule.cli`, carried onto each turn it fires). `clis.refusal` refuses — 422 —
-  a CLI the agent is not set up for, any CLI but Claude Code for an agentless or repo turn,
-  and Codex for a sensitive site's conversation. The new-chat menu and the schedule editor
-  offer the choice only for an agent set up for more than one. In Slack the ask's first
-  word chooses it — `@canopy hal --codex <ask>`, `/hal --claude <ask>`
-  (`slack.services.cli_flag`) — for a new thread; a thread already on another CLI is
-  refused, saying to start a new one. Email, the embedded widget and a confined fork never
-  choose. Without a choice the claim picks from the agent's list.
+  `POST /api/harness/turns/` (stored as `Turn.requested_cli`), and on a schedule
+  (`AgentSchedule.cli`, carried onto each turn it fires as `requested_cli`). `clis.refusal`
+  refuses — 422 — a CLI the agent is not set up for, one no runner serving its workspace has,
+  any CLI but Claude Code for an agentless or repo turn, and Codex for a sensitive site's
+  conversation. The new-chat menu and the schedule editor offer the choice only for an agent
+  set up for more than one. In Slack the ask's first word chooses it — `@canopy hal --codex
+  <ask>`, `/hal --claude <ask>` (`slack.services.cli_flag`) — for a new thread; a thread
+  already on another CLI is refused, saying to start a new one. Email, the embedded widget and
+  a confined fork never choose. Without a choice the claim picks from the agent's list.
 - **A box reports what it has** on every heartbeat, `clis`:
   `{"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}`, stored as
-  `capabilities.clis` after `clis.sanitize` (unknown CLIs and malformed values dropped). It is
-  a level: a beat without it removes it. A box that reports none is read as Claude Code alone
-  — signed in unless `Runner.signed_out`, confining at the box-wide `profiles`/`envelope`
-  (`clis.reported`). So nothing changes for a box until its code says it has more.
-- **One rule picks**, `clis.choose(turn, runner)`: the CLIs the turn allows
-  (`clis.allowed`: its conversation's `Session.cli` once it has one, else the `Turn.cli` it
-  was started on, else its acting agent's list, else the default), keep those the box has signed in, for a caller's turn (`Turn.capability`) those
-  it confines (`clis.confines`: the box's `profiles`/`envelope` for that CLI), for a
-  sensitive conversation only `SENSITIVE_CLIS` (Claude Code); the first left wins, `None` =
-  this box does not take it. The claim, coverage (`_refined_allows`) and `turn_reach` all ask
-  it, above the pin: a pin never puts a turn on a CLI the box lacks or a caller's turn on one
-  that cannot confine it.
-- **The claim records it**: `Turn.cli`, and `Session.cli` on a conversation's first claim —
-  never changed after, because its history lives in that CLI's own store. The claimed turn
-  carries `cli` and `cli_model`; the `status` event records `cli`.
+  `capabilities.clis` after `clis.sanitize` (malformed values dropped; names this server does
+  not know are kept apart as `capabilities.clis_unknown`, shown and never routed to). It is a
+  level: a beat without it removes it. A box that reports none is read as Claude Code alone —
+  signed in unless `Runner.signed_out`, confining at the box-wide `profiles`/`envelope`
+  (`clis.reported`). `RunnerOut.agent_clis` is that reading, per CLI (`label`, `signed_in`,
+  `confines`, `version`, `known`): the runner page shows it and works out nothing itself.
+- **One rule picks**, `clis.choose(turn, runner)`: the CLIs the turn allows (`clis.allowed`:
+  the conversation's `Session.cli` once it is held to one, else the turn's `requested_cli`,
+  else its acting agent's list, else the default — and never a CLI the agent is no longer set
+  up for), keep those the box has signed in, for a caller's turn (`Turn.capability`) those it
+  confines (`clis.confines`: the box's `profiles`/`envelope` for that CLI), for a sensitive
+  conversation only `SENSITIVE_CLIS` (Claude Code); the first left wins, `None` = this box does
+  not take it. The claim, coverage (`_refined_allows`, which passes its `ignore_requirements`
+  counterfactual through) and `turn_reach` all ask it, above the pin: a pin never puts a turn
+  on a CLI the box lacks or a caller's turn on one that cannot confine it.
+- **What was asked and what was picked are two fields.** The claim writes `Turn.cli` (and the
+  `status` event's `cli`); the claimed turn carries `cli` and `cli_model`. Every requeue (a
+  sessionless failure, a failed mid-turn delivery, a lost fleet member) clears `Turn.cli` and
+  keeps `requested_cli`, so a box that failed to start a turn on one CLI never holds it there.
+- **A conversation is held to a CLI once its history is in one**: `clis.pin_conversation`,
+  first write wins, when a runner reports a session for it (`session_sync.record_session`,
+  `stamp_turn_session`, `link_turn_session`) or its turn finishes `done` — never at the claim.
+  A session a box reports with no turn is held to the box's only CLI (emdash: Claude Code).
+  Once held: a fork runs on the same CLI; a transfer or placement onto a box without it is
+  refused (`placement._placeable_runner`); and if its agent is no longer set up for it, a send
+  is refused at every door (`clis.conversation_refusal`, 422; Slack says so in the thread).
 - **Sign-in is per CLI.** A box claims nothing only when no CLI is signed in. Coverage asks
   `choose` without the sign-in (a signed-out box still covers, like an offline one);
   `turn_reach` adds it, so a Codex conversation on a box whose Codex login is gone reads
-  `signed_out` with `reason` "no runner has Codex signed in" (`Reach.cli`). A turn only boxes
-  without its CLI would take is reported unclaimable with "it runs on Codex, and none of the
-  runners … has it set up".
+  `signed_out` with `reason` "no runner has Codex signed in" (`Reach.cli`: the CLI a box would
+  run it on were it signed in). A turn only boxes without a usable CLI would take is reported
+  unclaimable with `clis.blocker`'s reason, most specific first: the agent no longer runs the
+  conversation's CLI; a sensitive conversation on an agent set up for no CLI that may hold it;
+  a box that has the CLI but cannot confine a caller's turn on it; or none has it, with how to
+  sign it in. That pass runs only when the CLI could be the cause (`claim._cli_may_block`).
 - **Credentials name their CLI**, `RunnerLogin.cli`; each CLI keeps its own cascade, and the
   last-fallback refusal is per CLI. Codex has no setup-token (an OpenAI API key, vault secret
   `openai-api-key:<key>`, or a login). A box's credential bundle carries another CLI's
   entries only once the box reports that CLI — older code reads every entry as Claude's.
+- **A local session** (`POST /api/harness/local-turns/`) is a person's own Claude Code
+  session: its turn records `cli="claude-code"`.
 
 Spec: `docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md`.
 

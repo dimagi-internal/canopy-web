@@ -428,7 +428,7 @@ def named_agent(installation: SlackInstallation, text: str) -> tuple[Agent | Non
 
 
 #: The flags that choose a thread's agent CLI, read only as the ask's first word.
-CLI_FLAGS = {"--codex": clis.CODEX, "--claude": clis.CLAUDE_CODE, "--claude-code": clis.CLAUDE_CODE}
+CLI_FLAGS = {f"--{c}": c for c in clis.CLIS} | {"--claude": clis.CLAUDE_CODE}
 
 
 def cli_flag(prompt: str) -> tuple[str, str]:
@@ -450,7 +450,7 @@ def _cli_refusal(agent: Agent, cli: str, key: str) -> Outcome | None:
         if current:
             refused = (f"This thread runs on {clis.label(current)}, and a conversation keeps the "
                        f"CLI it started on. To use {clis.label(cli)}, start a new thread with "
-                       f"`@canopy {agent.slug} --{'codex' if cli == clis.CODEX else 'claude'} <your ask>`")
+                       f"`@canopy {agent.slug} --{cli} <your ask>`")
     if refused is None:
         return None
     return Outcome(CLI_REFUSED, f"{refused}. Nothing you wrote here was sent.", agent=agent,
@@ -1106,6 +1106,10 @@ def _send(session: Session, created: bool, agent: Agent | None, principal: Princ
     if session.status == Session.ARCHIVED and (session.metadata or {}).get("slack_shared_by"):
         return Outcome(SESSION_CLOSED, "This session was closed, so replies here no longer reach it. "
                        "Ask its owner to share a new one.", session=session, agent=agent)
+    # Held to a CLI its agent no longer runs: nothing would ever take the turn.
+    if (why := clis.conversation_refusal(session)) is not None:
+        return Outcome(CLI_REFUSED, f"{why[:1].upper()}{why[1:]}. Nothing you wrote here was sent.",
+                       session=session, agent=agent)
     if not created and not inbound.files:
         answered = _answer_if_waiting(session, agent, prompt)
         if answered is not None:

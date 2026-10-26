@@ -16,6 +16,15 @@ pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("slack_configured")
 THREAD = "1700000000.000100"
 
 
+@pytest.fixture(autouse=True)
+def _every_cli_on_some_runner(monkeypatch):
+    # Which runners have which CLI is `clis.available`'s own test; here every CLI
+    # is on some box, so the flag is what is tested.
+    from apps.harness import clis
+
+    monkeypatch.setattr(clis, "available", lambda _ws: set(clis.CLIS))
+
+
 def _private(slack) -> list[str]:
     return [p["text"] for p in slack.said("chat.postEphemeral")]
 

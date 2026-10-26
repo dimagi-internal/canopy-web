@@ -80,7 +80,12 @@ def test_non_admin_cannot_change_clis(world):
 
 
 def test_admin_sets_clis_by_patch(world):
-    owner, editor, _ws, agent = world
+    owner, editor, ws, agent = world
+    # Codex can be added once a runner serving the workspace has it.
+    Runner.objects.create(name="box", kind=Runner.CLOUD, owner=owner, workspace_id=ws.pk,
+                          last_heartbeat_at=timezone.now(),
+                          capabilities={"clis": {"claude-code": {"signed_in": True},
+                                                 "codex": {"signed_in": True}}})
     url = "/api/w/canopy/agents/echo/clis"
     body = {"clis": ["codex", "claude-code"], "cli_models": {"codex": "gpt-6.1-sol"}}
     assert _as(editor).patch(url, body, content_type="application/json").status_code == 403

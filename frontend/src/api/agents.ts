@@ -5,6 +5,7 @@
 import { apiV2, WORKSPACE_HEADER } from './client.v2'
 import type { components } from './generated'
 import { ApiError, ensureOk, unwrap } from './problem'
+import type { Cli } from '@/lib/clis'
 
 type Schemas = components['schemas']
 
@@ -1022,17 +1023,16 @@ export async function setAgentRepository(slug: string, repoUrl: string, repoRef 
   return normalizeAgentDetail(unwrap(res, 'setAgentRepository'))
 }
 
-/** Which agent CLIs an agent runs on, preferred first, and a model for each it names.
- *  The agent's owner or an admin. */
-export async function setAgentClis(
-  slug: string, clis: string[], cliModels: Record<string, string>,
-): Promise<{ clis: string[]; cli_models: Record<string, string> }> {
+/** Which agent CLIs an agent runs on, preferred first. The agent's owner or an admin.
+ *  Refused (422, with why) for a CLI no runner serving the workspace has, or one a
+ *  schedule still runs on. */
+export async function setAgentClis(slug: string, clis: Cli[]): Promise<{ clis: string[] }> {
   const res = await apiV2.PATCH('/api/agents/{slug}/clis', {
     params: { path: { slug } },
-    body: { clis: clis as ('claude-code' | 'codex')[], cli_models: cliModels },
+    body: { clis },
   })
   const a = unwrap(res, 'Could not save the agent CLIs')
-  return { clis: Array.from(a.clis ?? []), cli_models: { ...(a.cli_models ?? {}) } }
+  return { clis: Array.from(a.clis ?? []) }
 }
 
 export type AgentLicenseOut = Schemas['AgentLicenseOut']

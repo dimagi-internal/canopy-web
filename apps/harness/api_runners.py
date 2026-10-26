@@ -1348,7 +1348,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     # Slack & chat toggle round-trips the capabilities it read. Only a value that
     # differs from what the box reported is a hand edit to refuse.
     reported = ("projects", "profiles", "envelope", "midturn", "unprepared", "data_mode",
-                "data_mode_hash", "claude_model", "clis")
+                "data_mode_hash", "claude_model", "clis", "clis_unknown")
     payload.capabilities = {k: v for k, v in payload.capabilities.items()
                             if not (k in reported and runner.capabilities.get(k) == v)}
     if "projects" in payload.capabilities:
@@ -1360,7 +1360,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             "RUNNER_PROJECTS on a cloud runner). PATCH `agents`/`sessions` freely.",
         )
     for key in ("profiles", "envelope", "midturn", "unprepared", "data_mode", "data_mode_hash",
-                "claude_model", "clis"):
+                "claude_model", "clis", "clis_unknown"):
         if key in payload.capabilities:
             # Reported, like `projects` — and here it is a SECURITY property: a hand
             # edit claiming a runner can confine a caller's session would route

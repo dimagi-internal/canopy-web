@@ -14,6 +14,7 @@ from apps.common.schemas import StrictModel
 
 # framework→framework: agents and harness are both framework tier, and the
 # source vocabulary has ONE definition (harness owns Turn.origin).
+from apps.harness import clis
 from apps.harness.schemas import (
     LEGACY_SESSION_KEY,
     RoutableSource,
@@ -23,8 +24,7 @@ from apps.harness.schemas import (
 )
 
 # ---- Agent ----
-#: An agent CLI (`harness.clis.CLIS`).
-CliName = Literal["claude-code", "codex"]
+CliName = clis.CliName
 
 
 def _one_list_of_clis(value):
