@@ -142,6 +142,8 @@ describe('the handshake', () => {
 
     await expect(init).resolves.toEqual({
       token: 'tok',
+      // An older loader sends no expiry: "" (the client treats it as expired).
+      expiresAt: '',
       agent: 'labs-helper',
       metadata: { supplyPoint: 7 },
       actions: [{ name: 'recordCount' }],
@@ -215,6 +217,16 @@ describe('requests', () => {
     await fromHost({ source: SOURCE, type: 'token', id, token: 'fresh', expires_at: 'later' })
 
     await expect(promise).resolves.toEqual({ token: 'fresh', expiresAt: 'later' })
+    // A plain request never asks the host for an act-as-you permission.
+    expect(sent('token-request')[0].message.grant).toBe(false)
+  })
+
+  it('asks for an act-as-you permission only when told to', async () => {
+    const { link, sent } = await connected()
+    void link.requestToken({ grant: true }).catch(() => undefined)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(sent('token-request')[0].message.grant).toBe(true)
+    link.dispose()
   })
 
   it('does not settle a request with another request0s reply', async () => {

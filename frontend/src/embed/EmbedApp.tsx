@@ -36,6 +36,7 @@ import { PrivateInterstitial, type InterstitialApi } from '@/components/chat/Pri
 import { PRIVATE_NO_KEY, useAttachments, type PrivateFiles } from '@/pages/chat/useAttachments'
 import { sealedAttachmentHost, useSealedAttachments } from '@/components/chat/SealedAttachments'
 import { formDataSafeFetch, panelAttachmentApi, panelSealedFilesApi } from './panelFiles'
+import { createPageGrant, isNoGrant, untilLabel, type PageGrant } from './pageGrant'
 
 /**
  * The chat surface inside the widget's iframe.
@@ -242,6 +243,17 @@ export function EmbedApp({ link, app }: Props) {
   /** How many agents are on offer — whether switching means anything. */
   const [agentCount, setAgentCount] = useState(0)
   const clientRef = useRef<CanopyClient | null>(null)
+  /** This tab's act-as-you permission: asked for only once the person acts here
+   *  (pageGrant.ts), never on load. */
+  const grantRef = useRef<PageGrant | null>(null)
+  if (grantRef.current === null) {
+    grantRef.current = createPageGrant({
+      client: () => clientRef.current as CanopyClient,
+      isContact: () => principalRef.current?.kind === 'contact',
+    })
+  }
+  const pageGrant = grantRef.current
+  useEffect(() => () => pageGrant.dispose(), [pageGrant])
   /** Captured once per session, at open — a snapshot, not a subscription (v2
    *  spec §8). Held so the first send can carry it to the agent. */
   const pendingContext = useRef<string | null>(null)
@@ -261,9 +273,10 @@ export function EmbedApp({ link, app }: Props) {
         // The handshake's token is already in hand on the first call; asking
         // the host again immediately would mint a second one for nothing.
         if (initial?.token && !clientRef.current) {
-          return { token: initial.token, expiresAt: '' }
+          return { token: initial.token, expiresAt: initial.expiresAt ?? '' }
         }
-        return link.requestToken()
+        // A grant only once the person has acted in this panel (pageGrant.ts).
+        return link.requestToken({ grant: grantRef.current?.wanted() ?? false })
       },
       source: app,
       // A file upload is multipart: the browser writes its own Content-Type.
@@ -386,6 +399,10 @@ export function EmbedApp({ link, app }: Props) {
       // message in the transcript. Only a host still on `provideContext` (no
       // declared state, so nothing for the envelope to point at) keeps the
       // appended block.
+      // The person is sending: from now on this tab's mints ask its host for an
+      // act-as-you permission, and the conversation is created (and so stamped)
+      // with the token that carries it.
+      await pageGrant.ensure()
       const declared = link.pageState()
       const context = declared ? null : pendingContext.current
       const body = context ? `${text}\n\n${context}` : text
@@ -449,7 +466,7 @@ export function EmbedApp({ link, app }: Props) {
       // not for the person who just typed the question to be shown back.
       setPhase({ kind: 'chatting', sessionId: created.id, firstMessage: text, firstMessageClientId: clientId, agent })
     },
-    [client, link],
+    [client, link, pageGrant],
   )
 
   // A conversation the PAGE asked to open (`widget.openSession`) — a pointer it
@@ -691,6 +708,7 @@ export function EmbedApp({ link, app }: Props) {
       isContact={principal?.kind === 'contact'}
       expandable={expandable}
       snappable={snappable}
+      pageGrant={pageGrant}
     />
   )
 }
@@ -1050,6 +1068,7 @@ function EmbedChat({
   isContact = false,
   expandable = false,
   snappable = false,
+  pageGrant,
 }: {
   sessionId: string
   /** The opening message, already sent over HTTP. Echoed once on mount. Empty
@@ -1087,7 +1106,18 @@ function EmbedChat({
   expandable?: boolean
   /** Whether the host lets the docked rail snap into its page (its `init`). */
   snappable?: boolean
+  /** This tab's act-as-you permission (pageGrant.ts). */
+  pageGrant?: PageGrant
 }) {
+  /** The person acted in this conversation: make sure this tab holds a grant, and
+   *  when this is what asked for one, tell canopy the page acted here (a page
+   *  declaration stamps the conversation with the new token's grant) — before the
+   *  turn this send starts, so the turn reads through it. */
+  const withGrant = useCallback(async () => {
+    if (pageGrant && await pageGrant.ensure()) {
+      await declarePage(client, link, sessionBase(isContact, sessionId))
+    }
+  }, [pageGrant, client, link, isContact, sessionId])
   // No tool calls ever arrive here: canopy withholds them from every widget
   // connection, decided by the token rather than asked for (consumers.py).
   // A one-time ticket per connection rather than the token on the URL: URLs are
@@ -1317,9 +1347,10 @@ function EmbedChat({
     () => sealedAttachmentHost(sealedFiles, sealed.key, () => void sealed.unlock(), sealedFilesApi),
     [sealedFiles, sealed.key, sealed.unlock, sealedFilesApi])
   const appHost = useMemo(
-    () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates),
+    () => sealedAppHost(embedAppHost(client, sessionBase(isContact, sessionId), expanded, appUpdates,
+                                     pageGrant ? withGrant : undefined),
                         () => keyRef.current, keyOpen),
-    [client, sessionId, isContact, expanded, keyRef, appUpdates, keyOpen])
+    [client, sessionId, isContact, expanded, keyRef, appUpdates, keyOpen, pageGrant, withGrant])
 
   // Tell canopy what this page can do, so the agent's tool list includes it.
   // Re-sent whenever the host's set changes — a page the user navigated to
@@ -1415,8 +1446,11 @@ function EmbedChat({
     contextPreamble.current = null
     // The server takes whatever files this person staged with the send.
     clearAttachments()
-    socket.sendChat(context ? `${body}\n\n${context}` : body)
-  }, [socket, contextPreamble, clearAttachments])
+    void withGrant().catch(() => undefined).then(() => socket.sendChat(context ? `${body}\n\n${context}` : body))
+  }, [socket, contextPreamble, clearAttachments, withGrant])
+  const onContactSend = useCallback((body: string) => {
+    void withGrant().catch(() => undefined).then(() => socket.sendChat(body))
+  }, [socket, withGrant])
 
   return (
     <div className="flex h-full flex-col">
@@ -1489,6 +1523,7 @@ function EmbedChat({
         <JoinRequests sessionId={sessionId} actions={joinActions} live={liveJoinRequests}
           canDecide={myRole === 'owner'} unlockElement={personTrust.element} />
       )}
+      {pageGrant && <PageGrantLine pageGrant={pageGrant} agentName={agent.name} />}
       <div className="min-h-0 flex-1">
         <ChatPanel
           // MCP Apps: a Connected site's View for a tool result, acting as this
@@ -1500,7 +1535,7 @@ function EmbedChat({
           state={panelState}
           connected={socket.connected}
           currentUserId={socket.state.current_user_id}
-          onSend={isContact ? socket.sendChat : onSend}
+          onSend={isContact ? onContactSend : onSend}
           onStop={isContact ? () => undefined : socket.stopChat}
           onUnqueue={isContact ? undefined : socket.unqueueChat}
           // `socket.awaitingReply` on BOTH paths now. It used to be `sending`
@@ -1569,19 +1604,41 @@ function EmbedChat({
  *  under `/api/contact/` for a contact (their whole surface) — through the
  *  panel's own client, so the visitor's token is what authorises every click. */
 function embedAppHost(client: CanopyClient, sessionPath: string, expanded = false,
-                      updates?: AppResourceUpdates): AppHost {
+                      updates?: AppResourceUpdates, withGrant?: () => Promise<void>): AppHost {
   const at = (callId: string) => `${sessionPath}/apps/${encodeURIComponent(callId)}`
+  // A View reading the site as the person needs this tab's act-as-you permission.
+  // Opening their own conversation is the person's act, so a card that finds none
+  // asks for one (the panel then shows "can act as you … · Stop") and tries once more.
+  const granted = async <T,>(go: () => Promise<T>): Promise<T> => {
+    try {
+      return await go()
+    } catch (error) {
+      if (!withGrant || !isNoGrant(error)) throw error
+      await withGrant()
+      return go()
+    }
+  }
   const send = <T,>(path: string, method: string, body: unknown) =>
-    client.rest.json(path, { method, body: JSON.stringify(body) }) as Promise<T>
+    granted(() => client.rest.json(path, { method, body: JSON.stringify(body) }) as Promise<T>)
   return {
-    load: (callId) => client.rest.json(`${at(callId)}/resource`) as Promise<AppViewResource>,
+    // A card that loads read-only for want of a grant asks for one, then loads again.
+    load: async (callId) => {
+      const read = () => client.rest.json(`${at(callId)}/resource`) as Promise<AppViewResource>
+      const res = await read()
+      if (res.can_act || !withGrant) return res
+      await withGrant()
+      return read()
+    },
     callTool: (callId, name, args) =>
       send<CallToolResult>(`${at(callId)}/call`, 'POST', { name, arguments: args }),
     readResource: (callId, uri) => send(`${at(callId)}/read`, 'POST', { uri }),
     updateContext: (callId, params) =>
       send<void>(`${at(callId)}/context`, 'PUT', params).then(() => undefined),
+    // A View's ui/message is the person sending: the grant first, as for a typed send.
     sendMessage: (callId, text) =>
-      send<void>(`${at(callId)}/message`, 'POST', { text, client_id: newClientId() }).then(() => undefined),
+      (withGrant ? withGrant() : Promise.resolve())
+        .then(() => send<void>(`${at(callId)}/message`, 'POST', { text, client_id: newClientId() }))
+        .then(() => undefined),
     subscribe: (callId, uri) => send<void>(`${at(callId)}/subscribe`, 'POST', { uri }).then(() => undefined),
     unsubscribe: (callId, uri) => send<void>(`${at(callId)}/unsubscribe`, 'POST', { uri }).then(() => undefined),
     ...(updates ? { onResourceUpdated: updates.onResourceUpdated } : {}),
@@ -1594,4 +1651,30 @@ function embedAppHost(client: CanopyClient, sessionPath: string, expanded = fals
     // A View may ask to go full screen: it is drawn over the panel.
     fullscreen: true,
   }
+}
+
+
+/** The panel's act-as-you line: what the agent may do as the person on this page,
+ *  until when, and the person's Stop. Shown only while a grant is live. */
+function PageGrantLine({ pageGrant, agentName }: { pageGrant: PageGrant; agentName: string }) {
+  const [grant, setGrant] = useState(() => pageGrant.current())
+  const [stopping, setStopping] = useState(false)
+  useEffect(() => pageGrant.subscribe(() => setGrant(pageGrant.current())), [pageGrant])
+  if (!grant) return null
+  const who = grant.agent_name || agentName
+  const until = untilLabel(grant.expires_at)
+  return (
+    <div className="flex items-center gap-1 border-b border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground"
+         data-testid="page-grant-line">
+      <span className="min-w-0 truncate" title={`What ${grant.site} lets ${who} read as you: ${grant.scope || 'this page'}`}>
+        {who} can act as you on this page{until ? ` until ${until}` : ''}
+      </span>
+      <span aria-hidden>·</span>
+      <button type="button" disabled={stopping}
+              onClick={() => { setStopping(true); void pageGrant.stop().finally(() => setStopping(false)) }}
+              className="text-destructive hover:underline disabled:opacity-50">
+        Stop
+      </button>
+    </div>
+  )
 }

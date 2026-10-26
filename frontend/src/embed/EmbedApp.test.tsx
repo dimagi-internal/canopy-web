@@ -1153,3 +1153,59 @@ describe('the default agent, and switching', () => {
     expect(screen.queryByRole('button', { name: 'Make this my default' })).toBeNull()
   })
 })
+
+describe('the act-as-you permission', () => {
+  function grantingWorld() {
+    const asked: boolean[] = []
+    const requestToken = vi.fn(async (options?: { grant?: boolean }) => {
+      asked.push(options?.grant === true)
+      return { token: options?.grant ? 'granted' : 'plain', expiresAt: '' }
+    })
+    let stopped = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? '')
+        if (String(url).includes('/api/embed/agents')) {
+          return { ok: true, status: 200, json: async () => AGENTS } as Response
+        }
+        if (String(url).endsWith('/api/embed/host-grant')) {
+          if (init?.method === 'DELETE') stopped = true
+          const live = auth.endsWith('granted') && !stopped && init?.method !== 'DELETE'
+          return { ok: true, status: 200, json: async () => ({ grant: live ? {
+            id: 7, site: 'connect-labs', agent: '', agent_name: '', scope: 'marketplace:read',
+            granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z' } : null }) } as Response
+        }
+        return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
+      }),
+    )
+    return { asked, requestToken }
+  }
+
+  it('is never asked for on load, only when the person sends — and then shows, with Stop', async () => {
+    const { asked, requestToken } = grantingWorld()
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 'tok', agent: 'hal', actions: [] }), requestToken })}
+        app="connect-labs"
+      />,
+    )
+    await screen.findByPlaceholderText(/^Type a message/)
+    expect(asked).not.toContain(true)
+    expect(calls.some((c) => c.url.endsWith('/host-grant'))).toBe(false)
+
+    await say('what am I looking at?')
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(asked).toContain(true)
+    // The conversation is created with the token that carries the grant.
+    expect(String((created()?.init?.headers as Record<string, string>).Authorization)).toBe('Bearer granted')
+
+    const line = await screen.findByTestId('page-grant-line')
+    expect(line.textContent).toMatch(/^Hal can act as you on this page until /)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    await waitFor(() => expect(screen.queryByTestId('page-grant-line')).toBeNull())
+    expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant') && c.init?.method === 'DELETE')).toBe(true)
+  })
+})
