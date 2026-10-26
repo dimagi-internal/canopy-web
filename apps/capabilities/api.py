@@ -16,7 +16,8 @@ Who may call (the same doors as the rest of /api/agents, never a second rule):
   `Agent.is_admin`; a pool slot's data is written by a workspace admin
   (`integrations`) or the agent itself, and read MASKED by any member.
 
-A pool slot's SECRET data leaves canopy-web through exactly one door: the lease
+A pool slot's SECRET data is sealed to the agent's readers (canopy-web cannot
+open it) and leaves canopy-web through exactly one door, still sealed: the lease
 read (acquire response, GET /leases/{id}) of the user who acquired a ready lease
 on that slot (`slot_data.deliver`).
 
@@ -293,11 +294,15 @@ def list_capability_slot_data(request: HttpRequest, slug: str, name: str) -> Cap
 def set_capability_slot_data(request: HttpRequest, slug: str, name: str, slot: str,
                              payload: CapabilitySlotDataIn) -> CapabilitySlotDataOut:
     """Per key: a string writes it, null deletes it, a key left out is kept; a
-    section left out is untouched. `secret` is encrypted at rest and only ever
-    delivered on the lease read of the user holding a ready lease on this slot;
-    the response is the MASKED state. 422 unless the capability is a `pool` and
-    declares `slot`. For a workspace admin, or the agent's own login; a browser
-    needs a fresh passkey step-up (403 `step_up_required` otherwise)."""
+    section left out is untouched. A `secret` value is either already sealed
+    (`zks1:`, to the readers `GET /api/agents/{slug}/vault/zk/recipients` names,
+    under the name `capability-slot:<capability>/<slot>/<key>`) or plaintext,
+    which is sealed to those readers at once and never stored or logged in
+    clear; 409 when nobody can read the agent's secrets yet. It is delivered,
+    still sealed, only on the lease read of the user holding a ready lease on
+    this slot; the response is the MASKED state. 422 unless the capability is a
+    `pool` and declares `slot`. For a workspace admin, or the agent's own login;
+    a browser needs a fresh passkey step-up (403 `step_up_required` otherwise)."""
     cap = _declared(request, slug, name)
     _slot_writer(request, cap)
     if stepup.is_browser(request):
@@ -468,8 +473,9 @@ def get_capability_lease(request: HttpRequest, lease_id: str,
     failed), re-reading ready.json about once a second, else after `wait_s`.
 
     A ready `pool` lease read by the user who acquired it carries `slot_data`
-    (the slot's public and decrypted secret data; each delivery of secret
-    values is an event). Null for anyone else, admins included."""
+    (the slot's public data and its secret data still sealed, which the holder
+    opens with its device key; each delivery of secret values is an event).
+    Null for anyone else, admins included."""
     lease = _lease(request, lease_id)
     return _lease_out(services.wait_for_lease(lease, wait_s), deliver_to=request.user)
 

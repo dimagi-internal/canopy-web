@@ -35,6 +35,19 @@ class CapabilityGrantOut(StrictModel):
     updated_at: dt.datetime
 
 
+class CapabilitySlotDeliveryOut(StrictModel):
+    """A ready pool lease's slot data, for the user who acquired it. canopy-web
+    cannot open `sealed`: the holder opens each value with its device key
+    (`canopy vault open-slot-data`)."""
+
+    public: dict[str, str]
+    #: {key: "zks1:…"}, each sealed under the name
+    #: `capability-slot:<capability>/<slot>/<key>` to the agent's readers.
+    sealed: dict[str, str]
+    #: The agent id the sealed values are bound to.
+    agent_id: str
+
+
 class CapabilityLeaseOut(StrictModel):
     lease_id: str
     agent: str
@@ -69,11 +82,11 @@ class CapabilityLeaseOut(StrictModel):
     #: is launched — or s3://<bucket>/leases/<id>/out/ on a stack from before 0.9.0.
     #: Always "" for a pool lease.
     out_prefix: str
-    #: A `pool` lease's slot data, decrypted — `{"public": {...}, "secret": {...}}` —
-    #: ONLY on the acquire response and GET /leases/{id}, ONLY to the user who
-    #: acquired the lease, ONLY while it is `ready`, and only when the slot has
-    #: data; null everywhere else (lists, releases, other callers, admins).
-    slot_data: dict[str, dict[str, str]] | None = None
+    #: A `pool` lease's slot data — public values, and the secret values still
+    #: SEALED — ONLY on the acquire response and GET /leases/{id}, ONLY to the
+    #: user who acquired the lease, ONLY while it is `ready`, and only when the
+    #: slot has data; null everywhere else (lists, releases, other callers, admins).
+    slot_data: CapabilitySlotDeliveryOut | None = None
 
 
 class AgentCapabilityOut(StrictModel):
@@ -228,7 +241,8 @@ class CapabilitySlotDataIn(StrictModel):
     match [A-Za-z0-9_.-]{1,64}; a key is public or secret, never both."""
 
     public: dict[str, str | None] | None = None
-    #: Encrypted at rest; never returned by any read except to a ready lease's holder.
+    #: Each value sealed (`zks1:`) to the agent's readers — or plaintext, which
+    #: canopy-web seals at once and never keeps. Never returned in clear by any read.
     secret: dict[str, str | None] | None = None
 
 
@@ -241,6 +255,9 @@ class CapabilitySlotDataOut(StrictModel):
     declared: bool
     public: dict[str, str]
     secret_keys: list[str]
+    #: The slot has secret data from before sealing that is not delivered until
+    #: an operator runs `manage.py seal_slot_secrets`.
+    secret_awaiting_seal: bool = False
     updated_at: dt.datetime | None
     updated_by: str | None
     #: A live lease holds this slot now.

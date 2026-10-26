@@ -6,25 +6,34 @@ a backup code (`secret`). They live here, beside the lease, one row per slot.
 
 Security rules this module keeps (and the tests pin):
 
-- **Encrypted at rest.** `secret` is stored only as Fernet ciphertext of a JSON
-  object (`apps/common/encryption.py`, the same keys as `AgentCredential`).
-- **Write-only.** No read returns a secret VALUE — the masked listing names the
-  keys and nothing else, to everyone, admins included.
+- **Zero-knowledge.** A secret value is stored only SEALED (`zks1`, zk-v1 §6) to
+  the principals that may read the agent — each eligible device's ECDH key and
+  each vault member's vault key (`zk_seal.recipients_for`). canopy-web keeps no
+  key that opens it. A writer seals before sending; a plaintext value (an MCP or
+  script write) is sealed here at once and never stored or logged in clear. Its
+  sealed name is `sealed_name(capability, slot, key)`.
+- **Key names in clear.** The masked listing names the keys from the stored map;
+  nothing is decrypted to list them (nothing here can decrypt).
 - **Delivered to exactly one caller:** the user who acquired a pool lease
   (`requested_by`), while that lease is `ready`, for the slot it holds, and only
-  while the manifest still declares that slot. Every delivery of secret values
-  records `capability.slot.secret_delivered` (lease, slot, user, key NAMES).
+  while the manifest still declares that slot — still sealed; the holder opens
+  it with its device key (`canopy vault open-slot-data`). Every delivery records
+  `capability.slot.secret_delivered` (lease, slot, user, key NAMES).
 - **Never in a log.** Events, errors, `__str__` and the settings audit carry key
   names at most; a refusal names the key, never the value.
+
+A row from before this (`secret_enc`, Fernet under the app key) is sealed by
+`manage.py seal_slot_secrets`; until then its secret half is neither delivered
+nor writable (409), and the listing marks it `secret_awaiting_seal`.
 """
 from __future__ import annotations
 
-import json
 import re
 
 from django.db import transaction
 
-from apps.common.encryption import decrypt_secret, encrypt_secret
+from apps.agents.credentials import zk_seal
+from apps.agents.credentials.zk import ZkError
 
 from . import services
 from .models import AgentCapability, CapabilityLease, CapabilitySlotData
@@ -35,10 +44,30 @@ MAX_KEYS = 50
 MAX_VALUE = 4096
 
 
-def _secret_of(row: CapabilitySlotData | None) -> dict[str, str]:
-    if row is None or not row.secret_enc:
-        return {}
-    return json.loads(decrypt_secret(row.secret_enc))
+def sealed_name(capability: str, slot: str, key: str) -> str:
+    """The name a slot secret is sealed under (bound into its AAD and HKDF info).
+    The `canopy` CLI builds the same string to open it."""
+    return f"capability-slot:{capability}/{slot}/{key}"
+
+
+def _sealed_of(row: CapabilitySlotData | None) -> dict[str, str]:
+    return dict(row.secret_zk or {}) if row is not None else {}
+
+
+def _seal(cap: AgentCapability, slot: str, key: str, value: str) -> str:
+    """A value as stored: an already-sealed `zks1` checked for shape, else
+    plaintext sealed now to everyone who may read the agent."""
+    if value.startswith(zk_seal.SEALED_PREFIX):
+        try:
+            return zk_seal.check_sealed_value(value, f"secret.{key}")
+        except ZkError as e:
+            raise services.CapabilityError(422, str(e)) from None
+    agent = cap.agent
+    try:
+        return zk_seal.seal_to(value, agent_id=str(agent.pk), name=sealed_name(cap.name, slot, key),
+                               kv=agent.zk_kv, recipients=zk_seal.recipients_for(agent))
+    except ZkError as e:
+        raise services.CapabilityError(e.status, f"{key}: {e}") from None
 
 
 def declared_slots(cap: AgentCapability) -> list[str]:
@@ -75,8 +104,10 @@ def _validate(section: str, changes: dict) -> None:
             raise services.CapabilityError(422, f"{section}.{key}: a value is a string (or null to delete)")
         if not value.strip():
             raise services.CapabilityError(422, f"{section}.{key}: blank value — send null to delete a key")
-        if len(value) > MAX_VALUE:
-            raise services.CapabilityError(422, f"{section}.{key}: longer than {MAX_VALUE} characters")
+        limit = (zk_seal.MAX_VALUE_ZK_LEN if section == "secret" and value.startswith(zk_seal.SEALED_PREFIX)
+                 else MAX_VALUE)
+        if len(value) > limit:
+            raise services.CapabilityError(422, f"{section}.{key}: longer than {limit} characters")
 
 
 def _merge(current: dict[str, str], changes: dict | None) -> dict[str, str]:
@@ -102,7 +133,8 @@ def masked(cap: AgentCapability, slot: str, row: CapabilitySlotData | None,
         "slot": slot,
         "declared": slot in declared_slots(cap),
         "public": dict(row.public or {}) if row else {},
-        "secret_keys": sorted(_secret_of(row)) if row else [],
+        "secret_keys": sorted(_sealed_of(row)),
+        "secret_awaiting_seal": bool(row is not None and row.secret_enc),
         "updated_at": row.updated_at if row else None,
         "updated_by": (getattr(row.updated_by, "email", None) or None) if row else None,
         "held": holder is not None,
@@ -114,7 +146,7 @@ def state(row: CapabilitySlotData | None) -> dict | None:
     """The masked state for the settings audit's before/after: never a secret value."""
     if row is None:
         return None
-    return {"public": dict(row.public or {}), "secret_keys": sorted(_secret_of(row))}
+    return {"public": dict(row.public or {}), "secret_keys": sorted(_sealed_of(row))}
 
 
 def listing(cap: AgentCapability) -> list[dict]:
@@ -136,15 +168,19 @@ def put(cap: AgentCapability, slot: str, *, public: dict | None, secret: dict | 
             _validate(section, changes)
     with transaction.atomic():
         row = CapabilitySlotData.objects.select_for_update().filter(capability=cap, slot=slot).first()
+        if secret and row is not None and row.secret_enc:
+            raise services.CapabilityError(
+                409, f"{slot}'s secret data is from before sealing: run `manage.py seal_slot_secrets` first")
         before = state(row)
         new_public = _merge(dict(row.public or {}) if row else {}, public)
-        new_secret = _merge(_secret_of(row), secret)
+        sealed = {k: (v if v is None else _seal(cap, slot, k, v)) for k, v in (secret or {}).items()}
+        new_secret = _merge(_sealed_of(row), sealed)
         both = sorted(set(new_public) & set(new_secret))
         if both:
             raise services.CapabilityError(
                 422, f"{', '.join(both)}: a key is either public or secret, not both "
                      "(send null in the other section to move it)")
-        if not new_public and not new_secret:
+        if not new_public and not new_secret and not (row is not None and row.secret_enc):
             if row is not None:
                 row.delete()
             row = None
@@ -152,7 +188,7 @@ def put(cap: AgentCapability, slot: str, *, public: dict | None, secret: dict | 
             if row is None:
                 row = CapabilitySlotData(capability=cap, slot=slot)
             row.public = new_public
-            row.secret_enc = encrypt_secret(json.dumps(new_secret, sort_keys=True)) if new_secret else ""
+            row.secret_zk = new_secret
             row.updated_by = by if getattr(by, "is_authenticated", False) else None
             row.save()
     services._cap_event(cap, "slot.data_set",
@@ -177,8 +213,9 @@ def delete(cap: AgentCapability, slot: str, *, by) -> dict | None:
 
 
 def deliver(lease: CapabilityLease, user) -> dict | None:
-    """The slot's data, decrypted, for the lease's OWN requester while it is
-    ready — else None. Records each delivery of secret values."""
+    """The slot's data for the lease's OWN requester while it is ready — else
+    None. The secret half goes out still sealed (`sealed`), with the agent id
+    it is bound to; canopy-web cannot open it. Records each delivery."""
     if (lease.status != CapabilityLease.READY or not lease.slot or not services.is_pool(lease.capability)
             or lease.requested_by_id is None or lease.requested_by_id != getattr(user, "pk", None)):
         return None
@@ -187,11 +224,11 @@ def deliver(lease: CapabilityLease, user) -> dict | None:
     row = CapabilitySlotData.objects.filter(capability=lease.capability, slot=lease.slot).first()
     if row is None:
         return None
-    secret = _secret_of(row)
-    if secret:
+    sealed = _sealed_of(row)
+    if sealed:
         services._event(lease, "slot.secret_delivered",
-                        f"{lease.agent.slug}/{lease.capability.name} slot {lease.slot}: secret data "
+                        f"{lease.agent.slug}/{lease.capability.name} slot {lease.slot}: sealed secret data "
                         f"delivered to {getattr(user, 'email', '') or user.pk}",
                         slot=lease.slot, user=getattr(user, "email", "") or str(user.pk),
-                        secret_keys=sorted(secret))
-    return {"public": dict(row.public or {}), "secret": secret}
+                        secret_keys=sorted(sealed))
+    return {"public": dict(row.public or {}), "sealed": sealed, "agent_id": str(lease.agent_id)}

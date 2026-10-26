@@ -341,19 +341,22 @@ limits: {max_lease_s: 14400, idle_release_s: 900}
 A pool slot is a fixed thing — ACE's `worker-1` is one Connect test worker — and the
 holder needs its details. canopy-web keeps them next to the lease, one row per slot
 (`CapabilitySlotData`, unique on capability + slot): a `public` map (str → str: a phone, a
-name) and a `secret` map (a PIN, a backup code) stored only as Fernet ciphertext of a JSON
-object (`apps/common/encryption.py`, the same keys as `AgentCredential`). Every slot holds
-its own values; there is no default or shared value across slots.
+name) and a `secret` map (a PIN, a backup code), `secret_zk` — each value **sealed** (`zks1`,
+zk-v1 §6, `apps/agents/credentials/zk_seal.py`) to the agent's readers as they are when it is
+written (`zk_seal.recipients_for`: each eligible device's ECDH key, each vault member's vault
+key), under the name `capability-slot:<capability>/<slot>/<key>`. canopy-web holds no key that
+opens it. Key names are stored in clear. Every slot holds its own values; there is no default
+or shared value across slots.
 
 | Route | Gate | Body → response |
 |---|---|---|
-| `PUT /api/agents/{slug}/capabilities/{name}/slots/{slot}` | workspace admin (`integrations`), or the agent's own login | `{"public": {k: v\|null}?, "secret": {k: v\|null}?}` → the masked slot |
+| `PUT /api/agents/{slug}/capabilities/{name}/slots/{slot}` | workspace admin (`integrations`), or the agent's own login | `{"public": {k: v\|null}?, "secret": {k: "zks1:…"\|plaintext\|null}?}` → the masked slot |
 | `GET /api/agents/{slug}/capabilities/{name}/slots` | member | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order; 422 on an ec2-ephemeral capability |
 | `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent; also removes an undeclared slot's data |
 
-A **masked slot** is `{slot, declared, public, secret_keys, updated_at, updated_by, held,
-lease_id}`: public values, the NAMES of the secret keys, and whether (and which) live lease
-holds it. MCP tools: `set_capability_slot_data`, `list_capability_slot_data`,
+A **masked slot** is `{slot, declared, public, secret_keys, secret_awaiting_seal, updated_at,
+updated_by, held, lease_id}`: public values, the NAMES of the secret keys, and whether (and
+which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capability_slot_data`,
 `delete_capability_slot_data`.
 
 - **Writes are per key.** A string writes the key, `null` deletes it, a key left out is
@@ -362,16 +365,31 @@ holds it. MCP tools: `set_capability_slot_data`, `list_capability_slot_data`,
   (send `null` in one section and the value in the other to move it). A slot left with no
   keys has no row. 422 unless the capability is a `pool` that declares `slot` (and is not
   retired); a refusal names the key, never the value.
+- **A secret value is sealed before it is stored.** A writer that can seals it itself (to the
+  readers `GET …/vault/zk/recipients` names, checking their endorsements) and sends `zks1:…`,
+  stored as sent after a shape check (422 if malformed). A plaintext value — what the MCP tool
+  and ACE's `scripts/test-worker-set.ts` send — is sealed in the request, server side, and
+  never stored or logged in clear. 409 when nobody can read the agent's secrets yet (no vault
+  key, no approved machine). A seal reaches only the readers of that moment: a machine
+  approved later cannot open it until the value is written again.
 - **Republishing keeps the data.** It is keyed by the capability row and the slot name, not
   the manifest. Data for a slot the manifest no longer declares is kept but never
   delivered; DELETE removes it (PUT refuses it).
-- **Delivery — the only door a secret value leaves by.** The acquire response and `GET
-  /api/capabilities/leases/{id}` (and its long-poll, and the `get_capability_lease` tool)
-  carry `slot_data: {"public": {…}, "secret": {…}}`, decrypted, when ALL hold: the caller is
+- **Delivery — the only door a secret value leaves by, still sealed.** The acquire response
+  and `GET /api/capabilities/leases/{id}` (and its long-poll, and the `get_capability_lease`
+  tool) carry `slot_data: {"public": {…}, "sealed": {key: "zks1:…"}, "agent_id"}` when ALL
+  hold: the caller is
   the lease's `requested_by` (the login that acquired it — an agent's PAT gets it for the
   leases it acquired), the lease is a pool lease in `ready`, its slot is still declared, and
   the slot has data. Otherwise `slot_data` is `null` — on every list, on release, once the
-  lease is terminal, and for every other caller, workspace admins and owners included.
+  lease is terminal, and for every other caller, workspace admins and owners included. The
+  holder opens `sealed` on its machine: `canopy vault open-slot-data < lease.json` prints
+  `{"public", "secret"}` with this device's key (and passes an older server's plaintext
+  `secret` through).
+- **Rows from before sealing** (`secret_enc`, Fernet under canopy-web's own key) are sealed
+  once, after the deploy, by `manage.py seal_slot_secrets` (`--dry-run` first; it names any
+  row whose agent nobody can read yet and leaves it). Until then such a row's secret half is
+  not delivered, not writable (409) and listed as `secret_awaiting_seal`.
 - **Every delivery of secret values is an event**, `capability.slot.secret_delivered`
   (lease id, slot, user, secret key names). Writes are `capability.slot.data_set` /
   `.data_deleted` with key names.
