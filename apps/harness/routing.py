@@ -522,21 +522,38 @@ def assignment_rows_for(
     strict truncation: it takes no routed work, so a strict rule naming only it
     leaves the turn waiting, visibly.
     """
+    return list(enumerate(r for r, _rung in labelled_assignment_rows(
+        agent_id, origin, actor, defaults, priorities, requires=requires, serves=serves)))
+
+
+#: Which rung of the ladder put a runner in an agent's composed list.
+RUNG_PERSON, RUNG_SOURCE, RUNG_DEFAULT = "person", "source", "default"
+
+
+def labelled_assignment_rows(
+    agent_id, origin: str, actor: str, defaults: dict, priorities: dict,
+    *, requires: frozenset = frozenset(), serves: str = "",
+) -> list:
+    """`assignment_rows_for` with each runner's rung — `RUNG_PERSON` (the actor
+    rule), `RUNG_SOURCE` (the source rule) or `RUNG_DEFAULT` (the default order,
+    the agent's own or the one it follows) — as [(runner, rung)] in cascade order.
+    The one implementation of the ladder: the claim reads it through
+    `assignment_rows_for`, a route preview reads the rungs too."""
     base = defaults.get(agent_id) or []
     exact = priorities.get((agent_id, origin, actor)) if actor else None
     anyone = priorities.get((agent_id, origin, ""))
-    ladder = [rule for rule in (exact, anyone) if rule]
+    ladder = [(rule, rung) for rule, rung in ((exact, RUNG_PERSON), (anyone, RUNG_SOURCE)) if rule]
     if not ladder:
-        out = [r for _rank, r in base]
+        out = [(r, RUNG_DEFAULT) for _rank, r in base]
     else:
         seen: set = set()
         out = []
         truncated = False
-        for rule in ladder:
+        for rule, rung in ladder:
             for row in rule:  # already rank-ordered by load_assignment_rows
                 if row.runner_id not in seen:
                     seen.add(row.runner_id)
-                    out.append(row.runner)
+                    out.append((row.runner, rung))
             # "These runners or nothing": the turn waits rather than degrading.
             # Everything below this rung is absent from the list, so the
             # wedged-runner grace has nobody to promote — which is what makes "and
@@ -547,22 +564,22 @@ def assignment_rows_for(
                 truncated = True
                 break
         if not truncated:
-            out += [r for _rank, r in base if r.id not in seen]
+            out += [(r, RUNG_DEFAULT) for _rank, r in base if r.id not in seen]
     if requires:
         # A requirement is a FLOOR, applied to the composed list so a runner that
         # lacks it neither claims nor counts as a better-ranked blocker, and the
         # grace has nobody below the floor to promote (spec 2026-09-30). Applied
         # AFTER the strict truncation, so a strict rule whose runners all lack the
         # flag leaves an empty list — the turn waits, it does not fall through.
-        out = [r for r in out if rr.runner_satisfies(r, requires)]
-    out = [r for r in out if not r.directed_only()]
+        out = [(r, g) for r, g in out if rr.runner_satisfies(r, requires)]
+    out = [(r, g) for r, g in out if not r.directed_only()]
     if serves:
         # The same FLOOR, after the strict truncation for the same reason: a strict
         # rule whose every box reports it cannot run the agent leaves an empty list,
         # and the turn waits (visibly: `unclaimable_queued_turns`), never falls
         # through to boxes the rule exists to exclude.
-        out = [r for r in out if not cannot_serve(r, serves)]
-    return list(enumerate(out))
+        out = [(r, g) for r, g in out if not cannot_serve(r, serves)]
+    return out
 
 
 def kind_allows(runner: Runner, routing: str) -> bool:

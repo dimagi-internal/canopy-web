@@ -4213,6 +4213,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/route-preview": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Where the agent's work would go right now
+         * @description The runners a turn from `actor` (default: you) on `source` (default: a
+         *     canopy-web chat) would be offered, in order, with the rule that put each
+         *     there, and the one that would take it now. What "Auto" means for that work.
+         */
+        readonly get: operations["get_agent_route_preview"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/runner-rules": {
         readonly parameters: {
             readonly query?: never;
@@ -22852,6 +22874,57 @@ export interface components {
             readonly ready: boolean;
             /** Rank */
             readonly rank?: number | null;
+        };
+        /**
+         * AgentRoutePreviewOut
+         * @description Where this agent's work from `actor` on `source` would go right now, with
+         *     no runner chosen. `picks` is the box that would claim it now (the first
+         *     available one), None when it waits; `strict` when a rule says "these runners
+         *     or nothing"; `follows_workspace` names the workspace order the agent follows
+         *     when it has none of its own. `summary` says it in one line.
+         */
+        readonly AgentRoutePreviewOut: {
+            /** Source */
+            readonly source: string;
+            /** Actor */
+            readonly actor: string;
+            /** Runners */
+            readonly runners: readonly components["schemas"]["AgentRoutePreviewRunnerOut"][];
+            /** Picks */
+            readonly picks?: string | null;
+            /**
+             * Strict
+             * @default false
+             */
+            readonly strict: boolean;
+            /** Follows Workspace */
+            readonly follows_workspace?: string | null;
+            /** Summary */
+            readonly summary: string;
+        };
+        /**
+         * AgentRoutePreviewRunnerOut
+         * @description One box in the composed list, in cascade order. `rung` is the rule that
+         *     put it there: `person` (a rule for this person), `source` (a rule for this
+         *     source) or `default` (the agent's runner order, or the workspace order it
+         *     follows). `status` is `online`, `paused`, `offline` or `not ready`.
+         */
+        readonly AgentRoutePreviewRunnerOut: {
+            /**
+             * Runner Id
+             * Format: uuid
+             */
+            readonly runner_id: string;
+            /** Runner Name */
+            readonly runner_name: string;
+            /** Kind */
+            readonly kind: string;
+            /** Rung */
+            readonly rung: string;
+            /** Available */
+            readonly available: boolean;
+            /** Status */
+            readonly status: string;
         };
         /**
          * AgentRunnerRuleOut
@@ -45918,6 +45991,31 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["AgentPinnableRunnerOut"][];
+                };
+            };
+        };
+    };
+    readonly get_agent_route_preview: {
+        readonly parameters: {
+            readonly query?: {
+                readonly source?: "ace_web" | "email" | "canopy_scheduler" | "canopy_web_chat" | "slack" | "api";
+                readonly actor?: string;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentRoutePreviewOut"];
                 };
             };
         };
