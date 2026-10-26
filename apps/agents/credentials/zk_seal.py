@@ -119,6 +119,20 @@ def sealed_targets(value: str) -> set[tuple[str, str]]:
         return set()
 
 
+def keep_only(value: str, allowed: set[tuple[str, str]]) -> tuple[str, set[tuple[str, str]]]:
+    """`(value with only the recipients in allowed, the (kind, target) pairs dropped)`.
+    Each recipient carries its own ciphertext, so dropping one decrypts nothing; the
+    value is returned unchanged when nothing is dropped (or it is not a `zks1:` value)."""
+    if not isinstance(value, str) or not value.startswith(SEALED_PREFIX):
+        return value, set()
+    body = json.loads(b64u_bytes(value[len(SEALED_PREFIX):], "value_zk"))
+    dropped = {(r["kind"], r["target"]) for r in body["r"]} - allowed
+    if not dropped:
+        return value, set()
+    body["r"] = [r for r in body["r"] if (r["kind"], r["target"]) in allowed]
+    return SEALED_PREFIX + _b64u(json.dumps(body, separators=(",", ":")).encode()), dropped
+
+
 def seal_for_agent(agent, name: str, plaintext: str) -> str:
     """Seal one server-minted value to everyone who may read `agent`, at its kv."""
     return seal_to(plaintext, agent_id=str(agent.pk), name=name, kv=agent.zk_kv,

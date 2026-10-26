@@ -155,7 +155,8 @@ def post_delegated_checks(request: HttpRequest, runner_id: uuid.UUID,
 
     runner = runner_or_404(request, runner_id)
     agent = Agent.objects.filter(slug=payload.agent).first()
-    if agent is None or not any(k.runner_id == runner.pk for k in accounts.delegated_devices(agent)):
+    held = accounts.delegated_entries(agent).filter(name=payload.name).first() if agent else None
+    if held is None or not any(k.runner_id == runner.pk for k in accounts.entry_devices(held, agent)):
         raise zk_problem(zk.ZkError(404, "not_found", "no such delegated credential"))
     entry = delegations.record_checks(agent, payload.name, checks=[c.model_dump() for c in payload.checks],
                                       provider_expires_at=payload.provider_expires_at,

@@ -764,7 +764,8 @@ def get_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 
 
 def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
-    return AgentGitHubOut(**delegations.status(agent, machines=True), can_lend=agent.is_admin(request.user))
+    return AgentGitHubOut(**delegations.status(agent, machines=True, viewer=request.user),
+                          can_lend=agent.is_admin(request.user))
 
 
 @router.put("/{slug}/github", response=AgentGitHubOut,

@@ -35,7 +35,8 @@ or as you only under an act-as-you permission you granted.** Three kinds, one me
   <name>". It is a vault entry with `account: "delegated"` and `delegated_by`
   (`models.VaultEntryAccount`, read through `credentials/accounts.py`), sealed (`zks1`)
   to the machines that run the agent — a runner serving it whose owner is one of its
-  admins (`accounts.delegated_devices`) — and to nothing else: never under the vault key,
+  admins, and that is a cloud box or the person's own (`accounts.delegated_devices`;
+  another admin's laptop would let them open it) — and to nothing else: never under the vault key,
   so no member, admin or license holder reads it, nor canopy-web, nor the person it came
   from (they replace or withdraw it, `/settings`). It is the agent's to use in any turn
   `decide` lets run in the full profile (never a caller's confined turn); a box gets it

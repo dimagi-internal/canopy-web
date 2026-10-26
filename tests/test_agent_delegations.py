@@ -192,7 +192,54 @@ def test_a_license_holders_or_a_strangers_box_is_never_sealed_to(agent, owner, g
     other, _, _ = a_machine(theirs, stranger)
     entry = _lend(agent, owner, github)
     assert ("device", other.ecdh_jkt) not in accounts.zk_seal.sealed_targets(entry.value_zk)
-    assert accounts.delegated_devices(agent) == [machine[0]]
+    assert accounts.delegated_devices(agent, owner) == [machine[0]]
+
+
+def _another_admins_laptop(agent):
+    ada = User.objects.create_user("ada", "ada@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, ada, WorkspaceMembership.EDITOR)
+    AgentAdmin.objects.create(agent=agent, user=ada)
+    laptop = Runner.objects.create(name="ada-laptop", kind=Runner.EMDASH, owner=ada,
+                                   workspace=agent.workspace, status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=agent, runner=laptop, rank=2)
+    return laptop, a_machine(laptop, ada)
+
+
+def test_another_admins_laptop_is_never_sealed_to_but_the_persons_own_is(agent, owner, github, machine):
+    # A laptop's device key is in its owner's home directory: sealing the owner's token
+    # to another admin's laptop would let that admin open it. Their cloud box may hold it.
+    _, (theirs, _, _) = _another_admins_laptop(agent)
+    mine_runner = Runner.objects.create(name="olive-laptop", kind=Runner.EMDASH, owner=owner,
+                                        workspace=agent.workspace, status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=agent, runner=mine_runner, rank=3)
+    mine, _, _ = a_machine(mine_runner, owner)
+    entry = _lend(agent, owner, github)
+    sealed = accounts.zk_seal.sealed_targets(entry.value_zk)
+    assert ("device", theirs.ecdh_jkt) not in sealed
+    assert {("device", machine[0].ecdh_jkt), ("device", mine.ecdh_jkt)} <= sealed
+    assert {k.runner.name for k in accounts.delegated_devices(agent, owner)} == {"cloud-ec2-1", "olive-laptop"}
+    # The laptop's own admin delegating: their laptop qualifies for THEIR token, not the owner's.
+    assert "ada-laptop" in {k.runner.name for k in accounts.delegated_devices(agent, theirs.runner.owner)}
+
+
+def test_a_copy_sealed_to_another_admins_laptop_earlier_is_not_handed_out_and_is_pruned(
+        agent, owner, github, machine):
+    _, (theirs, _, _) = _another_admins_laptop(agent)
+    entry = _lend(agent, owner, github)
+    # As the first version sealed it: to every admin's runner, laptops included.
+    entry.value_zk = accounts.zk_seal.seal_to(
+        "github_pat_olive", agent_id=str(agent.pk), name=entry.name, kv=agent.zk_kv,
+        recipients=[("device", k.ecdh_jkt, k.ecdh_public_jwk) for k in (machine[0], theirs)])
+    entry.save(update_fields=["value_zk"])
+    assert accounts.resolve_payload(agent, theirs) == {}
+    assert "github-token" in accounts.resolve_payload(agent, machine[0])
+    assert accounts.machines_that_can_open(entry) == ["ada-laptop", "cloud-ec2-1"]
+
+    assert accounts.prune(entry, agent) == ["ada-laptop"]
+    entry.refresh_from_db()
+    assert accounts.zk_seal.sealed_targets(entry.value_zk) == {("device", machine[0].ecdh_jkt)}
+    assert opened(entry, machine[2], machine[0]) == "github_pat_olive"   # nothing re-encrypted
+    assert accounts.prune(entry, agent) == []
 
 
 @pytest.mark.parametrize("code,says", [
