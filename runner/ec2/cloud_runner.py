@@ -62,6 +62,7 @@ bootstrap_agents.sh (see runner/ec2/README.md), not this file directly.
 """
 from __future__ import annotations
 
+import abc
 import base64
 import contextlib
 import datetime
@@ -665,10 +666,7 @@ def _package_checks() -> None:
     _set_check("packages.inbox", *(
         ("ok", "") if _inbox_core() is not None
         else ("fail", "canopy_runner did not import: this box reads no mail and the Gmail doorbell does nothing")))
-    if RUNNER_EXECUTOR == "acp":
-        _set_check("packages.acp", *(
-            ("ok", "") if _acp_core() is not None
-            else ("fail", "canopy_acp did not import: turns fall back to claude -p and cannot be stopped")))
+    _executor().check_packages()
 
 
 def _credential_check() -> None:
@@ -3621,6 +3619,151 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
 
 
 # --------------------------------------------------------------------------
+# Turn executors: how this box drives an agent CLI through a turn
+# --------------------------------------------------------------------------
+# The CLI is WHICH agent program runs a turn (`claude-code`, `codex`:
+# apps/harness/clis.py). The executor is HOW this runner drives it:
+#
+#   cli  `claude -p` + stream-json parsing (`run_claude`)          claude-code
+#   acp  Agent Client Protocol to the Node adapter (`run_acp`)    claude-code
+#
+# Every operation the runner needs from "the thing that runs the agent CLI" is a
+# method on `TurnExecutor`, and every place the runner's behaviour depends on the
+# executor asks the instance `_executor()` returns — the only reader of
+# RUNNER_EXECUTOR. A new way of driving a CLI is a new subclass registered in
+# `_EXECUTORS`, never another `if RUNNER_EXECUTOR == ...` branch. Codex goes
+# here as `CodexAppServerExecutor` (`codex app-server` over stdio, its protocol
+# driver a `canopy_codex` package off the clone the way `canopy_acp` is ACP's —
+# docs/superpowers/specs/2026-10-26-multi-cli-agents-design.md §5); so would an
+# Agent SDK executor.
+#
+# The executors live in this file, not a module beside it: the box runs
+# cloud_runner.py as ONE file (seeded from Secrets Manager by runner.cfn.yaml,
+# replaced whole by update_runner.sh), so a sibling module would never reach a
+# box. A protocol driver lives in a package off the runner's clone, imported
+# lazily (`_acp_core`), and each executor here is the thin class over it.
+#
+# What is the CLI's rather than the executor's stays off this interface, shared
+# by both executors because both drive claude-code: the session store
+# (`_resume_target_exists`, `_ship_transcript_rows`, `_TurnTail` read
+# ~/.claude/projects), the credential cascade and its probe, and reading a cap
+# or a sign-out out of a turn's text (`_is_usage_cap`, `_is_auth_required`).
+
+class TurnExecutor(abc.ABC):
+    """One way of driving an agent CLI through a turn.
+
+    An executor keeps the live handle of each turn it runs (a process, a
+    protocol connection) so a stop from another thread can reach it.
+    """
+
+    #: The RUNNER_EXECUTOR value that selects it (runner.cfn.yaml `RunnerExecutor`).
+    name = ""
+    #: The agent CLI it drives — apps/harness/clis.py's vocabulary.
+    cli = "claude-code"
+    #: Can a turn under it run a locked settings document (sensitive-data mode's
+    #: permission profile, a confined turn's `--settings`)? A sensitive-data box
+    #: runs only an executor that can.
+    carries_settings = False
+
+    @abc.abstractmethod
+    def run_turn(self, prompt: str, turn_id: str, emit, *, cwd: pathlib.Path | None = None,
+                 agent_slug: str | None = None,
+                 resume_session_id: str | None = None) -> tuple[bool, str, str]:
+        """Start the turn — resuming `resume_session_id` when it exists here, else
+        fresh — and run it to its end. Returns (ok, final_text, cli_session_id).
+
+        While it runs it must: `emit` live events in the ledger's shapes
+        (`assistant`, `tool_start`, `tool_end`); call `_announce_session` the moment
+        it learns the CLI's session id; register its live handle so `live()` finds
+        it; end early once `stop_requested(turn_id)`; and, when the CLI refuses
+        for a usage cap, leave the cap's wording in `final_text` (and an exact reset
+        in `_CAP_RESET_HINT`) so `execute_prompt` fails over down the cascade.
+        """
+
+    @abc.abstractmethod
+    def live(self, turn_id: str):
+        """The handle a stop reaches for a turn this executor is running, or None.
+        Called under `_STOP_LOCK`, so it must not block or take that lock."""
+
+    @abc.abstractmethod
+    def interrupt(self, turn_id: str, handle, *, escalate: bool, waited: float) -> bool:
+        """A person's stop. The first asks politely; one `escalate`s after the turn
+        ignored it for `waited` seconds. Never raises, never blocks."""
+
+    def prepare(self) -> None:
+        """At bootstrap: install what this executor needs that the box may lack.
+        Best effort — a failure degrades, it never stops the box."""
+
+    def check_packages(self) -> None:
+        """Health: report (`_set_check`) whether what it imports off the clone did."""
+
+
+class ClaudePrintExecutor(TurnExecutor):
+    """`claude -p --output-format stream-json`, one process per turn."""
+
+    name = "cli"
+    carries_settings = True
+
+    def run_turn(self, prompt, turn_id, emit, *, cwd=None, agent_slug=None,
+                 resume_session_id=None):
+        return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                          resume_session_id=resume_session_id)
+
+    def live(self, turn_id):
+        # `_register_cli_proc` keeps the process under `_STOP_LOCK`, so a stop that
+        # beats the spawn is caught there and signalled exactly once.
+        return _CLI_PROCS.get(turn_id)
+
+    def interrupt(self, turn_id, handle, *, escalate, waited):
+        return _signal_cli(turn_id, handle, escalate=escalate)
+
+
+class AcpExecutor(TurnExecutor):
+    """ACP over `claude-agent-acp`, through canopy_acp. Without canopy_acp it runs
+    the turn as `claude -p` (`run_acp`), so a stop asks both executors."""
+
+    name = "acp"
+    # The adapter runs in bypassPermissions and takes no settings document.
+    carries_settings = False
+
+    def run_turn(self, prompt, turn_id, emit, *, cwd=None, agent_slug=None,
+                 resume_session_id=None):
+        return run_acp(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                       resume_session_id=resume_session_id)
+
+    def live(self, turn_id):
+        return _acp_agent_for(turn_id)
+
+    def interrupt(self, turn_id, handle, *, escalate, waited):
+        if escalate:
+            _log(f"turn {turn_id[:8]} ignored its stop for {waited:.0f}s; closing it")
+            _close_acp_later(turn_id, handle)
+            return True
+        return stop_turn(turn_id)
+
+    def prepare(self):
+        _install_acp_adapter()
+
+    def check_packages(self):
+        _set_check("packages.acp", *(
+            ("ok", "") if _acp_core() is not None
+            else ("fail", "canopy_acp did not import: turns fall back to claude -p and cannot be stopped")))
+
+
+#: The executor a box runs when RUNNER_EXECUTOR names none it knows.
+DEFAULT_EXECUTOR = ClaudePrintExecutor.name
+#: Every executor, by RUNNER_EXECUTOR value. A stop asks them in this order.
+_EXECUTORS: dict[str, TurnExecutor] = {
+    e.name: e for e in (AcpExecutor(), ClaudePrintExecutor())
+}
+
+
+def _executor() -> TurnExecutor:
+    """The executor this box runs its turns on: RUNNER_EXECUTOR, resolved."""
+    return _EXECUTORS.get(RUNNER_EXECUTOR) or _EXECUTORS[DEFAULT_EXECUTOR]
+
+
+# --------------------------------------------------------------------------
 # ACP executor
 # --------------------------------------------------------------------------
 # `claude -p` + stream-json parsing is canopy's own protocol, hand-rolled. ACP
@@ -3635,7 +3778,7 @@ def _post_transcript_batch(turn_id: str, attempt_id: str, seq: int, lines: list[
 #
 # Default OFF. `claude -p` is the proven path and stays the default until this
 # has run real turns on a real box; flip with RUNNER_EXECUTOR=acp.
-RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", "cli").strip().lower()
+RUNNER_EXECUTOR = os.environ.get("RUNNER_EXECUTOR", DEFAULT_EXECUTOR).strip().lower()
 
 # ── Sensitive-data mode (docs/superpowers/specs/2026-10-22-sensitive-data-agents-design.md §1) ──
 # `RUNNER_DATA_MODE=sensitive_data`: every model call this box makes goes to ONE
@@ -3695,10 +3838,12 @@ SENSITIVE_DATA_ALLOW = ("Read", "Grep", "Glob", "Skill", "ToolSearch", "TodoWrit
 SENSITIVE_DATA_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Agent",
                        "Task", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup",
                        "RemoteTrigger")
-if SENSITIVE_DATA_MODE and RUNNER_EXECUTOR != "cli":
-    # The ACP adapter runs in bypassPermissions and takes no settings document, so
-    # it cannot carry the locked profile. Sensitive-data turns run `claude -p`.
-    RUNNER_EXECUTOR = "cli"
+if SENSITIVE_DATA_MODE and not (RUNNER_EXECUTOR in _EXECUTORS
+                                and _EXECUTORS[RUNNER_EXECUTOR].carries_settings):
+    # An executor that cannot carry a settings document cannot carry the locked
+    # profile (the ACP adapter runs in bypassPermissions). Sensitive-data turns
+    # run `claude -p`.
+    RUNNER_EXECUTOR = DEFAULT_EXECUTOR
 
 
 def _data_mode_refused() -> bool:
@@ -3834,7 +3979,7 @@ def sensitive_data_posture() -> dict:
     material = json.dumps({
         "mode": RUNNER_DATA_MODE,
         "settings": sensitive_data_settings(),
-        "executor": RUNNER_EXECUTOR,
+        "executor": _executor().name,
         "credentials": [c[0] for c in _CLAUDE_CREDS],
         "egress": RUNNER_EGRESS,
     }, sort_keys=True)
@@ -4643,14 +4788,11 @@ def _ring_menu_answers(runner_id: str) -> None:
 
 def _execute_once(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
                   resume_session_id=None) -> tuple[bool, str, str]:
-    """The one place a turn picks an executor."""
+    """One attempt at a turn, on this box's executor."""
     if stop_requested(turn_id):
         return False, "stopped before it started", ""
-    if RUNNER_EXECUTOR == "acp":
-        return run_acp(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
-                       resume_session_id=resume_session_id)
-    return run_claude(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
-                      resume_session_id=resume_session_id)
+    return _executor().run_turn(prompt, turn_id, emit, cwd=cwd, agent_slug=agent_slug,
+                                resume_session_id=resume_session_id)
 
 
 def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
@@ -6358,7 +6500,7 @@ def _install_transcript_core(repo_dir: pathlib.Path) -> None:
     rather than a redeploy — the point of a switch you can actually use.
     """
     _expose_repo_packages(repo_dir)
-    _install_acp_adapter()
+    _executor().prepare()
 
 
 def _expose_repo_packages(repo_dir: pathlib.Path) -> None:
@@ -6509,19 +6651,15 @@ def request_stop(turn_id: str, why: str = "") -> bool:
     now = time.time()
     with _STOP_LOCK:
         first_at = _STOP_REQUESTED.setdefault(turn_id, now)
-        proc = _CLI_PROCS.get(turn_id)
+        # Every executor, not only this box's: one may hand a turn to another
+        # (ACP without canopy_acp runs it as `claude -p`).
+        held = [(ex, ex.live(turn_id)) for ex in _EXECUTORS.values()]
     escalate = now - first_at >= STOP_ESCALATE_SECONDS
     if first_at == now:
         _log(f"stop requested for turn {turn_id[:8]}" + (f" ({why})" if why else ""))
-    agent = _acp_agent_for(turn_id)
-    if agent is not None:
-        if escalate:
-            _log(f"turn {turn_id[:8]} ignored its stop for {now - first_at:.0f}s; closing it")
-            _close_acp_later(turn_id, agent)
-        else:
-            stop_turn(turn_id)
-    if proc is not None:
-        _signal_cli(turn_id, proc, escalate=escalate)
+    for ex, handle in held:
+        if handle is not None:
+            ex.interrupt(turn_id, handle, escalate=escalate, waited=now - first_at)
     return True
 
 
@@ -6573,7 +6711,7 @@ def _install_acp_adapter() -> None:
       perfectly well. A warning that names the wrong outcome is worse than
       silence: it sends the next person debugging in the opposite direction.
     """
-    if RUNNER_EXECUTOR != "acp":
+    if not isinstance(_executor(), AcpExecutor):
         return
     existing = shutil.which(ACP_ADAPTER_BIN)
     if existing:
