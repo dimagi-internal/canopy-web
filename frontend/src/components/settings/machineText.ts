@@ -55,13 +55,18 @@ export function machineShortName(k: Key): string {
 
 /** Where the machine's key lives, which decides how hard it is to steal. */
 export function keyPlace(k: Key): string {
-  const store = k.ecdh_store || (k.kind === 'aws-iam' ? '' : k.kind)
+  return storePlace(k.ecdh_store || (k.kind === 'aws-iam' ? '' : k.kind))
+}
+
+/** The same, from a key's store alone (a vault's runner row). */
+export function storePlace(store: string): string {
   switch (store) {
     case 'secure-enclave':
       return 'key locked in the security chip'
     case 'tpm':
       return 'key locked in the TPM chip'
     case 'aws-kms':
+    case 'kms-broker':  // a box of units: each unit's key, served by the box's KMS broker
       return 'key held by AWS'
     case 'software':
       return 'key stored in a file'

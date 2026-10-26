@@ -19,7 +19,7 @@ from ninja.errors import HttpError
 from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
-from apps.harness.models import Runner
+from apps.harness.models import Runner, RunnerDeviceKey
 from apps.harness.runners import can_administer_runner, vault_values_written
 from apps.passkeys import stepup
 from apps.passkeys.models import UserVaultKeyset
@@ -78,13 +78,31 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
     rank = {"owner": 0, "admin": 1, "member": 2}
     rows = sorted(ms.values(), key=lambda m: (rank[m.role], (m.user.email or "").lower()))
     held, keepers = workspace_vaults.copies(v)
+    attached = list(VaultAttachment.objects.filter(vault=v).select_related("agent", "runner"))
+    # A runner it serves is a member at the hardware level: say where its key lives and
+    # whether it holds a copy of the vault's key, is waiting for one, or cannot have one yet.
+    runner_ids = [a.runner_id for a in attached if a.runner_id]
+    waiting = ({t.get("runner") for t in workspace_vaults.pending_targets(v) if t.get("kind") == "device"}
+               if v.kv and runner_ids else set())
+    places = dict(RunnerDeviceKey.objects.filter(runner_id__in=runner_ids, status=RunnerDeviceKey.ACTIVE)
+                  .exclude(ecdh_jkt="").values_list("runner_id", "ecdh_store"))
+
+    def access(a) -> str:
+        if not v.kv:
+            return ""
+        if a.runner.name in keepers:
+            return "has"
+        return "waiting" if str(a.runner_id) in waiting else "none"
+
     return WorkspaceVaultOut(
         vault_id=str(v.pk), workspace=v.workspace_id, name=v.name, kv=v.kv,
         secrets=sorted(VaultSecret.objects.filter(vault=v).values_list("name", flat=True)),
         attachments=[{"id": a.pk, "agent": a.agent.slug if a.agent_id else None, "workspace": a.workspace_id,
                       "runner": str(a.runner_id) if a.runner_id else None,
-                      "runner_name": a.runner.name if a.runner_id else None}
-                     for a in VaultAttachment.objects.filter(vault=v).select_related("agent", "runner")],
+                      "runner_name": a.runner.name if a.runner_id else None,
+                      "access": access(a) if a.runner_id else "",
+                      "key_place": places.get(a.runner_id, "") if a.runner_id else ""}
+                     for a in attached],
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
         you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),

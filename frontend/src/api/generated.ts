@@ -32266,6 +32266,16 @@ export interface components {
             readonly runner?: string | null;
             /** Runner Name */
             readonly runner_name?: string | null;
+            /**
+             * Access
+             * @default
+             */
+            readonly access: string;
+            /**
+             * Key Place
+             * @default
+             */
+            readonly key_place: string;
         };
         /** WorkspaceVaultOut */
         readonly WorkspaceVaultOut: {
