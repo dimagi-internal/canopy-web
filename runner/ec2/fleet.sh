@@ -261,7 +261,7 @@ for _ in $(seq 1 $(( APPROVE_MINUTES * 6 ))); do
   sleep 10
 done
 [[ "$(json "$TMPC/fleet.json" 'd.get("status")' 2>/dev/null)" == "active" ]] \
-  || die "the fleet was not approved within ${APPROVE_MINUTES} min — approve it at $APPROVE_URL; its members join as soon as you do"
+  || die "the fleet was not approved within ${APPROVE_MINUTES} min — approve it at $APPROVE_URL, then run this same ./fleet.sh up again: its group stays empty until then"
 echo ">> approved: sizing $STACK to $MIN member(s) and a warm pool of $WARM"
 deploy_group "$MIN" "$WARM"
 echo "==> UP. fleet $NAME ($FLEET_ID), $MIN–$MAX members of $INSTANCE_TYPE, $MEMBER_TURNS turns each"
