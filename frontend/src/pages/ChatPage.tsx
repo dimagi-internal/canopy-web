@@ -50,6 +50,7 @@ import { useRunnerPlacement } from './chat/useRunnerPlacement'
 import { useSessionActions } from './chat/useSessionActions'
 import { useSessionMeta } from './chat/useSessionMeta'
 import { useSlashCommands } from './chat/useSlashCommands'
+import { CanopyAIButton } from '@/widget/CanopyAIButton'
 import { useTranscriptPaging } from './chat/useTranscriptPaging'
 import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
@@ -568,6 +569,7 @@ function ChatPageInner({
           // Copy is the kit's; Fork from here runs here (and opens the fork).
           messageActions={fork.messageActions}
           emptyState={emptyState}
+          composerActions={<CanopyAIButton />}
           historySlot={historySlot}
           // Refuse the send outright rather than queueing it at a box that
           // cannot answer — the banner above holds the ways out.

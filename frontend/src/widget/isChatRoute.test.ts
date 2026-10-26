@@ -9,6 +9,8 @@ describe('isChatRoute', () => {
     '/w/connect/chat',
     '/w/connect/chat/',
     '/w/connect/chat/251708cb-9190-43eb-b058-e810c411afb4',
+    '/ide',
+    '/ide/251708cb-9190-43eb-b058-e810c411afb4',
   ])('hides the launcher on %s', (path) => {
     expect(isChatRoute(path)).toBe(true)
   })
@@ -19,6 +21,7 @@ describe('isChatRoute', () => {
     '/activity',
     '/w/connect/chatbots', // a prefix is not a match
     '/supervisor',
+    '/ideas', // a prefix is not a match
   ])('keeps it on %s', (path) => {
     expect(isChatRoute(path)).toBe(false)
   })

@@ -62,6 +62,8 @@ export interface ChatPanelProps {
   disabledReason?: string;
   /** Rendered at the top of the scroll container (e.g. a "Load earlier" button / offline banner). */
   historySlot?: ReactNode;
+  /** The host's own controls beside Send (`SendBox.actions`). */
+  composerActions?: ReactNode;
   /** Persist the half-typed composer body under this key (the session id) so
    *  it survives routing away and back. Omit for in-memory-only drafts. */
   draftPersistKey?: string;
@@ -123,6 +125,7 @@ export function ChatPanel({
   emptyState,
   disabledReason,
   historySlot,
+  composerActions,
   draftPersistKey,
   draftStorage,
   typingVisibility,
@@ -540,6 +543,7 @@ export function ChatPanel({
         slashCommands={slashCommands}
         stopState={state.stopState}
         stopping={stopping}
+        actions={composerActions}
         peers={<PeerComposers peers={peerDrafts} />}
         banner={
           notice ? (
