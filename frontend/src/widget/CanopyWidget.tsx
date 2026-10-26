@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 
 import { apiV2 } from '@/api/client.v2'
 import { API_BASE, CSRF_COOKIE_NAME, apiUrl } from '@/api/base'
+import { setAssistant } from './assistant'
 import { buildPageContext } from './pageContext'
 import { tokenUrlFor } from './grantPage'
 import { currentPageState, hasPageState, onPageStateChanged } from './pageState'
@@ -54,6 +55,7 @@ interface WidgetHandle {
    *  cached copy from before theming existed must degrade, not throw. */
   setTheme?(theme: { mode?: 'light' | 'dark' | 'auto' }): void
   setLauncherVisible?(visible: boolean): void
+  toggle(): void
 }
 
 interface CanopyGlobal {
@@ -222,6 +224,8 @@ export function CanopyWidget() {
       unsubscribe = onPageActionsChanged(sync)
 
       handleRef.current = handle
+      // A page that hides the bubble opens the same panel from its own button.
+      setAssistant({ toggle: () => handle.toggle() })
       // The route effect ran before the handle existed; apply its answer now,
       // or a widget first mounted on a chat page would show its launcher there.
       handle.setLauncherVisible?.(!onChatPageRef.current)
@@ -236,6 +240,7 @@ export function CanopyWidget() {
       cancelled = true
       unsubscribe?.()
       unsubscribeState?.()
+      setAssistant(null)
       handleRef.current?.destroy()
       handleRef.current = null
     }
@@ -243,7 +248,8 @@ export function CanopyWidget() {
 
   // No launcher on a chat page. You are already talking to an agent there, and
   // the bubble sat directly on top of the composer's Send button — the one
-  // control that page exists for. The widget itself is not torn down (it lives
+  // control that page exists for. Those pages open it from "Canopy AI" beside
+  // Send instead (`CanopyAIButton`). The widget itself is not torn down (it lives
   // across navigations so an open conversation is not cut off); only its
   // launcher is hidden, and it comes back on the next non-chat route.
   // Deliberately `location.pathname` in the deps, so it re-evaluates per route;
@@ -264,9 +270,9 @@ export function CanopyWidget() {
   return null
 }
 
-/** A chat session page, or the chat home: `/w/:workspace/chat[/:id]`. Exported
- *  for its test — a route that is missed here puts the bubble back over a Send
- *  button. */
+/** A chat session page, the chat home (`/w/:workspace/chat[/:id]`), or the
+ *  session IDE (`/ide[/:id]`), which draws the same chat. Exported for its
+ *  test — a route that is missed here puts the bubble back over a Send button. */
 export function isChatRoute(pathname: string): boolean {
-  return /\/w\/[^/]+\/chat(\/|$)/.test(pathname)
+  return /\/w\/[^/]+\/chat(\/|$)/.test(pathname) || /^\/ide(\/|$)/.test(pathname)
 }

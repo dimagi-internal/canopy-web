@@ -59,6 +59,9 @@ interface Props {
   /** Optional app-supplied banner rendered above the composer (e.g. an
    *  imported-session note). The kit itself has no CLI-auth banners. */
   banner?: ReactNode;
+  /** The host's own controls, drawn just before Send (e.g. a button that opens
+   *  the host's assistant). */
+  actions?: ReactNode;
   /** Everyone else's live drafts (`PeerComposers`), drawn inside this box
    *  directly above your own textarea so the two read as the same kind of
    *  thing — people writing — at the same width. */
@@ -119,6 +122,7 @@ export function SendBox({
   stopState,
   stopping: stoppingProp = false,
   banner,
+  actions,
   peers,
   disabledReason,
   waitingPlaceholder,
@@ -578,6 +582,7 @@ export function SendBox({
               </select>
             </label>
           )}
+          {actions}
           <Button
             type="button"
             size="sm"

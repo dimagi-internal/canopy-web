@@ -827,3 +827,11 @@ describe("SendBox — dropping a reference", () => {
     expect(textarea().value).toBe("hello");
   });
 });
+
+describe("SendBox — the host's own controls", () => {
+  it("draws them just before Send", () => {
+    setup({ actions: <button type="button">Canopy AI</button> });
+    const buttons = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(buttons.slice(-2)).toEqual(["Canopy AI", "send"]);
+  });
+});
