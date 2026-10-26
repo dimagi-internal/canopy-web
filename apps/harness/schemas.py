@@ -947,6 +947,9 @@ class TurnOut(Schema):
     # running turn (that turn's id) rather than run on its own: the runner types
     # it into the live session and it finishes when that turn does.
     rides_turn_id: uuid.UUID | None = None
+    # The agent CLI the claim chose for it (`harness.clis`): "claude-code" or
+    # "codex"; "" until claimed.
+    cli: str = ""
     # WHAT created this turn (apps/harness/provenance.py): credential, client,
     # user_agent, request_id, mcp_tool, parent (raw), clicked_by. The client ip
     # is recorded but not served.
@@ -1092,6 +1095,9 @@ class ClaimedTurnOut(TurnOut):
     # earlier turn of it shipped (`session_sync.turn_end_held`). A runner resuming one
     # ships what comes after, so a ship that failed before is sent again.
     transcript_held: dict[str, int] = {}
+    # The model to start that CLI on, from the agent's `cli_models`; "" = the
+    # CLI's own default.
+    cli_model: str = ""
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so

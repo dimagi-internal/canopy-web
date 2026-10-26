@@ -7,12 +7,14 @@ one. An agent allows an ordered list (`Agent.clis`); the claim picks one for eac
 turn and records it (`Turn.cli`); a conversation keeps the one it started on
 (`Session.cli`), because its history lives in that CLI's own store.
 
-Imports nothing from the models at module level: both `agents.models` and
+Imports nothing that reaches the models at module level: both `agents.models` and
 `harness.models` read these constants.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from . import runner_requirements as rr
 
 CLAUDE_CODE = "claude-code"
 CODEX = "codex"
@@ -105,7 +107,10 @@ def allowed(turn) -> list[str]:
 def confines(report: CliReport) -> bool:
     """Whether a box can hold a caller's turn to its capability on this CLI: its
     guard and envelope versions for it are the ones `routing.profile_q` requires."""
-    from .routing import ENVELOPE_VERSION, PROFILES_VERSION
+    from .routing import (  # noqa: PLC0415 — routing imports the models, which import this module
+        ENVELOPE_VERSION,
+        PROFILES_VERSION,
+    )
 
     return report.profiles >= PROFILES_VERSION and report.envelope >= ENVELOPE_VERSION
 
@@ -120,8 +125,6 @@ def choose(turn, runner, *, reports: dict[str, CliReport] | None = None,
     left wins. `ignore_signed_in` is the counterfactual `turn_reach` asks to tell
     "signed out" from "never". Never bypassed by a pin: it is a security property
     for a confined turn, and a turn on a CLI a box lacks cannot run at all."""
-    from . import runner_requirements as rr
-
     have = reports if reports is not None else reported(runner)
     sensitive = rr.SENSITIVE_DATA in rr.requirements_of(turn)
     for cli in allowed(turn):

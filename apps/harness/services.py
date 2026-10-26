@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
+from . import clis as cli_vocab
 from . import sensitivity
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
@@ -545,8 +546,6 @@ def heartbeat(
     # Which agent CLIs the box has (`harness.clis`). A level, like `envelope`:
     # written every beat, and a beat without it removes it, so a box whose code
     # stops reporting a CLI is read as Claude Code alone on its next beat.
-    from . import clis as cli_vocab
-
     reported_clis = cli_vocab.sanitize(clis)
     if runner.capabilities.get("clis") != reported_clis:
         caps = {k: v for k, v in runner.capabilities.items() if k != "clis"}

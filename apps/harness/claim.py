@@ -20,7 +20,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.canopy_sessions.models import RunnerBinding, Session
-from apps.harness import actors
+from apps.harness import actors, clis
 from apps.harness import runner_requirements as rr
 from apps.workspaces import services as wsvc
 
@@ -378,7 +378,7 @@ def turn_reach(turn: Turn) -> Reach:
 
 
 def _when(at: dt.datetime | None) -> str:
-    return timezone.localtime(at, dt.timezone.utc).strftime("%b %-d %H:%M UTC") if at else "never"
+    return timezone.localtime(at, dt.UTC).strftime("%b %-d %H:%M UTC") if at else "never"
 
 
 def runner_situation(r: Runner) -> str:
@@ -658,7 +658,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
     # three messages that way). Not every not-ready note means that — a box with
     # no Claude desktop CLI still runs turns in emdash — so only this one gates.
     # Above the pin, like the pause: a pin cannot make a signed-out box work.
-    if runner.signed_out:
+    # Per CLI (`harness.clis`): a box with Codex signed in still takes Codex turns
+    # while its Claude login is gone, and `clis.choose` below keeps each turn to a
+    # CLI the box has signed in. A box with none signed in takes nothing.
+    reports = clis.reported(runner)
+    if not any(r.signed_in for r in reports.values()):
         return None
     # A computer used in plain Claude Code has no runner app to run a claimed turn;
     # it never heartbeats, so the guard above already stops it — this says so.
@@ -814,6 +818,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # agent's secrets (`device_keys.runner_serves_agent`).
         if turn_unit_refusal(runner, turn):
             continue
+        # The agent CLI it runs on (`clis.choose`), above the pin like the hold: a
+        # pin cannot put a turn on a CLI the box lacks, or a caller's turn on one
+        # that cannot confine it.
+        cli = clis.choose(turn, runner, reports=reports)
+        if cli is None:
+            continue
         pinned_here = turn.pinned_runner_id == runner.id
         if not pinned_here:
             if not kind_allows(runner, turn.routing):
@@ -887,16 +897,22 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                     turn_mode=mode.mode if mode else "",
                     turn_mode_basis=mode.basis[:320] if mode else "",
                     rides_turn_id=rides,
+                    cli=cli,
                     **({"origin_ref": turn.origin_ref} if stamp else {}),
                 )
         except IntegrityError:
             continue  # another runner claimed for this agent between our check and update
         if updated:
+            # A conversation keeps the CLI its first claim chose: its history
+            # lives in that CLI's store (`clis.allowed` reads it back).
+            Session.objects.filter(pk__in=[pk for pk in (turn.chat_session_id,
+                                                         turn.canopy_session_id) if pk],
+                                   cli="").update(cli=cli)
             turn.refresh_from_db()
             if auto is not None:
                 admission.record_auto(turn, auto, runner)
             append_events(turn, [{"kind": "status", "payload": {
-                "status": Turn.CLAIMED, "runner": runner.name,
+                "status": Turn.CLAIMED, "runner": runner.name, "cli": cli,
                 **_routing_basis(turn, runner, priorities),
                 **({"rides_turn": str(rides)} if rides else {}),
             }}])

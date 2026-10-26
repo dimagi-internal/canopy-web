@@ -8,7 +8,8 @@ from django.utils import timezone
 
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
-from apps.harness import clis, runner_requirements as rr
+from apps.harness import clis
+from apps.harness import runner_requirements as rr
 from apps.harness.models import Runner, Turn
 from apps.workspaces.models import Workspace
 
