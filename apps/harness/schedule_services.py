@@ -23,7 +23,7 @@ from apps.agents.models import Agent
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import schedule_turns
+from . import clis, schedule_turns
 from .models import AgentSchedule
 from .schedule_turns import fire_after_of
 
@@ -192,6 +192,13 @@ def _resolve_schedule(
     return schedule
 
 
+def _check_cli(agent, fields: dict) -> None:
+    """A schedule's chosen CLI must be one its agent is set up for — refused at
+    edit time, like a bad cron, not discovered as a turn that never runs."""
+    if (refused := clis.refusal(agent, fields.get("cli") or "")) is not None:
+        raise InvalidSchedule(refused)
+
+
 def serialize_schedule(schedule: AgentSchedule) -> dict:
     """The single serialized shape. REST builds ScheduleOut(**this); the MCP
     tools return it directly. fire_after (`schedule_turns.fire_after_of`) is the
@@ -218,6 +225,7 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
         "grace_minutes": schedule.grace_minutes,
         "always_run": schedule.always_run,
         "notify": schedule.notify,
+        "cli": schedule.cli,
         "last_slot": schedule.last_slot,
         "fire_after": fire_after,
         "next_runs": next_runs,
@@ -241,6 +249,7 @@ def create_schedule(
     )
     creator = user if getattr(user, "is_authenticated", False) else None
     fields = _apply_timing(fields)
+    _check_cli(agent, fields)
     try:
         # Own savepoint: an IntegrityError from uniq_agent_schedule_name must not
         # poison the request transaction (SESSION_SAVE_EVERY_REQUEST would then
@@ -260,6 +269,7 @@ def update_schedule(
         user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
     )
     fields = _apply_timing(fields, current=schedule)
+    _check_cli(schedule.agent, fields)
     for key, value in fields.items():
         setattr(schedule, key, value)
     if fields:

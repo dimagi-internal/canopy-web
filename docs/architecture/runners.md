@@ -367,20 +367,28 @@ A turn runs in an **agent CLI**: `claude-code` or `codex`. A CLI is not a surfac
 `Runner.engine` says where a laptop opens a session (emdash, the Claude desktop app,
 headless); `claude-desktop` and `emdash` run Claude Code only.
 
-- **An agent allows an ordered list**, `Agent.clis` (default `["claude-code"]`), and
-  optionally a model per CLI, `Agent.cli_models` (`{"codex": "gpt-6.1-sol"}`). Both are
-  definition fields: its admins set them (`PATCH /api/agents/{slug}/clis`, or the upsert,
-  where an editor's change is refused like a repo change); Settings → Where it runs →
-  Agent CLIs.
+- **An agent lists the CLIs it is set up for**, `Agent.clis` (default `["claude-code"]`),
+  its default first, and optionally a model per CLI, `Agent.cli_models`
+  (`{"codex": "gpt-6.1-sol"}`). Both are definition fields: its admins set them
+  (`PATCH /api/agents/{slug}/clis`, or the upsert, where an editor's change is refused like
+  a repo change); Settings → Where it runs → Agent CLIs. `AgentOut` carries `clis`.
+- **A conversation, turn or schedule may choose one of them**: `cli` on
+  `POST /api/canopy-sessions/` (stored as `Session.cli` from birth), on
+  `POST /api/harness/turns/` (stored as `Turn.cli` at enqueue), and on a schedule
+  (`AgentSchedule.cli`, carried onto each turn it fires). `clis.refusal` refuses — 422 —
+  a CLI the agent is not set up for, any CLI but Claude Code for an agentless or repo turn,
+  and Codex for a sensitive site's conversation. The new-chat menu and the schedule editor
+  offer the choice only for an agent set up for more than one. Without a choice the claim
+  picks from the agent's list.
 - **A box reports what it has** on every heartbeat, `clis`:
   `{"codex": {"signed_in": true, "profiles": 3, "envelope": 2, "version": "…"}}`, stored as
   `capabilities.clis` after `clis.sanitize` (unknown CLIs and malformed values dropped). It is
   a level: a beat without it removes it. A box that reports none is read as Claude Code alone
   — signed in unless `Runner.signed_out`, confining at the box-wide `profiles`/`envelope`
   (`clis.reported`). So nothing changes for a box until its code says it has more.
-- **One rule picks**, `clis.choose(turn, runner)`: the CLIs the turn allows (its
-  conversation's `Session.cli` once it has one, else its acting agent's list, else the
-  default), keep those the box has signed in, for a caller's turn (`Turn.capability`) those
+- **One rule picks**, `clis.choose(turn, runner)`: the CLIs the turn allows
+  (`clis.allowed`: its conversation's `Session.cli` once it has one, else the `Turn.cli` it
+  was started on, else its acting agent's list, else the default), keep those the box has signed in, for a caller's turn (`Turn.capability`) those
   it confines (`clis.confines`: the box's `profiles`/`envelope` for that CLI), for a
   sensitive conversation only `SENSITIVE_CLIS` (Claude Code); the first left wins, `None` =
   this box does not take it. The claim, coverage (`_refined_allows`) and `turn_reach` all ask

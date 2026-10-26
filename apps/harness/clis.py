@@ -3,9 +3,11 @@ the one rule that picks (spec 2026-10-26-multi-cli-agents).
 
 A CLI is the program a turn runs in — Claude Code or OpenAI's Codex. It is not a
 surface (`Runner.engine`: where a laptop opens a session) and never inferred from
-one. An agent allows an ordered list (`Agent.clis`); the claim picks one for each
-turn and records it (`Turn.cli`); a conversation keeps the one it started on
-(`Session.cli`), because its history lives in that CLI's own store.
+one. An agent lists the CLIs it is set up for (`Agent.clis`), its default first.
+Whoever starts a conversation, a turn or a schedule may choose one of those
+(`refusal` says when they may not); otherwise the claim picks from the list. The
+claim records the CLI on the turn (`Turn.cli`), and a conversation keeps the one
+it started on (`Session.cli`), because its history lives in that CLI's own store.
 
 Imports nothing that reaches the models at module level: both `agents.models` and
 `harness.models` read these constants.
@@ -94,20 +96,41 @@ def reported(runner) -> dict[str, CliReport]:
 
 
 # ---- the one rule -----------------------------------------------------------
-def allowed(turn) -> list[str]:
-    """The CLIs this turn may run on, preferred first: its conversation's, once it
-    has one (a conversation never changes CLI); else its acting agent's list; else
-    `DEFAULT` (a repo turn, an agentless chat). Unknown values are skipped, and an
-    agent whose list names nothing known runs on the default."""
-    session = getattr(turn, "chat_session", None) if turn.chat_session_id else None
-    if session is not None and session.cli:
-        return [session.cli]
-    agent = turn.acting_agent
+def offered(agent) -> list[str]:
+    """The CLIs `agent` is set up to run on, its default first (`Agent.clis`);
+    `DEFAULT` for no agent (a repo turn, an agentless chat), or for an agent whose
+    list names nothing known."""
     if agent is not None:
         listed = [c for c in dict.fromkeys(agent.clis or []) if c in CLIS]
         if listed:
             return listed
     return list(DEFAULT)
+
+
+def refusal(agent, cli: str) -> str | None:
+    """Why a conversation, turn or schedule may not choose `cli` for `agent`, or
+    None when it may (blank = no choice: the agent's default decides). Every door
+    that takes a chosen CLI asks this, so a choice the agent cannot run is refused
+    when it is made, never left to wait in the queue."""
+    if not cli or cli in offered(agent):
+        return None
+    if agent is None:
+        return f"a chat without an agent runs on {label(DEFAULT[0])} only"
+    return (f"{agent.name} isn't set up to run on {label(cli)}: add {label(cli)} under "
+            "its Settings → Agent CLIs first")
+
+
+def allowed(turn) -> list[str]:
+    """The CLIs this turn may run on, preferred first: its conversation's, once it
+    has one (a conversation never changes CLI); else the one it was started on
+    (`Turn.cli`, chosen by whoever enqueued it, or a schedule); else what its
+    acting agent offers (`offered`)."""
+    session = getattr(turn, "chat_session", None) if turn.chat_session_id else None
+    if session is not None and session.cli:
+        return [session.cli]
+    if turn.cli in CLIS:
+        return [turn.cli]
+    return offered(turn.acting_agent)
 
 
 def confines(report: CliReport) -> bool:

@@ -90,6 +90,9 @@ export interface CreateSessionInput {
   // Directed placement: pin the session's turns to this runner from creation
   // (rather than the default assignment-cascade routing).
   runnerId?: string;
+  // The agent CLI the conversation runs on for its whole life ("claude-code" |
+  // "codex"); omit for the agent's default.
+  cli?: string;
 }
 
 export async function createSession(
@@ -110,6 +113,7 @@ export async function createSession(
       project: input.project ?? "",
       metadata: input.metadata ?? {},
       runner_id: input.runnerId ?? null,
+      ...(input.cli ? { cli: input.cli } : {}),
       ...(conversationKey ? { conversation_key: conversationKey } : {}),
     }),
   });

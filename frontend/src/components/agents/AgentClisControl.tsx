@@ -3,9 +3,10 @@ import { useState } from 'react'
 import { setAgentClis } from '@/api/agents'
 import { CLIS, cliLabel } from '@/lib/clis'
 
-/** Which agent CLIs the agent's turns run on, preferred first, and the model each
- *  starts on. A turn runs on the first one its runner has signed in and can confine
- *  it on; a conversation keeps the one it started on (`apps/harness/clis.py`). */
+/** Which agent CLIs the agent is set up for, its default first, and the model each
+ *  starts on. A new chat or schedule may pick any of them; one that picks none runs
+ *  on the first its runner has signed in and can confine it on, and a conversation
+ *  keeps the one it started on (`apps/harness/clis.py`). */
 export function AgentClisControl({ slug, initialClis, initialModels, canEdit }: {
   slug: string
   initialClis: readonly string[]

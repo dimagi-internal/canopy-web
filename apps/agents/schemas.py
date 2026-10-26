@@ -527,6 +527,9 @@ class AgentOut(StrictModel):
     # agents LIST and the detail view carry it. Literal so the generated TS
     # client gets the union, not string.
     turn_mode: Literal["manual", "auto"] = "manual"
+    #: The agent CLIs it is set up for, its default first ("claude-code", "codex");
+    #: a new chat or schedule may pick any of them.
+    clis: list[str] = ["claude-code"]
     # Reachable from Slack (apps/slack). Owner-flipped, like turn_mode it is
     # operational state rather than repo config, so the self-publish upsert
     # cannot turn it on.
@@ -586,8 +589,6 @@ class AgentOwnerOut(StrictModel):
 
 class AgentDetailOut(AgentOut):
     definition: AgentDefinitionOut | None = None
-    #: The agent CLIs it runs on, preferred first ("claude-code", "codex").
-    clis: list[str] = ["claude-code"]
     #: A model per CLI; a CLI not named here starts on its own default.
     cli_models: dict[str, str] = {}
     # The person who operates this agent. Its GitHub-backed features (skill

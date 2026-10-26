@@ -416,6 +416,11 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     # sentence the panel shows them (`conversation_keys.CannotHold`).
     if sensitivity.is_sensitive(Session(metadata=metadata)):
         _holder_or_422(user=request.user)
+        if payload.cli and payload.cli not in clis.SENSITIVE_CLIS:
+            raise HttpError(422, "a conversation holding this site's sensitive data runs on "
+                                 "Claude Code only")
+    if (refused := clis.refusal(agent, payload.cli or "")) is not None:
+        raise HttpError(422, refused)
     # A key pair made in the starter's browser: if this conversation is (or becomes)
     # sensitive its words are sealed to it, and canopy-web never sees its private half.
     offered = None
@@ -453,7 +458,7 @@ def create_session(request: HttpRequest, payload: SessionCreateIn):
     session = services.create_session(
         workspace=workspace, created_by=request.user, agent=agent,
         project=payload.project, title=payload.title, metadata=metadata,
-        parent=payload.parent, conversation_key=offered,
+        parent=payload.parent, conversation_key=offered, cli=payload.cli or "",
     )
     return _out(session)
 

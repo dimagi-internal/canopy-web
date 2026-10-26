@@ -892,6 +892,9 @@ class TurnIn(Schema):
     acts_as: Literal["", "editor", "viewer"] | None = None
     # What this request was made from (see ParentIn). Optional.
     parent: ParentIn | None = None
+    # The agent CLI to run it on: one the agent is set up for (`clis.refusal`), or
+    # Claude Code for a project turn. Omit for the agent's default.
+    cli: Literal["claude-code", "codex"] | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -1261,6 +1264,9 @@ class ScheduleIn(Schema):
     grace_minutes: int = 120
     always_run: bool = False
     notify: list[str] = ["inbox"]
+    # The agent CLI its turns run on (one the agent is set up for); "" = the
+    # agent's default.
+    cli: Literal["", "claude-code", "codex"] = ""
 
     @field_validator("cron")
     @classmethod
@@ -1302,6 +1308,7 @@ class SchedulePatch(Schema):
     grace_minutes: int | None = None
     always_run: bool | None = None
     notify: list[str] | None = None
+    cli: Literal["", "claude-code", "codex"] | None = None
 
     @field_validator("cron")
     @classmethod
@@ -1329,6 +1336,8 @@ class ScheduleOut(Schema):
     grace_minutes: int
     always_run: bool = False
     notify: list[str]
+    # The agent CLI its turns run on; "" = the agent's default.
+    cli: str = ""
     last_slot: dt.datetime | None = None
     # The anchor the runner MUST pass as due_slot(after=...). Server-computed as
     # `last_slot or created_at` so the runner cannot get the fallback wrong.

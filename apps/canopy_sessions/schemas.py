@@ -69,6 +69,10 @@ class SessionCreateIn(Schema):
     parent: ParentIn | None = None
     # A key pair the starter's browser made (`conversation_keys.check_offer`).
     conversation_key: ConversationKeyIn | None = None
+    # The agent CLI this conversation runs on, for its whole life (one the agent is
+    # set up for, `clis.refusal`). None = its first turn's claim picks the agent's
+    # default.
+    cli: Literal["claude-code", "codex"] | None = None
 
 
 class SendIn(Schema):

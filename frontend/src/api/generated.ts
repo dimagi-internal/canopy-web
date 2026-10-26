@@ -21524,6 +21524,13 @@ export interface components {
              */
             readonly turn_mode: "manual" | "auto";
             /**
+             * Clis
+             * @default [
+             *       "claude-code"
+             *     ]
+             */
+            readonly clis: readonly string[];
+            /**
              * Slack Enabled
              * @default false
              */
@@ -21863,6 +21870,13 @@ export interface components {
              */
             readonly turn_mode: "manual" | "auto";
             /**
+             * Clis
+             * @default [
+             *       "claude-code"
+             *     ]
+             */
+            readonly clis: readonly string[];
+            /**
              * Slack Enabled
              * @default false
              */
@@ -21885,13 +21899,6 @@ export interface components {
             readonly op_vault: string;
             readonly plugin?: components["schemas"]["AgentPluginOut"] | null;
             readonly definition?: components["schemas"]["AgentDefinitionOut"] | null;
-            /**
-             * Clis
-             * @default [
-             *       "claude-code"
-             *     ]
-             */
-            readonly clis: readonly string[];
             /**
              * Cli Models
              * @default {}
@@ -26617,6 +26624,11 @@ export interface components {
             readonly always_run: boolean;
             /** Notify */
             readonly notify: readonly string[];
+            /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
             /** Last Slot */
             readonly last_slot?: string | null;
             /**
@@ -26723,6 +26735,12 @@ export interface components {
              *     ]
              */
             readonly notify: readonly string[];
+            /**
+             * Cli
+             * @default
+             * @enum {string}
+             */
+            readonly cli: "" | "claude-code" | "codex";
         };
         /** SchedulePreviewOut */
         readonly SchedulePreviewOut: {
@@ -26768,6 +26786,8 @@ export interface components {
             readonly always_run?: boolean | null;
             /** Notify */
             readonly notify?: readonly string[] | null;
+            /** Cli */
+            readonly cli?: ("" | "claude-code" | "codex") | null;
         };
         /** ContributorBriefOut */
         readonly ContributorBriefOut: {
@@ -34487,6 +34507,8 @@ export interface components {
             /** Acts As */
             readonly acts_as?: ("" | "editor" | "viewer") | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
+            /** Cli */
+            readonly cli?: ("claude-code" | "codex") | null;
         };
         /** EmdashSessionOut */
         readonly EmdashSessionOut: {
@@ -36314,6 +36336,8 @@ export interface components {
             readonly runner_id?: string | null;
             readonly parent?: components["schemas"]["ParentIn"] | null;
             readonly conversation_key?: components["schemas"]["ConversationKeyIn"] | null;
+            /** Cli */
+            readonly cli?: ("claude-code" | "codex") | null;
         };
         /**
          * SessionSearchPageOut

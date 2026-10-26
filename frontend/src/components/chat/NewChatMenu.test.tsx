@@ -71,3 +71,32 @@ describe('NewChatMenu with a target (/ide per-project +)', () => {
     )
   })
 })
+
+describe('NewChatMenu agent CLI choice', () => {
+  function open(agent: AgentOut) {
+    render(
+      <MemoryRouter>
+        <NewChatMenu agents={[agent]} runners={[]} target={{ kind: 'agent', agent }} label=""
+                     title="New chat" onError={vi.fn()} onCreated={vi.fn()} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByLabelText('New chat'))
+  }
+
+  it('offers no choice to an agent set up for one CLI', async () => {
+    open({ ...ace, clis: ['claude-code'] } as AgentOut)
+    expect(await screen.findByTestId('run-on-picker')).toBeTruthy()
+    expect(screen.queryByTestId('new-chat-cli')).toBeNull()
+  })
+
+  it('starts the chat on the CLI picked, the default sending none', async () => {
+    createSession.mockResolvedValue({ id: 'new', workspace: 'dimagi' } as ChatSession)
+    open({ ...ace, clis: ['claude-code', 'codex'] } as AgentOut)
+    const select = (await screen.findByTestId('new-chat-cli')) as HTMLSelectElement
+    expect(Array.from(select.options).map((o) => o.text)).toEqual(['Claude Code (default)', 'Codex'])
+    fireEvent.change(select, { target: { value: 'codex' } })
+    fireEvent.click(screen.getByText('Start chat'))
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(
+      { agentSlug: 'ace', workspace: 'dimagi', runnerId: undefined, cli: 'codex' }))
+  })
+})

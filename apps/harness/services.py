@@ -142,6 +142,7 @@ def enqueue_turn(
     parent=None,
     provenance_extra: dict | None = None,
     authserv_id: str | None = None,
+    cli: str = "",
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -265,6 +266,9 @@ def enqueue_turn(
                     if agent is not None and requested_turn_mode
                     and getattr(requested_turn_mode_by, "is_authenticated", False)
                     else None),
+                # The CLI it was started on, already checked by the caller
+                # (`clis.refusal`); blank lets the claim pick from the agent's list.
+                cli=cli,
             )
             if session is not None:
                 # A turn started from a sensitive turn or conversation makes the

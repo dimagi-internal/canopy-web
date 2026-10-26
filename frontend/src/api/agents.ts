@@ -106,16 +106,20 @@ export async function listMyAgents(params: ListAgentsParams = {}): Promise<Page<
   return agentPage(toPage(unwrap(res, 'listMyAgents')))
 }
 
-function agentPage<A extends Omit<AgentOut, 'runner_preference'> & { runner_preference?: ArrayLike<string> | null }>(
+function agentPage<A extends Omit<AgentOut, 'runner_preference' | 'clis'> & {
+  runner_preference?: ArrayLike<string> | null
+  clis?: ArrayLike<string> | null
+}>(
   page: Page<A>,
 ): Page<AgentOut> {
-  // runner_preference degrades the same way one level down (see toPage's comment);
-  // rebuild each item.
+  // runner_preference and clis degrade the same way one level down (see toPage's
+  // comment); rebuild each item.
   return {
     ...page,
     items: page.items.map((a) => ({
       ...a,
       runner_preference: a.runner_preference ? Array.from(a.runner_preference) : undefined,
+      clis: Array.from(a.clis ?? ['claude-code']),
     })),
   }
 }

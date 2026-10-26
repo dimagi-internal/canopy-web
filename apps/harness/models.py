@@ -749,8 +749,9 @@ class Turn(models.Model):
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/interface.py::capability_for`.
     capability = models.CharField(max_length=48, blank=True, default="")
-    # The agent CLI this turn ran on (`clis.CLIS`), chosen once at the claim by
-    # `clis.choose`; "" until claimed.
+    # The agent CLI this turn runs on (`clis.CLIS`): the one it was started on, if
+    # its starter or schedule chose one; else picked once at the claim by
+    # `clis.choose` ("" until then).
     cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     # A follow-up DELIVERED INTO a conversation's running turn rather than queued
     # behind it (canopy-web#1153): the runner holding that turn typed it into the
@@ -1219,6 +1220,9 @@ class AgentSchedule(models.Model):
         default=_default_notify, blank=True,
         help_text='Channel ids resolved through the notify registry, e.g. ["inbox"].',
     )
+    # The agent CLI its turns run on (`clis.refusal` checks it is one the agent is
+    # set up for); "" = the agent's default, as for any turn that names none.
+    cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     last_slot = models.DateTimeField(
         null=True, blank=True,
         help_text="Newest slot fired. The supersede + no-backfill anchor.",
