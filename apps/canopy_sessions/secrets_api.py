@@ -10,7 +10,9 @@ a key reaches the secrets of the chat it was issued for and no other.
 AND name the chat's Claude session id — were removed 2026-09-26.)
 
 Bearer only. Anyone refused gets the same 404 as "nothing here", so the answer
-never says whether a chat exists or which check failed.
+never says whether a chat exists or which check failed. What comes back is the
+value sealed (`zks1`) to the machine running the chat — canopy-web cannot open
+it; `canopy secret exec` opens it with that machine's ECDH key.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.route_gates import gate
 
 from . import secrets
@@ -56,11 +59,24 @@ def list_for_key(request: HttpRequest):
     return [_out(r) for r in secrets.live_secrets(_keyed(request))]
 
 
+#: What an older `canopy` CLI, which asks for a plaintext value, is told instead.
+UPDATE_CANOPY = ("this secret is sealed to the machine running the chat, and this `canopy` is too old "
+                 "to open it — update canopy (`canopy update`) and run the command again")
+
+
 @router.get("/key/{name}", response=SessionSecretValueOut,
-            summary="PLAINTEXT — for `canopy secret exec` in the session holding this chat's key")
-@gate("runner")  # X-Canopy-Chat-Key; plaintext
-def value_for_key(request: HttpRequest, name: str):
-    value = secrets.resolve_secret(_keyed(request), name, user=request.user)
-    if value is None:
+            summary="The SEALED value — for `canopy secret exec` in the session holding this chat's key")
+@gate("runner", step_up="bearer only, a browser is 403; the value is sealed to the chat's machine")  # X-Canopy-Chat-Key
+def value_for_key(request: HttpRequest, name: str, sealed: bool = False):
+    """`zks1`, sealed to the device keys of the machine running the chat; the CLI
+    opens it with its own ECDH key, bound to `binding_id` at `kv`. canopy-web holds
+    no plaintext. Without `?sealed=true` (an older CLI, which expects plaintext) a
+    409 `update_canopy` says to update."""
+    session = _keyed(request)
+    if not sealed:
+        raise ProblemError(409, "Update canopy", type_=TYPE_CONFLICT, detail=UPDATE_CANOPY,
+                           members={"error": "update_canopy"})
+    row = secrets.resolve_secret(session, name, user=request.user)
+    if row is None:
         raise HttpError(404, "no such secret")
-    return {"name": name, "value": value}
+    return {"name": name, "value_zk": row.value_zk, "binding_id": secrets.binding_id(session), "kv": secrets.KV}

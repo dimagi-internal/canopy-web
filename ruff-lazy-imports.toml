@@ -64,7 +64,6 @@
 "apps/canopy_sessions/management/commands/sweep_orphaned_attachments.py" = ["PLC0415"]  # 2
 "apps/canopy_sessions/placement.py" = ["PLC0415"]  # 10
 "apps/canopy_sessions/queued_feed.py" = ["PLC0415"]  # 2
-"apps/canopy_sessions/secrets.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/secrets_api.py" = ["PLC0415"]  # 1
 "apps/canopy_sessions/send.py" = ["PLC0415"]  # 12
 "apps/canopy_sessions/serializers.py" = ["PLC0415"]  # 2
