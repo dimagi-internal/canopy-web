@@ -1005,6 +1005,7 @@ aws sso login --profile labs
 ./fleet.sh down --name dimagi           # retire, empty the group (chats move), delete both stacks
 ```
 
+- **Order on a new fleet.** `up` creates the stack with an EMPTY group, registers the fleet and waits for your approval, and only then sizes the group: an instance reports ready (the launch hook the stack waits on) only after it has joined, which needs the approved fleet.
 - **What `up` builds.** Stack `canopy-fleet-<name>` (`fleet.cfn.yaml`). `fleet_template.py` renders it with `runner.cfn.yaml`'s own cloud-init, so a member is built exactly as a single box is. The stack holds:
   - the role, which trusts EC2 only;
   - a launch template;

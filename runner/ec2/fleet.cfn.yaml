@@ -34,7 +34,9 @@ Parameters:
   MinMembers:
     Type: Number
     Default: 1
-    MinValue: 1
+    # 0 only while fleet.sh creates a fleet: the group stays empty until canopy-web
+    # knows the fleet (an instance can only report ready once it has joined).
+    MinValue: 0
     Description: Members in service however quiet it is (the group's MinSize).
   MaxMembers:
     Type: Number
