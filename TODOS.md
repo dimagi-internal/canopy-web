@@ -107,14 +107,7 @@
 - **Plan 2, cloud runner Codex executor.** Starts with the live probe (a ChatGPT-signed-in `codex` on a box). Also covers Codex logins on `RunnerLogin`, an "add OpenAI key" UI, and runner copy that still says "Claude is not signed in".
 - **Plan 3, canopy plugin:** guards and caller context read Codex hook payloads; the factory's `skills/turn` and persona fallback (`AGENTS.md`).
 - **Plan 4, laptop headless runner on Codex.**
-- **Deferred minors from the Plan 1 review** (none affect a box that reports only Claude Code):
-  1. The signed-out reason uses `allowed()[0]`, so it can name the wrong CLI (Codex signed in but not confining, Claude confining but signed out).
-  2. "Sign X in" is the wrong advice when X is signed in but cannot confine, or for a sensitive conversation on a Codex-only agent.
-  3. The sensitive-data check still runs inside the `ignore_requirements` counterfactual, so that case is never diagnosed as a requirements problem.
-  4. A heartbeat whose `clis` names only unknown CLIs stores `{}` and the box takes no turns (fails closed; surprising for a newer runner on an older server).
-  5. The unclaimable report runs an `ignore_cli` coverage pass even when every agent in scope is Claude-only.
-  6. The frontend (`lib/clis.ts`, `RunnerOverview.tsx`) hardcodes the profile/envelope versions and the signed-out note; the server should compute them on `RunnerOut`.
-  7. Local turns record `cli=""`; they are always Claude Code.
+- **Runner honours `cli_model`.** The claim sends each turn's model (`Agent.cli_models`); no executor reads it yet, so no screen offers it.
 
 **Priority:** P2
 **Depends on:** a Codex sign-in on a test box for Plan 2's probe

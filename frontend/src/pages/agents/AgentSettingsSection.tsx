@@ -189,9 +189,9 @@ export function AgentSettingsSection() {
               </div>
               <div id="clis" className="scroll-mt-6 border-t border-border">
                 <Setting title="Agent CLIs" who={admins} canEdit={isAdmin}
-                         description="The agent CLIs it is set up for — Claude Code, Codex — its default first, and the model each starts on. A new chat or schedule can pick any of them.">
+                         description="The agent CLIs it is set up for — Claude Code, Codex — its default first. A new chat or schedule can pick any of them. A CLI can be added once a runner here has it.">
                   <AgentClisControl slug={agent.slug} initialClis={agent.clis ?? ['claude-code']}
-                                    initialModels={agent.cli_models ?? {}} canEdit={isAdmin} />
+                                    canEdit={isAdmin} />
                 </Setting>
               </div>
             </div>

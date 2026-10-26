@@ -13,18 +13,27 @@ afterEach(() => cleanup())
 const base = { id: 'r1', name: 'box', kind: 'cloud', status: 'online', ready: true, ready_note: '' }
 
 describe('RunnerFacts agent CLIs', () => {
-  it('reads a box that reports none as Claude Code', () => {
-    render(<RunnerFacts runner={{ ...base, capabilities: { profiles: 3, envelope: 2 } } as never} />)
+  const cli = (label: string, signed_in: boolean, confines: boolean, extra = {}) =>
+    ({ label, signed_in, confines, version: '', known: true, ...extra })
+
+  it('shows what the server reads off the box', () => {
+    render(<RunnerFacts runner={{ ...base, capabilities: {}, agent_clis: { 'claude-code': cli('Claude Code', true, true) } } as never} />)
     expect(screen.getByTestId('runner-clis').textContent).toBe('Claude Code (signed in)')
   })
 
   it('lists a reported Codex that cannot confine yet', () => {
-    const capabilities = { clis: {
-      'claude-code': { signed_in: true, profiles: 3, envelope: 2 },
-      codex: { signed_in: true, profiles: 0, envelope: 0, version: '0.164.0' },
-    } }
-    render(<RunnerFacts runner={{ ...base, capabilities } as never} />)
+    const agent_clis = {
+      'claude-code': cli('Claude Code', true, true),
+      codex: cli('Codex', true, false, { version: '0.164.0' }),
+    }
+    render(<RunnerFacts runner={{ ...base, capabilities: {}, agent_clis } as never} />)
     expect(screen.getByTestId('runner-clis').textContent).toBe(
       'Claude Code (signed in) · Codex 0.164.0 (signed in, cannot confine a caller’s turn yet)')
+  })
+
+  it('says when the box names a CLI this server does not know', () => {
+    const agent_clis = { gemini: cli('gemini', false, false, { known: false }) }
+    render(<RunnerFacts runner={{ ...base, capabilities: {}, agent_clis } as never} />)
+    expect(screen.getByTestId('runner-clis').textContent).toBe('gemini (not signed in, not known to this server)')
   })
 })

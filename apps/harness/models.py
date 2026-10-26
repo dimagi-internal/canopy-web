@@ -754,9 +754,12 @@ class Turn(models.Model):
     # the agent's guard confine the session to it. Decided once, at enqueue,
     # from the initiator — see `apps/agents/interface.py::capability_for`.
     capability = models.CharField(max_length=48, blank=True, default="")
-    # The agent CLI this turn runs on (`clis.CLIS`): the one it was started on, if
-    # its starter or schedule chose one; else picked once at the claim by
-    # `clis.choose` ("" until then).
+    # The agent CLI its starter or schedule asked for (`clis.refusal` checked it);
+    # "" = the agent's default decides. Never written by the claim.
+    requested_cli = models.CharField(max_length=32, blank=True, default="", db_default="")
+    # The agent CLI the claim picked for it (`clis.choose`), "" while queued: a turn
+    # that goes back to the queue is picked for again, so a box that failed to
+    # start it on one CLI never holds it to that CLI.
     cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     # A follow-up DELIVERED INTO a conversation's running turn rather than queued
     # behind it (canopy-web#1153): the runner holding that turn typed it into the

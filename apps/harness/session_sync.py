@@ -25,6 +25,7 @@ from apps.canopy_sessions.models import Message, RunnerBinding, Session
 from apps.canopy_sessions.staleness import active
 from apps.workspaces import services as wsvc
 
+from . import clis
 from .models import ProjectOptIn, Runner, Turn
 from .routing import EXECUTING, runner_tenant_slugs
 from .runner_requirements import is_sensitive_data_box
@@ -417,8 +418,27 @@ def record_session(
         from apps.canopy_sessions.transcript_ingest import seed_stream_desired
 
         seed_stream_desired(binding)
-        link_turn_session(turn or _turn_of_agent_thread(agent, thread_key, runner), binding.session)
+        turn = turn or _turn_of_agent_thread(agent, thread_key, runner)
+        link_turn_session(turn, binding.session)
+        # A session now exists in some CLI's store: hold the conversation to it.
+        if (cli := _reported_cli(turn, binding.session, runner)):
+            clis.pin_conversation([binding.session_id], cli)
     return binding
+
+
+def _reported_cli(turn, session, runner: Runner) -> str:
+    """Which agent CLI holds a session a runner just reported: the CLI its turn
+    was claimed on (that turn, or the conversation's one executing on this box);
+    else, for a box that has only one CLI, that one (a session a person opened in
+    emdash has no turn, and emdash runs Claude Code only). "" when it cannot be
+    told — the conversation is then held at its next report."""
+    if turn is None and session is not None:
+        turn = (Turn.objects.filter(chat_session=session, claimed_by=runner,
+                                    status__in=list(EXECUTING)).only("cli").first())
+    if turn is not None and turn.cli:
+        return turn.cli
+    has = clis.reported(runner)
+    return next(iter(has)) if len(has) == 1 else ""
 
 
 def _turn_of_agent_thread(agent, thread_key: str, runner: Runner):
@@ -451,7 +471,7 @@ def link_turn_session(turn, session) -> bool:
     )
     if linked and turn.cli:
         # A follow-up into it runs on the CLI that holds its history (`clis.allowed`).
-        Session.objects.filter(pk=session.pk, cli="").update(cli=turn.cli)
+        clis.pin_conversation([session.pk], turn.cli)
     return linked
 
 
@@ -468,12 +488,18 @@ def stamp_turn_session(turn_id, runner: Runner, session_key: str) -> bool:
     Only the runner that claimed the turn may stamp it, only while it runs, and
     only an empty key — the same first-write-wins rule `finish` keeps, so the
     two can never disagree. True if a row was stamped."""
-    return bool(
+    stamped = bool(
         Turn.objects.filter(
             pk=turn_id, claimed_by=runner, session_key="",
             status__in=[Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN],
         ).update(session_key=session_key[:200])
     )
+    if stamped:
+        # Its session exists now, in the CLI it was claimed on (`clis.pin_conversation`).
+        row = Turn.objects.filter(pk=turn_id).values("cli", "chat_session_id", "canopy_session_id").first()
+        if row and row["cli"]:
+            clis.pin_conversation([row["chat_session_id"], row["canopy_session_id"]], row["cli"])
+    return stamped
 
 
 @transaction.atomic

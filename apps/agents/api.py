@@ -36,7 +36,7 @@ from apps.api.route_gates import gate
 from apps.canopy_sessions.control import close_agent_sessions
 from apps.contacts.hcp.sensitive import _context_turn
 from apps.events import audit
-from apps.harness import closeout, turn_access
+from apps.harness import clis, closeout, turn_access
 from apps.harness import initiator as who
 from apps.harness.models import Turn
 from apps.passkeys import stepup
@@ -1074,6 +1074,8 @@ def set_agent_clis(request: HttpRequest, slug: str, payload: AgentClisIn) -> Age
     has signed in and can confine it on; a conversation keeps the one it started on.
     The agent's owner or an admin."""
     agent = agent_for_admin(request, slug)
+    if (refused := clis.list_refusal(agent, list(payload.clis))) is not None:
+        raise HttpError(422, refused)
     before = {"clis": list(agent.clis or []), "cli_models": dict(agent.cli_models or {})}
     agent.clis = list(payload.clis)
     if payload.cli_models is not None:

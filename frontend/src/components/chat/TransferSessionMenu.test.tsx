@@ -26,7 +26,7 @@ function runner(id: string, overrides: Partial<RunnerOut> = {}): RunnerOut {
     paused_note: '',
     paused_at: null,
     last_heartbeat_at: null,
-    capabilities: { sessions: true },
+    capabilities: { sessions: true }, agent_clis: {},
     host: 'host',
     code_branch: 'main',
     code_version: '',

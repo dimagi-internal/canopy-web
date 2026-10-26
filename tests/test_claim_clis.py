@@ -59,6 +59,11 @@ def test_codex_agent_claims_on_codex_box_and_stamps():
     claimed = claim.claim_next_turn(runner)
     assert claimed == turn
     assert claimed.cli == "codex"
+    # Held to Codex only once the box reports a session in it, not at the claim.
+    session.refresh_from_db()
+    assert session.cli == ""
+    from apps.harness import session_sync
+    assert session_sync.stamp_turn_session(claimed.pk, runner, "thread-1")
     session.refresh_from_db()
     assert session.cli == "codex"
     payload = claim_payload(claimed)
@@ -148,7 +153,7 @@ def test_unclaimable_report_matches_claim_for_cli():
     turn = _agent_turn(agent)
     Turn.objects.filter(pk=turn.pk).update(created_at=timezone.now() - claim.UNCLAIMABLE_GRACE * 2)
     stuck = {row["turn_id"]: row for row in claim.unclaimable_queued_turns(runner.owner)}
-    assert stuck[str(turn.pk)]["reason"].startswith("it runs on Codex, and none of the runners")
+    assert stuck[str(turn.pk)]["reason"].startswith("it runs on Codex, and none of those runners")
     assert claim.turn_reach(turn).kind == claim.UNROUTED
     runner.capabilities = {**runner.capabilities, "clis": {"claude-code": CONFINING,
                                                            "codex": CONFINING}}

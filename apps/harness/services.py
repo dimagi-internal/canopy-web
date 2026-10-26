@@ -142,7 +142,7 @@ def enqueue_turn(
     parent=None,
     provenance_extra: dict | None = None,
     authserv_id: str | None = None,
-    cli: str = "",
+    requested_cli: str = "",
 ) -> tuple[Turn, bool]:
     """Queued turns stack freely — the executing-turn index never blocks intake
     (new turns are born `queued`, which the index does not cover).
@@ -266,9 +266,9 @@ def enqueue_turn(
                     if agent is not None and requested_turn_mode
                     and getattr(requested_turn_mode_by, "is_authenticated", False)
                     else None),
-                # The CLI it was started on, already checked by the caller
+                # The CLI its starter asked for, already checked by the caller
                 # (`clis.refusal`); blank lets the claim pick from the agent's list.
-                cli=cli,
+                requested_cli=requested_cli,
             )
             if session is not None:
                 # A turn started from a sensitive turn or conversation makes the
@@ -551,10 +551,16 @@ def heartbeat(
     # written every beat, and a beat without it removes it, so a box whose code
     # stops reporting a CLI is read as Claude Code alone on its next beat.
     reported_clis = cli_vocab.sanitize(clis)
-    if runner.capabilities.get("clis") != reported_clis:
-        caps = {k: v for k, v in runner.capabilities.items() if k != "clis"}
+    unknown = cli_vocab.unknown_names(clis)
+    if (runner.capabilities.get("clis") != reported_clis
+            or (runner.capabilities.get("clis_unknown") or []) != unknown):
+        caps = {k: v for k, v in runner.capabilities.items() if k not in ("clis", "clis_unknown")}
         if reported_clis is not None:
             caps["clis"] = reported_clis
+        if unknown:
+            # Shown on the runner's page, never routed to: a box reporting only
+            # these takes no turns, and says why (`RunnerOut.agent_clis`).
+            caps["clis_unknown"] = unknown
         runner.capabilities = caps
         if "capabilities" not in fields:
             fields.append("capabilities")
@@ -680,7 +686,8 @@ def finish_turn(
         waiting = Turn.objects.filter(
             pk=turn.pk, status__in=[Turn.CLAIMED, Turn.RUNNING], session_key=""
         ).update(status=Turn.QUEUED, claimed_by=None, claimed_at=None, lease_expires_at=None,
-                 started_at=None, rides_turn=None, origin_ref=ref, result_note=result_note)
+                 started_at=None, rides_turn=None, origin_ref=ref, result_note=result_note,
+                 cli="")
         turn.refresh_from_db()
         if waiting:
             append_events(turn, [{"kind": "status", "payload": {
@@ -743,6 +750,9 @@ def finish_turn(
             lease_expires_at=None,
             started_at=None,
             result_note=result_note,
+            # Picked again at the next claim: no session was made, so nothing
+            # holds it to the CLI that failed to start (`clis.allowed`).
+            cli="",
         )
         turn.refresh_from_db()
         if requeued:
@@ -792,6 +802,10 @@ def finish_turn(
             f"{result_note} — NOTE: you asked to stop this turn and it ran to "
             f"completion anyway; the cancel never reached the runner"
         ).lstrip(" —")
+    if status == Turn.DONE and turn.cli:
+        # It ran to the end on this CLI, so its conversation's history is there,
+        # whether or not the box ever reported the session (`clis.pin_conversation`).
+        cli_vocab.pin_conversation([turn.chat_session_id, turn.canopy_session_id], turn.cli)
     from_states = [Turn.CLAIMED, Turn.RUNNING, Turn.NEEDS_HUMAN]
     if allow_queued:
         from_states.append(Turn.QUEUED)

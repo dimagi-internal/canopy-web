@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_v
 
 from apps.workspaces import links
 
+from . import clis as cli_vocab
 from . import sensitivity, session_sync
 from .models import Turn
 from .runner_requirements import is_sensitive_data_box
@@ -317,6 +318,19 @@ def _enrolled_roots(obj) -> list[str]:
     return cached
 
 
+class RunnerCliOut(Schema):
+    """One agent CLI on a box, as the server reads its report (`clis.reported`)."""
+
+    label: str
+    signed_in: bool
+    # It enforces the current guard and caller-envelope versions for this CLI, so a
+    # caller's (confined) turn may run on it (`clis.confines`).
+    confines: bool
+    version: str = ""
+    # A CLI this server does not know (a newer runner): never routed to.
+    known: bool = True
+
+
 class RunnerOut(Schema):
     id: uuid.UUID
     name: str
@@ -461,6 +475,23 @@ class RunnerOut(Schema):
     # null = every repo. Stamped on the heartbeat reply only; a box filters its
     # session report by it before reading any transcript tail.
     report_projects: list[str] | None = None
+
+    # The agent CLIs the box has, keyed by CLI, as routing reads them: a box that
+    # reports none is Claude Code alone, signed in unless it said otherwise. A map
+    # for the reason `health_checks` is one.
+    agent_clis: dict[str, RunnerCliOut] = {}
+
+    @staticmethod
+    def resolve_agent_clis(obj) -> dict[str, RunnerCliOut]:
+        if not hasattr(obj, "capabilities"):
+            return {}
+        out = {cli: RunnerCliOut(label=cli_vocab.label(cli), signed_in=r.signed_in,
+                                 confines=cli_vocab.confines(r), version=r.version)
+               for cli, r in cli_vocab.reported(obj).items()}
+        for name in (obj.capabilities or {}).get("clis_unknown") or []:
+            out[str(name)] = RunnerCliOut(label=str(name), signed_in=False, confines=False,
+                                          known=False)
+        return out
 
     @staticmethod
     def resolve_private_runner_id(obj) -> uuid.UUID | None:
@@ -936,7 +967,7 @@ class TurnIn(Schema):
     parent: ParentIn | None = None
     # The agent CLI to run it on: one the agent is set up for (`clis.refusal`), or
     # Claude Code for a project turn. Omit for the agent's default.
-    cli: Literal["claude-code", "codex"] | None = None
+    cli: cli_vocab.CliName | None = None
 
     _norm_origin = field_validator("origin")(staticmethod(normalize_origin))
 
@@ -1005,8 +1036,10 @@ class TurnOut(Schema):
     # it into the live session and it finishes when that turn does.
     rides_turn_id: uuid.UUID | None = None
     # The agent CLI the claim chose for it (`harness.clis`): "claude-code" or
-    # "codex"; "" until claimed.
+    # "codex"; "" until claimed (and again if it goes back to the queue).
     cli: str = ""
+    # The agent CLI its starter or schedule asked for; "" = the agent's default.
+    requested_cli: str = ""
     # WHAT created this turn (apps/harness/provenance.py): credential, client,
     # user_agent, request_id, mcp_tool, parent (raw), clicked_by. The client ip
     # is recorded but not served.
@@ -1308,7 +1341,7 @@ class ScheduleIn(Schema):
     notify: list[str] = ["inbox"]
     # The agent CLI its turns run on (one the agent is set up for); "" = the
     # agent's default.
-    cli: Literal["", "claude-code", "codex"] = ""
+    cli: cli_vocab.CliOrDefault = ""
 
     @field_validator("cron")
     @classmethod
@@ -1350,7 +1383,7 @@ class SchedulePatch(Schema):
     grace_minutes: int | None = None
     always_run: bool | None = None
     notify: list[str] | None = None
-    cli: Literal["", "claude-code", "codex"] | None = None
+    cli: cli_vocab.CliOrDefault | None = None
 
     @field_validator("cron")
     @classmethod
@@ -1599,7 +1632,7 @@ class RunnerVaultEntryIn(Schema):
     name: str = Field(default="", max_length=200)
     #: Which agent CLI it is for: a Claude token or API key, or an OpenAI API key for
     #: Codex (Codex has no setup-token).
-    cli: Literal["claude-code", "codex"] = "claude-code"
+    cli: cli_vocab.CliName = "claude-code"
 
 
 class RunnerVaultEntryOut(Schema):

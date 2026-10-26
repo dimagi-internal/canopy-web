@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from ninja.errors import HttpError
 
-from apps.harness import sensitivity
+from apps.harness import clis, sensitivity
 
 from . import services
 from . import send
@@ -93,6 +93,11 @@ def send_from(
         if not spec.http:
             raise
         raise HttpError(422, str(exc)) from None
+    # Held to an agent CLI its agent no longer runs: refused, not queued forever.
+    if (why := clis.conversation_refusal(session)) is not None:
+        if not spec.http:
+            raise ValueError(why)
+        raise HttpError(422, why)
     contact = getattr(initiator, "contact", None)
     if not sensitivity.reads_content(session, chat_surface=chat_surface,
                                      user=None if contact is not None else user, contact=contact):

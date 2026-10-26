@@ -32,6 +32,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from . import clis
 from . import initiator as who
 from .ledger import append_events
 from .models import PrivateRunner, Runner, Turn
@@ -254,6 +255,8 @@ def open_turn(request, agent, *, private_runner: PrivateRunner, claude_session_i
                     **({"acts_as": acts_as} if acts_as else {})},
         claimed_at=now, started_at=now, lease_expires_at=now + LOCAL_LEASE,
         session_key=claude_session_id, enqueued_by=user,
+        # A local session is a person's own Claude Code session (its id is Claude's).
+        cli=clis.CLAUDE_CODE,
         turn_mode=mode, turn_mode_basis=basis[:320],
         **asker.fields(),
     )

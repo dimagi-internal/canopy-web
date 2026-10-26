@@ -808,7 +808,7 @@ def requeue_lost(turn: Turn) -> bool:
         return False
     moved = Turn.objects.filter(pk=turn.pk, status__in=list(EXECUTING)).update(
         status=Turn.QUEUED, attempts=F("attempts") + 1, claimed_by=None, claimed_at=None,
-        lease_expires_at=None, started_at=None)
+        lease_expires_at=None, started_at=None, cli="")
     if not moved:
         return False
     turn.refresh_from_db()
