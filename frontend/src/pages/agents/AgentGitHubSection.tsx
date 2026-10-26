@@ -11,13 +11,13 @@ import { useAuth } from '@/auth/AuthProvider'
 import { GitHubTokenSteps } from '@/components/agents/GitHubTokenSteps'
 import type { CredStatus } from '@/pages/agents/agentCredentials'
 
-// GitHub is a PERSON's identity, lent to this one agent — its owner's, or one of
-// its admins' while the owner has lent none — not a secret of the agent's (its
-// vault) nor of the workspace (the shared vault). The lender makes a fine-grained
-// token on GitHub whose repository selection IS what this agent may touch, pastes
-// it here, and each of the agent's turns is handed it for that turn alone. The
-// server says who may lend (`can_lend`) and whose token is in force
-// (`lent_by_email`). See apps/agents/delegations.py.
+// GitHub is a PERSON's identity, delegated to this one agent — its owner's, or one of
+// its admins' — not an account of the agent's own. The person makes a fine-grained token
+// on GitHub whose repository selection IS what this agent may touch and pastes it here;
+// canopy checks it, then seals it so that only the machines that run the agent can open
+// it (apps/agents/credentials/accounts.py). Nobody can read it in canopy afterwards, the
+// person included: they replace or withdraw it. The server says who may delegate
+// (`can_lend`), whose token is in force (`lent_by_email`) and which machines can open it.
 //
 // canopy cannot mint the token: GitHub has no API that creates a fine-grained
 // token, only a form that accepts pre-filled values. So the button below opens
@@ -62,7 +62,7 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
         ? { label: 'Not set', tone: 'muted' }
         : gh.expired
           ? { label: 'Expired', tone: 'destructive' }
-          : gh.error || failing
+          : gh.error || failing || gh.no_longer_works
             ? { label: 'Not working', tone: 'destructive' }
             : gh.expiring_soon
               ? { label: 'Expires soon', tone: 'warning' }
@@ -86,33 +86,47 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
   if (!gh) return null
   const lentByMe = Boolean(user?.email && gh.lent_by_email && user.email === gh.lent_by_email)
   const failing = (gh.checks ?? []).filter((c) => !c.ok)
-  const tone = !gh.set || gh.expired || gh.error || failing.length ? 'destructive' : gh.expiring_soon ? 'warning' : 'success'
+  const broken = Boolean(gh.error || failing.length || gh.no_longer_works)
+  const tone = !gh.set || gh.expired || broken ? 'destructive' : gh.expiring_soon ? 'warning' : 'success'
+  const machines = gh.machines ?? []
+  const eligible = gh.eligible_machines ?? []
+  const checkedBy = gh.checked_by && gh.checked_by !== 'server' ? gh.checked_by : ''
 
   return (
     <section id="cred-github" className="mb-5 scroll-mt-6" data-testid="agent-github">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        GitHub — a borrowed credential
+        GitHub — a delegated credential
       </h3>
       <p className="mb-2 max-w-2xl text-[11px] text-muted-foreground">
-        Pushes and opens pull requests with a token borrowed from a person&rsquo;s own GitHub
-        account — its owner{gh.owner_email ? <> ({gh.owner_email})</> : null}, or one of its admins
-        when the owner has given none — on the repositories that token allows, in any turn canopy
-        lets run its full profile. A runner gets it for one turn at a time and keeps nothing.
+        Pushes and opens pull requests with a token a person delegated from their own GitHub
+        account — its owner{gh.owner_email ? <> ({gh.owner_email})</> : null} or one of its admins —
+        on the repositories that token allows, in any turn canopy lets run its full profile. Only the
+        machines that run {slug} can open it; nobody can read it in canopy.
       </p>
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-[12px]">
         <div className="flex flex-wrap items-center gap-2" data-testid="github-status">
           <span className={`rounded border px-1.5 py-0.5 text-[11px] ${TONE[tone]}`}>
-            {!gh.set ? 'Not set' : gh.expired ? 'Expired' : gh.error || failing.length ? 'Not working' : gh.expiring_soon ? 'Expires soon' : 'Working'}
+            {!gh.set ? 'Not set' : gh.expired ? 'Expired' : broken ? 'Not working' : gh.expiring_soon ? 'Expires soon' : 'Working'}
           </span>
           {gh.set && (
             <span className="text-foreground-secondary">
               acts as <span className="font-mono">@{gh.login}</span>
-              {gh.lent_by_email ? <> · borrowed from {gh.lent_by_email}&rsquo;s account</> : null}
-              {gh.expires_at ? <> · expires {day(gh.expires_at)}</> : <> · never expires</>}
-              {gh.checked_at ? <> · checked {day(gh.checked_at)}</> : null}
+              {gh.lent_by_email ? <> · delegated by {gh.lent_by_email}</> : null}
+              {gh.expires_at ? (
+                <> · GitHub says it {gh.expired ? 'expired' : 'expires'} {day(gh.expires_at)}</>
+              ) : (
+                <> · GitHub sets no expiry</>
+              )}
+              {gh.checked_at ? (
+                <>
+                  {' '}
+                  · checked {day(gh.checked_at)}
+                  {checkedBy ? <> by {checkedBy}</> : null}
+                </>
+              ) : null}
             </span>
           )}
-          {gh.set && (
+          {gh.set && !gh.in_vault && (
             <button
               type="button"
               disabled={busy}
@@ -134,6 +148,26 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
           </ul>
         )}
         {gh.error && <p className="mt-1 text-destructive">{gh.error}</p>}
+        {gh.no_longer_works && (
+          <p className="mt-1 text-destructive">
+            A machine found this token no longer works — {gh.lent_by_email || 'its person'} replaces it.
+          </p>
+        )}
+        {gh.in_vault && (
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="github-machines">
+            Only these machines can open it: {machines.length ? machines.join(', ') : 'none yet'}
+            {(gh.waiting_machines ?? []).length ? (
+              <> · waiting for one of them to seal it to {(gh.waiting_machines ?? []).join(', ')}</>
+            ) : null}
+            .
+          </p>
+        )}
+        {gh.set && (
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="github-local-use">
+            Someone using {slug} on their own machine does not get this token: there it pushes and
+            opens pull requests as their own GitHub account.
+          </p>
+        )}
         {(gh.identity_for_repos ?? []).length > 0 && (
           <p className="mt-1 text-[11px] text-muted-foreground" data-testid="github-identity-for-repos">
             Agentless turns on{' '}
@@ -175,19 +209,30 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
                   onClick={() => void run(() => deleteAgentGitHub(slug))}
                   className="min-h-11 rounded-md border border-input px-3 py-1 text-[12px] text-foreground disabled:opacity-40 sm:min-h-0"
                 >
-                  Remove
+                  Withdraw
                 </button>
               )}
             </div>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Checked against GitHub before it is saved. Encrypted at rest, never shown again.
+            <p className="mt-1 max-w-2xl text-[11px] text-muted-foreground" data-testid="github-who-can-open">
+              {eligible.length ? (
+                <>
+                  Checked against GitHub, then sealed so only the machines that run {slug} can open it:{' '}
+                  {eligible.join(', ')}. Their owners, who are {slug}&rsquo;s admins, could extract it from
+                  those machines. Nobody can read it in canopy, including you.
+                </>
+              ) : (
+                <>
+                  No machine that runs {slug} can open a delegated token yet: a runner that serves it, owned
+                  by one of its admins, needs an approved device key first.
+                </>
+              )}
             </p>
           </div>
         ) : (
           !gh.set && (
             <p className="mt-2 text-[11px] text-muted-foreground">
               Only the agent&rsquo;s owner{gh.owner_email ? <> ({gh.owner_email})</> : null} or one of its
-              admins can lend it their GitHub identity.
+              admins can delegate their GitHub identity to it.
             </p>
           )
         )}

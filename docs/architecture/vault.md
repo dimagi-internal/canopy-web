@@ -33,6 +33,15 @@ For testing, an agent's own login may hold a personal vault key, so a headless h
 - **What it never receives:** a copy of any vault's key or a value sealed to it — agent, workspace, shared or runner vault, by a person or a keeper (`vault_engine.parse_wraps` / `parse_values`, 403 `not_a_person`, whatever eligibility says) — or an endorsement (`zk_endorse.add`). A login that is not a person never registers a passkey or steps up (`passkeys.stepup.require_a_person`), so it approves no device key or invitation and reaches no step-up route.
 - **Off deletes it:** turning the switch off deletes the key and every conversation-key copy wrapped to it (`login_test_key.disable`).
 
+## Whose account an entry is
+
+Every entry, in an agent's vault (`AgentCredential`) or a workspace vault (`VaultSecret`), says whose account it is (`models.VaultEntryAccount`), read through `credentials/accounts.py`, never the columns:
+
+- **`agent`** — the agent's own (its own login or account). Everything below about the vault's key and its readers is about these.
+- **`delegated`** — a standing credential from a PERSON's own account, given to the agent: `delegated_by` the person, `provider`, `identity` (the external login, never a secret), `provider_expires_at` (what the provider said: information only), and the last `checks` with who ran them (`checked_by`: "server" when it was given, else a machine's name). Shown as "GitHub · delegated by Jonathan Jackson" (`accounts.label`).
+
+A delegated entry is sealed (`zks1`, zk-v1 §6) to the machines that run the agent — `accounts.delegated_devices`: an active device key with an approved ECDH key, on a runner that serves the agent, whose owner is one of its admins (`runner_may_hold_agent`), and that runs turns — and to its person's own vault key, and to nothing else. It is **never under the vault key**: every generic value write refuses its name (409 `delegated_entry`), enable and rotate leave it out of coverage, a member's read (`GET …/vault/zk`) names it in `delegated` and never carries its ciphertext, and the custodial and zero-knowledge `values` of a resolve leave it out. It leaves canopy-web only in a resolve's `delegated` field, to a `runner` read proved by one of those machines (`accounts.resolve_payload`), while its person is still an admin of the agent (`accounts.serves`). A machine that holds it re-seals it for one that is waiting (`accounts.keeper_work`, `accounts.reseal`); a machine that opens it probes it and reports (`POST /api/harness/runners/{id}/delegated-checks`). Its person sees and withdraws it at `/settings` (`GET|DELETE /api/me/delegated-credentials/`); nobody can read it, they included.
+
 ## Who may hold a copy of the vault's key (zero-knowledge)
 
 - **A person** (`zk.eligible_members`): a member of the vault who has a vault key of their own.

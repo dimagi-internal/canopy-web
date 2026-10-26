@@ -2026,11 +2026,16 @@ class TurnAgentTokenOut(Schema):
 
 
 class TurnGitHubTokenOut(Schema):
-    """One turn's GitHub credential: its agent OWNER's token for that agent
-    (`AgentDelegation`), and the identity to commit with. Handed to the runner
-    that claimed the turn, for that turn's environment only."""
+    """One turn's GitHub identity, and where its token is. A token a person delegated to
+    the agent is in the agent's vault, sealed to the machines that run it: `token` is ""
+    and `delegated` names the vault entry the box opens from its own resolve of `agent`.
+    One still held the old way comes in `token`, for that turn's environment only."""
 
-    token: str
+    token: str = ""
+    #: The agent vault entry holding the token (`github-token`), when it is there.
+    delegated: str = ""
+    #: The agent whose vault holds it: the turn's own, or its repo's (`RepoIdentity`).
+    agent: str = ""
     expires_at: dt.datetime | None = None
     github_login: str = ""
     git_name: str = ""

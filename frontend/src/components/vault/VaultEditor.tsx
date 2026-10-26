@@ -29,6 +29,9 @@ export interface VaultEntry {
   readCount?: number | null
   /** Something to say about this row. A warning or destructive flag sorts it to the top. */
   flag?: { label: string; tone: StatusTone }
+  /** Readable by no person (a credential a person delegated to the agent): never
+   * changed or revealed here — only its person replaces it, from where they gave it. */
+  sealed?: boolean
 }
 
 /** How long a revealed value stays on screen. */
@@ -299,7 +302,7 @@ export function VaultEditor({
                 canEdit={canEdit}
                 busy={busy}
                 onChange={() => { close(); setEditing(e.name) }}
-                onReveal={onReveal && e.set ? () => reveal(e.name) : undefined}
+                onReveal={onReveal && e.set && !e.sealed ? () => reveal(e.name) : undefined}
                 onDelete={onDelete && e.set ? () => remove(e.name) : undefined}
               />
             )
@@ -348,9 +351,11 @@ function VaultRow({ entry: e, lastUsed, revealed, canEdit, busy, onChange, onRev
         <TableCell className="text-right">
           {canEdit && (
             <div className="flex justify-end gap-1">
-              <Button size="sm" variant="outline" onClick={onChange} disabled={busy} aria-label={`${e.set ? 'Change' : 'Set'} ${e.name}`}>
-                {e.set ? 'Change' : 'Set'}
-              </Button>
+              {!e.sealed && (
+                <Button size="sm" variant="outline" onClick={onChange} disabled={busy} aria-label={`${e.set ? 'Change' : 'Set'} ${e.name}`}>
+                  {e.set ? 'Change' : 'Set'}
+                </Button>
+              )}
               {onReveal && (
                 <Button
                   size="sm"

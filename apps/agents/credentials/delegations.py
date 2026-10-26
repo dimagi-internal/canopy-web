@@ -31,13 +31,15 @@ import re
 from urllib.parse import urlencode
 
 import requests
+from django.db import transaction
 from django.utils import timezone
 
-from apps.common.encryption import decrypt_secret, encrypt_secret
+from apps.common.encryption import decrypt_secret
 from apps.workspaces import services as wsvc
 
 from ..definition import definition_key
 from ..models import Agent, AgentCredential, AgentDelegation, RepoIdentity
+from . import accounts, zk
 
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 15
@@ -265,36 +267,95 @@ def delegation_for(agent: Agent, service: str = AgentDelegation.GITHUB) -> Agent
     return None
 
 
-def set_github(agent: Agent, user, token: str) -> AgentDelegation:
-    """Store `user`'s GitHub token for `agent`, after proving it works.
+def github_entry(agent: Agent) -> AgentCredential | None:
+    """The GitHub token a person delegated to `agent`, in its vault (`accounts`): sealed
+    to the machines that run the agent, readable by no person. None before one is given
+    (an older `AgentDelegation` row may still serve until it is moved)."""
+    return accounts.delegated_entries(agent).filter(name=accounts.GITHUB_ENTRY,
+                                                    provider="github").first()
 
-    The agent's owner or one of its admins may delegate (`Agent.is_admin`): a
-    delegation from anyone else would never be used (see `delegation_for`), and
-    accepting one would read as if it were. Refused rather than stored when the token cannot open a pull request
-    on the agent's own repo — a token that fails its first check is the most
-    common mistake (wrong resource owner, repo not selected) and the cheapest
-    moment to say so.
-    """
+
+def _legacy_row(agent: Agent) -> AgentDelegation | None:
+    """A GitHub delegation still held the old way (`secret_enc`), until it is moved into
+    the vault (`manage.py move_delegations_to_vault`)."""
+    row = delegation_for(agent)
+    return row if row is not None and row.secret_enc else None
+
+
+def set_github(agent: Agent, user, token: str):
+    """Seal `user`'s GitHub token into `agent`'s vault as a credential delegated by them,
+    after proving it works. Replaces the one delegated now, whoever gave it.
+
+    The agent's owner or one of its admins may delegate (`Agent.is_admin`). Refused rather
+    than stored when the token cannot push to and open a pull request on the agent's own
+    repo — the commonest mistake and the cheapest moment to say so — and (409
+    `no_machine_can_open`) when no machine that runs the agent can open it yet.
+
+    canopy-web sees the token for this request only: it checks it, seals it to the
+    machines that run the agent (and to the person's own vault key), and keeps no copy it
+    can read. Their older `AgentDelegation` rows for the agent are deleted."""
     token = (token or "").strip()
     if not token:
         raise DelegationError("paste the token")
     if not agent.is_admin(user):
         raise DelegationError(
-            f"only {agent.slug}'s owner or an admin can lend it their GitHub identity")
+            f"only {agent.slug}'s owner or an admin can delegate their GitHub identity to it")
     meta = _meta_for(token, agent)
     failed = [c for c in meta["checks"] if not c["ok"]]
     if failed:
         raise DelegationError(f"{failed[0]['repo']}: {failed[0]['detail']}")
-    row, _ = AgentDelegation.objects.update_or_create(
-        user=user, agent=agent, service=AgentDelegation.GITHUB,
-        defaults={"secret_enc": encrypt_secret(token), "meta": meta, "expires_at": _expires(meta)},
-    )
-    return row
+    name = accounts.GITHUB_ENTRY
+    with transaction.atomic():
+        agent = zk._locked(agent)
+        own = AgentCredential.objects.filter(agent=agent, name=name, account="agent").first()
+        if own is not None:
+            raise DelegationError(
+                f"{agent.slug} already holds a credential of its own named {name}: rename or remove "
+                "it first")
+        value_zk, _ = accounts.seal(agent, name, token, user)
+        entry, _ = AgentCredential.objects.update_or_create(
+            agent=agent, name=name,
+            defaults={
+                "value_zk": value_zk, "value_enc": "", "kv": agent.zk_kv, "updated_by": user,
+                "account": "delegated", "delegated_by": user, "delegated_by_agent": None,
+                "provider": "github",
+                "identity": {k: meta.get(k) for k in ("login", "user_id", "name")},
+                "purpose": f"{agent.slug} pushes and opens pull requests"
+                           + (f" on {agent_repo(agent)}" if agent_repo(agent) else ""),
+                "scopes": [c["repo"] for c in meta["checks"]],
+                "provider_expires_at": _expires(meta),
+                "checks": meta["checks"], "checked_at": timezone.now(), "checked_by": "server",
+            })
+        AgentDelegation.objects.filter(agent=agent, service=AgentDelegation.GITHUB).delete()
+    return entry
 
 
-def check_github(agent: Agent) -> AgentDelegation | None:
-    """Re-run the checks on the delegation in force, and record what they found."""
-    row = delegation_for(agent)
+def record_checks(agent: Agent, name: str, *, checks: list, provider_expires_at=None,
+                  error: str = "", by: str) -> AgentCredential | None:
+    """What a machine that opened a delegated credential found when it probed it. canopy-web
+    cannot probe one itself — it cannot open it."""
+    entry = accounts.delegated_entries(agent).filter(name=name).first()
+    if entry is None:
+        return None
+    rows = [{"repo": str(c.get("repo") or "")[:200], "ok": bool(c.get("ok")),
+             "detail": str(c.get("detail") or "")[:300]} for c in (checks or [])[:20]]
+    if error:
+        rows = [{"repo": agent_repo(agent), "ok": False, "detail": str(error)[:300]}]
+    entry.checks, entry.checked_at, entry.checked_by = rows, timezone.now(), by[:120]
+    fields = ["checks", "checked_at", "checked_by", "updated_at"]
+    if provider_expires_at is not None:
+        entry.provider_expires_at = provider_expires_at
+        fields.append("provider_expires_at")
+    entry.save(update_fields=fields)
+    return entry
+
+
+def check_github(agent: Agent):
+    """Re-run the checks on a token still held the old way. One in the vault is checked
+    by the machines that open it (`record_checks`): canopy-web cannot read it."""
+    if github_entry(agent) is not None:
+        return github_entry(agent)
+    row = _legacy_row(agent)
     if row is None:
         return None
     try:
@@ -309,31 +370,74 @@ def check_github(agent: Agent) -> AgentDelegation | None:
 
 
 def clear_github(agent: Agent, user) -> bool:
-    deleted, _ = AgentDelegation.objects.filter(
+    """Withdraw the caller's own GitHub delegation — in the vault or held the old way."""
+    entry = github_entry(agent)
+    deleted = 0
+    if entry is not None and entry.delegated_by_id == user.pk:
+        deleted, _ = AgentCredential.objects.filter(pk=entry.pk).delete()
+    more, _ = AgentDelegation.objects.filter(
         agent=agent, user=user, service=AgentDelegation.GITHUB).delete()
-    return bool(deleted)
+    return bool(deleted or more)
 
 
-def status(agent: Agent) -> dict:
-    """Everything the settings screen shows. Never the token."""
-    row = delegation_for(agent)
+def status(agent: Agent, *, machines: bool = False) -> dict:
+    """Everything the settings screen shows. Never the token. `machines`: also which
+    machines can open it — read for the agent's own GitHub panel only, never by the
+    health checks that ask this of every agent in a tree."""
     owner = agent.owner
     base = {
         "repo": agent_repo(agent),
         "owner_email": owner.email if owner else "",
-        "lent_by_email": row.user.email if row else "",
+        "lent_by_email": "",
         "create_url": create_url(agent),
-        "set": row is not None,
+        "set": False,
         # Repos whose agentless project turns borrow this identity (RepoIdentity).
         "identity_for_repos": list(
             RepoIdentity.objects.filter(agent=agent).values_list("repo_slug", flat=True)),
     }
+    if machines:
+        # Who could open a token given now: said before anyone pastes one.
+        base["eligible_machines"] = sorted({k.runner.name for k in accounts.delegated_devices(agent)})
+    now = timezone.now()
+    entry = github_entry(agent)
+    if entry is not None:
+        about = (accounts.describe(entry, agent) if machines else
+                 {"in_force": accounts.serves(entry, agent), "label": accounts.label(entry, agent),
+                  "delegated_by_email": entry.delegated_by.email if entry.delegated_by_id else "",
+                  "identity": entry.identity or {}, "checks": entry.checks or [],
+                  "machines": [], "waiting": []})
+        failed = next((c for c in about["checks"] if not c.get("ok", True)), None)
+        expires = entry.provider_expires_at
+        return {
+            **base,
+            "set": about["in_force"],
+            "lent_by_email": about["delegated_by_email"],
+            "login": about["identity"].get("login", ""),
+            "name": about["identity"].get("name", ""),
+            "expires_at": expires,
+            "expired": bool(expires and expires <= now),
+            "expiring_soon": bool(expires and now < expires <= now + EXPIRY_WARNING),
+            "checks": about["checks"],
+            "error": ("" if about["in_force"] else
+                      f"{about['delegated_by_email']} is no longer an admin of {agent.slug}, so their "
+                      "token is not used — they or another admin delegate one again"),
+            "checked_at": entry.checked_at.isoformat() if entry.checked_at else None,
+            "checked_by": entry.checked_by,
+            "updated_at": entry.updated_at,
+            "in_vault": True,
+            "account_label": about["label"],
+            "machines": about["machines"],
+            "waiting_machines": about["waiting"],
+            "no_longer_works": bool(failed),
+        }
+    row = delegation_for(agent)
     if row is None:
         return base
     meta = row.meta or {}
-    now = timezone.now()
     return {
         **base,
+        "set": True,
+        "lent_by_email": row.user.email,
         "login": meta.get("login", ""),
         "name": meta.get("name", ""),
         "expires_at": row.expires_at,
@@ -352,18 +456,18 @@ def readiness(agent: Agent) -> tuple[str, str]:
     the runner's health give. Reads the stored checks; never calls GitHub."""
     st = status(agent)
     if not st["set"]:
-        return "fail", (
-            f"neither owner {st['owner_email'] or '(none)'} nor an admin has lent {agent.slug} "
+        return "fail", st.get("error") or (
+            f"neither owner {st['owner_email'] or '(none)'} nor an admin has delegated {agent.slug} "
             f"a GitHub token — /agents/{agent.slug}/settings → Credentials → GitHub")
     if st["expired"]:
-        return "fail", f"token expired {st['expires_at']:%Y-%m-%d}"
+        return "fail", f"GitHub says the token expired {st['expires_at']:%Y-%m-%d} — replace it"
     if st["error"]:
         return "fail", st["error"]
     bad = next((c for c in st["checks"] if not c["ok"]), None)
     if bad:
-        return "fail", f"{bad['repo']}: {bad['detail']}"
+        return "fail", f"{bad['repo']}: {bad['detail']} — this token no longer works; replace it"
     if st["expiring_soon"]:
-        return "warn", f"token expires {st['expires_at']:%Y-%m-%d} — replace it soon"
+        return "warn", f"GitHub says the token expires {st['expires_at']:%Y-%m-%d} — replace it soon"
     return "ok", f"acts as @{st['login']}" + (
         f", can push and open pull requests on {st['repo']}" if st["repo"] else "")
 
@@ -407,10 +511,13 @@ def requested_by(turn) -> str:
 
 
 def github_token_for_turn(turn) -> dict:
-    """The token, and the git identity to commit with, for one turn.
+    """The git identity to commit with for one turn, and where its token is.
 
-    THE ONLY WAY the agent's GitHub token (a borrowed credential) leaves canopy-web: `credentials/resolve`
-    never returns it, so no admin's PAT and no box outside a turn can read it."""
+    A token a person delegated to the agent is in its vault, sealed to the machines that
+    run it: this hands out no token, only `delegated` (the vault entry's name) and
+    `agent` — the box opens the entry from its own resolve. One still held the old way
+    (`AgentDelegation.secret_enc`, until it is moved) is handed over in `token`, as before.
+    `credentials/resolve` never returns either to a person."""
     if turn.capability:
         # A CALLER's turn (confined to a capability of the agent's interface) is
         # never lent the owner's GitHub identity: no published capability needs it,
@@ -423,23 +530,38 @@ def github_token_for_turn(turn) -> dict:
     agent = turn_agent(turn)
     if agent is None:
         raise DelegationError("this turn runs as no agent, so it has no GitHub identity")
-    row = delegation_for(agent)
+    entry = github_entry(agent)
+    if entry is not None:
+        if not accounts.serves(entry, agent):
+            raise DelegationError(
+                f"{entry.delegated_by.email if entry.delegated_by_id else 'its person'} is no longer an "
+                f"admin of {agent.slug}, so the GitHub token they delegated is not used — delegate one "
+                f"at /agents/{agent.slug}/settings → Credentials → GitHub")
+        ident = entry.identity or {}
+        return _issued(turn, agent, token="", login=ident.get("login", ""), user_id=ident.get("user_id", 0),
+                       name=ident.get("name", ""), expires_at=entry.provider_expires_at,
+                       delegated=entry.name)
+    row = _legacy_row(agent)
     if row is None:
         who = agent.owner.email if agent.owner else "nobody (the agent has no owner)"
         raise DelegationError(
-            f"neither {agent.slug}'s owner {who} nor an admin has lent it a GitHub identity — "
+            f"neither {agent.slug}'s owner {who} nor an admin has delegated it a GitHub identity — "
             f"add a token at /agents/{agent.slug}/settings → Credentials → GitHub")
-    if row.expires_at and row.expires_at <= timezone.now():
-        raise DelegationError(
-            f"{agent.slug}'s GitHub token expired {row.expires_at:%Y-%m-%d} — {row.user.email} "
-            f"replaces it at /agents/{agent.slug}/settings → Credentials → GitHub")
     meta = row.meta or {}
-    login, user_id = meta.get("login", ""), meta.get("user_id", 0)
+    return _issued(turn, agent, token=decrypt_secret(row.secret_enc), login=meta.get("login", ""),
+                   user_id=meta.get("user_id", 0), name=meta.get("name", ""), expires_at=row.expires_at,
+                   delegated="")
+
+
+def _issued(turn, agent: Agent, *, token: str, login: str, user_id, name: str, expires_at,
+            delegated: str) -> dict:
     return {
-        "token": decrypt_secret(row.secret_enc),
-        "expires_at": row.expires_at,
+        "token": token,
+        "delegated": delegated,
+        "agent": agent.slug,
+        "expires_at": expires_at,
         "github_login": login,
-        "git_name": meta.get("name") or login,
+        "git_name": name or login,
         # GitHub's noreply address links a commit to the account without
         # publishing anyone's email, and the fine-grained token cannot read the
         # real one anyway.

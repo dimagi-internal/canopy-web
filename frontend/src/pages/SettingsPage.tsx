@@ -11,6 +11,7 @@ import { ContactDetailsPanel } from '@/components/settings/ContactDetailsPanel'
 import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { ActAsYouPanel } from '@/components/settings/ActAsYouPanel'
+import { DelegatedCredentialsPanel } from '@/components/settings/DelegatedCredentialsPanel'
 import { useMemoryVisible } from '@/auth/memoryRollout'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
@@ -124,6 +125,8 @@ export function SettingsPage() {
       <GitHubPanel />
 
       <ConnectedAppsPanel />
+
+      <DelegatedCredentialsPanel />
 
       <ActAsYouPanel />
 

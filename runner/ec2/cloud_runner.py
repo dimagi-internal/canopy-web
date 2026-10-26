@@ -1516,6 +1516,12 @@ _AGENT_VAULT: dict[str, str] = {}
 #: fetched on the same resolve call as its 1Password key and cached with it.
 _AGENT_SF: dict[str, str] = {}
 
+#: Credentials people delegated to each agent (their own account, given for the agent
+#: to use): {slug: {name: plaintext}}. Opened by the canopy CLI with this box's own key
+#: from its resolve (`delegated`), held in memory only, and put into a turn's env only
+#: by `_github_turn_env` — never into an agent's rendered `.env`.
+_AGENT_DELEGATED: dict[str, dict] = {}
+
 
 def _delegated_chrome_sales_home(slug: str) -> pathlib.Path:
     """Where chrome-sales reads Salesforce creds in THIS agent's turns — the same
@@ -3110,7 +3116,7 @@ _TURN_VALUES_LOCK = threading.Lock()
 #: keys, same names as the resolve response). canopy 0.2.736 prints only
 #: {agent, source, values}; until it adds these, a unit's own (proofless) resolve
 #: stands, which a device-bound or zero-knowledge agent refuses.
-RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds")
+RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "salesforce_creds", "delegated")
 #: slug -> why its env could not be had (the turn's failure note says it).
 _TURN_ENV_ERRORS: dict = {}
 
@@ -3184,7 +3190,9 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
     # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
     # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
     # vault), which a unit's own resolve cannot attach.
-    extras = {k: str(doc.get(k) or "") for k in RESOLVE_EXTRAS if k in doc}
+    if isinstance(doc.get("delegated"), dict):
+        _AGENT_DELEGATED[slug] = {str(k): str(v) for k, v in doc["delegated"].items() if v}
+    extras = {k: str(doc.get(k) or "") for k in RESOLVE_EXTRAS if k in doc and k != "delegated"}
     if extras:
         _AGENT_OP[slug] = (now, extras.get("op_sa_token", ""))
         if "op_vault" in extras:
@@ -5700,9 +5708,17 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
         return {"CANOPY_REQUESTED_BY": requested_by}
     turn_id = str(turn["id"])
     status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/github-token")
-    if status == 200 and body and body.get("token"):
+    token = str((body or {}).get("token") or "") if status == 200 else ""
+    if status == 200 and body and not token and body.get("delegated"):
+        # A token a person delegated to the agent: canopy-web hands out no copy, only
+        # which vault entry holds it. This box opens it from its own resolve.
+        token = _delegated_value(str(body.get("agent") or ""), str(body["delegated"]))
+        if token:
+            _probe_delegated_github_soon(str(body.get("agent") or ""), str(body["delegated"]), token,
+                                         str(body.get("repo") or ""))
+    if status == 200 and body and token:
         _log(f"turn {turn_id[:8]}: GitHub as @{body.get('github_login') or '?'}")
-        env = github_env(body["token"], git_name=body.get("git_name") or "",
+        env = github_env(token, git_name=body.get("git_name") or "",
                          git_email=body.get("git_email") or "",
                          requested_by=body.get("requested_by") or requested_by)
         # Which repo the identity is for (`owner/name`, not a secret): an agent this box
@@ -5714,6 +5730,103 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     _log(f"turn {turn_id[:8]}: no GitHub identity (HTTP {status}) — pushes and pull requests "
          f"will fail; the agent's owner lends one at the agent's Settings → Credentials → GitHub")
     return {"CANOPY_REQUESTED_BY": requested_by}
+
+
+def _delegated_value(slug: str, name: str) -> str:
+    """The plaintext of credential `name` a person delegated to `slug`, opened by the
+    canopy CLI from this box's own resolve; "" when this box cannot open it (not sealed to
+    it yet — a machine that holds it re-seals it — or a CLI too old to say)."""
+    if not slug or not name:
+        return ""
+    if name not in _AGENT_DELEGATED.get(slug, {}):
+        _turn_values(slug)
+    value = _AGENT_DELEGATED.get(slug, {}).get(name, "")
+    if not value:
+        _log(f"{slug}: cannot open the delegated credential {name} on this box — it is sealed to the "
+             "machines that run the agent; one that holds it re-seals it for this one "
+             "(`canopy vault zk keep`)")
+    return value
+
+
+#: When each delegated GitHub token was last probed from this box: {(slug, name): epoch}.
+_DELEGATED_PROBED: dict = {}
+#: How often a box re-probes a delegated GitHub token it uses.
+DELEGATED_PROBE_SECONDS = 6 * 3600
+
+
+def _github_probe(token: str, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    """One GitHub API call with `token`: `(status, headers)`. Never raises."""
+    req = urllib.request.Request(f"https://api.github.com{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, dict(resp.headers)
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers or {})
+    except Exception:  # noqa: BLE001 - unreachable GitHub is "could not check", not "broken"
+        return 0, {}
+
+
+def probe_github_token(token: str, repo: str) -> dict:
+    """What canopy-web's own check found, made here (canopy-web cannot open the token):
+    `{checks, error, provider_expires_at}`. The two probes create nothing — a pull request
+    from, and a ref at, things that cannot exist (canopy-web `delegations._PROBE_HEAD`)."""
+    status, headers = _github_probe(token, "GET", "/user")
+    if status == 0:
+        return {}
+    if status == 401:
+        return {"error": "GitHub rejected this token (401) — it is wrong, expired or revoked"}
+    raw = str({k.lower(): v for k, v in headers.items()}.get("github-authentication-token-expiration") or "")
+    expires = None
+    if raw:
+        try:
+            expires = datetime.datetime.strptime(raw.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.timezone.utc).isoformat()
+        except ValueError:
+            expires = None
+    checks = []
+    if repo:
+        head = "canopy-permission-probe/does-not-exist"
+        pr, _ = _github_probe(token, "POST", f"/repos/{repo}/pulls",
+                              {"title": "canopy permission probe", "head": head, "base": "main"})
+        push, _ = _github_probe(token, "POST", f"/repos/{repo}/git/refs",
+                                {"ref": f"refs/heads/{head}", "sha": "0" * 39 + "1"})
+        if pr != 422:
+            checks.append({"repo": repo, "ok": False, "detail": (
+                "the token reaches this repo but lacks Pull requests: Read and write" if pr == 403 else
+                "the token cannot see this repo" if pr == 404 else f"GitHub answered {pr}")})
+        elif push != 422:
+            checks.append({"repo": repo, "ok": False, "detail": "the token cannot push here — it needs "
+                                                                "Contents: Read and write"})
+        else:
+            checks.append({"repo": repo, "ok": True, "detail": "can push and open pull requests"})
+    return {"checks": checks, "provider_expires_at": expires}
+
+
+def _probe_delegated_github_soon(slug: str, name: str, token: str, repo: str) -> None:
+    """Probe a delegated GitHub token this box opened — at most every
+    DELEGATED_PROBE_SECONDS per token, off the turn's thread — and tell canopy-web what it
+    found, which is how its person learns it no longer works."""
+    key = (slug, name)
+    now = time.time()
+    if now - _DELEGATED_PROBED.get(key, 0) < DELEGATED_PROBE_SECONDS:
+        return
+    _DELEGATED_PROBED[key] = now
+
+    def run() -> None:
+        found = probe_github_token(token, repo)
+        if not found:
+            return
+        status, _ = _api("POST", f"/runners/{_RUNNER_ID}/delegated-checks",
+                         {"agent": slug, "name": name, **found})
+        if status != 200:
+            _log(f"warn: could not report {slug}'s {name} probe (HTTP {status})")
+
+    if _RUNNER_ID:
+        threading.Thread(target=run, name=f"probe-{slug}", daemon=True).start()
 
 
 # Where a turn's chat attachments land: outside every checkout, so a screenshot

@@ -186,22 +186,34 @@ def test_the_route_refuses_with_salesforces_reason(hal, eva, owner, sf):
 
 @pytest.fixture
 def runner(owner, hal):
-    r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=owner,
+    r = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=owner, workspace=hal.workspace,
                               last_heartbeat_at=timezone.now(), status=Runner.ONLINE)
     RunnerAssignment.objects.create(agent=hal, runner=r, rank=0)
     return r
 
 
-def _resolve(runner, slug):
+def _resolve(runner, slug, sign=None):
+    from canopy_sdk.jose import make_dpop_proof
+
     from apps.tokens.models import PersonalToken
 
     raw, _ = PersonalToken.create_for_user(user=runner.owner, label="runner")
-    return Client().get(f"/api/agents/{slug}/credentials/resolve", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    url = f"/api/agents/{slug}/credentials/resolve"
+    proof = {"HTTP_DPOP": make_dpop_proof(sign, "GET", f"http://testserver{url}")} if sign else {}
+    return Client().get(url, HTTP_AUTHORIZATION=f"Bearer {raw}", **proof)
 
 
-def test_resolve_carries_the_borrowed_credential(hal, eva, owner, sf, runner):
+def test_resolve_carries_the_borrowed_credential_to_the_box_alone(hal, eva, owner, sf, runner):
+    """Only a box that runs the agent, by its own proof, gets it — never an admin reading
+    by hand (the box's owner included), since it is someone else's account."""
+    from tests.fixtures.machines import a_machine
+
     delegations.set_salesforce(hal, owner, "eva")
     r = _resolve(runner, "hal")
+    assert r.status_code == 200, r.content
+    assert r.json()["salesforce_creds"] == ""
+    _, sign, _ = a_machine(runner, owner)
+    r = _resolve(runner, "hal", sign)
     assert r.status_code == 200, r.content
     assert json.loads(r.json()["salesforce_creds"])["refreshToken"] == "r1"
 

@@ -166,6 +166,9 @@ def parse_values(store: Store, values: list, *, allow_sealed: bool = False) -> d
         SEALED_PREFIX, check_sealed_value, sealed_targets)
 
     sealed_ok = allow_sealed and store.accepts_sealed
+    # A credential a person delegated is sealed to the machines that run the agent and
+    # never written here: under the vault key, every member could read it (`accounts`).
+    delegated = set(store.secrets().filter(account="delegated").values_list("name", flat=True))
     out: dict[str, str] = {}
     for i, v in enumerate(values):
         name = (v.name or "").strip()
@@ -173,6 +176,10 @@ def parse_values(store: Store, values: list, *, allow_sealed: bool = False) -> d
             raise _zk._shape(f"values[{i}]: name is required")
         if name in out:
             raise _zk._shape(f"values[{i}]: {name} appears twice")
+        if name in delegated:
+            raise _zk.ZkError(409, "delegated_entry",
+                              f"values[{i}]: {name} is a credential a person delegated to {store.label}; "
+                              "only they can replace it, and it is never under the vault key")
         if sealed_ok and isinstance(v.value_zk, str) and v.value_zk.startswith(SEALED_PREFIX):
             out[name] = check_sealed_value(v.value_zk, name)
             _refuse_logins_that_are_not_people(
@@ -185,7 +192,9 @@ def parse_values(store: Store, values: list, *, allow_sealed: bool = False) -> d
 def require_coverage(store: Store, names) -> None:
     """Every stored value must be in the body: one left behind would be under a
     retired key (rotate), or custodial plaintext (an agent's enable)."""
-    missing = sorted(set(store.secrets().values_list("name", flat=True)) - set(names))
+    # Not a delegated entry: it is sealed to machines, never under the vault key.
+    missing = sorted(set(store.secrets().exclude(account="delegated").values_list("name", flat=True))
+                     - set(names))
     if missing:
         raise _zk.ZkError(422, "zk_values_incomplete",
                       "every stored credential must be included; missing: " + ", ".join(missing))

@@ -1815,6 +1815,52 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/delegated-credentials/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * The credentials from my own accounts that I delegated to agents
+         * @description Every credential you delegated to an agent: which agent, which provider and
+         *     account, which machines can open it (only those — nobody can read it in canopy,
+         *     you included), what the provider last said, and whether it is in force (you are
+         *     still one of the agent's admins). Never the value.
+         */
+        readonly get: operations["list_my_delegated_credentials"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/delegated-credentials/{credential_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Withdraw a credential I delegated to an agent
+         * @description Delete it from the agent's vault: no turn gets it from the next one on. A turn
+         *     already running keeps it until it ends, and a machine that opened it may have kept a
+         *     copy, so revoke it at the provider too (for GitHub,
+         *     github.com/settings/personal-access-tokens) — the only true recall.
+         */
+        readonly delete: operations["withdraw_my_delegated_credential"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/contact/ws-ticket": {
         readonly parameters: {
             readonly query?: never;
@@ -4670,9 +4716,11 @@ export interface paths {
          *     only when named in `refs` too. `op_vault`, `shared_op_vault` and `mailbox`
          *     are not secrets and are always returned.
          *
-         *     **Never the agent's GitHub token.** That borrowed credential (the token its owner
-         *     or an admin gave it from their own GitHub account) leaves canopy-web only for one turn a runner holds
-         *     (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never from here.
+         *     **Delegated credentials** (a token a person gave the agent from their own
+         *     account, such as its GitHub token) never ride `values`. They come only in
+         *     `delegated`, sealed (`zks1:`) to the machines that run the agent, and only to a
+         *     box that runs it reading with its own device proof — never to an admin or a
+         *     license holder. `salesforce_creds` likewise goes only to such a box.
          *
          *     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
          *     service-account token (`op_sa_token` is ""): its values come from here, so
@@ -5160,21 +5208,25 @@ export interface paths {
          */
         readonly get: operations["get_agent_github"];
         /**
-         * Lend this agent your GitHub identity (owner or admin, write-only)
-         * @description Store the caller's fine-grained GitHub token for this agent — its owner's,
-         *     or an admin's (used while the owner has lent none).
+         * Delegate your GitHub identity to this agent (owner or admin, write-only)
+         * @description Give this agent the caller's fine-grained GitHub token, as a credential delegated
+         *     by them. It replaces the one delegated now.
          *
-         *     Checked before it is stored: GitHub must accept it, and it must be able to
-         *     open a pull request on the agent's own repo. A token that fails is refused
-         *     with the reason, never saved. A browser needs a fresh passkey step-up
-         *     (403 `step_up_required` otherwise); a token may call it.
+         *     Checked first: GitHub must accept it, and it must be able to push to and open a pull
+         *     request on the agent's own repo; a token that fails is refused with the reason. Then
+         *     it is sealed to the machines that run the agent and nothing else: no person can read
+         *     it through canopy, the caller included, and canopy-web keeps no copy it can open.
+         *     409 `no_machine_can_open` when no machine that runs the agent has an approved device
+         *     key yet. A browser needs a fresh passkey step-up (403 `step_up_required`); a token may
+         *     call it.
          */
         readonly put: operations["set_agent_github"];
         readonly post?: never;
         /**
          * Withdraw your GitHub identity from this agent
          * @description Removes the CALLER's own delegation — nobody can withdraw someone
-         *     else's.
+         *     else's. A machine that opened it may have kept a copy: revoking the token at
+         *     GitHub (github.com/settings/personal-access-tokens) is the only true recall.
          */
         readonly delete: operations["delete_agent_github"];
         readonly options?: never;
@@ -5191,7 +5243,12 @@ export interface paths {
         };
         readonly get?: never;
         readonly put?: never;
-        /** Re-check this agent's GitHub token against GitHub */
+        /**
+         * Re-check this agent's GitHub token against GitHub
+         * @description A token held the old way is re-probed now. One delegated into the vault cannot be:
+         *     canopy-web cannot open it, so the machines that run the agent probe it and report
+         *     (`checked_by`), and this returns what they last found.
+         */
         readonly post: operations["check_agent_github"];
         readonly delete?: never;
         readonly options?: never;
@@ -9417,6 +9474,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/{slug}/delegated/{name}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * A keeper re-seals a delegated credential it holds for a machine that was waiting
+         * @description `{value_zk, expect}`: the credential re-sealed to the machines that run the agent.
+         *     Refused unless this box held it and still runs the agent (403 `zk_not_a_holder`), for
+         *     any recipient that is not one of those machines or the person it came from (422), for
+         *     one that drops a machine that held it (422), and when it changed since the box read it
+         *     (409 `zk_value_changed`).
+         */
+        readonly put: operations["put_delegated_reseal"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/vault-keeper/{slug}/wraps": {
         readonly parameters: {
             readonly query?: never;
@@ -9496,6 +9577,30 @@ export interface paths {
          */
         readonly put: operations["put_vault_keeper_workspace_pins"];
         readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/delegated-checks": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A machine reports what it found probing a credential delegated to an agent
+         * @description canopy-web cannot open a credential a person delegated to an agent, so the machines
+         *     that run the agent probe it (for GitHub: may it push to, and open a pull request on,
+         *     the agent's repo) and report here. Recorded on the entry as checked by this machine;
+         *     a failed probe is what tells its person to replace it. Only from a box that runs the
+         *     agent; nothing it reports changes who the entry is sealed to or whose it is.
+         */
+        readonly post: operations["post_delegated_checks"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -18434,6 +18539,78 @@ export interface components {
         readonly PanelGrantOut: {
             readonly grant?: components["schemas"]["HostGrantOut"] | null;
         };
+        /**
+         * MyDelegatedCredentialOut
+         * @description One credential from your own account, delegated to an agent. Never the value.
+         */
+        readonly MyDelegatedCredentialOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent */
+            readonly agent: string;
+            /**
+             * Agent Name
+             * @default
+             */
+            readonly agent_name: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Account
+             * @default delegated
+             */
+            readonly account: string;
+            /** Label */
+            readonly label: string;
+            /**
+             * Provider
+             * @default
+             */
+            readonly provider: string;
+            /** Identity */
+            readonly identity?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Delegated By Email
+             * @default
+             */
+            readonly delegated_by_email: string;
+            /**
+             * Delegated By Agent
+             * @default
+             */
+            readonly delegated_by_agent: string;
+            /**
+             * Purpose
+             * @default
+             */
+            readonly purpose: string;
+            /** Provider Expires At */
+            readonly provider_expires_at?: string | null;
+            /** Checks */
+            readonly checks?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /** Checked At */
+            readonly checked_at?: string | null;
+            /**
+             * Checked By
+             * @default
+             */
+            readonly checked_by: string;
+            /** Machines */
+            readonly machines?: readonly string[];
+            /** Waiting */
+            readonly waiting?: readonly string[];
+            /**
+             * In Force
+             * @default true
+             */
+            readonly in_force: boolean;
+            /** Updated At */
+            readonly updated_at?: string | null;
+        };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
             /** Slug */
@@ -24600,6 +24777,16 @@ export interface components {
              * @default 0
              */
             readonly read_count: number;
+            /**
+             * Account
+             * @default agent
+             */
+            readonly account: string;
+            /**
+             * Account Label
+             * @default
+             */
+            readonly account_label: string;
         };
         /**
          * AgentCredentialsIn
@@ -24716,6 +24903,82 @@ export interface components {
             readonly agent_id: string;
             /** Vaults */
             readonly vaults?: readonly components["schemas"]["ResolveVaultLayerOut"][];
+            /** Delegated */
+            readonly delegated?: {
+                readonly [key: string]: components["schemas"]["DelegatedEntryOut"];
+            };
+            /** Delegated Withheld */
+            readonly delegated_withheld?: readonly components["schemas"]["DelegatedWithheldOut"][];
+        };
+        /**
+         * DelegatedEntryOut
+         * @description One delegated credential, as a runner's resolve hands it out: ciphertext only.
+         */
+        readonly DelegatedEntryOut: {
+            /** Value Zk */
+            readonly value_zk: string;
+            /**
+             * Provider
+             * @default
+             */
+            readonly provider: string;
+            /** Identity */
+            readonly identity?: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Delegated By Email
+             * @default
+             */
+            readonly delegated_by_email: string;
+            /** Waiting */
+            readonly waiting?: readonly components["schemas"]["DelegatedWaitingOut"][];
+        };
+        /**
+         * DelegatedWaitingOut
+         * @description A machine that runs the agent and may hold a delegated credential, but it was not
+         *     sealed to it yet: a machine that holds it re-seals it (`…/vault/delegated/{name}`).
+         */
+        readonly DelegatedWaitingOut: {
+            /**
+             * Kind
+             * @default device
+             */
+            readonly kind: string;
+            /** Target */
+            readonly target: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+        };
+        /**
+         * DelegatedWithheldOut
+         * @description A delegated credential this read does not get, named so the reader uses their own.
+         */
+        readonly DelegatedWithheldOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Provider
+             * @default
+             */
+            readonly provider: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /**
+             * Delegated By Email
+             * @default
+             */
+            readonly delegated_by_email: string;
         };
         /** ResolveVaultLayerOut */
         readonly ResolveVaultLayerOut: {
@@ -24886,6 +25149,11 @@ export interface components {
              * @default []
              */
             readonly sealed: readonly string[];
+            /**
+             * Delegated
+             * @default []
+             */
+            readonly delegated: readonly string[];
             /**
              * @default {
              *       "value": "",
@@ -25455,6 +25723,32 @@ export interface components {
             readonly updated_at?: string | null;
             /** Identity For Repos */
             readonly identity_for_repos?: readonly string[];
+            /**
+             * In Vault
+             * @default false
+             */
+            readonly in_vault: boolean;
+            /**
+             * Account Label
+             * @default
+             */
+            readonly account_label: string;
+            /** Machines */
+            readonly machines?: readonly string[];
+            /** Waiting Machines */
+            readonly waiting_machines?: readonly string[];
+            /** Eligible Machines */
+            readonly eligible_machines?: readonly string[];
+            /**
+             * Checked By
+             * @default
+             */
+            readonly checked_by: string;
+            /**
+             * No Longer Works
+             * @default false
+             */
+            readonly no_longer_works: boolean;
         };
         /** AgentGitHubIn */
         readonly AgentGitHubIn: {
@@ -32452,15 +32746,112 @@ export interface components {
              */
             readonly pins_path: string;
         };
+        /**
+         * VaultKeeperDelegatedOut
+         * @description A credential a person delegated to an agent, sealed to this box, that a machine
+         *     which runs the agent is still waiting for. The box opens it, checks each waiting
+         *     machine's endorsement, and re-seals it to `recipients` (all of them that it keeps).
+         */
+        readonly VaultKeeperDelegatedOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Agent Id */
+            readonly agent_id: string;
+            /** Name */
+            readonly name: string;
+            /** Device Jkt */
+            readonly device_jkt: string;
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Expect */
+            readonly expect: string;
+            /** Recipients */
+            readonly recipients: readonly components["schemas"]["VaultKeeperRecipientOut"][];
+            /** Waiting */
+            readonly waiting: readonly string[];
+            /** Endorsements */
+            readonly endorsements: readonly components["schemas"]["ZkEndorsementOut"][];
+            /** Reseal Path */
+            readonly reseal_path: string;
+        };
         /** VaultKeeperOut */
         readonly VaultKeeperOut: {
             /** Agents */
             readonly agents: readonly components["schemas"]["VaultKeeperAgentOut"][];
+            /** Delegated */
+            readonly delegated?: readonly components["schemas"]["VaultKeeperDelegatedOut"][];
+        };
+        /** VaultKeeperRecipientOut */
+        readonly VaultKeeperRecipientOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Target */
+            readonly target: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+        };
+        /** DelegatedResealOut */
+        readonly DelegatedResealOut: {
+            /** Machines */
+            readonly machines: readonly string[];
+        };
+        /** DelegatedResealIn */
+        readonly DelegatedResealIn: {
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Expect */
+            readonly expect: string;
         };
         /** VaultKeeperGrantOut */
         readonly VaultKeeperGrantOut: {
             /** Granted */
             readonly granted: number;
+        };
+        /** RunnerDelegatedCheckOut */
+        readonly RunnerDelegatedCheckOut: {
+            /** Label */
+            readonly label: string;
+        };
+        /**
+         * RunnerDelegatedCheckIn
+         * @description What a machine found probing a credential delegated to `agent` (vault entry `name`).
+         */
+        readonly RunnerDelegatedCheckIn: {
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /** Checks */
+            readonly checks?: readonly components["schemas"]["RunnerDelegatedCheckRowIn"][];
+            /** Provider Expires At */
+            readonly provider_expires_at?: string | null;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+        };
+        /** RunnerDelegatedCheckRowIn */
+        readonly RunnerDelegatedCheckRowIn: {
+            /**
+             * Repo
+             * @default
+             */
+            readonly repo: string;
+            /** Ok */
+            readonly ok: boolean;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
         };
         /**
          * RunnerProjectRequestOut
@@ -33074,13 +33465,27 @@ export interface components {
         };
         /**
          * TurnGitHubTokenOut
-         * @description One turn's GitHub credential: its agent OWNER's token for that agent
-         *     (`AgentDelegation`), and the identity to commit with. Handed to the runner
-         *     that claimed the turn, for that turn's environment only.
+         * @description One turn's GitHub identity, and where its token is. A token a person delegated to
+         *     the agent is in the agent's vault, sealed to the machines that run it: `token` is ""
+         *     and `delegated` names the vault entry the box opens from its own resolve of `agent`.
+         *     One still held the old way comes in `token`, for that turn's environment only.
          */
         readonly TurnGitHubTokenOut: {
-            /** Token */
+            /**
+             * Token
+             * @default
+             */
             readonly token: string;
+            /**
+             * Delegated
+             * @default
+             */
+            readonly delegated: string;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
             /** Expires At */
             readonly expires_at?: string | null;
             /**
@@ -42260,6 +42665,46 @@ export interface operations {
             readonly header?: never;
             readonly path: {
                 readonly grant_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly list_my_delegated_credentials: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MyDelegatedCredentialOut"][];
+                };
+            };
+        };
+    };
+    readonly withdraw_my_delegated_credential: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly credential_id: number;
             };
             readonly cookie?: never;
         };
@@ -52595,6 +53040,34 @@ export interface operations {
             };
         };
     };
+    readonly put_delegated_reseal: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly slug: string;
+                readonly name: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["DelegatedResealIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["DelegatedResealOut"];
+                };
+            };
+        };
+    };
     readonly post_vault_keeper_wraps: {
         readonly parameters: {
             readonly query?: never;
@@ -52699,6 +53172,32 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["VaultKeeperPinsOut"];
+                };
+            };
+        };
+    };
+    readonly post_delegated_checks: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RunnerDelegatedCheckIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RunnerDelegatedCheckOut"];
                 };
             };
         };

@@ -1192,7 +1192,7 @@ def _editor_with_a_key(fleet, name="ed"):
 
 def test_a_holder_box_is_told_who_waits_and_adds_their_copy(fleet):
     assert _enable(fleet).status_code == 200
-    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": []}  # nobody waiting
+    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": [], "delegated": []}  # nobody waiting
     user, priv = _editor_with_a_key(fleet)
     body = fleet.client.get(_keeper_url(fleet)).json()
     [work] = body["agents"]
@@ -1202,7 +1202,7 @@ def test_a_holder_box_is_told_who_waits_and_adds_their_copy(fleet):
         member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
     assert res.status_code == 200 and res.json() == {"granted": 1}, res.content
     assert AgentVaultWrap.objects.filter(agent=fleet.agent, kind="member", user=user).exists()
-    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": []}
+    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": [], "delegated": []}
 
 
 def test_a_keeper_never_replaces_a_copy(fleet):
@@ -1215,7 +1215,7 @@ def test_a_keeper_never_replaces_a_copy(fleet):
 def test_a_box_with_no_copy_is_no_keeper(fleet):
     assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
     user, priv = _editor_with_a_key(fleet)
-    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": []}
+    assert fleet.client.get(_keeper_url(fleet)).json() == {"agents": [], "delegated": []}
     res = fleet.client.post(_keeper_url(fleet, "/eva/wraps"), data={"kv": 1, "wraps": [
         member_wrap(fleet, user=user, pub=priv.public_key())]}, content_type="application/json")
     assert res.status_code == 403 and res.json()["error"] == "zk_not_a_holder"

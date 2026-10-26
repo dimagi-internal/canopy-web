@@ -114,7 +114,10 @@ export function AgentSecretsPanel({
     updatedBy: r.updated_by_email,
     lastReadAt: r.last_read_at,
     readCount: r.read_count,
-    flag: orphan.has(r.name)
+    sealed: r.account === 'delegated',
+    flag: r.account === 'delegated'
+      ? { label: r.account_label || 'delegated', tone: 'neutral' }
+      : orphan.has(r.name)
       ? { label: 'not declared', tone: 'destructive' }
       : r.set
         ? undefined
