@@ -1917,6 +1917,10 @@ class AgentCredentialStatusOut(StrictModel):
     # often. History: GET …/credentials/{name}/reads.
     last_read_at: dt.datetime | None = None
     read_count: int = 0
+    #: Whose account it is: "agent" (the agent's own) or "delegated" (a person's, which
+    #: only the machines that run the agent can open), and the sentence that says so.
+    account: str = "agent"
+    account_label: str = ""
 
 
 class AgentCredentialReadOut(StrictModel):
@@ -2052,6 +2056,58 @@ class ResolveVaultLayerOut(StrictModel):
     values: dict[str, str] = Field(default_factory=dict)
 
 
+class MyDelegatedCredentialOut(StrictModel):
+    """One credential from your own account, delegated to an agent. Never the value."""
+
+    id: int
+    agent: str
+    agent_name: str = ""
+    name: str
+    account: str = "delegated"
+    #: "GitHub · delegated by Jonathan Jackson · GitHub says it expires 12 Jan 2027".
+    label: str
+    provider: str = ""
+    #: The external account it acts as (`{login, user_id, name}` for GitHub).
+    identity: dict[str, Any] = Field(default_factory=dict)
+    delegated_by_email: str = ""
+    delegated_by_agent: str = ""
+    purpose: str = ""
+    #: What the provider said about expiry: information only, canopy sets none.
+    provider_expires_at: dt.datetime | None = None
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    checked_at: dt.datetime | None = None
+    #: "server" (when it was given) or the name of the machine that probed it.
+    checked_by: str = ""
+    #: The only machines that can open it; their owners are the agent's admins.
+    machines: list[str] = Field(default_factory=list)
+    #: Machines that run the agent and wait for one that holds it to seal it to them.
+    waiting: list[str] = Field(default_factory=list)
+    #: You are still one of the agent's admins, so turns use it.
+    in_force: bool = True
+    updated_at: dt.datetime | None = None
+
+
+class DelegatedWaitingOut(StrictModel):
+    """A machine that runs the agent and may hold a delegated credential, but it was not
+    sealed to it yet: a machine that holds it re-seals it (`…/vault/delegated/{name}`)."""
+
+    kind: str = "device"
+    #: The machine's ECDH key thumbprint (the zks1 target).
+    target: str
+    public_jwk: dict[str, Any]
+    runner_name: str = ""
+
+
+class DelegatedEntryOut(StrictModel):
+    """One delegated credential, as a runner's resolve hands it out: ciphertext only."""
+
+    value_zk: str
+    provider: str = ""
+    identity: dict[str, Any] = Field(default_factory=dict)
+    delegated_by_email: str = ""
+    waiting: list[DelegatedWaitingOut] = Field(default_factory=list)
+
+
 class AgentCredentialsResolveOut(StrictModel):
     """PLAINTEXT, for a runner. The one route that returns values.
 
@@ -2080,12 +2136,11 @@ class AgentCredentialsResolveOut(StrictModel):
     # them, and the box then behaves exactly as it does today.
     shared_op_vault: str = ""
     shared_op_sa_token: str = ""
-    # No GitHub token: the agent's (a borrowed credential, `AgentDelegation`) leaves
-    # canopy-web only for ONE turn a runner holds
-    # (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never here.
+    # No GitHub token here: a token a person delegated is in `delegated` below, sealed
+    # to the machines that run the agent.
     # The chrome-sales `.sf-creds.json` this agent BORROWS (an `AgentDelegation`
     # of service salesforce: the lender's own credential, resolved now, not a
-    # copy). "" when it borrows none. The box writes it to
+    # copy). "" when it borrows none, and for every read but a box's that runs it. The box writes it to
     # ~/.canopy/delegated/<slug>/chrome-sales/.sf-creds.json, the only place
     # chrome-sales reads Salesforce creds in an agent session.
     salesforce_creds: str = ""
@@ -2119,6 +2174,11 @@ class AgentCredentialsResolveOut(StrictModel):
     #: device's copy of the key — or `wrap: null` and no values when this device may
     #: not open it. Only with a device proof.
     vaults: list[ResolveVaultLayerOut] = Field(default_factory=list)
+    #: Credentials people delegated to the agent (their own account, given for the
+    #: agent to use), each sealed (`zks1:`) to the machines that run the agent and
+    #: opened with this device's own key. Only to a box that runs the agent, reading
+    #: with its own proof; never to an admin or a license holder.
+    delegated: dict[str, DelegatedEntryOut] = Field(default_factory=dict)
 
 
 class ZkWrapMissingOut(StrictModel):
@@ -2360,8 +2420,72 @@ class VaultKeeperAgentOut(StrictModel):
     pins_path: str = ""
 
 
+class VaultKeeperRecipientOut(StrictModel):
+    kind: str
+    target: str
+    public_jwk: dict[str, Any]
+    runner_name: str = ""
+
+
+class VaultKeeperDelegatedOut(StrictModel):
+    """A credential a person delegated to an agent, sealed to this box, that a machine
+    which runs the agent is still waiting for. The box opens it, checks each waiting
+    machine's endorsement, and re-seals it to `recipients` (all of them that it keeps)."""
+
+    agent: str
+    agent_id: str
+    name: str
+    #: This box's key the value is sealed to.
+    device_jkt: str
+    value_zk: str
+    #: The digest of `value_zk`, to send back as `expect`.
+    expect: str
+    #: Everyone it may be sealed to now (the machines that run the agent, and its person).
+    recipients: list[VaultKeeperRecipientOut]
+    #: The targets (ECDH thumbprints) of the machines still waiting.
+    waiting: list[str]
+    endorsements: list[ZkEndorsementOut]
+    reseal_path: str
+
+
 class VaultKeeperOut(StrictModel):
     agents: list[VaultKeeperAgentOut]
+    delegated: list[VaultKeeperDelegatedOut] = Field(default_factory=list)
+
+
+class RunnerDelegatedCheckRowIn(StrictModel):
+    repo: str = ""
+    ok: bool
+    detail: str = ""
+
+
+class RunnerDelegatedCheckIn(StrictModel):
+    """What a machine found probing a credential delegated to `agent` (vault entry `name`)."""
+
+    agent: str
+    name: str
+    checks: list[RunnerDelegatedCheckRowIn] = Field(default_factory=list)
+    #: What the provider said about the token's expiry (GitHub's header), if anything.
+    provider_expires_at: dt.datetime | None = None
+    #: The provider refused it outright (GitHub 401): it no longer works.
+    error: str = ""
+
+
+class RunnerDelegatedCheckOut(StrictModel):
+    #: The entry's sentence after the report ("… no longer works — replace it").
+    label: str
+
+
+class DelegatedResealIn(StrictModel):
+    #: The value re-sealed (`zks1:`) to the machines that run the agent.
+    value_zk: str
+    #: `expect` from the keeper's work: the digest of the value this box opened.
+    expect: str
+
+
+class DelegatedResealOut(StrictModel):
+    #: The machines that can open it now.
+    machines: list[str]
 
 
 class VaultKeeperGrantOut(StrictModel):
@@ -2384,6 +2508,9 @@ class ZkStateOut(StrictModel):
     #: waiting for a vault-key holder to settle them into `zk1`. kv 0 = the
     #: agent is zero-knowledge from birth and has no vault key yet.
     sealed: list[str] = []
+    #: Names of credentials a person delegated to the agent: sealed to the machines that
+    #: run it, never under the vault key, so no member reads, settles or rotates them.
+    delegated: list[str] = []
     #: The keepers' record (`~keeper-pins` under the vault key): a browser that grants
     #: someone records the key it granted to, so keepers trust it from then on.
     pins: VaultKeeperPinsOut = VaultKeeperPinsOut()
@@ -2583,7 +2710,7 @@ class AgentSalesforceOut(StrictModel):
     set: bool = False
     owner_email: str = ""
     lender: str = ""
-    #: The Salesforce user the borrowed credential acts as, from the last probe.
+    #: The Salesforce user the lent credential acts as, from the last probe.
     username: str = ""
     error: str = ""
     checked_at: datetime | None = None
@@ -2609,8 +2736,7 @@ class AgentGitHubOut(StrictModel):
     #: `owner/repo`, parsed from the agent's repo URL; "" when it is not GitHub.
     repo: str = ""
     owner_email: str = ""
-    #: Whose delegation is in force: the owner's, or an admin's when the owner
-    #: has lent none (`delegations.delegation_for`). "" when none is.
+    #: Who delegated the token in force. "" when none is.
     lent_by_email: str = ""
     #: Whether the CALLER may lend this agent a token — its owner or an admin.
     can_lend: bool = False
@@ -2632,6 +2758,21 @@ class AgentGitHubOut(StrictModel):
     #: this agent's GitHub identity — its `RepoIdentity` rows. Read-only here;
     #: set in Django admin.
     identity_for_repos: list[str] = Field(default_factory=list)
+    #: The token is a credential delegated to the agent, in its vault: sealed to the
+    #: machines that run it and readable by no person (false: still held the old way).
+    in_vault: bool = False
+    #: "GitHub · delegated by Jonathan Jackson · GitHub says it expires 12 Jan 2027".
+    account_label: str = ""
+    #: The machines that can open it, and the ones that run the agent but wait for a
+    #: machine that holds it to seal it to them.
+    machines: list[str] = Field(default_factory=list)
+    waiting_machines: list[str] = Field(default_factory=list)
+    #: The machines a token given now would be sealed to: those that run the agent.
+    eligible_machines: list[str] = Field(default_factory=list)
+    #: Who ran the last check: "server" (when it was given) or a machine's name.
+    checked_by: str = ""
+    #: A machine's probe failed: the token no longer works, and its person replaces it.
+    no_longer_works: bool = False
 
 
 # ---- A2A Agent Card (apps/agents/agent_card.py) ----

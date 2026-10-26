@@ -261,6 +261,7 @@ from apps.host_grants.api import needs_router as site_needs_router  # noqa: E402
 from apps.host_grants.api import sites_router  # noqa: E402
 from apps.host_grants.grants_api import contact_grant_router, embed_grant_router  # noqa: E402
 from apps.host_grants.grants_api import me_router as host_grants_me_router  # noqa: E402
+from apps.agents.api_delegated import me_router as delegated_me_router  # noqa: E402
 from apps.embedding.embed_api import embed_router
 from apps.events.api import router as events_router  # noqa: E402
 from apps.feedback.api import router as feedback_router  # noqa: E402
@@ -329,6 +330,7 @@ api.add_router("", beta_requests_router)
 api.add_router("/embed", embed_router)
 api.add_router("/embed", embed_grant_router)  # the panel's "can read as you · Stop"
 api.add_router("", host_grants_me_router)  # /api/me/host-grants/
+api.add_router("", delegated_me_router)  # /api/me/delegated-credentials/
 # The contact surface. `/api/contact/` is the ONLY prefix a contact token can
 # reach — see apps/contacts/contact_api.py and the allowlist in
 # apps/common/middleware.py. `/api/auth/contact-token` mints one and is

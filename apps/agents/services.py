@@ -1670,6 +1670,9 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
         raise ValueError(f"blank value for: {', '.join(blank)}")
 
     by = user if getattr(user, "is_authenticated", False) else None
+    from .credentials import accounts  # cycle: credentials.accounts -> services  # noqa: PLC0415
+
+    accounts.refuse_delegated_names(agent, values)
     if agent.zk_enabled:
         from django.db import transaction
 
@@ -1724,7 +1727,10 @@ def agent_credential_status(agent) -> list[dict]:
 
     from django.db.models import Count, Max
 
-    stored = {c.name: c for c in AgentCredential.objects.filter(agent=agent).select_related("updated_by")}
+    from .credentials import accounts  # cycle: credentials.accounts -> services  # noqa: PLC0415
+
+    stored = {c.name: c for c in AgentCredential.objects.filter(agent=agent)
+              .select_related("updated_by", "delegated_by", "delegated_by_agent")}
     declared = [str(n) for n in (agent.runtime_secrets or []) if str(n).strip()]
     reads = {
         r["name"]: r for r in AgentCredentialRead.objects.filter(agent=agent)
@@ -1745,6 +1751,8 @@ def agent_credential_status(agent) -> list[dict]:
             "updated_by_email": (cred.updated_by.email if cred and cred.updated_by_id else None),
             "last_read_at": read.get("last"),
             "read_count": read.get("n", 0),
+            "account": cred.account if cred else "agent",
+            "account_label": accounts.label(cred, agent) if cred else "",
         })
     return rows
 
@@ -1797,7 +1805,7 @@ def resolve_agent_credentials(agent, refs: set[str] | None = None) -> dict[str, 
     caller names but the agent does not declare is never handed out, so a scoped
     caller cannot widen its read by guessing names."""
 
-    qs = AgentCredential.objects.filter(agent=agent).select_related("agent")
+    qs = AgentCredential.objects.filter(agent=agent).exclude(account="delegated").select_related("agent")
     if refs is not None:
         qs = qs.filter(name__in=sorted(set(refs) & declared_credential_names(agent)))
     # A zero-knowledge agent never reaches here (resolve branches to zk.py);
@@ -1831,8 +1839,9 @@ def reveal_agent_credential(agent, name: str, *, user) -> str | None:
     cred = AgentCredential.objects.filter(agent=agent, name=name).select_related("agent").first()
     if cred is None:
         return None
-    if cred.is_zk:
-        # Nothing to show: canopy-web holds only ciphertext (canopy-web#1550).
+    if cred.is_zk or cred.account == cred.DELEGATED:
+        # Nothing to show: canopy-web holds only ciphertext (canopy-web#1550), and a
+        # delegated credential is readable by no person at all (`accounts`).
 
         raise ZeroKnowledgeValue(f"{name} is a zero-knowledge value; canopy-web cannot reveal it")
 

@@ -193,7 +193,7 @@ def devices_waiting(agent, keys) -> set:
         return set()
     if agent.zk_kv == 0:
         stored = [sealed_targets(v) for v in AgentCredential.objects.filter(agent=agent)
-                  .exclude(value_zk="").values_list("value_zk", flat=True)]
+                  .exclude(value_zk="").exclude(account="delegated").values_list("value_zk", flat=True)]
         return {k.pk for k in keys if any(("device", k.ecdh_jkt) not in t for t in stored)}
     wrapped = set(AgentVaultWrap.objects.filter(agent=agent, kv=agent.zk_kv, kind="device",
                                                 device_key__in=keys).values_list("device_key_id", flat=True))
@@ -341,11 +341,15 @@ def state(agent, *, include_values: bool = False) -> dict:
         # Server-minted values sealed to recipients (`zks1`), waiting for a
         # vault-key holder to re-encrypt them as `zk1` — names only.
         "sealed": sorted(AgentCredential.objects.filter(agent=agent, value_zk__startswith="zks1:")
-                         .values_list("name", flat=True)),
+                         .exclude(account="delegated").values_list("name", flat=True)),
+        # Credentials a person delegated: names only, never ciphertext — no member may
+        # read one, and none is under the vault key to settle or rotate (`accounts`).
+        "delegated": sorted(AgentCredential.objects.filter(agent=agent, account="delegated")
+                            .values_list("name", flat=True)),
     }
     if include_values:
         out["values"] = {c.name: c.value_zk for c in AgentCredential.objects.filter(agent=agent)
-                         if c.is_zk}
+                         .exclude(account="delegated") if c.is_zk}
     return out
 
 
@@ -361,7 +365,9 @@ def resolve_payload(agent, device_key, wanted: set[str] | None) -> tuple[dict, d
     like a custodial resolve) and that device's wrap at the current kv, or None
     when it has none."""
 
-    qs = AgentCredential.objects.filter(agent=agent).exclude(value_zk="")
+    # A delegated entry never rides `values`: it goes only to a machine that runs the
+    # agent, in the resolve's own `delegated` field (`accounts.resolve_payload`).
+    qs = AgentCredential.objects.filter(agent=agent).exclude(value_zk="").exclude(account="delegated")
     if wanted is not None:
         qs = qs.filter(name__in=sorted(set(wanted) & services.declared_credential_names(agent)))
     values = {c.name: c.value_zk for c in qs}

@@ -137,4 +137,16 @@ describe('VaultEditor', () => {
     expect(screen.queryByRole('button', { name: /^(Change|Set) / })).toBeNull()
     expect(screen.queryByTestId('reveal-OCS_API_TOKEN')).toBeNull()
   })
+
+  it('never offers to change or reveal a credential a person delegated to the agent', () => {
+    const delegated: VaultEntry = {
+      name: 'github-token', set: true, sealed: true,
+      flag: { label: 'GitHub · delegated by Jonathan Jackson', tone: 'neutral' },
+    }
+    render(<VaultEditor entries={[delegated]} canEdit onSave={vi.fn()} onReveal={vi.fn()} onDelete={vi.fn()} />)
+    const row = screen.getByTestId('vault-row-github-token')
+    expect(row.textContent).toContain('delegated by Jonathan Jackson')
+    expect(within(row).queryByRole('button', { name: 'Change github-token' })).toBeNull()
+    expect(within(row).queryByTestId('reveal-github-token')).toBeNull()
+  })
 })

@@ -493,7 +493,75 @@ class ZeroKnowledgeValue(ValueError):
     """A custodial path asked for the plaintext of a zero-knowledge value."""
 
 
-class AgentCredential(models.Model):
+class VaultEntryAccount(models.Model):
+    """Whose account a vault entry is, as clear columns beside its ciphertext — the same
+    fields on an agent vault's entries (`AgentCredential`) and a workspace vault's
+    (`VaultSecret`). Read through `credentials.accounts`, never the columns directly.
+
+    - `agent`: the agent's own credential (its own login or account). Most entries.
+    - `delegated`: a standing credential from a PERSON's own account, which they gave
+      the agent to use (Jonathan's GitHub token for ACE). Sealed so that only the
+      machines that run the agent can open it (`accounts.delegated_devices`), never
+      under the vault key, and readable by no person through canopy: not the agent's
+      admins, not even the person it came from (they replace or withdraw it).
+      canopy gives it no expiry of its own; `provider_expires_at` is what the provider
+      said, shown as information.
+
+    Spec: docs/superpowers/specs/2026-10-26-delegated-credentials-in-the-vault-design.md
+    """
+
+    AGENT = "agent"
+    DELEGATED = "delegated"
+    ACCOUNT_CHOICES = [(AGENT, "The agent's own"), (DELEGATED, "Delegated by a person")]
+    PROVIDERS = ("github", "salesforce", "anthropic", "other")
+
+    account = models.CharField(max_length=16, choices=ACCOUNT_CHOICES, default=AGENT)
+    #: The person whose account it is. Required when delegated.
+    delegated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True,
+                                     blank=True, related_name="+")
+    #: When the account is an AGENT's own and another agent uses it (Eva's Salesforce
+    #: user, used by Echo): that agent. To it the entry is its own.
+    delegated_by_agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, null=True,
+                                           blank=True, related_name="+")
+    #: How a box injects and probes it: github / salesforce / anthropic / other.
+    provider = models.CharField(max_length=32, blank=True, default="")
+    #: The external login, never a secret: `{login, user_id, name}` for GitHub.
+    identity = models.JSONField(default=dict, blank=True)
+    #: One line, shown everywhere ("ACE opens PRs on ace-web").
+    purpose = models.CharField(max_length=200, blank=True, default="")
+    #: What it reaches, as declared. Shown, not enforced: the provider enforces it.
+    scopes = models.JSONField(default=list, blank=True)
+    #: What the provider reported at a check. Information only: canopy never expires or
+    #: refuses an entry on a date of its own.
+    provider_expires_at = models.DateTimeField(null=True, blank=True)
+    #: The last probe (`[{repo, ok, detail}]` for GitHub), when, and who ran it:
+    #: "server" (when it was given), or the name of the machine that ran it.
+    checks = models.JSONField(default=list, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+    checked_by = models.CharField(max_length=120, blank=True, default="")
+
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def account_constraints(cls, prefix: str) -> list:
+        """A delegated entry names its person and provider; the agent's own names neither."""
+        delegated = models.Q(account=cls.DELEGATED)
+        return [
+            models.CheckConstraint(
+                condition=models.Q(account__in=[cls.AGENT, cls.DELEGATED]),
+                name=f"{prefix}_account_kind"),
+            models.CheckConstraint(
+                condition=~delegated | (models.Q(delegated_by__isnull=False) & ~models.Q(provider="")),
+                name=f"{prefix}_delegated_names_its_person"),
+            models.CheckConstraint(
+                condition=delegated | (models.Q(delegated_by__isnull=True)
+                                       & models.Q(delegated_by_agent__isnull=True)),
+                name=f"{prefix}_own_names_no_person"),
+        ]
+
+
+class AgentCredential(VaultEntryAccount):
     """One named secret for one agent, encrypted at rest.
 
     Spec: docs/superpowers/specs/2026-09-05-agent-credentials-design.md
@@ -539,7 +607,8 @@ class AgentCredential(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["agent", "name"], name="one_value_per_agent_secret"
-            )
+            ),
+            *VaultEntryAccount.account_constraints("agentcred"),
         ]
 
     def __str__(self) -> str:
@@ -808,7 +877,7 @@ class Vault(models.Model):
         return f"{self.kind}:{self.name}"
 
 
-class VaultSecret(models.Model):
+class VaultSecret(VaultEntryAccount):
     """One value in a WORKSPACE vault: `zk1:` ciphertext under the vault's key, never
     anything canopy-web can read (formats: docs/vault/zk-v1/zk_v1_reference.py, bound to
     `credentials.workspace_vaults.binding_id`)."""
@@ -823,7 +892,8 @@ class VaultSecret(models.Model):
 
     class Meta:
         ordering = ["vault_id", "name"]
-        constraints = [models.UniqueConstraint(fields=["vault", "name"], name="one_vault_secret_per_name")]
+        constraints = [models.UniqueConstraint(fields=["vault", "name"], name="one_vault_secret_per_name"),
+                       *VaultEntryAccount.account_constraints("vaultsecret")]
 
     def __str__(self) -> str:
         return f"{self.vault_id}:{self.name}"

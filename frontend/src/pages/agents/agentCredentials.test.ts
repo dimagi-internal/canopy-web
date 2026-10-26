@@ -14,6 +14,8 @@ const row = (over: Partial<CredRow>): CredRow => ({
   updated_at: null,
   updated_by_email: null,
   read_count: 0,
+  account: 'agent',
+  account_label: '',
   ...over,
 })
 

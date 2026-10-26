@@ -22,21 +22,26 @@ predicate for "may this person make this agent do X" — ask `decide`.
 
 ## Whose authority an agent acts with
 
-**An agent acts as itself — with its own credentials or ones it borrowed — or as you
-only under an act-as-you permission you granted.** Three kinds, one meaning each:
+**An agent acts as itself — with its own credentials or ones a person delegated to it —
+or as you only under an act-as-you permission you granted.** Three kinds, one meaning each:
 
 * **Its own credential** — the agent's own login (`Agent.user`, e.g.
-  `ace@dimagi-ai.com`) and the secrets in its own vault. A runner turn signs in with a
-  login issued for that turn (`TurnAgentToken`); a stored login expires like any PAT
-  (`PAT_DEFAULT_TTL_DAYS`, 180 days) and rotation replaces it first
+  `ace@dimagi-ai.com`) and the secrets in its own vault (`account: "agent"`). A runner
+  turn signs in with a login issued for that turn (`TurnAgentToken`); a stored login
+  expires like any PAT (`PAT_DEFAULT_TTL_DAYS`, 180 days) and rotation replaces it first
   (`pat_rotation.max_days`).
-* **A borrowed credential** — a standing credential from a person's own account given
-  to the agent (`AgentDelegation`: its owner's or an admin's GitHub token, shown as
-  "GitHub · borrowed from <name>'s account"). It is the agent's to use in any turn
-  `decide` lets run in the full profile (never a caller's confined turn), and it leaves
-  canopy-web only for ONE turn a runner holds
-  (`POST /api/harness/runners/{rid}/turns/{tid}/github-token`) — never from
-  `credentials/resolve`, not to an admin's PAT, not to a box outside a turn.
+* **A delegated credential** — a standing credential from a person's own account given
+  to the agent: its owner's or an admin's GitHub token, shown as "GitHub · delegated by
+  <name>". It is a vault entry with `account: "delegated"` and `delegated_by`
+  (`models.VaultEntryAccount`, read through `credentials/accounts.py`), sealed (`zks1`)
+  to the machines that run the agent — a runner serving it whose owner is one of its
+  admins (`accounts.delegated_devices`) — and to nothing else: never under the vault key,
+  so no member, admin or license holder reads it, nor canopy-web, nor the person it came
+  from (they replace or withdraw it, `/settings`). It is the agent's to use in any turn
+  `decide` lets run in the full profile (never a caller's confined turn); a box gets it
+  only in its own resolve's `delegated` field, proved by its device key. canopy gives it
+  no expiry: the provider's own is shown as information. → `vault.md` § Whose account
+  an entry is
 * **An act-as-you permission** — time-limited, granted by the person asking, in the
   moment (a page's host grant; an agent working in their own turn, below).
   Nothing else lets an agent act as a person. In particular:
@@ -682,7 +687,7 @@ tool; and beside every delivered prompt — the runner leaves
   Expired, long-finished, or a conversation whose current turn is not confined → it
   authenticates nothing; `who_is_asking` answers only about its own conversation.
 * **A confined turn holds no credentials it does not need.** canopy refuses it
-  the agent's borrowed GitHub token (`agents.credentials.delegations.github_token_for_turn` → 409).
+  the GitHub token delegated to the agent (`agents.credentials.delegations.github_token_for_turn` → 409).
   The cloud runner builds its env from an allowlist (`_confined_env` in
   `runner/ec2/cloud_runner.py`: Claude's login, locale/paths/TLS, which agent and
   turn) — no `CANOPY_TOKEN`, no agent `.env`, no 1Password key (it never calls

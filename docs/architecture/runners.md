@@ -780,32 +780,42 @@ Specs: `docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md`,
 
 ## The GitHub identity a turn gets
 
-**An agent acts on GitHub with a borrowed credential — its OWNER's token (or, while the
-owner has given none, one of its ADMINS') — never a box credential, and it reaches a box
-only for one turn.** Boxes hold no GitHub token. `AgentDelegation` (person, agent,
-service) is the third credential kind beside the agent's own vault and the
-workspace's shared vault: a person lending their identity to one agent
-(`apps/agents/credentials/delegations.py`).
+**An agent acts on GitHub with a delegated credential — a token its OWNER or one of its
+ADMINS gave it from their own account — never a box credential.** Boxes hold no GitHub
+token of their own. The token is a vault entry of the agent's (`github-token`,
+`account: "delegated"`), sealed only to the machines that run the agent
+(`apps/agents/credentials/accounts.py`, `delegations.py`; spec
+`2026-10-26-delegated-credentials-in-the-vault-design.md`).
 
 - The owner or an admin pastes a fine-grained PAT on the agent's Settings → Credentials →
-  GitHub (canopy pre-fills GitHub's creation form, `delegations.create_url`; GitHub
-  has no API to mint one). Its repository selection IS the agent's scope. The
-  agent's owner or an admin (`Agent.is_admin`) may set it, and it is refused unless it can push and open a pull
-  request on the agent's repo (`check_repo`: probes that GitHub answers 422 for a
-  branch/commit that cannot exist, 403/404 for no permission — nothing is created).
-- In force (`delegation_for`): the owner's, while they are a member of its
-  workspace; else the most recently saved one whose person is still an admin. The
-  owner's always wins. Salesforce delegations stay owner-only.
-- Issued per turn by `POST /api/harness/runners/{rid}/turns/{tid}/github-token`:
-  only for a turn that runner is executing, re-checking `runner_may_hold_agent`;
-  the principal is resolved server-side (`delegations.turn_agent`); **409 with the
-  reason and no shared fallback** when absent or expired; always refused for a
-  confined (caller) turn. Returns the token, the lender's git identity (noreply
-  email) and `requested_by` for a `Requested-by:` trailer — the caller is recorded,
-  never the principal. Stopping bad writes is the agent's own gating, not the token
-  layer's. Each issue is an `agent.github.issued` event. **This is the only door**:
-  `credentials/resolve` never returns it (no `github_token` field), to an admin's PAT
-  or to a box outside a turn.
+  GitHub (canopy pre-fills GitHub's creation form, `delegations.create_url`; GitHub has
+  no API to mint one). Its repository selection IS the agent's scope. It is refused
+  unless it can push and open a pull request on the agent's repo (`check_repo`: probes
+  that GitHub answers 422 for a branch/commit that cannot exist, 403/404 for no
+  permission — nothing is created), and (409 `no_machine_can_open`) while no machine
+  that runs the agent has an approved device key. Then canopy-web seals it to those
+  machines (and to the person's own vault key) and keeps nothing it can read. Giving one
+  replaces the one in force.
+- In force (`accounts.serves`): while its person is one of the agent's admins (the owner
+  counts; `is_admin` fails closed on someone who left the workspace). Never on a date:
+  GitHub's own expiry is shown, and GitHub refuses it.
+- Per turn, `POST /api/harness/runners/{rid}/turns/{tid}/github-token`: only for a turn
+  that runner is executing, re-checking `runner_may_hold_agent`; the principal is
+  resolved server-side (`delegations.turn_agent`); **409 with the reason and no shared
+  fallback** when absent or no longer in force; always refused for a confined (caller)
+  turn. It returns the git identity (noreply email), `requested_by` for a
+  `Requested-by:` trailer, and `delegated: "github-token"` with the `agent` whose vault
+  holds it — no token. The cloud runner opens it from its OWN resolve of that agent
+  (`delegated` field, opened by the canopy CLI with the box's key;
+  `cloud_runner._delegated_value`). A token still held the old way (`AgentDelegation`,
+  until `manage.py move_delegations_to_vault --apply`) comes in `token`, as before.
+- **Checked by the boxes.** canopy-web cannot open it, so a box that does probes it at
+  most every six hours (`cloud_runner.probe_github_token`) and reports
+  `POST /api/harness/runners/{rid}/delegated-checks`; a failed probe turns `github.<slug>`
+  red with "replace it". `github-readiness` reads what the boxes found.
+- **A new machine** gets it from one that holds it: the keeper (`canopy vault zk keep`)
+  sees it in `GET …/vault-keeper` (`delegated`), checks the newcomer's endorsement, and
+  re-seals it (`PUT …/vault-keeper/{slug}/delegated/{name}`).
 - **Cloning a new agent.** The box-wide prepare (`bootstrap_agents.sh`, `canopy agent
   prepare --runner`) therefore has no GitHub token: an agent whose private repo is not
   on the box yet is cloned at its FIRST turn, with that turn's token

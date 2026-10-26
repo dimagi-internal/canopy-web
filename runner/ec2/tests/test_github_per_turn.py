@@ -186,3 +186,54 @@ def test_a_chat_turn_carries_its_chats_key_and_leaves_it_for_the_mcp_helper(cr, 
 
     # A turn that is not a chat's carries no key.
     assert cr._chat_key_env({"id": "t", "agent_slug": "echo"}) == {}
+
+
+# ---- a token a person delegated to the agent lives in its vault -------------------------
+
+def test_a_delegated_token_is_opened_from_the_boxs_own_resolve(cr, monkeypatch):
+    """canopy-web hands out no copy of a delegated token, only which vault entry holds it;
+    the box takes it from its own resolve (opened with its own key by the canopy CLI)."""
+    TOKENS["ace-turn"] = {"token": "", "delegated": "github-token", "agent": "ace", "github_login": "olive",
+                          "git_name": "Olive Owner", "git_email": "1+olive@users.noreply.github.com",
+                          "repo": "dimagi-internal/ace", "requested_by": ""}
+    probed = []
+    monkeypatch.setattr(cr, "_probe_delegated_github_soon", lambda *a: probed.append(a))
+    monkeypatch.setattr(cr, "_turn_values",
+                        lambda slug: cr._AGENT_DELEGATED.update({slug: {"github-token": "tok-vault"}}) or {})
+    try:
+        env = _env_for(cr, {"id": "ace-turn", "agent_slug": "ace"})
+    finally:
+        TOKENS.pop("ace-turn")
+        cr._AGENT_DELEGATED.clear()
+    assert env["GH_TOKEN"] == "tok-vault" and env["GIT_AUTHOR_NAME"] == "Olive Owner"
+    assert probed == [("ace", "github-token", "tok-vault", "dimagi-internal/ace")]
+
+
+def test_a_box_that_cannot_open_it_runs_the_turn_with_no_github_identity(cr, monkeypatch):
+    TOKENS["ace-turn"] = {"token": "", "delegated": "github-token", "agent": "ace", "github_login": "olive"}
+    monkeypatch.setattr(cr, "_turn_values", lambda slug: {})
+    try:
+        env = _env_for(cr, {"id": "ace-turn", "agent_slug": "ace"})
+    finally:
+        TOKENS.pop("ace-turn")
+    assert "GH_TOKEN" not in env or not env["GH_TOKEN"]
+
+
+def test_the_box_probes_a_delegated_token_like_canopy_web_did(cr, monkeypatch):
+    calls = []
+
+    def probe(token, method, path, body=None):
+        calls.append((method, path))
+        if path == "/user":
+            return 200, {"github-authentication-token-expiration": "2026-12-01 10:00:00 UTC"}
+        return 422, {}
+
+    monkeypatch.setattr(cr, "_github_probe", probe)
+    found = cr.probe_github_token("tok", "dimagi-internal/ace")
+    assert found["checks"] == [{"repo": "dimagi-internal/ace", "ok": True,
+                                "detail": "can push and open pull requests"}]
+    assert found["provider_expires_at"].startswith("2026-12-01T10:00:00")
+    assert ("POST", "/repos/dimagi-internal/ace/pulls") in calls
+
+    monkeypatch.setattr(cr, "_github_probe", lambda *a, **k: (401, {}))
+    assert "rejected" in cr.probe_github_token("tok", "dimagi-internal/ace")["error"]

@@ -26,16 +26,21 @@ from apps.harness import aws_iam_proof, device_keys
 from apps.harness.models import Runner
 
 from .. import mailbox, services
-from . import delegations, licenses, vault_alerts, vault_members, workspace_vaults, zk
+from . import accounts, delegations, licenses, vault_alerts, vault_members, workspace_vaults, zk
 
 logger = logging.getLogger(__name__)
 
 #: The secret fields of the response beside `values`. A scoped resolve
 #: (`?refs=`) returns each only when it is named; the read log names each one
-#: handed out, like a ref. Never the agent's GitHub token (a borrowed credential): it
-#: leaves canopy-web only for one turn a runner holds
-#: (`delegations.github_token_for_turn`), never to a read outside a turn.
+#: handed out, like a ref. A credential a person delegated to the agent is not one of
+#: them: it rides `delegated`, sealed to the machines that run the agent, and only a
+#: runner read proved by one of them gets it (`accounts.resolve_payload`).
 RESOLVE_SECRET_EXTRAS = ("op_sa_token", "shared_op_sa_token", "salesforce_creds")
+
+#: Handed only to a `runner` read — a box that runs the agent, by its own proof — never
+#: to an admin's or a license holder's: a credential lent to the agent from someone
+#: else's account (Salesforce, an agent's own, lent).
+RUNNER_ONLY_EXTRAS = ("salesforce_creds",)
 
 #: What a `license` read (a person's local turn, canopy-web#1704) never gets (nor does
 #: any read: the agent OWNER's GitHub delegation): a credential LENT to the agent, the shared vault's
@@ -88,6 +93,9 @@ class Resolved:
     wrap: Any
     agent_id: str
     vaults: list = field(default_factory=list)
+    #: Credentials people delegated to the agent, sealed to this machine: {name:
+    #: {value_zk, provider, identity, delegated_by_email, waiting}} (`accounts`).
+    delegated: dict = field(default_factory=dict)
     via: str = field(default="", compare=False)
 
     def response_fields(self) -> dict:
@@ -295,7 +303,16 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
     def extra(name: str) -> bool:
         if via == "license" and name in LICENSE_WITHHELD_EXTRAS:
             return False
+        if name in RUNNER_ONLY_EXTRAS and not runner_read:
+            return False
         return wanted is None or name in wanted
+
+    # A box that runs the agent, by its own proof: never an admin reading by hand (the
+    # owner at their own laptop is an `admin` read, `_classify_read`).
+    runner_read = (via == "runner" and device_key is not None
+                   and _classify_read(request, via, runner=device_key.runner, device_key=device_key,
+                                      rtok=rtok) == "runner")
+    delegated = accounts.resolve_payload(agent, device_key) if runner_read else {}
 
     if via == "license":
         # A license holder runs the agent's TOOLS, not the agent: never its own canopy
@@ -315,11 +332,12 @@ def resolve(request: HttpRequest, agent, refs: str | None) -> Resolved | Refusal
         mailbox=agent.email or "",
         mailbox_backend=mailbox_backend(agent),
         google_account=agent.google_identity(),
+        delegated=delegated,
         zk=agent.zk_enabled, kv=agent.zk_kv if agent.zk_enabled else None, wrap=zk_wrap,
         agent_id=str(agent.pk) if agent.zk_enabled else "",
         vaults=layers,
     )
-    read = (list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)]
+    read = (list(values) + [n for n in RESOLVE_SECRET_EXTRAS if getattr(out, n)] + list(delegated)
             + [f"{layer['name']}/{n}" for layer in layers for n in layer["values"]])
     runner = device_key.runner if device_key is not None else caller_runner(request)
     out.via = via = _classify_read(request, via, runner=runner, device_key=device_key, rtok=rtok)

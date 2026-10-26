@@ -174,9 +174,11 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     only when named in `refs` too. `op_vault`, `shared_op_vault` and `mailbox`
     are not secrets and are always returned.
 
-    **Never the agent's GitHub token.** That borrowed credential (the token its owner
-    or an admin gave it from their own GitHub account) leaves canopy-web only for one turn a runner holds
-    (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never from here.
+    **Delegated credentials** (a token a person gave the agent from their own
+    account, such as its GitHub token) never ride `values`. They come only in
+    `delegated`, sealed (`zks1:`) to the machines that run the agent, and only to a
+    box that runs it reading with its own device proof — never to an admin or a
+    license holder. `salesforce_creds` likewise goes only to such a box.
 
     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
     service-account token (`op_sa_token` is ""): its values come from here, so
@@ -742,10 +744,10 @@ def delete_sender_trust(request: HttpRequest, slug: str, email: str):
     return Status(204, None)
 
 
-# ---- GitHub: the owner's (or an admin's) identity, lent to this agent ---------
-# The owner or an admin pastes a fine-grained token here; a runner is handed it one turn at a
-# time. See apps/agents/credentials/delegations.py for the rule and AgentDelegation for why it
-# is not a vault item.
+# ---- GitHub: the owner's (or an admin's) identity, delegated to this agent -----
+# The owner or an admin pastes a fine-grained token here; it is sealed into the agent's
+# vault as a credential delegated by them, which only the machines that run the agent can
+# open (apps/agents/credentials/accounts.py, delegations.py).
 
 @router.get("/{slug}/github", response=AgentGitHubOut,
             summary="How this agent acts on GitHub (masked — never the token)")
@@ -762,25 +764,30 @@ def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
 
 
 @router.put("/{slug}/github", response=AgentGitHubOut,
-            summary="Lend this agent your GitHub identity (owner or admin, write-only)")
+            summary="Delegate your GitHub identity to this agent (owner or admin, write-only)")
 @gate("agent-owner", setting=True, step_up=True)  # strictly the agent's own owner (delegations.set_github)
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
-    """Store the caller's fine-grained GitHub token for this agent — its owner's,
-    or an admin's (used while the owner has lent none).
+    """Give this agent the caller's fine-grained GitHub token, as a credential delegated
+    by them. It replaces the one delegated now.
 
-    Checked before it is stored: GitHub must accept it, and it must be able to
-    open a pull request on the agent's own repo. A token that fails is refused
-    with the reason, never saved. A browser needs a fresh passkey step-up
-    (403 `step_up_required` otherwise); a token may call it."""
+    Checked first: GitHub must accept it, and it must be able to push to and open a pull
+    request on the agent's own repo; a token that fails is refused with the reason. Then
+    it is sealed to the machines that run the agent and nothing else: no person can read
+    it through canopy, the caller included, and canopy-web keeps no copy it can open.
+    409 `no_machine_can_open` when no machine that runs the agent has an approved device
+    key yet. A browser needs a fresh passkey step-up (403 `step_up_required`); a token may
+    call it."""
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):   # before the step-up, as delegations.set_github says it
-        raise HttpError(422, f"only {agent.slug}'s owner or an admin can lend it their GitHub identity")
+        raise HttpError(422, f"only {agent.slug}'s owner or an admin can delegate their GitHub identity to it")
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     try:
         delegations.set_github(agent, request.user, payload.token)
     except delegations.DelegationError as exc:
         raise HttpError(422, str(exc)) from exc
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
     return _github_out(request, agent)
 
 
@@ -794,6 +801,9 @@ def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) ->
     ),
 )
 def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
+    """A token held the old way is re-probed now. One delegated into the vault cannot be:
+    canopy-web cannot open it, so the machines that run the agent probe it and report
+    (`checked_by`), and this returns what they last found."""
     agent = agent_for_read(request, slug)
     delegations.check_github(agent)
     return _github_out(request, agent)
@@ -805,7 +815,8 @@ def check_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
 @gate("member", "self", setting=True, viewer_write="withdraws only the caller's OWN GitHub delegation")
 def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     """Removes the CALLER's own delegation — nobody can withdraw someone
-    else's."""
+    else's. A machine that opened it may have kept a copy: revoking the token at
+    GitHub (github.com/settings/personal-access-tokens) is the only true recall."""
     agent = agent_for_read(request, slug)
     delegations.clear_github(agent, request.user)
     return _github_out(request, agent)
