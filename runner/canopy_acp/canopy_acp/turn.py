@@ -107,6 +107,23 @@ def wait_released(session_id: str, wait: float = RELEASE_WAIT_SECONDS,
     return True
 
 
+def stop_origin(stop: str, canopy_cancelled: bool, init) -> str:
+    """Who ended a turn that did not end cleanly, and which adapter build did it.
+
+    On 2026-10-26 turn 068076b8 (canopy-web on demo-0fc9c7b1efb87c5c3, failure
+    investigation 14) failed "turn ended: cancelled" with no stop requested, and
+    the note could not say whether canopy had sent the cancel or the adapter
+    ended the turn on its own, nor which claude-agent-acp the box runs (cloud
+    boxes install it unpinned). Both decide where the fix goes."""
+    info = (init or {}).get("agentInfo") if isinstance(init, dict) else None
+    version = info.get("version") if isinstance(info, dict) else ""
+    adapter = f"claude-agent-acp {version}" if version else "adapter version unknown"
+    if stop == "cancelled":
+        who = "canopy sent the cancel" if canopy_cancelled else "the adapter's own: canopy sent no cancel"
+        return f"{who}; {adapter}"
+    return adapter
+
+
 def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None = None,
                resume: str | None = None, on_start=None, on_session=None, on_end=None,
                cancelled=lambda: False, session_start_timeout: float = 300,
@@ -186,7 +203,7 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
     session_id = ""
     try:
         agent = make_agent(cwd=cwd, env=env, on_update=on_update)
-        agent.start()
+        init = agent.start()
         if on_start is not None:
             on_start(agent)
         if resume:
@@ -240,13 +257,17 @@ def drive_turn(prompt: str, *, make_agent, reducer, emit, cwd, env: dict | None 
         stop = (result or {}).get("stopReason", "")
         rate_limit = dict(reducer.rate_limit or {})
         ok = stop in ("end_turn", "max_tokens") and rate_limit.get("status") != "rejected"
-        text = reducer.assistant_text.strip() or f"turn ended: {stop or 'unknown'}"
-        if stop not in ("end_turn", "max_tokens") and not text.startswith("turn ended:"):
+        text = reducer.assistant_text.strip()
+        if stop not in ("end_turn", "max_tokens"):
             # A turn failed on its stop reason must say which one. On 2026-10-26 turn
             # cfab21f5 (demo runner, failure investigation 12) failed with only the
             # agent's last words — "Standalone sleep is blocked, so I'll run it in the
             # background." — and nothing recorded why it was graded failed.
-            text = f"{text}\n\nturn ended: {stop or 'unknown'}"
+            reason = f"turn ended: {stop or 'unknown'} ({stop_origin(stop, was_cancelled, init)})"
+            text = f"{text}\n\n{reason}" if text else reason
+            tail = getattr(agent, "stderr_tail", lambda: "")()
+            if tail:
+                log(f"ACP turn ended {stop or 'unknown'}; adapter stderr: {tail}")
         return TurnResult(ok=ok, text=text, session_id=session_id, stop_reason=stop,
                           cancelled=was_cancelled or stop == "cancelled", rate_limit=rate_limit)
     except Exception as exc:  # noqa: BLE001 — named, with how the adapter went

@@ -476,6 +476,11 @@ class AcpAgent:
         except Exception:  # noqa: BLE001
             pass
 
+    def stderr_tail(self, lines: int = 5) -> str:
+        """The adapter's last stderr lines, joined — for the runner's log only:
+        stderr is not vetted for what it quotes, so it never goes in a note."""
+        return " | ".join(list(self._stderr_tail)[-lines:])
+
     def exit_report(self, wait: float = 2) -> str:
         """Why the adapter is gone: its exit status and the tail of its stderr,
         or "" while it is still running. A negative code is the signal that
