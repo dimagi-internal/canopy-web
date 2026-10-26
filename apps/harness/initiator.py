@@ -28,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from django.contrib.auth import get_user_model
+
 from apps.agents.models import Agent
 
 # --- kind: WHAT asked --------------------------------------------------------
@@ -170,6 +172,27 @@ def _agent_login_of(user) -> str | None:
     return agent.slug if agent is not None else None
 
 
+def _on_behalf_of(turn) -> dict | None:
+    """The person an agent's turn was started for (`origin_ref.on_behalf_of`, which only
+    the server stamps), as the receiving agent reads them: who, and what they are to IT."""
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    rec = ref.get("on_behalf_of")
+    if not isinstance(rec, dict) or not rec.get("user_id"):
+        return None
+    from .caller_context import relationship_for_user  # noqa: PLC0415 — cycle: caller_context imports this module
+
+    person = get_user_model().objects.filter(pk=rec["user_id"]).first()
+    if person is None:
+        return None
+    return {
+        "user": {"id": person.pk, "email": person.email,
+                 "name": person.get_full_name() or person.email},
+        "relationship": relationship_for_user(person, getattr(turn, "acting_agent", None)),
+        "via_agent": rec.get("agent", ""),
+        "turn": rec.get("turn", ""),
+    }
+
+
 def describe(turn) -> dict:
     """The initiator as the API and the runner see it. Names, not ids alone:
     the agent is going to read this and address a person."""
@@ -203,6 +226,10 @@ def describe(turn) -> dict:
         if login_of:
             out["agent_login"] = login_of
             out["self"] = bool(turn.agent_id) and login_of == getattr(turn.agent, "slug", None)
+            # WHO THE AGENT WAS WORKING FOR. Always present on an agent's turn — the
+            # person, or null when it acted on its own — so the agent receiving the work
+            # never has to guess whether a human is behind it (turn_asker; 2026-10-26).
+            out["on_behalf_of"] = _on_behalf_of(turn)
     if contact is not None:
         out["contact"] = {
             "id": contact.pk,

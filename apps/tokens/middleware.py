@@ -153,17 +153,22 @@ class BearerTokenAuthMiddleware:
             request.auth_credential = found.credential
             request._dont_enforce_csrf_checks = True
             _apply_acting_cap(request)
-            # "I am this agent, acting on behalf of <person>": checked against the turn
-            # this login serves, else refused here (apps/harness/turn_asker.py).
+            # A turn's own login works for the person who started that turn: canopy-web
+            # works them out here, on every request, so no agent has to remember to say
+            # so (apps/harness/turn_asker.py). `X-Canopy-On-Behalf-Of` only asserts it:
+            # naming anyone else is refused.
+            from apps.harness import turn_asker  # noqa: PLC0415 — a PAT door import, like the file's other door-specific imports
+
             if request.META.get("HTTP_X_CANOPY_ON_BEHALF_OF"):
                 from apps.api.errors import problem_response  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
-                from apps.harness import turn_asker  # noqa: PLC0415 — only a request sending X-Canopy-On-Behalf-Of pays for it, like the file's other door-specific imports
 
                 try:
                     turn_asker.declare(request.user, found.credential,
                                        request.META["HTTP_X_CANOPY_ON_BEHALF_OF"])
                 except turn_asker.Refused as exc:
                     return problem_response(403, detail=f"X-Canopy-On-Behalf-Of refused: {exc}")
+            else:
+                turn_asker.attach(request.user, found.credential)
             return
 
         # A CONTACT token must never be mistaken for a user. It resolves to no

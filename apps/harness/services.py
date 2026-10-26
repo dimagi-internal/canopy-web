@@ -224,6 +224,14 @@ def enqueue_turn(
         # production path that still lands here.
         from . import initiator as who
         initiator = who.unknown(via=origin)
+    # An agent's turn login working for a person (turn_asker): every turn it starts
+    # carries them, whichever door it came through — a dispatch, a send into another
+    # session, a new session. The server's record only; a client's is dropped at the door.
+    from . import turn_asker  # noqa: PLC0415 — cycle: turn_asker -> turn_agent_tokens -> services
+
+    on_behalf = turn_asker.of(getattr(initiator, "user", None))
+    if on_behalf is not None:
+        origin_ref = {**(origin_ref or {}), "on_behalf_of": on_behalf.record()}
     from apps.threads import guard as thread_guard
 
     from . import provenance

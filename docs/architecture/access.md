@@ -38,7 +38,7 @@ only under an act-as-you permission you granted.** Three kinds, one meaning each
   (`POST /api/harness/runners/{rid}/turns/{tid}/github-token`) — never from
   `credentials/resolve`, not to an admin's PAT, not to a box outside a turn.
 * **An act-as-you permission** — time-limited, granted by the person asking, in the
-  moment (a page's host grant; acting `X-Canopy-On-Behalf-Of` in their own turn, below).
+  moment (a page's host grant; an agent working in their own turn, below).
   Nothing else lets an agent act as a person. In particular:
   - **An agent's caller token only reads.** A full-profile AGENT turn asked by someone
     who is not the agent's owner, an admin or canopy — an editor, a `full:` rule, a
@@ -740,21 +740,22 @@ Spec: `docs/superpowers/specs/2026-09-18-who-is-asking-initiator-identity-and-ac
 
 ## Acting on behalf of the person who asked
 
-An agent's turn acts as the agent, and canopy-web judges its requests on the agent's
-access. When the person in the turn asks for something that is theirs to decide, the
-agent says so on the request, and canopy-web judges it on THEIR access instead
-(`apps/harness/turn_asker.py`):
+An agent's turn does the work of the person who started it, and canopy-web carries that
+person without being told (`apps/harness/turn_asker.py`). A request authenticated with
+the login canopy-web issued for a turn (`TurnAgentToken`) works for that turn's person;
+the bearer middleware works them out on every such request, and nothing the agent sends
+can add or remove them. The person is found only when the turn that login serves now
+(its own, or a session login's newest turn) is executing, unconfined and runs for this
+agent, and was started by a verified, active human who is not an agent — or was itself
+started on such a person's behalf, so a chain of agents keeps them. The request must not
+have lowered itself (`acts_as`), and the person's own turn cap applies to them. Anything
+else — a stored PAT, a turn canopy itself started, an unverified asker — is the agent
+acting for itself.
 
     X-Canopy-On-Behalf-Of: <the person's email>
 
-Nothing is inferred: a request without the header is the agent acting for itself. With
-it, the claim is checked in the bearer middleware and refused (403, saying why) unless
-the request authenticated with the login canopy-web issued for a turn
-(`TurnAgentToken`, never a stored PAT); the turn that login serves now (its own, or a
-session login's newest turn) is executing, unconfined and runs for this agent; it was
-started by that person, verified, active and not an agent; and the request did not lower
-itself (`acts_as`). The person's own turn cap applies to them. A browser session or any
-other credential sending the header is refused too, never quietly judged as itself.
+still works as an assertion. It must name that same person; any mismatch, and any other
+credential sending it (a browser session included), is refused with a 403 that says why.
 
 On someone's behalf, these are judged as that person:
 
@@ -765,11 +766,14 @@ On someone's behalf, these are judged as that person:
 
 Reads are unchanged: a turn already reads as its asker where that matters (scoped caller
 tokens, above). Each decision made on someone's behalf is recorded as an
-`agent.on_behalf.decided` event, and a dispatched turn carries
-`origin_ref.on_behalf_of` (`{email, turn, agent, decided}`), which the server alone
-stamps. Its initiator stays the agent: the agent made the call, for that person. The
-canopy CLI sends the header with `--on-behalf-of <email>` (or `caller`, the current
-turn's verified asker).
+`agent.on_behalf.decided` event. Every turn the agent starts from there, through any door
+(a dispatch, a send into another session, a new session), carries
+`origin_ref.on_behalf_of` (`{user_id, email, turn, agent, decided}`), stamped by
+`services.enqueue_turn` alone; a client's own is dropped. Its initiator stays the agent:
+the agent made the call, for that person. The receiving agent's envelope says so in
+`who.on_behalf_of` (`{user, relationship, via_agent, turn}`, the relationship being the
+person's to the receiving agent), which every turn an agent's login started carries:
+`null` means the agent acted on its own.
 
 ## Acting as the person on a connected site (act-as-you permissions)
 

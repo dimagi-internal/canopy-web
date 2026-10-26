@@ -1,10 +1,11 @@
 """An agent acting ON BEHALF OF the person in its turn (apps/harness/turn_asker.py).
 
 hal, in Jonathan's session, dispatches eva's turn pinned to Jonathan's cloud box. hal
-administers neither, so acting for itself the pin is refused; saying "on behalf of
-jjackson@" on its turn login, it is judged as Jonathan and the pin goes through, recorded.
-The claim is checked, never inferred: the wrong person, a stored token, a finished turn,
-an unverified asker or someone else's newer message all refuse it.
+administers neither; on the login canopy-web issued for Jonathan's turn it is working for
+him, so canopy-web judges the pin as Jonathan, and the pin goes through, recorded. Nobody
+declares it: canopy-web works the person out from the login. A stored token, a finished
+turn, an unverified asker or a turn canopy itself started work for no one — the agent acts
+as itself. `X-Canopy-On-Behalf-Of` still asserts it, and naming anyone else refuses.
 """
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
-from apps.canopy_sessions.models import Session
+from apps.canopy_sessions.models import Session, SessionParticipant
+from apps.harness import initiator as who
 from apps.harness import turn_agent_tokens
 from apps.harness.models import Runner, RunnerAssignment, Turn
 from apps.tokens.models import PersonalToken
@@ -78,9 +80,65 @@ def _dispatch(world, bearer, *, on_behalf_of=None, **body):
     return Client().post("/api/harness/turns/", payload, content_type="application/json", **headers)
 
 
-def test_acting_for_itself_hal_may_not_pin_eva_to_jonathans_box(world):
-    r = _dispatch(world, _login(world, _turn(world)))
+def test_in_jonathans_turn_hal_works_for_him_without_saying_so(world):
+    turn = _turn(world)
+    r = _dispatch(world, _login(world, turn))
+    assert r.status_code == 201, r.content
+    made = Turn.objects.get(pk=r.json()["id"])
+    assert made.pinned_runner == world["cloud"]
+    ob = made.origin_ref["on_behalf_of"]
+    assert (ob["email"], ob["user_id"], ob["turn"]) == (JJ, world["jj"].pk, str(turn.pk))
+
+
+def test_on_a_stored_token_hal_acts_for_itself_and_may_not_pin(world):
+    bearer, _ = PersonalToken.create_for_user(user=world["hal"].user, label="canopy-pat")
+    r = _dispatch(world, bearer)
     assert r.status_code == 403 and "pinning eva's turn" in r.json()["detail"]
+
+
+def test_a_turn_canopy_started_works_for_no_one(world):
+    """A schedule's turn: hal acts as itself, and the next agent is told so."""
+    turn = _turn(world)
+    Turn.objects.filter(pk=turn.pk).update(initiator_kind="system", initiator_assurance="internal")
+    r = _dispatch(world, _login(world, turn), runner_id=None)
+    assert r.status_code == 201, r.content
+    made = Turn.objects.get(pk=r.json()["id"])
+    assert "on_behalf_of" not in made.origin_ref
+    assert who.describe(made)["on_behalf_of"] is None  # said outright, never left out
+
+
+def test_a_chain_of_agents_keeps_the_person(world):
+    """Jonathan asks hal; hal dispatches eva; eva's login dispatches on — still for him."""
+    first = _dispatch(world, _login(world, _turn(world)), runner_id=None)
+    eva_turn = Turn.objects.get(pk=first.json()["id"])
+    Turn.objects.filter(pk=eva_turn.pk).update(status=Turn.RUNNING, claimed_by=world["laptop"])
+    eva_turn.refresh_from_db()
+    wsvc.ensure_member(world["ws"], world["eva"].user, WorkspaceMembership.EDITOR)
+    bearer = turn_agent_tokens.issue(eva_turn, world["laptop"])["token"]
+    payload = {"agent_slug": "hal", "origin": "api", "idempotency_key": uuid.uuid4().hex,
+               "prompt": "and tell hal"}
+    r = Client().post("/api/harness/turns/", payload, content_type="application/json",
+                      HTTP_AUTHORIZATION=f"Bearer {bearer}")
+    assert r.status_code == 201, r.content
+    made = Turn.objects.get(pk=r.json()["id"])
+    assert made.origin_ref["on_behalf_of"]["email"] == JJ
+    assert made.origin_ref["on_behalf_of"]["agent"] == "eva"
+
+
+def test_a_send_into_another_session_carries_the_person(world):
+    """The door ada used on 2026-10-26: a follow-up into an existing session."""
+    target = Session.objects.create(workspace=world["ws"], agent=world["eva"], status=Session.ACTIVE)
+    SessionParticipant.objects.create(session=target, user=world["hal"].user,
+                                      role=SessionParticipant.EDITOR)
+    bearer = _login(world, _turn(world))
+    r = Client().post(f"/api/canopy-sessions/{target.pk}/send", {"text": "please re-run it"},
+                      content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {bearer}")
+    assert r.status_code == 200, r.content
+    made = Turn.objects.get(pk=r.json()["turn_id"])
+    assert made.origin_ref["on_behalf_of"]["email"] == JJ
+    seen = who.describe(made)["on_behalf_of"]
+    assert seen["user"]["email"] == JJ and seen["relationship"] == "owner"
+    assert seen["via_agent"] == "hal"
 
 
 def test_on_behalf_of_jonathan_the_pin_is_his_to_decide_and_recorded(world):
@@ -95,10 +153,9 @@ def test_on_behalf_of_jonathan_the_pin_is_his_to_decide_and_recorded(world):
     assert made.initiator_user == world["hal"].user  # hal made the call; the record says for whom
 
 
-def test_auto_on_jonathans_behalf_is_requested_by_him(world):
+def test_auto_in_jonathans_turn_is_requested_by_him(world):
     bearer = _login(world, _turn(world))
-    assert _dispatch(world, bearer, turn_mode="auto").status_code == 403
-    r = _dispatch(world, bearer, on_behalf_of=JJ, turn_mode="auto")
+    r = _dispatch(world, bearer, turn_mode="auto")
     assert r.status_code == 201, r.content
     made = Turn.objects.get(pk=r.json()["id"])
     assert made.requested_turn_mode_by == world["jj"]  # the claim re-checks him, an admin of eva
@@ -164,7 +221,8 @@ def test_a_session_login_acts_for_whoever_sent_the_newest_message(world):
 
 
 def test_a_client_cannot_write_its_own_on_behalf_record(world):
-    r = _dispatch(world, _login(world, _turn(world)), runner_id=None,
-                  origin_ref={"on_behalf_of": {"email": JJ}})
+    bearer, _ = PersonalToken.create_for_user(user=world["hal"].user, label="canopy-pat")
+    r = _dispatch(world, bearer, runner_id=None,
+                  origin_ref={"on_behalf_of": {"email": JJ, "user_id": world["jj"].pk}})
     assert r.status_code == 201, r.content
     assert "on_behalf_of" not in Turn.objects.get(pk=r.json()["id"]).origin_ref

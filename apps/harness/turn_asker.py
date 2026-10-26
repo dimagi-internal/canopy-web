@@ -1,32 +1,35 @@
-"""An agent acting ON BEHALF OF the person who asked — said on the request, checked here.
+"""An agent acting ON BEHALF OF the person who asked — worked out by canopy-web, never declared.
 
-An agent's turn acts as the agent (access.md). Most of the time that is right: hal doing
-its own work is judged as hal. But when the person in the turn asks for something that is
-theirs to decide — "republish it on cloud-ec2-2", their box, the agent they own — the
-agent is doing THEIR work, and judging it as the agent asks the wrong question. So the
-agent says which it is doing, on the request:
+An agent's turn does the work of the person who started it. When that agent calls canopy
+with the login canopy-web issued for the turn (`TurnAgentToken`), the request carries that
+person: canopy-web works out who they are from the login alone, on every request, and
+judges the decisions below on their access. Whatever turn the agent starts from there
+(a dispatch, a send into another session, a new session) is stamped with them
+(`origin_ref["on_behalf_of"]`, `services.enqueue_turn`), and the next agent's envelope
+names them (`initiator.describe`). Nothing depends on an agent remembering to say it:
+2026-10-26, ada re-ran ACE turns Jonathan had asked for, and ACE was told only "ada,
+admin".
 
-    X-Canopy-On-Behalf-Of: jjackson@dimagi.com
-
-and canopy-web checks the claim and, if it holds, judges the decisions below on that
-person's access instead of the agent's. A request without the header is the agent acting
-for itself, under its own access, exactly as before. Nothing is inferred.
-
-The claim holds only when ALL of these do (`resolve`; any failure is a 403 that says which):
-* the request authenticated with a login canopy-web issued for one turn
-  (`TurnAgentToken`) — never a stored PAT, which anything holding it could use to name
-  any turn;
+The person is found only when ALL of these hold (`_check`); otherwise the request is the
+agent acting for itself, exactly as before:
+* the request authenticated with a login canopy-web issued for one turn — never a stored
+  PAT, which anything holding it could use to name any turn;
 * the turn that login serves NOW — its own turn, or for a session login the session's
   newest turn (each message is its own turn) — is still executing, is not confined to a
   caller capability, and runs for this agent;
-* that turn was started by the named person, a verified, active human (not canopy, not
-  an agent), and the request did not put itself in a lower role (`acts_as` only lowers).
+* that turn was started by a verified, active human (not canopy, not an agent), or was
+  itself started on such a person's behalf (the chain carries them), and the request did
+  not put itself in a lower role (`acts_as` only lowers).
 The person's own turn cap (their `acts_as`) applies to them here as on their turn.
+
+`X-Canopy-On-Behalf-Of: <email>` is still accepted, as an assertion: it must name that
+same person, or the request is refused (403, saying why). It adds nothing a request
+without it does not get.
 
 What it decides: where the person's work runs (`access.may_pin_runner` — every door that
 picks a runner) and whether a dispatch may run `auto` (`turn_gates`). Reads are unchanged:
 a turn already reads as its asker wherever that matters (scoped caller tokens). Every
-decision made on someone's behalf is recorded: an event, and on a dispatched turn
+decision made on someone's behalf is recorded: an event, and the turn's
 `origin_ref["on_behalf_of"]`.
 """
 from __future__ import annotations
@@ -34,6 +37,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 
 from apps.agents.models import Agent
@@ -88,16 +92,39 @@ def subject(user):
 
 
 def declare(user, credential: dict | None, email: str) -> OnBehalf:
-    """Check the request's claim to act for `email` and attach it to `user`. Raises Refused."""
-    ob = resolve(user, credential, email)
+    """Check the request's `X-Canopy-On-Behalf-Of` against the person its login works for,
+    and attach them to `user`. Raises Refused."""
+    email = (email or "").strip().lower()
+    if not email:
+        raise Refused("X-Canopy-On-Behalf-Of names no one")
+    ob = _check(user, credential, email)
+    setattr(user, ATTR, ob)
+    return ob
+
+
+def attach(user, credential: dict | None) -> OnBehalf | None:
+    """Work out the person `user`'s turn login works for and attach them; None (and nothing
+    attached) when it works for no one — a stored token, canopy's own turn, an agent's."""
+    kind = kinds.kind_of(credential or {})
+    if kind is None or not kind.may_act_on_behalf:
+        return None  # not a turn's login: no lookup at all
+    try:
+        ob = _check(user, credential, None)
+    except Refused:
+        return None
     setattr(user, ATTR, ob)
     return ob
 
 
 def resolve(user, credential: dict | None, email: str) -> OnBehalf:
+    """`declare` without attaching: the person, checked against `email`. Raises Refused."""
     email = (email or "").strip().lower()
     if not email:
         raise Refused("X-Canopy-On-Behalf-Of names no one")
+    return _check(user, credential, email)
+
+
+def _check(user, credential: dict | None, email: str | None) -> OnBehalf:
     cred = credential or {}
     kind = kinds.kind_of(cred)
     if kind is None or not kind.may_act_on_behalf or not cred.get("id"):
@@ -121,16 +148,37 @@ def resolve(user, credential: dict | None, email: str) -> OnBehalf:
     acting = turn_agent(current)
     if acting is None or acting.pk != agent.pk:
         raise Refused("the turn this login serves now runs for another agent")
-    person = current.initiator_user if current.initiator_user_id else None
-    if (person is None or current.initiator_kind != who.USER or not person.is_active
-            or Agent.objects.filter(user_id=person.pk).exists()):
+    person = _principal(current)
+    if person is None:
         raise Refused("the turn this login serves was not started by a person")
-    if not is_verified(current):
-        raise Refused(f"the turn's asker {person.email} is not verified")
-    if person.email.lower() != email:
+    if email is not None and person.email.lower() != email:
         raise Refused(f"the turn this login serves was started by {person.email}, not {email}")
     acting_cap(current)  # their own turn's acts_as applies to them here too
     return OnBehalf(user=person, turn=current, agent=agent)
+
+
+def _principal(turn: Turn):
+    """The person `turn` does the work of: its verified, active human asker; or, for a turn
+    an agent started, the person that agent was already acting for (stamped by the server
+    when it started it, so a chain of dispatches keeps them). None for anyone else."""
+    if turn.initiator_kind == who.USER and turn.initiator_user_id:
+        person = turn.initiator_user
+        if _is_person(person):
+            if not is_verified(turn):
+                raise Refused(f"the turn's asker {person.email} is not verified")
+            return person
+    ref = turn.origin_ref if isinstance(turn.origin_ref, dict) else {}
+    carried = ref.get("on_behalf_of")
+    if isinstance(carried, dict) and carried.get("user_id"):
+        person = get_user_model().objects.filter(pk=carried["user_id"]).first()
+        if person is not None and _is_person(person):
+            return person
+    return None
+
+
+def _is_person(user) -> bool:
+    return bool(user is not None and user.is_active
+                and not Agent.objects.filter(user_id=user.pk).exists())
 
 
 def _current_turn(grant: TurnAgentToken) -> Turn | None:
