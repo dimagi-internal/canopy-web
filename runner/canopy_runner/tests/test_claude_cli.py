@@ -25,7 +25,7 @@ def direct_runtime(monkeypatch):
     monkeypatch.setattr(desktop, "_current", desktop.CLAUDE_CLI)
     monkeypatch.setattr(desktop, "IN_FLIGHT", {})
     monkeypatch.setattr(desktop, "claude_cli", lambda: Path("/stub/bin/claude"))
-    monkeypatch.setattr(desktop, "prepare_settings", lambda cfg, wt: None)
+    monkeypatch.setattr(desktop, "prepare_settings", lambda cfg, wt, **kw: None)
     monkeypatch.setattr(desktop.caller, "write_caller_file", lambda turn: None)
     monkeypatch.setattr(desktop, "transcript_path", lambda sid, claude_home=None: None)
     monkeypatch.setattr(headless, "adapter_argv", lambda: ["/stub/adapter"])
@@ -36,8 +36,13 @@ def direct_runtime(monkeypatch):
     yield
 
 
+#: The env each stubbed headless turn was started with, in order.
+ENVS: list[dict] = []
+
+
 @pytest.fixture
 def runs(monkeypatch):
+    ENVS.clear()
     """Stub the headless executor; record each call."""
     calls: list[dict] = []
 
@@ -48,6 +53,7 @@ def runs(monkeypatch):
             on_session(sid)
         emit([{"kind": "assistant", "payload": {"text": "hi"}}])
         calls.append({"prompt": prompt, "cwd": cwd, "resume": resume})
+        ENVS.append(env or {})
         return True, "answer", sid
 
     monkeypatch.setattr(headless, "run_turn", run_turn)
@@ -362,3 +368,10 @@ def test_a_headless_turn_is_one_shot_so_background_work_is_refused(monkeypatch):
     monkeypatch.setattr(canopy_acp, "drive_turn", drive_turn)
     headless.run_turn("hi", cwd=Path("/tmp"), emit=lambda e: None, env={"X": "1"})
     assert seen == {"X": "1", headless.HEADLESS_ENV: "1", headless.ONE_SHOT_ENV: "1"}
+
+
+def test_a_headless_turn_starts_on_its_agents_model(cfg, runs):
+    _go(cfg, FakeClient(), _turn(cli_model="opus"))
+    assert ENVS[0]["ANTHROPIC_MODEL"] == "opus"
+    _go(cfg, FakeClient(), _turn(id="turn-0002-bbbb", cli_model="opus; rm -rf"))
+    assert ENVS[1].get("ANTHROPIC_MODEL") != "opus; rm -rf"

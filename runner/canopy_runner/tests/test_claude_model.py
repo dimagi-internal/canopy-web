@@ -56,3 +56,13 @@ def test_every_heartbeat_carries_it(monkeypatch):
     monkeypatch.setattr(c, "_call", lambda method, path, body=None: (sent.append(body), (200, {}))[1])
     c.heartbeat("r1", [])
     assert sent[-1]["claude_model"] == "opus[1m]"
+
+
+# ---- the agent's model for one claimed turn (canopy-web `cli_model`) ----
+@pytest.mark.parametrize("given,model", [
+    ("opus", "opus"), ("claude-opus-5-5[1m]", "claude-opus-5-5[1m]"), ("", ""), (None, ""),
+    ("opus --dangerously-skip-permissions", ""), ("-p", ""),
+])
+def test_a_turns_model_is_taken_only_when_it_is_a_model_name(given, model):
+    assert claude_model.for_turn({"cli_model": given}) == model
+    assert claude_model.for_turn(None) == ""

@@ -4648,7 +4648,7 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         reducer = core.UpdateReducer()
         res = drive_turn(
             prompt, make_agent=make_agent, reducer=reducer, emit=emit,
-            cwd=workdir, env=_agent_env(agent_slug), resume=resume,
+            cwd=workdir, env=_model_env(_agent_env(agent_slug)), resume=resume,
             on_start=lambda agent: _acp_register(turn_id, agent),
             on_session=on_session,
             on_end=lambda agent: (_acp_unregister(turn_id),
@@ -11068,6 +11068,14 @@ def _turn_model(turn: dict) -> str:
     model name is ignored rather than passed to the CLI."""
     model = str(turn.get("cli_model") or "").strip()
     return model if _MODEL_NAME.fullmatch(model) else ""
+
+
+def _model_env(env: dict) -> dict:
+    """`env` with the turn's model (`_turn_model`) as `ANTHROPIC_MODEL`, which Claude
+    Code reads before its settings — how a turn the CLI is not spawned for directly
+    (the ACP adapter starts it) still starts on its agent's model."""
+    model = getattr(_TURN_ENV, "model", None)
+    return {**env, "ANTHROPIC_MODEL": model} if model else env
 
 
 def _cli_refusal(turn: dict) -> str | None:

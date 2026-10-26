@@ -37,3 +37,13 @@ def test_a_turn_for_another_cli_is_refused(cloud_runner, monkeypatch):
     assert path == f"/turns/{TID}/finish"
     assert body["status"] == "failed" and body["result_note"].startswith("cli_mismatch")
     assert getattr(cloud_runner._TURN_ENV, "model", None) is None
+
+
+def test_an_acp_turn_starts_on_the_turns_model(cloud_runner):
+    """The ACP adapter starts Claude Code itself: the model reaches it as ANTHROPIC_MODEL."""
+    cloud_runner._TURN_ENV.model = "opus"
+    try:
+        assert cloud_runner._model_env({"X": "1"}) == {"X": "1", "ANTHROPIC_MODEL": "opus"}
+    finally:
+        cloud_runner._TURN_ENV.model = None
+    assert cloud_runner._model_env({"X": "1"}) == {"X": "1"}

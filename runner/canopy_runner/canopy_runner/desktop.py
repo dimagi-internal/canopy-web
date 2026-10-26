@@ -79,7 +79,7 @@ from pathlib import Path
 
 from canopy_transcript.result_note import cap, turn_url
 
-from . import caller, session_naming, transfer
+from . import caller, claude_model, session_naming, transfer
 from .cancel import CANCELLED_TURNS
 
 logger = logging.getLogger("canopy_runner.desktop")
@@ -444,8 +444,12 @@ def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
     return wt
 
 
-def worktree_settings(allow: list[str], existing: dict | None = None) -> dict:
+def worktree_settings(allow: list[str], existing: dict | None = None, *, model: str = "") -> dict:
     out = dict(existing or {})
+    if model:
+        # The agent's model for this session (canopy-web's `cli_model`): the
+        # worktree's local settings are read by the CLI and the desktop app alike.
+        out["model"] = model
     perms = dict(out.get("permissions") or {})
     perms["allow"] = sorted(set(perms.get("allow") or []) | set(allow))
     out["permissions"] = perms
@@ -511,7 +515,7 @@ def _cli_env(cli: Path) -> dict:
     return {**os.environ, "PATH": os.pathsep.join(extra + [path])}
 
 
-def prepare_settings(cfg, wt: Path) -> None:
+def prepare_settings(cfg, wt: Path, *, model: str = "") -> None:
     cli = _cli()
     # `install` alone reuses whatever version is already in Claude Code's plugin
     # cache; `update` is what brings in the mod a runner upgrade shipped.
@@ -524,7 +528,7 @@ def prepare_settings(cfg, wt: Path) -> None:
     allow = list(getattr(cfg, "desktop_allow", None) or DEFAULT_ALLOW)
     if start_session_enabled():
         allow.append(START_RULE)
-    path.write_text(json.dumps(worktree_settings(allow, existing), indent=2) + "\n")
+    path.write_text(json.dumps(worktree_settings(allow, existing, model=model), indent=2) + "\n")
 
 
 def ensure_mod() -> None:
@@ -546,7 +550,7 @@ def ensure_mod() -> None:
                    capture_output=True, text=True, timeout=120)
 
 
-def seed_session(cfg, wt: Path, name: str = "") -> str:
+def seed_session(cfg, wt: Path, name: str = "", *, model: str = "") -> str:
     cli = _cli()
     argv = [str(cli), "-p", SEED_PROMPT, "--output-format", "json"]
     if name:
@@ -555,7 +559,8 @@ def seed_session(cfg, wt: Path, name: str = "") -> str:
         # was titled from the seed prompt alone, and all came out as "General
         # coding session". Same name emdash shows: c-/cx- + subject + disc.
         argv += ["--name", name]
-    model = getattr(cfg, "desktop_model", "")
+    # The agent's model for this turn, else the box's own default for its sessions.
+    model = model or getattr(cfg, "desktop_model", "")
     if model:
         argv += ["--model", model]
     out = subprocess.run(argv, cwd=wt, env=_cli_env(cli), capture_output=True, text=True, timeout=300)
@@ -1254,7 +1259,7 @@ class TurnRun:
             repo, base = project_repo(self.cfg, self.target)
             name = session_naming.build_task_name(self.target, self.turn)
             wt = make_worktree(self.cfg, repo, base, name)
-            prepare_settings(self.cfg, wt)
+            prepare_settings(self.cfg, wt, model=claude_model.for_turn(self.turn))
             transfer.restore_into(self.cfg, self.client, self.turn, wt)
             channel = wt / CHANNEL
             channel.mkdir(exist_ok=True)
@@ -1263,7 +1268,8 @@ class TurnRun:
                 prompt = (f"[Continuing prior work on this thread — context from earlier sessions "
                           f"(a fresh session, possibly a different machine):]\n{summary}\n\n{prompt}")
             started = start_in_app(self.cfg, wt, name)
-            sid = started or seed_session(self.cfg, wt, name)
+            sid = started or seed_session(self.cfg, wt, name,
+                                          model=claude_model.for_turn(self.turn))
             # The turn's record starts AFTER the seed's "Reply with exactly: ready"
             # exchange — shipping it made a turn's transcript the seed and nothing
             # else (found live, #1188).
@@ -1324,7 +1330,7 @@ class TurnRun:
         repo, base = project_repo(self.cfg, self.target)
         name = session_naming.build_task_name(self.target, self.turn)
         wt = make_worktree(self.cfg, repo, base, name)
-        prepare_settings(self.cfg, wt)
+        prepare_settings(self.cfg, wt, model=claude_model.for_turn(self.turn))
         # A transfer's work, restored before the agent sees its first prompt.
         transfer.restore_into(self.cfg, self.client, self.turn, wt)
         (wt / CHANNEL).mkdir(exist_ok=True)
@@ -1360,10 +1366,14 @@ class TurnRun:
             self.client.post_events(self.id, events)
 
         cli = claude_cli()
+        env = _cli_env(cli) if cli else None
+        if env is not None and (model := claude_model.for_turn(self.turn)):
+            # Read before any settings file, so a resumed session gets it too.
+            env = {**env, "ANTHROPIC_MODEL": model}
         try:
             ok, text, sid = headless.run_turn(
                 prompt, cwd=wt, emit=emit, resume=resume, on_session=on_session,
-                env=_cli_env(cli) if cli else None,
+                env=env,
                 cancelled=lambda: self.id in CANCELLED_TURNS, timeout=CHAT_TIMEOUT_SECONDS)
         except Exception as exc:  # noqa: BLE001 — reported as the turn's failure
             sid = getattr(exc, "session_id", "") or resume or ""
