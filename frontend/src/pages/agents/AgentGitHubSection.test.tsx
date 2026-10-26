@@ -62,7 +62,7 @@ describe('AgentGitHubSection', () => {
     getAgentGitHub.mockResolvedValue({ ...WORKING, lent_by_email: 'ada@dimagi-ai.com', login: 'ada' })
     show('ada@dimagi-ai.com')
     await waitFor(() => expect(screen.getByTestId('github-setup')).toBeTruthy())
-    expect(screen.getByTestId('github-status').textContent).toContain('lent by ada@dimagi-ai.com')
+    expect(screen.getByTestId('github-status').textContent).toContain('borrowed from ada@dimagi-ai.com')
     expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy()
   })
 

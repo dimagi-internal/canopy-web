@@ -155,7 +155,7 @@ Resources:
         InstanceType: !Ref InstanceType
         ImageId: !Ref Ami
         IamInstanceProfile: { Arn: !GetAtt InstanceProfile.Arn }
-        SecurityGroupIds: [ !Ref SecurityGroup ]
+        SecurityGroupIds: [ !GetAtt SecurityGroup.GroupId ]  # a launch template takes the id, never the name
         MetadataOptions: { HttpTokens: required, HttpEndpoint: enabled, HttpPutResponseHopLimit: 1 }
         BlockDeviceMappings:
           - DeviceName: /dev/sda1

@@ -43,7 +43,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.base import Provider
 from fastmcp.tools.base import Tool, ToolResult
 
-from .projects import _call, _current_user, readable_project
+from .projects import _call, _current_user, off_the_shared_thread, readable_project
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class KbTool(Tool):
     async def run(self, arguments: dict) -> ToolResult:
         args = dict(arguments or {})
         ref = args.pop("project", "")
-        out = await sync_to_async(_kb_call, thread_sensitive=True)(ref, self.kb_tool, args)
+        out = await off_the_shared_thread(_kb_call)(ref, self.kb_tool, args)
         # The research tools answer in text an agent reads as-is (as a project's own server does).
         text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
         return ToolResult(content=text, structured_content={"result": out})

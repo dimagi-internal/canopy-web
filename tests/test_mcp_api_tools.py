@@ -411,10 +411,12 @@ def test_a_capped_turns_mcp_call_keeps_its_cap(tenancy, monkeypatch):
 
 
 def test_a_caller_tokens_own_turn_caps_the_call(tenancy):
-    """A caller token names its turn itself: no header is needed for the cap to hold."""
+    """A caller token names its turn itself: no header is needed for the cap to hold.
+    (A full-profile caller token is read-only now, so a write is refused before the cap
+    is even asked; either way nothing changes.)"""
     turn = _capped_turn(tenancy["jj"], "viewer")
     with as_claims(sub=f"turn:{turn.pk}", user_id=tenancy["jj"].pk, auth_method="caller_token",
                    turn_id=str(turn.pk), turn_ids=[str(turn.pk)], all_tools=True,
-                   tool_globs=["*"]), pytest.raises(ToolError, match="403"):
+                   tool_globs=["*"]), pytest.raises(ToolError, match="403|act-as-you permission"):
         _call("set_turn_mode", {"slug": "hal", "turn_mode": "auto"})
     assert Agent.objects.get(slug="hal").turn_mode != "auto"

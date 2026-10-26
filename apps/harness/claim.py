@@ -335,6 +335,9 @@ def turn_reach(turn: Turn) -> Reach:
     turn = (Turn.objects.select_related("agent", "chat_session", "chat_session__runner_binding",
                                         "chat_session__agent", "enqueued_by")
             .get(pk=turn.pk))
+    if (held := turn.acting_agent) is not None and held.held:
+        # The agent hold: no runner claims it until release, whatever routing says.
+        return Reach(UNROUTED, [], reason=f"the agent '{held.slug}' is on hold")
     if turn.chat_session_id:
         ws = turn.chat_session.workspace_id
     elif turn.agent_id:
@@ -540,6 +543,14 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
 
     out = []
     for t in queued:
+        if (held := t.acting_agent) is not None and held.held:
+            # Routing is beside the point until the agent hold is released — and
+            # coverage does not know the hold, so this comes before `claimable_now`.
+            note = f" ({held.held_note})" if held.held_note else ""
+            out.append(_unclaimable_row(user, t, f"agent {held.slug}", "agent_hold",
+                                        f"the agent '{held.slug}' is on hold{note} — none of its "
+                                        "turns run until it is released"))
+            continue
         if t.pk in claimable_now:
             continue
         if t.chat_session_id:
@@ -603,17 +614,21 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
         else:
             kind = "config"
             reason = f"no runner {what}"
-        from . import turn_access
-
-        out.append({
-            "turn_id": str(t.pk), "target": target,
-            # A prompt is a log (turn_access); a contact's view is already
-            # narrowed to their own conversations by `turn_q`.
-            "prompt": ((t.prompt or "")[:120]
-                       if user is None or turn_access.can_read_turn_content(user, t) else ""),
-            "created_at": t.created_at, "reason": reason, "kind": kind,
-        })
+        out.append(_unclaimable_row(user, t, target, kind, reason))
     return out
+
+
+def _unclaimable_row(user, t: Turn, target: str, kind: str, reason: str) -> dict:
+    from . import turn_access
+
+    return {
+        "turn_id": str(t.pk), "target": target,
+        # A prompt is a log (turn_access); a contact's view is already
+        # narrowed to their own conversations by `turn_q`.
+        "prompt": ((t.prompt or "")[:120]
+                   if user is None or turn_access.can_read_turn_content(user, t) else ""),
+        "created_at": t.created_at, "reason": reason, "kind": kind,
+    }
 
 
 def _unserving_said(t: Turn, by_unserving: dict) -> str:
@@ -788,6 +803,11 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         .filter(profile_q(runner))
         .exclude(agent_id__in=busy_agents)
         .exclude(chat_session_id__in=busy_sessions)
+        # The AGENT hold (Agent.held): none of a held agent's turns — its own or a
+        # chat with it — is claimed, ridden or pinned, like the fleet hold above
+        # but for one agent. Outside `match_q` so a pin cannot punch through it.
+        .exclude(agent__held=True)
+        .exclude(chat_session__agent__held=True)
         .filter(tenant_q)
         # assignment_allows reads turn.agent_id; the session leg's stickiness
         # check reads chat_session.agent_id + chat_session.runner_binding.

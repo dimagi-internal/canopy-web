@@ -221,6 +221,17 @@ class Agent(models.Model):
     # Reachable from Slack (apps/slack). Off by default and owner-only to flip:
     # it opens the agent to a new channel of people, which is a deliberate act.
     slack_enabled = models.BooleanField(default=False)
+    # The agent hold: while `held`, no runner is handed this agent's turns — its own
+    # (schedules, dispatches, mail) or a chat with it. The per-agent sibling of the
+    # fleet hold (harness.FleetHold), enforced in the same one place,
+    # `harness.claim.claim_next_turn`. Turns keep enqueuing and wait QUEUED, so the
+    # queue shows what tried to reach the agent; running turns finish normally.
+    # Operational state set from the board (POST /hold), never by the upsert.
+    held = models.BooleanField(default=False)
+    held_note = models.CharField(max_length=500, blank=True, default="")
+    held_at = models.DateTimeField(null=True, blank=True)
+    held_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="+")
     # The agent's own login (`user`) may hold a personal vault key for TESTING, so a
     # headless harness signed in as the agent can take part in its own sensitive
     # conversations (apps/agents/credentials/test_key.py). Off by default; an agent
@@ -1151,6 +1162,43 @@ class AgentDelegation(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"delegation:{self.user_id}->{self.agent_id}:{self.service}"
+
+
+class AgentLoginRequest(models.Model):
+    """An agent admin asking that a PERSON's existing canopy account become the agent's
+    own login (`Agent.user`), waiting for that person to say yes.
+
+    Linking an account makes it the agent: the agent's token signs in as it, and
+    `mint_agent_canopy_token` / rotation mint tokens for it. Done to someone else's
+    account without them, it would let an admin act as that person. So an account that
+    has ever signed in interactively (`last_login` set — it may be a person's) is linked
+    only when its own person accepts, in their own browser behind a passkey step-up
+    (`agent_login.accept_link`). A fresh account made for the agent (never signed in)
+    is linked by an admin directly, as before."""
+
+    PENDING, ACCEPTED, DECLINED, WITHDRAWN = "pending", "accepted", "declined", "withdrawn"
+    STATUS_CHOICES = [(PENDING, "Pending"), (ACCEPTED, "Accepted"), (DECLINED, "Declined"),
+                      (WITHDRAWN, "Withdrawn")]
+
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="login_requests")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                             related_name="agent_login_requests")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                     blank=True, related_name="+")
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["agent"], condition=models.Q(status="pending"),
+                                    name="one_pending_login_request_per_agent"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"login-request:{self.agent_id}->{self.user_id}:{self.status}"
 
 
 class RepoIdentity(models.Model):

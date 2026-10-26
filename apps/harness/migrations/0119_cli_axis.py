@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("harness", "0117_retire_missing_sessions"),
+        ("harness", "0118_fleet_routing"),
     ]
 
     operations = [

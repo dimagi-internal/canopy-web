@@ -25,7 +25,9 @@ from apps.agents.models import Agent
 from apps.agents.route_refusals import zk_problem
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
+from apps.canopy_sessions import transcript_read
 from apps.canopy_sessions.models import Attachment, Session
+from apps.canopy_sessions.staleness import active, open_reason
 from apps.events import audit as events_audit
 from apps.passkeys import stepup
 from apps.workspaces import services as wsvc
@@ -1129,18 +1131,26 @@ def set_runner_engine(request: HttpRequest, runner_id: uuid.UUID, payload: Runne
 
 
 def _open_sessions_by_runner(runner_ids) -> dict:
-    """{runner id: sessions open on it} — active and still reported, the session
-    list's own `state=active` rule (`unseen_q`), so the two counts cannot drift."""
-    from apps.canopy_sessions.staleness import active
-
+    """{runner id: {reason: (count, oldest activity)}} for the sessions open on it:
+    active and still reported, the session list's own `state=active` rule
+    (`unseen_q`), so the two counts cannot drift; each labelled by
+    `staleness.open_reason`, which reads the same checks."""
     if not runner_ids:
         return {}
     rows = (
-        active(Session.objects.filter(runner_binding__runner_id__in=runner_ids))
-        .values("runner_binding__runner_id")
-        .annotate(n=models.Count("pk", distinct=True))
+        transcript_read.with_activity(
+            active(Session.objects.filter(runner_binding__runner_id__in=runner_ids))
+        )
+        .annotate(_open_reason=open_reason())
+        .values("runner_binding__runner_id", "_open_reason")
+        .annotate(n=models.Count("pk", distinct=True), oldest=models.Min("_activity"))
     )
-    return {row["runner_binding__runner_id"]: row["n"] for row in rows}
+    out: dict = {}
+    for row in rows:
+        out.setdefault(row["runner_binding__runner_id"], {})[row["_open_reason"]] = (
+            row["n"], row["oldest"],
+        )
+    return out
 
 
 def _with_roots(request: HttpRequest, runners):
@@ -1222,7 +1232,12 @@ def _runner_rows(request: HttpRequest, qs) -> list:
     open_by_runner = _open_sessions_by_runner([r.pk for r in rows])
     administered = harness_runners.administered_runner_ids(request.user, rows)
     for r in rows:
-        r.open_sessions = open_by_runner.get(r.pk, 0)
+        reasons = open_by_runner.get(r.pk, {})
+        r.open_sessions = sum(n for n, _ in reasons.values())
+        r.open_sessions_by_reason = {
+            reason: {"count": n, "oldest_activity_at": oldest}
+            for reason, (n, oldest) in sorted(reasons.items())
+        }
         # Resolved here rather than in the schema because it is a property of the
         # (caller, runner) PAIR, and a Ninja resolver only sees the row.
         r.can_manage = r.owner_id in (request.user.id, None)

@@ -57,6 +57,7 @@ SOURCES: list[str] = [
     "apps.harness.alerts_agent_routing",
     "apps.harness.alerts_project_opt_in",
     "apps.canopy_sessions.alerts_handoff",
+    "apps.agents.alerts_agent_token",
 ]
 
 

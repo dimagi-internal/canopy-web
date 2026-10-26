@@ -379,7 +379,7 @@ def test_the_real_resolve_failure_reaches_the_note(off_disk, monkeypatch, tmp_pa
 def test_a_turn_whose_env_file_cannot_be_written_fails_clearly(turn_box, monkeypatch):
     mod, root, timeline = turn_box
 
-    def no_write(slug, turn_id):
+    def no_write(slug, turn_id, **k):
         mod._TURN_ENV_ERRORS[slug] = "[Errno 28] No space left on device"
         return None
 
@@ -529,3 +529,41 @@ def test_drain_inbox_probes_each_mailbox_in_its_agents_gog_home(cloud_runner, un
     assert {e["GOG_HOME"].rsplit("/", 1)[-1] for e in seen_env} == {"eva", "ace"}
     cloud_runner._INBOX_STAMPS.clear()
     cloud_runner._GOG_CLIENT_LIVE.clear()
+
+
+# ---- a turn held on a site's page never holds the agent's own login there -------------
+
+def test_a_page_turn_leaves_the_agents_own_site_login_out_of_its_env(turn_box, monkeypatch):
+    """canopy-web says (`page_site`) this chat is held on a connect-labs page, where the
+    agent reaches the site only as the person who sent: LABS_MCP_TOKEN is in neither the
+    turn's environment nor its env file, and CANOPY_PAGE_SITE tells its helpers why."""
+    mod, root, _ = turn_box
+    monkeypatch.setattr(mod, "_turn_values",
+                        lambda slug, **k: {"CANOPY_WEB_PAT": "eva-pat", "LABS_MCP_TOKEN": "own-labs"})
+    seen = []
+
+    def execute(prompt, turn_id, emit, **k):
+        env = mod._agent_env("eva")
+        seen.append((env, pathlib.Path(env["CANOPY_AGENT_ENV_FILE"]).read_text()))
+        return True, "done", "sid"
+
+    monkeypatch.setattr(mod, "execute_prompt", execute)
+    mod._run_turn("rid", {**_turn(), "page_site": {"site": "connect-labs",
+                                                   "withheld": ["LABS_MCP_TOKEN"]}})
+    env, text = seen[0]
+    assert "LABS_MCP_TOKEN" not in env and "own-labs" not in text
+    assert env["CANOPY_PAGE_SITE"] == "connect-labs"
+    assert env["CANOPY_WEB_PAT"] == "eva-pat" and "CANOPY_WEB_PAT=eva-pat\n" in text
+    # The next turn on this thread is an ordinary one: it holds the login again.
+    seen.clear()
+    mod._run_turn("rid", _turn())
+    env, text = seen[0]
+    assert env["LABS_MCP_TOKEN"] == "own-labs" and "CANOPY_PAGE_SITE" not in env
+
+
+def test_the_page_site_block_is_validated(cloud_runner):
+    mod = cloud_runner
+    assert mod.page_site({}) == ("", frozenset())
+    assert mod.page_site({"page_site": {"site": "a b", "withheld": ["X"]}}) == ("", frozenset())
+    assert mod.page_site({"page_site": {"site": "connect-labs", "withheld": ["OK_1", "no;rm"]}}) == \
+        ("connect-labs", frozenset({"OK_1"}))

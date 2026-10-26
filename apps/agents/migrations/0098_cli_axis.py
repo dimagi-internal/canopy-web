@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0094_declare_secrets_stored_before_2093"),
+        ("agents", "0097_agent_hold"),
     ]
 
     operations = [

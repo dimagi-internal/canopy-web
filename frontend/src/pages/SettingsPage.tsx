@@ -16,6 +16,7 @@ import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePan
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
 import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
 import { SessionReviewersPanel } from '@/components/settings/SessionReviewersPanel'
+import { AgentLoginRequestsPanel } from '@/components/settings/AgentLoginRequestsPanel'
 import { runnerHref } from '@/lib/scopedLinks'
 
 export function SettingsPage() {
@@ -75,6 +76,8 @@ export function SettingsPage() {
       {/* Security first and full width; the rest flow into two columns on a
           wide screen and stack on a narrow one. */}
       <SecurityCard machines={<DeviceKeysPanel />} />
+
+      <AgentLoginRequestsPanel />
 
       <div className="gap-5 lg:columns-2 [&>*]:mb-5 [&>*]:break-inside-avoid">
       <ContactDetailsPanel />

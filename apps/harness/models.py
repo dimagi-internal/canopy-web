@@ -2362,6 +2362,11 @@ class RunnerFleet(models.Model):
     #: `{vault_id: {"kv": n, "wrap": …}}`: what a new member is given (`fleets.join`).
     #: Ciphertext for a key only the fleet's role can use; canopy-web opens none of it.
     vault_wraps = models.JSONField(default=dict, blank=True)
+    #: The fleet's routing: every row an agent's runner list or a workspace's runner
+    #: order holds for its members, `{key: fields}` (`fleets.sync_routing`). Members are
+    #: routed as the fleet, so a new member joins with these rows and a change to one
+    #: member's rows reaches all of them; kept here so it outlives every member.
+    routing = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
     approved_at = models.DateTimeField(null=True, blank=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,

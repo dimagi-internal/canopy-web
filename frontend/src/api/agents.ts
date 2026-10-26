@@ -458,6 +458,26 @@ export async function setAgentTurnMode(slug: string, mode: TurnMode, workspace?:
   return unwrap(res, 'setAgentTurnMode').turn_mode
 }
 
+// The agent hold: while held no runner starts the agent's turns (its schedules,
+// dispatches, mail, chats with it); they wait queued for the release. Any editor
+// may hold or release (agent.work); any member may read.
+export type AgentHold = Schemas['AgentHoldOut']
+
+export async function getAgentHold(slug: string): Promise<AgentHold> {
+  const res = await apiV2.GET('/api/agents/{slug}/hold', { params: { path: { slug } } })
+  return unwrap(res, 'getAgentHold')
+}
+
+export async function holdAgent(slug: string, note: string): Promise<AgentHold> {
+  const res = await apiV2.POST('/api/agents/{slug}/hold', { params: { path: { slug } }, body: { note } })
+  return unwrap(res, 'holdAgent')
+}
+
+export async function releaseAgentHold(slug: string): Promise<AgentHold> {
+  const res = await apiV2.POST('/api/agents/{slug}/hold/release', { params: { path: { slug } } })
+  return unwrap(res, 'releaseAgentHold')
+}
+
 // Turn Slack access to the agent on or off (owner only). Same return shape as
 // setAgentTurnMode, for the same reason: the toggle only needs the flag back.
 // The agent's owner or a workspace owner. `null` clears the owner (workspace
@@ -470,15 +490,32 @@ export async function transferAgentOwner(slug: string, userId: number | null): P
   return unwrap(res, 'transferAgentOwner') as unknown as AgentDetailOut
 }
 
-/** Link this agent to the canopy user it IS (null unlinks). The agent's owner or
- *  an admin. A refusal carries its reason (already another instance's user, not a
- *  workspace member), which is what the control shows. */
-export async function linkAgentCanopyUser(slug: string, userId: number | null): Promise<AgentDetailOut> {
+/** Link this agent to its canopy login — always the account at its own email — or
+ *  unlink it. The agent's owner or an admin. With no account at that email canopy
+ *  creates one; an existing account there gets a request its person accepts
+ *  (`canopy_user_request` on the answer). A refusal carries its reason. */
+export async function linkAgentCanopyUser(slug: string, link: boolean): Promise<AgentDetailOut> {
   const res = await apiV2.PUT('/api/agents/{slug}/canopy-user', {
     params: { path: { slug } },
-    body: { user_id: userId },
+    body: { link },
   })
   return unwrap(res, 'Could not change the canopy user') as unknown as AgentDetailOut
+}
+
+/** A request, from an agent's admin, to make YOUR canopy account that agent's login. */
+export type AgentLoginRequestOut = Schemas['AgentLoginRequestOut']
+
+export async function listMyAgentLoginRequests(): Promise<AgentLoginRequestOut[]> {
+  const res = await apiV2.GET('/api/me/agent-login-requests/')
+  return unwrap(res, 'Could not load requests for your account') as unknown as AgentLoginRequestOut[]
+}
+
+/** Accept (browser + passkey step-up, answered by the API client) or decline. */
+export async function decideMyAgentLoginRequest(id: number, accept: boolean): Promise<AgentLoginRequestOut> {
+  const res = accept
+    ? await apiV2.POST('/api/me/agent-login-requests/{request_id}/accept', { params: { path: { request_id: id } } })
+    : await apiV2.POST('/api/me/agent-login-requests/{request_id}/decline', { params: { path: { request_id: id } } })
+  return unwrap(res, accept ? 'Could not accept' : 'Could not decline') as unknown as AgentLoginRequestOut
 }
 
 export type SlackEnabledOut = Schemas['SlackEnabledOut']

@@ -15,6 +15,9 @@ export type Capability = {
   pages?: string[]
   sites?: string[]
   ceiling?: string[]
+  // Per site: the agent's own credential names that are its login there (e.g.
+  // { 'connect-labs': ['LABS_MCP_TOKEN'] }). Withheld from every turn held on that site's page.
+  own_login?: Record<string, string[]>
   data?: string
 }
 

@@ -6,6 +6,12 @@ middleware adds the agent half: only the canopy tools the caller's capability
 lists exist for that session. Listing and calling are both filtered, and
 `who_is_asking` answers only about the session's own conversation.
 
+A FULL-profile caller token for an AGENT's turn (`read_only`: an editor's turn, a
+`full:` rule's, a writer's in someone else's chat) sees every tool that only READS,
+run as the asker, plus driving their own open page, and no write: the asker granted
+the agent no act-as-you permission (`READ_ONLY_REFUSAL`). It writes as the agent's own
+login. A repo chat's token (no agent) is the person's own tool: every tool, as them.
+
 Everything else — a PAT, the widget's tokens — passes through untouched.
 """
 from __future__ import annotations
@@ -17,6 +23,7 @@ from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from apps.agents.sensitive_data import sensitive_tool
+from apps.harness.caller_tokens import PAGE_DRIVE_TOOLS, PAGE_TOOL_PREFIX, SITE_GATEWAY_TOOLS
 from apps.tokens import kinds
 
 
@@ -44,7 +51,23 @@ def caller_turn_ids() -> list[str] | None:
     return [str(t) for t in (claims.get("turn_ids") or []) if t]
 
 
-def _allowed(name: str, claims: dict) -> bool:
+#: What a full-profile caller token's session is told when it tries a write. Its tools
+#: run as the person who asked, and nothing that person did lets the agent act as them.
+READ_ONLY_REFUSAL = (
+    "{name} changes something, and this session reaches canopy as the person who asked "
+    "only to read: the agent can't act as them here, because they haven't granted it an "
+    "act-as-you permission. Do it as the agent's own login — the `canopy` CLI acts as the "
+    "agent — or ask them to do it.")
+
+
+def read_only(tool) -> bool:
+    """A tool that only reads: its MCP annotation says so (`api_tools._annotations`
+    sets it for every GET route; a hand-written tool declares it)."""
+    ann = getattr(tool, "annotations", None)
+    return bool(ann is not None and getattr(ann, "readOnlyHint", False))
+
+
+def _allowed(name: str, claims: dict, tool=None) -> bool:
     if claims.get("sensitive"):
         # A sensitive turn's session: the canopy tools a `data: sensitive`
         # capability may hold (and its page's own actions), never more, whatever
@@ -54,7 +77,19 @@ def _allowed(name: str, claims: dict) -> bool:
             return False
         return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
     if claims.get("all_tools"):
-        return True             # a full-profile caller: every tool, run as the asker
+        if not claims.get("read_only"):
+            return True         # a repo chat: the person's own tool, every tool as them
+        # An agent's full-profile turn asked by someone else (an editor, a `full:` rule,
+        # a writer in someone else's chat): every READ, run as the asker, and driving
+        # their own open page (`caller_tokens.PAGE_DRIVE_TOOLS`). Never a write: the
+        # asker granted the agent no act-as-you permission, so it may not act as them.
+        if name in PAGE_DRIVE_TOOLS or name.startswith(PAGE_TOOL_PREFIX):
+            return True
+        # The page's site, as the asker under their own act-as-you permission for the
+        # page (`caller_tokens.SITE_GATEWAY_TOOLS`): they granted it from the page.
+        if name in SITE_GATEWAY_TOOLS:
+            return True
+        return tool is not None and read_only(tool)
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
 
 
@@ -69,13 +104,18 @@ class TurnScopeMiddleware(Middleware):
         claims = _turn_claims()
         if claims is None:
             return tools
-        return [t for t in tools if _allowed(t.name, claims)]
+        return [t for t in tools if _allowed(t.name, claims, t)]
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         claims = _turn_claims()
         if claims is not None:
             name = context.message.name
-            if not _allowed(name, claims):
+            tool = None
+            if claims.get("read_only") and not claims.get("sensitive"):
+                tool = await _tool(context, name)
+            if not _allowed(name, claims, tool):
+                if tool is not None:
+                    raise ToolError(READ_ONLY_REFUSAL.format(name=name))
                 raise ToolError(f"{name} is not part of what this caller's session may use")
             # Every tool that takes a `turn_id` is pinned to THIS token's own
             # conversation. Without it the argument is the whole gate: a caller
@@ -89,3 +129,11 @@ class TurnScopeMiddleware(Middleware):
                 if asked not in set(claims.get("turn_ids") or []):
                     raise ToolError("turn not found")
         return await call_next(context)
+
+
+async def _tool(context: MiddlewareContext, name: str):
+    """The tool being called, for its annotations; None when it cannot be found."""
+    try:
+        return await context.fastmcp_context.fastmcp.get_tool(name)
+    except Exception:  # noqa: BLE001 — unknown means "not a read", which refuses
+        return None

@@ -352,6 +352,55 @@ const readComposer = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; 
            typed: typed.found ? typed.text : full.text };
 })(); })()`);
 
+// Bring the active terminal's view back to its live bottom, if someone scrolled
+// it up. `.xterm-rows` is only what the view shows, so a pane scrolled up to read
+// a long reply shows that reply and no composer, and every send bounced
+// COMPOSER_NOT_VISIBLE however often it was retried (turn 6c185edd, 2026-10-26:
+// four claims over 90s read the identical mid-reply frame).
+//
+// Measured against emdash's xterm (2026-10-26): it scrolls only for a TRUSTED
+// wheel — a WheelEvent dispatched from the page is ignored — so this goes
+// through `page.mouse`. And its scrollbar slider cannot say "at the bottom": with
+// a long scrollback one pixel of slider is many lines. So no guess about where
+// the view is; wheeling down at the bottom is a no-op. It is guarded instead on
+// what makes a wheel safe: the pane has scrollback (a slider shorter than its
+// track — a full-screen app's alternate buffer has none, and there a wheel is
+// turned into arrow keys) and the app has no mouse reporting on
+// (`enable-mouse-events`, where the wheel would reach claude as input).
+// Returns whether it wheeled.
+const scrollTermToBottom = async () => {
+  const at = await page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const term = activeTerm();
+    if (!term || term.classList.contains('enable-mouse-events')) return null;
+    const bar = term.querySelector('.xterm-scrollable-element .scrollbar.vertical');
+    const slider = bar && bar.querySelector('.slider');
+    if (!slider || !bar.clientHeight || slider.offsetHeight >= bar.clientHeight - 1) return null;
+    const r = (term.querySelector('.xterm-screen') || term).getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  })(); })()`);
+  if (!at) return false;
+  // One wheel moves the view a bounded distance however large its delta, and a
+  // long reply is many screens. So wheel until the frame stops changing — the
+  // bottom — rather than a fixed count (five fell short on the incident's pane).
+  const frame = () => page.evaluate(String.raw`(() => { ${ACTIVE_TERM_FN}; return (() => {
+    const rows = activeTerm()?.querySelector('.xterm-rows');
+    return rows ? rows.textContent : '';
+  })(); })()`);
+  await page.mouse.move(at.x, at.y);
+  let before = await frame();
+  for (let i = 0; i < SCROLL_MAX_WHEELS; i++) {
+    await page.mouse.wheel(0, 20000);
+    await page.waitForTimeout(60);
+    const now = await frame();
+    if (now === before) break;
+    before = now;
+  }
+  return true;
+};
+// Far more than any real scrollback needs at one wheel's reach; a bound, not a target.
+const SCROLL_MAX_WHEELS = 200;
+const SCROLL_BUDGET_MS = 8000;
+
 // A frame with no composer is UNREADABLE, not empty: mid-redraw right after the
 // task click, a menu/dialog covering the input, or a clipped stale frame (all
 // observed live). Re-read a few times for the transient cases; the caller decides
@@ -360,6 +409,17 @@ const readComposerSettled = async () => {
   let composer = { found: false, text: '', typed: '' };
   for (let attempt = 0; attempt < 4; attempt++) {
     composer = await readComposer();
+    if (composer.found) break;
+    // Not drawn where it should be: the pane may simply be scrolled up. Bounded,
+    // so a scroll that cannot finish costs a few seconds, never the send.
+    const scrolled = attempt === 0 && await Promise.race([
+      scrollTermToBottom().catch(() => false),
+      new Promise((resolve) => setTimeout(() => resolve(false), SCROLL_BUDGET_MS)),
+    ]);
+    if (scrolled) {
+      await page.waitForTimeout(150);
+      composer = await readComposer();
+    }
     if (composer.found) break;
     await page.waitForTimeout(400);
   }

@@ -3221,15 +3221,17 @@ def _turn_env_dir(turn_id: str, *, create: bool = True) -> pathlib.Path | None:
     return root / str(turn_id)
 
 
-def write_turn_env(slug: str, turn_id: str) -> pathlib.Path | None:
+def write_turn_env(slug: str, turn_id: str, *, withheld=frozenset()) -> pathlib.Path | None:
     """`<root>/<turn>/env` (dir 0700, file 0600) holding `slug`'s env for ONE turn.
     The turn gets its path as `CANOPY_AGENT_ENV_FILE`; `remove_turn_env` deletes it in
     the turn's `finally`. None when it cannot be written (the turn still has the
-    values in its environment)."""
+    values in its environment). `withheld` names are left out: a turn held on a site's
+    page never holds the agent's own login there (`page_site`)."""
     d = _turn_env_dir(turn_id)
     values = _turn_values(slug)
     if d is None or values is None:
         return None
+    values = {k: v for k, v in values.items() if k not in withheld}
     try:
         d.mkdir(mode=0o700, exist_ok=True)
         os.chmod(d, 0o700)
@@ -3466,12 +3468,18 @@ def _agent_env(slug: str | None) -> dict:
     env = _child_safe_env()
     for key in _GITHUB_ENV_KEYS:
         env.pop(key, None)
+    withheld = _withheld()
+    for key in withheld:
+        env.pop(key, None)
+    # Never the box's credential in a turn. An AGENT acts as itself (its turn login,
+    # else CANOPY_WEB_PAT from its ~/.<slug>/.env), and a turn that fell back to this
+    # process's CANOPY_TOKEN acted as the box's owner with their whole canopy. An
+    # agentless repo turn is no different: anyone the workspace routes here may have
+    # started it, and it reaches canopy as its asker through its caller token
+    # (`_scoped_token_env`), never as whoever paired the box.
+    env.pop("CANOPY_TOKEN", None)
     if not slug:
         return {**env, **extra}
-    # Never the box's credential for an AGENT: it acts as itself (CANOPY_WEB_PAT
-    # from its ~/.<slug>/.env), and a turn that fell back to this process's
-    # CANOPY_TOKEN acted as the box's owner with their whole canopy.
-    env.pop("CANOPY_TOKEN", None)
     # WHICH agent this is, as a variable Claude Code will actually hand on. It
     # strips secret-looking variables (CANOPY_WEB_PAT among them) from the env it
     # gives a plugin's MCP `headersHelper`, and runs that helper from the plugin's
@@ -3533,6 +3541,8 @@ def _agent_env(slug: str | None) -> dict:
             continue
         if key in _GITHUB_ENV_KEYS:
             continue  # GitHub is the owner's, issued per turn — never the agent's .env
+        if key in withheld:
+            continue  # its own login at the site this page turn is held on (`page_site`)
         value = value.strip().strip('"').strip("'")
         # An agent .env provisioned before canopy moved names its OLD address;
         # left alone it would send every CLI call this turn makes there
@@ -3548,7 +3558,7 @@ def _agent_env(slug: str | None) -> dict:
     env.update(gog_env(slug))
     # LAST, over the agent's own .env: a confined turn's profile is the runner's
     # decision, and nothing an agent provisions may switch it off.
-    return {**env, **extra}
+    return {k: v for k, v in {**env, **extra}.items() if k not in withheld}
 
 
 # Bounded retry for a transient transcript-POST failure (5xx/timeout/URLError).
@@ -5212,6 +5222,39 @@ def _chat_key_env(turn: dict) -> dict:
     return {"CANOPY_CHAT_KEY": key, "CANOPY_CHAT_SESSION": chat_id}
 
 
+#: Set for a turn held on a Connected site's page (canopy-web `ClaimedTurnOut.page_site`):
+#: the site's name. Not a secret — it lets the agent's own code (an MCP headers helper)
+#: know that here it must not authenticate as the agent at that site.
+PAGE_SITE_ENV = "CANOPY_PAGE_SITE"
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+
+
+def page_site(turn: dict) -> tuple[str, frozenset]:
+    """(site, withheld credential names) for a turn held on a site's page, else ("", ∅).
+
+    canopy-web decides it (`interface.page_turn`): the conversation is on a site the
+    agent serves, so the agent reaches that site only as the person who sent, through
+    canopy's gateway — never with its own login there, which this turn must not hold."""
+    block = turn.get("page_site")
+    if not isinstance(block, dict):
+        return "", frozenset()
+    site = str(block.get("site") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", site):
+        return "", frozenset()
+    names = block.get("withheld") if isinstance(block.get("withheld"), list) else []
+    return site, frozenset(str(n) for n in names if _ENV_NAME.match(str(n)))
+
+
+def _page_site_env(turn: dict) -> dict:
+    site, _withheld = page_site(turn)
+    return {PAGE_SITE_ENV: site} if site else {}
+
+
+def _withheld() -> frozenset:
+    """This thread's turn's withheld credential names (`page_site`)."""
+    return getattr(_TURN_ENV, "withheld", None) or frozenset()
+
+
 SCOPED_TOKEN_ROOT = pathlib.Path.home() / ".canopy" / "scoped"
 _SCOPED_KEEP_SECONDS = 7 * 24 * 3600
 
@@ -5391,9 +5434,15 @@ def _github_turn_env(runner_id: str, turn: dict) -> dict:
     status, body = _api("POST", f"/runners/{runner_id}/turns/{turn_id}/github-token")
     if status == 200 and body and body.get("token"):
         _log(f"turn {turn_id[:8]}: GitHub as @{body.get('github_login') or '?'}")
-        return github_env(body["token"], git_name=body.get("git_name") or "",
-                          git_email=body.get("git_email") or "",
-                          requested_by=body.get("requested_by") or requested_by)
+        env = github_env(body["token"], git_name=body.get("git_name") or "",
+                         git_email=body.get("git_email") or "",
+                         requested_by=body.get("requested_by") or requested_by)
+        # Which repo the identity is for (`owner/name`, not a secret): an agent this box
+        # has no clone of yet is cloned with THIS turn's token (`_ensure_agent_clone`) —
+        # canopy-web never hands the agent's GitHub token to a read outside a turn.
+        if body.get("repo"):
+            env[AGENT_REPO_ENV] = str(body["repo"])
+        return env
     _log(f"turn {turn_id[:8]}: no GitHub identity (HTTP {status}) — pushes and pull requests "
          f"will fail; the agent's owner lends one at the agent's Settings → Credentials → GitHub")
     return {"CANOPY_REQUESTED_BY": requested_by}
@@ -5784,8 +5833,51 @@ def agents_unprepared() -> list[str] | None:
     return sorted(s for s in tried if not (pathlib.Path(AGENT_ROOT) / s / ".git").is_dir())
 
 
-def _ensure_agent_clone(slug: str) -> None:
+#: The turn env key `_github_turn_env` names the agent's repo under (`owner/name`).
+AGENT_REPO_ENV = "CANOPY_AGENT_REPO"
+_GITHUB_REPO = re.compile(r"^[\w-][\w.-]*/[\w-][\w.-]*$")
+
+
+def _clone_agent_repo(slug: str, env: dict | None) -> None:
+    """Clone `slug`'s repo into AGENT_ROOT with the TURN's GitHub identity, when the turn
+    has one. The agent's GitHub token reaches a box only for a turn
+    (`POST …/turns/{id}/github-token`), never from `credentials/resolve`, so the box-wide
+    bootstrap cannot clone a private agent repo: its first turn does, here. Best-effort:
+    `canopy agent prepare` runs next either way and says what it could not do."""
+    env = env or {}
+    repo, token = str(env.get(AGENT_REPO_ENV) or ""), str(env.get("GH_TOKEN") or "")
+    if not token or not _GITHUB_REPO.match(repo):
+        return
+    dest = pathlib.Path(AGENT_ROOT) / slug
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["git", "clone", "--depth", "1", f"https://github.com/{repo}.git", str(dest)],
+                           capture_output=True, text=True, timeout=300,
+                           env={**_child_safe_env(), **env})
+        if r.returncode != 0:
+            _log(f"warn: agent {slug}: clone of {repo} with the turn's GitHub identity failed: "
+                 f"{(r.stderr or r.stdout).strip().splitlines()[-1:] or ['?']}")
+    except Exception as exc:  # noqa: BLE001 — prepare still runs and reports
+        _log(f"warn: agent {slug}: clone of {repo} did not run: {exc}")
+
+
+#: How `prepare_agent` hands the canopy CLI a turn's GitHub token (its agent_prepare.py).
+TURN_GITHUB_TOKEN_ENV = "CANOPY_TURN_GITHUB_TOKEN"
+
+#: When each agent was last prepared with a turn's GitHub identity (`_ensure_agent_clone`).
+_PREPARED_WITH_GITHUB: dict[str, float] = {}
+
+#: What `_ensure_agent_clone` clones with. A name of its own so the test loader can swap
+#: in a no-op: no test may clone a real repo.
+_LAZY_CLONER = _clone_agent_repo
+
+
+def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
     """Set an agent up NOW if this box has no clone of it — before its turn runs.
+
+    `env` is the turn's own environment: its GitHub identity clones the agent's
+    private repo (`_clone_agent_repo`) before `canopy agent prepare` runs, since the
+    box-wide prepare is never given the agent's GitHub token.
 
     A box clones agents only when it bootstraps (service start, or a refresh it
     acts on when idle). An agent created since then had its turns run in a bare
@@ -5797,17 +5889,33 @@ def _ensure_agent_clone(slug: str) -> None:
     `_BOOTSTRAPPED_AT`, which discharges that pending refresh."""
     if not slug or _safe_session_dirname(slug) != slug:
         return
-    if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
+    github = bool((env or {}).get("GH_TOKEN"))
+
+    def stale() -> bool:
+        # The box-wide pass since this agent was last prepared WITH a GitHub identity
+        # had none, so its private plugin repos may be stale or missing: the first turn
+        # after each box-wide bootstrap prepares it again with its own token.
+        return github and _PREPARED_WITH_GITHUB.get(slug, 0.0) < _BOOTSTRAPPED_AT
+
+    if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir() and not stale():
         return
     with _LAZY_BOOTSTRAP_LOCK:
         # Re-checked under the lock: a concurrent turn may have just done it.
         if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
+            if not stale():
+                return
+            _PREPARED_WITH_GITHUB[slug] = time.time()  # first: a failure is not retried every turn
+            _log(f"agent {slug}: preparing it again with this turn's GitHub identity")
+            _LAZY_BOOTSTRAPPER(slug, env)
             return
         if time.time() - _LAZY_BOOTSTRAP_TRIED.get(slug, 0.0) < LAZY_BOOTSTRAP_RETRY:
             return
         _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
         _log(f"agent {slug}: no clone on this box yet — bootstrapping before its turn runs")
-        _LAZY_BOOTSTRAPPER(slug)
+        _LAZY_CLONER(slug, env)
+        if github:
+            _PREPARED_WITH_GITHUB[slug] = time.time()
+        _LAZY_BOOTSTRAPPER(slug, env)
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -5846,7 +5954,7 @@ def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path
     session_id = turn.get("_worktree_of") or _chat_session_id(turn)
     slug = _turn_agent_slug(turn)
     if slug:
-        _ensure_agent_clone(slug)
+        _ensure_agent_clone(slug, env)
     # A PROJECT turn (a repo, no agent) works in its own worktree of that repo, at
     # the same path it always had — an empty scratch dir until #1131, which is why
     # such turns went looking for /opt/canopy-web.
@@ -6565,12 +6673,23 @@ def _canopy_cli() -> str:
     return shutil.which("canopy", path=f"{path}:{local}" if path else local) or f"{local}/canopy"
 
 
-def prepare_agent(slug: str) -> None:
+def prepare_agent(slug: str, turn_env: dict | None = None) -> None:
     """Prepare ONE agent with `canopy agent prepare --runner` — the lazy path for an agent
     this box has never seen. Only that agent, not the fleet: a new agent's first turn waits
     for itself, not for every other agent's clone, plugins and Gmail check. Best-effort,
-    like the fleet bootstrap; the agent's readiness report says what it could do."""
+    like the fleet bootstrap; the agent's readiness report says what it could do.
+
+    `turn_env` is the turn's own environment: its GitHub token goes to the CLI as
+    CANOPY_TURN_GITHUB_TOKEN, which it uses for its own `git` calls only (cloning and
+    pulling the agent's private plugin repos) and drops from its environment — so no
+    other child it runs inherits it. `credentials/resolve` never hands the CLI that
+    token."""
     env = _off_disk_env(dict(os.environ))
+    for key in _GITHUB_ENV_KEYS:
+        env.pop(key, None)
+    token = str((turn_env or {}).get("GH_TOKEN") or "")
+    if token:
+        env[TURN_GITHUB_TOKEN_ENV] = token
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # bootstrap_agents.sh and `canopy agent prepare --runner` read the agent
     # roster and credentials AS THIS BOX: hand them its own token, not a PAT.
@@ -10378,10 +10497,15 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
             _log(f"turn {turn_id[:8]} NOT run — {note}")
             return
+        # A turn held on a site's page never holds the agent's own login there
+        # (canopy-web `page_site`): those names are kept out of every env this turn
+        # builds (`_agent_env`, `write_turn_env`), and CANOPY_PAGE_SITE says why.
+        _TURN_ENV.withheld = page_site(turn)[1]
         if confined:
             # No GitHub identity (canopy refuses one for a caller's turn anyway),
             # no chat key, no repo worktrees: only what says who and which turn.
             per_turn = {**_write_envelope(turn), **_lineage_env(turn), **ONE_SHOT_TURN_ENV,
+                        **_page_site_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         else:
             # What this turn alone carries: its GitHub identity (first — the cwd's
@@ -10397,6 +10521,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             per_turn = {**_github_turn_env(runner_id, turn), **_write_envelope(turn),
                         **_chat_key_env(turn), **_lineage_env(turn), **scoped_env,
                         **_agent_token_env(runner_id, turn), **ONE_SHOT_TURN_ENV,
+                        **_page_site_env(turn),
                         **(SENSITIVE_DATA_ENV if SENSITIVE_DATA_MODE else {})}
         _clear_canopy_needs_auth()
         _TURN_ENV.extra = dict(per_turn)
@@ -10413,8 +10538,9 @@ def _run_turn(runner_id: str, turn: dict) -> None:
             # reason and no session, which the server re-queues (a sessionless
             # failure is a non-attempt, bounded by MAX_SESSIONLESS_RETRIES).
             # The clone first: whether the agent has an env to resolve at all is read
-            # from its template (an agent this box has never seen is bootstrapped now).
-            _ensure_agent_clone(slug)
+            # from its template (an agent this box has never seen is bootstrapped now,
+            # cloned with this turn's GitHub identity).
+            _ensure_agent_clone(slug, per_turn)
             if _turn_values(slug) is None:
                 note = (f"[runner] could not resolve {slug}'s credentials: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no answer from the canopy CLI'}")
@@ -10424,7 +10550,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
                 _api("POST", f"/turns/{turn_id}/finish", {"status": "failed", "result_note": note})
                 _log(f"turn {turn_id[:8]} NOT run — {note}")
                 return
-            env_path = write_turn_env(slug, str(turn_id))
+            env_path = write_turn_env(slug, str(turn_id), withheld=_withheld())
             if env_path is None:
                 note = (f"[runner] could not write {slug}'s per-turn credentials file: "
                         f"{_TURN_ENV_ERRORS.get(slug) or 'no tmpfs root'}")
@@ -10606,6 +10732,7 @@ def _run_turn(runner_id: str, turn: dict) -> None:
         _TURN_ENV.read_settings = None
         _TURN_ENV.mcp_config = None
         _TURN_ENV.confined = None
+        _TURN_ENV.withheld = frozenset()
         _TURN_ENV.chat_session = ""
         if cli_session_id and cwd is not None:
             _record_session_cwd(cli_session_id, cwd)

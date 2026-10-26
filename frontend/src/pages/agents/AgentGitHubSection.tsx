@@ -91,12 +91,13 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
   return (
     <section id="cred-github" className="mb-5 scroll-mt-6" data-testid="agent-github">
       <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        GitHub — acting as whoever lent it
+        GitHub — a borrowed credential
       </h3>
       <p className="mb-2 max-w-2xl text-[11px] text-muted-foreground">
-        Pushes and opens pull requests as the person who lent it a token — its owner
-        {gh.owner_email ? <> ({gh.owner_email})</> : null}, or one of its admins when the owner has
-        not — on the repositories that token allows. No runner keeps the token.
+        Pushes and opens pull requests with a token borrowed from a person&rsquo;s own GitHub
+        account — its owner{gh.owner_email ? <> ({gh.owner_email})</> : null}, or one of its admins
+        when the owner has given none — on the repositories that token allows, in any turn canopy
+        lets run its full profile. A runner gets it for one turn at a time and keeps nothing.
       </p>
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-[12px]">
         <div className="flex flex-wrap items-center gap-2" data-testid="github-status">
@@ -106,7 +107,7 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
           {gh.set && (
             <span className="text-foreground-secondary">
               acts as <span className="font-mono">@{gh.login}</span>
-              {gh.lent_by_email ? <> · lent by {gh.lent_by_email}</> : null}
+              {gh.lent_by_email ? <> · borrowed from {gh.lent_by_email}&rsquo;s account</> : null}
               {gh.expires_at ? <> · expires {day(gh.expires_at)}</> : <> · never expires</>}
               {gh.checked_at ? <> · checked {day(gh.checked_at)}</> : null}
             </span>

@@ -909,15 +909,19 @@ export async function makeWorkspaceVaultKey(vaultId: string, me: Unlocked): Prom
 }
 
 /** Give everyone and every machine waiting a copy of the vault's key, opened with mine. */
-export async function grantWorkspaceVaultPending(vaultId: string, me: Unlocked): Promise<ZkStateOut> {
+export async function grantWorkspaceVaultPending(
+  vaultId: string, me: Unlocked, only?: (t: ZkTargetOut) => boolean,
+): Promise<ZkStateOut> {
   const state = await getWorkspaceVaultZk(vaultId)
-  const targets = state.pending.map(targetOf).filter((t): t is Target => t !== null)
+  // `only` narrows the grant to some of those waiting (one runner's row).
+  const pending = only ? state.pending.filter(only) : state.pending
+  const targets = pending.map(targetOf).filter((t): t is Target => t !== null)
   if (state.kv === 0 || !targets.length) return state
   const vk = await openVk(state, me)
   const wraps = await Promise.all(targets.map((t) => wrapTo(vk, state.agent_id, state.kv, t)))
   const out = await addWorkspaceVaultWraps(vaultId, { kv: state.kv, wraps })
   // This grant is what confirms each person's key (a first one, or a new one): record it.
-  await recordGranted(state, vk, state.pending, (b) => putWorkspaceVaultPins(vaultId, b),
+  await recordGranted(state, vk, pending, (b) => putWorkspaceVaultPins(vaultId, b),
     () => getWorkspaceVaultZk(vaultId))
   return out
 }

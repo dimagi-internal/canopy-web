@@ -94,7 +94,8 @@ class CanopyPATVerifier(TokenVerifier):
                         # Provenance: WHICH credential (apps/harness/provenance.py).
                         "token_id": grant.token_id, "token_label": f"turn:{grant.turn.pk}",
                         "turn_ids": sorted(grant.turn_ids), "tool_globs": grant.tool_globs,
-                        "all_tools": grant.all_tools, "sensitive": grant.sensitive},
+                        "all_tools": grant.all_tools, "sensitive": grant.sensitive,
+                        "read_only": grant.read_only},
             )
         user, pat = await sync_to_async(_lookup_user, thread_sensitive=True)(token)
         if user is None:

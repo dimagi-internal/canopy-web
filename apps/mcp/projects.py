@@ -36,6 +36,7 @@ import logging
 import re
 
 from asgiref.sync import sync_to_async
+from django.db import close_old_connections
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.base import Provider
@@ -120,6 +121,25 @@ def _call(workspace: str, handle: str, name: str, arguments: dict):
         kb.db.close()
 
 
+def off_the_shared_thread(fn):
+    """`fn` as an awaitable on a worker thread, its DB connection closed before and
+    after (as apps/common/ticks.py runs its jobs).
+
+    Not `thread_sensitive=True`: outside a Django request that is ONE thread per
+    process, shared with MCP sign-in (apps/mcp/auth.py) and its audit write, so a
+    slow knowledge-base call (a reranked search, a first-call download, a long
+    `sql`) would hold up every MCP request on the instance. On a worker thread it
+    keeps only its own caller waiting. The KB's serving copy is locked per file
+    (`kb_store.local_path`) and each call opens and closes its own reader."""
+    def run(*args):
+        close_old_connections()
+        try:
+            return fn(*args)
+        finally:
+            close_old_connections()
+    return sync_to_async(run, thread_sensitive=False)
+
+
 class ProjectTool(Tool):
     """One of a project's tools. Carries its project so a call re-checks access
     against that project, not whatever the name might mean by then."""
@@ -128,7 +148,7 @@ class ProjectTool(Tool):
     handle: str
 
     async def run(self, arguments: dict) -> ToolResult:
-        out = await sync_to_async(_call, thread_sensitive=True)(
+        out = await off_the_shared_thread(_call)(
             self.workspace, self.handle, self.name, arguments or {})
         # The research tools answer in text an agent reads as-is; JSON-quoting it would
         # turn every newline into "\n" and cost the reader tokens for nothing.

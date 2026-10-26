@@ -170,9 +170,13 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
     always was. With `refs`, `values` holds only the named refs that the
     agent also declares (`runtime_secrets`), and the secret extras
-    (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
-    are included only when named in `refs` too. `op_vault`, `shared_op_vault`
-    and `mailbox` are not secrets and are always returned.
+    (`op_sa_token`, `shared_op_sa_token`, `salesforce_creds`) are included
+    only when named in `refs` too. `op_vault`, `shared_op_vault` and `mailbox`
+    are not secrets and are always returned.
+
+    **Never the agent's GitHub token.** That borrowed credential (the token its owner
+    or an admin gave it from their own GitHub account) leaves canopy-web only for one turn a runner holds
+    (`POST /api/harness/runners/{id}/turns/{id}/github-token`), never from here.
 
     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
     service-account token (`op_sa_token` is ""): its values come from here, so
@@ -936,6 +940,8 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
     30) canopy-web mints a new token for the agent's own canopy login, writes
     it to the agent's `canopy-pat` credential (a runner picks it up at its next
     `canopy cred sync`), keeps the old token valid for 24 h and then revokes it.
+    The agent's token expires (the PAT default, 180 days), so `period_days` is
+    capped 14 days short of that and the token is always replaced first.
     Turning it on needs the agent to have its own login and a stored
     `canopy-pat`, and — when that login has ever signed in interactively — a
     workspace owner (422/403 otherwise). The owner or an admin."""
@@ -949,7 +955,7 @@ def set_pat_rotation(request: HttpRequest, slug: str, payload: PatRotationIn) ->
         if not agent.pat_rotation_enabled:
             agent.pat_rotation_enabled_by = request.user
     agent.pat_rotation_enabled = payload.enabled
-    agent.pat_rotation_days = payload.period_days
+    agent.pat_rotation_days = min(payload.period_days, pat_rotation.max_days())
     agent.save(update_fields=["pat_rotation_enabled", "pat_rotation_days",
                               "pat_rotation_enabled_by", "updated_at"])
     audit.note_change(scope=f"agent:{agent.slug}/pat-rotation",

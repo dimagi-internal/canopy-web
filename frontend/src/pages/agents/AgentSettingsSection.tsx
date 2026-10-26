@@ -11,6 +11,7 @@ import { AgentOwnerControl } from '@/components/agents/AgentOwnerControl'
 import { AgentClisControl } from '@/components/agents/AgentClisControl'
 import { AgentRepositoryControl } from '@/components/agents/AgentRepositoryControl'
 import { AgentRouting } from '@/components/agents/AgentRouting'
+import { AgentHoldControl } from '@/components/agents/AgentHold'
 import { SlackAccessToggle } from '@/components/agents/SlackAccessToggle'
 import { AgentMailboxControl } from '@/components/agents/AgentMailboxControl'
 import { AgentGoogleAccountControl } from '@/components/agents/AgentGoogleAccountControl'
@@ -48,7 +49,7 @@ import { useWorkspaceRole } from '@/workspace/WorkspaceProvider'
 //   External accounts  — GitHub, Salesforce, its Google mailbox
 //   Security           — its secrets (the vault), then who and what can open them
 export function AgentSettingsSection() {
-  const { agent } = useOutletContext<AgentOutletContext>()
+  const { agent, hold, setHold } = useOutletContext<AgentOutletContext>()
   const { tab } = useParams()
   const { hash, search, key } = useLocation()
   const navigate = useNavigate()
@@ -167,6 +168,18 @@ export function AgentSettingsSection() {
                   <AgentRouting agentSlug={agent.slug} agentName={agent.name} initialTurnMode={agent.turn_mode} />
                 </Setting>
               </div>
+              {hold && (
+                <div id="hold" className="scroll-mt-6 border-t border-border">
+                  <Setting
+                    title="Hold"
+                    who="workspace editors and above"
+                    canEdit={canRoute}
+                    description="Stop every runner from starting its turns; they wait queued until you release it."
+                  >
+                    <AgentHoldControl slug={agent.slug} hold={hold} canEdit={canRoute} onChange={setHold} />
+                  </Setting>
+                </div>
+              )}
               <div id="repository" className="scroll-mt-6 border-t border-border">
                 <Setting title="Repository" who={admins} canEdit={isAdmin}
                          description="The GitHub repository its runners clone and run, and the branch.">
@@ -222,6 +235,8 @@ export function AgentSettingsSection() {
                 agentSlug={agent.slug}
                 workspace={agent.workspace ?? ''}
                 initialUser={agent.canopy_user ?? null}
+                initialRequest={agent.canopy_user_request ?? null}
+                agentEmail={agent.email ?? ''}
                 canEdit={isAdmin}
               />
             </Setting>

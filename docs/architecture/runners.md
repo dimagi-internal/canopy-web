@@ -661,6 +661,28 @@ retries, and its live tail ticks once more as it stops.
   end by `tests/test_sdk_round_trip.py` and `tests/test_runner_requirements*.py`.
   Spec: `docs/superpowers/specs/2026-09-30-zdr-runners-design.md`.
 
+## A turn on a site's page withholds the agent's own login there
+
+A turn whose conversation is held on a Connected site's page that its agent serves
+carries `page_site: {site, withheld}` in its claim (`interface.page_turn`; the
+names come from `own_login:` in the agent's interface). There the agent reaches the
+site only through canopy's gateway, as the person who sent (`access.md` § Acting as
+the person on a connected site), so:
+
+- **Cloud runner** (`runner/ec2/cloud_runner.py`, `page_site`): the withheld names
+  are dropped from the turn's environment (`_agent_env`) and its per-turn env file
+  (`write_turn_env`, `CANOPY_AGENT_ENV_FILE`), and `CANOPY_PAGE_SITE=<site>` is set —
+  confined turns too. The box still holds the values for the agent's other turns
+  (the in-memory resolve is per agent), so the boundary is the turn's own process.
+- **Laptop runner** (`runner/canopy_runner/canopy_runner/page_site.py`): emdash, not
+  the runner, starts the session, so it writes `~/.canopy/page/task/<task>.json` for
+  the agent's MCP headers helper (found from `EMDASH_TASK_NAME`). The agent's own
+  `.env` stays on that disk: on a laptop the helper and the caller envelope's `site`
+  block are the boundary, not the environment.
+- An agent whose secrets come from 1Password still gets its own
+  `OP_SERVICE_ACCOUNT_TOKEN` in a full turn, which can read the withheld value from
+  its vault; keep the site login in canopy-web's vault for the withholding to bind.
+
 ## Scheduled turns
 
 The scheduler is a producer of turns, not an execution engine (no celery/beat).
@@ -710,8 +732,9 @@ Specs: `docs/superpowers/specs/2026-07-15-agent-scheduled-turns-design.md`,
 
 ## The GitHub identity a turn gets
 
-**An agent acts on GitHub as its OWNER (or, while the owner has lent none, one of
-its ADMINS), through a delegation — never a box credential.** Boxes hold no GitHub token. `AgentDelegation` (person, agent,
+**An agent acts on GitHub with a borrowed credential — its OWNER's token (or, while the
+owner has given none, one of its ADMINS') — never a box credential, and it reaches a box
+only for one turn.** Boxes hold no GitHub token. `AgentDelegation` (person, agent,
 service) is the third credential kind beside the agent's own vault and the
 workspace's shared vault: a person lending their identity to one agent
 (`apps/agents/credentials/delegations.py`).
@@ -732,7 +755,20 @@ workspace's shared vault: a person lending their identity to one agent
   confined (caller) turn. Returns the token, the lender's git identity (noreply
   email) and `requested_by` for a `Requested-by:` trailer — the caller is recorded,
   never the principal. Stopping bad writes is the agent's own gating, not the token
-  layer's. Each issue is an `agent.github.issued` event.
+  layer's. Each issue is an `agent.github.issued` event. **This is the only door**:
+  `credentials/resolve` never returns it (no `github_token` field), to an admin's PAT
+  or to a box outside a turn.
+- **Cloning a new agent.** The box-wide prepare (`bootstrap_agents.sh`, `canopy agent
+  prepare --runner`) therefore has no GitHub token: an agent whose private repo is not
+  on the box yet is cloned at its FIRST turn, with that turn's token
+  (`cloud_runner._ensure_agent_clone` → `_clone_agent_repo`, using the `repo` the
+  github-token answer names), and prepare then runs with that turn's GitHub env (the
+  canopy CLI's `git` falls back to `GH_TOKEN`), so its private plugin repos install. The
+  first turn of each agent after every box-wide bootstrap prepares it again the same
+  way (`_PREPARED_WITH_GITHUB`), so private plugins stay as fresh as the box-wide pass
+  used to keep them. A clone the box-wide pass could not make is not reported
+  unprepared — that would stop canopy-web sending the turn that clones it; a failed
+  in-turn clone is.
 - **Agentless repo turns and project chats** (`Turn.project`, or the chat
   session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row
@@ -978,7 +1014,7 @@ inconclusive probe is still mailed. Tests:
 - **One protocol, two channels.** The `ws/runner/<id>/` socket's `heartbeat` and `finish` frames are read and applied by the same functions as `POST …/runners/{id}/heartbeat` and `POST …/turns/{id}/finish` (`apps/harness/runner_protocol.py`, over `HeartbeatIn` / `TurnFinishIn`): a WS beat carries `degraded`/`note`, `host`, `projects` and `mailboxes_readable` with the REST rules (absent leaves a list alone; a malformed field costs that field, never the beat), and a WS finish takes only `done`/`failed`/`cancelled` and records `session_key` (a refused frame acks `ok: false` with an `error`). Who may act as a runner is `runner_protocol.acting_runner_q` — its owner; a runner with no owner connects for nobody and is in nobody's `/supervisor` snapshot.
 - The token opens the runner protocol only (`apps/harness/runner_auth.py`) and authenticates as `Runner.owner`, so every owner-scoped runner gate is unchanged. Revoking the device key (Settings → Security) stops the box at once — the socket re-checks its credential on every frame (`channels_auth.still_signed_in`).
 - **A laptop installed from a download pairs in the browser and holds no PAT** (`apps/harness/api_runner_pairings.py`, `runner/canopy_runner/canopy_runner/browser_pair.py`). The box makes its device key, then `POST /api/harness/runner-pairings/` with the public key and a DPoP proof of it, the loopback port it listens on, its hostname, account and whether emdash is present; it shows the returned code and opens `/pair/<code>`. The person signs in, checks the code, picks a workspace where they hold `agent.work` and a name, and approves behind a passkey step-up (a token is refused). The approval's one-time secret comes back only as a redirect to `http://127.0.0.1:<port>/paired` on the machine whose browser approved, so an approve link sent to someone else gives the sender nothing. The box claims (`…/{id}/claim`, DPoP of the same key plus the secret) and gets a `Runner` (`kind=emdash`, runtime `claude-cli` when there is no emdash) whose device key is already ACTIVE, ECDH key approved with it; the approver must still hold `agent.work` there. A key canopy-web already has ACTIVE on a live runner re-attaches instead; any other known key, an expired, declined or used pairing, or a wrong secret or proof is one uniform 401. Pairings last 15 minutes, one live per key. `runner.json` then has no token, and `~/.canopy/device-key/status.json` is written as canopy's CLI writes it so `canopy vault` shares the key.
-- A developer laptop (`install-runner.sh`) pairs with its person's PAT (`CANOPY_TOKEN`), which also registers its key. A **cloud box pairs by invitation and holds no PAT** (below). A box paired by invitation, and every isolation unit, has **no PAT fallback**: without a token it reports itself unauthenticated. Only a cloud box from an older stack that still has `CANOPY_TOKEN` (and never paired by invitation) falls back to it while no approved key can get a token (`runner/ec2/cloud_runner.py::_bearer`). An agent turn never inherits the box's credential — it acts with its own `CANOPY_WEB_PAT`.
+- A developer laptop (`install-runner.sh`) pairs with its person's PAT (`CANOPY_TOKEN`), which also registers its key. A **cloud box pairs by invitation and holds no PAT** (below). A box paired by invitation, and every isolation unit, has **no PAT fallback**: without a token it reports itself unauthenticated. Only a cloud box from an older stack that still has `CANOPY_TOKEN` (and never paired by invitation) falls back to it while no approved key can get a token (`runner/ec2/cloud_runner.py::_bearer`). No turn inherits the box's credential: an agent turn acts with its own login, and an agentless repo turn (anyone's, once routed here) reaches canopy only through its asker's read-only caller token (`cloud_runner._agent_env` strips `CANOPY_TOKEN` from both).
 - **Pairing a cloud box by invitation** (`apps/harness/api_runner_invitations.py`). `runner/ec2/up.sh`, with the operator's own workbench token, creates a `RunnerInvitation` once the stack's instance role exists: `{name, workspace, role_arn, ecdh_public_jwk}` (the `<stack>-ecdh` KMS public key), in a workspace where the operator has `agent.work`. It lasts an hour, and one live invitation exists per (role, name): your own new one replaces yours, and someone else's live one is never replaced (409). The approve link is printed, mailed and pushed to the creator. **Only the creator approves it**, from a browser behind a passkey step-up (`stepup.require_recent_step_up`); a token gets 403, so neither `up.sh` nor the box can approve its own pairing. The box (no state file, no `CANOPY_TOKEN`) calls `POST /api/harness/runners/pair-by-role` with an instance-role proof bound to that URL (`aws_iam_proof.verify`): waiting → 202; approved → one transaction creates the `Runner` (owner = creator, `workspace` = the invitation's, enrolled there by `Runner.save`), its `aws-iam` `RunnerDeviceKey` already ACTIVE (and the invitation's ECDH key approved with it), and marks the invitation consumed. The creator must still have `agent.work` there at that moment. Every other answer (no invitation, expired, used, another name, another ECDH key, a bad or replayed proof) is one uniform 401 that creates nothing. The box then signs in at `POST /api/runner-sessions/` as any keyless box does.
 - **A replaced instance re-attaches.** The role is the box's identity (`jkt` = sha256 of the role ARN), and `up.sh --allow-instance-change` keeps the stack's role. So `pair-by-role` from a role with an ACTIVE key on a non-retired runner of the same name returns 200 with that runner's id; no invitation is needed or used, and `wire.sh` has no predecessor to retire. A role whose runner was retired needs a new invitation from that runner's owner; the old key row is replaced, so `jkt` stays unique. A key for the role on another owner's runner (live, revoked or retired) is never erased, and a pending or revoked key on a live runner is never replaced either: a revocation is undone by its owner, not by re-inviting. Each is the uniform 401.
 - A box of isolation units pairs every unit in one call (`units` on the invitation and on `pair-by-role`; see "Units on the box" above).
@@ -1031,6 +1067,14 @@ cloud runners, whose size canopy-web sets from the work waiting for it. Spec:
   (`_give_wraps`). The copy is ciphertext for the same public key; a wrap binds vault,
   key version and the ECDH key thumbprint, so it opens on any member and canopy-web
   opens none of it.
+- **A member is routed as its fleet** (`fleets.sync_routing`). Agents' runner lists and
+  workspaces' runner orders name runners, and a member the scaler adds is a new runner,
+  so the fleet keeps its routing (`RunnerFleet.routing`): every row its members hold. A
+  member joins with those rows (a live member's, else the fleet's copy), and each tick
+  first carries a change made to one member's rows (added to an agent, taken off one,
+  switched off) to every member. Route a fleet by routing any one member. A member whose
+  instance left the group is retired with its rows deleted, as the retire route does;
+  the fleet's copy outlives every member.
 - **A credential set is the fleet's one list** (`RunnerCredentialSet`, § Credential
   sets below). `fleet.sh up --credential-set <name>` makes the fleet read an existing
   set; otherwise it gets a new one.

@@ -373,13 +373,13 @@ step3_agents() {
       FAILED_AGENTS+=("$slug")
     fi
   done
-  # What this box tried to set up and could not — read by cloud_runner.py and
-  # REPORTED on its heartbeat (`agents_unprepared`), so canopy-web stops handing
-  # it those agents' turns (routing.cannot_serve). Only a pass that clones writes
-  # it: the credentials-only pass attempts no clone and so has no verdict.
+  # A box-wide pass is never given the agents' GitHub tokens (canopy-web hands
+  # it only to a turn), so a private agent repo it cannot clone is NOT unprepared: its
+  # first turn clones it with that turn's token (cloud_runner._ensure_agent_clone), and
+  # only a failure THERE is reported (`agents_unprepared`, routing.cannot_serve).
+  # Reporting it here would stop canopy-web from ever sending the turn that fixes it.
   if (( ! CREDENTIALS_ONLY )); then
-    printf '%s\n' "${FAILED_AGENTS[@]}" | grep -v '^$' >"$AGENT_ROOT/.unprepared" 2>/dev/null \
-      || : >"$AGENT_ROOT/.unprepared" 2>/dev/null || true
+    : >"$AGENT_ROOT/.unprepared" 2>/dev/null || true
   fi
 }
 

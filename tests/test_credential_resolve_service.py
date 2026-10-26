@@ -169,7 +169,8 @@ def test_a_license_read_never_gets_the_agents_login_or_the_extras(monkeypatch, o
     out = cr.resolve(_request(owner), agent, None)
     assert out.via == "license"
     assert out.values == {"api-key": "v"}
-    assert (out.op_sa_token, out.shared_op_sa_token, out.github_token, out.salesforce_creds) == ("", "", "", "")
+    assert (out.op_sa_token, out.shared_op_sa_token, out.salesforce_creds) == ("", "", "")
+    assert not hasattr(out, "github_token")
 
 
 def test_parse_refs():

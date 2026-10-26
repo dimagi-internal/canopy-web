@@ -27,7 +27,7 @@ from django.utils import timezone
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import RunnerBinding, Session
 from apps.events.models import Activity
-from apps.harness import aws_iam_proof, claim, fleets
+from apps.harness import aws_iam_proof, claim, device_keys, fleets
 from apps.harness import runners as harness_runners
 from apps.harness.models import (
     Runner,
@@ -38,6 +38,7 @@ from apps.harness.models import (
     RunnerInvitation,
     RunnerLogin,
     Turn,
+    WorkspaceRunnerOrder,
 )
 from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.runner_invitations import PAIR, PAIR_HTU, _pat_client, _proof, make_org
@@ -520,3 +521,101 @@ def test_one_fleets_aws_error_does_not_stop_another(world, monkeypatch):
         raise fleets.AwsError("throttled")
     monkeypatch.setattr(fleets, "get", boom)
     assert fleets.tick() == {}
+
+
+# ---- a member is routed as its fleet ---------------------------------------------------
+
+I3 = "i-0aaaabbbbccccdddd"
+
+
+def _routes(runner):
+    return (sorted(RunnerAssignment.objects.filter(runner=runner).values_list("agent__slug", "source", "enabled")),
+            sorted(WorkspaceRunnerOrder.objects.filter(runner=runner).values_list("workspace_id", "enabled")))
+
+
+def test_a_member_the_scaler_adds_joins_routed_as_the_fleet(world, sts, aws):
+    WorkspaceRunnerOrder.objects.create(workspace=world["org"]["ws"], runner=world["one"], rank=0)
+    fleets.tick()  # the fleet keeps its routing
+    aws.add(I2)
+    res = _join(sts, I2)
+    assert res.status_code == 201, res.content
+    new = Runner.objects.get(pk=res.json()["runner_id"])
+    assert _routes(new) == _routes(world["one"]) == ([("echo", "", True)], [(world["org"]["ws"].slug, True)])
+    # So the work it was added for reaches it.
+    turn = _turn(world["agent"], "k1")
+    assert turn.pk in fleets._covered([new], [turn])[new.pk]
+
+
+def test_a_change_to_one_members_routing_reaches_every_member(world, aws):
+    aws.add(I2)
+    two = _member(world["fleet"], I2)
+    fleets.tick()
+    assert _routes(two) == _routes(world["one"])
+    eva = Agent.objects.create(slug="eva", name="Eva", workspace=world["org"]["ws"], owner=world["org"]["user"])
+    RunnerAssignment.objects.create(agent=eva, runner=two, rank=1)                    # added on one
+    RunnerAssignment.objects.filter(runner=world["one"], agent=world["agent"]).update(enabled=False)  # switched off on one
+    fleets.tick()
+    assert _routes(world["one"]) == _routes(two) == ([("echo", "", False), ("eva", "", True)], [])
+    RunnerAssignment.objects.filter(runner=world["one"], agent=eva).delete()          # taken off one
+    fleets.tick()
+    assert _routes(world["one"]) == _routes(two) == ([("echo", "", False)], [])
+
+
+def test_the_fleets_routing_outlives_every_member(world, sts, aws):
+    fleets.tick()
+    del aws.instances[I1]
+    fleets.tick()
+    # Retired as the retire route retires: its rows go, so no Runners tab lists it.
+    assert _routes(world["one"]) == ([], [])
+    aws.add(I3)
+    res = _join(sts, I3)
+    new = Runner.objects.get(pk=res.json()["runner_id"])
+    assert _routes(new) == ([("echo", "", True)], [])
+
+
+# ---- a member built as a box of units ---------------------------------------------------
+
+def _unit_jwk() -> dict:
+    from canopy_sdk.keys import header_jwk
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    return device_keys.normalize_public_jwk(header_jwk(ec.generate_private_key(ec.SECP256R1())))
+
+
+def _join_as_unit(sts, instance, jwk, *, units=None):
+    sts.arn = assumed(instance)
+    name = f"dimagi-{instance.removeprefix('i-')}"
+    one = {"name": name, "public_jwk": jwk, "ecdh_public_jwk": ECDH, "ecdh_store": "kms-broker",
+           "host": name, "capabilities": {"sessions": True}}
+    body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), "units": units or [one]}
+    return Client().post(PAIR, data=body, content_type="application/json")
+
+
+def test_a_member_built_as_one_unit_joins_and_signs_in_with_the_units_own_key(org, sts, aws):
+    fleet = _approved_fleet(org)
+    aws.add(I1)
+    jwk = _unit_jwk()
+    res = _join_as_unit(sts, I1, jwk)
+    assert res.status_code == 201, res.content
+    body = res.json()
+    member = Runner.objects.get(pk=body["runner_id"])
+    assert body["units"] == {member.name: str(member.pk)} and member.fleet == fleet
+    assert member.capabilities["unit"] == {"kind": "tree", "root": "connect"}
+    key = RunnerDeviceKey.objects.get(pk=body["device_keys"][member.name])
+    assert key.kind == RunnerDeviceKey.SOFTWARE and key.status == RunnerDeviceKey.ACTIVE
+    assert key.jkt == device_keys.thumbprint(jwk)
+    # It holds the fleet's ECDH key, approved with the fleet, so the fleet's vault copies go to it.
+    assert key.ecdh_jkt == device_keys.thumbprint(ECDH) and key.ecdh_approved_at is not None
+    # The same instance again re-attaches: one runner, the same unit key.
+    cache.clear()
+    again = _join_as_unit(sts, I1, jwk)
+    assert again.status_code == 200 and again.json()["device_keys"] == body["device_keys"]
+    assert Runner.objects.filter(fleet=fleet).count() == 1
+
+
+def test_a_member_is_one_unit_never_several(org, sts, aws):
+    _approved_fleet(org)
+    aws.add(I1)
+    two = [{"name": f"dimagi-{I1.removeprefix('i-')}", "public_jwk": _unit_jwk()},
+           {"name": "dimagi-other", "public_jwk": _unit_jwk()}]
+    assert _join_as_unit(sts, I1, None, units=two).status_code == 401

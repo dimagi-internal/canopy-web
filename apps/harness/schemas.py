@@ -75,6 +75,11 @@ def chat_send_origin(value: str | None) -> str | None:
     return value
 
 
+class OpenSessionReason(Schema):
+    count: int
+    oldest_activity_at: dt.datetime | None = None
+
+
 class RunnerIn(Schema):
     name: str
     kind: str  # emdash|cloud|remote|desktop
@@ -92,7 +97,8 @@ class UnclaimableTurnOut(Schema):
     reason: str
     # "config" = nothing declares this target (needs a fix); "offline" = something
     # does, but no runner is reachable right now (usually transient); "parked" =
-    # every runner that could take it is paused (`reason` says by whom, until when).
+    # every runner that could take it is paused (`reason` says by whom, until when);
+    # "hold" = the fleet is on hold; "agent_hold" = its agent is (Agent.held).
     kind: str = "config"
     # Whether the caller may cancel it (POST /turns/{id}/cancel) — the fix the
     # warning offers in place.
@@ -346,6 +352,12 @@ class RunnerOut(Schema):
     # pause ("paused · 4 open sessions"): idle sessions on a paused box are not
     # waiting on anybody, so they are counted here rather than on the feed.
     open_sessions: int = 0
+    # The same open sessions by WHY each is open (`staleness.OPEN_REASONS`, plus
+    # `unclassified` if the rule and its explanation ever disagree), each with the
+    # oldest last activity among them. Counts only: no session, title or person,
+    # so it is shown to anyone who sees the runner. Stamped by the fleet list and
+    # the one-runner read; None on a route that does not count.
+    open_sessions_by_reason: dict[str, OpenSessionReason] | None = None
     # What the box reports about its own features (Runner.health), keyed by
     # check name. A map rather than a list on purpose: openapi-fetch's Readable<T>
     # degrades an array of OBJECTS inside a response into an ArrayLike the client
@@ -1070,6 +1082,17 @@ class CallerContextOut(Schema):
     envelope: dict
 
 
+class ClaimPageSiteOut(Schema):
+    """A turn held on a Connected site's page (`interface.page_turn`)."""
+
+    # The site's name (the conversation's `embed_app`), which the agent serves.
+    site: str
+    # The agent's own credential names that are its login at that site
+    # (`own_login:` in its interface). The runner leaves them out of this turn's
+    # environment: on a page the agent reaches the site only as the person who sent.
+    withheld: list[str] = []
+
+
 class ClaimedTurnOut(TurnOut):
     """A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
     the caller envelope, so the runner can hand it to the agent without a second
@@ -1098,6 +1121,10 @@ class ClaimedTurnOut(TurnOut):
     # The model to start that CLI on, from the agent's `cli_models`; "" = the
     # CLI's own default.
     cli_model: str = ""
+    # For a turn whose conversation is held on a Connected site's page that its agent
+    # serves: the site, and the agent's own credentials for it that the runner must
+    # leave out of the turn (`interface.page_turn`). Null for every other turn.
+    page_site: ClaimPageSiteOut | None = None
 
     # Nothing about a visitor's HOST credential is ever here (host grant
     # contract v1): the gateway (`site_call`) attaches it inside canopy-web, so
@@ -1124,6 +1151,12 @@ class ClaimedTurnOut(TurnOut):
         if session is None or not sensitivity.any_sensitive(session, obj):
             return {}
         return session_sync.turn_end_held(session)
+
+    @staticmethod
+    def resolve_page_site(obj) -> dict | None:
+        from apps.agents.interface import page_turn  # noqa: PLC0415 — as resolve_caller_context: the interface reads models, loaded with a call
+
+        return page_turn(obj)
 
     @staticmethod
     def resolve_caller_context(obj) -> dict:

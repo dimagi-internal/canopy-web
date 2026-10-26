@@ -111,9 +111,10 @@ export interface TurnSummary {
 }
 
 export interface TurnFold {
-  /** The work behind the fold line. */
+  /** The work behind the fold line: the turn's tool calls. */
   folded: ChatRow[];
-  /** Rows pulled OUT of the fold because the person acts on them, in order. */
+  /** Everything else before the reply, in order: the agent's own words along
+   *  the way, and calls the person acts on. Never folded. */
   kept: ChatRow[];
   /** The agent's final text, shown in full below the fold. */
   reply: ChatRow;
@@ -128,7 +129,11 @@ export interface TurnFold {
  * `live` is the caller's answer to "is this turn still running" — from the
  * server's turn status. A live turn is never folded: you are watching it.
  * Neither is a turn with no reply text (there is nothing to show beneath the
- * fold) or with nothing in front of its reply.
+ * fold) or with no tool calls in front of its reply.
+ *
+ * Only TOOL CALLS fold. What the agent said along the way stays where it can be
+ * read: it was on screen while the turn ran, and folding it at the end pulled
+ * text out from under someone in the middle of reading it.
  */
 export function planFold(segment: TurnSegment, { live }: { live: boolean }): TurnFold | null {
   if (live || !segment.user) return null;
@@ -143,11 +148,12 @@ export function planFold(segment: TurnSegment, { live }: { live: boolean }): Tur
   }
   if (replyAt < 0) return null;
   const before = body.slice(0, replyAt);
-  const folded = before.filter((r) => !mustStayVisible(r));
+  const folds = (r: ChatRow) => r.kind === "tool_pair" && !mustStayVisible(r);
+  const folded = before.filter(folds);
   if (folded.length === 0) return null;
   return {
     folded,
-    kept: before.filter(mustStayVisible),
+    kept: before.filter((r) => !folds(r)),
     reply: body[replyAt],
     after: body.slice(replyAt + 1),
     summary: summariseTurn(segment),

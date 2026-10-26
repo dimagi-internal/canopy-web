@@ -1,4 +1,4 @@
-import type { Draft, Message, MessageAuthor, SessionState, WsEvent } from "./protocol";
+import type { Draft, Message, MessageAuthor, QueuedMessage, SessionState, WsEvent } from "./protocol";
 import { isUnconfirmed, sameAuthor } from "./identity";
 
 // Pure reducer for SessionState — extracted from useSessionSocket so it
@@ -77,7 +77,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
   }
   switch (frame.event) {
     case "session.state": {
-      const messages = keepUnechoedSends(prev.messages, frame.data.messages);
+      const messages = keepUnechoedSends(prev.messages, frame.data.messages, frame.data.queued);
       return messages === frame.data.messages ? frame.data : { ...frame.data, messages };
     }
 
@@ -656,11 +656,27 @@ export function markSendFailed(prev: SessionState, clientId: string, detail: str
  *  keeps its client_id but is a server row now, and a snapshot is only the TAIL:
  *  a long reply's tool rows push the line out of its window, and carrying it
  *  re-numbered it to the bottom, below the reply it started.
+ *
+ *  Unconfirmed is the client's guess, and it can be wrong: a line whose live
+ *  echo this page never matched stays unconfirmed after the agent has read it,
+ *  and the tail is too short to show it — so it was carried below its own
+ *  reply, until a reload. The snapshot's `queued` is the server's answer
+ *  (`send.queued_messages`: sends whose line has not landed), so where it is
+ *  present a send the server has accepted is carried only while it is listed.
+ *  One the server has not accepted yet (pending) or refused (error) has no
+ *  turn to list, and is always kept.
  */
-function keepUnechoedSends(previous: Message[], snapshot: Message[]): Message[] {
+function keepUnechoedSends(
+  previous: Message[],
+  snapshot: Message[],
+  queued: QueuedMessage[] | undefined,
+): Message[] {
+  const waiting = queued ? new Set(queued.map((q) => q.client_id).filter(Boolean)) : null;
   const mine = previous.filter(
     (m) => m.role === "user" && typeof m.content?.client_id === "string" &&
-      isUnconfirmed(m) && !snapshot.some((s) => s.id === m.id),
+      isUnconfirmed(m) && !snapshot.some((s) => s.id === m.id) &&
+      (waiting === null || m.status === "pending" || m.status === "error" ||
+        waiting.has(m.content.client_id as string)),
   );
   if (mine.length === 0) return snapshot;
   // Compared as the live echo is (`comparableText`): the snapshot's copy of a

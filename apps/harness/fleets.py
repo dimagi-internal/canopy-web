@@ -39,11 +39,18 @@ RUNNER_SCALER_TICK_S (default 30 s), per active fleet:
    lowered by one, which puts it back in the warm pool. AWS never picks a busy
    member: every member is protected until canopy-web lifts it;
 5. refresh the fleet's copy of each vault key from a member that holds it.
+
+Members are routed AS THE FLEET (`sync_routing`): a member joins with the rows its
+fleet holds in agents' runner lists and workspaces' runner orders, and each tick
+first carries a change made to one member's rows (adding it to an agent, taking it
+off one, switching it off) to every member. Without it a member the scaler added
+would be in no list, and the work it was added for would never reach it.
 """
 from __future__ import annotations
 
 import datetime as dt
 import functools
+import json
 import logging
 import math
 import re
@@ -63,11 +70,14 @@ from .claim import _assignment_rows_for_turns, _coverage
 from .models import (
     FleetHold,
     Runner,
+    RunnerAccessToken,
+    RunnerAssignment,
     RunnerCredentialSet,
     RunnerDeviceKey,
     RunnerFleet,
     RunnerInvitation,
     Turn,
+    WorkspaceRunnerOrder,
 )
 from .routing import EXECUTING, blocking_turn, prime_machine_units, runner_tenant_slugs_of
 
@@ -278,13 +288,22 @@ def power_of(lifecycle: str) -> str:
 class Joined:
     status: str            # "joined" | "reattached" | "waiting"
     runner: Runner | None = None
+    #: A member that came up as a unit: the unit's own signing key, which it signs in with.
+    unit_key: RunnerDeviceKey | None = None
 
 
 def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilities: dict,
-         ecdh_public_jwk: dict | None, ecdh_store: str, refuse) -> Joined:
+         ecdh_public_jwk: dict | None, ecdh_store: str, refuse, unit_jwk: dict | None = None) -> Joined:
     """An instance of `fleet`'s group joins as its own runner. `caller_arn` is the
     verified STS ARN (`aws_iam_proof.verify_caller`). `refuse(why)` builds the
-    uniform 401 every refusal is; the reason goes to the log only."""
+    uniform 401 every refusal is; the reason goes to the log only.
+
+    A member built as a box of isolation units (`runner.cfn.yaml`'s cloud-init, one
+    workspace-tree unit) sends `unit_jwk`: the unit's own signing key. The instance
+    role belongs to root, so the unit signs in with that key instead; it is made
+    active under the fleet's approval, and it carries the fleet's ECDH key, so it is
+    the key the fleet's vault copies are given to. The role + instance key is still
+    the member's identity, for a rejoin."""
     from .api import declared_capabilities  # noqa: PLC0415 — the api module imports this one
     from .api_device_keys import ECDH_STORES  # noqa: PLC0415 — as above
 
@@ -322,20 +341,37 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
     role = aws_iam_proof.canonical_role_arn(caller_arn)
     jkt = aws_iam_proof.member_jkt(role, instance)
     power = power_of(seen.get("lifecycle", ""))
+    unit = None
+    if unit_jwk is not None:
+        try:
+            unit = device_keys.normalize_public_jwk(unit_jwk)
+        except device_keys.KeyError_ as exc:
+            raise refuse(f"unit key: {exc}") from exc
 
     existing = RunnerDeviceKey.objects.select_related("runner").filter(jkt=jkt).first()
     if existing is not None:
         if existing.status != RunnerDeviceKey.ACTIVE or existing.runner.status == Runner.RETIRED:
             raise refuse(f"{instance} was {existing.runner.name}, which is retired")
         _set_power(existing.runner, power)
-        return Joined("reattached", existing.runner)
+        unit_key = _unit_key(fleet, existing.runner, unit, name, ecdh_public_jwk) if unit else None
+        return Joined("reattached", existing.runner, unit_key)
 
     ecdh_jkt = device_keys.thumbprint(ecdh) if ecdh else ""
     store = ecdh_store if ecdh_store in ECDH_STORES else ("aws-kms" if fleet.ecdh_public_jwk else "")
+    caps = declared_capabilities(capabilities)
+    if unit is not None:
+        # canopy-web says what unit it is, as for any unit: the fleet's tree.
+        from apps.workspaces import services as wsvc  # noqa: PLC0415 — as above
+
+        caps["unit"] = {"kind": "tree", "root": wsvc.tree_roots({fleet.workspace_id}).get(
+            fleet.workspace_id, fleet.workspace_id)}
+        # The unit's key carries the ECDH key; the role + instance key is identity only.
+        ecdh, ecdh_jkt, store = {}, "", ""
+    unit_key = None
     try:
         with transaction.atomic():
             runner = Runner.objects.create(
-                name=name, kind=Runner.CLOUD, host=host, capabilities=declared_capabilities(capabilities),
+                name=name, kind=Runner.CLOUD, host=host, capabilities=caps,
                 owner=owner, workspace_id=fleet.workspace_id, machine_id=f"{role}/{instance}",
                 fleet=fleet, instance_id=instance, credential_set=fleet.credential_set,
                 power=power, power_changed_at=timezone.now())
@@ -349,13 +385,45 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
                 ecdh_approved_at=fleet.approved_at if fleet.ecdh_public_jwk else None,
                 ecdh_approved_by=fleet.approved_by if fleet.ecdh_public_jwk else None,
             )
+            if unit is not None:
+                unit_key = _unit_key(fleet, runner, unit, name, ecdh_public_jwk)
     except IntegrityError:
-        raise refuse(f"{instance}: a concurrent join won") from None
+        raise refuse(f"{instance}: a concurrent join won, or its unit key is another runner's") from None
     _attach_vault(fleet, runner)
-    _give_wraps(fleet, key)
+    _give_wraps(fleet, unit_key or key)
+    _put_routes(runner, _current_routing(fleet, exclude=runner))
     activity.emit(activity.RUNNER_PAIRED, workspace=fleet.workspace_id, actor=owner, surface="runner",
                   ref=str(runner.pk), meta={"name": runner.name, "fleet": fleet.name})
-    return Joined("joined", runner)
+    return Joined("joined", runner, unit_key)
+
+
+def _unit_key(fleet: RunnerFleet, runner: Runner, jwk: dict, name: str,
+              ecdh_public_jwk: dict | None) -> RunnerDeviceKey:
+    """The member's unit signing key: active under the fleet's approval, with the
+    fleet's ECDH key (its broker serves the fleet's KMS key). A rejoin with a new
+    unit key (the instance's disk was replaced) replaces the old one in place, so the
+    vault copies on it are kept; the same key again changes nothing."""
+    jkt = device_keys.thumbprint(jwk)
+    ecdh = dict(fleet.ecdh_public_jwk or {})
+    if ecdh_public_jwk and ecdh and device_keys.thumbprint(
+            device_keys.normalize_public_jwk(ecdh_public_jwk)) != device_keys.thumbprint(ecdh):
+        ecdh = {}  # not the fleet's key: it gets no copy, and waits for a person like any new ECDH key
+    fields = dict(kind=RunnerDeviceKey.SOFTWARE, public_jwk=jwk, jkt=jkt, label=f"{name} (fleet unit key)",
+                  status=RunnerDeviceKey.ACTIVE, created_by=fleet.owner, approved_by=fleet.approved_by,
+                  approved_at=fleet.approved_at, ecdh_public_jwk=ecdh,
+                  ecdh_jkt=device_keys.thumbprint(ecdh) if ecdh else "", ecdh_store="kms-broker" if ecdh else "",
+                  ecdh_approved_at=fleet.approved_at if ecdh else None,
+                  ecdh_approved_by=fleet.approved_by if ecdh else None)
+    key = (RunnerDeviceKey.objects.filter(runner=runner, kind=RunnerDeviceKey.SOFTWARE,
+                                          status=RunnerDeviceKey.ACTIVE).first())
+    if key is None:
+        return RunnerDeviceKey.objects.create(runner=runner, **fields)
+    if key.jkt != jkt:
+        for f, v in fields.items():
+            setattr(key, f, v)
+        key.save()
+        RunnerAccessToken.objects.filter(device_key=key).delete()
+    return key
 
 
 def _attach_vault(fleet: RunnerFleet, runner: Runner) -> None:
@@ -421,6 +489,86 @@ def refresh_wraps(fleet: RunnerFleet) -> None:
     for key in RunnerDeviceKey.objects.filter(runner__fleet=fleet, status=RunnerDeviceKey.ACTIVE,
                                               ecdh_jkt=jkt).exclude(runner__status=Runner.RETIRED):
         _give_wraps(fleet, key)
+
+
+# ── routing: a member is routed as its fleet ────────────────────────────────
+# A route is one routing row naming a member, keyed without the member:
+# ["a", agent id, source, actor] for an agent's runner list (`RunnerAssignment`),
+# ["w", workspace] for a workspace's runner order (`WorkspaceRunnerOrder`).
+
+_A_FIELDS = ("rank", "enabled", "strict", "turn_mode")
+
+
+def _routes_of(runner: Runner) -> dict:
+    out = {}
+    for a in RunnerAssignment.objects.filter(runner=runner).values("agent_id", "source", "actor", *_A_FIELDS):
+        out[json.dumps(["a", a["agent_id"], a["source"], a["actor"]])] = {f: a[f] for f in _A_FIELDS}
+    for o in WorkspaceRunnerOrder.objects.filter(runner=runner).values("workspace_id", "rank", "enabled"):
+        out[json.dumps(["w", o["workspace_id"]])] = {"rank": o["rank"], "enabled": o["enabled"]}
+    return out
+
+
+def _put_routes(runner: Runner, want: dict) -> int:
+    """Make `runner`'s rows exactly `want`. Returns how many rows it wrote or removed."""
+    have = _routes_of(runner)
+    n = 0
+    for key in set(have) - set(want):
+        kind, *k = json.loads(key)
+        if kind == "a":
+            RunnerAssignment.objects.filter(runner=runner, agent_id=k[0], source=k[1], actor=k[2]).delete()
+        else:
+            WorkspaceRunnerOrder.objects.filter(runner=runner, workspace_id=k[0]).delete()
+        n += 1
+    for key, fields in want.items():
+        if have.get(key) == fields:
+            continue
+        kind, *k = json.loads(key)
+        if kind == "a":
+            RunnerAssignment.objects.update_or_create(
+                runner=runner, agent_id=k[0], source=k[1], actor=k[2], defaults=fields)
+        else:
+            WorkspaceRunnerOrder.objects.update_or_create(runner=runner, workspace_id=k[0], defaults=fields)
+        n += 1
+    return n
+
+
+def _current_routing(fleet: RunnerFleet, *, exclude: Runner | None = None) -> dict:
+    """What a joining member is given: a live member's rows (they may hold a change
+    the next tick has not carried yet), else the fleet's own copy."""
+    sibling = (fleet.members.exclude(status=Runner.RETIRED).exclude(pk=getattr(exclude, "pk", None))
+               .order_by("-power_changed_at").first())
+    return _routes_of(sibling) if sibling is not None else dict(fleet.routing or {})
+
+
+def sync_routing(fleet: RunnerFleet, members: list[Runner]) -> list[str]:
+    """Carry each member's routing changes to every member, against the fleet's copy:
+    a route a member has that the copy lacks or holds differently is added or
+    changed for all; a route the copy has that a member lacks was taken off it, so
+    it is taken off all (a change elsewhere to the same route loses to the removal).
+    A member that joined was given the copy, so it differs only where a person
+    changed something."""
+    if not members:
+        return []
+    base = dict(fleet.routing or {})
+    seen = {m.pk: _routes_of(m) for m in members}
+    want = dict(base)
+    removed = set()
+    for rows in seen.values():
+        for key, fields in rows.items():
+            if base.get(key) != fields:
+                want[key] = fields
+        removed |= set(base) - set(rows)
+    for key in removed:
+        want.pop(key, None)
+    did = []
+    with transaction.atomic():
+        for m in members:
+            if seen[m.pk] != want and _put_routes(m, want):
+                did.append(f"routed {m.name} as the fleet")
+        if want != base:
+            RunnerFleet.objects.filter(pk=fleet.pk).update(routing=want)
+            fleet.routing = want
+    return did
 
 
 # ── the scaler's view of the work ───────────────────────────────────────────
@@ -549,6 +697,8 @@ def tick_fleet(fleet: RunnerFleet, now: dt.datetime) -> list[str]:
             aws.protect(fleet.group_name, m.instance_id, True)
         _set_power(m, power, now)
         live.append(m)
+    # Routing before demand: a member is counted only for work routed to it.
+    did += sync_routing(fleet, live)
     # 2. fail over the chats of members that are gone FIRST: a moved turn is then
     # counted against the member it moved to, not as demand for one more.
     did += fail_over(fleet, now)
@@ -637,9 +787,14 @@ def _retire_gone(m: Runner, now: dt.datetime) -> None:
             close_turn(turn, Turn.LOST, from_states=EXECUTING, event={"reason": "fleet_member_gone"},
                        riders=False, drill_summary="runner lost the turn (its fleet instance is gone)",
                        auto_debug=False)
-    Runner.objects.filter(pk=m.pk).update(
-        status=Runner.RETIRED, power=Runner.POWER_STOPPED, power_changed_at=now,
-        status_note="retired: its instance left the fleet's group")
+    with transaction.atomic():
+        Runner.objects.filter(pk=m.pk).update(
+            status=Runner.RETIRED, power=Runner.POWER_STOPPED, power_changed_at=now,
+            status_note="retired: its instance left the fleet's group")
+        # As the retire route does: a retired runner's rows would be listed by the
+        # Runners tab and 422 its next save. The fleet keeps its routing (`routing`).
+        RunnerAssignment.objects.filter(runner=m).delete()
+        WorkspaceRunnerOrder.objects.filter(runner=m).delete()
 
 
 def requeue_lost(turn: Turn) -> bool:
