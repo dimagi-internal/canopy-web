@@ -351,3 +351,53 @@ def test_a_running_adapter_reports_no_exit(tmp_path):
     agent = AcpAgent(cwd=tmp_path, argv=[sys.executable, "-c", "import time; time.sleep(30)"])
     agent.proc = None
     assert agent.exit_report() == ""
+
+
+def test_the_adapter_pipes_are_utf8_whatever_the_locale(tmp_path, monkeypatch):
+    """On Windows the locale default is cp1252, which cannot decode the 0x9D byte
+    of a right double quote. The reader died on it and the turn failed as "ACP
+    connection closed before a reply arrived" (2026-10-26, fizzy email turn
+    b50c9a50 on shayoni-win-cdp; failure investigation 11). Here the locale
+    default is forced to cp1252, as on that box."""
+    import subprocess
+    import sys
+
+    from canopy_acp.client import AcpAgent
+
+    real = subprocess.Popen
+
+    def windows_popen(*args, **kwargs):
+        kwargs.setdefault("encoding", "cp1252")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", windows_popen)
+    reply = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"agentInfo": {"title": "a “quoted” reply"}}},
+                       ensure_ascii=False)
+    agent = AcpAgent(cwd=tmp_path, argv=[
+        sys.executable, "-c",
+        "import sys; sys.stdin.readline(); "
+        f"sys.stdout.buffer.write({(reply + chr(10)).encode('utf-8')!r}); sys.stdout.flush(); "
+        "sys.stdin.readline()",
+    ])
+    try:
+        result = agent.start()
+    finally:
+        agent.close()
+    assert result["agentInfo"]["title"] == "a “quoted” reply"
+
+
+def test_a_reader_that_fails_says_so():
+    """A reader that dies on bad input is not the adapter hanging up: the waiter's
+    error names the failure (investigation 11)."""
+
+    class Broken:
+        def __iter__(self):
+            raise UnicodeDecodeError("charmap", b"\x9d", 0, 1, "character maps to <undefined>")
+
+    agent = FakeAgent()
+    conn = AcpConnection(write_to=agent.to_agent_w, read_from=Broken())
+    pending = conn.request("session/prompt", {})
+    conn.start()
+    with pytest.raises(Exception) as err:
+        pending.result(timeout=5)
+    assert "the reader failed: UnicodeDecodeError" in str(err.value)

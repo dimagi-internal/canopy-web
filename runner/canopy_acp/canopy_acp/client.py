@@ -115,6 +115,8 @@ class AcpConnection:
         self._pending: dict[int, Pending] = {}
         self._lock = threading.Lock()
         self._closed = threading.Event()
+        # Why the reader stopped, when it was not the stream ending (close()).
+        self._reader_error = ""
         self._reader: threading.Thread | None = None
         self.permission_policy = permission_policy or allow_first_option
         self.on_update = on_update
@@ -157,8 +159,11 @@ class AcpConnection:
         # until the lease sweep.
         with self._lock:
             pending, self._pending = self._pending, {}
+        why = "ACP connection closed before a reply arrived"
+        if self._reader_error:
+            why += f" (the reader failed: {self._reader_error})"
         for waiter in pending.values():
-            waiter._fail("ACP connection closed before a reply arrived")
+            waiter._fail(why)
         try:
             self._out.close()
         except Exception:  # noqa: BLE001 — closing must not raise
@@ -228,7 +233,12 @@ class AcpConnection:
                     self._dispatch(message)
                 except Exception:  # noqa: BLE001 — one bad message never ends the loop
                     logger.debug("dispatch failed", exc_info=True)
-        except Exception:  # noqa: BLE001 — a closed pipe is an ordinary end
+        except Exception as exc:  # noqa: BLE001 — a closed pipe is an ordinary end
+            # ...but anything else is not, and it must say so: a decode error used
+            # to end the reader here and read exactly like the adapter hanging up
+            # (investigation 11, 2026-10-26).
+            if not self._closed.is_set():
+                self._reader_error = f"{type(exc).__name__}: {exc}"
             logger.debug("ACP reader ended", exc_info=True)
         finally:
             self.close()
@@ -428,10 +438,16 @@ class AcpAgent:
         """Spawn and `initialize`. Returns the agent's initialize result."""
         # stderr to a pipe we drain, not inherited: a chatty adapter must not
         # interleave with the runner's own logs.
+        # UTF-8 named, never the locale's: the adapter (node) always writes UTF-8,
+        # and on Windows the locale default is cp1252, which cannot decode bytes
+        # such as the 0x9D in a right double quote. The reader died on the first
+        # one and the turn read "ACP connection closed before a reply arrived"
+        # (2026-10-26, a fizzy email turn b50c9a50 on shayoni-win-cdp; failure
+        # investigation 11).
         self.proc = subprocess.Popen(
             self._argv, cwd=str(self.cwd), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
         )
         threading.Thread(target=self._drain_stderr, daemon=True, name="acp-stderr").start()
         self.conn = AcpConnection(
