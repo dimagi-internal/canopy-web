@@ -990,6 +990,14 @@ cloud runners, whose size canopy-web sets from the work waiting for it. Spec:
   (`_give_wraps`). The copy is ciphertext for the same public key; a wrap binds vault,
   key version and the ECDH key thumbprint, so it opens on any member and canopy-web
   opens none of it.
+- **A member is routed as its fleet** (`fleets.sync_routing`). Agents' runner lists and
+  workspaces' runner orders name runners, and a member the scaler adds is a new runner,
+  so the fleet keeps its routing (`RunnerFleet.routing`): every row its members hold. A
+  member joins with those rows (a live member's, else the fleet's copy), and each tick
+  first carries a change made to one member's rows (added to an agent, taken off one,
+  switched off) to every member. Route a fleet by routing any one member. A member whose
+  instance left the group is retired with its rows deleted, as the retire route does;
+  the fleet's copy outlives every member.
 - **A credential set is the fleet's one list** (`RunnerCredentialSet`, § Credential
   sets below). `fleet.sh up --credential-set <name>` makes the fleet read an existing
   set; otherwise it gets a new one.
