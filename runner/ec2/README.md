@@ -638,6 +638,20 @@ installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
   worktree judged by its HEAD) — which it keeps and names in the **`scratch`** check.
   cloud-ec2-2 reached 100% on 2026-10-19 on exactly this scratch (~3.4 GB of week-old
   agent clones in `/tmp`, 2.1 GB of session worktrees). `DISK_SWEEP=0` turns it off.
+- a unit's sweep reaches only its own files, so the **update timer** (`update_runner.sh`,
+  root on a box of units, every tick) handles what no unit owns:
+  - it installs `/etc/tmpfiles.d/tmp.conf` (`D /tmp 1777 root root 3d`), so
+    `systemd-tmpfiles-clean.timer` ages out anything in `/tmp` untouched for 3 days,
+    whoever owns it;
+  - on a box of units, it deletes the caches of the user the box ran as before units
+    (`LEGACY_USER`, default `ubuntu`), when that user is not a unit and runs nothing.
+    The caches are `.claude/plugins/cache`, `.cache/uv`, `.cache/ms-playwright` and
+    `.npm/_cacache`; never work, keys or config;
+  - at ≥ 80% it measures `/home/*` and `/tmp` into `/opt/canopy-runner/disk-usage.json`,
+    and the `disk` check's detail then names the largest.
+
+  cloud-ec2-2 warned at 89% on 2026-10-26 while each unit's sweep freed 0 MB: 35 GB
+  sat in `/home/ubuntu` and 12 GB in `/tmp`, owned by users the units cannot touch.
 
 ## Migrating the live stack (`canopy-cloud-runner`, created 2026-09-05)
 The live box keeps working untouched: its baked-in `canopy-fetch-env` reads the

@@ -488,6 +488,94 @@ ensure_needrestart_exclusion() {
   rm -f "$tmp"
 }
 
+# --- what no unit cleans ----------------------------------------------------
+#
+# Each unit's runner sweeps only its own files (cloud_runner.py maybe_sweep_disk),
+# while its `disk` check measures the whole volume. On cloud-ec2-2 (2026-10-26)
+# that check warned at 89% while every sweep freed 0 MB: 35 GB sat in the home of
+# the user the box ran as before it had units, and 12 GB of /tmp belonged to users
+# no unit may delete. Root's tick is the one place that can see all of it.
+
+# /tmp: Ubuntu's own rule (/usr/lib/tmpfiles.d/tmp.conf, `D /tmp ... -`) empties
+# /tmp only at boot, and a runner box is not rebooted. A file of the same name in
+# /etc replaces the vendor one, adding an age: systemd-tmpfiles-clean.timer then
+# removes what has not been touched in 3 days, whoever owns it, every day.
+# systemd's own private dirs keep their `x` rules (systemd-tmp.conf).
+TMPFILES_CONF="${TMPFILES_CONF:-/etc/tmpfiles.d/tmp.conf}"
+TMPFILES_RULE='D /tmp 1777 root root 3d'
+ensure_tmp_age_rule() {
+  [ -d "$(dirname "$TMPFILES_CONF")" ] || return 0
+  grep -qsxF "$TMPFILES_RULE" "$TMPFILES_CONF" && return 0
+  local tmp; tmp="$(mktemp)"
+  printf '# canopy: /tmp loses what nobody touched in 3 days, not only at boot (canopy-web runner/ec2/update_runner.sh)\n%s\n' \
+    "$TMPFILES_RULE" > "$tmp"
+  # shellcheck disable=SC2086 # PRIV_CMD is empty or `sudo -n`
+  if $PRIV_CMD install -m 0644 "$tmp" "$TMPFILES_CONF" 2>/dev/null; then
+    log "/tmp now ages out after 3 days ($TMPFILES_CONF)"
+  else
+    log "could not write $TMPFILES_CONF; /tmp is still emptied only at boot"
+  fi
+  rm -f "$tmp"
+}
+
+# The user a box ran as before it had units keeps a home full of caches nothing
+# reads any more (on cloud-ec2-2: plugin versions at 1.8 GB each, uv's cache).
+# Only regenerable caches go, never work, keys or config, and only on a box of
+# units, when that user is not one of them and runs nothing.
+LEGACY_USER="${LEGACY_USER:-ubuntu}"
+LEGACY_CACHES=(".claude/plugins/cache" ".cache/uv" ".cache/ms-playwright" ".npm/_cacache")
+retire_legacy_caches() {
+  [ "$UNITS_MODE" = "1" ] || return 0
+  local home="${LEGACY_HOME:-}" rel size
+  [ -n "$home" ] || home="$(getent passwd "$LEGACY_USER" 2>/dev/null | cut -d: -f6)"
+  [ -n "$home" ] && [ -d "$home" ] || return 0
+  # A unit's own user is never legacy.
+  unit_rows | awk '{print $2}' | grep -qxF "$LEGACY_USER" && return 0
+  # Someone (or something) is working as it: leave its caches alone.
+  pgrep -u "$LEGACY_USER" >/dev/null 2>&1 && return 0
+  for rel in "${LEGACY_CACHES[@]}"; do
+    [ -d "$home/$rel" ] && [ ! -L "$home/$rel" ] || continue
+    size="$(du -sh "$home/$rel" 2>/dev/null | cut -f1)"
+    rm -rf "${home:?}/$rel" \
+      && log "removed $home/$rel (${size:-?}): $LEGACY_USER runs nothing on this box of units"
+  done
+}
+
+# Where the space is, for the runners' `disk` check: they run as their units and
+# cannot read the other homes, so root measures them and leaves the answer here.
+# Only when the volume is at warn — du over every home is not free.
+DISK_USAGE_FILE="${DISK_USAGE_FILE:-$RUNNER_HOME/disk-usage.json}"
+DISK_USAGE_ROOT="${DISK_USAGE_ROOT:-/}"
+DISK_WARN_PCT="${DISK_WARN_PCT:-80}"
+record_disk_usage() {
+  local pct p paths=()
+  pct="$(df -P "$DISK_USAGE_ROOT" 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')"
+  if [ -z "$pct" ] || [ "$pct" -lt "${DISK_WARN_PCT%.*}" ]; then
+    rm -f "$DISK_USAGE_FILE"
+    return 0
+  fi
+  for p in "${DISK_USAGE_ROOT%/}"/home/* "${DISK_USAGE_ROOT%/}"/tmp; do
+    [ -d "$p" ] && paths+=("$p")
+  done
+  [ ${#paths[@]} -gt 0 ] || return 0
+  local limit=""; command -v timeout >/dev/null && limit="timeout 300"
+  # shellcheck disable=SC2086 # limit is empty or `timeout 300`
+  $limit du -xs --block-size=1 "${paths[@]}" 2>/dev/null | python3 -c '
+import json, os, sys, time
+rows = []
+for line in sys.stdin:
+    size, _, path = line.rstrip("\n").partition("\t")
+    if size.isdigit():
+        rows.append([path, int(size)])
+rows.sort(key=lambda r: -r[1])
+tmp = sys.argv[1] + ".new"
+with open(tmp, "w") as fh:
+    json.dump({"at": int(time.time()), "pct": int(sys.argv[2]), "largest": rows[:6]}, fh)
+os.chmod(tmp, 0o644)
+os.replace(tmp, sys.argv[1])
+' "$DISK_USAGE_FILE" "$pct" || log "could not record where the disk space is"
+}
+
 # --- main -------------------------------------------------------------------
 case "$MODE" in
   secret)
@@ -509,7 +597,12 @@ esac
 EXPECTED="$(expected_sha)"
 V="$(verdict "$EXPECTED")"
 
-[ "$MODE" = "check" ] || ensure_needrestart_exclusion
+if [ "$MODE" != "check" ]; then
+  ensure_needrestart_exclusion
+  ensure_tmp_age_rule
+  retire_legacy_caches
+  record_disk_usage
+fi
 
 if [ "$MODE" = "check" ]; then
   echo "$V expected=${EXPECTED:-<unknown>} installed=${INSTALLED_SHA:-<unknown>}"

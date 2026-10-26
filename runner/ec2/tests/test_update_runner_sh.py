@@ -61,7 +61,25 @@ class Box:
         self._write_stub("fake-restart", f'echo "$@" >> "{self.restart_log}"\n')
         (tmp_path / "etc-needrestart" / "conf.d").mkdir(parents=True)
         self.needrestart_conf = tmp_path / "etc-needrestart" / "conf.d" / "50-canopy-runner.conf"
+        (tmp_path / "etc-tmpfiles").mkdir()
+        self.tmpfiles_conf = tmp_path / "etc-tmpfiles" / "tmp.conf"
+        # The pre-units user's home, the volume's fill and its processes: stubbed,
+        # so a test never measures, or deletes from, the machine it runs on.
+        self.legacy_home = tmp_path / "legacy-home"
+        self.legacy_home.mkdir()
+        self.disk_pct = tmp_path / "disk-pct"
+        self.disk_pct.write_text("10")
+        self._write_stub("df", f'echo "Filesystem 1024-blocks Used Available Capacity Mounted"\n'
+                               f'echo "/dev/root 100 10 90 $(cat "{self.disk_pct}")% /"\n')
+        self.legacy_busy = tmp_path / "legacy-busy"
+        self._write_stub("pgrep", f'[ -e "{self.legacy_busy}" ]\n')
         self.seed_repo(GOOD_RUNNER)
+
+    def env(self) -> dict:
+        """What every run sets beside its own variables: the root-level files go here."""
+        return {"NEEDRESTART_CONF": str(self.needrestart_conf), "PRIV_CMD": "",
+                "TMPFILES_CONF": str(self.tmpfiles_conf), "LEGACY_HOME": str(self.legacy_home),
+                "DISK_USAGE_ROOT": str(self.root)}
 
     def _write_stub(self, name: str, body: str) -> None:
         path = self.bin / name
@@ -127,8 +145,7 @@ class Box:
                 "CANOPY_WEB_REPO_DIR": str(self.repo),
                 "STATE_FILE": str(self.root / "state.json"),
                 "RESTART_CMD": str(self.bin / "fake-restart"),
-                "NEEDRESTART_CONF": str(self.needrestart_conf),
-                "PRIV_CMD": "",
+                **self.env(),
             },
         )
 
@@ -576,7 +593,7 @@ class UnitsBox(Box):
                  "RESTART_CMD": str(self.bin / "fake-restart"), "UNITS_FILE": str(self.etc / "units.json"),
                  "BOX_ENV_FILE": str(self.etc / "box.env"), "UNIT_ETC": str(self.etc),
                  "AS_UNIT": str(self.bin / "fake-as-unit"),
-                 "NEEDRESTART_CONF": str(self.needrestart_conf), "PRIV_CMD": ""})
+                 **self.env()})
 
 
 @pytest.fixture
@@ -699,3 +716,86 @@ def test_new_boxes_get_the_same_rule_from_the_template():
     assert "path: /etc/needrestart/conf.d/50-canopy-runner.conf" in text
     assert NEEDRESTART_RULE in text
     assert NEEDRESTART_RULE in SCRIPT.read_text()
+
+
+# --- what no unit cleans ----------------------------------------------------
+# Each unit sweeps only its own files while its `disk` check measures the whole
+# volume. On cloud-ec2-2 (2026-10-26) it warned at 89% while every sweep freed
+# 0 MB: 35 GB in the pre-units user's home, 12 GB of /tmp owned by users no unit
+# may delete. Root's tick is the one place that sees all of it.
+TMP_RULE = "D /tmp 1777 root root 3d"
+
+
+def test_every_tick_ages_tmp_out_whoever_owns_it(box):
+    assert box.run().returncode == 0
+    assert TMP_RULE in box.tmpfiles_conf.read_text().splitlines()
+    # Idempotent: a second tick leaves the file as it is.
+    before = box.tmpfiles_conf.stat().st_mtime_ns
+    assert box.run().returncode == 0
+    assert box.tmpfiles_conf.stat().st_mtime_ns == before
+
+
+def test_check_mode_lays_no_tmp_rule(box):
+    assert box.run("--check").returncode == 0
+    assert not box.tmpfiles_conf.exists()
+
+
+def _legacy_caches(home: pathlib.Path) -> list[pathlib.Path]:
+    caches = [home / ".claude/plugins/cache/ace/ace/0.1", home / ".cache/uv/x",
+              home / ".cache/ms-playwright/chromium", home / ".npm/_cacache/y"]
+    for c in caches:
+        c.mkdir(parents=True)
+        (c / "blob").write_text("x" * 100)
+    return caches
+
+
+def _legacy_work(home: pathlib.Path) -> list[pathlib.Path]:
+    keep = [home / "work/gwdata/items.jsonl", home / ".ssh/authorized_keys",
+            home / ".claude/settings.json", home / ".claude/plugins/installed_plugins.json"]
+    for k in keep:
+        k.parent.mkdir(parents=True, exist_ok=True)
+        k.write_text("keep")
+    return keep
+
+
+def test_a_box_of_units_drops_the_pre_units_users_caches_and_keeps_its_work(units_box):
+    caches, work = _legacy_caches(units_box.legacy_home), _legacy_work(units_box.legacy_home)
+    out = units_box.run()
+    assert out.returncode == 0, out.stderr
+    for c in caches:
+        assert not c.exists(), c
+    for k in work:
+        assert k.read_text() == "keep", k
+    assert "removed" in out.stdout + out.stderr
+
+
+def test_the_caches_stay_while_that_user_runs_something(units_box):
+    caches = _legacy_caches(units_box.legacy_home)
+    units_box.legacy_busy.write_text("")
+    assert units_box.run().returncode == 0
+    assert all(c.exists() for c in caches)
+
+
+def test_a_box_without_units_keeps_its_own_users_caches(box):
+    # There the "legacy" user IS the runner.
+    caches = _legacy_caches(box.legacy_home)
+    assert box.run().returncode == 0
+    assert all(c.exists() for c in caches)
+
+
+def test_at_warn_root_records_where_the_space_is_for_the_runners(units_box):
+    units_box.disk_pct.write_text("89")
+    (units_box.root / "home" / "ubuntu").mkdir(parents=True, exist_ok=True)
+    (units_box.root / "tmp").mkdir(exist_ok=True)
+    units_box._write_stub("du", 'for p in "$@"; do case "$p" in -*) ;; '
+                                '*ubuntu) printf "37580963840\\t%s\\n" "$p";; '
+                                '*) printf "1024\\t%s\\n" "$p";; esac; done\n')
+    assert units_box.run().returncode == 0
+    doc = json.loads((units_box.home / "disk-usage.json").read_text())
+    assert doc["pct"] == 89
+    assert doc["largest"][0] == [str(units_box.root / "home" / "ubuntu"), 37580963840]
+    assert str(units_box.root / "tmp") in [p for p, _ in doc["largest"]]
+    # Below warn the record goes away, so a runner never quotes a stale one.
+    units_box.disk_pct.write_text("40")
+    assert units_box.run().returncode == 0
+    assert not (units_box.home / "disk-usage.json").exists()

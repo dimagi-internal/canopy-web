@@ -725,15 +725,40 @@ def _disk_check() -> None:
     gib = 1024 ** 3
     detail = (f"{DISK_PATH} {pct:.0f}% used ({du.used / gib:.1f} of {du.total / gib:.1f} GiB, "
               f"{du.free / gib:.1f} GiB free)")
+    where = _disk_largest() if pct >= DISK_WARN_PCT else ""
     if pct >= DISK_FAIL_PCT:
         _set_check("disk", "fail", detail + ": turns will start failing on writes. The runner "
                    "clears old scratch and caches on its own when idle; if this stays, what "
-                   "fills it is not scratch (see the `scratch` check) — grow the volume (VolumeSize)")
+                   "fills it is not scratch (see the `scratch` check) — grow the volume (VolumeSize)"
+                   + where)
     elif pct >= DISK_WARN_PCT:
         _set_check("disk", "warn", detail + ": the runner clears old scratch and caches "
-                   "at its next idle moment")
+                   "at its next idle moment" + where)
     else:
         _set_check("disk", "ok", detail)
+
+
+#: Where the space is, measured by root's update tick (update_runner.sh
+#: record_disk_usage) while the volume is at warn: a unit's runner cannot read the
+#: other homes, and its sweep reaches only its own files — so a warning whose space
+#: sits elsewhere (cloud-ec2-2, 2026-10-26: 35 GB in the pre-units user's home)
+#: says where. Older than two ticks and it is not quoted.
+DISK_USAGE_FILE = pathlib.Path(os.environ.get("DISK_USAGE_FILE", str(RUNNER_HOME / "disk-usage.json")))
+DISK_USAGE_MAX_AGE_SECONDS = 2 * 3600
+
+
+def _disk_largest() -> str:
+    """"; largest: /home/ubuntu 35.0 GiB, /tmp 12.1 GiB, …" from root's record, or ""."""
+    try:
+        doc = json.loads(DISK_USAGE_FILE.read_text())
+        if time.time() - float(doc.get("at") or 0) > DISK_USAGE_MAX_AGE_SECONDS:
+            return ""
+        rows = [(str(p), int(n)) for p, n in doc.get("largest") or []][:4]
+    except (OSError, ValueError, TypeError):
+        return ""
+    if not rows:
+        return ""
+    return "; largest: " + ", ".join(f"{p} {n / 1024 ** 3:.1f} GiB" for p, n in rows)
 
 
 def _disk_pct() -> float:
