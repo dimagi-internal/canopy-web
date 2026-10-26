@@ -185,6 +185,21 @@ class TurnModeIn(StrictModel):
     turn_mode: Literal["manual", "auto"]
 
 
+class AgentHoldIn(StrictModel):
+    # What you are tracing, so whoever finds the agent silent knows why and when to
+    # release it — the fleet hold's note, for one agent.
+    note: str = Field(default="", max_length=500)
+
+
+class AgentHoldOut(StrictModel):
+    held: bool
+    note: str = ""
+    held_at: dt.datetime | None = None
+    held_by_email: str = ""
+    # Turns waiting on the hold right now — what tried to reach the agent.
+    queued: int = 0
+
+
 class RepositoryIn(StrictModel):
     """Point an agent at its GitHub repository — the code its runners clone."""
 

@@ -213,6 +213,17 @@ class Agent(models.Model):
     # Reachable from Slack (apps/slack). Off by default and owner-only to flip:
     # it opens the agent to a new channel of people, which is a deliberate act.
     slack_enabled = models.BooleanField(default=False)
+    # The agent hold: while `held`, no runner is handed this agent's turns — its own
+    # (schedules, dispatches, mail) or a chat with it. The per-agent sibling of the
+    # fleet hold (harness.FleetHold), enforced in the same one place,
+    # `harness.claim.claim_next_turn`. Turns keep enqueuing and wait QUEUED, so the
+    # queue shows what tried to reach the agent; running turns finish normally.
+    # Operational state set from the board (POST /hold), never by the upsert.
+    held = models.BooleanField(default=False)
+    held_note = models.CharField(max_length=500, blank=True, default="")
+    held_at = models.DateTimeField(null=True, blank=True)
+    held_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="+")
     # The agent's own login (`user`) may hold a personal vault key for TESTING, so a
     # headless harness signed in as the agent can take part in its own sensitive
     # conversations (apps/agents/credentials/test_key.py). Off by default; an agent

@@ -92,7 +92,8 @@ class UnclaimableTurnOut(Schema):
     reason: str
     # "config" = nothing declares this target (needs a fix); "offline" = something
     # does, but no runner is reachable right now (usually transient); "parked" =
-    # every runner that could take it is paused (`reason` says by whom, until when).
+    # every runner that could take it is paused (`reason` says by whom, until when);
+    # "hold" = the fleet is on hold; "agent_hold" = its agent is (Agent.held).
     kind: str = "config"
     # Whether the caller may cancel it (POST /turns/{id}/cancel) — the fix the
     # warning offers in place.
