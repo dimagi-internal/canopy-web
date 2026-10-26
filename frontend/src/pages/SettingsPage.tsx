@@ -150,7 +150,7 @@ function DeviceKeysPanel() {
       {keys === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : keys.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No machines yet. One shows up here when a runner asks to read secrets.</p>
+        <p className="text-sm text-muted-foreground">No runners yet. One shows up here when a runner asks to read secrets.</p>
       ) : (
         <DeviceKeysTable
           keys={keys}

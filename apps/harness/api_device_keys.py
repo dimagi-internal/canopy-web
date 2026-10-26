@@ -65,8 +65,8 @@ def _may_trust_or_403(request: HttpRequest, runner: Runner) -> None:
 
 
 def approve_path(key: RunnerDeviceKey) -> str:
-    """Settings → Your machines with this key highlighted, app-relative."""
-    return f"/settings?device_key={key.pk}#device-keys"
+    """Settings → Your runners with this key highlighted, app-relative."""
+    return f"/settings?device_key={key.pk}#your-runners"
 
 
 def approve_url(key: RunnerDeviceKey) -> str:

@@ -691,7 +691,7 @@ def test_approving_a_new_key_approves_its_ecdh_key_too(fleet):
 
 
 def test_the_key_list_says_which_machine_what_it_can_open_and_where_its_key_lives(fleet):
-    """Settings > Your machines reads "box — AWS server · key held by AWS · can
+    """Settings > Your runners reads "box — AWS server · key held by AWS · can
     open Eva" from these fields."""
     def row():
         return fleet.client.get("/api/runner-device-keys/").json()[0]
@@ -941,7 +941,7 @@ def test_an_approved_key_that_came_to_serve_an_agent_since_offers_give_access(fl
     # The agent's setup step links straight to that machine's row, where one touch lets it in.
     from apps.agents.setup import _vault
     step = _vault(_agent(fleet), "/w/x/agents/eva/settings")
-    assert step["href"] == f"/settings?device_key={key.pk}#your-machines"
+    assert step["href"] == f"/settings?device_key={key.pk}#your-runners"
     assert step["action"] == f"Let {key.runner.name} in"
 
 

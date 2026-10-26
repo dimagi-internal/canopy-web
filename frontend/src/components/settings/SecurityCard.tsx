@@ -22,10 +22,11 @@ import { ZkAgentsPanel } from './ZkAgentsPanel'
 /**
  * Security — one card for everything that keeps agents' secrets safe
  * (canopy-web#1550): You (how you confirm it's you, your recovery code),
- * Your machines (approve or revoke), Your agents (where each stands). The old
+ * Your runners (approve or revoke), Your agents (where each stands). The old
  * separate Passkeys / Device keys / Vault key / Zero-knowledge cards were one
  * idea split four ways. Deep links still land: #passkeys, #vault-key,
- * #device-keys, #your-agents.
+ * #device-keys, #your-agents, and #your-machines (this row's old name, in
+ * links already sent).
  */
 export function SecurityCard({ machines }: { machines: ReactNode }) {
   return (
@@ -34,11 +35,11 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
         <h2 className="text-sm font-semibold text-foreground">Security</h2>
         <p className="mt-1 text-sm text-foreground-secondary" data-testid="security-summary">
           Your agents&rsquo; secrets can be opened by: <strong className="font-medium text-foreground">you</strong> (your
-          passkey) · <strong className="font-medium text-foreground">machines you approve</strong> · not canopy-web.
+          passkey) · <strong className="font-medium text-foreground">runners you approve</strong> · not canopy-web.
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          canopy-web stores each agent&rsquo;s secrets locked. A copy of the key goes to you and to each machine you
-          approve; a machine&rsquo;s copy is kept inside its own hardware and can&rsquo;t be copied off it.
+          canopy-web stores each agent&rsquo;s secrets locked. A copy of the key goes to you and to each runner you
+          approve; a runner&rsquo;s copy is kept inside its own hardware and can&rsquo;t be copied off it.
         </p>
       </div>
 
@@ -47,8 +48,9 @@ export function SecurityCard({ machines }: { machines: ReactNode }) {
         <RecoveryRow />
       </Row>
 
-      <Row id="your-machines" title="Your machines"
-           hint="Each can open the agents it runs. Approving a machine — one passkey tap — hands it its copy of the key.">
+      <Row id="your-runners" title="Your runners"
+           hint="Each can open the agents it runs. Approving a runner — one passkey tap — hands it its copy of the key.">
+        <span id="your-machines" aria-hidden="true" />
         {machines}
       </Row>
 

@@ -71,7 +71,7 @@ def test_pending_key_raises_and_approval_resolves(box):
     assert r.subject_key == f"device_key:{key.pk}"
     assert r.workspace == "dimagi"
     assert r.title == "haldimagi-mbp has a new device key waiting for approval"
-    assert r.url == f"/settings?device_key={key.pk}#device-keys"
+    assert r.url == f"/settings?device_key={key.pk}#your-runners"
     alerts.tick(t0)
     a = Alert.objects.get(kind=src.KIND)
     assert a.status == Alert.OPEN and a.severity == "blocking"

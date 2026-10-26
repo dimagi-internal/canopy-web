@@ -213,7 +213,7 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
                      "one here so its runners can read it.",
                      href=f"{settings}#credentials", action="Add the missing secrets")
     if vh["machines_waiting"]:
-        # Straight to the waiting machine's own row under Your machines, which lets it
+        # Straight to the waiting machine's own row under Your runners, which lets it
         # in with one passkey touch; several go to that list.
         keys = machine_keys_waiting(agent, facts)
         names = ", ".join(vh["machines_waiting"])
@@ -222,8 +222,8 @@ def _canopy_vault(agent: Agent, settings: str, vh: dict, facts=None) -> dict:
                      f"{names} {'runs' if one else 'run'} {agent.name} but cannot open its secrets yet. "
                      f"Letting {'it' if one else 'each'} in hands it a copy of {agent.name}'s vault key: "
                      "one passkey touch, by you or another of its admins.",
-                     href=(f"/settings?device_key={next(iter(keys.values()))}#your-machines" if one
-                           else "/settings#your-machines"),
+                     href=(f"/settings?device_key={next(iter(keys.values()))}#your-runners" if one
+                           else "/settings#your-runners"),
                      action=f"Let {names} in" if one else "Let them in")
     return _step("vault", title, DONE,
                  f"All {vh['declared']} declared secrets are in canopy-web." if vh["declared"] else

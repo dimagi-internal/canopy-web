@@ -10,7 +10,7 @@ with a pending key and every bound agent's turn failing until someone happened
 to open Settings. So a NEW pending key, and an active key sent back to pending
 by a new encryption key (`set_ecdh`), mails and Web-Pushes everyone who can
 approve it — the runner's owner and its explicit admins
-(`can_administer_runner`) — deep-linking to Settings → Your machines with that
+(`can_administer_runner`) — deep-linking to Settings → Your runners with that
 key highlighted, where approving (and giving it access) is one passkey touch.
 
 Once per event: registration is idempotent (a re-POST of a known key returns
@@ -92,7 +92,7 @@ def notify_pending(key, *, reapproval: bool = False) -> dict:
                       f"Approving takes one passkey touch and also gives it access to your agents.")
         foot = "You are getting this because you administer this runner. If you did not expect it, revoke it there."
         _send(approvers(runner), subject=subject, detail=detail, link=link, foot=foot,
-              link_text="Review it under Your machines", result=result)
+              link_text="Review it under Your runners", result=result)
     except Exception:  # noqa: BLE001
         logger.exception("device key notice failed for %s", getattr(key, "pk", "?"))
         result["error"] = True
@@ -186,7 +186,7 @@ def notify_rekeyed(key, *, adopted: bool = False) -> dict:
                   f"and its access. If you did not replace or rebuild this box, revoke the key now.")
         foot = "You are getting this because you administer this runner."
         _send(approvers(runner), subject=subject, detail=detail, link=approve_url(key), foot=foot,
-              link_text="Review it under Your machines", result=result)
+              link_text="Review it under Your runners", result=result)
     except Exception:  # noqa: BLE001
         logger.exception("re-key notice failed for %s", getattr(key, "pk", "?"))
         result["error"] = True
