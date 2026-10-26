@@ -221,7 +221,7 @@ Credentials canopy-web must use itself cannot be zero-knowledge. They keep their
 
 ## UI
 
-- **The vault page and the agent's Credentials page** show, on every entry, whose account it is: "ACE's own account" or "GitHub · borrowed from Jonathan Jackson's account · expires 12 Jan" (`accounts.label`). They also show the last check and by whom. A borrowed entry also shows "only ACE's machines can open it" with the list of machines, and never offers a reveal or edit, to anyone. Its person gets Replace / Withdraw; a vault admin gets Remove.
+- **The vault page and the agent's Credentials page** show, on every entry, whose account it is: "ACE's own account" or "GitHub · borrowed from Jonathan Jackson's account · GitHub says it expires 12 Jan" (`accounts.label`). They also show the last check and by whom. A borrowed entry also shows "only ACE's machines can open it" with the list of machines, and never offers a reveal or edit, to anyone. Its person gets Replace / Withdraw; a vault admin gets Remove.
 - **`/settings` → "Your accounts agents borrow"**: one row per borrowed entry from your accounts. Each row shows the provider and identity ("GitHub as @jjackson"), the agent (or box), its purpose, **which machines can open it** and their owners, the provider's own expiry when known (as information), last check, last used, and **Replace** / **Withdraw**. canopy-web's own uses (the GitHub App connection) follow, labelled.
 - **`/settings` → "Act-as-you permissions"**: the live ones, in the same line as on the page, with Stop, then the last 30 days of uses. Under it, **"Standing access you've given"**: session-review grants and HCP grants, each with Revoke.
 - **On a page or in a chat**: the act-as-you line with Stop, while live.
