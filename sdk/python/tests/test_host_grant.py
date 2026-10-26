@@ -41,7 +41,7 @@ def test_a_valid_grant_issues_a_short_dpop_bound_token_with_no_refresh(world):
     body = result.body()
 
     assert body["token_type"] == "DPoP"
-    assert 0 < body["expires_in"] <= 900
+    assert 0 < body["expires_in"] <= 1800
     assert body["scope"] == "marketplace:read"
     assert "refresh_token" not in body
     assert result.headers()["Cache-Control"] == "no-store"

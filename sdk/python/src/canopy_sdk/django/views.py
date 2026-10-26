@@ -1,6 +1,7 @@
 """Views a Django host mounts."""
 from __future__ import annotations
 
+import json
 import logging
 from urllib.parse import urlsplit
 
@@ -229,18 +230,33 @@ def protected_resource_metadata_view(request):
     return _json(protected_resource_metadata(_grant_config_or_404()))
 
 
+def _wants_grant(request) -> bool:
+    """Whether the panel asked for a grant with this mint (``{"grant": true}``)."""
+    try:
+        body = json.loads(request.body or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(body, dict) and body.get("grant") is True
+
+
 @login_required
 @require_POST
 def panel_token(request):
     """Mint a canopy token for the person whose session this is.
 
-    The subject is ``request.user`` and can be nothing else: the request body is
-    never read. The one thing read is ``?page=``, which names the page the panel
-    is on — in signed mode the page token it was rendered with (this host's own
-    signature over the route and this user), in key mode a page key or path the
-    browser names. Either way it can only SELECT among the pages registered in
-    ``PAGE_SCOPES``; unknown, forged, expired or another user's means no grant,
-    and the mint goes ahead without one.
+    The subject is ``request.user`` and can be nothing else. Two things are read:
+
+    * ``?page=``, which names the page the panel is on — in signed mode the page
+      token it was rendered with (this host's own signature over the route and
+      this user), in key mode a page key or path the browser names. Either way it
+      can only SELECT among the pages registered in ``PAGE_SCOPES``; unknown,
+      forged, expired or another user's means no grant, and the mint goes ahead
+      without one.
+    * ``{"grant": true}`` in the JSON body: the panel asks for a grant only once
+      the person has sent a message in it (and while that tab stays open after),
+      never on load. Without it the mint carries no ID-JAG, whatever the page —
+      so the agent acts as the person only after they used the panel. Nothing
+      else in the body is read; a scope or subject sent there is ignored.
 
     A page that chose its agent (and requirements) has them read from the same
     place as its scopes, and signed into the assertion: the token is BOUND to
@@ -258,7 +274,7 @@ def panel_token(request):
     chosen = page.agent if page is not None else ""
     try:
         payload = arrival_payload(config, conf.subject_for_user(request.user),
-                                  scopes=page.scopes if page is not None else (),
+                                  scopes=page.scopes if page is not None and _wants_grant(request) else (),
                                   agent_slug=chosen or conf.agent_slug(), bind_agent=bool(chosen),
                                   runner_requirements=(page.runner_requirements
                                                        if page is not None else ()),

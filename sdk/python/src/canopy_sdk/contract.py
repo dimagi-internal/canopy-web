@@ -77,9 +77,13 @@ ASSERTION_MAX_LIFETIME = 120
 ID_JAG_MAX_LIFETIME = 300
 #: canopy's ``private_key_jwt`` client assertion.
 CLIENT_ASSERTION_MAX_LIFETIME = 60
-#: A host-issued access token. A longer ``expires_in`` is clamped by canopy,
-#: never trusted — a host bug must not make a visitor's token outlive the visit.
-ACCESS_TOKEN_MAX_LIFETIME = 900
+#: A host-issued access token: 30 minutes. A longer ``expires_in`` is clamped by
+#: canopy, never trusted — a host bug must not make a visitor's token outlive the
+#: visit. A grant is minted only once the person sends from the page (the panel
+#: asks for it then, not on load), and a conversation reads only through the grant
+#: of the page that last acted in it, so this is how long a page's permission lasts
+#: after the person last acted there.
+ACCESS_TOKEN_MAX_LIFETIME = 1800
 #: Clock skew tolerated on ``exp`` / ``iat`` of the assertion, ID-JAG and client
 #: assertion, both directions.
 LEEWAY_SECONDS = 30
