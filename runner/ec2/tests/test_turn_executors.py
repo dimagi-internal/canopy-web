@@ -89,6 +89,9 @@ def test_a_stop_reaches_whichever_executor_holds_the_turn(cloud_runner, monkeypa
         def poll(self):
             return None
 
+        def send_signal(self, sig):
+            self.signals.append("INT" if sig == cr.signal.SIGINT else str(sig))
+
         def terminate(self):
             self.signals.append("TERM")
 
@@ -102,7 +105,7 @@ def test_a_stop_reaches_whichever_executor_holds_the_turn(cloud_runner, monkeypa
         proc = Proc()
         cr._register_cli_proc(TID, proc)
         assert cr.request_stop(TID) is True
-        assert proc.signals == ["TERM"]
+        assert proc.signals == ["INT"]
     finally:
         with cr._TURNS_LOCK:
             cr._IN_FLIGHT.pop(TID, None)

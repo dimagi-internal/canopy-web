@@ -3740,7 +3740,10 @@ class ClaudePrintExecutor(TurnExecutor):
         return _CLI_PROCS.get(turn_id)
 
     def interrupt(self, turn_id, handle, *, escalate, waited):
-        return _signal_cli(turn_id, handle, escalate=escalate)
+        # SIGINT, then SIGTERM, then SIGKILL, by how long the stop was ignored
+        # (`_signal_cli`). `request_stop` stamps the first delivery's time and
+        # passes `waited` 0 only on that one, so the SIGINT goes out once.
+        return _signal_cli(turn_id, handle, waited=waited, first=waited == 0)
 
 
 class AcpExecutor(TurnExecutor):
@@ -4866,6 +4869,10 @@ def execute_prompt(prompt: str, turn_id: str, emit, cwd=None, agent_slug=None,
 #: cap and sign-in sentences are one line; anything longer is the agent talking
 #: (perhaps about limits) and streams as it always did.
 CREDENTIAL_NOTICE_MAX_CHARS = 300
+#: Set by `run_claude` on an assistant event the CLI marked as a credential
+#: error, so `_CredentialNotices` holds it back whatever its wording; stripped
+#: before the event goes anywhere.
+CREDENTIAL_ERROR_KEY = "credential_error"
 
 
 class _CredentialNotices:
@@ -4880,12 +4887,15 @@ class _CredentialNotices:
     def _is_notice(event) -> bool:
         if not isinstance(event, dict) or event.get("kind") != "assistant":
             return False
+        if event.get(CREDENTIAL_ERROR_KEY):
+            return True   # the stream named it (`run_claude`); no text guess needed
         text = str((event.get("payload") or {}).get("text") or "").strip()
         return (0 < len(text) <= CREDENTIAL_NOTICE_MAX_CHARS
                 and (_is_usage_cap(text) or _is_auth_required(text)))
 
     def emit(self, events) -> None:
-        held = [e for e in events if self._is_notice(e)]
+        held = [{k: v for k, v in e.items() if k != CREDENTIAL_ERROR_KEY}
+                for e in events if self._is_notice(e)]
         rest = [e for e in events if not self._is_notice(e)]
         self._held.extend(held)
         if rest or not held:
@@ -4919,10 +4929,16 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             resume_session_id=resume_session_id)
         label = _claude_cred_label()
         attempted.append(label)
+        fault = _CREDENTIAL_FAULT.pop(turn_id, None)
         if stop_requested(turn_id):
             # A person stopped it: never fail over and run it again.
             return ok, text, session_id
-        capped, dead = _is_usage_cap(text), _is_auth_required(text)
+        # What the stream said wins; the text matchers are the fallback for an
+        # executor (or an older CLI) that said nothing structured.
+        if fault:
+            capped, dead = fault == "capped", fault == "dead"
+        else:
+            capped, dead = _is_usage_cap(text), _is_auth_required(text)
         hint = _CAP_RESET_HINT.pop(turn_id, None)
         reset = None
         if capped and not ok:
@@ -4937,11 +4953,9 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             return ok, text, session_id
         if capped:
             capped_labels.append(label)
-            _record_outcome(label, "capped", detail=next(
-                (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), ""),
-                reset=reset)
-            cap_line = cap_line or next(
-                (ln.strip() for ln in text.splitlines() if _is_usage_cap(ln)), "")
+            _record_outcome(label, "capped", detail=_fault_line(text, _is_usage_cap),
+                            reset=reset)
+            cap_line = cap_line or _fault_line(text, _is_usage_cap)
             _log(f"turn {turn_id[:8]}: {label} is at its usage cap")
         elif capped_labels and _is_bare_acp_refusal(text):
             # Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): the
@@ -4971,8 +4985,7 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             if not _is_bare_acp_refusal(text):
                 # The CLI's own sentence: evidence. A bare refusal's probe has
                 # already recorded what it found, and "unknown" stays unknown.
-                _record_outcome(label, "dead", detail=next(
-                    (ln.strip() for ln in text.splitlines() if _is_auth_required(ln)), ""))
+                _record_outcome(label, "dead", detail=_fault_line(text, _is_auth_required))
             _log(f"turn {turn_id[:8]}: {label} is not signed in")
             _notify_auth_required(label, turn_id)
         if not _advance_claude_credential(turn_id=turn_id):
@@ -5016,6 +5029,14 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
         # Resume what the caller asked for, not whatever the failed attempt
         # opened (see `execute_prompt`).
         resume_session_id = original_resume
+
+
+def _fault_line(text: str, matches) -> str:
+    """The line of a refused turn's text that says why: the one the text matcher
+    knows, else the first line, since a fault the stream named may be worded in
+    a way no matcher knows ("API Error: 401 OAuth access token is invalid")."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    return next((ln for ln in lines if matches(ln)), lines[0] if lines else "")[:300]
 
 
 def _probe_says_capped(label: str, resets: list[float], turn_id: str) -> bool:
@@ -5098,6 +5119,9 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
     cli_session_id = ""
     ok = True
     lines_seen = 0
+    # What the stream itself says about the credential (`_credential_fault`):
+    # the first fault seen, and the reset a rejected rate limit names.
+    fault, fault_reset = None, None
     batch: list[dict] = []
     attempt_id = uuid.uuid4().hex[:8]
     transcript_buf: list[str] = []
@@ -5229,10 +5253,16 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
                     _announce_session(turn_id, evt["session_id"])
                 cli_session_id = evt["session_id"]
             etype = evt.get("type")
+            evt_fault, evt_reset = _credential_fault(evt)
+            fault = fault or evt_fault
+            fault_reset = fault_reset or evt_reset
             if etype == "assistant":
                 for block in (evt.get("message", {}).get("content") or []):
                     if block.get("type") == "text" and block.get("text"):
-                        batch.append({"kind": "assistant", "payload": {"text": block["text"]}})
+                        event = {"kind": "assistant", "payload": {"text": block["text"]}}
+                        if evt_fault:
+                            event[CREDENTIAL_ERROR_KEY] = evt.get("error")
+                        batch.append(event)
                     elif block.get("type") == "tool_use":
                         # `id` here is the tool_use block's own id — the SAME value the
                         # matching tool_result block calls `tool_use_id`. Carrying it on
@@ -5335,6 +5365,11 @@ def run_claude(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         except OSError:
             tail = ""
         final_text = tail[-500:]
+    if fault and not ok:
+        # For `execute_prompt`'s cascade, which reads this before any text.
+        _CREDENTIAL_FAULT[turn_id] = fault
+        if fault == "capped" and fault_reset:
+            _CAP_RESET_HINT[turn_id] = fault_reset
     if (resume_session_id and not _resume_retried and lines_seen == 0
             and loop_error is None and proc.returncode != 0
             and not stop_requested(turn_id)):  # a stopped turn is not a failed resume
@@ -6607,10 +6642,10 @@ _STOP_LOCK = threading.Lock()
 _CLI_PROCS: dict = {}
 #: Turn id -> the CLI session id it drives, for a session-shaped stop.
 _TURN_SESSIONS: dict[str, str] = {}
-#: A stop re-delivered this long after the first one escalates: SIGKILL for
-#: `claude -p`, closing the adapter for ACP. Every heartbeat re-delivers a stop
-#: the server still sees running, so this is reached only by a turn that ignored
-#: the polite one.
+#: A stop re-delivered this long after the first one escalates: SIGTERM for
+#: `claude -p` (SIGKILL at twice this), closing the adapter for ACP. Every
+#: heartbeat re-delivers a stop the server still sees running, so this is reached
+#: only by a turn that ignored the polite one.
 STOP_ESCALATE_SECONDS = float(os.environ.get("STOP_ESCALATE_SECONDS", "30"))
 
 
@@ -6633,17 +6668,29 @@ def _register_cli_proc(turn_id: str, proc) -> None:
         _CLI_PROCS[turn_id] = proc
         early = turn_id in _STOP_REQUESTED
     if early:
-        _signal_cli(turn_id, proc, escalate=False)
+        _signal_cli(turn_id, proc, waited=0.0, first=True)
 
 
-def _signal_cli(turn_id: str, proc, *, escalate: bool) -> bool:
+def _signal_cli(turn_id: str, proc, *, waited: float, first: bool) -> bool:
+    """Stop `claude -p` in three steps, by how long the stop has been ignored.
+
+    SIGINT first, once: the CLI ends the turn and still writes its `result`
+    (text, cost, permission denials) and closes the transcript for the next
+    `--resume`. SIGTERM leaves the turn unfinished with no result, so it is only
+    the second step; SIGKILL is the last. Docs: code.claude.com/docs/en/headless
+    ("Stop a run with SIGTERM"); audit finding 3.
+    """
     try:
         if proc.poll() is not None:
             return False
-        if escalate:
+        if waited >= 2 * STOP_ESCALATE_SECONDS:
             proc.kill()
-        else:
+        elif waited >= STOP_ESCALATE_SECONDS:
             proc.terminate()
+        elif first:
+            proc.send_signal(signal.SIGINT)
+        else:
+            return False  # the SIGINT is out; give it time before escalating
         return True
     except Exception as exc:  # noqa: BLE001
         _log(f"stop turn={turn_id[:8]}: could not signal claude: {exc}")
@@ -6666,8 +6713,9 @@ def request_stop(turn_id: str, why: str = "") -> bool:
 
     Idempotent and cheap, because it is called again on every heartbeat until
     the server sees the turn finish: the first call interrupts politely (ACP
-    `session/cancel`, SIGTERM to `claude -p`); one arriving STOP_ESCALATE_SECONDS
-    later escalates (close the adapter, SIGKILL). Never raises, never blocks.
+    `session/cancel`, SIGINT to `claude -p`); one arriving STOP_ESCALATE_SECONDS
+    later escalates (close the adapter, SIGTERM, then SIGKILL at twice that).
+    Never raises, never blocks.
     """
     turn_id = str(turn_id or "")
     with _TURNS_LOCK:
@@ -7557,8 +7605,59 @@ def _is_bare_acp_refusal(text: str) -> bool:
             and not any(m in low for m in _AUTH_REQUIRED_MARKERS))
 
 
+#: The CLI's own error categories (an assistant message's `error`, a
+#: `system/api_retry`'s `error`) that mean a person has to sign in again. Read
+#: from the stream, not the text: on 2026-10-26 an invalid setup-token ended its
+#: turn with "Failed to authenticate. API Error: 401 OAuth access token is
+#: invalid.", which no text marker matched, so the box neither failed over nor
+#: alerted (docs/superpowers/specs/2026-10-26-claude-code-audit.md, finding 1).
+_DEAD_ERRORS = frozenset({"authentication_failed", "oauth_org_not_allowed",
+                          "account_on_hold"})
+#: The categories that mean the credential is out of usage. `billing_error` sits
+#: here because the text matchers already count "credit balance is too low" as a
+#: cap, and the two must agree.
+_CAP_ERRORS = frozenset({"rate_limit", "billing_error"})
+
+
+def _credential_fault(evt: dict) -> tuple[str | None, float | None]:
+    """What one stream-json event says about the credential that ran it:
+    ("capped" | "dead" | None, the cap's reset as epoch seconds or None).
+
+    A `rate_limit_event` arrives on every turn, so only a `rejected` one counts.
+    A `system/api_retry` counts only for a dead login: the CLI retries a rate
+    limit or an overload on its own, and a retry that then succeeds is not a cap.
+    """
+    if not isinstance(evt, dict):
+        return None, None
+    etype, error = evt.get("type"), evt.get("error")
+    if etype == "rate_limit_event":
+        info = evt.get("rate_limit_info") or {}
+        if isinstance(info, dict) and info.get("status") == "rejected":
+            resets = info.get("resetsAt")
+            ok_reset = isinstance(resets, (int, float)) and resets > 0
+            return "capped", float(resets) if ok_reset else None
+        return None, None
+    if etype == "system" and evt.get("subtype") == "api_retry":
+        return ("dead" if error in _DEAD_ERRORS else None), None
+    if etype == "assistant":
+        if error in _DEAD_ERRORS:
+            return "dead", None
+        if error in _CAP_ERRORS:
+            return "capped", None
+        return None, None
+    if etype == "result" and evt.get("is_error") and evt.get("api_error_status") == 401:
+        return "dead", None
+    return None, None
+
+
+#: turn id -> "capped" | "dead", what the `claude -p` stream itself said about a
+#: failed turn's credential. Popped by `execute_prompt`, which falls back to the
+#: text matchers only when a turn left nothing here.
+_CREDENTIAL_FAULT: dict[str, str] = {}
+
 #: turn id -> the reset (epoch s) the ACP adapter reported in `_claude/rateLimit`
-#: meta. Exact where the text form is a parse; popped by `execute_prompt`.
+#: meta, or the `claude -p` stream in a rejected `rate_limit_event`. Exact where
+#: the text form is a parse; popped by `execute_prompt`.
 _CAP_RESET_HINT: dict[str, float] = {}
 
 #: How long to park when no cap named a reset we could read. Short on purpose: a
@@ -7714,23 +7813,26 @@ def _probe_entry(entry: tuple[str, str, str]) -> dict:
         out["detail"] = f"the probe could not run ({exc})"[:300]
         return out
     stdout, stderr = proc.stdout or "", proc.stderr or ""
-    result, is_error = "", True
+    result, is_error, fault = "", True, None
     try:
         doc = json.loads(stdout)
         if isinstance(doc, dict):
             result = str(doc.get("result") or "")
             is_error = bool(doc.get("is_error"))
+            # The result's own `api_error_status`: a 401 here is a dead token
+            # whatever the sentence says (audit finding 1).
+            fault, _ = _credential_fault(doc)
     except ValueError:
         pass
     text = "\n".join(t for t in (result, stdout, stderr) if t)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if _is_usage_cap(text):
+    if fault == "capped" or (fault is None and _is_usage_cap(text)):
         out["status"] = "capped"
-        out["detail"] = next((ln for ln in lines if _is_usage_cap(ln)), "")[:300]
+        out["detail"] = _fault_line(text, _is_usage_cap)
         out["reset"] = _cap_reset_epoch(text)
-    elif _is_auth_required(text):
+    elif fault == "dead" or (fault is None and _is_auth_required(text)):
         out["status"] = "dead"
-        out["detail"] = next((ln for ln in lines if _is_auth_required(ln)), "")[:300]
+        out["detail"] = _fault_line(text, _is_auth_required)
     elif proc.returncode == 0 and not is_error:
         out["status"] = "ok"
         out["detail"] = "answered a prompt"

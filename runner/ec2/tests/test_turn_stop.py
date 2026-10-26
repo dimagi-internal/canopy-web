@@ -6,7 +6,7 @@ for stops, and `stop_turn` was never called. The huddle turn ran 23 more minutes
 
 Now all three signals — the `cancel` frame, the `session_interrupt` frame and
 `cancel_turn_ids` on any heartbeat reply — reach `request_stop`, which interrupts
-the executor (ACP `session/cancel`, SIGTERM to `claude -p`), escalates if it is
+the executor (ACP `session/cancel`, SIGINT to `claude -p`), escalates if it is
 ignored, and the turn's worker finishes it CANCELLED.
 """
 from __future__ import annotations
@@ -38,6 +38,10 @@ class _Proc:
 
     def poll(self):
         return None if self.alive else 0
+
+    def send_signal(self, sig):
+        import signal
+        self.signals.append({signal.SIGINT: "INT"}.get(sig, str(sig)))
 
     def terminate(self):
         self.signals.append("TERM")
@@ -77,7 +81,10 @@ def test_stop_cancels_the_acp_session_then_closes_it_if_ignored(running, monkeyp
     assert agent.closed.wait(2), "an ignored stop never escalated to closing the adapter"
 
 
-def test_stop_terminates_claude_p_then_kills_it_if_ignored(running, monkeypatch):
+def test_stop_interrupts_claude_p_then_terminates_then_kills_it(running, monkeypatch):
+    """SIGINT ends the turn with a real `result` (text, cost, a transcript closed
+    for `--resume`); SIGTERM leaves it unfinished with none, so it is only the
+    second step (claude-code audit finding 3)."""
     mod = running
     proc = _Proc()
     mod._register_cli_proc(TID, proc)
@@ -85,10 +92,16 @@ def test_stop_terminates_claude_p_then_kills_it_if_ignored(running, monkeypatch)
     monkeypatch.setattr(mod.time, "time", lambda: clock[0])
 
     mod.request_stop(TID)
-    assert proc.signals == ["TERM"]
-    clock[0] += mod.STOP_ESCALATE_SECONDS + 1
+    assert proc.signals == ["INT"]
+    clock[0] += 5  # a heartbeat inside the grace window re-sends nothing
     mod.request_stop(TID)
-    assert proc.signals == ["TERM", "KILL"]
+    assert proc.signals == ["INT"]
+    clock[0] += mod.STOP_ESCALATE_SECONDS
+    mod.request_stop(TID)
+    assert proc.signals == ["INT", "TERM"]
+    clock[0] += mod.STOP_ESCALATE_SECONDS
+    mod.request_stop(TID)
+    assert proc.signals == ["INT", "TERM", "KILL"]
 
 
 def test_a_stop_that_beat_the_spawn_stops_the_process_at_once(running):
@@ -96,7 +109,7 @@ def test_a_stop_that_beat_the_spawn_stops_the_process_at_once(running):
     mod.request_stop(TID)
     proc = _Proc()
     mod._register_cli_proc(TID, proc)
-    assert proc.signals == ["TERM"]
+    assert proc.signals == ["INT"]
 
 
 def test_a_stopped_turn_never_starts_an_executor(running, monkeypatch):

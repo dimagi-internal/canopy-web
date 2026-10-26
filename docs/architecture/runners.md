@@ -959,9 +959,10 @@ A stored value is not a working one. So the box asks each credential one short
 question with no tools (`cloud_runner._probe_credential`: `claude -p "Reply with
 OK" --output-format json --max-turns 1` in a scratch dir, with that credential's
 environment built as a copy — never `os.environ`, turns run concurrently; 90 s
-timeout) and classifies the answer with the same `_is_usage_cap` /
-`_is_auth_required` turns use: `ok`, `capped` (+ the reset when readable), `dead`,
-or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
+timeout) and classifies the answer the way a turn's failure is (below): the
+result's `api_error_status` first (401 = `dead`), then the `_is_usage_cap` /
+`_is_auth_required` text matchers: `ok`, `capped` (+ the reset when readable),
+`dead`, or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
 (every probe answers `unknown`).
 
 - **When:** after `fetch_and_stage_credential` stages a bundle, synchronously,
@@ -1000,6 +1001,17 @@ or `unknown` (timeout, crash, unreadable). `CLAUDE_PROBE=0` turns probing off
   pauses over, or lifts, a person's pause. A beat with no usable reply leaves
   the pause alone. After anyone changes the pause (a person's unpause, the
   scheduled wake) the box pauses again only on probes taken after that change.
+- **A `claude -p` turn's failure is read from the stream, not its text**
+  (`cloud_runner._credential_fault`): an assistant message's `error`
+  (`authentication_failed`, `oauth_org_not_allowed`, `account_on_hold` → dead;
+  `rate_limit`, `billing_error` → capped), a `system/api_retry` with a dead
+  category, a result with `api_error_status: 401`, and a `rate_limit_event` whose
+  `status` is `rejected` (capped, its `resetsAt` the exact reset). Dead fails over
+  and raises `claude_auth_required`, like a signed-out login. The text matchers
+  decide only when the stream named nothing (ACP, an older CLI): an invalid
+  setup-token's "API Error: 401 OAuth access token is invalid" matches none of
+  them. An assistant message the stream marked as a credential error is held back
+  like a cap sentence. Tests: `runner/ec2/tests/test_structured_credential_errors.py`.
 - **A bare ACP refusal is probed.** Over ACP a capped token and a signed-out one
   both fail with `runner error (acp): authentication required`. When nothing
   earlier in the turn capped, the box probes that credential: capped → it is a cap
