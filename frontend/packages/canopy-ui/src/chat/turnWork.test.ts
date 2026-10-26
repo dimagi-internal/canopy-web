@@ -68,12 +68,19 @@ describe("planFold", () => {
       ]),
     )[0];
 
-  it("folds a finished turn's work above its final reply", () => {
+  it("folds a finished turn's tool calls above its final reply", () => {
     const fold = planFold(turn(), { live: false });
     expect(fold).not.toBeNull();
-    expect(fold!.folded).toHaveLength(3);
+    expect(fold!.folded.map((r) => r.kind)).toEqual(["tool_pair", "tool_pair"]);
     expect(fold!.reply.kind === "message" && fold!.reply.message.plaintext).toBe("Fixed it.");
     expect(foldLine(fold!.summary)).toBe("Worked for 4m 12s · 2 tool calls · 1 file changed");
+  });
+
+  it("never folds what the agent said along the way", () => {
+    // It was on screen while the turn ran; folding it at the end pulled text
+    // out from under someone reading it.
+    const fold = planFold(turn(), { live: false });
+    expect(fold!.kept.map((r) => r.kind === "message" && r.message.plaintext)).toEqual(["Looking."]);
   });
 
   it("never folds a live turn", () => {

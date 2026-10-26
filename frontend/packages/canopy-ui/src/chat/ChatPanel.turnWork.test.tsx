@@ -78,15 +78,16 @@ function panel(s: SessionState) {
 }
 
 describe("a finished turn", () => {
-  it("folds its work into one line, with the final reply in full below", () => {
+  it("folds its tool calls into one line, with the agent's words and reply in full below", () => {
     panel(state({ turn_status: status({ state: "done", settled: true }) }));
     const fold = screen.getByTestId("turn-fold");
     expect(screen.getByTestId("turn-fold-line").textContent).toBe(
       "Worked for 4m 12s · 3 tool calls · 1 file changed",
     );
     expect((fold as HTMLDetailsElement).open).toBe(false);
-    // The work is inside the fold; the reply is outside it.
-    expect(within(fold).getByText("Looking into it.")).not.toBeNull();
+    // The tool calls are inside the fold; what the agent said is outside it.
+    expect(within(fold).getByTestId("todowrite-row")).not.toBeNull();
+    expect(fold.contains(screen.getByText("Looking into it."))).toBe(false);
     const reply = screen.getByText("All fixed — the bug was in x.");
     expect(fold.contains(reply)).toBe(false);
     // Opened, it lists the files with their line counts.
@@ -219,9 +220,10 @@ describe("find in transcript", () => {
     const box = screen.getByRole("textbox", { name: "Find in loaded messages" });
     expect(screen.getByTestId("chat-find-count").textContent).toBe("loaded messages only");
     act(() => {
-      fireEvent.change(box, { target: { value: "looking into" } });
+      fireEvent.change(box, { target: { value: "1/3 done" } });
     });
-    expect(screen.getByTestId("chat-find-count").textContent).toBe("1 of 1");
+    // Only inside the fold: the to-do list rides the folded TodoWrite call.
+    expect(screen.getByTestId("chat-find-count").textContent).toBe("1 of 3");
     // The match was folded shut; finding it opened the fold.
     expect((screen.getByTestId("turn-fold") as HTMLDetailsElement).open).toBe(true);
     act(() => {
