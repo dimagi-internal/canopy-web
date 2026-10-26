@@ -11,8 +11,7 @@
 "apps/admission/apps.py" = ["PLC0415"]  # 6
 "apps/admission/defaults.py" = ["PLC0415"]  # 1
 "apps/admission/evaluate.py" = ["PLC0415"]  # 12
-"apps/admission/gmail.py" = ["PLC0415"]  # 2
-"apps/admission/notices.py" = ["PLC0415"]  # 12
+"apps/admission/notices.py" = ["PLC0415"]  # 11
 "apps/admission/rules.py" = ["PLC0415"]  # 3
 "apps/admission/runner_notices.py" = ["PLC0415"]  # 2
 "apps/admission/signals.py" = ["PLC0415"]  # 1
