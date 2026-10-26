@@ -518,13 +518,13 @@ def thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inb
         _sync_audience(existing, inbound, principal)
         return existing, False
     session = _new_thread_session(agent=agent, principal=principal, key=key, inbound=inbound,
-                                  title=title)
+                                  title=title, cli=cli)
     _sync_audience(session, inbound, principal)
     return session, True
 
 
 def _new_thread_session(*, agent: Agent, principal: Principal, key: str, inbound: Inbound,
-                        title: str) -> Session:
+                        title: str, cli: str = "") -> Session:
     """A new Session for this (agent, Slack thread), owned by `principal`. No Slack calls."""
     metadata = {
         SLACK_THREAD_KEY: key,
@@ -910,7 +910,7 @@ def restart_from_click(installation: SlackInstallation, *, slack_user_id: str, c
         if live is None:
             session = _new_thread_session(agent=agent, principal=principal, key=key,
                                           inbound=replace(inbound, follow=False),
-                                          title=prompt or "Slack thread")
+                                          title=prompt or "Slack thread", cli=closed.cli)
     if session is None:
         _resolve_restart_notice(installation, channel_id, message_ts,
                                 f":arrow_forward: A new session with `{agent.slug}` was started from "
