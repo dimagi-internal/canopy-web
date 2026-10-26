@@ -72,7 +72,8 @@ def _url(box, suffix=""):
 
 def test_an_admin_sees_every_open_session_with_who_started_it_and_no_words(box):
     mine = _chat(box, "jj-testing-something", box["owner"])
-    _chat(box, "ace-at-work", box["ace_login"])
+    # Running, so it is open: an agent-started chat closes once nothing runs on it.
+    _chat(box, "ace-at-work", box["ace_login"], status=Turn.RUNNING)
 
     # The admin cannot open the owner's chat …
     assert _as(box["admin"]).get(f"/api/w/w1/sessions/{mine.pk}").status_code == 404

@@ -329,6 +329,10 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
   each (the first driving turn's initiator; an agent's own login reads as that
   agent), how, its turns, last activity and `open_reason`; and close an idle one.
   The runner row's count and this list are the same `active()` set.
+- On the cloud, a person's auto-mode web chat closes after `CLOUD_CHAT_IDLE` (24h)
+  with no turn created or finished; a session an agent started (its first turn's
+  initiator is an agent or an agent's own login) ran on its own, so it closes once
+  nothing is in flight. Manual sessions and a dialog up still hold one open.
 - `GET /api/canopy-sessions/?reply=true` stamps every row with `feed_status`; the
   Feed only sorts and counts that verdict. The "is asking" / "is done" pushes go to
   the first candidate the session is on the Feed for

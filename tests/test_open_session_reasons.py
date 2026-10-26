@@ -155,3 +155,38 @@ def test_the_oldest_activity_is_the_longest_quiet_session_for_that_reason():
     held = row["open_sessions_by_reason"]["no_turn_found"]
     assert held["count"] == 2
     assert dt.datetime.fromisoformat(held["oldest_activity_at"]) == long_ago
+
+
+def test_a_persons_web_chat_on_the_cloud_closes_after_a_day_idle():
+    user, ws, agent = _ctx()
+    cloud = _runner(ws, user, "cloud-ec2-1", kind=Runner.CLOUD, reports=False)
+    _recorded(agent, cloud, "fresh", seen_ago=dt.timedelta(hours=2))
+    _driven(cloud, agent, "fresh", Turn.DONE, mode="auto", origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    _recorded(agent, cloud, "abandoned", seen_ago=dt.timedelta(days=2))
+    old = _driven(cloud, agent, "abandoned", Turn.DONE, mode="auto",
+                  origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    two_days_ago = timezone.now() - dt.timedelta(days=2)
+    Turn.objects.filter(pk=old.pk).update(created_at=two_days_ago, finished_at=two_days_ago)
+    _recorded(agent, cloud, "asking", seen_ago=dt.timedelta(days=2))
+    asking = _driven(cloud, agent, "asking", Turn.DONE, mode="auto",
+                     origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+    Turn.objects.filter(pk=asking.pk).update(created_at=two_days_ago, finished_at=two_days_ago)
+    RunnerBinding.objects.filter(session_key="asking").update(
+        pending_question={"question": "Proceed?", "options": [{"label": "Yes"}]},
+    )
+    assert _reasons() == {"fresh": "person_started", "asking": "dialog_up"}
+
+
+def test_a_web_chat_an_agent_started_closes_once_nothing_runs_on_it():
+    user, ws, agent = _ctx()
+    cloud = _runner(ws, user, "cloud-ec2-1", kind=Runner.CLOUD, reports=False)
+    ace_login = User.objects.create_user("ace-login", "ace@dimagi-ai.com", "pw")
+    Agent.objects.filter(pk=agent.pk).update(user=ace_login)
+    for key, starter in (("by-login", {"initiator_kind": "user", "initiator_user": ace_login}),
+                         ("by-agent", {"initiator_kind": "agent", "initiator_agent": "hal"}),
+                         ("by-person", {"initiator_kind": "user", "initiator_user": user})):
+        _recorded(agent, cloud, key)
+        turn = _driven(cloud, agent, key, Turn.DONE, mode="auto",
+                       origin=Turn.ORIGIN_CANOPY_WEB_CHAT)
+        Turn.objects.filter(pk=turn.pk).update(**starter)
+    assert _reasons() == {"by-person": "person_started"}
