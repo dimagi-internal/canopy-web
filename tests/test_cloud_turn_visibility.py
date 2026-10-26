@@ -340,3 +340,48 @@ def test_a_finished_auto_web_chat_the_cloud_ran_closes_too():
                         idempotency_key="d1", status=Turn.DONE, turn_mode="auto",
                         claimed_by=cloud)
     assert "dispatch" not in _active(user)
+
+
+# The turn knows its session even when the keys disagree. A dispatched huddle round
+# carries its own thread key (`origin_ref.thread_key`), and on cloud-ec2-2 the
+# binding's session_key and the turn's drifted apart, so the key join found no
+# driving turn: the session badged mode "" and the auto-retire leg never fired.
+# 161 finished huddle rounds and dispatches were still "open" on 2026-10-26.
+# `Turn.canopy_session` is the link record-session writes for exactly this turn.
+
+
+def test_a_finished_auto_cloud_session_retires_by_its_turns_session_link():
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    session = _recorded(agent, cloud, "k1", started_ago=dt.timedelta(days=10))
+    t = _driven(cloud, agent, "some-other-key", Turn.DONE, mode="auto", origin=Turn.ORIGIN_API)
+    Turn.objects.filter(pk=t.pk).update(canopy_session=session)
+    assert "turn k1" not in _active(user)
+
+
+def test_a_manual_cloud_turn_linked_by_session_stays_active():
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    session = _recorded(agent, cloud, "k2", started_ago=dt.timedelta(days=1))
+    t = _driven(cloud, agent, "some-other-key", Turn.DONE, mode="manual", origin=Turn.ORIGIN_API)
+    Turn.objects.filter(pk=t.pk).update(canopy_session=session)
+    rows = _active(user)
+    assert "turn k2" in rows
+    assert rows["turn k2"]["turn_mode"] == "manual"
+
+
+def test_the_open_sessions_list_and_the_runner_count_agree():
+    """`GET /api/harness/sessions` (the phone's Open Sessions) read its own rule
+    and listed every cloud-held session, while the runner row's `open_sessions`
+    read `staleness.active`: 161 against 99 on cloud-ec2-2. One rule now."""
+    user, ws, agent = _ctx()
+    cloud = _cloud(ws, user)
+    _recorded(agent, cloud, "done1", started_ago=dt.timedelta(hours=3))
+    _driven(cloud, agent, "done1", Turn.DONE, mode="auto")
+    _recorded(agent, cloud, "live1", started_ago=dt.timedelta(minutes=2))
+    _driven(cloud, agent, "live1", Turn.RUNNING, mode="auto")
+    c = _client(user)
+    listed = {r["emdash_task"] for r in c.get("/api/harness/sessions").json()}
+    assert listed == {"live1"}
+    runner = next(r for r in c.get("/api/harness/runners/").json() if r["name"] == cloud.name)
+    assert runner["open_sessions"] == len(listed)
