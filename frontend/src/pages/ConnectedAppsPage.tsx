@@ -833,6 +833,9 @@ export function ConnectedAppsPage(): JSX.Element | null {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The site the form just connected. Its card lands in the list above, out
+  // of sight of the button, so the form says so and links to it.
+  const [connected, setConnected] = useState<ConnectedApp | null>(null)
 
   const [name, setName] = useState('')
   const [origins, setOrigins] = useState('')
@@ -889,8 +892,9 @@ export function ConnectedAppsPage(): JSX.Element | null {
 
   async function onConnect(e: FormEvent) {
     e.preventDefault()
+    setConnected(null)
     await run(async () => {
-      await connectApp(slug!, {
+      const app = await connectApp(slug!, {
         name: name.trim(),
         origins: parseOrigins(origins),
         show_on_canopy_pages: showHere,
@@ -900,6 +904,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
         host_issuer: hostIssuer.trim(),
         host_mcp_resource: hostResource.trim(),
       })
+      setConnected(app)
       setName('')
       setOrigins('')
       setPicked([])
@@ -944,7 +949,7 @@ export function ConnectedAppsPage(): JSX.Element | null {
               key={app.id}
               id={`site-${app.id}`}
               className={`rounded-lg border bg-card p-4 space-y-2 ${
-                hash === `#site-${app.id}` ? 'border-primary' : 'border-border'
+                hash === `#site-${app.id}` || connected?.id === app.id ? 'border-primary' : 'border-border'
               }`}
             >
               <div className="flex items-start justify-between gap-3">
@@ -1145,8 +1150,17 @@ export function ConnectedAppsPage(): JSX.Element | null {
           </label>
 
           <Button type="submit" disabled={busy || !name.trim()}>
-            Connect
+            {busy ? 'Connecting…' : 'Connect'}
           </Button>
+          {connected && !busy && (
+            <p role="status" className="text-sm text-primary">
+              Connected {connected.name}.{' '}
+              <a href={`#site-${connected.id}`} className="underline">
+                See its card
+              </a>{' '}
+              to choose which agent it opens on and test the connection.
+            </p>
+          )}
         </form>
       )}
     </div>
