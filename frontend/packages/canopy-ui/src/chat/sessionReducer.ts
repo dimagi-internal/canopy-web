@@ -451,7 +451,7 @@ export function sessionReducer(prev: SessionState, frame: WsEvent): SessionState
     case "session.queued":
       // Wholesale, like session.turn_status: a client that just connected has
       // no correct prior to merge a delta into.
-      return { ...prev, queued: frame.data.queued };
+      return { ...prev, queued: frame.data.queued, cancelled: frame.data.cancelled ?? prev.cancelled };
 
     case "draft.committed": {
       // The sender already shows its line (a pending row stamped with this

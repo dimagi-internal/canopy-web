@@ -195,8 +195,12 @@ export function MessageItem({
   const otherAuthor = otherAuthorOf(message, currentUserId, currentContactId);
   // A teammate's line sits on the agent's side of the column, so it needs its
   // own treatment — in the agent's `bg-muted` it read as the agent talking.
+  const cancelled = message.role === "user" && message.content?.cancelled === true;
+  const cancelledBy = typeof message.content?.cancelled_by === "string" ? message.content.cancelled_by : "";
   const bubbleClass =
-    message.role === "user"
+    cancelled
+      ? `${otherAuthor ? "mr-auto" : "ml-auto"} border border-dashed border-border bg-muted/40 text-muted-foreground`
+    : message.role === "user"
       ? otherAuthor
         ? "mr-auto border border-border bg-card text-foreground"
         : "ml-auto bg-primary text-primary-foreground"
@@ -260,6 +264,11 @@ export function MessageItem({
       )}
       {/* Your own line, before canopy has confirmed it. Shown at once so a send
           never looks like it vanished; flagged plainly if it did not go. */}
+      {cancelled && (
+        <div data-testid="message-cancelled" className="mt-1 text-[11px]">
+          Cancelled{cancelledBy ? ` by ${cancelledBy}` : ""} — the agent never read this
+        </div>
+      )}
       {message.role === "user" && isPending && (
         <div className="mt-1 text-[11px] opacity-70" role="status">Sending…</div>
       )}

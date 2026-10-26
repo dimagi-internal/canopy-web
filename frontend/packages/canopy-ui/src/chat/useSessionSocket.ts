@@ -649,7 +649,13 @@ export function useSessionSocket({
         const messages = clientId
           ? prev.messages.filter((m) => !(m.role === "user" && m.content?.client_id === clientId))
           : prev.messages;
-        return { ...prev, queued, messages };
+        // Keep its words, in place and marked, until the server's list says so.
+        const cancelled = entry && !(prev.cancelled ?? []).some((c) => c.turn_id === turnId)
+          ? [...(prev.cancelled ?? []),
+             { turn_id: entry.turn_id, client_id: entry.client_id, author: entry.author, text: entry.text,
+               sent_at: entry.sent_at, cancelled_by: "" }]
+          : prev.cancelled;
+        return { ...prev, queued, messages, cancelled };
       });
       send({ action: "chat.unqueue", data: { turn_id: turnId } });
     },

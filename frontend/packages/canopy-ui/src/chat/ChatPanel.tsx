@@ -8,6 +8,7 @@ import type { RenderMarkdown } from "./MessageItem";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { MessageList } from "./MessageList";
 import { PresenceChips } from "./PresenceChips";
+import { withCancelledSends } from "./cancelledSends";
 import { isMine, isUnconfirmed } from "./identity";
 import { QueuedRows } from "./QueuedRows";
 import { RunningAgents } from "./RunningAgents";
@@ -293,6 +294,14 @@ export function ChatPanel({
           ),
     [state.messages, waitingClientIds],
   );
+  // What the list draws: the same, plus the sends withdrawn before the agent read
+  // them, in the place they were sent. Kept apart from `shownMessages` because
+  // everything else (the queue fold, Edit, "is a reply owed") reasons about real
+  // lines, and a cancelled one is none of those.
+  const displayMessages = useMemo(
+    () => withCancelledSends(shownMessages, state.cancelled),
+    [shownMessages, state.cancelled],
+  );
   // The list folds its LAST turn unless that turn is live. A send of yours drawn
   // in the queue is not in the list, so its last turn is the previous one, and
   // `liveTurn` (true from the moment you press send) unfolded that turn's whole
@@ -444,7 +453,7 @@ export function ChatPanel({
       >
         <SubagentsContext.Provider value={state.subagents ?? NO_SUBAGENTS}>
           <MessageList
-            messages={shownMessages}
+            messages={displayMessages}
             emptyState={emptyState}
             renderMarkdown={renderMarkdown}
             pendingReply={showActivityLine}
@@ -569,7 +578,7 @@ export function editTarget({
   if (!settled) return null;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.role !== "user" || (m.content?.record as { compact_summary?: unknown } | undefined)?.compact_summary) {
+    if (m.role !== "user" || m.content?.cancelled === true || (m.content?.record as { compact_summary?: unknown } | undefined)?.compact_summary) {
       continue;
     }
     // A row with no author predates authorship, and renders as yours.

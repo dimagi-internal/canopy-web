@@ -679,7 +679,8 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
         everyone watching — see `queued_feed`. Whole, never a delta, for the
         same reason `session.turn_status` is: a just-connected client has no
         correct prior to apply one to."""
-        await self.send_json({"event": "session.queued", "data": {"queued": message.get("queued") or []}})
+        await self.send_json({"event": "session.queued", "data": {"queued": message.get("queued") or [],
+                                                                   "cancelled": message.get("cancelled") or []}})
 
     async def session_join_requests(self, message):
         """The whole list of open requests to join this private conversation
@@ -819,6 +820,7 @@ class SessionConsumer(AsyncJsonWebsocketConsumer):
                 draft_words=self._draft_words,
                 messages=messages,
                 queued=chat_send.queued_messages(self.session),
+                cancelled=chat_send.cancelled_sends(self.session),
             ),
         }
 
