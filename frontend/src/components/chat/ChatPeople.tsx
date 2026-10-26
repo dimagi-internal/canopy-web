@@ -3,10 +3,12 @@ import {
   addParticipant,
   getSession,
   giveKeyCopy,
+  listParticipantCandidates,
   listParticipants,
   participantRecipient,
   removeParticipant,
   type Participant,
+  type ParticipantCandidate,
   type ParticipantRecipient,
   type SealedKeyWrapIn,
 } from "@/api/chat";
@@ -15,7 +17,8 @@ import type { Unlocked } from "@/vault/operations";
 import { pinPerson, trustPerson } from "@/vault/trust";
 import { refuseUnconfirmed, usePersonTrust, type ConfirmPerson } from "@/vault/PersonTrustPrompt";
 import { useVaultUnlock } from "@/vault/useVaultUnlock";
-import { AddPersonForm, PeopleTable, type PersonRow } from "@/components/people/PeopleTable";
+import { PeopleTable, type PersonRow } from "@/components/people/PeopleTable";
+import { AddPeoplePicker } from "@/components/people/AddPeoplePicker";
 import type { RoleOption } from "@/components/people/roles";
 
 // The roles a chat's owner may hand out. Owner is whoever started the chat and
@@ -135,6 +138,7 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
   const [error, setError] = useState("");
   const isOwner = myRole === "owner";
   const mayAdd = isOwner || canAddPeople;
+  const [candidates, setCandidates] = useState<ParticipantCandidate[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +149,18 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
       cancelled = true;
     };
   }, [sessionId]);
+
+  // Who you could add: the server's list, so nobody is ever typed in by hand.
+  useEffect(() => {
+    if (!mayAdd) return;
+    let cancelled = false;
+    listParticipantCandidates(sessionId)
+      .then((rows) => !cancelled && setCandidates(rows))
+      .catch(() => !cancelled && setCandidates([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, mayAdd, people]);
 
   const rows: PersonRow[] = (people ?? []).map((p) => {
     const isChatOwner = p.role === "owner";
@@ -201,8 +217,10 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
       )}
       {mayAdd ? (
         <div className="space-y-1">
-          <AddPersonForm
+          <AddPeoplePicker
             autoFocus
+            candidates={candidates ?? []}
+            loading={candidates === null}
             options={SHARE_ROLES}
             defaultRole="editor"
             onAdd={async (email, role) =>
@@ -210,7 +228,7 @@ export function ChatPeoplePanel({ sessionId, myRole, canAddPeople = false }: {
                                         APP_PEOPLE_API, trust.confirm))
             }
           />
-          <p className="text-muted-foreground">They must already be in this workspace.</p>
+          <p className="text-muted-foreground">Anyone in this workspace who is not in it yet, people or agents.</p>
         </div>
       ) : (
         myRole && <p className="text-muted-foreground">Only the chat's owner can add people.</p>

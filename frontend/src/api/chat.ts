@@ -502,6 +502,13 @@ export function listParticipants(id: string): Promise<Participant[]> {
   return request<Participant[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/participants`);
 }
 
+export type ParticipantCandidate = components["schemas"]["ParticipantCandidateOut"];
+
+/** Who you could add to this chat: its workspace's members not in it yet. */
+export function listParticipantCandidates(id: string): Promise<ParticipantCandidate[]> {
+  return request<ParticipantCandidate[]>(`/api/canopy-sessions/${encodeURIComponent(id)}/participants/candidates`);
+}
+
 export type SealedKeyWrapIn = components["schemas"]["SealedKeyWrapIn"];
 export type ParticipantRecipient = components["schemas"]["ParticipantRecipientOut"];
 

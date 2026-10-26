@@ -682,6 +682,15 @@ class SessionMoveIn(Schema):
     workspace: str
 
 
+class ParticipantCandidateOut(Schema):
+    """Someone you could add to this chat: a member of its workspace not yet in it."""
+    user_id: int
+    email: str
+    display_name: str
+    #: An agent's own login: the agent's slug, so the picker can say it is an agent.
+    agent_slug: str = ""
+
+
 class ParticipantOut(Schema):
     """Someone explicitly given this chat. The creator is its owner."""
     user_id: int
