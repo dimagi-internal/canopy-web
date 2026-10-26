@@ -349,7 +349,7 @@ def acquire(agent, name: str, *, params: dict | None, turn_id=None, by=None) -> 
                           .values_list("name", flat=True))
         raise CapabilityError(422, (
             f"{agent.slug} declares no capability {name!r} (declared: {', '.join(declared) or 'none'}). "
-            "Declare it in runtime.yaml and run `canopy-runtime publish-capabilities`."))
+            "Add its capability.yaml and run `canopy-runtime publish-capabilities --dir infra/capabilities`."))
     if cap.kind not in KINDS:
         raise CapabilityError(422, f"capability kind {cap.kind!r} is not brokered (only {', '.join(KINDS)})")
     grant = grant_for(agent, name)

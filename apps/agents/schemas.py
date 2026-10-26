@@ -48,7 +48,7 @@ class AgentIn(StrictModel):
     repo_ref: str | None = Field(default=None, max_length=120)
     runtime_engine: Literal["emdash", "cloud_p", "any"] | None = None
     runtime_secrets: list[str] | None = None
-    # WHERE each declared secret's value lives, mirrored from runtime.yaml:
+    # WHERE each declared secret's value lives:
     # {"gog-token": {"op": "op://Agent-Ace/gog-token/credential"}}. Without it
     # the vault importer can only guess a convention, and a guess here resolves
     # to the WRONG credential rather than failing (ace#2060).
@@ -417,10 +417,9 @@ class AgentActorRouteIn(StrictModel):
 
 
 class AgentRuntimeOut(StrictModel):
-    """What a runner needs from canopy-web to run this agent: the repo pointer
-    (whose runtime.yaml is the declarative spec), the secret-reference names to
-    resolve from the env store, the engine preference, and the tenant. The
-    declarative spec + secret VALUES live elsewhere (repo / secret store)."""
+    """What a runner needs from canopy-web to run this agent: the repo pointer,
+    the secret-reference names to resolve from the env store, the engine
+    preference, and the tenant. Secret VALUES live in the secret store."""
 
     slug: str
     repo_url: str
@@ -1806,7 +1805,7 @@ class AgentVaultOut(StrictModel):
     key_set: bool = False
     # How many declared refs canopy-web can actually LOCATE. Without this an
     # import that returns "45 skipped" is unexplainable from the UI: the cause is
-    # always that runtime.yaml's source map never reached this deployment, and
+    # always that the agent's source map was never declared on this deployment, and
     # nothing on the screen could say so.
     declared: int = 0
     locatable: int = 0
@@ -1829,7 +1828,7 @@ class AgentCredentialsIn(StrictModel):
 class AgentCredentialStatusOut(StrictModel):
     """Masked view — booleans and timestamps, NEVER values.
 
-    `declared` distinguishes a ref the agent's runtime.yaml asks for from an
+    `declared` distinguishes a ref the agent declares from an
     orphan left behind when one was removed; `source` says which store a live
     value came from, so a canopy-web/1Password divergence during migration is
     visible rather than silent."""
@@ -2354,7 +2353,7 @@ class ZkRecipientsOut(StrictModel):
     kv: int
     recipients: list[ZkRecipientOut]
     endorsements: list[ZkEndorsementOut]
-    #: Declared names (runtime.yaml), and which of them hold a value now.
+    #: Declared names (Agent.runtime_secrets), and which of them hold a value now.
     declared: list[str]
     stored: list[str]
 
@@ -2377,7 +2376,7 @@ class ZkEndorsementsOut(StrictModel):
 
 
 class SecretRequestIn(StrictModel):
-    #: A secret name the agent declares in runtime.yaml.
+    #: A secret name the agent declares in its vault.
     name: str = Field(max_length=200)
     #: One line for the person answering: why the agent needs it.
     reason: str = Field(default="", max_length=300)

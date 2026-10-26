@@ -1,21 +1,12 @@
-"""The declarative runtime spec an agent ships in its own repo (`runtime.yaml`).
+"""The capability manifest an agent ships in its own repo (`capability.yaml`).
 
-This is the *desired* runtime for one agent: which plugins it needs (canopy + ace +
-its own), which MCP servers and tools, which execution engine it prefers, which
-secrets it needs (**by reference name only — never a value**), and the preflight
-checks that define "ready". It was designed for a reconciler (RS2) that would
-provision a box from it; that was never wired in and was retired (2026-10-15) —
-canopy's `canopy agent prepare` prepares an agent. What reads it today: canopy-web's
-capability publish and its credentials screen's declared-secret counts.
+A capability is a machine (or a pool of slots) the agent leases from canopy-web.
+The agent DECLARES it in its own repo, one `capability.yaml` per capability;
+`canopy-runtime publish-capabilities` validates each with `CapabilityManifest` and
+sends them to canopy-web, which validates them again with this same model.
 
-This module *defines and validates* the shape so the agent's PRs can be linted.
-
-Two hard rules encoded here:
-  1. `extra="forbid"` everywhere — a typo'd key is a validation error in the
-     agent's PR, not a silently-ignored field that never provisions.
-  2. `secrets` is a list of reference *names*. There is no field anywhere that
-     holds a secret value; the value is resolved from the env's store (1Password
-     vault) by canopy, never here.
+`extra="forbid"` everywhere: a typo'd key is a validation error in the agent's PR,
+not a silently-ignored field.
 """
 from __future__ import annotations
 
@@ -25,109 +16,15 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-# The engine axis (RS4). Mirrors agents.Agent.runtime_engine on canopy-web.
-Engine = Literal["emdash", "cloud_p", "any"]
-
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PluginRef(_Strict):
-    """A `.claude-plugin` the agent depends on (canopy, ace, its own …)."""
-
-    name: str = Field(min_length=1)
-    # Where to get it: a git URL, a marketplace ref, or a local path. Empty means
-    # "resolved by name from the default marketplace" — non-secret either way.
-    source: str = ""
-
-
-class McpRef(_Strict):
-    """An MCP server the agent's runtime must have wired up."""
-
-    name: str = Field(min_length=1)
-    # Optional endpoint/command hint; empty = the plugin that provides it wires it.
-    url: str = ""
-
-
-class ToolRef(_Strict):
-    """A CLI tool / binary the runtime requires on PATH (e.g. `gh`, `claude`)."""
-
-    name: str = Field(min_length=1)
-    # If true, absence is fine (reported, not a gap): a tool only some turns use
-    # (ACE's adb/maestro for local device walks, java for one QA gate).
-    optional: bool = False
-
-
-class PreflightCheck(_Strict):
-    """One check that must pass for the box to be 'ready' for this agent.
-
-    `run` is a NON-SECRET shell probe descriptor (e.g. `claude whoami`); `expect`
-    is an optional substring the reconciler looks for in its output. A failing
-    check the box can't self-heal (interactive OAuth) becomes 'needs bootstrap'.
-    """
-
-    name: str = Field(min_length=1)
-    run: str = ""
-    expect: str = ""
-
-
-class SecretRef(_Strict):
-    """A secret the agent needs, declared by REFERENCE NAME plus where its value
-    must land. The name resolves against the env's store (1Password); `env` and/or
-    `path` say how the runtime consumes it — the repo declares this because only
-    the repo knows its own tools (claude wants `CLAUDE_CODE_OAUTH_TOKEN`, gog wants
-    a credentials file). Still **never a value** — only a reference + destination.
-    """
-
-    name: str = Field(min_length=1)
-    # Inject the resolved value into this environment variable (the common case).
-    env: str = ""
-    # Or write it to this file path (e.g. a gog credentials.json). `~` is expanded.
-    path: str = ""
-    # If true, absence is fine (skipped) rather than a "needs bootstrap" gap.
-    optional: bool = False
-    # WHERE the value comes from (canopy-web mirrors these as Agent.runtime_sources):
-    # `op` is a 1Password reference (op://Vault/Item/field) — a pointer, not a value;
-    # `value` is a NON-sensitive literal that varies per environment (a base URL, a
-    # folder id) and so is declared as a reference rather than under `env:`.
-    # At most one of the two. Neither → resolved by name from the env's store.
-    op: str = ""
-    value: str = ""
-    # Never in a shared store: minted per human/machine and kept only locally
-    # (ACE's ACE_WEB_PAT_TOKEN). The reconciler does not try to resolve it.
-    local_only: bool = False
-
-    @model_validator(mode="after")
-    def _one_source(self) -> "SecretRef":
-        if self.op and self.value:
-            raise ValueError(f"secret {self.name!r}: give `op` or `value`, not both")
-        if self.op and not self.op.startswith("op://"):
-            raise ValueError(f"secret {self.name!r}: `op` is a 1Password reference (op://…), got {self.op!r}")
-        if self.local_only and (self.op or self.value):
-            raise ValueError(f"secret {self.name!r}: a local_only secret has no shared source")
-        return self
-
-    @field_validator("name")
-    @classmethod
-    def _name_is_a_ref_not_a_value(cls, v: str) -> str:
-        if not v or len(v) > 120 or any(c in v for c in "= \t\n"):
-            raise ValueError(
-                f"secret name is a reference NAME, not a value; got {v!r}. "
-                "Put the value in the env's secret store and reference its name."
-            )
-        return v
-
-
 # --- capabilities ----------------------------------------------------------
 #
-# A capability is a machine the agent leases from canopy-web for as long as it
-# needs it (docs/architecture/capabilities.md in canopy-web). The agent DECLARES
-# it here, in its own repo: `runtime.yaml` points at one `capability.yaml` per
-# capability, and `canopy-runtime publish-capabilities` sends them to canopy-web,
-# which validates them with this same model. canopy-web owns the generic
-# lifecycle; everything specific (the stack, the image, the CLI on it) is the
-# agent's.
+# canopy-web owns the generic lifecycle (docs/architecture/capabilities.md);
+# everything specific (the stack, the image, the CLI on it) is the agent's.
 
 CAPABILITY_NAME = r"^[a-z0-9-]{3,40}$"
 _PARAM_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -135,19 +32,6 @@ _EXEC_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 _PY_TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
 }
-
-
-class CapabilityRef(_Strict):
-    """`runtime.yaml` → one capability: a path to its manifest, relative to runtime.yaml."""
-
-    manifest: str = Field(min_length=1)
-
-    @field_validator("manifest")
-    @classmethod
-    def _relative(cls, v: str) -> str:
-        if v.startswith("/") or v.startswith("~"):
-            raise ValueError(f"manifest is a path in the agent's repo, relative to runtime.yaml; got {v!r}")
-        return v
 
 
 class CapabilityAws(_Strict):
@@ -331,33 +215,3 @@ def load_capability_manifest(text: str) -> CapabilityManifest:
     if not isinstance(data, dict):
         raise ValueError("capability.yaml must be a mapping at the top level")
     return CapabilityManifest.model_validate(data)
-
-
-class RuntimeSpec(_Strict):
-    """The whole `runtime.yaml` — one agent's declarative runtime."""
-
-    version: int = 1
-    engine: Engine = "any"
-    plugins: list[PluginRef] = Field(default_factory=list)
-    mcp: list[McpRef] = Field(default_factory=list)
-    tools: list[ToolRef] = Field(default_factory=list)
-    # Secret REFERENCES (name + destination), never values — see SecretRef.
-    secrets: list[SecretRef] = Field(default_factory=list)
-    # Non-secret literal env the runtime needs (Drive folder IDs, a gog client
-    # name, doc IDs — echo's .env is full of these). NOT secrets: values live here
-    # in the clear because they aren't sensitive. The reconciler injects them
-    # alongside the resolved secrets.
-    env: dict[str, str] = Field(default_factory=dict)
-    preflight: list[PreflightCheck] = Field(default_factory=list)
-    # Capabilities this agent declares (published to canopy-web by
-    # `canopy-runtime publish-capabilities`), each a path to its capability.yaml.
-    capabilities: list[CapabilityRef] = Field(default_factory=list)
-
-
-def load_runtime_yaml(text: str) -> RuntimeSpec:
-    """Parse + validate a runtime.yaml document. Raises on malformed YAML or a
-    spec that violates the schema (unknown key, secret value, missing name)."""
-    data = yaml.safe_load(text) or {}
-    if not isinstance(data, dict):
-        raise ValueError("runtime.yaml must be a mapping at the top level")
-    return RuntimeSpec.model_validate(data)

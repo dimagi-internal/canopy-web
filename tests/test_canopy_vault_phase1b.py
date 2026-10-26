@@ -394,7 +394,7 @@ def test_an_unscoped_read_of_a_stored_orphan_alerts(fleet):
 
 def test_a_name_a_workspace_vault_supplies_is_not_undeclared(fleet):
     """The fleet's gog OAuth clients live in the workspace vault, not in each
-    agent's runtime.yaml; asking for one is not an undeclared read."""
+    agent's declaration; asking for one is not an undeclared read."""
     v = Vault.objects.create(workspace=fleet["ws"], kind=Vault.WORKSPACE, name="Shared", kv=1)
     VaultAttachment.objects.create(vault=v, workspace=fleet["ws"])
     VaultSecret.objects.create(vault=v, name="gog-oauth-client-web", value_zk="zk1:x", kv=1)

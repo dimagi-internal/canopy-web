@@ -169,7 +169,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
     always was. With `refs`, `values` holds only the named refs that the
-    agent's runtime.yaml also declares, and the secret extras
+    agent also declares (`runtime_secrets`), and the secret extras
     (`op_sa_token`, `shared_op_sa_token`, `github_token`, `salesforce_creds`)
     are included only when named in `refs` too. `op_vault`, `shared_op_vault`
     and `mailbox` are not secrets and are always returned.
@@ -559,7 +559,7 @@ def _secret_request_out(req, message: str = "") -> SecretRequestOut:
 @gate("agent-login", "agent-admin", kind="request")
 def request_agent_secret(request: HttpRequest, slug: str, payload: SecretRequestIn) -> SecretRequestOut:
     """For the agent itself (its own login) or an admin. `name` must be declared
-    in the agent's runtime.yaml. The chat this is called from shows the person a
+    in the agent's vault (`runtime_secrets`). The chat this is called from shows the person a
     card that seals the value in their browser and stores ciphertext only — you
     never receive the value, and must not ask for it in the chat. Read the
     request back (`get_agent_secret_request`) for `status: fulfilled`, then

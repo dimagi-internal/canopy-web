@@ -200,7 +200,7 @@ def get_agent_capabilities(request: HttpRequest, slug: str) -> AgentCapabilities
 @gate("agent-admin", "agent-login", setting=True)  # the agent's deploy publishes
 def put_agent_capabilities(request: HttpRequest, slug: str, payload: AgentCapabilitiesIn) -> AgentCapabilitiesOut:
     """The agent's deploy calls this (`canopy-runtime publish-capabilities`) with
-    every capability its runtime.yaml declares. Each ec2-ephemeral stack's
+    every capability manifest (`capability.yaml`) the agent ships. Each ec2-ephemeral stack's
     Outputs are read now and must meet the contract (422 naming what is
     missing); a `pool` has no stack, only its `slots`. Idempotent; a capability
     left out is retired and its live leases released. A pool's live leases

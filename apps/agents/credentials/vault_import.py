@@ -44,7 +44,7 @@ def plan_import(declared: list[str], sources: dict) -> list[ImportItem]:
     for name in declared:
         src = sources.get(name)
         if not isinstance(src, dict):
-            out.append(ImportItem(name, "skip", reason="runtime.yaml does not say where this lives"))
+            out.append(ImportItem(name, "skip", reason="the declaration does not say where this lives"))
         elif src.get("local_only"):
             # Minted per-human on a workstation. There is no vault copy, and
             # inventing one would make the screen claim a value it does not have.

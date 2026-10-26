@@ -448,7 +448,7 @@ function RecentSessions({ agent }: { agent: AgentHealthOut }): JSX.Element {
 
 const REF_LABEL: Record<AgentVault['refs'][number]['status'], string> = {
   stored: 'in canopy-web',
-  literal: 'plain value in runtime.yaml',
+  literal: 'plain value (not a secret)',
   local: 'minted per machine',
   '1password': 'in 1Password',
   missing: 'not stored anywhere',

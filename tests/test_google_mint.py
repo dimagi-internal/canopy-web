@@ -250,7 +250,7 @@ def _stored_token(agent) -> str:
 
 @pytest.mark.django_db
 def test_it_lands_in_the_same_slot_a_hand_minted_token_does(fleet, monkeypatch):
-    """`gog-token` is the ref every runtime.yaml and every vault already names.
+    """`gog-token` is the ref every agent's declaration and every vault already names.
     A second slot would give one mailbox two sources of truth."""
     monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
     state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)

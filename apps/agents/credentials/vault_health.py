@@ -6,16 +6,16 @@ read `vault_health`, so they cannot disagree about whether an agent is done
 moving off 1Password.
 
 Each declared ref (`Agent.runtime_secrets`) is classified against what is
-actually stored in canopy-web (`AgentCredential`) and what runtime.yaml says
-about it (`runtime_sources`, the same `vault_import.plan_import` the importer
+actually stored in canopy-web (`AgentCredential`) and where its vault declaration
+says it lives (`runtime_sources`, the same `vault_import.plan_import` the importer
 uses):
 
 - ``stored``    — a value is in canopy-web.
-- ``literal``   — runtime.yaml carries it as a plain value (a base URL); no
+- ``literal``   — the declaration carries it as a plain value (a base URL); no
                   secret to move.
 - ``local``     — minted per machine (`local_only`); never in any vault.
 - ``1password`` — only an ``op://`` reference: it lives in 1Password.
-- ``missing``   — no value here, and runtime.yaml does not say where it lives.
+- ``missing``   — no value here, and the declaration does not say where it lives.
 
 An agent resolving from canopy-web (`credential_source`) is fully moved when no
 ref is ``1password`` or ``missing``. One resolving from 1Password needs its vault

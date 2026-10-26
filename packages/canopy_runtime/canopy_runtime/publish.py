@@ -1,20 +1,22 @@
-"""``canopy-runtime publish-capabilities`` — send an agent's declared capabilities to canopy-web.
+"""``canopy-runtime publish-capabilities`` — send an agent's capabilities to canopy-web.
 
 Part of the agent's deploy, not a hand step:
 
-    canopy-runtime publish-capabilities --spec runtime.yaml --agent ace
+    canopy-runtime publish-capabilities --dir infra/capabilities --agent ace
+    canopy-runtime publish-capabilities --manifest a/capability.yaml --manifest b/capability.yaml --agent ace
 
-loads every ``capabilities[].manifest`` (paths relative to the spec file),
-validates each with ``CapabilityManifest``, and sends the whole list in one
-``PUT /api/agents/<slug>/capabilities``. canopy-web validates them again,
-resolves each stack's Outputs, and retires any capability the list leaves out
-(releasing its live leases). Idempotent: publishing the same list twice changes
-nothing.
+``--dir`` takes every ``<dir>/*/capability.yaml``; ``--manifest`` names one file and
+repeats. Each is validated with ``CapabilityManifest`` and the whole list goes in one
+``PUT /api/agents/<slug>/capabilities``. canopy-web validates them again, resolves
+each stack's Outputs, and RETIRES ANY CAPABILITY THE LIST LEAVES OUT (releasing its
+live leases), so the list is the agent's complete set: ``--dir`` is the form to use,
+and it refuses an empty directory rather than retire everything. Idempotent:
+publishing the same list twice changes nothing.
 
 Stdlib HTTP on purpose — this package is Django-free and installs on a bare box.
 
 Exit codes: 0 published · 1 canopy-web refused or could not be reached ·
-2 the spec or a manifest is invalid.
+2 the arguments or a manifest are invalid.
 """
 from __future__ import annotations
 
@@ -26,30 +28,47 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from canopy_runtime.schema import CapabilityManifest, load_capability_manifest, load_runtime_yaml
+from canopy_runtime.schema import CapabilityManifest, load_capability_manifest
 
 DEFAULT_BASE_URL = "https://canopy.dimagi.com"
+USAGE = ("canopy-runtime publish-capabilities (--dir infra/capabilities | --manifest PATH ...) "
+         "--agent <slug> [--base-url URL] [--token PAT] [--dry-run]")
 
 
-def load_manifests(spec_path: Path) -> list[CapabilityManifest]:
-    """Every manifest the spec declares, validated, in declaration order.
-    Raises ValueError naming the file at fault."""
-    spec = load_runtime_yaml(spec_path.read_text())
-    root = spec_path.resolve().parent
+def find_manifests(directory: Path) -> list[Path]:
+    """Every ``<directory>/*/capability.yaml``, sorted. Raises ValueError if the
+    directory is missing, holds none (publishing an empty list retires every
+    capability), or has a subdirectory whose manifest is misnamed (a
+    ``capability.yml`` the glob would silently skip, retiring that capability)."""
+    if not directory.is_dir():
+        raise ValueError(f"{directory}: not a directory")
+    found = sorted(directory.glob("*/capability.yaml"))
+    for sub in sorted(p for p in directory.iterdir() if p.is_dir()):
+        for odd in ("capability.yml", "capability.yaml.disabled"):
+            if (sub / odd).exists():
+                raise ValueError(f"{sub / odd}: manifests are named capability.yaml")
+    if not found:
+        raise ValueError(f"{directory}: no */capability.yaml found; publishing nothing would "
+                         "retire every capability this agent has")
+    return found
+
+
+def load_manifests(paths: list[Path]) -> list[CapabilityManifest]:
+    """Every manifest, validated, in the order given. Raises ValueError naming the
+    file at fault (unreadable, invalid, or a repeat of an earlier capability name)."""
     manifests: list[CapabilityManifest] = []
-    seen: dict[str, str] = {}
-    for ref in spec.capabilities:
-        path = (root / ref.manifest).resolve()
+    seen: dict[str, Path] = {}
+    for path in paths:
         try:
             manifest = load_capability_manifest(path.read_text())
         except OSError as exc:
-            raise ValueError(f"{ref.manifest}: cannot read ({exc})") from exc
+            raise ValueError(f"{path}: cannot read ({exc})") from exc
         except ValueError as exc:
-            raise ValueError(f"{ref.manifest}: {exc}") from exc
+            raise ValueError(f"{path}: {exc}") from exc
         if manifest.name in seen:
-            raise ValueError(f"{ref.manifest}: capability {manifest.name!r} is already declared "
+            raise ValueError(f"{path}: capability {manifest.name!r} is already declared "
                              f"by {seen[manifest.name]}")
-        seen[manifest.name] = ref.manifest
+        seen[manifest.name] = path
         manifests.append(manifest)
     return manifests
 
@@ -82,7 +101,11 @@ def put(base_url: str, agent: str, token: str, body: dict, *, timeout: float = 6
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="canopy-runtime publish-capabilities")
-    ap.add_argument("--spec", required=True, help="path to the agent's runtime.yaml")
+    ap.add_argument("--manifest", action="append", default=[], metavar="PATH",
+                    help="a capability.yaml to publish (repeatable)")
+    ap.add_argument("--dir", action="append", default=[], metavar="DIR",
+                    help="publish every DIR/*/capability.yaml (repeatable)")
+    ap.add_argument("--spec", help=argparse.SUPPRESS)  # retired: fails loudly below
     ap.add_argument("--agent", required=True, help="the agent's canopy slug")
     ap.add_argument("--base-url", default=os.environ.get("CANOPY_BASE_URL") or DEFAULT_BASE_URL)
     ap.add_argument("--token", default=os.environ.get("CANOPY_TOKEN") or os.environ.get("CANOPY_WEB_PAT"),
@@ -90,8 +113,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="validate and print the body; send nothing")
     args = ap.parse_args(argv)
 
+    if args.spec:
+        print(f"error: --spec is retired: capabilities publish from their "
+              f"capability.yaml manifests, not from a spec file. Publish from the capability manifests directly:\n  {USAGE}", file=sys.stderr)
+        return 2
+    if not (args.manifest or args.dir):
+        print(f"error: name the manifests to publish:\n  {USAGE}", file=sys.stderr)
+        return 2
     try:
-        manifests = load_manifests(Path(args.spec))
+        paths: list[Path] = []
+        for d in args.dir:
+            paths += find_manifests(Path(d))
+        paths += [Path(m) for m in args.manifest]
+        once: dict[Path, Path] = {}  # the same file via --dir and --manifest is one capability
+        for p in paths:
+            once.setdefault(p.resolve(), p)
+        paths = list(once.values())
+        manifests = load_manifests(paths)
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

@@ -112,14 +112,13 @@ class Agent(models.Model):
     # unrepresentable rather than merely unpopulated. Do not re-nullable this.
     # --- Runtime registry (agent-runtime-registry design) ----------------
     # canopy-web is the entry point a runner asks "how do I run agent X?": it holds
-    # the POINTER to the agent's repo (whose runtime.yaml is the declarative WHAT),
-    # the secret REFERENCES (names, never values — resolved from 1Password on a
-    # laptop / Secrets Manager on a cloud box), and the engine preference. The
-    # declarative spec itself lives in the repo; secret values live in the store.
+    # the POINTER to the agent's repo, the secret REFERENCES (names, never values;
+    # declared in the Canopy vault by `canopy agent vault`), and the engine preference.
+    # Secret values live in the store.
     EMDASH, CLOUD_P, ANY_ENGINE = "emdash", "cloud_p", "any"
     ENGINE_CHOICES = [(EMDASH, "emdash"), (CLOUD_P, "cloud-p (claude -p)"), (ANY_ENGINE, "any")]
     repo_url = models.CharField(
-        max_length=300, blank=True, default="", help_text="Agent's git repo (holds runtime.yaml).",
+        max_length=300, blank=True, default="", help_text="Agent's git repo.",
     )
     repo_ref = models.CharField(max_length=120, blank=True, default="main")
     runtime_engine = models.CharField(max_length=10, choices=ENGINE_CHOICES, default=ANY_ENGINE)
@@ -135,8 +134,8 @@ class Agent(models.Model):
     # the one-time bridge in harness.routing that turns it into RunnerAssignment
     # rows; dropped with its own migration once nothing reads it.
     runner_preference = models.JSONField(default=list, blank=True)
-    # WHERE each declared secret's value comes from, mirrored from the agent
-    # repo's runtime.yaml: {"<ref-name>": {"op": "op://..."} | {"value": "..."}}.
+    # WHERE each declared secret's value comes from:
+    # {"<ref-name>": {"op": "op://..."} | {"value": "..."}}.
     #
     # runtime_secrets says an agent NEEDS `gog-token`; this says that value lives
     # at op://Agent-Ace/gog-token/credential. Without it an importer can only
@@ -147,7 +146,7 @@ class Agent(models.Model):
     # one that fails (ace#2060).
     runtime_sources = models.JSONField(
         default=dict, blank=True,
-        help_text='Per-ref value source from runtime.yaml: {"name": {"op": "op://..."}} '
+        help_text='Per-ref value source: {"name": {"op": "op://..."}} '
                   'or {"name": {"value": "literal"}}. Never holds a secret VALUE for an '
                   "op-backed ref — only where to find it.",
     )
@@ -496,14 +495,14 @@ class AgentCredential(models.Model):
     runner has five credentials; ACE declares 45 refs and echo 12.
 
     Deliberately carries NO `optional`/`env`/`path` metadata. That is the
-    DECLARATION's job, and it lives in the agent's runtime.yaml (reaching
-    canopy-web as Agent.runtime_secrets). Storing shape here too is the
+    DECLARATION's job, and it lives in the agent's vault declaration
+    (Agent.runtime_secrets, written by `canopy agent vault`). Storing shape here too is the
     two-writers mistake that produced the gog_client drift — three copies of one
     fact, two of them wrong.
     """
 
     agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="credentials")
-    #: Matches a `secrets[].name` in the agent's runtime.yaml.
+    #: Matches a name in the agent's declared secrets (Agent.runtime_secrets).
     name = models.CharField(max_length=120)
     #: Fernet ciphertext (apps/common/encryption.py). Never plaintext. Empty
     #: for a zero-knowledge value (`value_zk`).
