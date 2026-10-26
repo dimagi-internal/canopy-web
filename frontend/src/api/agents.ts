@@ -458,6 +458,26 @@ export async function setAgentTurnMode(slug: string, mode: TurnMode, workspace?:
   return unwrap(res, 'setAgentTurnMode').turn_mode
 }
 
+// The agent hold: while held no runner starts the agent's turns (its schedules,
+// dispatches, mail, chats with it); they wait queued for the release. Any editor
+// may hold or release (agent.work); any member may read.
+export type AgentHold = Schemas['AgentHoldOut']
+
+export async function getAgentHold(slug: string): Promise<AgentHold> {
+  const res = await apiV2.GET('/api/agents/{slug}/hold', { params: { path: { slug } } })
+  return unwrap(res, 'getAgentHold')
+}
+
+export async function holdAgent(slug: string, note: string): Promise<AgentHold> {
+  const res = await apiV2.POST('/api/agents/{slug}/hold', { params: { path: { slug } }, body: { note } })
+  return unwrap(res, 'holdAgent')
+}
+
+export async function releaseAgentHold(slug: string): Promise<AgentHold> {
+  const res = await apiV2.POST('/api/agents/{slug}/hold/release', { params: { path: { slug } } })
+  return unwrap(res, 'releaseAgentHold')
+}
+
 // Turn Slack access to the agent on or off (owner only). Same return shape as
 // setAgentTurnMode, for the same reason: the toggle only needs the flag back.
 // The agent's owner or a workspace owner. `null` clears the owner (workspace

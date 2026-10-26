@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Outlet, useParams } from 'react-router-dom'
-import { getAgent, listTasks, type AgentDetailOut } from '@/api/agents'
+import { getAgent, getAgentHold, listTasks, type AgentDetailOut, type AgentHold } from '@/api/agents'
+import { AgentHoldBanner } from '@/components/agents/AgentHold'
 import { AgentLeftNav } from '@/components/agents/AgentLeftNav'
 import { AlertList } from '@/components/alerts/AlertList'
 import { roleAllows } from '@/lib/workspaceRoles'
@@ -19,6 +20,10 @@ export interface AgentOutletContext {
   waiting: number | undefined
   /** Re-read `waiting` — call after anything that may move a task. */
   refreshWaiting: () => void
+  /** The agent hold, owned here so the banner and Settings show one state;
+   *  `null` until read. */
+  hold: AgentHold | null
+  setHold: (h: AgentHold) => void
 }
 
 /**
@@ -45,6 +50,17 @@ export function AgentWorkspacePage() {
   }, [slug])
   useEffect(() => refreshWaiting(), [refreshWaiting])
   const waiting = waitingFor && waitingFor.slug === slug ? waitingFor.n : undefined
+
+  // Stamped with its slug for the same reason as `waitingFor`.
+  const [holdFor, setHoldFor] = useState<{ slug: string; hold: AgentHold } | null>(null)
+  useEffect(() => {
+    if (!slug) return
+    getAgentHold(slug)
+      .then((hold) => setHoldFor({ slug, hold }))
+      .catch(() => setHoldFor(null))
+  }, [slug])
+  const hold = holdFor && holdFor.slug === slug ? holdFor.hold : null
+  const setHold = useCallback((h: AgentHold) => { if (slug) setHoldFor({ slug, hold: h }) }, [slug])
 
   useEffect(() => {
     if (!slug) return
@@ -111,8 +127,11 @@ export function AgentWorkspacePage() {
       <WorkbenchMain>
         {/* Alerts about this agent (no runner it can use, stuck turns…), above
             every section; nothing at all when there are none. */}
+        {hold && (
+          <AgentHoldBanner slug={agent.slug} name={agent.name} hold={hold} canEdit={canEdit} onChange={setHold} />
+        )}
         <AlertList scope={`agent:${agent.slug}`} hideEmpty className="max-w-4xl px-6 pt-4" />
-        <Outlet context={{ agent, canEdit, waiting, refreshWaiting } satisfies AgentOutletContext} />
+        <Outlet context={{ agent, canEdit, waiting, refreshWaiting, hold, setHold } satisfies AgentOutletContext} />
       </WorkbenchMain>
     </WorkbenchShell>
   )
