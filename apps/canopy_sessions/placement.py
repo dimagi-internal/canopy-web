@@ -11,7 +11,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.harness import clis, routing
+from apps.harness import clis, routing, sensitivity
 from apps.harness.models import Turn
 
 from . import activity as session_activity
@@ -19,8 +19,9 @@ from . import conversation_keys, handoff, services, transcript_read
 from .models import Message, RunnerBinding, Session
 
 
-def _placeable_runner(session: Session, runner_id):
-    """`_eligible_runner`, then the conversation's runner requirements (`sensitive_data`)."""
+def _placeable_runner(session: Session, runner_id, *, cli: str = ""):
+    """`_eligible_runner`, then the conversation's runner requirements (`sensitive_data`)
+    and its agent CLI — `cli` when a transfer moves it to another one."""
     from apps.harness import runner_requirements as rr
 
     runner = _eligible_runner(session, runner_id)
@@ -32,7 +33,7 @@ def _placeable_runner(session: Session, runner_id):
         return None
     # Likewise a box without the agent CLI the conversation is held to
     # (`harness.clis`): no claim on it could ever run the conversation's turns.
-    if session.cli and session.cli not in clis.reported(runner):
+    if (cli or session.cli) and (cli or session.cli) not in clis.reported(runner):
         return None
     # A chat WITH an agent runs as that agent on the box it lands on, so the box
     # must be one that may hold the agent (agents.services.runner_may_hold_agent:
@@ -48,7 +49,7 @@ def _placeable_runner(session: Session, runner_id):
     return runner
 
 
-def _placement_refused(session: Session, runner_id, default: str) -> ValueError:
+def _placement_refused(session: Session, runner_id, default: str, *, cli: str = "") -> ValueError:
     """The error for a placement `_placeable_runner` refused. Names the
     requirement when the runner is one the caller could otherwise place on —
     "unknown runner" would be false for a box their own fleet lists — and
@@ -58,9 +59,13 @@ def _placement_refused(session: Session, runner_id, default: str) -> ValueError:
 
     runner = _eligible_runner(session, runner_id)
     if runner is not None:
-        if session.cli and session.cli not in clis.reported(runner):
-            return ValueError(f"this conversation runs on {clis.label(session.cli)}, and "
-                              f"{runner.name} does not have it")
+        held = cli or session.cli
+        if held and held not in clis.reported(runner):
+            other = [c for c in clis.offered(session.agent) if c in clis.reported(runner)]
+            hint = (f" — transfer it with cli={other[0]} to continue on {clis.label(other[0])} "
+                    "from a fresh session" if other and not cli else "")
+            return ValueError(f"this conversation {'would run' if cli else 'runs'} on "
+                              f"{clis.label(held)}, and {runner.name} does not have it{hint}")
         reqs = rr.requirements_of_session(session)
         return ValueError(f"this conversation requires a {rr.describe(reqs)} runner")
     return ValueError(default)
@@ -224,8 +229,23 @@ def busy_reason(session: Session) -> str:
     return ""
 
 
+def cli_switch_refusal(session: Session, cli: str) -> str | None:
+    """Why `session` may not continue on agent CLI `cli`, or None. A switch is a
+    fresh start in that CLI from the handoff's prompt (never a resume), so it is
+    allowed to any CLI its agent is set up for — except one that may not hold a
+    sensitive conversation."""
+    if not cli or cli == session.cli:
+        return None
+    if cli not in clis.offered(session.agent):
+        who = session.agent.name if session.agent else "a chat without an agent"
+        return f"{who} isn't set up to run on {clis.label(cli)}"
+    if sensitivity.is_sensitive(session) and cli not in clis.SENSITIVE_CLIS:
+        return f"a conversation holding sensitive data cannot move to {clis.label(cli)}"
+    return None
+
+
 def transfer_session(*, session: Session, placement: str, brief: str = "", user=None,
-                     initiator=None):
+                     initiator=None, cli: str = ""):
     """Move a live session onto another runner, carrying its history AND its work.
 
     What a transfer has to do, which pinning a turn alone does NOT:
@@ -248,6 +268,9 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     4. **Hand over context.** `TRANSFER_PREAMBLE`, what the snapshot holds, and
        the caller's `brief` become the prompt of a turn pinned to the target.
 
+    `cli` continues the conversation on another agent CLI (`cli_switch_refusal`):
+    the target must have it, and starts it fresh — nothing resumes across CLIs.
+
     `placement` is a runner UUID (resolved through the same `_placeable_runner`
     gate `send_message` uses, so a foreign or non-session-capable box is refused
     rather than left pinned-and-unclaimable forever).
@@ -259,9 +282,12 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
     retries. Returns (binding, turn); `turn` is None while the source packs
     (`session.handoffs.first()` says how that is going).
     """
-    target = _placeable_runner(session, placement)
+    to_cli = cli if cli and cli != session.cli else ""
+    if (refused := cli_switch_refusal(session, to_cli)) is not None:
+        raise ValueError(refused)
+    target = _placeable_runner(session, placement, cli=to_cli)
     if target is None:
-        raise _placement_refused(session, placement, "unknown runner for transfer")
+        raise _placement_refused(session, placement, "unknown runner for transfer", cli=to_cli)
     if session.status != Session.ACTIVE:
         raise ValueError("cannot transfer an archived session")
     if reason := busy_reason(session):
@@ -281,7 +307,7 @@ def transfer_session(*, session: Session, placement: str, brief: str = "", user=
         # only record of which task on which box holds the work.
         h = handoff.begin(session=session, binding=binding, source=source, target=target,
                           brief=brief, user=user,
-                          initiator=_initiator(initiator, user, "transfer"))
+                          initiator=_initiator(initiator, user, "transfer"), to_cli=to_cli)
 
         binding.runner = target
         binding.transferred_from = source

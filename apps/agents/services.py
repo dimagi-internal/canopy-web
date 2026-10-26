@@ -56,7 +56,7 @@ def _aware(value):
 # ---- agents ----
 #: What an agent IS on its boxes: the code they clone and what they install with
 #: it. Changing one on an existing agent is its admins' (agents/api.py upsert).
-DEFINITION_FIELDS = ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets",
+DEFINITION_FIELDS = ("repo_url", "repo_ref", "runtime_secrets",
                      "runtime_sources", "clis", "cli_models")
 
 
@@ -85,7 +85,7 @@ def upsert_agent(data, *, workspace, owner=None) -> Agent:
     # ONLY when explicitly provided. The plugin re-upserts agents on every sync
     # with these fields absent (None) — a plain default would clobber runtime
     # config back to empty on each heartbeat. Configure once, keep it.
-    for field in ("repo_url", "repo_ref", "runtime_engine", "runtime_secrets",
+    for field in ("repo_url", "repo_ref", "runtime_secrets",
                   "runtime_sources", "runner_preference", "clis", "cli_models"):
         value = getattr(data, field, None)
         if value is not None:

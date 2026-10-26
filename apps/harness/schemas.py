@@ -13,6 +13,7 @@ from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_v
 from apps.workspaces import links
 
 from . import clis as cli_vocab
+from . import invocations
 from . import sensitivity, session_sync
 from .models import Turn
 from .runner_requirements import is_sensitive_data_box
@@ -1182,6 +1183,16 @@ class ClaimPageSiteOut(Schema):
     withheld: list[str] = []
 
 
+class InvocationOut(Schema):
+    """The plugin command a turn's prompt opens with (`harness.invocations`)."""
+
+    plugin: str
+    skill: str
+    args: str = ""
+    # Every line after the command's, as written.
+    rest: str = ""
+
+
 class ClaimedTurnOut(TurnOut):
     """A turn as its CLAIMING runner receives it: everything `TurnOut` has, plus
     the caller envelope, so the runner can hand it to the agent without a second
@@ -1210,6 +1221,10 @@ class ClaimedTurnOut(TurnOut):
     # The model to start that CLI on, from the agent's `cli_models`; "" = the
     # CLI's own default.
     cli_model: str = ""
+    # The plugin command its prompt opens with, parsed once here so each turn
+    # executor renders it in its own CLI's terms (Claude Code types `prompt` as
+    # is); null for a prompt of plain words.
+    invocation: InvocationOut | None = None
     # For a turn whose conversation is held on a Connected site's page that its agent
     # serves: the site, and the agent's own credentials for it that the runner must
     # leave out of the turn (`interface.page_turn`). Null for every other turn.
@@ -1224,6 +1239,12 @@ class ClaimedTurnOut(TurnOut):
     @staticmethod
     def resolve_mcp_token(obj) -> str | None:
         return getattr(obj, "mcp_token", None)
+
+    @staticmethod
+    def resolve_invocation(obj) -> InvocationOut | None:
+        inv = invocations.parse(getattr(obj, "prompt", ""))
+        return InvocationOut(plugin=inv.plugin, skill=inv.skill, args=inv.args,
+                             rest=inv.rest) if inv else None
 
     @staticmethod
     def resolve_chat_key(obj) -> str | None:

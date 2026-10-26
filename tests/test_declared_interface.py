@@ -72,7 +72,8 @@ def _as_user(agent, user, key):
     ({"capabilities": {"ask": {"callers": ["contact:signed"]}}}, "not a caller class"),
     ({"capabilities": {"Ask!": {}}}, "must match"),
     ({"capabilities": {}, "callers_default": "all"}, "callers_default"),
-    ({"capabilities": {"ask": {"entry": "run everything"}}}, "slash command"),
+    ({"capabilities": {"ask": {"entry": "run everything"}}}, "plugin command"),
+    ({"capabilities": {"ask": {"entry": "/help me"}}}, "plugin command"),
     ({"surprise": 1}, "unknown top-level"),
 ])
 def test_parse_refuses_what_it_does_not_understand(doc, msg):

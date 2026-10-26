@@ -115,15 +115,12 @@ class Agent(models.Model):
     # --- Runtime registry (agent-runtime-registry design) ----------------
     # canopy-web is the entry point a runner asks "how do I run agent X?": it holds
     # the POINTER to the agent's repo, the secret REFERENCES (names, never values;
-    # declared in the Canopy vault by `canopy agent vault`), and the engine preference.
-    # Secret values live in the store.
-    EMDASH, CLOUD_P, ANY_ENGINE = "emdash", "cloud_p", "any"
-    ENGINE_CHOICES = [(EMDASH, "emdash"), (CLOUD_P, "cloud-p (claude -p)"), (ANY_ENGINE, "any")]
+    # declared in the Canopy vault by `canopy agent vault`), and the agent CLIs it
+    # runs on. Secret values live in the store.
     repo_url = models.CharField(
         max_length=300, blank=True, default="", help_text="Agent's git repo.",
     )
     repo_ref = models.CharField(max_length=120, blank=True, default="main")
-    runtime_engine = models.CharField(max_length=10, choices=ENGINE_CHOICES, default=ANY_ENGINE)
     # The agent CLIs this agent may run on, preferred first (`harness.clis`): the
     # claim picks the first one the box has signed in and can confine the turn on.
     # Part of the agent's definition, like its repo (agents.services.DEFINITION_FIELDS).

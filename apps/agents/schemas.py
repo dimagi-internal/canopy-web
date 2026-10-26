@@ -59,7 +59,6 @@ class AgentIn(StrictModel):
     # them) never clobber runtime config back to empty. See services.upsert_agent.
     repo_url: str | None = Field(default=None, max_length=300)
     repo_ref: str | None = Field(default=None, max_length=120)
-    runtime_engine: Literal["emdash", "cloud_p", "any"] | None = None
     # The agent CLIs it runs on, preferred first (`harness.clis`); None = unchanged.
     clis: list[CliName] | None = None
     # A model per CLI, e.g. {"codex": "gpt-6.1-sol"}; None = unchanged.
@@ -468,13 +467,12 @@ class AgentActorRouteIn(StrictModel):
 
 class AgentRuntimeOut(StrictModel):
     """What a runner needs from canopy-web to run this agent: the repo pointer,
-    the secret-reference names to resolve from the env store, the engine
-    preference, and the tenant. Secret VALUES live in the secret store."""
+    the secret-reference names to resolve from the env store, the agent CLIs it
+    runs on, and the tenant. Secret VALUES live in the secret store."""
 
     slug: str
     repo_url: str
     repo_ref: str
-    engine: str
     secret_refs: list[str]
     workspace: str | None
     #: The agent CLIs it runs on, preferred first, and a model for each it names.

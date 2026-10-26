@@ -124,6 +124,11 @@ class TransferIn(Schema):
     # prompt describes them server-side, so this carries only what no checkout
     # holds: what shipped, what is still open, what to do next.
     brief: str = ""
+    # Continue on another agent CLI its agent is set up for (`harness.clis`): the
+    # target starts it fresh from the handoff, never resuming the old CLI's session.
+    # The way to move a conversation off a box whose CLI ran out — Claude to Codex
+    # or back. None = stay on its own CLI (the target must have it).
+    cli: clis.CliName | None = None
 
 
 class HandoffOut(Schema):
@@ -173,6 +178,8 @@ class TransferAllIn(Schema):
     session_ids: list[str] = []
     # List what would move, and why anything would not, without moving it.
     dry_run: bool = False
+    # Continue every session on this agent CLI (see `TransferIn.cli`).
+    cli: clis.CliName | None = None
 
 
 class TransferAllResult(Schema):

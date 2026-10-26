@@ -923,6 +923,8 @@ class TransferRequest(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+",
     )
     brief = models.TextField(blank=True, default="")
+    # The agent CLI to continue on, when the move changes it (`SessionHandoff.to_cli`).
+    cli = models.CharField(max_length=32, blank=True, default="", db_default="")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=PENDING)
     decided_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
@@ -991,6 +993,11 @@ class SessionHandoff(models.Model):
     initiator = models.JSONField(null=True, blank=True, default=None)
     # Pack the Claude transcript too: the target runs Claude itself and can resume it.
     want_transcript = models.BooleanField(default=False)
+    # The agent CLI the conversation continues on, when the move changes it
+    # (`harness.clis`); "" = it stays on its own. A change never resumes: the new
+    # CLI starts a fresh session from the handoff's prompt, and the conversation
+    # is held to the new CLI when the handoff settles.
+    to_cli = models.CharField(max_length=32, blank=True, default="", db_default="")
 
     capture_status = models.CharField(max_length=12, default=PENDING)
     capture_note = models.CharField(max_length=500, blank=True, default="")
