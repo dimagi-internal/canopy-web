@@ -40,7 +40,6 @@ def cr(cloud_runner, monkeypatch):
 def test_detects_the_cap_message_the_fleet_actually_hit(cr):
     assert cr._is_usage_cap(CAP_TEXT)
     assert cr._is_usage_cap("Error: usage limit reached")
-    assert cr._is_usage_cap("your credit balance is too low")
 
 
 def test_an_ordinary_failure_is_not_a_cap(cr):

@@ -4631,6 +4631,8 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
         _announce_session(turn_id, session_id)
         _log(f"exec: acp (turn {turn_id[:8]}) in {workdir} session={session_id[:8]}")
 
+    started = time.time()
+
     try:
         # The loop itself — events, replay, wedge guard, releasing the session —
         # is canopy_acp.drive_turn, shared with the laptop's `claude-cli` runtime.
@@ -4657,8 +4659,20 @@ def run_acp(prompt: str, turn_id: str, emit, cwd: pathlib.Path | None = None,
             flush_seconds=TRANSCRIPT_FLUSH_SECONDS, clock=time.time, log=_log)
     except TurnError as exc:
         _log(f"turn {turn_id[:8]}: ACP executor failed: {exc.detail}")
+        # The adapter's bare `auth_required` cannot say a dead token from a capped
+        # one; what Claude Code wrote into the session's transcript can.
+        if fault := _transcript_fault(workdir, exc.session_id, started):
+            _CREDENTIAL_FAULT[turn_id] = fault
         return False, f"runner error (acp): {exc.detail}", exc.session_id
     final_text = res.text
+    # The adapter can end a turn the API refused with a clean stop and the error as
+    # plain text. Claude Code's own record of the refusal (`isApiErrorMessage`, with
+    # its `error` category) says what happened to the credential — read it, so a
+    # 401 or an empty account fails over and alerts exactly as under `claude -p`.
+    if fault := _transcript_fault(workdir, res.session_id, started):
+        _log(f"turn {turn_id[:8]}: the API refused the turn ({fault}), per its transcript")
+        _CREDENTIAL_FAULT[turn_id] = fault
+        return False, final_text, res.session_id
     limit = res.rate_limit
     if limit:
         _log(f"turn {turn_id[:8]}: rate limit {limit.get('status')} ({limit.get('rateLimitType')})")
@@ -4902,7 +4916,7 @@ class _CredentialNotices:
             return True   # the stream named it (`run_claude`); no text guess needed
         text = str((event.get("payload") or {}).get("text") or "").strip()
         return (0 < len(text) <= CREDENTIAL_NOTICE_MAX_CHARS
-                and (_is_usage_cap(text) or _is_auth_required(text)))
+                and (_is_usage_cap(text) or _is_auth_required(text) or _is_out_of_credit(text)))
 
     def emit(self, events) -> None:
         held = [{k: v for k, v in e.items() if k != CREDENTIAL_ERROR_KEY}
@@ -4933,6 +4947,7 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
     resets: list[float] = []      # each capped credential's reset, epoch seconds
     capped_labels: list[str] = []
     dead_labels: list[str] = []
+    broke_labels: list[str] = []  # out of credit: no reset, a person adds credit
     cap_line = ""                 # the first cap message, kept for the final note
     while True:
         ok, text, session_id = _execute_once(
@@ -4947,9 +4962,11 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
         # What the stream said wins; the text matchers are the fallback for an
         # executor (or an older CLI) that said nothing structured.
         if fault:
-            capped, dead = fault == "capped", fault == "dead"
+            capped, dead, broke = fault == "capped", fault == "dead", fault == "no_credit"
         else:
-            capped, dead = _is_usage_cap(text), _is_auth_required(text)
+            broke = _is_out_of_credit(text)
+            capped = not broke and _is_usage_cap(text)
+            dead = not broke and _is_auth_required(text)
         hint = _CAP_RESET_HINT.pop(turn_id, None)
         reset = None
         if capped and not ok:
@@ -4958,17 +4975,23 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
                 resets.append(reset)
             else:
                 reset = None
-        if ok or not (capped or dead):
+        if ok or not (capped or dead or broke):
             if ok:
                 _record_outcome(label, "ok", detail="ran a turn")
             return ok, text, session_id
-        if capped:
+        if broke:
+            # Moves on like a cap, but nothing resets it: the owner is told now.
+            broke_labels.append(label)
+            _record_outcome(label, "no_credit", detail=_fault_line(text, _is_out_of_credit))
+            _log(f"turn {turn_id[:8]}: {label} is out of credit")
+            _notify_out_of_credit(label, turn_id)
+        elif capped:
             capped_labels.append(label)
             _record_outcome(label, "capped", detail=_fault_line(text, _is_usage_cap),
                             reset=reset)
             cap_line = cap_line or _fault_line(text, _is_usage_cap)
             _log(f"turn {turn_id[:8]}: {label} is at its usage cap")
-        elif capped_labels and _is_bare_acp_refusal(text):
+        elif not fault and capped_labels and _is_bare_acp_refusal(text):
             # Investigation 9 (turn 7d230f39, ACE on cloud-ec2-2, 2026-10-18): the
             # box login capped, then the setup-token answered ACP's bare
             # `auth_required`. Every credential was out of usage, but this was
@@ -4981,7 +5004,7 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             _record_outcome(label, "capped", detail="refused the session after a cap")
             _log(f"turn {turn_id[:8]}: {label} refused the session after a cap — "
                  "counted as capped")
-        elif _is_bare_acp_refusal(text) and _probe_says_capped(label, resets, turn_id):
+        elif not fault and _is_bare_acp_refusal(text) and _probe_says_capped(label, resets, turn_id):
             # cloud-ec2-fork, 2026-10-18: ONE setup-token, at its weekly cap,
             # answered ACP's bare refusal, and with nothing else in the turn to
             # have capped first, every turn said "not signed in". The refusal
@@ -4993,9 +5016,10 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             # — but the REASON is carried to the terminal message below, because
             # "wait for the reset" is wrong advice for a token that has none.
             dead_labels.append(label)
-            if not _is_bare_acp_refusal(text):
-                # The CLI's own sentence: evidence. A bare refusal's probe has
-                # already recorded what it found, and "unknown" stays unknown.
+            if fault or not _is_bare_acp_refusal(text):
+                # The CLI's own sentence, or its structured error: evidence. A
+                # bare refusal's probe has already recorded what it found, and
+                # "unknown" stays unknown.
                 _record_outcome(label, "dead", detail=_fault_line(text, _is_auth_required))
             _log(f"turn {turn_id[:8]}: {label} is not signed in")
             _notify_auth_required(label, turn_id)
@@ -5014,7 +5038,7 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
             # bare cap message names a reset time but never says the fleet has
             # run out of credentials entirely, which is the thing a human has to
             # act on.
-            if not capped_labels:
+            if not capped_labels and not broke_labels:
                 # Deliberately does NOT mention waiting: this is the state that
                 # never clears on its own, and telling an operator a cap will
                 # reset is how a box sits dead for a day.
@@ -5022,6 +5046,17 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
                         f"{', '.join(attempted)}). This will NOT clear on its own — "
                         f"someone has to re-authenticate the subscription and set the "
                         f"token (`canopy runner credential`).")
+            elif not capped_labels:
+                # Only credit is gone: nothing resets on its own. Paused so other
+                # runners take the work, and re-probed until someone adds credit.
+                until = _park_until_cap_resets(
+                    [], "", turn_id, why=f"out of credit ({', '.join(broke_labels)})")
+                note = (f"[runner] out of credit — every Claude credential on this box "
+                        f"is out of credit or not working (tried: {', '.join(attempted)}). "
+                        f"This will NOT clear on its own: someone has to add credit to "
+                        f"{', '.join(broke_labels)} or set a new credential (`canopy runner "
+                        f"credential`). This runner has paused itself so other runners "
+                        f"take its work, and checks again at {until}.")
             else:
                 until = _park_until_cap_resets(resets, cap_line or text, turn_id)
                 _notify_out_of_usage(capped_labels, dead_labels, until, turn_id)
@@ -5031,6 +5066,9 @@ def _execute_down_the_cascade(prompt: str, turn_id: str, notices: _CredentialNot
                         f"itself until {until} so other runners take its work; it "
                         f"resumes on its own then, or sooner if a new credential is "
                         f"set (`canopy runner credential`) and it is unpaused.")
+                if broke_labels:
+                    note += (f" Separately, {', '.join(broke_labels)} is out of credit "
+                             f"and will NOT clear on its own — someone has to add credit.")
                 if dead_labels:
                     note += (f" Separately, {', '.join(dead_labels)} is not signed in "
                              f"and will NOT clear on its own — someone has to "
@@ -7658,8 +7696,14 @@ _USAGE_CAP_RE = re.compile(
 _USAGE_CAP_MARKERS = (
     "out of usage",
     "rate limit exceeded",
-    "insufficient credit",
+)
+
+#: Substrings that mean an API key's account has run out of prepaid credit. Not a
+#: cap: nothing resets it — a person adds credit (or replaces the key) — so the box
+#: moves on and pauses like a cap, AND tells the runner's owner (`_notify_out_of_credit`).
+_OUT_OF_CREDIT_MARKERS = (
     "credit balance is too low",
+    "insufficient credit",
 )
 
 #: Substrings that mean "this credential is DEAD and a human must sign in".
@@ -7698,6 +7742,11 @@ def _is_usage_cap(text: str) -> bool:
     return bool(_USAGE_CAP_RE.search(low)) or any(m in low for m in _USAGE_CAP_MARKERS)
 
 
+def _is_out_of_credit(text: str) -> bool:
+    low = (text or "").lower()
+    return any(m in low for m in _OUT_OF_CREDIT_MARKERS)
+
+
 def _is_auth_required(text: str) -> bool:
     """True when the credential needs a human to sign in again.
 
@@ -7729,15 +7778,16 @@ def _is_bare_acp_refusal(text: str) -> bool:
 #: alerted (docs/superpowers/specs/2026-10-26-claude-code-audit.md, finding 1).
 _DEAD_ERRORS = frozenset({"authentication_failed", "oauth_org_not_allowed",
                           "account_on_hold"})
-#: The categories that mean the credential is out of usage. `billing_error` sits
-#: here because the text matchers already count "credit balance is too low" as a
-#: cap, and the two must agree.
-_CAP_ERRORS = frozenset({"rate_limit", "billing_error"})
+#: The categories that mean the credential is out of usage until its reset.
+_CAP_ERRORS = frozenset({"rate_limit"})
+#: The categories that mean the credential's account is out of credit: no reset,
+#: a person has to add credit (`_is_out_of_credit` is the text form).
+_CREDIT_ERRORS = frozenset({"billing_error"})
 
 
 def _credential_fault(evt: dict) -> tuple[str | None, float | None]:
     """What one stream-json event says about the credential that ran it:
-    ("capped" | "dead" | None, the cap's reset as epoch seconds or None).
+    ("capped" | "dead" | "no_credit" | None, the cap's reset as epoch seconds or None).
 
     A `rate_limit_event` arrives on every turn, so only a `rejected` one counts.
     A `system/api_retry` counts only for a dead login: the CLI retries a rate
@@ -7756,17 +7806,66 @@ def _credential_fault(evt: dict) -> tuple[str | None, float | None]:
     if etype == "system" and evt.get("subtype") == "api_retry":
         return ("dead" if error in _DEAD_ERRORS else None), None
     if etype == "assistant":
-        if error in _DEAD_ERRORS:
-            return "dead", None
-        if error in _CAP_ERRORS:
-            return "capped", None
-        return None, None
+        return _error_fault(error), None
     if etype == "result" and evt.get("is_error") and evt.get("api_error_status") == 401:
         return "dead", None
     return None, None
 
 
-#: turn id -> "capped" | "dead", what the `claude -p` stream itself said about a
+def _transcript_fault(cwd, session_id: str, since: float) -> str | None:
+    """What the API said about the credential, if the turn that started at
+    `since` ENDED on Claude Code's own API-error record in its transcript
+    (`isApiErrorMessage`, `error: "authentication_failed"`/`"rate_limit"`/
+    `"billing_error"`): the structured fault an ACP turn's adapter does not pass
+    on. None when the turn's last record is anything else, or it wrote none."""
+    ct = _transcript_core()
+    if ct is None or not session_id or cwd is None:
+        return None
+    try:
+        path = ct.resolve_cli_transcript(cwd, session_id, claude_home=CLAUDE_PROJECTS_HOME)
+        records = ct.read_tail_records(path) if path is not None else []
+    except Exception:  # noqa: BLE001 — a read that fails knows nothing
+        return None
+    for rec in reversed(records):
+        if not isinstance(rec, dict) or rec.get("isSidechain") or rec.get("type") in (
+                "system", "queue-operation", "summary"):
+            continue
+        if _record_epoch(rec) < since - 1:
+            return None  # an earlier turn's ending, not this one's
+        if rec.get("type") != "assistant" or not rec.get("isApiErrorMessage"):
+            return None
+        fault = _error_fault(rec.get("error"))
+        if fault is None:
+            text = " ".join(b.get("text", "") for b in ((rec.get("message") or {}).get("content") or [])
+                            if isinstance(b, dict) and isinstance(b.get("text"), str))
+            fault = ("no_credit" if _is_out_of_credit(text) else "capped" if _is_usage_cap(text)
+                     else "dead" if _is_auth_required(text) else None)
+        return fault
+    return None
+
+
+def _record_epoch(rec: dict) -> float:
+    """A transcript record's timestamp as epoch seconds; 0 when it has none."""
+    try:
+        return datetime.datetime.fromisoformat(
+            str(rec.get("timestamp") or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _error_fault(error) -> str | None:
+    """The fault one of the CLI's error categories names — the `error` of an
+    assistant event in the stream, or of an `isApiErrorMessage` transcript record."""
+    if error in _DEAD_ERRORS:
+        return "dead"
+    if error in _CAP_ERRORS:
+        return "capped"
+    if error in _CREDIT_ERRORS:
+        return "no_credit"
+    return None
+
+
+#: turn id -> "capped" | "dead" | "no_credit", what the CLI itself said about a
 #: failed turn's credential. Popped by `execute_prompt`, which falls back to the
 #: text matchers only when a turn left nothing here.
 _CREDENTIAL_FAULT: dict[str, str] = {}
@@ -7797,7 +7896,8 @@ def _cap_reset_epoch(text: str) -> float | None:
     return when.timestamp() if when else None
 
 
-def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
+def _park_until_cap_resets(resets: list[float], text: str, turn_id: str,
+                           why: str = "Claude usage cap") -> str:
     """Every credential on this box is capped: pause the runner on canopy-web and
     schedule the unpause for the EARLIEST reset among them — the first moment any
     login can work again. Routing then sends this box's work elsewhere instead of
@@ -7810,7 +7910,7 @@ def _park_until_cap_resets(resets: list[float], text: str, turn_id: str) -> str:
     until = min(resets) if resets else time.time() + CAP_PAUSE_FALLBACK_SECONDS
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
     first = next((ln.strip() for ln in (text or "").splitlines() if _is_usage_cap(ln)), "")
-    note = (f"{SELF_PAUSE_PREFIX}Claude usage cap — resumes {stamp}"
+    note = (f"{SELF_PAUSE_PREFIX}{why} — resumes {stamp}"
             + ("" if resets else " (reset unreadable; retrying then)")
             + (f": {first}" if first else ""))[:200]
     if _RUNNER_ID:
@@ -7942,7 +8042,10 @@ def _probe_entry(entry: tuple[str, str, str]) -> dict:
         pass
     text = "\n".join(t for t in (result, stdout, stderr) if t)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if fault == "capped" or (fault is None and _is_usage_cap(text)):
+    if fault == "no_credit" or (fault is None and _is_out_of_credit(text)):
+        out["status"] = "no_credit"
+        out["detail"] = _fault_line(text, _is_out_of_credit)
+    elif fault == "capped" or (fault is None and _is_usage_cap(text)):
         out["status"] = "capped"
         out["detail"] = _fault_line(text, _is_usage_cap)
         out["reset"] = _cap_reset_epoch(text)
@@ -7983,6 +8086,10 @@ def _record_probe(result: dict) -> None:
     elif status == "dead":
         _set_check(f"claude.probe.{label}", "fail",
                    "not signed in — someone has to sign it in again" + when)
+    elif status == "no_credit":
+        # The wording canopy-web's `runner_credential` alert reads (OUT_OF_CREDIT_MARKERS).
+        _set_check(f"claude.probe.{label}", "fail",
+                   "out of credit — someone has to add credit to its account" + when)
     else:
         _set_check(f"claude.probe.{label}", "warn",
                    f"could not check: {result.get('detail') or 'no answer'}" + when)
@@ -8089,6 +8196,8 @@ def _credential_readiness(now: float | None = None) -> tuple[bool, str]:
                 return True, ""
             resets.append(reset)
             parts.append(f"{lb}: at its usage cap until {_iso(reset)}")
+        elif p["status"] == "no_credit":
+            parts.append(f"{lb}: out of credit")
         else:
             parts.append(f"{lb}: not signed in")
     note = "no working Claude credential — " + "; ".join(parts)
@@ -8196,7 +8305,8 @@ def _credential_tick(beat: dict | None = None) -> None:
         due = [lb for lb, p in _PROBES.items()
                if (p["status"] == "capped" and _probe_reset(p) <= wall
                    and p.get("at", 0.0) < _probe_reset(p))
-               or (p["status"] == "dead" and wall - p.get("at", 0.0) >= DEAD_REPROBE_SECONDS)]
+               or (p["status"] in ("dead", "no_credit")
+                   and wall - p.get("at", 0.0) >= DEAD_REPROBE_SECONDS)]
     if due:
         _probe_in_background(due)
     _sync_self_pause(beat)
@@ -8274,6 +8384,32 @@ def _notify_out_of_usage(capped: list[str], dead: list[str], until: str,
                  "that this box has stopped until its caps reset")
     except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
         _log(f"warn: could not notify that the box is out of usage ({exc})")
+
+
+def _notify_out_of_credit(label: str, turn_id: str) -> None:
+    """Tell canopy-web, and through it the runner's owner and admins, that a
+    credential's account is out of credit. Like a dead login it never clears on
+    its own, so a person hears about it the first time, not after a day of
+    paused work. Best-effort and logged on failure, like its siblings."""
+    body = {
+        "items": [{
+            "source": "runner.credential",
+            "kind": "claude_credit_exhausted",
+            "level": "error",
+            "summary": (f"The Claude credential ({label}) on {RUNNER_NAME or 'this runner'} "
+                        f"is out of credit. The runner moved on to its next credential, and "
+                        f"pauses itself when none is left. Add credit to its account, or "
+                        f"replace it — this does NOT reset on its own like a usage cap."),
+            "key": f"credit-exhausted:{RUNNER_NAME}",
+        }],
+    }
+    try:
+        status, _ = _api("POST", "/", body, prefix="/api/events")
+        if status not in (200, 201):
+            _log(f"warn: out-of-credit notify returned {status} — the runner's owner may "
+                 "not know this credential needs credit")
+    except Exception as exc:  # noqa: BLE001 — notifying must never break the turn
+        _log(f"warn: could not notify about the out-of-credit credential ({exc})")
 
 
 def _notify_auth_required(label: str, turn_id: str) -> None:

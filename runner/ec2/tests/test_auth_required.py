@@ -47,8 +47,10 @@ def test_every_cap_wording_matches_by_shape(cr, text):
 
 def test_the_capless_phrasings_still_match(cr):
     """The few that never say "limit" — the shape rule cannot see these."""
-    assert cr._is_usage_cap("your credit balance is too low")
     assert cr._is_usage_cap("rate limit exceeded")
+    # Out of credit is its own state: nothing resets it (`_is_out_of_credit`).
+    assert not cr._is_usage_cap("your credit balance is too low")
+    assert cr._is_out_of_credit("your credit balance is too low")
 
 
 # ── the state that had no name ──────────────────────────────────────────────

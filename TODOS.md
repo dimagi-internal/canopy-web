@@ -115,7 +115,7 @@
 
 ### Claude Code: use the CLI's first-party mechanisms
 
-**What:** The rest of the audit in `docs/superpowers/specs/2026-10-26-claude-code-audit.md` (findings 1 and 3 are done): replace the paid "Reply with OK" probe (finding 2), then the others in the audit's suggested order. Still open from finding 1: route away from a credential near its cap using `rate_limit_event` utilization, delete the text matchers' duplicate copies in `packages/canopy_transcript`, check whether the laptop's transcript records carry `error`, and teach the ACP path the same fields (it still reads the adapter's bare `auth_required` plus a probe).
+**What:** The rest of the audit in `docs/superpowers/specs/2026-10-26-claude-code-audit.md` (findings 1 and 3 are done): replace the paid "Reply with OK" probe (finding 2), then the others in the audit's suggested order. Still open from finding 1: route away from a credential near its cap using `rate_limit_event` utilization, delete the text matchers' duplicate copies in `packages/canopy_transcript`, and check whether the laptop's transcript records carry `error`.
 
 **Priority:** P2
 **Depends on:** None
