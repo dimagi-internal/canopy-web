@@ -947,6 +947,13 @@ class InitiatorPersonOut(Schema):
     name: str
 
 
+class InitiatorOnBehalfOut(Schema):
+    user: InitiatorPersonOut
+    relationship: str
+    via_agent: str = ""
+    turn: str = ""
+
+
 class InitiatorOut(Schema):
     """Who asked for this turn, and how that was established."""
 
@@ -960,6 +967,10 @@ class InitiatorOut(Schema):
     # this turn's own agent — the agent started this turn itself (e.g. testing).
     agent_login: str | None = None
     self: bool = False
+    # On an agent's turn: the person it was working for — {user, relationship (to the
+    # agent receiving the work), via_agent, turn} — or null when it acted on its own.
+    # canopy-web works it out from the agent's turn login; no agent declares it.
+    on_behalf_of: InitiatorOnBehalfOut | None = None
     # WHICH credential the request that created the turn used — {type, id, label}
     # (`pat`, `oauth`, `session`, `delegated`, `contact`, `caller_token`) — and
     # the program that sent it (X-Canopy-Client). Null when canopy started it.

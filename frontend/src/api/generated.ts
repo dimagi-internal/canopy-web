@@ -18704,6 +18704,22 @@ export interface components {
              */
             readonly error: string;
         };
+        /** InitiatorOnBehalfOut */
+        readonly InitiatorOnBehalfOut: {
+            readonly user: components["schemas"]["InitiatorPersonOut"];
+            /** Relationship */
+            readonly relationship: string;
+            /**
+             * Via Agent
+             * @default
+             */
+            readonly via_agent: string;
+            /**
+             * Turn
+             * @default
+             */
+            readonly turn: string;
+        };
         /**
          * InitiatorOut
          * @description Who asked for this turn, and how that was established.
@@ -18726,6 +18742,7 @@ export interface components {
              * @default false
              */
             readonly self: boolean;
+            readonly on_behalf_of?: components["schemas"]["InitiatorOnBehalfOut"] | null;
             /** Credential */
             readonly credential?: {
                 readonly [key: string]: unknown;

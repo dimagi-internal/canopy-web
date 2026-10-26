@@ -97,11 +97,8 @@ def enqueue_turn(request: HttpRequest, payload: TurnIn):
     turn_gates.check_email_poster(request, payload, agent)
     pinned = turn_gates.resolve_pin(request, payload, agent)
     initiator = turn_gates.check_asker(request, payload, agent)
-    # An agent dispatching on behalf of the person in its turn (turn_asker): the record
-    # says so, and that person is who asked for its mode (the claim re-checks them).
-    on_behalf = turn_asker.of(request.user)
-    if on_behalf is not None:
-        origin_ref["on_behalf_of"] = on_behalf.record()
+    # An agent dispatching for the person in its turn (turn_asker): enqueue_turn stamps
+    # them on the turn, and they are who asked for its mode (the claim re-checks them).
     if (refused := clis.refusal(agent, payload.cli or "")) is not None:
         raise HttpError(422, refused)
 
