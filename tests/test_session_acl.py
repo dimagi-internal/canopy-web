@@ -300,3 +300,41 @@ def test_an_agent_thread_belongs_to_whoever_runs_the_agent():
     assert access.role_for(people["owner"], thread) == SessionParticipant.OWNER  # workspace owner
     assert access.role_for(admin, thread) == SessionParticipant.OWNER
     assert access.role_for(people["mate"], thread) is None
+
+
+def test_an_agent_s_admins_own_every_conversation_with_it():
+    """A person's chat with an agent — a Slack thread, a web chat — is theirs AND
+    the agent's admins': the people answerable for the agent read it and own it
+    alongside its creator, so they can bring someone in. A plain co-tenant is
+    still out, and a sensitive one stays sealed to its own people."""
+    from apps.agents.models import AgentAdmin
+    from apps.canopy_sessions.models import Session
+    from apps.harness import runner_requirements as rr
+
+    people, s, ws = _world()
+    agent = s["agent_thread"].agent
+    Agent.objects.filter(pk=agent.pk).update(owner=None)
+    admin = _user("admin")
+    _member(admin, ws)
+    AgentAdmin.objects.create(agent=agent, user=admin)
+    chat = Session.objects.create(workspace=ws, created_by=people["mate"], agent=agent,
+                                  origin=Session.ORIGIN_WEB)
+
+    assert access.role_for(people["mate"], chat) == SessionParticipant.OWNER
+    for user in (people["owner"], admin):  # a workspace owner, an explicit admin
+        assert access.role_for(user, chat) == SessionParticipant.OWNER, user.username
+        assert access.can_share(user, chat), user.username
+    for who in ("viewer", "outsider", "box_admin", "hal_login"):
+        assert access.can_read(people[who], chat) is False, who
+
+    resp = _client(admin).post(
+        f"/api/canopy-sessions/{chat.id}/participants",
+        {"email": "viewer@dimagi.com", "role": "viewer"}, content_type="application/json")
+    assert resp.status_code == 200
+    assert access.role_for(people["viewer"], chat) == SessionParticipant.VIEWER
+
+    sealed = Session.objects.create(workspace=ws, created_by=people["mate"], agent=agent,
+                                    origin=Session.ORIGIN_WEB,
+                                    metadata={rr.METADATA_KEY: [rr.SENSITIVE_DATA]})
+    assert access.role_for(admin, sealed) == SessionParticipant.VIEWER
+    assert access.can_share(admin, sealed) is False

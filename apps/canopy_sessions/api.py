@@ -1080,8 +1080,9 @@ def _session_by_key_or_404(request: HttpRequest, key: uuid.UUID) -> Session:
         raise HttpError(
             404,
             "no session with this id or session_key is visible to you. A session is "
-            "visible to its creator, its participants, the agent's admins (for the "
-            "agent's own threads) and, for an emdash-discovered session, its workspace",
+            "visible to its creator, its participants, the agent's admins (for any "
+            "conversation with the agent) and, for an emdash-discovered session, its "
+            "workspace",
         )
     if len(matches) > 1:
         raise HttpError(
