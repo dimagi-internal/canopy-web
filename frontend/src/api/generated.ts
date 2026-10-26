@@ -7419,6 +7419,8 @@ export interface paths {
          *       turns that into an actionable 409 naming what is in the way, so the
          *       caller deletes the agents (or moves them) and retries. Memberships and
          *       invites are the workspace's own bookkeeping and cascade with it.
+         *     - **Refuses while it holds anything else that keeps a workspace** — a
+         *       project turn's history, a chat session — with a 409 counting what is there.
          */
         readonly delete: operations["delete_workspace"];
         readonly options?: never;

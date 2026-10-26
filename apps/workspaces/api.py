@@ -9,6 +9,10 @@ approves or denies it (docs/architecture/access.md, "Getting into a workspace").
 """
 from __future__ import annotations
 
+from collections import Counter
+
+from django.db import transaction
+from django.db.models import ProtectedError
 from django.http import HttpRequest
 from ninja import Router, Status
 from ninja.errors import HttpError
@@ -471,6 +475,8 @@ def delete_workspace(request: HttpRequest, slug: str):
       turns that into an actionable 409 naming what is in the way, so the
       caller deletes the agents (or moves them) and retries. Memberships and
       invites are the workspace's own bookkeeping and cascade with it.
+    - **Refuses while it holds anything else that keeps a workspace** — a
+      project turn's history, a chat session — with a 409 counting what is there.
     """
     _require(request.user, slug, perms.OWN)
     ws = Workspace.objects.filter(slug=slug).first()
@@ -490,7 +496,20 @@ def delete_workspace(request: HttpRequest, slug: str):
             f"workspace '{slug}' still owns {len(agent_slugs)} agent(s): "
             f"{', '.join(agent_slugs)}. Delete or move them first.",
         )
-    ws.delete()
+    # Agents are the common blocker, named above; anything else that keeps a
+    # tenant (a project turn's history, a chat session) is PROTECT too. Name it
+    # rather than let ProtectedError surface as a 500.
+    try:
+        with transaction.atomic():
+            ws.delete()
+    except ProtectedError as e:
+        held = Counter(obj._meta.verbose_name_plural for obj in e.protected_objects)
+        raise HttpError(
+            409,
+            f"workspace '{slug}' still holds "
+            + ", ".join(f"{n} {what}" for what, n in sorted(held.items()))
+            + ". It is not empty, so it cannot be deleted.",
+        ) from None
     return Status(204, None)
 
 

@@ -67,6 +67,7 @@ class FakeAws:
         self.instances: dict[str, dict] = {}
         self.desired = 1
         self.calls: list[tuple] = []
+        self.deleted = False  # `fleet.sh down` deleted the stack, and the group with it
 
     def add(self, iid, *, lifecycle="InService", state="running", group=GROUP):
         self.instances[iid] = {"state": state, "group": group, "lifecycle": lifecycle, "protected": True}
@@ -76,7 +77,7 @@ class FakeAws:
         return None if i is None else {"state": i["state"], "group": i["group"], "lifecycle": i["lifecycle"]}
 
     def group(self, name):
-        if name != GROUP:
+        if name != GROUP or self.deleted:
             return None
         return {"desired": self.desired, "instances": [
             {"id": k, "lifecycle": v["lifecycle"], "protected": v["protected"]}
@@ -475,6 +476,21 @@ def test_a_member_whose_instance_left_the_group_is_retired_and_its_turn_queued_a
     assert one.status == Runner.RETIRED
     running.refresh_from_db()
     assert running.status == Turn.QUEUED and running.claimed_by_id is None and running.attempts == 1
+
+
+def test_a_retired_fleets_members_are_retired_once_its_group_is_deleted(world, aws):
+    fleets.retire(world["fleet"])
+    aws.deleted = True
+    fleets.tick()
+    assert Runner.objects.get(pk=world["one"].pk).status == Runner.RETIRED
+    # Nothing is left to read: the fleet drops out of the tick.
+    assert fleets.tick() == {}
+
+
+def test_an_active_fleets_missing_group_retires_no_one(world, aws):
+    aws.deleted = True
+    fleets.tick()
+    assert Runner.objects.get(pk=world["one"].pk).status != Runner.RETIRED
 
 
 def test_a_chat_on_a_gone_member_moves_to_a_live_one(world, aws):
