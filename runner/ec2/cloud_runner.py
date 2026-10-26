@@ -3466,12 +3466,15 @@ def _agent_env(slug: str | None) -> dict:
     env = _child_safe_env()
     for key in _GITHUB_ENV_KEYS:
         env.pop(key, None)
+    # Never the box's credential in a turn. An AGENT acts as itself (its turn login,
+    # else CANOPY_WEB_PAT from its ~/.<slug>/.env), and a turn that fell back to this
+    # process's CANOPY_TOKEN acted as the box's owner with their whole canopy. An
+    # agentless repo turn is no different: anyone the workspace routes here may have
+    # started it, and it reaches canopy as its asker through its caller token
+    # (`_scoped_token_env`), never as whoever paired the box.
+    env.pop("CANOPY_TOKEN", None)
     if not slug:
         return {**env, **extra}
-    # Never the box's credential for an AGENT: it acts as itself (CANOPY_WEB_PAT
-    # from its ~/.<slug>/.env), and a turn that fell back to this process's
-    # CANOPY_TOKEN acted as the box's owner with their whole canopy.
-    env.pop("CANOPY_TOKEN", None)
     # WHICH agent this is, as a variable Claude Code will actually hand on. It
     # strips secret-looking variables (CANOPY_WEB_PAT among them) from the env it
     # gives a plugin's MCP `headersHelper`, and runs that helper from the plugin's

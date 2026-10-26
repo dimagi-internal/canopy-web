@@ -54,3 +54,11 @@ def test_the_cloner_needs_the_turns_token_and_a_plain_repo(cloud_runner, tmp_pat
     cloud_runner._clone_agent_repo("fizzy", {cloud_runner.AGENT_REPO_ENV: "dimagi-internal/fizzy"})
     cloud_runner._clone_agent_repo("fizzy", {"GH_TOKEN": "t", cloud_runner.AGENT_REPO_ENV: "../evil"})
     assert ran == []
+
+
+def test_an_agentless_turn_never_inherits_the_boxs_canopy_token(cloud_runner, monkeypatch):
+    """A repo chat routed to this box may be anyone's; it reaches canopy as its asker
+    (caller token), never as whoever paired the box."""
+    monkeypatch.setenv("CANOPY_TOKEN", "box-owners-pat")
+    assert "CANOPY_TOKEN" not in cloud_runner._agent_env(None)
+    assert "CANOPY_TOKEN" not in cloud_runner._agent_env("")

@@ -1360,7 +1360,8 @@ class TestInheritedSessionMarkers:
         monkeypatch.setenv("CANOPY_TOKEN", "pat")
         env = cloud_runner._agent_env(None)
         assert env["PATH"] == "/usr/bin"
-        assert env["CANOPY_TOKEN"] == "pat"
+        # Never the box's own canopy credential: a repo turn here may be anyone's.
+        assert "CANOPY_TOKEN" not in env
 
     def test_an_agents_own_env_still_layers_on_top(self, cloud_runner, monkeypatch, tmp_path):
         """Stripping must not disturb the per-agent identity load — that file is
