@@ -3579,11 +3579,12 @@ export interface paths {
          * Link this agent to the canopy user it is
          * @description The canopy user account this agent's own token signs in as. `user_id`
          *     null unlinks it. A fresh account made for the agent (one nobody has ever
-         *     signed in to) is linked at once; so is your own account, after a passkey
-         *     step-up. Anyone else's existing account is NOT linked: a request goes to that
-         *     person (`canopy_user_request` in the answer), who accepts it in their own
-         *     browser (`POST /api/me/agent-login-requests/{id}/accept`), since the agent
-         *     would then act as them. A browser session only: a token is refused (403).
+         *     signed in to) is linked at once. Your own signed-in account is linked after a
+         *     passkey step-up, so only from a browser. Anyone else's existing account is
+         *     NOT linked: a request goes to that person (`canopy_user_request` in the
+         *     answer), who accepts it in their own browser
+         *     (`POST /api/me/agent-login-requests/{id}/accept`), since the agent would then
+         *     act as them. The owner or an admin, from the browser or with a token.
          */
         readonly put: operations["link_canopy_user"];
         readonly post?: never;

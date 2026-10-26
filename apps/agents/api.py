@@ -490,27 +490,26 @@ def get_agent(request: HttpRequest, slug: str) -> AgentDetailOut:
     return _detail(request, agent)
 
 
-# Browser-only (a token is refused): linking a canopy user makes it count as the
-# agent itself (never confined against itself — agents/access.py), and its token
-# then signs in AS that account, so it is a decision people make in the canopy UI.
-# Someone's existing account is linked only when THEY accept (agent_login).
+# Linking a canopy user makes it count as the agent itself (never confined against
+# itself — agents/access.py), and the agent's token then signs in AS that account. Gated
+# by role (MCP does everything): an admin links a fresh account made for the agent, or
+# asks; someone's existing account is linked only when THEY accept, in their browser
+# behind a passkey (agent_login, /api/me/agent-login-requests/).
 @router.put("/{slug}/canopy-user", response=AgentDetailOut,
             summary="Link this agent to the canopy user it is")
 @gate("agent-admin", setting=True, step_up=True)  # step-up only to link your own signed-in account
 def link_canopy_user(request: HttpRequest, slug: str, payload: AgentCanopyUserIn) -> AgentDetailOut:
     """The canopy user account this agent's own token signs in as. `user_id`
     null unlinks it. A fresh account made for the agent (one nobody has ever
-    signed in to) is linked at once; so is your own account, after a passkey
-    step-up. Anyone else's existing account is NOT linked: a request goes to that
-    person (`canopy_user_request` in the answer), who accepts it in their own
-    browser (`POST /api/me/agent-login-requests/{id}/accept`), since the agent
-    would then act as them. A browser session only: a token is refused (403)."""
+    signed in to) is linked at once. Your own signed-in account is linked after a
+    passkey step-up, so only from a browser. Anyone else's existing account is
+    NOT linked: a request goes to that person (`canopy_user_request` in the
+    answer), who accepts it in their own browser
+    (`POST /api/me/agent-login-requests/{id}/accept`), since the agent would then
+    act as them. The owner or an admin, from the browser or with a token."""
     agent = agent_for_read(request, slug)
     if not agent.is_admin(request.user):
         raise HttpError(403, "only the agent's owner or an admin can change its canopy user")
-    if not stepup.is_browser(request):
-        raise HttpError(403, "linking an agent's canopy user is done in the canopy web app, "
-                             "not with a token")
     if payload.user_id is not None and payload.user_id == request.user.pk \
             and not agent_login.is_fresh_login(request.user):
         stepup.require_recent_step_up(request)

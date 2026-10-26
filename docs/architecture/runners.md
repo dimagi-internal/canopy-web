@@ -699,9 +699,13 @@ workspace's shared vault: a person lending their identity to one agent
   prepare --runner`) therefore has no GitHub token: an agent whose private repo is not
   on the box yet is cloned at its FIRST turn, with that turn's token
   (`cloud_runner._ensure_agent_clone` → `_clone_agent_repo`, using the `repo` the
-  github-token answer names), before prepare runs. A clone the box-wide pass could not
-  make is not reported unprepared — that would stop canopy-web sending the turn that
-  clones it; a failed in-turn clone is.
+  github-token answer names), and prepare then runs with that turn's GitHub env (the
+  canopy CLI's `git` falls back to `GH_TOKEN`), so its private plugin repos install. The
+  first turn of each agent after every box-wide bootstrap prepares it again the same
+  way (`_PREPARED_WITH_GITHUB`), so private plugins stay as fresh as the box-wide pass
+  used to keep them. A clone the box-wide pass could not make is not reported
+  unprepared — that would stop canopy-web sending the turn that clones it; a failed
+  in-turn clone is.
 - **Agentless repo turns and project chats** (`Turn.project`, or the chat
   session's `project`, = repo name) run as no one on GitHub and are
   refused the same way, unless the repo has an `agents.RepoIdentity` row

@@ -99,12 +99,31 @@ def test_only_the_owner_or_an_admin(ws, owner, ace_user):
     c.force_login(member)
     assert _put(c, "ace", ace_user).status_code == 403
 
-    # Not with a token, the owner's own included: the agent's token would sign in as
-    # the linked account, so linking is done by people in the canopy web app.
+    # The owner's own TOKEN may do it too (MCP does everything; gated by role).
     raw, _ = PersonalToken.create_for_user(user=owner, label="t")
     r = Client().put("/api/agents/ace/canopy-user", {"user_id": ace_user.pk},
                      content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
-    assert r.status_code == 403, r.content
+    assert r.status_code == 200, r.content
+    assert Agent.objects.get(slug="ace").user == ace_user
+
+
+def test_a_token_asks_for_a_persons_account_but_never_links_it(ws, owner):
+    _agent(ws, owner, "ace")
+    pat = _person(ws, "pat")
+    raw, _ = PersonalToken.create_for_user(user=owner, label="t")
+    r = Client().put("/api/agents/ace/canopy-user", {"user_id": pat.pk},
+                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 200, r.content
+    assert r.json()["canopy_user"] is None
+    assert r.json()["canopy_user_request"]["user_email"] == "pat@dimagi.com"
+    # Linking the admin's OWN signed-in account needs a passkey, which a token never has.
+    from django.utils import timezone
+
+    owner.last_login = timezone.now()
+    owner.save(update_fields=["last_login"])
+    r = Client().put("/api/agents/ace/canopy-user", {"user_id": owner.pk},
+                     content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
+    assert r.status_code == 403
     assert Agent.objects.get(slug="ace").user is None
 
 

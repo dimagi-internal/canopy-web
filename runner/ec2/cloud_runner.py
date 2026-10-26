@@ -5821,6 +5821,12 @@ def _clone_agent_repo(slug: str, env: dict | None) -> None:
         _log(f"warn: agent {slug}: clone of {repo} did not run: {exc}")
 
 
+#: How `prepare_agent` hands the canopy CLI a turn's GitHub token (its agent_prepare.py).
+TURN_GITHUB_TOKEN_ENV = "CANOPY_TURN_GITHUB_TOKEN"
+
+#: When each agent was last prepared with a turn's GitHub identity (`_ensure_agent_clone`).
+_PREPARED_WITH_GITHUB: dict[str, float] = {}
+
 #: What `_ensure_agent_clone` clones with. A name of its own so the test loader can swap
 #: in a no-op: no test may clone a real repo.
 _LAZY_CLONER = _clone_agent_repo
@@ -5843,18 +5849,33 @@ def _ensure_agent_clone(slug: str, env: dict | None = None) -> None:
     `_BOOTSTRAPPED_AT`, which discharges that pending refresh."""
     if not slug or _safe_session_dirname(slug) != slug:
         return
-    if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
+    github = bool((env or {}).get("GH_TOKEN"))
+
+    def stale() -> bool:
+        # The box-wide pass since this agent was last prepared WITH a GitHub identity
+        # had none, so its private plugin repos may be stale or missing: the first turn
+        # after each box-wide bootstrap prepares it again with its own token.
+        return github and _PREPARED_WITH_GITHUB.get(slug, 0.0) < _BOOTSTRAPPED_AT
+
+    if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir() and not stale():
         return
     with _LAZY_BOOTSTRAP_LOCK:
         # Re-checked under the lock: a concurrent turn may have just done it.
         if (pathlib.Path(AGENT_ROOT) / slug / ".git").is_dir():
+            if not stale():
+                return
+            _PREPARED_WITH_GITHUB[slug] = time.time()  # first: a failure is not retried every turn
+            _log(f"agent {slug}: preparing it again with this turn's GitHub identity")
+            _LAZY_BOOTSTRAPPER(slug, env)
             return
         if time.time() - _LAZY_BOOTSTRAP_TRIED.get(slug, 0.0) < LAZY_BOOTSTRAP_RETRY:
             return
         _LAZY_BOOTSTRAP_TRIED[slug] = time.time()
         _log(f"agent {slug}: no clone on this box yet — bootstrapping before its turn runs")
         _LAZY_CLONER(slug, env)
-        _LAZY_BOOTSTRAPPER(slug)
+        if github:
+            _PREPARED_WITH_GITHUB[slug] = time.time()
+        _LAZY_BOOTSTRAPPER(slug, env)
 
 
 def _turn_cwd(turn: dict, turn_id: str, env: dict | None = None) -> pathlib.Path:
@@ -6612,12 +6633,23 @@ def _canopy_cli() -> str:
     return shutil.which("canopy", path=f"{path}:{local}" if path else local) or f"{local}/canopy"
 
 
-def prepare_agent(slug: str) -> None:
+def prepare_agent(slug: str, turn_env: dict | None = None) -> None:
     """Prepare ONE agent with `canopy agent prepare --runner` — the lazy path for an agent
     this box has never seen. Only that agent, not the fleet: a new agent's first turn waits
     for itself, not for every other agent's clone, plugins and Gmail check. Best-effort,
-    like the fleet bootstrap; the agent's readiness report says what it could do."""
+    like the fleet bootstrap; the agent's readiness report says what it could do.
+
+    `turn_env` is the turn's own environment: its GitHub token goes to the CLI as
+    CANOPY_TURN_GITHUB_TOKEN, which it uses for its own `git` calls only (cloning and
+    pulling the agent's private plugin repos) and drops from its environment — so no
+    other child it runs inherits it. `credentials/resolve` never hands the CLI that
+    token."""
     env = _off_disk_env(dict(os.environ))
+    for key in _GITHUB_ENV_KEYS:
+        env.pop(key, None)
+    token = str((turn_env or {}).get("GH_TOKEN") or "")
+    if token:
+        env[TURN_GITHUB_TOKEN_ENV] = token
     env.setdefault("AGENT_ROOT", AGENT_ROOT)
     # bootstrap_agents.sh and `canopy agent prepare --runner` read the agent
     # roster and credentials AS THIS BOX: hand them its own token, not a PAT.

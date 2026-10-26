@@ -6,10 +6,11 @@ middleware adds the agent half: only the canopy tools the caller's capability
 lists exist for that session. Listing and calling are both filtered, and
 `who_is_asking` answers only about the session's own conversation.
 
-A FULL-profile caller token (`all_tools`: an editor's turn, a `full:` rule's, a
-writer's in someone else's chat, any repo chat) sees every tool that only READS, run
-as the asker, and no write: the asker granted the agent no act-as-you permission, so
-it may not act as them (`READ_ONLY_REFUSAL`). It writes as the agent's own login.
+A FULL-profile caller token for an AGENT's turn (`read_only`: an editor's turn, a
+`full:` rule's, a writer's in someone else's chat) sees every tool that only READS,
+run as the asker, plus driving their own open page, and no write: the asker granted
+the agent no act-as-you permission (`READ_ONLY_REFUSAL`). It writes as the agent's own
+login. A repo chat's token (no agent) is the person's own tool: every tool, as them.
 
 Everything else — a PAT, the widget's tokens — passes through untouched.
 """
@@ -22,6 +23,7 @@ from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 from apps.agents.sensitive_data import sensitive_tool
+from apps.harness.caller_tokens import PAGE_DRIVE_TOOLS, PAGE_TOOL_PREFIX
 from apps.tokens import kinds
 
 
@@ -54,7 +56,8 @@ def caller_turn_ids() -> list[str] | None:
 READ_ONLY_REFUSAL = (
     "{name} changes something, and this session reaches canopy as the person who asked "
     "only to read: the agent can't act as them here, because they haven't granted it an "
-    "act-as-you permission. Do it as the agent's own login, or ask them to do it.")
+    "act-as-you permission. Do it as the agent's own login — the `canopy` CLI acts as the "
+    "agent — or ask them to do it.")
 
 
 def read_only(tool) -> bool:
@@ -74,9 +77,14 @@ def _allowed(name: str, claims: dict, tool=None) -> bool:
             return False
         return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
     if claims.get("all_tools"):
-        # A full-profile caller (an editor, a `full:` rule, a writer in someone else's
-        # chat, any repo chat): every READ, run as the asker. Never a write: the asker
-        # granted the agent no act-as-you permission, so it may not act as them.
+        if not claims.get("read_only"):
+            return True         # a repo chat: the person's own tool, every tool as them
+        # An agent's full-profile turn asked by someone else (an editor, a `full:` rule,
+        # a writer in someone else's chat): every READ, run as the asker, and driving
+        # their own open page (`caller_tokens.PAGE_DRIVE_TOOLS`). Never a write: the
+        # asker granted the agent no act-as-you permission, so it may not act as them.
+        if name in PAGE_DRIVE_TOOLS or name.startswith(PAGE_TOOL_PREFIX):
+            return True
         return tool is not None and read_only(tool)
     return any(fnmatch.fnmatchcase(name, g) for g in claims.get("tool_globs") or [])
 
@@ -99,7 +107,7 @@ class TurnScopeMiddleware(Middleware):
         if claims is not None:
             name = context.message.name
             tool = None
-            if claims.get("all_tools") and not claims.get("sensitive"):
+            if claims.get("read_only") and not claims.get("sensitive"):
                 tool = await _tool(context, name)
             if not _allowed(name, claims, tool):
                 if tool is not None:

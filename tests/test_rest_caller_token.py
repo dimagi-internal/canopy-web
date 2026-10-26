@@ -189,22 +189,42 @@ def test_a_browser_session_keeps_its_own_identity(client, w):
 
 # -- it never mints a credential ----------------------------------------------
 
-def test_a_caller_token_cannot_mint_an_agents_token(client, w):
-    """`mint_agent_canopy_token` is an MCP tool, so a caller token reaches its route
-    over REST — and is refused: a caller token only reads."""
+def test_a_caller_token_cannot_mint_an_agents_never_expiring_token(client, w):
+    """`mint_agent_canopy_token` is an MCP tool, so a caller token reaches it over
+    REST; the minting gate is an allowlist (browser session, PAT), so a token that
+    lives as long as its conversation cannot trade itself for one that never dies."""
     Agent.objects.create(slug="echo", name="Echo", workspace=w["ws"], owner=w["jj"])
     raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
     resp = client.post("/api/agents/echo/canopy-token", data={},
                        content_type="application/json", **_bearer(raw))
     assert resp.status_code == 403
-    assert "act-as-you permission" in resp.json()["detail"]
+    assert "caller_token" in resp.json()["detail"]
 
 
-def test_a_caller_token_reads_but_never_writes_as_its_asker(client, w):
-    """Its asker granted the agent no act-as-you permission: any write is refused,
-    saying so, while reads go on as the asker."""
-    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+def _agent_chat_turn(w, user):
+    agent = Agent.objects.create(slug="echo", name="Echo", workspace=w["ws"], owner=w["jj"])
+    session = Session.objects.create(workspace=w["ws"], agent=agent, created_by=user, title="agent chat")
+    return _chat_turn(w, user, session=session)
+
+
+def test_an_agent_turns_caller_token_reads_but_never_writes_as_its_asker(client, w):
+    """An agent driven by someone its owner did not make an admin: the asker granted
+    it no act-as-you permission, so it reads as them and any write is refused."""
+    turn = _agent_chat_turn(w, w["lili"])
+    raw = caller_tokens.mint(turn, scoped=True)
     resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **_bearer(raw))
     assert resp.status_code == 403
     assert "haven't granted it an act-as-you permission" in resp.json()["detail"]
     assert client.get("/api/harness/turns/", **_bearer(raw)).status_code == 200
+    # Driving the asker's own open page is not a write it is refused.
+    resp = client.post(f"/api/canopy-sessions/{turn.chat_session_id}/page-actions/invoke",
+                       data={"name": "selectSkill", "args": {}}, content_type="application/json",
+                       **_bearer(raw))
+    assert "act-as-you" not in resp.content.decode()
+
+
+def test_a_repo_chats_caller_token_keeps_its_writes(client, w):
+    """A repo chat is the person's own tool, not an agent acting for them."""
+    raw = caller_tokens.mint(_chat_turn(w, w["jj"]), scoped=True)
+    resp = client.post("/api/harness/turns/", data={}, content_type="application/json", **_bearer(raw))
+    assert "act-as-you" not in resp.content.decode()

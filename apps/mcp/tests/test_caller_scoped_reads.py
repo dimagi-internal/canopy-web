@@ -161,8 +161,11 @@ def test_a_scoped_token_lists_every_read_and_runs_each_as_the_asker(w):
     names = {t.name for t in tools}
     assert {"harness_list_turns", "read_turn_messages", "who_is_asking"} <= names
     # Reads only: the asker granted the agent no act-as-you permission.
-    assert all(t.annotations and t.annotations.readOnlyHint for t in tools)
+    page = {"invoke_page_action", "read_page_state", "list_page_actions"}
+    assert all((t.annotations and t.annotations.readOnlyHint) or t.name in page for t in tools)
     assert not {"enqueue_turn", "create_tasks", "canopy_sessions_send", "site_call"} & names
+    # Driving the asker's own open page is allowed: it runs in their tab, as them.
+    assert {"invoke_page_action", "read_page_state", "list_page_actions"} <= names
 
 
 def test_a_scoped_token_is_refused_a_write_and_told_why(w):
