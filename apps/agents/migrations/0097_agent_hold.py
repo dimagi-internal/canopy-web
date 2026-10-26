@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0094_declare_secrets_stored_before_2093"),
+        ("agents", "0096_link_logins_at_agent_email"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
