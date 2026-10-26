@@ -155,3 +155,83 @@ def test_unclaimable_report_matches_claim_for_cli():
     runner.save(update_fields=["capabilities"])
     assert str(turn.pk) not in {row["turn_id"] for row in claim.unclaimable_queued_turns(runner.owner)}
     assert claim.claim_next_turn(runner) == turn
+
+
+# ---- review fixes ----
+def test_a_conversation_from_before_clis_stays_on_claude_code():
+    """Every conversation before this change ran on Claude Code; its history is there."""
+    import importlib
+
+    agent, session, runner = _ctx(agent_clis=("codex", "claude-code"),
+                                  report={"claude-code": CONFINING, "codex": CONFINING})
+    Session.objects.filter(pk=session.pk).update(cli="", cli_session_id="abc")
+    mig = importlib.import_module("apps.canopy_sessions.migrations.0060_backfill_session_cli")
+    from django.apps import apps as global_apps
+    mig.backfill(global_apps, None)
+    session.refresh_from_db()
+    assert session.cli == "claude-code"
+    _send(session, "k1")
+    assert claim.claim_next_turn(runner).cli == "claude-code"
+
+
+def test_a_rider_never_switches_the_running_turns_cli():
+    agent, session, runner = _ctx(agent_clis=("codex", "claude-code"),
+                                  report={"claude-code": CONFINING, "codex": CONFINING})
+    first = _send(session, "k1")
+    assert claim.claim_next_turn(runner) == first
+    # Claimed by code from before CLIs: nothing stamped on it or its session.
+    Turn.objects.filter(pk=first.pk).update(cli="")
+    Session.objects.filter(pk=session.pk).update(cli="")
+    _send(session, "k2", "and this")
+    # Codex is preferred, but the running turn is Claude Code's: it waits, never rides
+    # into a live Claude session as a Codex turn.
+    assert claim.claim_next_turn(runner) is None
+
+
+def test_an_agent_turns_session_keeps_its_cli():
+    from apps.harness import session_sync
+
+    agent, _session, runner = _ctx(report={"codex": CONFINING, "claude-code": CONFINING})
+    turn = _agent_turn(agent)
+    claimed = claim.claim_next_turn(runner)
+    assert claimed == turn and claimed.cli == "codex"
+    linked = Session.objects.create(workspace=agent.workspace, agent=agent, title="run")
+    session_sync.link_turn_session(claimed, linked)
+    linked.refresh_from_db()
+    assert linked.cli == "codex"
+
+
+def test_a_codex_conversation_is_not_signed_out_by_claudes_login():
+    from canopy_transcript import SIGNED_OUT_NOTE
+
+    from apps.canopy_sessions import api as sessions_api
+    from apps.canopy_sessions.models import RunnerBinding
+
+    agent, session, runner = _ctx(report={"codex": CONFINING, "claude-code": {"signed_in": False}})
+    Runner.objects.filter(pk=runner.pk).update(ready=False, ready_note=SIGNED_OUT_NOTE)
+    RunnerBinding.objects.create(session=session, runner=runner, thread_key="tk")
+    Session.objects.filter(pk=session.pk).update(cli="codex")
+    session.refresh_from_db()
+    assert sessions_api._out(session)["runner_signed_out"] is False
+    Session.objects.filter(pk=session.pk).update(cli="claude-code")
+    session.refresh_from_db()
+    assert sessions_api._out(session)["runner_signed_out"] is True
+
+
+def test_a_fleet_member_signed_in_to_codex_is_still_wakeable():
+    from canopy_transcript import SIGNED_OUT_NOTE
+
+    from apps.harness.models import RunnerCredentialSet, RunnerFleet
+
+    agent, session, runner = _ctx(report={"codex": CONFINING, "claude-code": {"signed_in": False}})
+    cset = RunnerCredentialSet.objects.create(name="s", workspace=agent.workspace, owner=runner.owner)
+    fleet = RunnerFleet.objects.create(name="f", workspace=agent.workspace, owner=runner.owner,
+                                       credential_set=cset,
+                                       role_arn="arn:x", role_jkt="j", region="us-east-1",
+                                       group_name="g", status=RunnerFleet.ACTIVE)
+    Runner.objects.filter(pk=runner.pk).update(fleet=fleet, ready=False, ready_note=SIGNED_OUT_NOTE,
+                                               power=Runner.POWER_STOPPED)
+    runner.refresh_from_db()
+    assert runner.wakeable is True
+    runner.capabilities = {**runner.capabilities, "clis": {"codex": {"signed_in": False}}}
+    assert runner.wakeable is False

@@ -505,7 +505,10 @@ class Runner(models.Model):
         unclaimable report) counts it as on its way, so work for a fleet whose
         members are in its warm pool is neither refused by an admission rule nor
         reported stuck while one starts."""
-        if self.fleet_id is None or self.paused or self.status == self.RETIRED or self.signed_out:
+        if self.fleet_id is None or self.paused or self.status == self.RETIRED:
+            return False
+        # Signed out of every agent CLI, as the claim reads it (`clis.reported`).
+        if not any(r.signed_in for r in clis.reported(self).values()):
             return False
         if self.fleet.status != RunnerFleet.ACTIVE:
             return False

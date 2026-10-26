@@ -102,3 +102,21 @@ def test_ws_beat_with_malformed_clis_keeps_the_beat():
     runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame))
     runner.refresh_from_db()
     assert set(clis.reported(runner)) == {"claude-code"}
+
+
+# ---- review fixes ----
+def test_clis_is_reported_not_set_by_hand(client):
+    owner = User.objects.create_user(username="own", email="own@dimagi.com")
+    report = {"claude-code": {"signed_in": True, "profiles": 0, "envelope": 0, "version": ""}}
+    runner = _runner(owner=owner, capabilities={"clis": report, "sessions": True})
+    client.force_login(owner)
+    forged = {"clis": {"claude-code": {"signed_in": True, "profiles": 99, "envelope": 99}}}
+    resp = client.patch(f"/api/harness/runners/{runner.id}", data={"capabilities": forged},
+                        content_type="application/json")
+    assert resp.status_code == 422
+    # A write that omits it (the Slack & chat toggle) keeps the box's own report.
+    resp = client.patch(f"/api/harness/runners/{runner.id}",
+                        data={"capabilities": {"sessions": False}}, content_type="application/json")
+    assert resp.status_code == 200, resp.content
+    runner.refresh_from_db()
+    assert runner.capabilities["clis"] == report

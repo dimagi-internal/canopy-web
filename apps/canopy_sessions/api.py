@@ -27,6 +27,7 @@ from apps.api.auth import session_auth
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 from apps.api.pagination import clamp_limit
 from apps.api.route_gates import gate
+from apps.harness import clis
 from apps.harness import initiator as who
 from apps.harness import provenance, sensitivity
 from apps.harness import runner_requirements as rr
@@ -141,6 +142,15 @@ def _runner_online(runner) -> bool | None:
     return runner.live_status == Runner.ONLINE
 
 
+def _runner_signed_out(runner, session) -> bool:
+    """The bound box cannot run this conversation's agent CLI: its login for it is
+    gone (`harness.clis.reported`). A conversation with no CLI yet reads Claude Code's."""
+    if runner is None:
+        return False
+    report = clis.reported(runner).get(session.cli or clis.CLAUDE_CODE)
+    return report is not None and not report.signed_in
+
+
 def _runner_status(runner) -> str | None:
     """The bound runner's live_status verbatim — see SessionOut.runner_status.
 
@@ -238,7 +248,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # went away. None when unbound — nothing to be offline.
         "runner_online": _runner_online(runner),
         "runner_status": _runner_status(runner),
-        "runner_signed_out": bool(runner and runner.signed_out),
+        "runner_signed_out": _runner_signed_out(runner, session),
         # The model its runner's sessions start on (`opus[1m]`), as the box
         # reports it: how the chat's context meter sizes the window, since the
         # transcript never records the `[1m]`. "" when unbound or unreported.

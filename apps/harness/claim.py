@@ -907,6 +907,12 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
             # A confined turn never rides into the owner's session; one whose
             # mid-turn delivery already failed waits for the turn to end.
             continue
+        if rides is not None and cli != (Turn.objects.filter(pk=rides).values_list(
+                "cli", flat=True).first() or clis.CLAUDE_CODE):
+            # A rider is typed into the running session, so it runs on that session's
+            # CLI or not at all (a turn claimed before CLIs ran on Claude Code); it
+            # waits for the turn to end rather than switch the conversation's CLI.
+            continue
         try:
             # Own atomic block per attempt: an IntegrityError from the
             # one_executing_turn_per_agent index (concurrent claim for the
