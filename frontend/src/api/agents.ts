@@ -981,6 +981,19 @@ export async function setAgentRepository(slug: string, repoUrl: string, repoRef 
   return normalizeAgentDetail(unwrap(res, 'setAgentRepository'))
 }
 
+/** Which agent CLIs an agent runs on, preferred first, and a model for each it names.
+ *  The agent's owner or an admin. */
+export async function setAgentClis(
+  slug: string, clis: string[], cliModels: Record<string, string>,
+): Promise<{ clis: string[]; cli_models: Record<string, string> }> {
+  const res = await apiV2.PATCH('/api/agents/{slug}/clis', {
+    params: { path: { slug } },
+    body: { clis: clis as ('claude-code' | 'codex')[], cli_models: cliModels },
+  })
+  const a = unwrap(res, 'Could not save the agent CLIs')
+  return { clis: Array.from(a.clis ?? []), cli_models: { ...(a.cli_models ?? {}) } }
+}
+
 export type AgentLicenseOut = Schemas['AgentLicenseOut']
 
 // Who uses this agent LOCALLY, in their own Claude Code (canopy-web#1704): every

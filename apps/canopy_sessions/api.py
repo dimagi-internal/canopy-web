@@ -244,6 +244,8 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # transcript never records the `[1m]`. "" when unbound or unreported.
         "runner_model": str((runner.capabilities or {}).get("claude_model") or "") if runner else "",
         "session_key": binding.session_key if binding else "",
+        # The agent CLI this conversation runs on (`harness.clis`); "" until its first claim.
+        "cli": session.cli,
         "transferring": staleness.is_transferring(binding),
         # Is this session blocked on a human? A bool on the LIST (the menu
         # itself rides the detail read) — a list carrying every session's full

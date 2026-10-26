@@ -35903,6 +35903,11 @@ export interface components {
              */
             readonly session_key: string;
             /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
+            /**
              * Transferring
              * @default false
              */
@@ -36743,6 +36748,11 @@ export interface components {
              * @default
              */
             readonly session_key: string;
+            /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
             /**
              * Transferring
              * @default false

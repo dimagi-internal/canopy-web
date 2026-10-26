@@ -463,6 +463,9 @@ class SessionOut(Schema):
     # by. "" when unbound, or the box does not report it.
     runner_model: str = ""
     session_key: str = ""
+    #: The agent CLI this conversation runs on ("claude-code", "codex"), chosen by its
+    #: first claim and never changed; "" until then.
+    cli: str = ""
     #: Moved onto `runner_name` and not reported there yet (`staleness.TRANSFER_WINDOW`):
     #: listed, but nothing to drive until the new box picks it up.
     transferring: bool = False
