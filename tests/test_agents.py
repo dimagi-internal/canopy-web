@@ -249,6 +249,21 @@ def test_close_out_names_its_turn_when_one_session_serves_two():
     assert Turn.objects.filter(agent=agent).count() == 2
 
 
+def test_close_out_names_a_chat_turn_of_its_agent():
+    """An email turn delivered into a live chat session targets the SESSION, not the
+    agent, so it is not in `agent.turns`; the named id still finds it."""
+    from apps.canopy_sessions.models import Session
+
+    agent = _agent()
+    session = Session.objects.create(agent=agent, workspace=agent.workspace, title="chat")
+    chat_turn = Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_API,
+                                    idempotency_key="c1", status=Turn.DONE)
+    landed = closeout.upsert_turn(agent, _turn(cli_session_id="s7", title="Answered",
+                                               turn_id=chat_turn.pk))
+    chat_turn.refresh_from_db()
+    assert landed.pk == chat_turn.pk and chat_turn.report_title == "Answered"
+
+
 def test_close_out_ignores_a_turn_id_from_another_agent():
     agent, other = _agent(), _agent(slug="hal")
     foreign = _dispatch(other, key="kx")
