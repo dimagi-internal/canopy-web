@@ -85,3 +85,5 @@ describe('every route lives under /w/:workspace, or says why not', () => {
     }
   })
 })
+
+// probe: exercises PR frontend checks; never merged
