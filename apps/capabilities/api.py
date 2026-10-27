@@ -35,10 +35,14 @@ from django.utils import timezone
 from ninja import Query, Router, Status
 from ninja.errors import HttpError
 
+from apps.agents.credentials.zk import ZkError
 from apps.agents.gates import agent_for_read, agent_for_work
+from apps.agents.models import Agent
+from apps.agents.route_refusals import zk_problem
 from apps.api.auth import session_auth
 from apps.api.route_gates import gate
 from apps.events import audit
+from apps.harness.api import runner_or_404
 from apps.passkeys import stepup
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
@@ -67,6 +71,9 @@ from .schemas import (
     CapabilitySpendRow,
     CapabilityUploadsIn,
     CapabilityUploadsOut,
+    SlotSecretKeeperOut,
+    SlotSecretResealIn,
+    SlotSecretResealOut,
 )
 
 agents_router = Router(auth=session_auth, tags=["capabilities"])
@@ -574,3 +581,46 @@ def list_capability_artifacts(request: HttpRequest, lease_id: str, prefix: str =
     except services.CapabilityError as e:
         raise _refusal(e) from e
     return CapabilityArtifactsOut(lease_id=str(lease.pk), prefix=prefix, artifacts=arts, expires_in_s=ttl)
+
+
+# ---- the keeper: slot secrets follow the agent's readers ---------------------------------
+# Under the runner's own path, so the box's runner token reaches them
+# (`apps/harness/runner_auth.py`); mounted at `/harness` beside the agents' keeper calls.
+
+runner_router = Router(auth=session_auth, tags=["capabilities"])
+
+
+@runner_router.get("/runners/{runner_id}/vault-keeper/slot-secrets", response=SlotSecretKeeperOut,
+                   summary="Pool-slot secrets this runner holds that a reader of the agent waits for")
+@gate("runner", step_up="runner protocol: a box's own token; the values are ciphertext only machines open")
+def get_slot_secret_keeper_work(request: HttpRequest, runner_id: uuid.UUID) -> SlotSecretKeeperOut:
+    """For each pool slot's secret sealed to one of this box's machines (one of the
+    agent's readers) that a reader is still waiting for — a machine approved since it
+    was written, or a vault member: the stored value, everyone it may be sealed to, who
+    waits, and the endorsements to check them against. The box decides whom to trust
+    and re-seals; canopy-web only lists."""
+    runner = runner_or_404(request, runner_id)
+    return SlotSecretKeeperOut(slot_secrets=slot_data.keeper_work(runner))
+
+
+@runner_router.put("/runners/{runner_id}/vault-keeper/{slug}/slot-secrets/{capability}/{slot}/{key}",
+                   response=SlotSecretResealOut,
+                   summary="A keeper re-seals a pool slot's secret for the agent's readers")
+@gate("runner", setting=True,
+      step_up="runner protocol: a box's own token; the value is ciphertext only machines open")
+def put_slot_secret_reseal(request: HttpRequest, runner_id: uuid.UUID, slug: str, capability: str,
+                           slot: str, key: str, payload: SlotSecretResealIn) -> SlotSecretResealOut:
+    """`{value_zk, expect}`: the slot secret re-sealed to the agent's readers. Refused
+    unless this box held it and still is a reader (403 `zk_not_a_holder`), for any
+    recipient that is not a reader now (422), for one that drops a reader that held it
+    (422), and when it changed since the box read it (409 `zk_value_changed`)."""
+    runner = runner_or_404(request, runner_id)
+    agent = Agent.objects.filter(slug=slug).first()
+    try:
+        if agent is None:
+            raise ZkError(404, "not_found", "no such agent")
+        machines = slot_data.reseal(agent, capability, slot, key, value_zk=payload.value_zk,
+                                    expect=payload.expect, runner=runner)
+    except ZkError as exc:
+        raise zk_problem(exc) from exc
+    return SlotSecretResealOut(machines=machines)

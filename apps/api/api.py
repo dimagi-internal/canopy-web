@@ -250,6 +250,7 @@ from apps.canopy_sessions.secrets_api import router as session_secrets_router  #
 from apps.canopy_sessions.sharing_api import router as session_sharing_router  # noqa: E402
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
+from apps.capabilities.api import runner_router as capability_keeper_router  # noqa: E402
 from apps.common.api import common_router, public_router  # noqa: E402
 from apps.contacts.api import router as contacts_router
 from apps.contacts.contact_api import contact_router, contact_token_router  # noqa: E402
@@ -411,6 +412,7 @@ api.add_router("/harness/local-turns", local_turns_router)
 api.add_router("/private-runners", private_runners_router)
 api.add_router("", workspace_vaults_router)  # workspace vaults: /workspaces/{slug}/vaults, /vaults/{id}
 api.add_router("/harness", vault_keeper_router)  # the keeper's calls, under the runner's own path
+api.add_router("/harness", capability_keeper_router)  # … and its slot-secret calls
 api.add_router("/harness", harness_router)
 api.add_router("/me/canopy-projects", project_opt_in_router)
 # What the fleet's debugger agent reads and closes (apps/harness/auto_debug.py).

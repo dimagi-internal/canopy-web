@@ -354,8 +354,8 @@ or shared value across slots.
 | `GET /api/agents/{slug}/capabilities/{name}/slots` | member | → `{agent, capability, slots: [masked slot]}`, one per declared slot, in order; 422 on an ec2-ephemeral capability |
 | `DELETE /api/agents/{slug}/capabilities/{name}/slots/{slot}` | as PUT | → 204, idempotent; also removes an undeclared slot's data |
 
-A **masked slot** is `{slot, declared, public, secret_keys, secret_awaiting_seal, updated_at,
-updated_by, held, lease_id}`: public values, the NAMES of the secret keys, and whether (and
+A **masked slot** is `{slot, declared, public, secret_keys, updated_at, updated_by, held,
+lease_id}`: public values, the NAMES of the secret keys, and whether (and
 which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capability_slot_data`,
 `delete_capability_slot_data`.
 
@@ -370,8 +370,21 @@ which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capabil
   stored as sent after a shape check (422 if malformed). A plaintext value — what the MCP tool
   and ACE's `scripts/test-worker-set.ts` send — is sealed in the request, server side, and
   never stored or logged in clear. 409 when nobody can read the agent's secrets yet (no vault
-  key, no approved machine). A seal reaches only the readers of that moment: a machine
-  approved later cannot open it until the value is written again.
+  key, no approved machine). A seal reaches the readers of that moment; it then follows
+  the agent's readers (below).
+- **It follows the agent's readers.** A machine approved later, or a new vault member with a
+  vault key, gets it from a box that holds it: the keeper (`canopy vault zk keep`) reads
+  `GET /api/harness/runners/{rid}/vault-keeper/slot-secrets` (each value sealed to one of its
+  machines that a reader waits for, with every reader's public key and the endorsements),
+  opens it with its own device key, checks a waiting machine's endorsement (a person is
+  pinned on first sight, as for the vault key), and sends the new `zks1` to
+  `PUT …/vault-keeper/{slug}/slot-secrets/{capability}/{slot}/{key}` with `expect` (the
+  digest of what it opened). canopy-web refuses a recipient that is not a reader now (422),
+  one that drops a reader that held it (422), a box that held no copy (403) and a stale
+  write (409) (`slot_data.reseal`). A reader the agent loses — a machine revoked, retired
+  or no longer serving it, a person who left the vault — is dropped from every value's
+  envelope within ten minutes (`slot_data.prune`, a tick); each recipient has its own
+  ciphertext, so that decrypts nothing.
 - **Republishing keeps the data.** It is keyed by the capability row and the slot name, not
   the manifest. Data for a slot the manifest no longer declares is kept but never
   delivered; DELETE removes it (PUT refuses it).
@@ -386,13 +399,9 @@ which) live lease holds it. MCP tools: `set_capability_slot_data`, `list_capabil
   holder opens `sealed` on its machine: `canopy vault open-slot-data < lease.json` prints
   `{"public", "secret"}` with this device's key (and passes an older server's plaintext
   `secret` through).
-- **Rows from before sealing** (`secret_enc`, Fernet under canopy-web's own key) are sealed
-  once, after the deploy, by `manage.py seal_slot_secrets` (`--dry-run` first; it names any
-  row whose agent nobody can read yet and leaves it). Until then such a row's secret half is
-  not delivered, not writable (409) and listed as `secret_awaiting_seal`.
 - **Every delivery of secret values is an event**, `capability.slot.secret_delivered`
   (lease id, slot, user, secret key names). Writes are `capability.slot.data_set` /
-  `.data_deleted` with key names.
+  `.data_deleted` with key names; a keeper's re-seal is `capability.slot.secret_resealed`.
 - **Never in a log.** No event, error, `__str__`/`repr`, MCP call-log row or settings-audit
   row carries a secret value: the audit stores the request body with `secret` redacted and
   a masked before/after (`public`, `secret_keys`, and `secret_keys_written` — so a rotated

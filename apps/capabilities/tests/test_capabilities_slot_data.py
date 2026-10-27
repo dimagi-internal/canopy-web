@@ -14,7 +14,6 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
@@ -22,20 +21,22 @@ from pathlib import Path
 import pytest
 from asgiref.sync import async_to_sync
 from cryptography.hazmat.primitives.asymmetric import ec
-from django.core.management import call_command
 from django.db import connection
 from django.utils import timezone
 from fastmcp.server.auth import AccessToken
 from mcp.server.auth.middleware.auth_context import AuthenticatedUser, auth_context_var
 
-from apps.capabilities import aws, services
+from apps.agents.credentials import vault_engine, zk_seal
+from apps.capabilities import aws, services, slot_data
 from apps.capabilities.models import CapabilityLease, CapabilitySlotData
-from apps.common.encryption import encrypt_secret
 from apps.events.models import Event, SettingChange
+from apps.harness import device_keys
+from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.models import UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.workspaces.models import WorkspaceMembership as M
 from apps.workspaces.testing import a_member
+from tests.fixtures.machines import a_machine
 
 from .helpers import MANIFEST, _as, _json, _pat, _publish
 
@@ -233,7 +234,7 @@ def test_the_listing_is_masked_for_everyone(pool, tenancy, who):
     assert one["secret_keys"] == ["backup_code", "pin"] and "secret" not in one
     assert one["updated_by"] == "jj@dimagi.com" and one["held"] is False
     assert body["slots"][1] == {"slot": "worker-2", "declared": True, "public": {}, "secret_keys": [],
-                                "secret_awaiting_seal": False, "updated_at": None, "updated_by": None,
+                                "updated_at": None, "updated_by": None,
                                 "held": False, "lease_id": None}
 
 
@@ -267,7 +268,7 @@ def test_the_secret_is_stored_sealed_to_the_agents_readers(pool, tenancy):
     _no_secret_in(raw)
     row = CapabilitySlotData.objects.get()
     _no_secret_in(str(row) + repr(row))
-    assert row.secret_enc == "" and sorted(row.secret_zk) == ["backup_code", "pin"]
+    assert sorted(row.secret_zk) == ["backup_code", "pin"]
     assert all(v.startswith("zks1:") for v in row.secret_zk.values())
     # Sealed to the owner's vault key, under the slot's name — not to anything canopy-web holds.
     opened = _open(tenancy, {"agent_id": str(tenancy["agent"].pk), "sealed": row.secret_zk})
@@ -489,55 +490,100 @@ def test_the_slot_routes_are_mcp_tools_and_the_lease_tool_delivers(pool, tenancy
     _no_secret_in(json.dumps(list(MCPAuditLog.objects.values_list("args_summary", "error"))))
 
 
-# ---- rows from before sealing ----------------------------------------------------
+# ---- the keeper: a sealed value follows the agent's readers -----------------------------
 
-def _legacy(pool, slot="worker-1"):
-    """A row as the Fernet era left it: the secret map under canopy-web's own key."""
-    cap = CapabilitySlotData._meta.get_field("capability").related_model.objects.get(name="test-worker")
-    return CapabilitySlotData.objects.create(
-        capability=cap, slot=slot, public={"phone": "+1"},
-        secret_enc=encrypt_secret(json.dumps({"pin": PIN, "backup_code": BACKUP})))
+PIN_NAME = "capability-slot:test-worker/worker-1/pin"
 
 
-def test_a_legacy_row_is_neither_listed_by_value_nor_delivered_nor_written_until_sealed(pool, tenancy):
-    _legacy(pool)
-    one = pool.get(SLOTS).json()["slots"][0]
-    assert one["secret_keys"] == [] and one["secret_awaiting_seal"] is True
-    lease = _take(_pat(tenancy["bot"])).json()
-    assert lease["slot_data"]["sealed"] == {}
-    _no_secret_in(json.dumps(lease))
-    r = _put(pool, secret={"pin": "NEW"})
-    assert r.status_code == 409 and "seal_slot_secrets" in r.json()["detail"]
-    assert _put(pool, public={"name": "x"}).status_code == 200  # the public half stays writable
+def _box(tenancy, name="cloud-1"):
+    """A cloud runner of the owner's that runs ace."""
+    r = Runner.objects.create(name=name, kind=Runner.CLOUD, owner=tenancy["owner"],
+                              workspace=tenancy["ws"], last_heartbeat_at=timezone.now(),
+                              status=Runner.ONLINE)
+    RunnerAssignment.objects.create(agent=tenancy["agent"], runner=r, rank=0)
+    return r
 
 
-def test_seal_slot_secrets_seals_legacy_rows_and_clears_the_old_ciphertext(pool, tenancy):
-    _legacy(pool)
-    out, err = io.StringIO(), io.StringIO()
-    call_command("seal_slot_secrets", "--dry-run", stdout=out, stderr=err)
-    assert json.loads(out.getvalue())["sealed"] == [{"slot": "ace/test-worker/worker-1",
-                                                     "keys": ["backup_code", "pin"]}]
-    assert CapabilitySlotData.objects.get().secret_enc != ""  # a dry run writes nothing
-    out = io.StringIO()
-    call_command("seal_slot_secrets", stdout=out, stderr=err)
-    _no_secret_in(out.getvalue() + err.getvalue() + _events_text())
+def _opened_by(value, tenancy, key, ecdh, name=PIN_NAME):
+    return ref.open_sealed_value(value, str(tenancy["agent"].pk), name, "device", key.ecdh_jkt, ecdh)
+
+
+def _keeper(c, runner):
+    r = c.get(f"/api/harness/runners/{runner.pk}/vault-keeper/slot-secrets")
+    assert r.status_code == 200, r.content
+    return r.json()["slot_secrets"]
+
+
+def _reseal_to(value, tenancy, opener, to, name=PIN_NAME):
+    key, ecdh = opener
+    plain = _opened_by(value, tenancy, key, ecdh, name)
+    return zk_seal.seal_to(plain, agent_id=str(tenancy["agent"].pk), name=name, kv=tenancy["agent"].zk_kv,
+                           recipients=to)
+
+
+def test_a_box_that_holds_a_slot_secret_reseals_it_for_a_machine_approved_later(pool, tenancy):
+    box = _box(tenancy)
+    key, _, ecdh = a_machine(box, tenancy["owner"])
+    _seed(pool)
+    assert _keeper(pool, box) == []                         # nobody waits yet
+    new, _, new_ecdh = a_machine(box, tenancy["owner"])
+    work = {w["name"]: w for w in _keeper(pool, box)}
+    assert sorted(work) == ["capability-slot:test-worker/worker-1/backup_code", PIN_NAME]
+    pin = work[PIN_NAME]
+    assert pin["waiting"] == [new.ecdh_jkt] and pin["device_jkt"] == key.ecdh_jkt
+    _no_secret_in(json.dumps(pin))
+
+    everyone = [(r["kind"], r["target"], r["public_jwk"]) for r in pin["recipients"]]
+    value = _reseal_to(pin["value_zk"], tenancy, (key, ecdh), everyone)
+    r = _json(pool, "put", pin["reseal_path"], {"value_zk": value, "expect": pin["expect"]})
+    assert r.status_code == 200, r.content
+    assert r.json()["machines"] == ["cloud-1"]
     row = CapabilitySlotData.objects.get()
-    assert row.secret_enc == "" and sorted(row.secret_zk) == ["backup_code", "pin"]
-    lease = _take(_pat(tenancy["bot"])).json()
-    assert _open(tenancy, lease["slot_data"]) == {"pin": PIN, "backup_code": BACKUP}
-    assert Event.objects.filter(kind="capability.slot.secret_sealed").exists()
-    out = io.StringIO()
-    call_command("seal_slot_secrets", stdout=out)  # idempotent: nothing left
-    assert json.loads(out.getvalue())["sealed"] == []
+    assert _opened_by(row.secret_zk["pin"], tenancy, new, new_ecdh) == PIN
+    assert [w["name"] for w in _keeper(pool, box)] == ["capability-slot:test-worker/worker-1/backup_code"]
+    assert Event.objects.filter(kind="capability.slot.secret_resealed").exists()
+    _no_secret_in(_events_text())
+
+    r = _json(pool, "put", pin["reseal_path"], {"value_zk": value, "expect": pin["expect"]})
+    assert r.status_code == 409 and r.json()["error"] == "zk_value_changed"   # stale
 
 
-def test_seal_slot_secrets_leaves_a_row_nobody_can_read_and_names_it(pool, tenancy):
-    _legacy(pool)
-    UserVaultKeyset.objects.all().delete()
-    out, err = io.StringIO(), io.StringIO()
-    call_command("seal_slot_secrets", stdout=out, stderr=err)
-    body = json.loads(out.getvalue())
-    assert body["sealed"] == [] and body["skipped"][0]["slot"] == "ace/test-worker/worker-1"
-    assert "left unsealed: ace/test-worker/worker-1" in err.getvalue()
-    _no_secret_in(out.getvalue() + err.getvalue())
-    assert CapabilitySlotData.objects.get().secret_enc != ""
+def test_a_reseal_to_a_stranger_or_dropping_a_reader_is_refused(pool, tenancy):
+    box = _box(tenancy)
+    key, _, ecdh = a_machine(box, tenancy["owner"])
+    _seed(pool)
+    stored = CapabilitySlotData.objects.get().secret_zk["pin"]
+    expect = vault_engine.value_digest(stored)
+    url = f"/api/harness/runners/{box.pk}/vault-keeper/ace/slot-secrets/test-worker/worker-1/pin"
+    theirs = Runner.objects.create(name="out-box", kind=Runner.CLOUD, owner=tenancy["outsider"],
+                                   status=Runner.ONLINE)
+    other, _, _ = a_machine(theirs, tenancy["outsider"])
+    mine = ("device", key.ecdh_jkt, key.ecdh_public_jwk)
+    stranger = ("device", other.ecdh_jkt, other.ecdh_public_jwk)
+    r = _json(pool, "put", url, {"value_zk": _reseal_to(stored, tenancy, (key, ecdh), [mine, stranger]),
+                                 "expect": expect})
+    assert r.status_code == 422 and r.json()["error"] == "zk_invalid_target"
+    r = _json(pool, "put", url, {"value_zk": _reseal_to(stored, tenancy, (key, ecdh), [mine]),
+                                 "expect": expect})
+    assert r.status_code == 422 and r.json()["error"] == "zk_rewrap_required"   # drops the owner's key
+    other_box = _box(tenancy, "cloud-2")                     # a box with no copy is no keeper
+    r = _json(pool, "put", url.replace(str(box.pk), str(other_box.pk)),
+              {"value_zk": _reseal_to(stored, tenancy, (key, ecdh), [mine]), "expect": expect})
+    assert r.status_code == 403 and r.json()["error"] == "zk_not_a_holder"
+    assert CapabilitySlotData.objects.get().secret_zk["pin"] == stored
+
+
+def test_a_revoked_machine_is_dropped_from_every_slot_secret_without_decrypting(pool, tenancy):
+    box = _box(tenancy)
+    key, _, ecdh = a_machine(box, tenancy["owner"])
+    gone, _, _ = a_machine(box, tenancy["owner"])
+    _seed(pool)
+    assert ("device", gone.ecdh_jkt) in zk_seal.sealed_targets(CapabilitySlotData.objects.get().secret_zk["pin"])
+    assert slot_data.prune() == {}                          # nothing to drop yet
+    device_keys.revoke(gone, by=tenancy["owner"])
+    assert slot_data.prune() == {"ace/test-worker/worker-1/backup_code": [gone.ecdh_jkt],
+                                 "ace/test-worker/worker-1/pin": [gone.ecdh_jkt]}
+    row = CapabilitySlotData.objects.get()
+    assert ("device", gone.ecdh_jkt) not in zk_seal.sealed_targets(row.secret_zk["pin"])
+    assert _opened_by(row.secret_zk["pin"], tenancy, key, ecdh) == PIN   # the readers left still open it
+    assert slot_data.prune() == {}

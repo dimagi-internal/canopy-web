@@ -198,9 +198,6 @@ class CapabilitySlotData(models.Model):
     #: {key: "zks1:…"} — each value sealed to the agent's readers under
     #: `slot_data.sealed_name(capability, slot, key)`. Key names are in clear.
     secret_zk = models.JSONField(default=dict, blank=True)
-    #: LEGACY: Fernet ciphertext of the pre-sealing secret map. `manage.py
-    #: seal_slot_secrets` seals it into `secret_zk` and clears it; "" after that.
-    secret_enc = models.TextField(blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
                                    null=True, blank=True, related_name="+")

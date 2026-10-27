@@ -28,7 +28,18 @@ def run() -> None:
     services.sweep_tick(trigger="scheduler")
 
 
+#: How often slot secrets drop readers the agent no longer has (`slot_data.prune`).
+SLOT_PRUNE_EVERY_S = 10 * 60
+
+
+def prune_slot_secrets() -> None:
+    from . import slot_data  # noqa: PLC0415 — imported from AppConfig.ready; models load later
+
+    slot_data.prune_tick()
+
+
 def register() -> None:
     from apps.common import ticks
 
     ticks.register("capabilities.sweep", run, interval_s, dedupe=False)
+    ticks.register("capabilities.slot_secret_prune", prune_slot_secrets, SLOT_PRUNE_EVERY_S)

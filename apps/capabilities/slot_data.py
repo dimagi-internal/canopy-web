@@ -22,21 +22,29 @@ Security rules this module keeps (and the tests pin):
 - **Never in a log.** Events, errors, `__str__` and the settings audit carry key
   names at most; a refusal names the key, never the value.
 
-A row from before this (`secret_enc`, Fernet under the app key) is sealed by
-`manage.py seal_slot_secrets`; until then its secret half is neither delivered
-nor writable (409), and the listing marks it `secret_awaiting_seal`.
+**Follows the agent's readers.** A seal reaches the readers of its moment. When
+the agent gains one (a machine approved, a vault member with a vault key), a box
+that holds the value re-seals it for them — the keeper (`keeper_work` /
+`reseal`, `canopy vault zk keep`): it opens the value with its own device key,
+checks the newcomer's endorsement, and sends back a new `zks1`; canopy-web only
+lists who waits and checks who the new value is sealed to. When the agent loses
+one, `prune` drops it from every value's envelope (a tick, `scheduler.py`),
+decrypting nothing.
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from django.db import transaction
 
-from apps.agents.credentials import zk_seal
+from apps.agents.credentials import vault_engine, zk, zk_endorse, zk_seal
 from apps.agents.credentials.zk import ZkError
 
 from . import services
 from .models import AgentCapability, CapabilityLease, CapabilitySlotData
+
+logger = logging.getLogger(__name__)
 
 SECTIONS = ("public", "secret")
 KEY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -134,7 +142,6 @@ def masked(cap: AgentCapability, slot: str, row: CapabilitySlotData | None,
         "declared": slot in declared_slots(cap),
         "public": dict(row.public or {}) if row else {},
         "secret_keys": sorted(_sealed_of(row)),
-        "secret_awaiting_seal": bool(row is not None and row.secret_enc),
         "updated_at": row.updated_at if row else None,
         "updated_by": (getattr(row.updated_by, "email", None) or None) if row else None,
         "held": holder is not None,
@@ -168,9 +175,6 @@ def put(cap: AgentCapability, slot: str, *, public: dict | None, secret: dict | 
             _validate(section, changes)
     with transaction.atomic():
         row = CapabilitySlotData.objects.select_for_update().filter(capability=cap, slot=slot).first()
-        if secret and row is not None and row.secret_enc:
-            raise services.CapabilityError(
-                409, f"{slot}'s secret data is from before sealing: run `manage.py seal_slot_secrets` first")
         before = state(row)
         new_public = _merge(dict(row.public or {}) if row else {}, public)
         sealed = {k: (v if v is None else _seal(cap, slot, k, v)) for k, v in (secret or {}).items()}
@@ -180,7 +184,7 @@ def put(cap: AgentCapability, slot: str, *, public: dict | None, secret: dict | 
             raise services.CapabilityError(
                 422, f"{', '.join(both)}: a key is either public or secret, not both "
                      "(send null in the other section to move it)")
-        if not new_public and not new_secret and not (row is not None and row.secret_enc):
+        if not new_public and not new_secret:
             if row is not None:
                 row.delete()
             row = None
@@ -232,3 +236,136 @@ def deliver(lease: CapabilityLease, user) -> dict | None:
                         slot=lease.slot, user=getattr(user, "email", "") or str(user.pk),
                         secret_keys=sorted(sealed))
     return {"public": dict(row.public or {}), "sealed": sealed, "agent_id": str(lease.agent_id)}
+
+
+# ---- following the agent's readers -----------------------------------------------------
+
+def _recipient_rows(agent) -> list[dict]:
+    """Everyone a slot secret of `agent` may be sealed to now, with their public keys:
+    each eligible machine and each vault member with a vault key (`recipients_for`)."""
+    out = [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
+            "runner_name": k.runner.name} for k in zk.eligible_device_keys(agent)]
+    out += [{"kind": "member", "target": str(ks.user_id), "public_jwk": ks.public_jwk, "runner_name": ""}
+            for ks in zk.eligible_members(agent)]
+    return out
+
+
+def _sealed_rows():
+    return (CapabilitySlotData.objects.exclude(secret_zk={})
+            .select_related("capability__agent").order_by("capability_id", "slot"))
+
+
+def _held_by(runner, agent) -> set[str]:
+    """The ECDH thumbprints of this runner's machines among `agent`'s readers."""
+    return {k.ecdh_jkt for k in zk.eligible_device_keys(agent) if k.runner_id == runner.pk}
+
+
+def keeper_work(runner) -> list[dict]:
+    """For each slot secret this box holds (sealed to one of its eligible machines) that
+    a reader of the agent is still waiting for: what the box needs to re-seal it — the
+    stored value, everyone it may be sealed to, which of them wait, and the endorsements
+    it checks a waiting machine against. canopy-web only lists; the box decides whom to
+    trust (`canopy vault zk keep`). The same shape as a delegated credential's work."""
+    out: list[dict] = []
+    seen: dict = {}
+    for row in _sealed_rows():
+        cap, agent = row.capability, row.capability.agent
+        if agent.pk not in seen:
+            seen[agent.pk] = {"mine": _held_by(runner, agent), "rows": None, "ends": None}
+        facts = seen[agent.pk]
+        if not facts["mine"]:
+            continue
+        if facts["rows"] is None:
+            facts["rows"] = _recipient_rows(agent)
+        for key, value in sorted((row.secret_zk or {}).items()):
+            sealed = zk_seal.sealed_targets(value)
+            holder = next((t for t in sorted(facts["mine"]) if ("device", t) in sealed), None)
+            waiting = [r["target"] for r in facts["rows"] if (r["kind"], r["target"]) not in sealed]
+            if holder is None or not waiting:
+                continue
+            if facts["ends"] is None:
+                facts["ends"] = [{**e, "agent_id": str(agent.pk)} for e in zk_endorse.endorsements(agent)]
+            out.append({
+                "agent": agent.slug, "agent_id": str(agent.pk), "name": sealed_name(cap.name, row.slot, key),
+                "device_jkt": holder, "value_zk": value, "expect": vault_engine.value_digest(value),
+                "recipients": facts["rows"], "waiting": waiting, "endorsements": facts["ends"],
+                "reseal_path": (f"/api/harness/runners/{runner.pk}/vault-keeper/{agent.slug}/slot-secrets/"
+                                f"{cap.name}/{row.slot}/{key}"),
+            })
+    return out
+
+
+def reseal(agent, capability: str, slot: str, key: str, *, value_zk: str, expect: str, runner) -> list[str]:
+    """Replace a slot secret with one a machine that opened it made, sealed to more of
+    the agent's readers. Every recipient must be one now (`recipients_for`); every one it
+    was sealed to that still is must stay; the writer — this runner — must have held it
+    and must still. `expect` is the digest of the value it opened, checked under the
+    row's lock, so two keepers racing make one write. Returns the machines (runner
+    names) it is now sealed to."""
+    name = sealed_name(capability, slot, key)
+    value_zk = zk_seal.check_sealed_value(value_zk, name)
+    with transaction.atomic():
+        row = (CapabilitySlotData.objects.select_for_update()
+               .filter(capability__agent=agent, capability__name=capability, slot=slot).first())
+        current = (row.secret_zk or {}).get(key) if row is not None else None
+        if not current:
+            raise ZkError(404, "not_found", f"{agent.slug}/{capability} slot {slot} has no secret {key}")
+        if vault_engine.value_digest(current) != (expect or "").strip().lower():
+            raise ZkError(409, "zk_value_changed", f"{key} changed since you read it")
+        rows = _recipient_rows(agent)
+        allowed = {(r["kind"], r["target"]) for r in rows}
+        old, given = zk_seal.sealed_targets(current), zk_seal.sealed_targets(value_zk)
+        mine = {("device", t) for t in _held_by(runner, agent)}
+        if not (mine & old) or not (mine & given):
+            raise ZkError(403, "zk_not_a_holder", f"this runner holds no copy of {name}")
+        stray = sorted(t for _, t in given - allowed)
+        if stray:
+            raise ZkError(422, "zk_invalid_target",
+                          f"{key} may be sealed only to {agent.slug}'s readers: {', '.join(stray)}")
+        if not (old & allowed) <= given:
+            raise ZkError(422, "zk_rewrap_required", f"{key} must stay sealed to every reader that holds it")
+        row.secret_zk = {**row.secret_zk, key: value_zk}
+        row.save(update_fields=["secret_zk", "updated_at"])
+    services._cap_event(row.capability, "slot.secret_resealed",
+                        f"{agent.slug}/{capability} slot {slot}: {key} re-sealed by {runner.name}",
+                        slot=slot, secret_keys=[key], runner=runner.name)
+    names = {r["target"]: r["runner_name"] for r in rows if r["kind"] == "device"}
+    return sorted({names[t] for k, t in given if k == "device" and t in names})
+
+
+def prune(agent=None) -> dict[str, list[str]]:
+    """Drop, from every slot secret (of `agent`, or of every agent), each recipient that
+    is no longer one of its agent's readers: a machine revoked, retired, no longer
+    serving it or whose person left the vault; a person who left it. Each recipient has
+    its own ciphertext, so this edits the envelope and decrypts nothing — even when that
+    leaves nobody, and the value must be written again. Returns
+    {"<agent>/<capability>/<slot>/<key>": [targets dropped]} for what changed."""
+    rows = _sealed_rows()
+    if agent is not None:
+        rows = rows.filter(capability__agent=agent)
+    allowed_of: dict = {}
+    changed: dict[str, list[str]] = {}
+    for row in rows:
+        a = row.capability.agent
+        if a.pk not in allowed_of:
+            allowed_of[a.pk] = {(r["kind"], r["target"]) for r in _recipient_rows(a)}
+        allowed = allowed_of[a.pk]
+        if not any(zk_seal.keep_only(v, allowed)[1] for v in (row.secret_zk or {}).values()):
+            continue
+        with transaction.atomic():
+            fresh = CapabilitySlotData.objects.select_for_update().get(pk=row.pk)
+            new = {}
+            for key, value in (fresh.secret_zk or {}).items():
+                kept, dropped = zk_seal.keep_only(value, allowed)
+                new[key] = kept
+                if dropped:
+                    changed[f"{a.slug}/{row.capability.name}/{row.slot}/{key}"] = sorted(t for _, t in dropped)
+            fresh.secret_zk = new
+            fresh.save(update_fields=["secret_zk", "updated_at"])
+    return changed
+
+
+def prune_tick() -> None:
+    """The scheduler's job: `prune` every agent, noting what it dropped."""
+    for where, dropped in prune().items():
+        logger.info("slot secrets: dropped %s from %s (no longer a reader)", ", ".join(dropped), where)

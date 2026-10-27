@@ -12,6 +12,7 @@ from typing import Any, Literal
 from canopy_runtime.schema import CapabilityManifest
 from pydantic import Field
 
+from apps.agents.schemas import ZkEndorsementOut
 from apps.common.schemas import StrictModel
 
 LeaseStatus = Literal["queued", "provisioning", "ready", "released", "failed", "expired"]
@@ -255,9 +256,6 @@ class CapabilitySlotDataOut(StrictModel):
     declared: bool
     public: dict[str, str]
     secret_keys: list[str]
-    #: The slot has secret data from before sealing that is not delivered until
-    #: an operator runs `manage.py seal_slot_secrets`.
-    secret_awaiting_seal: bool = False
     updated_at: dt.datetime | None
     updated_by: str | None
     #: A live lease holds this slot now.
@@ -270,3 +268,49 @@ class CapabilitySlotsOut(StrictModel):
     capability: str
     #: One per declared slot, in declared order.
     slots: list[CapabilitySlotDataOut]
+
+
+class SlotSecretKeeperRecipientOut(StrictModel):
+    kind: str
+    target: str
+    public_jwk: dict[str, Any]
+    runner_name: str = ""
+
+
+class SlotSecretKeeperWorkOut(StrictModel):
+    """A pool slot's secret, sealed to this box, that a reader of the agent (a machine
+    approved since, or a vault member) is still waiting for. The box opens it, checks
+    each waiting machine's endorsement, and re-seals it to `recipients` (all of them
+    that it keeps). The shape of a delegated credential's keeper work."""
+
+    agent: str
+    agent_id: str
+    #: The name it is sealed under: `capability-slot:<capability>/<slot>/<key>`.
+    name: str
+    #: This box's key the value is sealed to.
+    device_jkt: str
+    value_zk: str
+    #: The digest of `value_zk`, to send back as `expect`.
+    expect: str
+    #: Everyone it may be sealed to now (the agent's eligible machines and vault members).
+    recipients: list[SlotSecretKeeperRecipientOut]
+    #: The targets (ECDH thumbprints, or user ids) still waiting.
+    waiting: list[str]
+    endorsements: list[ZkEndorsementOut]
+    reseal_path: str
+
+
+class SlotSecretKeeperOut(StrictModel):
+    slot_secrets: list[SlotSecretKeeperWorkOut]
+
+
+class SlotSecretResealIn(StrictModel):
+    #: The value re-sealed (`zks1:`) to the agent's readers.
+    value_zk: str
+    #: `expect` from the keeper's work: the digest of the value this box opened.
+    expect: str
+
+
+class SlotSecretResealOut(StrictModel):
+    #: The machines that can open it now.
+    machines: list[str]
