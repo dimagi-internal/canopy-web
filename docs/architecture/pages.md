@@ -197,7 +197,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     **Roles** (owner + one roster of every member's role on the agent, why,
     and what they can reach — `GET /api/agents/{slug}/access`; admins
     granted/revoked on the row); **Channels** (callers, Slack, email, Google
-    account); **External accounts** (GitHub delegation, Salesforce, the
+    account); **External accounts** (GitHub delegation, the
     Google mailbox); **Security** — first its secrets: where they live, its
     canopy login, and every secret in `VaultEditor`
     (`components/vault/VaultEditor.tsx`, a table you Change / Add / Reveal /

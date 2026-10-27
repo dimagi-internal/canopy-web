@@ -852,8 +852,7 @@ token of their own. The token is a vault entry of the agent's (`github-token`,
   or expired token is a red health check, not a mid-turn 403.
 
 Spec: `docs/superpowers/specs/2026-09-24-agent-github-delegation-design.md`
-(`tests/test_agent_delegations.py`). Salesforce uses the same model with an agent
-as lender (`delegations.set_salesforce`).
+(`tests/test_agent_delegations.py`). Salesforce for agents: a workspace vault holding `salesforce` (Eva's chrome-sales credential), attached to each agent that uses it; boxes stage it from the resolved values.
 
 ### The canopy login a turn gets (turn-scoped agent token)
 

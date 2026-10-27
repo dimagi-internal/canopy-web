@@ -10,7 +10,7 @@ writes its own audit record.
 A route that changes how something is configured says so at the route:
 `@gate(..., setting=True)` (`apps/api/route_gates.py`). That covers who may do what
 (members, roles, admins, invites, access and admission rules), where work runs (runner routing, workspace order, pairing, pausing,
-retiring), credentials and integrations (vaults, tokens, GitHub, Salesforce, Slack,
+retiring), credentials and integrations (vaults, tokens, GitHub, Slack,
 mailboxes, connected apps), what an agent or workspace is set to do (turn mode,
 schedules, sender trust, retention), sharing and visibility, and a person's own
 settings (tokens, preferences, memory grants).

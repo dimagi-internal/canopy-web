@@ -6,11 +6,10 @@ import { getAgentCredentialStatus, startGoogleMint, type AgentCredentialStatusOu
 import { getAgentMailbox, type AgentMailboxOut } from '@/api/mail'
 import type { CredStatus } from '@/pages/agents/agentCredentials'
 import { AgentGitHubSection } from '@/pages/agents/AgentGitHubSection'
-import { AgentSalesforceSection } from '@/pages/agents/AgentSalesforceSection'
 import { declaresMailbox, GOG_TOKEN_REF, mintOutcome } from '@/pages/agents/googleMint'
 
 // The agent's External accounts tab: the outside accounts it acts as —
-// GitHub, Salesforce, its Google mailbox.
+// GitHub and its Google mailbox.
 //
 // It LEADS with a status list (#1314): one line per account, each reported up
 // by its own detail section, so the one that needs a person (a mailbox nobody
@@ -25,7 +24,7 @@ const TONE: Record<CredStatus['tone'], string> = {
 
 const MARK: Record<CredStatus['tone'], string> = { success: '✓', warning: '!', destructive: '✗', muted: '–' }
 
-type StatusKey = 'github' | 'salesforce'
+type StatusKey = 'github'
 
 export function AgentAccountsPanel({
   agent,
@@ -45,7 +44,6 @@ export function AgentAccountsPanel({
   )
   // Stable per key, so a section's effect does not re-fire on every render.
   const [onGitHub] = useState(() => report('github'))
-  const [onSalesforce] = useState(() => report('salesforce'))
 
   useEffect(() => {
     getAgentCredentialStatus(agent.slug).then(setRows, () => setRows([]))
@@ -82,7 +80,6 @@ export function AgentAccountsPanel({
 
   const statusRows: { key: string; name: string; href?: string; s: CredStatus | undefined }[] = [
     { key: 'github', name: 'GitHub', href: '#cred-github', s: status.github },
-    ...(status.salesforce ? [{ key: 'salesforce', name: 'Salesforce', href: '#cred-salesforce', s: status.salesforce }] : []),
     ...(hosted ? [{ key: 'email', name: 'Email', href: '#reach', s: mailBox?.live
       ? { label: 'Canopy-hosted', tone: 'success' } as CredStatus
       : { label: 'Canopy-hosted, not routed', tone: 'warning' } as CredStatus }] : []),
@@ -155,7 +152,6 @@ export function AgentAccountsPanel({
       {error && <p className="mb-3 text-[13px] text-destructive">{error}</p>}
 
       <AgentGitHubSection slug={agent.slug} onStatus={onGitHub} />
-      <AgentSalesforceSection slug={agent.slug} onStatus={onSalesforce} />
     </div>
   )
 }

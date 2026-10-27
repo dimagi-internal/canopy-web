@@ -1,6 +1,6 @@
 """/api/agents/{slug}/… — an agent's secrets: credentials and their resolve, the
-vault and zero-knowledge vault, secret requests, sender trust, GitHub and
-Salesforce identities, device keys, credential alerts and PAT rotation."""
+vault and zero-knowledge vault, secret requests, sender trust, GitHub
+identity, device keys, credential alerts and PAT rotation."""
 from __future__ import annotations
 
 import datetime as dt
@@ -63,8 +63,6 @@ from .schemas import (
     AgentCredentialStatusOut,
     AgentGitHubIn,
     AgentGitHubOut,
-    AgentSalesforceIn,
-    AgentSalesforceOut,
     AgentVaultIn,
     AgentVaultOut,
     DeviceProofRequiredOut,
@@ -167,8 +165,8 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
 
     **Scoping (`?refs=a,b`).** Without `refs` the response is everything, as it
     always was. With `refs`, `values` holds only the named refs that the
-    agent also declares (`runtime_secrets`), and the secret extras
-    (`op_sa_token`, `salesforce_creds`) are included
+    agent also declares (`runtime_secrets`), and the secret extra
+    `op_sa_token` is included
     only when named in `refs` too. `op_vault` and `mailbox`
     are not secrets and are always returned.
 
@@ -176,7 +174,7 @@ def resolve_agent_credentials(request: HttpRequest, slug: str, refs: str | None 
     account, such as its GitHub token) never ride `values`. They come only in
     `delegated`, sealed (`zks1:`) to the machines that run the agent, and only to a
     box that runs it reading with its own device proof — never to an admin or a
-    license holder. `salesforce_creds` likewise goes only to such a box.
+    license holder.
 
     **`credential_source == "canopy-web"`** leaves out the agent's 1Password
     service-account token (`op_sa_token` is ""): its values come from here, so
@@ -823,59 +821,6 @@ def delete_agent_github(request: HttpRequest, slug: str) -> AgentGitHubOut:
     agent = agent_for_read(request, slug)
     delegations.clear_github(agent, request.user)
     return _github_out(request, agent)
-
-
-# ---- Salesforce: another agent's own identity, lent to this one ---------------
-# chrome-sales acts in Salesforce as one delegated identity (Eva's SF user). The
-# row names the lender; the credential is the lender's own, resolved at use time.
-# See the Salesforce section of apps/agents/credentials/delegations.py.
-
-@router.get("/{slug}/salesforce", response=AgentSalesforceOut,
-            summary="Whose Salesforce identity this agent borrows (masked — never the credential)")
-@gate("member")
-def get_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
-    agent = agent_for_read(request, slug)
-    return AgentSalesforceOut(**delegations.salesforce_status(agent))
-
-
-@router.put("/{slug}/salesforce", response=AgentSalesforceOut,
-            summary="Lend this agent another agent's Salesforce identity (owner of both)")
-@gate("agent-owner", setting=True)  # owner of BOTH borrower and lender (delegations.set_salesforce)
-def set_agent_salesforce(request: HttpRequest, slug: str,
-                         payload: AgentSalesforceIn) -> AgentSalesforceOut:
-    """Checked before it is stored: the lender must hold a Salesforce credential
-    and Salesforce must accept it. Refused with the reason otherwise."""
-    agent = agent_for_read(request, slug)
-    try:
-        delegations.set_salesforce(agent, request.user, payload.lender)
-    except delegations.DelegationError as exc:
-        raise HttpError(422, str(exc)) from exc
-    return AgentSalesforceOut(**delegations.salesforce_status(agent))
-
-
-@router.post("/{slug}/salesforce/check", response=AgentSalesforceOut,
-             summary="Re-check the Salesforce identity this agent borrows")
-@gate(
-    "member",
-    kind="action",
-    viewer_write=(
-        "re-probes the lender's credential against Salesforce and records the result; grants and changes nothing"
-    ),
-)
-def check_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
-    agent = agent_for_read(request, slug)
-    delegations.check_salesforce(agent)
-    return AgentSalesforceOut(**delegations.salesforce_status(agent))
-
-
-@router.delete("/{slug}/salesforce", response=AgentSalesforceOut,
-               summary="Stop lending this agent a Salesforce identity")
-# removes only the caller's own delegation
-@gate("member", "self", setting=True, viewer_write="withdraws only the caller's OWN Salesforce delegation")
-def delete_agent_salesforce(request: HttpRequest, slug: str) -> AgentSalesforceOut:
-    agent = agent_for_read(request, slug)
-    delegations.clear_salesforce(agent, request.user)
-    return AgentSalesforceOut(**delegations.salesforce_status(agent))
 
 
 # Registered AFTER the literal `status`/`resolve` paths on purpose: Django

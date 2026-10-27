@@ -4,7 +4,7 @@ identity, admins, licenses and settings) and its syncs and turns; the rest of
 the surface is split by subdomain into the `api_*.py` modules beside it:
 `api_routing` (which runners do its work), `api_skills`, `api_board` (projects,
 tasks, the action queue), `api_credentials` (secrets, vault, zero-knowledge,
-GitHub, Salesforce, PAT rotation) and `api_readiness`.
+GitHub, PAT rotation) and `api_readiness`.
 
 The turn routes stay HERE, on `turns_router`: `list_turns` shares its name with
 a harness view, so its operationId (= MCP tool name) is qualified by this

@@ -207,19 +207,19 @@ def test_values_are_resolved_in_memory_and_cached_for_the_ttl(off_disk, monkeypa
 
 
 def test_resolve_extras_from_the_cli_are_used_instead_of_a_proofless_resolve(off_disk, monkeypatch):
-    """When `--print-json` carries the resolve's op key / vault / Salesforce loan (it
+    """When `--print-json` carries the resolve's op key / vault (it
     resolved with the unit's proof), the runner uses them and makes no resolve of
     its own; without them it keeps its own resolve."""
     mod, _ = off_disk
     doc = {"agent": "eva", "source": "canopy-web", "values": {"X": "1"},
-           "op_sa_token": "ops_eva", "op_vault": "Agent-Eva", "salesforce_creds": "{\"u\": 1}"}
+           "op_sa_token": "ops_eva", "op_vault": "Agent-Eva"}
     monkeypatch.setattr(mod.subprocess, "run",
                         lambda argv, **kw: subprocess.CompletedProcess(argv, 0, json.dumps(doc), ""))
     monkeypatch.setattr(mod, "_bearer", lambda min_life=0: "crt")
     monkeypatch.setattr(mod, "_api", lambda *a, **k: pytest.fail("a proofless resolve was made"))
     mod._turn_values("eva")
     assert mod._agent_op_token("eva") == "ops_eva"
-    assert mod._AGENT_VAULT["eva"] == "Agent-Eva" and mod._AGENT_SF["eva"] == "{\"u\": 1}"
+    assert mod._AGENT_VAULT["eva"] == "Agent-Eva"
 
 
 def test_a_failed_refresh_keeps_the_last_good_values(off_disk, monkeypatch):

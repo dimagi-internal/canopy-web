@@ -2170,12 +2170,6 @@ class AgentCredentialsResolveOut(StrictModel):
     op_sa_token: str = ""
     # No GitHub token here: a token a person delegated is in `delegated` below, sealed
     # to the machines that run the agent.
-    # The chrome-sales `.sf-creds.json` this agent BORROWS (an `AgentDelegation`
-    # of service salesforce: the lender's own credential, resolved now, not a
-    # copy). "" when it borrows none, and for every read but a box's that runs it. The box writes it to
-    # ~/.canopy/delegated/<slug>/chrome-sales/.sf-creds.json, the only place
-    # chrome-sales reads Salesforce creds in an agent session.
-    salesforce_creds: str = ""
     # THIS instance's mailbox (`Agent.email`), which the box sets Gmail up for.
     # Not a secret; it rides here because bootstrap already asks this route per
     # agent. It is the instance's, never the repo's — every instance of an
@@ -2734,27 +2728,6 @@ class SkillHistoryOut(StrictModel):
 
 
 # ---- GitHub: the owner's identity, lent to one agent (AgentDelegation) ----
-class AgentSalesforceIn(StrictModel):
-    #: The agent whose own Salesforce credential to borrow (e.g. "eva").
-    lender: str
-
-
-class AgentSalesforceOut(StrictModel):
-    """Whose Salesforce identity this agent borrows, and who borrows its own.
-    Never the credential."""
-
-    set: bool = False
-    owner_email: str = ""
-    lender: str = ""
-    #: The Salesforce user the lent credential acts as, from the last probe.
-    username: str = ""
-    error: str = ""
-    checked_at: datetime | None = None
-    updated_at: datetime | None = None
-    #: Agents borrowing THIS agent's Salesforce credential.
-    lent_to: list[str] = Field(default_factory=list)
-
-
 class AgentGitHubIn(StrictModel):
     token: str
 
