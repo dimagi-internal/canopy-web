@@ -2,7 +2,9 @@
 
 `harness/0125` has already made each one into the inbound-mail triggers it amounted
 to and moved its turns onto them. Here its login-less user is deleted — taking its
-membership, the account and its sender bindings with it — and the two models go.
+membership, the account and its sender bindings with it. The two models go in
+0016: on Postgres the delete leaves deferred FK trigger events pending until its
+transaction commits, and ALTER TABLE on those tables refuses to run before then.
 """
 from django.db import migrations
 
@@ -25,22 +27,4 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RunPython(delete_system_users, migrations.RunPython.noop),
-        migrations.RemoveConstraint(
-            model_name="systemaccount",
-            name="uniq_ws_system_account_name",
-        ),
-        migrations.RemoveConstraint(
-            model_name="systemsender",
-            name="uniq_system_sender",
-        ),
-        migrations.RemoveField(
-            model_name="systemsender",
-            name="account",
-        ),
-        migrations.DeleteModel(
-            name="SystemAccount",
-        ),
-        migrations.DeleteModel(
-            name="SystemSender",
-        ),
     ]

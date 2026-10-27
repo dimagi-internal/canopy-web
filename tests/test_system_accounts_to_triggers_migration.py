@@ -1,4 +1,4 @@
-"""harness 0125 + workspaces 0015: every system account becomes the inbound-mail
+"""harness 0125 + workspaces 0015/0016: every system account becomes the inbound-mail
 triggers it amounted to, then its user and the models go. Delete this file once a
 deploy includes them (CLAUDE.md § Migrations)."""
 from __future__ import annotations
@@ -10,7 +10,7 @@ from django.db.migrations.executor import MigrationExecutor
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.needs_migrations]
 
 BEFORE = [("harness", "0124_agent_triggers"), ("workspaces", "0014_drop_shared_1password_vault")]
-AFTER = [("workspaces", "0015_retire_system_accounts")]
+AFTER = [("workspaces", "0016_drop_system_account_models")]
 
 
 def _at(targets):
