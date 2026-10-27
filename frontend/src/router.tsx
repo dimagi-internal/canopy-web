@@ -29,6 +29,7 @@ import { WorkspaceRunnersPage } from './pages/WorkspaceRunnersPage'
 import { WorkspaceAgentAccessPage } from './pages/WorkspaceAgentAccessPage'
 import { TopologyMapPage } from './pages/topology/TopologyMapPage'
 import { WorkspaceMembersPage } from './pages/WorkspaceMembersPage'
+import { WorkspaceMemberTreePage } from './pages/WorkspaceMemberTreePage'
 import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
@@ -331,6 +332,8 @@ export const routeTable: RouteObject[] = [
         children: [
           { index: true, element: <Navigate to="members" replace /> },
           { path: 'members', element: <WorkspaceMembersPage /> },
+          // Everyone across this workspace and the ones below it, with the gaps.
+          { path: 'member-tree', element: <WorkspaceMemberTreePage /> },
           // People asking to be invited. `:requestId` is the page the admins'
           // notification email links to (apps/workspaces/links.py::access_request_link).
           { path: 'access-requests', element: <WorkspaceAccessRequestsPage /> },

@@ -196,6 +196,45 @@ class MemberRoleUpdateIn(StrictModel):
     role: Role
 
 
+class MemberAddIn(StrictModel):
+    # Someone already in this workspace's tree, added here directly — no invite.
+    user_id: int
+    role: Role
+
+
+class MemberTreeWorkspaceOut(StrictModel):
+    slug: str
+    display_name: str
+    parent: str | None = None
+    # Below the tree's root (0 = the workspace the tree was asked for).
+    depth: int
+    # The caller's role here, and whether they may add, re-role or remove people.
+    my_role: str
+    can_manage: bool
+
+
+class MemberTreeCellOut(StrictModel):
+    role: str
+    # Held by inheritance (an owner or admin of an ancestor): nothing here to
+    # change — the grant lives on `inherited_from`.
+    inherited: bool = False
+    inherited_from: str | None = None
+
+
+class MemberTreePersonOut(StrictModel):
+    user_id: int
+    email: str
+    system: bool = False
+    # {workspace slug: their role there}; a slug that is absent = not a member.
+    cells: dict[str, MemberTreeCellOut]
+
+
+class MemberTreeOut(StrictModel):
+    root: str
+    workspaces: list[MemberTreeWorkspaceOut]
+    people: list[MemberTreePersonOut]
+
+
 class InviteCreateIn(StrictModel):
     # EmailStr rejects a non-email string at the schema boundary, before it
     # ever becomes a matchable admission key for `pending_invite_for_email` /

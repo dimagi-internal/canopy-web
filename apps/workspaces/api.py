@@ -54,8 +54,13 @@ from .schemas import (
     InviteCreateIn,
     InviteOut,
     InvitePreviewOut,
+    MemberAddIn,
     MemberOut,
     MemberRoleUpdateIn,
+    MemberTreeCellOut,
+    MemberTreeOut,
+    MemberTreePersonOut,
+    MemberTreeWorkspaceOut,
     RequestableWorkspaceOut,
     RunnerOrderIn,
     RunnerOrderRowOut,
@@ -103,6 +108,13 @@ _REMOVE_MEMBER_ERROR_MESSAGES = {
     "not_found": "member not found",
     "last_owner": "cannot remove the last owner",
 }
+_ADD_MEMBER_ERROR_MESSAGES = {
+    "not_found": "no such person in this workspace tree",
+    "already_member": "already a member here; change their role instead",
+    "invalid_role": "unknown role",
+    "system_role": "a system account may only be an editor or a viewer",
+}
+_ADD_MEMBER_ERROR_STATUS = {**_MEMBER_ERROR_STATUS, "already_member": 409}
 _SET_MEMBER_ROLE_ERROR_MESSAGES = {
     "not_found": "member not found",
     "last_owner": "cannot demote the last owner",
@@ -524,6 +536,70 @@ def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
     system_ids = set(SystemAccount.objects.filter(user_id__in=[r.user_id for r in rows])
                      .values_list("user_id", flat=True))
     return [_member_out(row, system_ids) for row in rows]
+
+
+@router.post("/{slug}/members/", response={201: MemberOut},
+             summary="Add someone already in this workspace tree (admin or owner)")
+@gate("members.manage", setting=True)  # + may_manage_member on the granted role
+def add_member(request: HttpRequest, slug: str, payload: MemberAddIn) -> Status:
+    """Adds a person who is already a member of another workspace in this tree
+    (one you are in too) directly, at `role` — no invite, no email. 404 for
+    anyone else, so this never adds an arbitrary user id; 409 if they already
+    hold a role here (change it with PATCH); 403 for a role you may not grant;
+    422 for a system account above editor."""
+    m = _require(request.user, slug, perms.MEMBERS_MANAGE)
+    _require_may_manage(m, None, payload.role)
+    try:
+        added = services.add_tree_member(
+            workspace=m.workspace, user_id=payload.user_id, role=payload.role,
+            visible=set(services.member_roles(request.user)), by=request.user,
+        )
+    except services.MemberError as exc:
+        raise HttpError(_ADD_MEMBER_ERROR_STATUS[exc.code], _ADD_MEMBER_ERROR_MESSAGES[exc.code])
+    return Status(201, _member_out(added))
+
+
+@router.get("/{slug}/member-tree", response=MemberTreeOut,
+            summary="Everyone across this workspace and the ones below it (member-only)")
+@gate("member")
+def member_tree(request: HttpRequest, slug: str) -> MemberTreeOut:
+    """This workspace and every workspace below it that you are in, in tree
+    order, and one row per person who is in any of them with their role in
+    each (`cells`; a missing slug = not a member there). Owners and admins of
+    an ancestor are in every workspace below it by inheritance
+    (`inherited: true`, `inherited_from` the ancestor); editors and viewers are
+    not, which is the gap this view makes visible. `can_manage` says where you
+    may add, re-role or remove people."""
+    m = _membership_or_404(request.user, slug)
+    # Read every role once (`member_roles`), not `membership()` per workspace.
+    mine = services.member_roles(request.user)
+    tree = services.subtree(m.workspace, visible=lambda s: s in mine)
+    workspaces: list[MemberTreeWorkspaceOut] = []
+    people: dict[int, MemberTreePersonOut] = {}
+    for ws, depth in tree:
+        my_role = mine.get(ws.slug) or m.role
+        workspaces.append(MemberTreeWorkspaceOut(
+            slug=ws.slug, display_name=ws.display_name, parent=ws.parent_id, depth=depth,
+            my_role=my_role, can_manage=perms.role_allows(my_role, perms.MEMBERS_MANAGE),
+        ))
+        for row in services.effective_memberships(ws):
+            person = people.get(row.user_id)
+            if person is None:
+                person = people[row.user_id] = MemberTreePersonOut(
+                    user_id=row.user_id, email=row.user.email, cells={},
+                )
+            inherited = getattr(row, "inherited", False)
+            person.cells[ws.slug] = MemberTreeCellOut(
+                role=row.role, inherited=inherited,
+                inherited_from=getattr(row, "inherited_from", None) if inherited else None,
+            )
+    system_ids = set(SystemAccount.objects.filter(user_id__in=list(people)).values_list("user_id", flat=True))
+    for uid in system_ids:
+        people[uid].system = True
+    return MemberTreeOut(
+        root=m.workspace.slug, workspaces=workspaces,
+        people=sorted(people.values(), key=lambda p: (p.system, p.email.lower())),
+    )
 
 
 @router.delete("/{slug}/members/{user_id}/", response={204: None},

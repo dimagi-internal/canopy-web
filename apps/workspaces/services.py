@@ -725,6 +725,7 @@ def effective_memberships(ws) -> list[WorkspaceMembership]:
                 workspace=ws, user=up.user, role=up.role, joined_at=up.joined_at,
             )
             synthetic.inherited = True
+            synthetic.inherited_from = up.workspace_id  # the ancestor the grant lives on
             rows[user_id] = synthetic
     return list(rows.values())
 
@@ -860,11 +861,13 @@ def current_workspace(user, explicit: str | None = None) -> Workspace:
 
 
 class MemberError(Exception):
-    """Raised by `set_member_role` / `remove_member` for any reason a member
-    mutation can't proceed.
+    """Raised by `set_member_role` / `remove_member` / `add_tree_member` for any
+    reason a member mutation can't proceed.
 
     `.code` is a closed set (`not_found`, `last_owner`, `invalid_role`,
-    `system_role` — a system account above editor) an HTTP layer maps to a status — same shape as `InviteError` below.
+    `system_role` — a system account above editor, `already_member` — an add for
+    someone with a row here already) an HTTP layer maps to a status — same shape
+    as `InviteError` below.
     """
 
     def __init__(self, code: str):
@@ -1012,6 +1015,43 @@ def remove_member(*, workspace: Workspace, user_id, by=None) -> None:
         departure.sweep(m.user, workspace.slug, by=by)
 
     _guarded_owner_mutation(workspace=workspace, user_id=user_id, mutate=_mutate)
+
+
+def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[str], by=None) -> WorkspaceMembership:
+    """Add someone who is ALREADY in `workspace`'s tree to it directly, at `role`
+    — the fix for a gap the member tree shows (an editor of the org who is not
+    in one of its divisions), without an email invite.
+
+    Only a person the caller can already see in the same tree may be added:
+    they must be a member (directly or by inheritance) of some workspace in
+    `visible` (the caller's own workspaces) that shares `workspace`'s root.
+    Anyone else is `MemberError('not_found')` — this is never a way to add an
+    arbitrary user id. `MemberError('already_member')` if they hold a direct
+    row here already (a role change is `set_member_role`);
+    `MemberError('system_role')` for a system account above editor;
+    `MemberError('invalid_role')` for a role `ROLE_RANK` does not know.
+
+    The authority check (who may grant `role`) is the caller's, made before
+    this is called; the row itself is created by `_grant`, the shared door."""
+    from django.contrib.auth import get_user_model
+
+    from .system_accounts import ROLES as SYSTEM_ROLES
+    from .system_accounts import is_system_user
+
+    if role not in WorkspaceMembership.ROLE_RANK:
+        raise MemberError("invalid_role")
+    user = get_user_model().objects.filter(pk=user_id).first()
+    if user is None:
+        raise MemberError("not_found")
+    root = tree_roots({workspace.slug})[workspace.slug]
+    theirs = user_workspace_slugs(user) & set(visible)
+    if not theirs or root not in set(tree_roots(theirs).values()):
+        raise MemberError("not_found")
+    if WorkspaceMembership.objects.filter(workspace=workspace, user=user).exists():  # authz-exempt: is the TARGET already here
+        raise MemberError("already_member")
+    if role not in SYSTEM_ROLES and is_system_user(user):
+        raise MemberError("system_role")
+    return _grant(workspace, user, role, invited_by=by)
 
 
 # ---- the membership-creating door shared by invites and access requests ----

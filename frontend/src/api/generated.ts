@@ -7670,6 +7670,40 @@ export interface paths {
          */
         readonly get: operations["list_members"];
         readonly put?: never;
+        /**
+         * Add someone already in this workspace tree (admin or owner)
+         * @description Adds a person who is already a member of another workspace in this tree
+         *     (one you are in too) directly, at `role` — no invite, no email. 404 for
+         *     anyone else, so this never adds an arbitrary user id; 409 if they already
+         *     hold a role here (change it with PATCH); 403 for a role you may not grant;
+         *     422 for a system account above editor.
+         */
+        readonly post: operations["add_member"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/member-tree": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everyone across this workspace and the ones below it (member-only)
+         * @description This workspace and every workspace below it that you are in, in tree
+         *     order, and one row per person who is in any of them with their role in
+         *     each (`cells`; a missing slug = not a member there). Owners and admins of
+         *     an ancestor are in every workspace below it by inheritance
+         *     (`inherited: true`, `inherited_from` the ancestor); editors and viewers are
+         *     not, which is the gap this view makes visible. `can_manage` says where you
+         *     may add, re-role or remove people.
+         */
+        readonly get: operations["member_tree"];
+        readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -29836,6 +29870,68 @@ export interface components {
              */
             readonly system: boolean;
         };
+        /** MemberAddIn */
+        readonly MemberAddIn: {
+            /** User Id */
+            readonly user_id: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "owner" | "admin" | "editor" | "viewer";
+        };
+        /** MemberTreeCellOut */
+        readonly MemberTreeCellOut: {
+            /** Role */
+            readonly role: string;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
+            /** Inherited From */
+            readonly inherited_from?: string | null;
+        };
+        /** MemberTreeOut */
+        readonly MemberTreeOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["MemberTreeWorkspaceOut"][];
+            /** People */
+            readonly people: readonly components["schemas"]["MemberTreePersonOut"][];
+        };
+        /** MemberTreePersonOut */
+        readonly MemberTreePersonOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /**
+             * System
+             * @default false
+             */
+            readonly system: boolean;
+            /** Cells */
+            readonly cells: {
+                readonly [key: string]: components["schemas"]["MemberTreeCellOut"];
+            };
+        };
+        /** MemberTreeWorkspaceOut */
+        readonly MemberTreeWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Parent */
+            readonly parent?: string | null;
+            /** Depth */
+            readonly depth: number;
+            /** My Role */
+            readonly my_role: string;
+            /** Can Manage */
+            readonly can_manage: boolean;
+        };
         /** MemberRoleUpdateIn */
         readonly MemberRoleUpdateIn: {
             /**
@@ -51227,6 +51323,54 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["MemberOut"][];
+                };
+            };
+        };
+    };
+    readonly add_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MemberAddIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+        };
+    };
+    readonly member_tree: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberTreeOut"];
                 };
             };
         };

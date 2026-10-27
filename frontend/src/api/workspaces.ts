@@ -15,6 +15,10 @@ export type MemberProfileOut = components['schemas']['MemberProfileOut']
 export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
 export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
+export type MemberTreeOut = components['schemas']['MemberTreeOut']
+export type MemberTreeWorkspaceOut = components['schemas']['MemberTreeWorkspaceOut']
+export type MemberTreePersonOut = components['schemas']['MemberTreePersonOut']
+export type MemberTreeCellOut = components['schemas']['MemberTreeCellOut']
 export type InvitePreviewOut = components['schemas']['InvitePreviewOut']
 export type RetentionOut = components['schemas']['RetentionOut']
 export type RetentionRuleOut = components['schemas']['RetentionRuleOut']
@@ -59,6 +63,26 @@ export async function getMember(slug: string, userId: number): Promise<MemberPro
   })
   ensureOk(res, 'Failed to load member')
   return res.data as unknown as MemberProfileOut
+}
+
+/** This workspace and the ones below it the caller is in, with everyone's role in each. */
+export async function getMemberTree(slug: string): Promise<MemberTreeOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/member-tree', {
+    params: { path: { slug } },
+  })
+  ensureOk(res, 'Failed to load members across workspaces')
+  return res.data as unknown as MemberTreeOut
+}
+
+/** Add someone already in this workspace's tree directly, at `role` — no invite.
+ *  404 = not in the tree (as you see it); 409 = already a member (use setMemberRole). */
+export async function addTreeMember(slug: string, userId: number, role: MemberRole): Promise<MemberOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/members/', {
+    params: { path: { slug } },
+    body: { user_id: userId, role },
+  })
+  ensureOk(res, 'Failed to add member')
+  return res.data as unknown as MemberOut
 }
 
 export async function listWorkspaces(): Promise<WorkspaceOut[]> {
