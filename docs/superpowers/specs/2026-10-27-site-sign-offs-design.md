@@ -1,6 +1,6 @@
 # Site sign-offs: a connected site asks a person to approve something with their passkey
 
-Status: proposed (2026-10-27). First caller: connect-labs, before it mints a full-access MCP token.
+Status: proposed (2026-10-27); open questions ruled the same day. First caller: connect-labs, before it mints a full-access MCP token.
 
 ## Why
 
@@ -89,8 +89,10 @@ neither builds nor checks these by hand.
 Canopy answers `201 {id, approve_url, expires_at, approvers}`:
 
 - `approvers` is `"subject"` or `"agent_admins"`.
-- A request stays open for 24 hours: long enough for an owner to answer an agent's request
-  later, and short enough that a stale one is not lying around.
+- How long a request stays open depends on who approves it:
+  - `"subject"`: 15 minutes. The person is redirected straight to the page, so it is
+    answered at once or not at all.
+  - `"agent_admins"`: 24 hours, so an owner can answer an agent's request later.
 
 Refusals use the site-agents error codes (`unknown_issuer`, `replayed`, `malformed`,
 `rate_limited`), plus `no_approver` (422) when nobody in canopy may approve for that subject
@@ -98,17 +100,24 @@ Refusals use the site-agents error codes (`unknown_issuer`, `replayed`, `malform
 
 ### 2. Who may approve: `sign_offs.approvers_for(app, subject)`, the one answer
 
-1. **The subject is a canopy person.** A user with that email who passes
-   `login_test_key.is_person`, and is a member of the site's workspace tree, gets
-   `"subject"`. Only that person may approve.
-2. **Otherwise, the subject is an agent's account.** An `Agent` in the site's tenant whose
-   `email` or whose login's (`Agent.user`) email is the subject gets `"agent_admins"`. Its
-   owner and anyone `Agent.is_admin` may approve, as long as they are a person. The agent's
-   own login never may.
-3. **Otherwise** canopy answers `no_approver`.
+**The bar is the one the SDK already uses for a visitor.** When labs signs an assertion for
+someone on its pages, `contacts.services.resolve_arrival` decides whether they arrive in
+canopy as themselves. They do when `user_for_verified_email` finds exactly one active user
+holding that address (a verified allauth email, or an agent's own login) and that user is a
+member of the site's workspace (`workspaces.services.is_member`). Anyone else arrives as a
+contact. Sign-offs ask the same question through the same two functions, so "who may approve
+for this subject" cannot drift from "who this subject is in canopy":
+
+1. **The subject resolves to a person.** If the user found passes `login_test_key.is_person`,
+   the answer is `"subject"`. Only that person may approve.
+2. **The subject resolves to an agent.** If the user is an agent's login (`Agent.user`), or
+   the subject is an `Agent.email` mailbox in the site's tenant, the answer is
+   `"agent_admins"`. Its owner and anyone `Agent.is_admin` may approve, as long as they are a
+   person. The agent's own login never may.
+3. **Otherwise** (a contact, or nobody) canopy answers `no_approver`.
 
 This is evaluated again when someone approves, not just when the request is made: an admin
-removed in between can no longer approve.
+removed in between can no longer approve, and neither can a person who has left the workspace.
 
 ### 3. The approval page: `/sign-offs/<id>` (SPA)
 
@@ -173,6 +182,8 @@ where the approver's browser goes back to the site but the requester is somewher
   is refused. A `return_url` on an origin the site has not registered is refused.
 - **Who approves:**
   - A person's own request may be approved by that person only.
+  - A subject that `resolve_arrival` would treat as a contact (no verified address, or not a
+    member of the site's workspace) gets `no_approver`.
   - An agent's request may be approved by its owner or an admin. The agent's own login may
     not approve it, and neither may a member who is not an admin.
   - An admin removed after the request was made can no longer approve.
@@ -182,7 +193,8 @@ where the approver's browser goes back to the site but the requester is somewher
   - After approval, the JWS verifies with the SDK against canopy's published key and carries
     the request's `site_ref` and action.
 - **Closing:** declining, a request that has expired, or a second decision all close the
-  request.
+  request. A `"subject"` request expires after 15 minutes and an `"agent_admins"` one after
+  24 hours.
 - **Route gates:** the route-gates test passes with the new label.
 
 ## Out of scope here (the other two PRs)
@@ -196,14 +208,12 @@ where the approver's browser goes back to the site but the requester is somewher
   the `approve_url` to its owner, waits until the site has the approval, and stores the
   minted token in its canopy vault as it does today.
 
-## Open questions
+## Rulings (Jonathan, 2026-10-27)
 
-1. **Labs users with no canopy account.** Most labs users (partner staff) are not in
-   canopy, so for them the answer is `no_approver`. Labs decides what happens then. My
-   suggestion is that they keep self-service no-user-visit tokens, and a full token is for
-   people and agents canopy can vouch for. That is a labs ruling, and canopy only reports it.
-2. **Workspace membership for rule 1.** Is "member of the site's workspace tree" the right
-   bar for a person approving their own request, or is any canopy person with that email
-   enough? Requiring membership is the safer default.
-3. **Lifetime of an open request.** 24 hours suits the agent case. Should the person case,
-   which redirects at once, be shorter (say 15 minutes)?
+1. **Labs users canopy cannot vouch for** (most partner staff) get `no_approver`, and labs
+   then offers them no-user-visit tokens only. A full-access token is for people and agents
+   canopy knows.
+2. **Who counts as the subject** is whoever the SDK would let arrive as themselves: the same
+   `resolve_arrival` bar (a verified address plus membership of the site's workspace), not a
+   second rule.
+3. **A person's own request lasts 15 minutes**; an agent's lasts 24 hours.
