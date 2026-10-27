@@ -4,6 +4,7 @@ import { AlertList } from '@/components/alerts/AlertList'
 import { Section } from '@/components/objectPage/settingsLayout'
 import { RunnerDrills } from '@/components/supervisor/RunnerDrills'
 import { RunnerHealth } from '@/components/supervisor/RunnerHealth'
+import { RunnerRefreshStatus } from '@/components/supervisor/RunnerRefresh'
 import type { RunnerOutletContext } from './RunnerPage'
 
 /** The agent CLIs the box has, as the server reads its report (`RunnerOut.agent_clis`). */
@@ -69,7 +70,7 @@ export function RunnerFacts({ runner }: { runner: RunnerOut }): JSX.Element {
 
 /** Is it working: what it is, what to act on, what it says about itself, and
  *  whether it can run the agents it should. */
-export function RunnerOverview({ runner, agents, onChanged }: RunnerOutletContext): JSX.Element {
+export function RunnerOverview({ runner, agents }: RunnerOutletContext): JSX.Element {
   const online = runner.status === 'online'
   return (
     <div data-testid={`runner-detail-${runner.name}`}>
@@ -79,13 +80,14 @@ export function RunnerOverview({ runner, agents, onChanged }: RunnerOutletContex
       {/* What to act on (its credential, a waiting device key…), named the way
           people named things. Nothing when there is nothing to do. */}
       <AlertList scope={`runner:${runner.id}`} hideEmpty className="mb-6" />
+      {/* A Refresh someone asked for: what it waits on, or what it changed. */}
+      <RunnerRefreshStatus runner={runner} />
       <Section id="about" title="About">
         <RunnerFacts runner={runner} />
       </Section>
       <Section id="health" title="Health">
         <RunnerHealth
           runner={runner}
-          onChanged={onChanged}
           agentWorkspace={(slug) => agents?.find((a) => a.slug === slug)?.workspace ?? undefined}
         />
       </Section>

@@ -1,6 +1,6 @@
-import { useState, type JSX } from 'react'
+import type { JSX } from 'react'
 import { Link } from 'react-router-dom'
-import { refreshRunner, type RunnerOut } from '@/api/harness'
+import type { RunnerOut } from '@/api/harness'
 import { relativeAge } from '@/lib/relativeAge'
 import { scopedPath } from '../../lib/scopedLinks'
 
@@ -12,9 +12,8 @@ import { scopedPath } from '../../lib/scopedLinks'
 //
 // No report is not the same as a clean report: a runner that does not send
 // health (a laptop that has not refreshed yet, an older box) renders as "not
-// reported", never green. Every runner can be refreshed (canopy-web#1763): a cloud
-// box restarts into its bootstrap; a laptop updates its plugins and the canopy CLI
-// in place and reports one `refresh` check.
+// reported", never green. Refreshing it is the runner page's header action, and
+// where that request is shows above this card (RunnerRefresh.tsx).
 
 const TONE: Record<string, { dot: string; text: string }> = {
   ok: { dot: 'bg-success', text: 'text-foreground-secondary' },
@@ -36,29 +35,15 @@ export function fixHref(checkName: string, agentWorkspace: (slug: string) => str
 
 export function RunnerHealth({
   runner,
-  onChanged,
   agentWorkspace = () => undefined,
 }: {
   runner: RunnerOut
-  onChanged?: (runner: RunnerOut) => void
   /** Which workspace an agent lives in, for links to fix a check. */
   agentWorkspace?: (slug: string) => string | undefined
 }): JSX.Element | null {
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
   const reported = runner.health_checks != null
-  const canRefresh = runner.can_administer
   const cloud = runner.kind === 'cloud'
-  if (!reported && !canRefresh) return null
-
-  const refresh = () => {
-    setBusy(true)
-    setErr(null)
-    refreshRunner(runner.id)
-      .then((fresh) => onChanged?.(fresh))
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : 'could not request a refresh'))
-      .finally(() => setBusy(false))
-  }
+  if (!reported && !runner.can_administer) return null
 
   // Failures first, then warnings, then the rest — the order a person reads in.
   const rank = { fail: 0, warn: 1, ok: 2 } as Record<string, number>
@@ -71,25 +56,7 @@ export function RunnerHealth({
         <span className="text-[11px] text-muted-foreground" data-testid="runner-health-age">
           {runner.health_received_at ? `reported ${relativeAge(runner.health_received_at)}` : 'not reported'}
         </span>
-        {canRefresh && (
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={busy || !!runner.refresh_pending}
-            data-testid="runner-refresh"
-            className="ml-auto rounded-md border border-border px-2.5 py-1 text-[12px] font-medium text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            {busy ? '…' : runner.refresh_pending ? 'Refresh requested' : 'Refresh'}
-          </button>
-        )}
       </div>
-      {runner.refresh_pending && (
-        <p className="text-[12px] text-muted-foreground" data-testid="runner-refresh-pending">
-          {cloud
-            ? 'Waiting for the box to go idle — it restarts, updates its plugins, the canopy CLI and Claude Code, then reports back here.'
-            : 'The machine updates its plugins and the canopy CLI at its next heartbeat, then reports back here. Sessions already open keep what they loaded.'}
-        </p>
-      )}
       {checks.length > 0 && (
         <table className="w-full text-[12px]">
           <tbody>
@@ -124,7 +91,6 @@ export function RunnerHealth({
           last {cloud ? 'bootstrap' : 'refresh'} {relativeAge(new Date(runner.health_bootstrapped_at * 1000).toISOString())}
         </p>
       ) : null}
-      {err && <p className="text-[12px] text-destructive" data-testid="runner-refresh-error">{err}</p>}
     </div>
   )
 }

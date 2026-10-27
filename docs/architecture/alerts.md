@@ -50,6 +50,7 @@ user)` (what this viewer may do — no actions, no alert) and `perform`.
 | `unclaimable_turns` | `apps/harness/alerts_unclaimable.py` | blocking | Stuck turns |
 | `device_key_pending` | `apps/harness/alerts_device_key.py` | blocking | Device key |
 | `runner_code` | `apps/harness/alerts_runner_code.py` (a heartbeating runner on a non-`main` branch, or still older than what shipped `OUTDATED_GRACE` (2 h) after the deploy — its updater's window; a quiet box and one ahead of the deploy raise nothing) | action | Runner code |
+| `runner_refresh` | `apps/harness/alerts_runner_refresh.py` (a Refresh still pending 30 min after it was asked; handed to the person who asked, so they are told once; says what it waits on — offline, turns in flight, or the box's floor between self-restarts; resolves when the box reports the bootstrap) | action | Runner refresh |
 | `canopy_projects_off` | `apps/harness/alerts_project_opt_in.py` (one per runner owner whose live runners hold repos while they opted into none, `ProjectOptIn`; only that owner sees it) | setup | Canopy projects |
 | `transfer_left_open` | `apps/canopy_sessions/alerts_handoff.py` (a transferred session's task still open on the box it left: its close keeps failing, or it was kept because it holds the only copy of the work; 14 days) | action | Transfers |
 | `agent_token_expiring` | `apps/agents/alerts_agent_token.py` (an agent's newest stored canopy token expires within 14 days and nothing rotates it — automatic rotation off, typically a token kept in 1Password; says how to re-mint it; only the agent's admins see it) | action | Agent login |
@@ -89,7 +90,8 @@ Per-source notes:
   Dismiss, for a person who runs only agents and means canopy to be off in
   their repos); `trigger_stopped` Open triggers (restore the creator's access, or
   re-create it as yourself); `transfer_left_open` Retry close / Close it anyway (· Dismiss,
-  for a task someone already dealt with by hand). No other kind offers Dismiss.
+  for a task someone already dealt with by hand); `runner_refresh` Open runner (·
+  Dismiss, for a box someone means to leave as it is). No other kind offers Dismiss.
 - **`runner_credential` actions** are the only two that fix a broken
   credential: **Replace token** (a link to the runner's credentials; "Sign in
   again" for a login) and **Remove token**, offered only when removing is

@@ -1699,7 +1699,7 @@ def refresh_runner(request: HttpRequest, runner_id: uuid.UUID):
     # The administer tier, not the act-as tier: this changes what the box runs
     # on, the same class of operation as setting its credentials.
     runner = runner_admin_or_404(request, runner_id)
-    return _with_roots(request, harness_runners.request_refresh(runner))
+    return _with_roots(request, harness_runners.request_refresh(runner, by=request.user))
 
 
 @router.get("/runners/{runner_id}/usage-scope", response=UsageScopeOut)

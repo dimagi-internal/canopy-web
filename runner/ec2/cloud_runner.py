@@ -1133,7 +1133,8 @@ def health_report() -> dict:
     # `canopy_version`: what canopy-web compares with the release to ask this box
     # for a refresh (canopy_release.refresh_owed). "" = unknown.
     return {"checks": checks, "checked_at": time.time(), "bootstrapped_at": _BOOTSTRAPPED_AT,
-            "canopy_version": _CANOPY_CLI["v"] or ""}
+            "canopy_version": _CANOPY_CLI["v"] or "",
+            "refresh_floor_until": _refresh_floor_until()}
 
 
 # ── self-refresh ─────────────────────────────────────────────────────────────
@@ -1157,6 +1158,20 @@ def _refresh_marker() -> pathlib.Path:
     return pathlib.Path(RUNNER_HOME) / "last-self-refresh"
 
 
+def _last_self_refresh() -> float:
+    try:
+        return float(_refresh_marker().read_text().strip() or 0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _refresh_floor_until() -> float:
+    """The earliest this box will restart itself again (0: no floor on record),
+    reported in health so a person sees why a requested refresh is waiting."""
+    last = _last_self_refresh()
+    return last + REFRESH_MIN_INTERVAL_SECONDS if last else 0.0
+
+
 def _refresh_reason(pending: bool, now: float) -> str:
     if pending:
         # An operator's Refresh, or canopy-web seeing this box's canopy CLI behind
@@ -1177,10 +1192,7 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     reason = _refresh_reason(pending, now)
     if not reason or _in_flight_ids():
         return False
-    try:
-        last = float(_refresh_marker().read_text().strip() or 0)
-    except Exception:  # noqa: BLE001
-        last = 0.0
+    last = _last_self_refresh()
     if now - last < REFRESH_MIN_INTERVAL_SECONDS:
         return False
     try:

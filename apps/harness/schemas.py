@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from dataclasses import asdict
 from typing import Annotated, Any, Literal
 
 from canopy_cron import validate_cron, validate_timezone
@@ -13,8 +14,7 @@ from pydantic import ConfigDict, Field, WithJsonSchema, field_validator, model_v
 from apps.workspaces import links
 
 from . import clis as cli_vocab
-from . import invocations
-from . import sensitivity, session_sync
+from . import invocations, runner_refresh, sensitivity, session_sync
 from .models import Turn
 from .runner_requirements import is_sensitive_data_box
 
@@ -184,6 +184,32 @@ class RunnerHealthIn(Schema):
     # The box's canopy CLI version ("" = unknown), compared with the canopy
     # release to ask a stale box for a refresh (`canopy_release.refresh_owed`).
     canopy_version: str = Field(default="", max_length=32)
+    # The earliest the box will restart itself again (its floor between
+    # self-restarts) — why a requested refresh is waiting when nothing is busy.
+    refresh_floor_until: float = 0
+
+
+class RefreshChangeOut(Schema):
+    name: str
+    before: str = ""
+    after: str = ""
+
+
+class RunnerRefreshOut(Schema):
+    """Where this runner's Refresh is (`runner_refresh.status`): `none`, `pending`
+    with what it waits on (`offline`, `busy`, `floor`; empty = its next
+    heartbeat), or `done` with what changed since it was asked."""
+
+    state: Literal["none", "pending", "done"]
+    requested_at: dt.datetime | None = None
+    requested_by: str = ""
+    waiting_on: list[Literal["offline", "busy", "floor"]] = []
+    in_flight: int = 0
+    eligible_at: dt.datetime | None = None
+    finished_at: dt.datetime | None = None
+    took_seconds: int | None = None
+    changes: list[RefreshChangeOut] = []
+    problems: list[str] = []
 
 
 class RunnerFlagsIn(Schema):
@@ -568,6 +594,8 @@ class RunnerOut(Schema):
     # Asked to refresh and has not bootstrapped since. The runner reads this off
     # its own heartbeat reply — the durable request, not a frame.
     refresh_pending: bool | None = None
+    # The same request as a person reads it — what it waits on, or what it changed.
+    refresh: RunnerRefreshOut | None = None
     # Turns this runner reported running that a person asked to stop — set only
     # on a heartbeat reply (services.cancel_requested_turn_ids), empty elsewhere.
     # The durable half of a stop: the `cancel` frame is the doorbell, this is
@@ -621,6 +649,12 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_refresh_pending(obj) -> bool:
         return obj.refresh_pending()
+
+    @staticmethod
+    def resolve_refresh(obj) -> RunnerRefreshOut | None:
+        if not hasattr(obj, "refresh_requested_at"):
+            return None
+        return RunnerRefreshOut(**asdict(runner_refresh.status(obj)))
 
     @staticmethod
     def resolve_cancel_turn_ids(obj) -> list[str] | None:

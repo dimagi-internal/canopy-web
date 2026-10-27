@@ -272,6 +272,15 @@ class Runner(models.Model):
     # the box reporting a bootstrap newer than it (`health.bootstrapped_at`), so
     # nothing has to clear it and a refresh that never happened stays visible.
     refresh_requested_at = models.DateTimeField(null=True, blank=True)
+    # Who asked (NULL: canopy itself, e.g. a new agent's setup), what the box was
+    # on when they did (`runner_refresh.versions`), and when the server saw the
+    # request discharged — the page's before → after, and the one notice the
+    # asker gets (`runner_refresh.finished`).
+    refresh_requested_by = models.ForeignKey(
+        "auth.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    refresh_before = models.JSONField(default=dict, blank=True)
+    refresh_finished_at = models.DateTimeField(null=True, blank=True)
     # When the box last posted its usage report (`apps/events/usage.py`).
     usage_reported_at = models.DateTimeField(null=True, blank=True)
     # This runner's owner. Load-bearing for authz AND for tenancy:
@@ -433,14 +442,19 @@ class Runner(models.Model):
         (`canopy_release.refresh_owed`): a stale canopy is fixed by a re-bootstrap,
         not by the runner-code updater, so it rides this request, not the
         `runner.update_available` doorbell."""
-        if self.refresh_requested_at is not None:
-            try:
-                booted = float((self.health or {}).get("bootstrapped_at") or 0)
-            except (TypeError, ValueError):
-                booted = 0.0
-            if booted < self.refresh_requested_at.timestamp():
-                return True
-        return canopy_release.refresh_owed(self.health)
+        return self.refresh_requested() or canopy_release.refresh_owed(self.health)
+
+    def refresh_requested(self) -> bool:
+        """A Refresh someone asked for (`refresh_requested_at`) that the box has not
+        bootstrapped since — the request the runner page and its asker follow
+        (`runner_refresh`), without canopy's own CLI-behind ask."""
+        if self.refresh_requested_at is None:
+            return False
+        try:
+            booted = float((self.health or {}).get("bootstrapped_at") or 0)
+        except (TypeError, ValueError):
+            booted = 0.0
+        return booted < self.refresh_requested_at.timestamp()
 
     def expected_canopy_version(self) -> str:
         """The canopy release this box should run (`canopy_release.expected`).

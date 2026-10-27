@@ -22,6 +22,7 @@ import { relativeAge } from '@/lib/relativeAge'
 export const KIND_LABEL: Record<string, string> = {
   runner_credential: 'Runner credential',
   runner_code: 'Runner code',
+  runner_refresh: 'Runner refresh',
   turn_failure: 'Failed turns',
   unclaimable_turns: 'Stuck turns',
   device_key_pending: 'Device key',

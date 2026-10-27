@@ -73,7 +73,8 @@ def _run(*, run: Runner, home: Path | None) -> None:
         logger.info("refresh: canopy asked for one; updating plugins and the canopy CLI")
         check = prepare(run=run, home=home)
         done = time.time()
-        _report = {"checks": [check], "checked_at": done, "bootstrapped_at": done}
+        _report = {"checks": [check], "checked_at": done, "bootstrapped_at": done,
+                   "refresh_floor_until": _last_started + MIN_INTERVAL_SECONDS}
         logger.info("refresh: done — %s", check["detail"])
     except Exception:  # noqa: BLE001 — never take the runner down
         logger.warning("refresh failed", exc_info=True)
