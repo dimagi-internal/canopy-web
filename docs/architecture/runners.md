@@ -55,8 +55,8 @@ other agent's, no repo turn, no agentless chat — however they reach it, a pin 
 Off (an empty list) lifts it. It never adds work: an agent still reaches the box only
 through its runner list or the order it follows. The choices are the agents in the
 workspaces the box serves that the caller can see. It is the person-set counterpart of
-a box declaring it runs one agent and is asked in the same places (`routing.unit_refusal`,
-`turn_unit_refusal`, `runner_target_q`), so the claim, turn status, the unclaimable
+a box declaring it runs one agent and is asked in the same places (`routing.serves_refusal`,
+`turn_serves_refusal`, `runner_target_q`), so the claim, turn status, the unclaimable
 report, the vault and what the box prepares all agree.
 
 **A runner's name** is what people see, changed on its Settings tab (`PUT /api/harness/runners/{id}/name`,
@@ -103,16 +103,16 @@ its row. `roots` lists only the trees the caller is a member of.
 
 A cloud machine can run several runners, each serving a workspace tree, or a single
 agent given a runner of its own. The machine declares what each serves in
-`capabilities.unit` — `{"kind": "tree", "root": "dimagi"}` or
-`{"kind": "agent", "slug": "eva"}` (`Runner.unit()`). Runners on one machine share
+`capabilities.serves` — `{"kind": "tree", "root": "dimagi"}` or
+`{"kind": "agent", "slug": "eva"}` (`Runner.serves()`). Runners on one machine share
 `Runner.machine_id`, the canonical IAM
 role ARN the box proved: set by `runners.set_runner_machine` when an aws-iam device
 key is approved and by pairing by role, never from a role the box merely names.
 
-`routing.unit_refusal(runner, slug)` — part of `cannot_serve` — refuses:
+`routing.serves_refusal(runner, slug)` — part of `cannot_serve` — refuses:
 
 - **"<runner> is the runner for agent S"**: an agent's runner asked about any agent but S —
-  and, for a whole turn (`turn_unit_refusal`), any turn that does not act as S: a
+  and, for a whole turn (`turn_serves_refusal`), any turn that does not act as S: a
   repo turn, an agentless chat. Its `runner_target_q` targets only S's turns and chats;
 - **"S has its own runner on this machine (<runner>)"**: any other live runner with the
   same `machine_id` as the runner for agent S.
@@ -125,25 +125,25 @@ pinned or bound turn would otherwise hand the box the agent's secrets through
 with that reason, `runner_routes_agent` and `agents_routed_to`
 ask it, `inherited_orders` drops such a runner for that agent, and the routing
 writes (`apps/agents/api_routing.py::_runners_for_routing`) refuse it with 422 and the reason.
-The topology lists a machine's runners together (`machine`, `unit` on each runner row).
-`prime_machine_units` loads the machine siblings once per claim and per report.
-Tests: `tests/test_runner_units.py`.
+The topology lists a machine's runners together (`machine`, `serves` on each runner row).
+`prime_machine_runners` loads the machine siblings once per claim and per report.
+Tests: `tests/test_runners_on_one_machine.py`.
 
-### Setting up the runners on a machine (`RunnerUnits`)
+### Setting up the runners on a machine (`Runners`)
 
-- **Runners.** The stack parameter `RunnerUnits` (`tree:dimagi,tree:marshellis,agent:eva`;
-  empty = one runner for `tree:<RunnerWorkspace>`) lists them; `cloud_runner.parse_units`
+- **Runners.** The stack parameter `Runners` (`tree:dimagi,tree:marshellis,agent:eva`;
+  empty = one runner for `tree:<RunnerWorkspace>`) lists them; `cloud_runner.parse_runners`
   names them. The runner for the box's own workspace tree keeps the **box's** name (so a
   box moved to several runners keeps its runner); every other runner is `<box>-<id>`. Each
   is a Unix user `cu-<id>` (home 0700), a `canopy-runner@<id>.service` (`User=cu-%i`,
   `NoNewPrivileges`, `PrivateTmp`), its own `/etc/canopy-runner/<id>.env`, state file,
   in-flight marker, clones, Claude logins and transcripts. The runner code and the
   updater's clone are root's and read-only to the runners.
-- **Root's parts** (`cloud_runner.py --install-units`, run by cloud-init or by an operator
-  moving a live box): `canopy-units.service` (every boot: `--setup-units` makes users,
-  env files, each runner's 32-byte gog secret, `/run/canopy/<uid>`, `units.json`, and the
+- **Root's parts** (`cloud_runner.py --install-runners`, run by cloud-init or by an operator
+  moving a live box): `canopy-runners.service` (every boot: `--setup-runners` makes users,
+  env files, each runner's 32-byte gog secret, `/run/canopy/<uid>`, `runners.json`, and the
   iptables rule that rejects IMDS for every uid but root's), `canopy-kms-broker.service`
-  (`runner/ec2/kms_broker.py`), `canopy-pair.service` (`--pair-units`) and the updater
+  (`runner/ec2/kms_broker.py`), `canopy-pair.service` (`--pair-runners`) and the updater
   (as root). `box.env` holds the stack's parameters and **no secret**.
 - **Identity.** A runner cannot reach the instance role. Its signing key is a software key
   in its home made by the canopy CLI (`canopy vault device --public-jwk --kind software`);
@@ -151,12 +151,12 @@ Tests: `tests/test_runner_units.py`.
   KMS key of its own in the `<stack>-ecdh` stack (`alias/canopy-runner-ecdh/<role>/<id>`;
   the box-named runner keeps the box's original key), used only through the broker, which
   maps the caller's `SO_PEERCRED` uid to that runner's key and nothing else.
-- **Pairing, once per machine.** `up.sh --units …` makes ONE invitation listing every runner
-  (`RunnerInvitation.units`, each with its KMS public key); the approve page lists them.
+- **Pairing, once per machine.** `up.sh --runners …` makes ONE invitation listing every runner
+  (`RunnerInvitation.runners`, each with its KMS public key); the approve page lists them.
   `canopy-pair` collects every runner's public keys and makes ONE `pair-by-role` call with
-  the instance-role proof (`apps/harness/unit_pairing.py`): one transaction, one runner
+  the instance-role proof (`apps/harness/machine_pairing.py`): one transaction, one runner
   per entry (owner = the creator, its workspace, `machine_id` = the role,
-  `capabilities.unit` from the invitation) with an ACTIVE software key. The creator must
+  `capabilities.serves` from the invitation) with an ACTIVE software key. The creator must
   still have `agent.work` in **every** runner's workspace, or nothing is made.
 - **Re-attach and adoption.** A runner already paired this way — its active key a runner
   software key, its runner on this `machine_id` — re-attaches with the same role and
@@ -171,19 +171,19 @@ Tests: `tests/test_runner_units.py`.
   broker — keeps its approval and wraps (`up.sh --in-place` makes that invitation). Every
   re-key emits `runner.rekeyed` and mails/pushes the runner's approvers. A different ECDH
   key waits for a person and drops the stale wraps; a runner with no active key (revoked)
-  is refused. `capabilities.unit` is server-owned once set: a capabilities write can
+  is refused. `capabilities.serves` is server-owned once set: a capabilities write can
   neither replace nor clear it.
 - **Runner key slots are pinned** (`up.sh`): each extra runner keeps the `-ecdh` slot
-  (`Unit1..4`) it was given — a re-run without `--units` keeps every slot, a reordered
+  (`Runner1..4`) it was given — a re-run without `--runners` keeps every slot, a reordered
   list keeps each runner where it is, new runners take free slots, and a slot is dropped
-  only with `--remove-unit <id>`. Runner keys (and the box's own) are `DeletionPolicy: Retain`.
+  only with `--remove-runner <id>`. Runner keys (and the box's own) are `DeletionPolicy: Retain`.
 - A runner's token reaches only itself and the agents it serves:
-  `tests/test_runner_units_isolation.py`.
+  `tests/test_runner_serves.py`.
 
 ### Secrets off disk
 
-- **On by default only on a runner with its own Unix user** (`CANOPY_UNIT`, or a box with
-  `/etc/canopy-runner/units.json`). A box built before that keeps its
+- **On by default only on a runner with its own Unix user** (`CANOPY_RUNNER_INSTANCE`, or a box with
+  `/etc/canopy-runner/runners.json`). A box built before that keeps its
   `~/.<slug>/.env` files until an operator opts it in with `RUNNER_SECRET_FILES=0`
   (a systemd drop-in); `RUNNER_SECRET_FILES=1` keeps the files anywhere. Also gated on
   the installed canopy CLI (>= 0.2.736, `cloud_runner.OFF_DISK_MIN_CLI`): an older CLI
@@ -342,7 +342,7 @@ has no clone of. It is a FLOOR on the composed list in
 every box cannot run it waits, and `unclaimable_queued_turns` reports such a turn
 as `config`, quoting what each box said. A pin still lands on a box that reports
 it cannot run the agent (a drill exists to find this out), but never on one whose
-`unit_refusal` refuses it.
+`serves_refusal` refuses it.
 `agents_routed_to(runner)` is the same rule as a list. Three readers share it,
 and `tests/test_runner_serves_agents.py` holds it to `claim_next_turn` over every
 box and agent pair:
@@ -1117,7 +1117,7 @@ inconclusive probe is still mailed. Tests:
 - A developer laptop (`install-runner.sh`) pairs with its person's PAT (`CANOPY_TOKEN`), which also registers its key. A **cloud box pairs by invitation and holds no PAT** (below). A box paired by invitation, and every runner with its own Unix user on a machine, has **no PAT fallback**: without a token it reports itself unauthenticated. Only a cloud box from an older stack that still has `CANOPY_TOKEN` (and never paired by invitation) falls back to it while no approved key can get a token (`runner/ec2/cloud_runner.py::_bearer`). No turn inherits the box's credential: an agent turn acts with its own login, and an agentless repo turn (anyone's, once routed here) reaches canopy only through its asker's read-only caller token (`cloud_runner._agent_env` strips `CANOPY_TOKEN` from both).
 - **Pairing a cloud box by invitation** (`apps/harness/api_runner_invitations.py`). `runner/ec2/up.sh`, with the operator's own workbench token, creates a `RunnerInvitation` once the stack's instance role exists: `{name, workspace, role_arn, ecdh_public_jwk}` (the `<stack>-ecdh` KMS public key), in a workspace where the operator has `agent.work`. It lasts an hour, and one live invitation exists per (role, name): your own new one replaces yours, and someone else's live one is never replaced (409). The approve link is printed, mailed and pushed to the creator. **Only the creator approves it**, from a browser behind a passkey step-up (`stepup.require_recent_step_up`); a token gets 403, so neither `up.sh` nor the box can approve its own pairing. The box (no state file, no `CANOPY_TOKEN`) calls `POST /api/harness/runners/pair-by-role` with an instance-role proof bound to that URL (`aws_iam_proof.verify`): waiting → 202; approved → one transaction creates the `Runner` (owner = creator, `workspace` = the invitation's, enrolled there by `Runner.save`), its `aws-iam` `RunnerDeviceKey` already ACTIVE (and the invitation's ECDH key approved with it), and marks the invitation consumed. The creator must still have `agent.work` there at that moment. Every other answer (no invitation, expired, used, another name, another ECDH key, a bad or replayed proof) is one uniform 401 that creates nothing. The box then signs in at `POST /api/runner-sessions/` as any keyless box does.
 - **A replaced instance re-attaches.** The role is the box's identity (`jkt` = sha256 of the role ARN), and `up.sh --allow-instance-change` keeps the stack's role. So `pair-by-role` from a role with an ACTIVE key on a non-retired runner of the same name returns 200 with that runner's id; no invitation is needed or used, and `wire.sh` has no predecessor to retire. A role whose runner was retired needs a new invitation from that runner's owner; the old key row is replaced, so `jkt` stays unique. A key for the role on another owner's runner (live, revoked or retired) is never erased, and a pending or revoked key on a live runner is never replaced either: a revocation is undone by its owner, not by re-inviting. Each is the uniform 401.
-- A machine running several runners pairs every runner in one call (`units` on the invitation and on `pair-by-role`; see "Setting up the runners on a machine" above).
+- A machine running several runners pairs every runner in one call (`runners` on the invitation and on `pair-by-role`; see "Setting up the runners on a machine" above).
 - **A fleet member joins with no invitation of its own.** When the proven role is a fleet's, `pair-by-role` is `fleets.join`: the fleet's one passkey approval plus AWS's word that the instance is the fleet group's (§ Runner fleets). Its key is role + instance, so sign-in (`aws_iam_proof.verify_caller` → `known_key`) tells members apart.
 - Cloud runner: `runner/ec2/cloud_runner.py::_bearer` signs its instance-role proof itself; a runner with its own Unix user runs `canopy vault runner-session` with its own software key. Laptop runner: `runner/canopy_runner/canopy_runner/runner_token.py::RunnerCredential` runs `canopy vault runner-session` when the canopy CLI is installed, else signs the proof itself (`device_proof.py`, the same key files and formats as canopy's `orchestrator/device_key.py`: `se.key` through `canopy-device-key`, the TPM key `canopy-device-key`, or `sw.pem`), shared by its REST client and wake socket. Both renew 10 min before expiry, retry a 401 once with a fresh token, and fall back to the PAT only while no approved key can get one.
 

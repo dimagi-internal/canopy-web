@@ -77,11 +77,11 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
     )
   }
   if (!inv) return <div className="h-32 max-w-2xl animate-pulse rounded-lg bg-muted" />
-  const units = inv.units ?? []
+  const runners = inv.runners ?? []
   // A FLEET's invitation (`apps/harness/fleets.py`): approving it lets every
   // instance of one Auto Scaling group join, and is used up by the approval.
   const fleet = inv.fleet ?? null
-  const pairedRunnerId = inv.runner_id ?? units.find((u) => u.runner_id)?.runner_id ?? null
+  const pairedRunnerId = inv.runner_id ?? runners.find((r) => r.runner_id)?.runner_id ?? null
 
   async function approve() {
     if (!inv) return
@@ -145,7 +145,7 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
             {fleet.min_members} and {fleet.max_members} of them running by the work waiting. They share one credential
             set and one key for reading zero-knowledge secrets.
           </p>
-        ) : units.length > 0 ? (
+        ) : runners.length > 0 ? (
           <>
             <table className="mt-4 w-full text-left text-[13px]" aria-label="Runners">
               <thead className="text-[12px] text-muted-foreground">
@@ -157,18 +157,18 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
                 </tr>
               </thead>
               <tbody>
-                {units.map((u) => (
-                  <tr key={u.name} className="border-t border-border" data-testid="invitation-unit">
-                    <td className="py-1 pr-3 font-mono">{u.name}</td>
-                    <td className="py-1 pr-3">{u.kind === 'agent' ? `only agent ${u.slug}` : 'its workspace tree'}</td>
-                    <td className="py-1 pr-3">{u.workspace}</td>
-                    <td className="py-1 font-mono text-[12px]">{u.runner_id ?? '—'}</td>
+                {runners.map((r) => (
+                  <tr key={r.name} className="border-t border-border" data-testid="invitation-runner">
+                    <td className="py-1 pr-3 font-mono">{r.name}</td>
+                    <td className="py-1 pr-3">{r.kind === 'agent' ? `only agent ${r.slug}` : 'its workspace tree'}</td>
+                    <td className="py-1 pr-3">{r.workspace}</td>
+                    <td className="py-1 font-mono text-[12px]">{r.runner_id ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <p className="mt-3 text-[12px] text-muted-foreground">
-              Approving makes each of these {units.length} runners yours in its workspace: each is its own user on
+              Approving makes each of these {runners.length} runners yours in its workspace: each is its own user on
               the machine with its own key, holds no token, and serves nothing until you route work to it
               {inv.has_ecdh_key ? '. Their keys for reading zero-knowledge secrets are approved with them' : ''}.
             </p>

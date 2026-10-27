@@ -390,7 +390,7 @@ class TopologyRunnerOut(StrictModel):
     # one machine are listed together.
     machine: str = ""
     # What it declares it serves: `tree:<root>`, `agent:<slug>`, or "" for none.
-    unit: str = ""
+    serves: str = ""
 
 
 class RunnerTopologyOut(StrictModel):

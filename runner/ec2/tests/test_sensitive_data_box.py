@@ -851,7 +851,7 @@ def test_a_retired_runner_forgets_its_kept_conversations_at_start(
     state = tmp_path / "state.json"
     state.write_text(json.dumps({"runner_id": "r-gone"}))
     monkeypatch.setattr(mod, "STATE_FILE", state)
-    monkeypatch.setattr(mod, "UNIT", "u1")
+    monkeypatch.setattr(mod, "RUNNER_INSTANCE", "u1")
     monkeypatch.setattr(mod, "_api", lambda m, p, b=None, **k: (404, {"detail": "not found"}))
     try:
         mod.pair_or_load()

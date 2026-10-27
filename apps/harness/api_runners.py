@@ -57,6 +57,7 @@ from .api import (  # noqa: E402
     runner_read_q,
 )
 from .models import (
+    SERVES,
     FleetHold,
     PrivateRunner,
     Runner,
@@ -64,6 +65,7 @@ from .models import (
     RunnerSlashCommands,
     Turn,
     WorkspaceRunnerOrder,
+    with_serves_key,
 )
 from .runner_requirements import is_sensitive_data_box
 from .schemas import (
@@ -1114,7 +1116,7 @@ def set_runner_name(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerN
     administrator. Routing, pins and the vault follow the runner, not its name, so
     nothing else changes. The box keeps the name it paired as (`paired_as`)."""
     # Pairing matches on `paired_as` as well as `name` (api_runner_invitations
-    # pair_by_role, unit_pairing._machine_runner), so a replaced instance still
+    # pair_by_role, machine_pairing._machine_runner), so a replaced instance still
     # re-attaches to a renamed runner.
     runner = runner_admin_or_404(request, runner_id)
     name = payload.name.strip()
@@ -1422,16 +1424,16 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             # carries the same numbers per agent CLI (`clis.reported` prefers it).
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
-    caps = dict(payload.capabilities)
+    caps = with_serves_key(payload.capabilities)
     for key in reported:
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
-    # What a runner serves (`capabilities.unit`) is SERVER-OWNED once it is set (`unit_pairing` records it
+    # What a runner serves (`capabilities.serves`) is SERVER-OWNED once it is set (`machine_pairing` records it
     # from the invitation a person approved): a write can neither replace nor clear
     # it, or an agent's runner could lift its own restriction. A box-sent value is
     # ignored; a runner with none may still declare one (a self-restriction).
-    if runner.capabilities.get("unit"):
-        caps["unit"] = runner.capabilities["unit"]
+    if runner.serves():
+        caps[SERVES] = runner.serves()
     runner.capabilities = caps
     runner.save(update_fields=["capabilities"])
     return _with_roots(request, runner)

@@ -41,7 +41,7 @@ function invitation(over: Partial<RunnerInvitationOut> = {}): RunnerInvitationOu
     has_ecdh_key: true,
     runner_id: null,
     directed: false,
-    units: [],
+    runners: [],
     ...over,
   }
 }
@@ -76,7 +76,7 @@ describe('RunnerInvitationApprovePage', () => {
   it('lists every runner one approval pairs', async () => {
     getRunnerInvitation.mockResolvedValue(
       invitation({
-        units: [
+        runners: [
           { name: 'cloud-ec2-9', workspace: 'connect', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: null },
           { name: 'cloud-ec2-9-marsh', workspace: 'marsh', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: null },
           { name: 'cloud-ec2-9-agent-eva', workspace: 'connect', kind: 'agent', slug: 'eva', has_ecdh_key: false, runner_id: null },
@@ -84,7 +84,7 @@ describe('RunnerInvitationApprovePage', () => {
       }),
     )
     renderPage()
-    const rows = await screen.findAllByTestId('invitation-unit')
+    const rows = await screen.findAllByTestId('invitation-runner')
     expect(rows.map((r) => r.textContent)).toEqual([
       expect.stringContaining('cloud-ec2-9its workspace tree'),
       expect.stringContaining('cloud-ec2-9-marsh'),
@@ -111,7 +111,7 @@ describe('RunnerInvitationApprovePage', () => {
       getRunnerInvitation.mockResolvedValue(
         invitation({
           status: 'consumed',
-          units: [{ name: 'cloud-ec2-fork', workspace: 'connect', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: 'r-9' }],
+          runners: [{ name: 'cloud-ec2-fork', workspace: 'connect', kind: 'tree', slug: '', has_ecdh_key: false, runner_id: 'r-9' }],
         }),
       )
       renderPage()

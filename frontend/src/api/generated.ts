@@ -9096,9 +9096,9 @@ export interface paths {
          *     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
          *     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
          *
-         *     A machine running several runners sends `units` (each runner's name, the public
+         *     A machine running several runners sends `runners` (each runner's name, the public
          *     half of its own signing key and its ECDH key) with ONE proof: one runner per entry
-         *     with an active software device key, `units` mapping each name to its runner id. A
+         *     with an active software device key, `runners` mapping each name to its runner id. A
          *     replaced instance (the same role and runner names) re-attaches every runner, its
          *     new key replacing the old in place, keeping each runner id; that needs no
          *     invitation. A runner not yet paired needs the approved invitation that lists it.
@@ -30788,10 +30788,10 @@ export interface components {
              */
             readonly machine: string;
             /**
-             * Unit
+             * Serves
              * @default
              */
-            readonly unit: string;
+            readonly serves: string;
         };
         /** TopologyWorkspaceOut */
         readonly TopologyWorkspaceOut: {
@@ -32511,6 +32511,33 @@ export interface components {
             /** Workspace */
             readonly workspace: string;
         };
+        /**
+         * InvitationRunnerOut
+         * @description One runner an invitation pairs, and its id once the machine has paired.
+         */
+        readonly InvitationRunnerOut: {
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "tree" | "agent";
+            /**
+             * Slug
+             * @default
+             */
+            readonly slug: string;
+            /**
+             * Has Ecdh Key
+             * @default false
+             */
+            readonly has_ecdh_key: boolean;
+            /** Runner Id */
+            readonly runner_id?: string | null;
+        };
         /** RunnerFleetMemberOut */
         readonly RunnerFleetMemberOut: {
             /**
@@ -32637,74 +32664,20 @@ export interface components {
             /** Runner Id */
             readonly runner_id?: string | null;
             /**
-             * Units
+             * Runners
              * @default []
              */
-            readonly units: readonly components["schemas"]["RunnerInvitationUnitOut"][];
+            readonly runners: readonly components["schemas"]["InvitationRunnerOut"][];
             readonly fleet?: components["schemas"]["RunnerFleetOut"] | null;
         };
         /**
-         * RunnerInvitationUnitOut
-         * @description One runner an invitation pairs, and its id once the machine has paired.
-         */
-        readonly RunnerInvitationUnitOut: {
-            /** Name */
-            readonly name: string;
-            /** Workspace */
-            readonly workspace: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            readonly kind: "tree" | "agent";
-            /**
-             * Slug
-             * @default
-             */
-            readonly slug: string;
-            /**
-             * Has Ecdh Key
-             * @default false
-             */
-            readonly has_ecdh_key: boolean;
-            /** Runner Id */
-            readonly runner_id?: string | null;
-        };
-        /**
-         * RunnerInvitationIn
-         * @description Invite one new cloud box, by the name it will pair as and its EC2 instance
-         *     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
-         *     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
-         *     `units`: a machine that runs several runners lists them, and the one
-         *     approval pairs every one.
-         */
-        readonly RunnerInvitationIn: {
-            /** Name */
-            readonly name: string;
-            /** Workspace */
-            readonly workspace: string;
-            /** Role Arn */
-            readonly role_arn: string;
-            /** Ecdh Public Jwk */
-            readonly ecdh_public_jwk?: {
-                readonly [key: string]: unknown;
-            } | null;
-            /** Units */
-            readonly units?: readonly components["schemas"]["RunnerUnitIn"][] | null;
-            /**
-             * Directed
-             * @default false
-             */
-            readonly directed: boolean;
-        };
-        /**
-         * RunnerUnitIn
+         * InvitedRunnerIn
          * @description One runner on the invited machine, named `name`, serving `workspace`'s tree
          *     (`kind` tree) or only agent `slug` (`kind` agent, an agent of `workspace`).
          *     `ecdh_public_jwk` is that runner's zero-knowledge ECDH
          *     key (its KMS key in the `<stack>-ecdh` stack) when known.
          */
-        readonly RunnerUnitIn: {
+        readonly InvitedRunnerIn: {
             /** Name */
             readonly name: string;
             /** Workspace */
@@ -32724,6 +32697,33 @@ export interface components {
             readonly ecdh_public_jwk?: {
                 readonly [key: string]: unknown;
             } | null;
+        };
+        /**
+         * RunnerInvitationIn
+         * @description Invite one new cloud box, by the name it will pair as and its EC2 instance
+         *     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
+         *     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
+         *     `runners`: a machine that runs several runners lists them, and the one
+         *     approval pairs every one.
+         */
+        readonly RunnerInvitationIn: {
+            /** Name */
+            readonly name: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Role Arn */
+            readonly role_arn: string;
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /** Runners */
+            readonly runners?: readonly components["schemas"]["InvitedRunnerIn"][] | null;
+            /**
+             * Directed
+             * @default false
+             */
+            readonly directed: boolean;
         };
         /**
          * RunnerFleetIn
@@ -33049,7 +33049,7 @@ export interface components {
          * RunnerPairByRoleOut
          * @description `paired` (a new runner), `reattached` (this role's existing runner — a
          *     replaced instance), or `waiting` (the invitation is not approved yet; ask
-         *     again on the next poll). A machine of several runners gets `units`, each
+         *     again on the next poll). A machine of several runners gets `runners`, each
          *     runner's id by its name (`paired` when any was made).
          */
         readonly RunnerPairByRoleOut: {
@@ -33060,6 +33060,13 @@ export interface components {
             readonly status: "paired" | "reattached" | "waiting";
             /** Runner Id */
             readonly runner_id?: string | null;
+            /**
+             * Runners
+             * @default {}
+             */
+            readonly runners: {
+                readonly [key: string]: string;
+            };
             /**
              * Units
              * @default {}
@@ -33074,6 +33081,41 @@ export interface components {
             readonly device_keys: {
                 readonly [key: string]: string;
             };
+        };
+        /**
+         * PairingRunnerIn
+         * @description One runner of a machine pairing all its runners at once: its `name`, the
+         *     PUBLIC half of the runner's own signing key (`public_jwk`, a software P-256 key
+         *     in the runner's home), its zero-knowledge ECDH key, and what it declares.
+         */
+        readonly PairingRunnerIn: {
+            /** Name */
+            readonly name: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /** Ecdh Public Jwk */
+            readonly ecdh_public_jwk?: {
+                readonly [key: string]: unknown;
+            } | null;
+            /**
+             * Ecdh Store
+             * @default
+             */
+            readonly ecdh_store: string;
+            /**
+             * Capabilities
+             * @default {}
+             */
+            readonly capabilities: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Host
+             * @default
+             */
+            readonly host: string;
         };
         /**
          * RunnerPairByRoleIn
@@ -33114,43 +33156,8 @@ export interface components {
              * @default
              */
             readonly ecdh_store: string;
-            /** Units */
-            readonly units?: readonly components["schemas"]["RunnerPairUnitIn"][] | null;
-        };
-        /**
-         * RunnerPairUnitIn
-         * @description One runner of a machine pairing all its runners at once: its `name`, the
-         *     PUBLIC half of the runner's own signing key (`public_jwk`, a software P-256 key
-         *     in the runner's home), its zero-knowledge ECDH key, and what it declares.
-         */
-        readonly RunnerPairUnitIn: {
-            /** Name */
-            readonly name: string;
-            /** Public Jwk */
-            readonly public_jwk: {
-                readonly [key: string]: unknown;
-            };
-            /** Ecdh Public Jwk */
-            readonly ecdh_public_jwk?: {
-                readonly [key: string]: unknown;
-            } | null;
-            /**
-             * Ecdh Store
-             * @default
-             */
-            readonly ecdh_store: string;
-            /**
-             * Capabilities
-             * @default {}
-             */
-            readonly capabilities: {
-                readonly [key: string]: unknown;
-            };
-            /**
-             * Host
-             * @default
-             */
-            readonly host: string;
+            /** Runners */
+            readonly runners?: readonly components["schemas"]["PairingRunnerIn"][] | null;
         };
         /** BoxEgressOut */
         readonly BoxEgressOut: {

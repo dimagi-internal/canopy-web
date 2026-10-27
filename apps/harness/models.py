@@ -22,6 +22,31 @@ from . import canopy_release, clis
 # imports this constant from here rather than declaring a second one.
 HEARTBEAT_ONLINE_WINDOW = dt.timedelta(seconds=90)
 
+#: The capability that says what a runner serves (`Runner.serves`).
+SERVES = "serves"
+# Old name, read until every runner reports the new one: remove in the follow-up.
+OLD_SERVES = "unit"
+
+
+def serves_of(capabilities) -> dict:
+    """What a capabilities dict says its runner serves: `capabilities["serves"]`, else
+    the old key a runner (or a row) from before the rename carries. {} for none."""
+    caps = capabilities or {}
+    said = caps.get(SERVES)
+    if not isinstance(said, dict) or not said:
+        said = caps.get(OLD_SERVES)  # Old name, read until every runner reports the new one: remove in the follow-up.
+    return said if isinstance(said, dict) else {}
+
+
+def with_serves_key(capabilities: dict) -> dict:
+    """`capabilities` as canopy-web stores it: what a runner serves under `serves`,
+    never under the old key a runner from before the rename still sends."""
+    caps = dict(capabilities or {})
+    old = caps.pop(OLD_SERVES, None)  # Old name, read until every runner reports the new one: remove in the follow-up.
+    if isinstance(old, dict) and old and not caps.get(SERVES):
+        caps[SERVES] = old
+    return caps
+
 
 class Runner(models.Model):
     """A paired executor (laptop emdash daemon, cloud container, remote box)."""
@@ -326,7 +351,7 @@ class Runner(models.Model):
     # The MACHINE this runner is on: the canonical IAM role ARN its box proved
     # (`services.set_runner_machine`, from an approved aws-iam device key and from
     # pairing by role). Several runners can share a machine, and so share this. "" = not known (a laptop, or a box that never proved a
-    # role). Read by `routing.unit_refusal` and the topology's grouping; never a
+    # role). Read by `routing.serves_refusal` and the topology's grouping; never a
     # grant on its own.
     machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
     #: A PRIVATE runner is its owner's own machine (canopy-web#1705): it takes no fleet
@@ -339,7 +364,7 @@ class Runner(models.Model):
     #: they reach it (an assignment, an inherited order, a pin). Empty = no
     #: restriction. Set by a person on the runner page, never reported by the box,
     #: and it only ever narrows what the box takes — the person-set counterpart of a
-    #: box declaring it runs one agent (`unit()`); both apply when both are set
+    #: box declaring it runs one agent (`serves()`); both apply when both are set
     #: (`routing.dedicated_agent_slugs`).
     only_agents = models.ManyToManyField("agents.Agent", blank=True, related_name="dedicated_runners")
     #: Directed only: the box takes only what is PUT on it (`directed_only`). A
@@ -397,13 +422,12 @@ class Runner(models.Model):
         role = self.machine_id.rsplit("/", 1)[-1] if self.machine_id else ""
         return role.split("-RunnerRole", 1)[0]
 
-    def unit(self) -> dict:
-        """What this runner says it serves (`capabilities.unit`):
+    def serves(self) -> dict:
+        """What this runner says it serves (`capabilities.serves`):
         `{"kind": "tree", "root": <slug>}` or `{"kind": "agent", "slug": <slug>}`;
         {} for a runner that declares none. Box-declared, and only ever a
-        restriction on what the box takes (`routing.unit_refusal`)."""
-        unit = (self.capabilities or {}).get("unit")
-        return unit if isinstance(unit, dict) else {}
+        restriction on what the box takes (`routing.serves_refusal`)."""
+        return serves_of(self.capabilities)
 
     def observed_projects(self) -> list[str]:
         """Every repo this box reports it holds (emdash's projects table, a cloud
@@ -2331,9 +2355,9 @@ class RunnerInvitation(models.Model):
     #: (`docs/architecture/runners.md § Several runners on one machine`): `[{name, workspace, kind, slug,
     #: ecdh_public_jwk, runner_id}]`. `kind` is "tree" or "agent" (`slug` names the
     #: agent). Empty for a single-runner invitation, which pairs as `name` in
-    #: `workspace` by its instance role (`units_of`). `runner_id` is filled in when
+    #: `workspace` by its instance role (`invited_runners`). `runner_id` is filled in when
     #: the box pairs.
-    units = models.JSONField(default=list, blank=True)
+    runners = models.JSONField(default=list, blank=True)
     #: Pair its runners directed-only (`Runner.directed`): a test box (`up.sh
     #: --test`) is directed from the moment it pairs, before anyone could route to it.
     directed = models.BooleanField(default=False)

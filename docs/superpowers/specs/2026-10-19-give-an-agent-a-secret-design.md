@@ -35,7 +35,7 @@ What the owner wants: from the IDE, an easy way to put a secret into an agent's 
 | Every new agent is born zero-knowledge at kv 0 | `services.born_zk_fields` |
 | Recipients = the agent's approved device keys on runners that serve it, plus its admins' vault keys | `zk_seal.recipients_for`; `device_keys.runner_serves_agent` |
 
-**Runner isolation (#1698) already gives per-tree recipients.** A cloud runner is one isolation unit, and `runner_serves_agent` asks `routing.runner_routes_agent`, which includes `unit_refusal`. So a box in another tree, or another agent's unit, is never among an agent's recipients. Sealing targets "only the agent's tree's boxes" with no change here. A new unit's KMS-held ECDH key becomes a recipient once it is approved and routed to the agent, through the same wrap flow that §4 attaches endorsements to.
+**Runner isolation (#1698) already gives per-tree recipients.** A cloud runner serves one workspace tree or one agent, and `runner_serves_agent` asks `routing.runner_routes_agent`, which includes `serves_refusal`. So a runner in another tree, or another agent's runner, is never among an agent's recipients. Sealing targets "only the agent's tree's boxes" with no change here. A new runner's KMS-held ECDH key becomes a recipient once it is approved and routed to the agent, through the same wrap flow that §4 attaches endorsements to.
 
 ## How it works
 

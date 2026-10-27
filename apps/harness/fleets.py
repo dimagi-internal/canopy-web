@@ -68,6 +68,7 @@ from apps.workspaces import permissions as perms
 from . import aws_iam_proof, credential_sets, device_keys
 from .claim import _assignment_rows_for_turns, _coverage
 from .models import (
+    SERVES,
     FleetHold,
     Runner,
     RunnerAccessToken,
@@ -79,7 +80,7 @@ from .models import (
     Turn,
     WorkspaceRunnerOrder,
 )
-from .routing import EXECUTING, blocking_turn, prime_machine_units, runner_tenant_slugs_of
+from .routing import EXECUTING, blocking_turn, prime_machine_runners, runner_tenant_slugs_of
 
 logger = logging.getLogger(__name__)
 
@@ -289,17 +290,17 @@ class Joined:
     status: str            # "joined" | "reattached" | "waiting"
     runner: Runner | None = None
     #: A member whose runner has its own Unix user: that runner's own signing key, which it signs in with.
-    unit_key: RunnerDeviceKey | None = None
+    runner_key: RunnerDeviceKey | None = None
 
 
 def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilities: dict,
-         ecdh_public_jwk: dict | None, ecdh_store: str, refuse, unit_jwk: dict | None = None) -> Joined:
+         ecdh_public_jwk: dict | None, ecdh_store: str, refuse, runner_jwk: dict | None = None) -> Joined:
     """An instance of `fleet`'s group joins as its own runner. `caller_arn` is the
     verified STS ARN (`aws_iam_proof.verify_caller`). `refuse(why)` builds the
     uniform 401 every refusal is; the reason goes to the log only.
 
     A member built like a machine of several runners (`runner.cfn.yaml`'s cloud-init,
-    one runner for a workspace tree) sends `unit_jwk`: that runner's own signing key. The instance
+    one runner for a workspace tree) sends `runner_jwk`: that runner's own signing key. The instance
     role belongs to root, so the runner signs in with that key instead; it is made
     active under the fleet's approval, and it carries the fleet's ECDH key, so it is
     the key the fleet's vault copies are given to. The role + instance key is still
@@ -341,10 +342,10 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
     role = aws_iam_proof.canonical_role_arn(caller_arn)
     jkt = aws_iam_proof.member_jkt(role, instance)
     power = power_of(seen.get("lifecycle", ""))
-    unit = None
-    if unit_jwk is not None:
+    own_jwk = None
+    if runner_jwk is not None:
         try:
-            unit = device_keys.normalize_public_jwk(unit_jwk)
+            own_jwk = device_keys.normalize_public_jwk(runner_jwk)
         except device_keys.KeyError_ as exc:
             raise refuse(f"runner key: {exc}") from exc
 
@@ -353,21 +354,21 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
         if existing.status != RunnerDeviceKey.ACTIVE or existing.runner.status == Runner.RETIRED:
             raise refuse(f"{instance} was {existing.runner.name}, which is retired")
         _set_power(existing.runner, power)
-        unit_key = _unit_key(fleet, existing.runner, unit, name, ecdh_public_jwk) if unit else None
-        return Joined("reattached", existing.runner, unit_key)
+        runner_key = _runner_key(fleet, existing.runner, own_jwk, name, ecdh_public_jwk) if own_jwk else None
+        return Joined("reattached", existing.runner, runner_key)
 
     ecdh_jkt = device_keys.thumbprint(ecdh) if ecdh else ""
     store = ecdh_store if ecdh_store in ECDH_STORES else ("aws-kms" if fleet.ecdh_public_jwk else "")
     caps = declared_capabilities(capabilities)
-    if unit is not None:
+    if own_jwk is not None:
         # canopy-web says what it serves, as for any such runner: the fleet's tree.
         from apps.workspaces import services as wsvc  # noqa: PLC0415 — as above
 
-        caps["unit"] = {"kind": "tree", "root": wsvc.tree_roots({fleet.workspace_id}).get(
+        caps[SERVES] = {"kind": "tree", "root": wsvc.tree_roots({fleet.workspace_id}).get(
             fleet.workspace_id, fleet.workspace_id)}
         # The runner's key carries the ECDH key; the role + instance key is identity only.
         ecdh, ecdh_jkt, store = {}, "", ""
-    unit_key = None
+    runner_key = None
     try:
         with transaction.atomic():
             runner = Runner.objects.create(
@@ -385,19 +386,19 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
                 ecdh_approved_at=fleet.approved_at if fleet.ecdh_public_jwk else None,
                 ecdh_approved_by=fleet.approved_by if fleet.ecdh_public_jwk else None,
             )
-            if unit is not None:
-                unit_key = _unit_key(fleet, runner, unit, name, ecdh_public_jwk)
+            if own_jwk is not None:
+                runner_key = _runner_key(fleet, runner, own_jwk, name, ecdh_public_jwk)
     except IntegrityError:
         raise refuse(f"{instance}: a concurrent join won, or its runner key is another runner's") from None
     _attach_vault(fleet, runner)
-    _give_wraps(fleet, unit_key or key)
+    _give_wraps(fleet, runner_key or key)
     _put_routes(runner, _current_routing(fleet, exclude=runner))
     activity.emit(activity.RUNNER_PAIRED, workspace=fleet.workspace_id, actor=owner, surface="runner",
                   ref=str(runner.pk), meta={"name": runner.name, "fleet": fleet.name})
-    return Joined("joined", runner, unit_key)
+    return Joined("joined", runner, runner_key)
 
 
-def _unit_key(fleet: RunnerFleet, runner: Runner, jwk: dict, name: str,
+def _runner_key(fleet: RunnerFleet, runner: Runner, jwk: dict, name: str,
               ecdh_public_jwk: dict | None) -> RunnerDeviceKey:
     """The member runner's own signing key: active under the fleet's approval, with the
     fleet's ECDH key (its broker serves the fleet's KMS key). A rejoin with a new
@@ -603,7 +604,7 @@ def _covered(runners: list[Runner], queued: list[Turn]) -> dict:
     if not runners or not queued:
         return {r.pk: set() for r in runners}
     by_pk = {t.pk: t for t in queued}
-    prime_machine_units(runners)
+    prime_machine_runners(runners)
     defaults, priorities = _assignment_rows_for_turns(queued)
     tenants = runner_tenant_slugs_of(runners)
     cover = _coverage(set(by_pk), runners, defaults, priorities)

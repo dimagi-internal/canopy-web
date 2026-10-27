@@ -2665,8 +2665,24 @@ RUNNER_NAME_PATTERN = r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
 
 RunnerInvitationStatus = Literal["pending", "approved", "consumed", "expired"]
 
+#: The key a machine's runners came under before they were `runners`.
+# Old name, read until every runner reports the new one: remove in the follow-up.
+OLD_RUNNERS_KEY = "units"
 
-class RunnerUnitIn(Schema):
+
+def runners_from_old_key(data):
+    """A request body listing a machine's runners under the old key, as `runners`.
+    Old name, read until every runner reports the new one: remove in the follow-up."""
+    raw = getattr(data, "_obj", data)   # Ninja hands a validator its body wrapped
+    if isinstance(raw, dict) and OLD_RUNNERS_KEY in raw:
+        data = dict(raw)
+        old = data.pop(OLD_RUNNERS_KEY)
+        if not data.get("runners"):
+            data["runners"] = old
+    return data
+
+
+class InvitedRunnerIn(Schema):
     """One runner on the invited machine, named `name`, serving `workspace`'s tree
     (`kind` tree) or only agent `slug` (`kind` agent, an agent of `workspace`).
     `ecdh_public_jwk` is that runner's zero-knowledge ECDH
@@ -2683,19 +2699,25 @@ class RunnerInvitationIn(Schema):
     """Invite one new cloud box, by the name it will pair as and its EC2 instance
     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
-    `units`: a machine that runs several runners lists them, and the one
+    `runners`: a machine that runs several runners lists them, and the one
     approval pairs every one."""
 
     name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
     workspace: str = Field(min_length=1, max_length=100)
     role_arn: str = Field(min_length=1, max_length=300)
     ecdh_public_jwk: dict[str, Any] | None = None
-    units: list[RunnerUnitIn] | None = Field(default=None, max_length=8)
+    runners: list[InvitedRunnerIn] | None = Field(default=None, max_length=8)
     # Pair its runners directed-only: a test box (`up.sh --test`).
     directed: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def runners_under_old_key(cls, data):
+        # An `up.sh` from before the rename sends `units` (`runners_from_old_key`).
+        return runners_from_old_key(data)
 
-class RunnerInvitationUnitOut(Schema):
+
+class InvitationRunnerOut(Schema):
     """One runner an invitation pairs, and its id once the machine has paired."""
 
     name: str
@@ -2860,13 +2882,13 @@ class RunnerInvitationOut(Schema):
     has_ecdh_key: bool = False
     runner_id: uuid.UUID | None = None
     #: The runners the machine pairs as; empty for a machine with one runner.
-    units: list[RunnerInvitationUnitOut] = []
+    runners: list[InvitationRunnerOut] = []
     #: A FLEET's invitation: what approving it lets join (`fleets.py`). Approving
     #: uses the invitation up; the fleet's instances then join on their own.
     fleet: RunnerFleetOut | None = None
 
 
-class RunnerPairUnitIn(Schema):
+class PairingRunnerIn(Schema):
     """One runner of a machine pairing all its runners at once: its `name`, the
     PUBLIC half of the runner's own signing key (`public_jwk`, a software P-256 key
     in the runner's home), its zero-knowledge ECDH key, and what it declares."""
@@ -2894,21 +2916,37 @@ class RunnerPairByRoleIn(Schema):
     ecdh_store: str = Field(default="", max_length=16)
     #: A machine running several runners pairs them all in this one call (`name`
     #: is then the MACHINE's name, the one its invitation was made for).
-    units: list[RunnerPairUnitIn] | None = Field(default=None, max_length=8)
+    runners: list[PairingRunnerIn] | None = Field(default=None, max_length=8)
+
+    @model_validator(mode="before")
+    @classmethod
+    def runners_under_old_key(cls, data):
+        # A runner from before the rename sends `units` (`runners_from_old_key`).
+        return runners_from_old_key(data)
 
 
 class RunnerPairByRoleOut(Schema):
     """`paired` (a new runner), `reattached` (this role's existing runner — a
     replaced instance), or `waiting` (the invitation is not approved yet; ask
-    again on the next poll). A machine of several runners gets `units`, each
+    again on the next poll). A machine of several runners gets `runners`, each
     runner's id by its name (`paired` when any was made)."""
 
     status: Literal["paired", "reattached", "waiting"]
     runner_id: uuid.UUID | None = None
+    runners: dict[str, uuid.UUID] = {}
+    # Old name, read until every runner reports the new one: remove in the follow-up.
+    #: `runners` again, for a runner from before the rename.
     units: dict[str, uuid.UUID] = {}
     #: Each runner's device key id, by runner name — what the box records so its
     #: proofs are sent (`canopy vault device --registered`).
     device_keys: dict[str, uuid.UUID] = {}
+
+    @model_validator(mode="after")
+    def runners_under_old_key_too(self):
+        # Old name, read until every runner reports the new one: remove in the follow-up.
+        if self.runners and not self.units:
+            self.units = dict(self.runners)
+        return self
 
 
 # ---- laptop pairing by browser (apps/harness/api_runner_pairings.py) ------------------

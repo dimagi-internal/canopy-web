@@ -131,7 +131,7 @@ def test_the_stack_writes_no_pat_no_claude_token_and_no_keyring_password():
     """A box of several runners holds no PAT (it pairs by invitation, each runner signs in
     with its own key), no Claude token (each runner's logins come from canopy-web) and no
     box-wide gog password (each agent's is derived from its runner's secret) — spec
-    2026-10-19-runner-isolation-units §5."""
+    2026-10-19-runner-isolation-runners §5."""
     cfn = (EC2 / "runner.cfn.yaml").read_text()
     for banned in ("CANOPY_TOKEN=", "CLAUDE_CODE_OAUTH_TOKEN=", "GOG_KEYRING_PASSWORD=",
                    "CanopyTokenSecret", "ClaudeTokenSecret", "GogKeyringSecret", "runner.env"):

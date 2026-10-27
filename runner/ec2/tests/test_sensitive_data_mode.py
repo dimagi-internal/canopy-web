@@ -118,9 +118,9 @@ def test_a_mode_canopy_does_not_know_takes_no_turn(load_cloud_runner, monkeypatc
     sent = []
     monkeypatch.setattr(cr, "_ws_request", lambda ws, msg, want: sent.append(msg) or {})
     assert cr._claim_and_run_once(None, "r-1") is False and sent == []
-    box = {"RUNNER_NAME": "cloud-sensitive-1", "RUNNER_UNITS": "tree:dimagi", "RUNNER_DATA_MODE": mode}
-    units = [{"id": "dimagi", "name": "cloud-sensitive-1", "kind": "tree", "slug": ""}]
-    assert cr.egress_plan(box, units, {"cloud-sensitive-1": {"locked": False}})["dimagi"]["locked"] is True
+    box = {"RUNNER_NAME": "cloud-sensitive-1", "RUNNERS": "tree:dimagi", "RUNNER_DATA_MODE": mode}
+    runners = [{"id": "dimagi", "name": "cloud-sensitive-1", "kind": "tree", "slug": ""}]
+    assert cr.egress_plan(box, runners, {"cloud-sensitive-1": {"locked": False}})["dimagi"]["locked"] is True
 
 
 def test_a_sensitive_data_box_reports_its_health(sensitive, ordinary):

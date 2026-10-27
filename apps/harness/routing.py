@@ -32,6 +32,7 @@ from .models import (
     RunnerEnrollment,
     Turn,
     WorkspaceRunnerOrder,
+    serves_of,
 )
 
 
@@ -58,7 +59,7 @@ def load_assignment_rows(agent_ids) -> tuple[dict, dict]:
         .select_related("runner").prefetch_related("runner__declared_flags").order_by("rank")
     )
     rows = list(rows)
-    prime_machine_units([row.runner for row in rows])
+    prime_machine_runners([row.runner for row in rows])
     for row in rows:
         if row.source:
             priorities.setdefault((row.agent_id, row.source, row.actor), []).append(row)
@@ -104,13 +105,13 @@ def cannot_serve(runner: Runner, slug: str) -> str:
         and the turn ended without doing anything (cloud-ec2-2, fizzy, 2026-10-15).
 
     A box can only refuse work for itself here, so a self-report is safe to trust
-    in this direction. And what it serves on its machine (`unit_refusal`), which is
+    in this direction. And what it serves on its machine (`serves_refusal`), which is
     the same kind of self-restriction. Reads the runner row; its machine siblings
-    come from `prime_machine_units` when the caller loaded them (one query per
+    come from `prime_machine_runners` when the caller loaded them (one query per
     call otherwise, and none for a box with no machine)."""
     if not slug:
         return ""
-    said = unit_refusal(runner, slug)
+    said = serves_refusal(runner, slug)
     if said:
         return said
     caps = runner.capabilities or {}
@@ -131,16 +132,16 @@ def cannot_serve(runner: Runner, slug: str) -> str:
 # the same machine (`Runner.machine_id`) runs that agent. Both are restrictions
 # a box declares on itself, so trusting its declaration is safe.
 
-#: The attribute `prime_machine_units` caches a runner's machine siblings that run
+#: The attribute `prime_machine_runners` caches a runner's machine siblings that run
 #: one agent on: {agent slug: sibling runner name}.
-_MACHINE_UNITS = "_machine_agent_units"
+_MACHINE_AGENT_RUNNERS = "_machine_agent_runners"
 
 
-def _agent_unit_slug(unit: dict) -> str | None:
+def _served_agent_slug(serves: dict) -> str | None:
     """The agent an agent's runner runs ("" when it names none); None: not one agent's runner."""
-    if unit.get("kind") != "agent":
+    if serves.get("kind") != "agent":
         return None
-    return str(unit.get("slug") or "")
+    return str(serves.get("slug") or "")
 
 
 def prime_dedicated_agents(runners) -> None:
@@ -166,39 +167,38 @@ def _dedicated_refusal(runner: Runner, only: set[str]) -> str:
     return f"{runner.name} runs only {', '.join(sorted(only))}"
 
 
-def prime_machine_units(runners) -> None:
+def prime_machine_runners(runners) -> None:
     """Cache, on each of `runners`, which agent each OTHER live runner on its
     machine runs alone — one query for them all, so the claim and the coverage report
-    ask `unit_refusal` of every candidate without a query each. Primes their
-    dedicated agents too (`prime_dedicated_agents`), which `unit_refusal` also asks."""
+    ask `serves_refusal` of every candidate without a query each. Primes their
+    dedicated agents too (`prime_dedicated_agents`), which `serves_refusal` also asks."""
     runners = [r for r in runners if r is not None]
     prime_dedicated_agents(runners)
     machines = {r.machine_id for r in runners if r.machine_id}
     rows = list(Runner.objects.filter(machine_id__in=machines).exclude(status=Runner.RETIRED)
                 .values_list("pk", "name", "machine_id", "capabilities")) if machines else []
     for r in runners:
-        units: dict = {}
+        agent_runners: dict = {}
         for pk, name, machine, caps in rows:
             if machine != r.machine_id or pk == r.pk:
                 continue
-            unit = (caps or {}).get("unit")
-            slug = _agent_unit_slug(unit) if isinstance(unit, dict) else None
+            slug = _served_agent_slug(serves_of(caps))
             if slug:
-                units.setdefault(slug, name)
-        setattr(r, _MACHINE_UNITS, units)
+                agent_runners.setdefault(slug, name)
+        setattr(r, _MACHINE_AGENT_RUNNERS, agent_runners)
 
 
-def machine_agent_units(runner: Runner) -> dict:
+def machine_agent_runners(runner: Runner) -> dict:
     """{agent slug: runner name} for the runners on `runner`'s machine that run one
     agent, other than itself — {} for a runner on no known machine."""
     if not runner.machine_id:
         return {}
-    if not hasattr(runner, _MACHINE_UNITS):
-        prime_machine_units([runner])
-    return getattr(runner, _MACHINE_UNITS)
+    if not hasattr(runner, _MACHINE_AGENT_RUNNERS):
+        prime_machine_runners([runner])
+    return getattr(runner, _MACHINE_AGENT_RUNNERS)
 
 
-def unit_refusal(runner: Runner, slug: str) -> str:
+def serves_refusal(runner: Runner, slug: str) -> str:
     """Why what `runner` serves on its machine keeps it from running agent `slug` —
     "" when it does not:
 
@@ -211,32 +211,32 @@ def unit_refusal(runner: Runner, slug: str) -> str:
     asks it above the pin, and the vault through `runner_routes_agent`."""
     if not slug:
         return ""
-    own = _agent_unit_slug(runner.unit())
+    own = _served_agent_slug(runner.serves())
     if own is not None and slug != own:
         return f"{runner.name} is the runner for agent {own or '(no agent named)'}"
     only = dedicated_agent_slugs(runner)
     if only is not None and slug not in only:
         return _dedicated_refusal(runner, only)
-    sibling = machine_agent_units(runner).get(slug)
+    sibling = machine_agent_runners(runner).get(slug)
     if sibling and own != slug:
         return f"{slug} has its own runner on this machine ({sibling})"
     return ""
 
 
-def turn_unit_refusal(runner: Runner, turn) -> str:
-    """`unit_refusal` for a whole turn: an agent's runner refuses every turn that does
+def turn_serves_refusal(runner: Runner, turn) -> str:
+    """`serves_refusal` for a whole turn: an agent's runner refuses every turn that does
     not run AS its agent — another agent's, and one with no acting agent at all
     (a repo turn, an agentless chat) — and any runner refuses a turn whose agent
     has its own runner elsewhere on its machine. A runner a person dedicated to
     some agents refuses the same way. "" when it takes the turn."""
     agent = turn.acting_agent
-    own = _agent_unit_slug(runner.unit())
+    own = _served_agent_slug(runner.serves())
     if own is not None and (agent is None or agent.slug != own):
         return f"{runner.name} is the runner for agent {own or '(no agent named)'}"
     only = dedicated_agent_slugs(runner)
     if only is not None and agent is None:
         return _dedicated_refusal(runner, only)
-    return unit_refusal(runner, agent.slug) if agent is not None else ""
+    return serves_refusal(runner, agent.slug) if agent is not None else ""
 
 
 def agents_following_runner(runner: Runner, among=None) -> set:
@@ -289,7 +289,7 @@ def runner_routes_agent(runner: Runner, agent, facts: ServingFacts | None = None
     if runner.status == Runner.RETIRED or not runner.owner_id or runner.directed_only():
         return False
     facts = facts or ServingFacts([runner], [agent])
-    if unit_refusal(runner, agent.slug):
+    if serves_refusal(runner, agent.slug):
         return False
     if agent.workspace_id not in facts.tenant_slugs(runner):
         return False
@@ -316,11 +316,11 @@ class ServingFacts:
         self.agents = list(agents)
         self._by_pk = {r.pk: r for r in self.runners}
         # Each runner's flags (`runner_may_hold_agent`), enrollments
-        # (`runner_tenant_slugs_of`) and what each serves (`unit_refusal`) without a query each.
+        # (`runner_tenant_slugs_of`) and what each serves (`serves_refusal`) without a query each.
         bare = [r for r in self.runners if "declared_flags" not in getattr(r, "_prefetched_objects_cache", {})]
         if bare:
             prefetch_related_objects(bare, "declared_flags", "enrollments")
-        prime_machine_units([r for r in self.runners if not hasattr(r, _MACHINE_UNITS)])
+        prime_machine_runners([r for r in self.runners if not hasattr(r, _MACHINE_AGENT_RUNNERS)])
         self._tenants: dict | None = None
         self._inherited: dict | None = None
         self._assigned: set | None = None
@@ -400,7 +400,7 @@ def agents_routed_to(runner: Runner):
     candidates = Agent.objects.filter(id__in=listed | agents_following_runner(runner),
                                       workspace_id__in=tenant)
     held = [a.id for a in candidates
-            if runner_may_hold_agent(runner, a) and not unit_refusal(runner, a.slug)]
+            if runner_may_hold_agent(runner, a) and not serves_refusal(runner, a.slug)]
     return Agent.objects.filter(id__in=held).select_related("owner").order_by("slug")
 
 
@@ -489,7 +489,7 @@ def inherited_orders(agent_ids) -> dict:
                 inh.missing_repo.append(r)
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)
-            elif unit_refusal(r, agent.slug):
+            elif serves_refusal(r, agent.slug):
                 continue  # another agent's runner, or the agent has its own: not for it
             else:
                 inh.runners.append(r)
@@ -655,7 +655,7 @@ def load_workspace_orders(ws_ids) -> dict:
         .exclude(runner__status=Runner.RETIRED).order_by("rank")
     )
     rows = list(rows)
-    prime_machine_units([row.runner for row in rows])
+    prime_machine_runners([row.runner for row in rows])
     for row in rows:
         out.setdefault(row.workspace_id, []).append(row.runner)
     return out
@@ -921,7 +921,7 @@ def blocking_turn(turn: Turn) -> Turn | None:
 
 
 def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
-                    *, ignore_unit: bool = False) -> Q:
+                    *, ignore_serves: bool = False) -> Q:
     """Which queued turns this runner can TARGET under directed routing (spec
     2026-07-24): agents via RunnerAssignment (the one source of truth —
     capabilities.agents no longer routes agent turns), repos via
@@ -979,13 +979,13 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
                 | Q(chat_session__runner_binding__runner=runner)
             )
         )
-    own = None if ignore_unit else _agent_unit_slug(runner.unit())
+    own = None if ignore_serves else _served_agent_slug(runner.serves())
     if own is not None:
         # An agent's runner targets its one agent's turns and chats, nothing else —
-        # no repo turns, no agentless chats (`turn_unit_refusal`). `ignore_unit`
+        # no repo turns, no agentless chats (`turn_serves_refusal`). `ignore_serves`
         # is the unclaimable report's counterfactual only.
         q &= Q(agent__slug=own) | Q(chat_session__agent__slug=own)
-    only = None if ignore_unit else dedicated_agent_slugs(runner)
+    only = None if ignore_serves else dedicated_agent_slugs(runner)
     if only is not None:
         # Likewise a runner a person dedicated to some agents (`Runner.only_agents`).
         q &= Q(agent__slug__in=only) | Q(chat_session__agent__slug__in=only)

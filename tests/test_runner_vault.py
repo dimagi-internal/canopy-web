@@ -111,7 +111,7 @@ def test_two_boxes_in_one_boundary_share_a_vault(fleet):
     assert {r.pk for r in workspace_vaults.serving_runners(v)} == {fleet["runner"].pk, second.pk}
 
 
-@pytest.mark.parametrize("difference", ["owner", "sensitive", "agent_unit"])
+@pytest.mark.parametrize("difference", ["owner", "sensitive", "agent_runner"])
 def test_a_box_across_the_boundary_is_refused(fleet, difference):
     v = workspace_vaults.create_for_runner(fleet["runner"], by=fleet["user"])
     if difference == "owner":
@@ -121,7 +121,7 @@ def test_a_box_across_the_boundary_is_refused(fleet, difference):
     elif difference == "sensitive":
         other = _other_runner(fleet, capabilities={"data_mode": "sensitive_data"})
     else:
-        other = _other_runner(fleet, capabilities={"unit": {"kind": "agent", "slug": "eva"}})
+        other = _other_runner(fleet, capabilities={"serves": {"kind": "agent", "slug": "eva"}})
     with pytest.raises(workspace_vaults.ZkError) as exc:
         workspace_vaults.attach(v, runner=other, by=fleet["user"])
     assert exc.value.code == "vault_crosses_isolation"

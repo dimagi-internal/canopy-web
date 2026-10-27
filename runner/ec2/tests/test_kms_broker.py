@@ -57,7 +57,7 @@ class FakeKms:
 KEYS = {2001: "alias/canopy-runner-ecdh/role", 2002: "alias/canopy-runner-ecdh/role/agent-eva"}
 
 
-def test_a_unit_gets_only_its_own_key(kb):
+def test_a_runner_gets_only_its_own_key(kb):
     kms = FakeKms()
     assert kb.answer(b'{"op":"public_key"}', 2002, KEYS, kms) == {
         "jwk": {"kty": "EC", "crv": "P-256", "x": "x-alias/canopy-runner-ecdh/role/agent-eva", "y": "y"}}
@@ -93,16 +93,29 @@ def test_a_failure_is_an_answer_never_a_crash(kb):
     assert "AccessDenied" in out["error"]
 
 
-def test_units_json_maps_uids_to_keys(kb, tmp_path):
-    doc = {"box": "cloud-ec2-9", "units": [
+def test_runners_json_maps_uids_to_keys(kb, tmp_path):
+    doc = {"box": "cloud-ec2-9", "runners": [
         {"id": "dimagi", "uid": 2001, "kms_key": KEYS[2001]},
         {"id": "agent-eva", "uid": 2002, "kms_key": KEYS[2002]},
         {"id": "broken", "uid": 0, "kms_key": "alias/x"},       # root is never a runner
         {"id": "nokey", "uid": 2003, "kms_key": ""},
     ]}
-    (tmp_path / "units.json").write_text(json.dumps(doc))
-    assert kb.load_keys(str(tmp_path / "units.json")) == KEYS
+    (tmp_path / "runners.json").write_text(json.dumps(doc))
+    assert kb.load_keys(str(tmp_path / "runners.json")) == KEYS
     assert kb.load_keys(str(tmp_path / "missing.json")) == {}
+
+
+def test_a_box_not_yet_moved_is_read_from_units_json(kb, tmp_path, monkeypatch):
+    """Until update_runner.sh moves it, the list is units.json, under `units` (remove in the follow-up)."""
+    doc = {"box": "cloud-ec2-9", "units": [{"id": "dimagi", "uid": 2001, "kms_key": KEYS[2001]},
+                                           {"id": "agent-eva", "uid": 2002, "kms_key": KEYS[2002]}]}
+    (tmp_path / "units.json").write_text(json.dumps(doc))
+    monkeypatch.setattr(kb, "RUNNERS_FILE", str(tmp_path / "runners.json"))
+    monkeypatch.setattr(kb, "OLD_RUNNERS_FILE", str(tmp_path / "units.json"))
+    assert kb.load_keys() == KEYS
+    # Once it is moved, the new file is read.
+    (tmp_path / "runners.json").write_text(json.dumps({"runners": doc["units"][:1]}))
+    assert kb.load_keys() == {2001: KEYS[2001]}
 
 
 def test_jwk_spki_round_trip_is_what_kms_and_cryptography_agree_on(kb):

@@ -2,9 +2,9 @@
 
 Each runner serves a workspace tree or a single agent, each its own Unix user with
 its own keys. Two refusals keep routing inside that, both declared by the box about
-itself (`routing.unit_refusal`, part of `routing.cannot_serve`):
+itself (`routing.serves_refusal`, part of `routing.cannot_serve`):
 
-  - one AGENT's runner (`capabilities.unit = {"kind": "agent", "slug": S}`) runs only S;
+  - one AGENT's runner (`capabilities.serves = {"kind": "agent", "slug": S}`) runs only S;
   - when an agent has a runner of its own on a machine (`Runner.machine_id`), no
     other runner on that machine runs it, so its secrets stay with that runner.
 
@@ -32,9 +32,9 @@ pytestmark = pytest.mark.django_db
 ROLE = "arn:aws:iam::111122223333:role/cloud-ec2-2-RunnerRole"
 
 
-def _runner(owner, name, ws, *, unit=None, machine="", kind=Runner.CLOUD, **caps):
-    if unit is not None:
-        caps["unit"] = unit
+def _runner(owner, name, ws, *, serves=None, machine="", kind=Runner.CLOUD, **caps):
+    if serves is not None:
+        caps["serves"] = serves
     return Runner.objects.create(name=name, kind=kind, host=name, owner=owner, workspace=ws,
                                  status=Runner.ONLINE, last_heartbeat_at=timezone.now(),
                                  capabilities=caps, machine_id=machine)
@@ -46,13 +46,13 @@ def box():
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     WorkspaceMembership.objects.create(workspace=dimagi, user=jj, role=WorkspaceMembership.OWNER)
-    tree = _runner(jj, "cloud-ec2-2-dimagi", dimagi, unit={"kind": "tree", "root": "dimagi"},
+    tree = _runner(jj, "cloud-ec2-2-dimagi", dimagi, serves={"kind": "tree", "root": "dimagi"},
                    machine=ROLE)
-    eva_unit = _runner(jj, "cloud-ec2-2-agent-eva", dimagi, unit={"kind": "agent", "slug": "eva"},
+    eva_runner = _runner(jj, "cloud-ec2-2-agent-eva", dimagi, serves={"kind": "agent", "slug": "eva"},
                        machine=ROLE)
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=dimagi, owner=jj)
     ace = Agent.objects.create(slug="ace", name="ACE", workspace=dimagi, owner=jj)
-    return {"jj": jj, "dimagi": dimagi, "tree": tree, "eva_unit": eva_unit, "eva": eva, "ace": ace}
+    return {"jj": jj, "dimagi": dimagi, "tree": tree, "eva_runner": eva_runner, "eva": eva, "ace": ace}
 
 
 def _turn(agent, key, *, age=3600, **kw):
@@ -69,42 +69,42 @@ def _client(user):
 
 
 # ---- the refusals themselves ---------------------------------------------------------
-def test_cannot_serve_is_unchanged_for_runners_with_no_unit_and_no_machine(box):
+def test_cannot_serve_is_unchanged_for_runners_that_serve_nothing_and_have_no_machine(box):
     plain = _runner(box["jj"], "jj-cloud", box["dimagi"])
-    assert routing.unit_refusal(plain, "eva") == ""
+    assert routing.serves_refusal(plain, "eva") == ""
     assert routing.cannot_serve(plain, "eva") == ""
     assert routing.cannot_serve(plain, "ace") == ""
     # A tree's runner on a machine with no agent's runner refuses nothing either.
     other = _runner(box["jj"], "cloud-ec2-9", box["dimagi"],
-                    unit={"kind": "tree", "root": "dimagi"}, machine=ROLE.replace("2", "9"))
+                    serves={"kind": "tree", "root": "dimagi"}, machine=ROLE.replace("2", "9"))
     assert routing.cannot_serve(other, "eva") == ""
 
 
 def test_the_two_refusals_and_their_reasons(box):
-    tree, eva_unit = box["tree"], box["eva_unit"]
-    assert routing.cannot_serve(eva_unit, "eva") == ""
-    assert routing.cannot_serve(eva_unit, "ace") == "cloud-ec2-2-agent-eva is the runner for agent eva"
+    tree, eva_runner = box["tree"], box["eva_runner"]
+    assert routing.cannot_serve(eva_runner, "eva") == ""
+    assert routing.cannot_serve(eva_runner, "ace") == "cloud-ec2-2-agent-eva is the runner for agent eva"
     assert routing.cannot_serve(tree, "ace") == ""
     assert routing.cannot_serve(tree, "eva") == (
         "eva has its own runner on this machine (cloud-ec2-2-agent-eva)")
 
 
-def test_a_retired_agent_unit_releases_its_agent(box):
-    Runner.objects.filter(pk=box["eva_unit"].pk).update(status=Runner.RETIRED)
+def test_a_retired_agent_runner_releases_its_agent(box):
+    Runner.objects.filter(pk=box["eva_runner"].pk).update(status=Runner.RETIRED)
     tree = Runner.objects.get(pk=box["tree"].pk)
     assert routing.cannot_serve(tree, "eva") == ""
 
 
 # ---- claim parity ----------------------------------------------------------------------
-def test_an_agent_unit_claims_only_its_agent(box):
-    eva_unit, ace, eva = box["eva_unit"], box["ace"], box["eva"]
+def test_an_agent_runner_claims_only_its_agent(box):
+    eva_runner, ace, eva = box["eva_runner"], box["ace"], box["eva"]
     # Rows written straight to the table, past the routing-write gate.
-    RunnerAssignment.objects.create(agent=ace, runner=eva_unit, rank=0)
-    RunnerAssignment.objects.create(agent=eva, runner=eva_unit, rank=0)
+    RunnerAssignment.objects.create(agent=ace, runner=eva_runner, rank=0)
+    RunnerAssignment.objects.create(agent=eva, runner=eva_runner, rank=0)
     t_ace = _turn(ace, "ace")
-    assert claim.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(eva_runner) is None
     t_eva = _turn(eva, "eva")
-    claimed = claim.claim_next_turn(eva_unit)
+    claimed = claim.claim_next_turn(eva_runner)
     assert claimed is not None and claimed.pk == t_eva.pk
     assert Turn.objects.get(pk=t_ace.pk).status == Turn.QUEUED
 
@@ -113,34 +113,34 @@ def test_an_agent_unit_claims_only_its_agent(box):
     assert "runner for agent eva" in rows[str(t_ace.pk)]["reason"]
 
 
-def test_an_agent_with_its_own_unit_is_claimed_by_no_other_unit_on_the_machine(box):
-    tree, eva_unit, eva = box["tree"], box["eva_unit"], box["eva"]
+def test_an_agent_with_its_own_runner_is_claimed_by_no_other_runner_on_the_machine(box):
+    tree, eva_runner, eva = box["tree"], box["eva_runner"], box["eva"]
     RunnerAssignment.objects.create(agent=eva, runner=tree, rank=0)
     t = _turn(eva, "eva")
     assert claim.claim_next_turn(tree) is None
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert "eva has its own runner on this machine" in rows[str(t.pk)]["reason"]
 
-    RunnerAssignment.objects.create(agent=eva, runner=eva_unit, rank=1)
-    assert claim.claim_next_turn(eva_unit).pk == t.pk
+    RunnerAssignment.objects.create(agent=eva, runner=eva_runner, rank=1)
+    assert claim.claim_next_turn(eva_runner).pk == t.pk
 
 
-def test_a_workspace_order_naming_both_units_routes_each_agent_to_its_own(box):
-    tree, eva_unit = box["tree"], box["eva_unit"]
-    WorkspaceRunnerOrder.objects.create(workspace=box["dimagi"], runner=eva_unit, rank=0)
+def test_a_workspace_order_naming_both_runners_routes_each_agent_to_its_own(box):
+    tree, eva_runner = box["tree"], box["eva_runner"]
+    WorkspaceRunnerOrder.objects.create(workspace=box["dimagi"], runner=eva_runner, rank=0)
     WorkspaceRunnerOrder.objects.create(workspace=box["dimagi"], runner=tree, rank=1)
     t_ace, t_eva = _turn(box["ace"], "ace", age=0), _turn(box["eva"], "eva", age=0)
     # The eva runner is not a better-ranked blocker for ace: it is not in ace's list.
     assert claim.claim_next_turn(tree).pk == t_ace.pk
     assert claim.claim_next_turn(tree) is None
-    assert claim.claim_next_turn(eva_unit).pk == t_eva.pk
+    assert claim.claim_next_turn(eva_runner).pk == t_eva.pk
 
 
-def test_a_pin_does_not_get_past_the_unit(box):
-    eva_unit, tree = box["eva_unit"], box["tree"]
-    t_ace = _turn(box["ace"], "ace", pinned_runner=eva_unit)
+def test_a_pin_does_not_get_past_what_a_runner_serves(box):
+    eva_runner, tree = box["eva_runner"], box["tree"]
+    t_ace = _turn(box["ace"], "ace", pinned_runner=eva_runner)
     t_eva = _turn(box["eva"], "eva", pinned_runner=tree)
-    assert claim.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(eva_runner) is None
     assert claim.claim_next_turn(tree) is None
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert "runner for agent eva" in rows[str(t_ace.pk)]["reason"]
@@ -150,22 +150,22 @@ def test_a_pin_does_not_get_past_the_unit(box):
 def test_the_vault_reads_the_same_rule(box):
     from apps.harness.device_keys import runner_serves_agent
 
-    tree, eva_unit, eva, ace = box["tree"], box["eva_unit"], box["eva"], box["ace"]
+    tree, eva_runner, eva, ace = box["tree"], box["eva_runner"], box["eva"], box["ace"]
     RunnerAssignment.objects.create(agent=eva, runner=tree, rank=0)
-    RunnerAssignment.objects.create(agent=ace, runner=eva_unit, rank=0)
-    RunnerAssignment.objects.create(agent=eva, runner=eva_unit, rank=0)
+    RunnerAssignment.objects.create(agent=ace, runner=eva_runner, rank=0)
+    RunnerAssignment.objects.create(agent=eva, runner=eva_runner, rank=0)
     assert not routing.runner_routes_agent(tree, eva)
-    assert not routing.runner_routes_agent(eva_unit, ace)
-    assert routing.runner_routes_agent(eva_unit, eva)
+    assert not routing.runner_routes_agent(eva_runner, ace)
+    assert routing.runner_routes_agent(eva_runner, eva)
     assert not runner_serves_agent(tree, eva)
-    assert [a.slug for a in routing.agents_routed_to(eva_unit)] == ["eva"]
+    assert [a.slug for a in routing.agents_routed_to(eva_runner)] == ["eva"]
     assert "eva" not in {a.slug for a in routing.agents_routed_to(tree)}
 
 
 # ---- routing writes --------------------------------------------------------------------
-def test_routing_writes_that_cross_a_unit_are_refused(box):
+def test_routing_writes_that_cross_what_a_runner_serves_are_refused(box):
     c = _client(box["jj"])
-    resp = c.put("/api/agents/ace/runners", {"runner_ids": [str(box["eva_unit"].pk)]},
+    resp = c.put("/api/agents/ace/runners", {"runner_ids": [str(box["eva_runner"].pk)]},
                  content_type="application/json")
     assert resp.status_code == 422, resp.content
     assert "runner for agent eva" in resp.json()["detail"]
@@ -175,7 +175,7 @@ def test_routing_writes_that_cross_a_unit_are_refused(box):
     assert "eva has its own runner on this machine" in resp.json()["detail"]
     assert not RunnerAssignment.objects.exists()
 
-    resp = c.put("/api/agents/eva/runners", {"runner_ids": [str(box["eva_unit"].pk)]},
+    resp = c.put("/api/agents/eva/runners", {"runner_ids": [str(box["eva_runner"].pk)]},
                  content_type="application/json")
     assert resp.status_code == 200, resp.content
     resp = c.put("/api/agents/ace/runners", {"runner_ids": [str(box["tree"].pk)]},
@@ -184,16 +184,16 @@ def test_routing_writes_that_cross_a_unit_are_refused(box):
 
 
 # ---- the topology groups a machine's runners ---------------------------------------------
-def test_the_topology_lists_a_boxs_units_together(box):
+def test_the_topology_lists_a_machines_runners_together(box):
     _runner(box["jj"], "a-laptop", box["dimagi"], kind=Runner.EMDASH)
     _runner(box["jj"], "zz-other-box", box["dimagi"], machine="arn:aws:iam::111122223333:role/zz")
     rows = _client(box["jj"]).get("/api/workspaces/dimagi/runner-topology").json()["runners"]
     by_name = {r["name"]: r for r in rows}
     assert by_name["cloud-ec2-2-dimagi"]["machine"] == "cloud-ec2-2"
     assert by_name["cloud-ec2-2-agent-eva"]["machine"] == "cloud-ec2-2"
-    assert by_name["cloud-ec2-2-dimagi"]["unit"] == "tree:dimagi"
-    assert by_name["cloud-ec2-2-agent-eva"]["unit"] == "agent:eva"
-    assert by_name["a-laptop"]["machine"] == "" and by_name["a-laptop"]["unit"] == ""
+    assert by_name["cloud-ec2-2-dimagi"]["serves"] == "tree:dimagi"
+    assert by_name["cloud-ec2-2-agent-eva"]["serves"] == "agent:eva"
+    assert by_name["a-laptop"]["machine"] == "" and by_name["a-laptop"]["serves"] == ""
     names = [r["name"] for r in rows]
     i, j = names.index("cloud-ec2-2-agent-eva"), names.index("cloud-ec2-2-dimagi")
     assert abs(i - j) == 1
@@ -258,44 +258,44 @@ def _session_capable(*runners):
         r.refresh_from_db()
 
 
-def test_an_agent_unit_takes_no_repo_turn_and_no_agentless_chat(box):
-    eva_unit = box["eva_unit"]
-    _session_capable(eva_unit)
+def test_an_agent_runner_takes_no_repo_turn_and_no_agentless_chat(box):
+    eva_runner = box["eva_runner"]
+    _session_capable(eva_runner)
     repo = Turn.objects.create(project="canopy-web", workspace=box["dimagi"], origin=Turn.ORIGIN_API,
                                idempotency_key="repo", routing=Turn.ANY, prompt="fix it")
     Turn.objects.filter(pk=repo.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
     chat = _chat(box)
     pinned = Turn.objects.create(project="other-repo", workspace=box["dimagi"],
                                  origin=Turn.ORIGIN_API, idempotency_key="pinned",
-                                 routing=Turn.ANY, prompt="drill", pinned_runner=eva_unit)
+                                 routing=Turn.ANY, prompt="drill", pinned_runner=eva_runner)
     Turn.objects.filter(pk=pinned.pk).update(created_at=timezone.now() - dt.timedelta(hours=1))
-    assert claim.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(eva_runner) is None
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     for t in (repo, chat, pinned):
         assert "runner for agent eva" in rows[str(t.pk)]["reason"], rows[str(t.pk)]
     # Its own agent's chat it takes.
     own = _chat(box, agent=box["eva"], key="eva-chat")
-    RunnerAssignment.objects.create(agent=box["eva"], runner=eva_unit, rank=0)
-    assert claim.claim_next_turn(eva_unit).pk == own.pk
+    RunnerAssignment.objects.create(agent=box["eva"], runner=eva_runner, rank=0)
+    assert claim.claim_next_turn(eva_runner).pk == own.pk
 
 
-def test_a_tree_unit_still_takes_agentless_chats(box):
+def test_a_tree_runner_still_takes_agentless_chats(box):
     tree = box["tree"]
     _session_capable(tree)
     chat = _chat(box)
     assert claim.claim_next_turn(tree).pk == chat.pk
 
 
-def test_a_bound_chat_the_unit_refuses_reads_the_same_everywhere(box):
+def test_a_bound_chat_the_runner_refuses_reads_the_same_everywhere(box):
     """The binding short-circuit must not report a chat as live that the claim
     refuses: an ace chat bound to the eva runner, an eva chat bound to the tree."""
     from apps.harness.claim import turn_reach
 
-    tree, eva_unit = box["tree"], box["eva_unit"]
-    _session_capable(tree, eva_unit)
-    ace_chat = _chat(box, agent=box["ace"], bound_to=eva_unit, key="ace")
+    tree, eva_runner = box["tree"], box["eva_runner"]
+    _session_capable(tree, eva_runner)
+    ace_chat = _chat(box, agent=box["ace"], bound_to=eva_runner, key="ace")
     eva_chat = _chat(box, agent=box["eva"], bound_to=tree, key="eva")
-    assert claim.claim_next_turn(eva_unit) is None
+    assert claim.claim_next_turn(eva_runner) is None
     assert claim.claim_next_turn(tree) is None
     assert turn_reach(Turn.objects.get(pk=ace_chat.pk)).kind != "live"
     assert turn_reach(Turn.objects.get(pk=eva_chat.pk)).kind != "live"

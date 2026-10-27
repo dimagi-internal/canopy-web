@@ -102,14 +102,16 @@ def canopy():
 
 def _fake(tmp: pathlib.Path, *, stack_status=None, change_set=None, secrets=(),
           old_parts=0, stack_workspace="dimagi", pat_secret="", ecdh_slots="",
-          stack_units="", ecdh_read="", units_read="") -> pathlib.Path:
+          stack_runners="", old_stack_runners="", ecdh_read="", runners_read="") -> pathlib.Path:
+    """`old_stack_runners`: the runner stack's RunnerUnits, as a stack made before the
+    rename names its runners (`stack_runners` is its Runners)."""
     state = tmp / "state"
     state.mkdir()
     (state / "calls").write_text("")
     cfg = {"stack_status": stack_status, "change_set": change_set, "secrets": list(secrets),
            "old_parts": old_parts, "stack_workspace": stack_workspace, "role_arn": ROLE_ARN, "spki": SPKI,
-           "pat_secret": pat_secret, "ecdh_slots": ecdh_slots, "stack_units": stack_units,
-           "ecdh_read": ecdh_read, "units_read": units_read}
+           "pat_secret": pat_secret, "ecdh_slots": ecdh_slots, "stack_runners": stack_runners,
+           "old_stack_runners": old_stack_runners, "ecdh_read": ecdh_read, "runners_read": runners_read}
     (state / "cfg.json").write_text(json.dumps(cfg))
     bin_ = tmp / "bin"
     bin_.mkdir()
@@ -144,11 +146,13 @@ elif "describe-stacks" in a and "starts_with(ParameterKey" in arg("--query"):
         print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
         sys.exit(254)
     print(cfg["ecdh_slots"].replace(" ", chr(10)).replace("=", chr(9)))
-elif "describe-stacks" in a and "RunnerUnits" in arg("--query"):
-    if cfg.get("units_read") == "throttled":
+elif "describe-stacks" in a and "ParameterKey=='Runners'" in arg("--query"):
+    if cfg.get("runners_read") == "throttled":
         print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
         sys.exit(254)
-    print(cfg["stack_units"] or "None")
+    print(cfg["stack_runners"] or "None")
+elif "describe-stacks" in a and "ParameterKey=='RunnerUnits'" in arg("--query"):
+    print(cfg["old_stack_runners"] or "None")
 elif "describe-stacks" in a and "CanopyTokenSecret" in arg("--query"):
     print(cfg["pat_secret"])
 elif "describe-stacks" in a and "EcdhKeyArn" in arg("--query"):
@@ -305,17 +309,17 @@ def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):
     assert all(a == "Bearer t" for a in canopy.handler.auth), "up.sh speaks as the operator"
 
 
-def test_a_new_boxs_invitation_lists_its_one_unit(tmp_path, canopy):
-    # A new box runs its runners the --install-units way (one: tree:<workspace>, named the box) and
+def test_a_new_boxs_invitation_lists_its_one_runner(tmp_path, canopy):
+    # A new box runs its runners the --install-runners way (one: tree:<workspace>, named the box) and
     # pairs listing it; an invitation without it is refused at every pairing call
     # however it is approved (found standing up the first sensitive-data box, 2026-10-22).
     _fake(tmp_path)
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "connect")
     assert res.returncode == 0, res.stdout + res.stderr
     (_path, body), = [p for p in canopy.handler.posted if p[0] == "/api/harness/runner-invitations/"]
-    assert [(u["name"], u["kind"], u["workspace"]) for u in body["units"]] == [
+    assert [(u["name"], u["kind"], u["workspace"]) for u in body["runners"]] == [
         ("cloud-ec2-test", "tree", "connect")]
-    assert "RunnerUnits=tree:connect" in res.stdout
+    assert "Runners=tree:connect" in res.stdout
 
 
 def test_an_invitation_that_expires_says_rerun(tmp_path, canopy):
@@ -445,52 +449,54 @@ def test_up_workspace_names_where_the_box_pairs(tmp_path, canopy):
     assert "directed" not in body
 
 
-# ---- several runners on one machine (spec 2026-10-19-runner-isolation-units, plan Task 6.6) --
+# ---- several runners on one machine (docs/architecture/runners.md) --
 
-def test_up_units_invites_every_unit_in_one_invitation(tmp_path, canopy):
+def test_up_runners_invites_every_runner_in_one_invitation(tmp_path, canopy):
     state = _fake(tmp_path)
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi",
-              "--units", "tree:dimagi,tree:connect,agent:eva")
+              "--runners", "tree:dimagi,tree:connect,agent:eva")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert " RunnerUnits=tree:dimagi,tree:connect,agent:eva " in _deploy(state)
+    assert " Runners=tree:dimagi,tree:connect,agent:eva " in _deploy(state)
     ecdh = next(c for c in _calls(state) if "cloudformation deploy" in c and "-ecdh" in c)
-    for p in ("Unit1=connect", "Unit2=agent-eva", "Unit3=", "Unit4="):
+    for p in ("Runner1=connect", "Runner2=agent-eva", "Runner3=", "Runner4="):
         assert f" {p}" in ecdh + " ", (p, ecdh)
     # Each extra runner's key is read by the alias the -ecdh stack gives it.
     assert any("get-public-key --key-id alias/canopy-runner-ecdh/canopy-cloud-runner-test-RunnerRole-X/agent-eva"
                in c for c in _calls(state))
     [(_, body)] = [(p, b) for p, b in canopy.handler.posted if p == "/api/harness/runner-invitations/"]
     assert body["name"] == "cloud-ec2-test"
-    assert [(u["name"], u["workspace"], u["kind"], u["slug"]) for u in body["units"]] == [
+    assert [(u["name"], u["workspace"], u["kind"], u["slug"]) for u in body["runners"]] == [
         ("cloud-ec2-test", "dimagi", "tree", ""), ("cloud-ec2-test-connect", "connect", "tree", ""),
         ("cloud-ec2-test-agent-eva", "dimagi", "agent", "eva")]
-    assert all("ecdh_public_jwk" in u for u in body["units"])
+    assert all("ecdh_public_jwk" in u for u in body["runners"])
+    # The same list under the old key, for a canopy-web from before the rename.
+    assert body["units"] == body["runners"]
     # Every runner's workspace passed the invitation's gates before AWS was touched.
     assert {"dimagi", "connect"} <= set(canopy.handler.checked)
 
 
-def test_up_units_refuses_a_workspace_you_cannot_run_work_in(tmp_path, canopy):
+def test_up_runners_refuses_a_workspace_you_cannot_run_work_in(tmp_path, canopy):
     state = _fake(tmp_path)
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi",
-              "--units", "tree:dimagi,tree:readonly")
+              "--runners", "tree:dimagi,tree:readonly")
     assert res.returncode != 0 and "readonly" in res.stderr
     assert not any("deploy" in c for c in _calls(state))
 
 
-def test_up_units_in_place_leaves_the_runner_stack_alone(tmp_path, canopy):
+def test_up_runners_in_place_leaves_the_runner_stack_alone(tmp_path, canopy):
     """Moving a live box to several runners: the KMS keys and the invitation, never an
-    instance stop/start or replacement — the box moves itself (--install-units)."""
+    instance stop/start or replacement — the box moves itself (--install-runners)."""
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=INSTANCE_CHANGE, stack_workspace="connect")
     canopy.handler.runners = [{"kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units", "tree:connect,agent:eva@connect",
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--runners", "tree:connect,agent:eva@connect",
               "--in-place")
     assert res.returncode == 0, res.stdout + res.stderr
     deploys = [c for c in _calls(state) if "cloudformation deploy" in c]
     assert deploys and all("-ecdh" in c for c in deploys), deploys
     assert not any("execute-change-set" in c for c in _calls(state))
-    assert "--install-units" in res.stdout and "RUNNER_UNITS=tree:connect,agent:eva@connect" in res.stdout
+    assert "--install-runners" in res.stdout and "RUNNERS=tree:connect,agent:eva@connect" in res.stdout
     [(_, body)] = [(p, b) for p, b in canopy.handler.posted if p == "/api/harness/runner-invitations/"]
-    assert [u["name"] for u in body["units"]] == ["cloud-ec2-test", "cloud-ec2-test-agent-eva"]
+    assert [u["name"] for u in body["runners"]] == ["cloud-ec2-test", "cloud-ec2-test-agent-eva"]
 
 
 
@@ -500,62 +506,69 @@ def _ecdh_deploy(state):
     return next(c for c in _calls(state) if "cloudformation deploy" in c and "-ecdh" in c) + " "
 
 
-def test_a_plain_rerun_keeps_every_unit_key_slot(tmp_path, canopy):
-    """`./up.sh --name cloud-ec2-2` after a move must not blank Unit1..4: that would
+def test_a_plain_rerun_keeps_every_runner_key_slot(tmp_path, canopy):
+    """`./up.sh --name cloud-ec2-2` after a move must not blank Runner1..4: that would
     remove the runners' KMS keys and break every wrap to them."""
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  ecdh_slots="Unit1=marsh Unit2=agent-eva Unit3= Unit4=")
+                  ecdh_slots="Runner1=marsh Runner2=agent-eva Runner3= Runner4=")
     canopy.handler.runners = [{"kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
     assert res.returncode == 0, res.stdout + res.stderr
     ecdh = _ecdh_deploy(state)
-    for p in ("Unit1=marsh", "Unit2=agent-eva", "Unit3=", "Unit4="):
+    for p in ("Runner1=marsh", "Runner2=agent-eva", "Runner3=", "Runner4="):
         assert f" {p} " in ecdh, (p, ecdh)
 
 
-def test_a_reordered_units_list_keeps_each_unit_in_its_slot(tmp_path, canopy):
+def test_a_reordered_runners_list_keeps_each_runner_in_its_slot(tmp_path, canopy):
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  ecdh_slots="Unit1=dimagi Unit2=agent-eva Unit3= Unit4=")
+                  ecdh_slots="Runner1=dimagi Runner2=agent-eva Runner3= Runner4=")
     canopy.handler.runners = [{"kind": "cloud", "name": n, "status": "online"} for n in
                               ("cloud-ec2-test", "cloud-ec2-test-dimagi", "cloud-ec2-test-agent-eva",
                                "cloud-ec2-test-canopy")]
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units",
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--runners",
               "tree:connect,tree:canopy,agent:eva@connect,tree:dimagi")
     assert res.returncode == 0, res.stdout + res.stderr
     ecdh = _ecdh_deploy(state)
-    for p in ("Unit1=dimagi", "Unit2=agent-eva", "Unit3=canopy", "Unit4="):
+    for p in ("Runner1=dimagi", "Runner2=agent-eva", "Runner3=canopy", "Runner4="):
         assert f" {p} " in ecdh, (p, ecdh)
 
 
-def test_dropping_a_unit_needs_remove_unit(tmp_path, canopy):
+def test_dropping_a_runner_needs_remove_runner(tmp_path, canopy):
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  ecdh_slots="Unit1=dimagi Unit2=agent-eva Unit3= Unit4=")
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units", "tree:connect,agent:eva@connect")
-    assert res.returncode != 0 and "--remove-unit dimagi" in res.stderr
+                  ecdh_slots="Runner1=dimagi Runner2=agent-eva Runner3= Runner4=")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--runners", "tree:connect,agent:eva@connect")
+    assert res.returncode != 0 and "--remove-runner dimagi" in res.stderr
     assert not any("-ecdh" in c and "deploy" in c for c in _calls(state))
     canopy.handler.runners = [{"kind": "cloud", "name": n, "status": "online"} for n in
                               ("cloud-ec2-test", "cloud-ec2-test-agent-eva")]
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units", "tree:connect,agent:eva@connect",
-              "--remove-unit", "dimagi")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--runners", "tree:connect,agent:eva@connect",
+              "--remove-runner", "dimagi")
     assert res.returncode == 0, res.stdout + res.stderr
     ecdh = _ecdh_deploy(state)
-    assert " Unit1= " in ecdh and " Unit2=agent-eva " in ecdh
+    assert " Runner1= " in ecdh and " Runner2=agent-eva " in ecdh
 
 
-def test_a_plain_rerun_keeps_the_stacks_units(tmp_path, canopy):
+@pytest.mark.parametrize("named", ["stack_runners", "old_stack_runners"])
+def test_a_plain_rerun_keeps_the_stacks_runners(tmp_path, canopy, named):
+    """`old_stack_runners`: a stack made before the rename names them RunnerUnits, and
+    its -ecdh stack's slots Unit<i>: both are read, and deployed under the new names.
+    (Remove the old-name case in the follow-up.)"""
+    slot = "Runner1" if named == "stack_runners" else "Unit1"
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  stack_units="tree:connect,agent:eva@connect", ecdh_slots="Unit1=agent-eva")
+                  **{named: "tree:connect,agent:eva@connect"}, ecdh_slots=f"{slot}=agent-eva")
     canopy.handler.runners = [{"kind": "cloud", "name": n, "status": "online"} for n in
                               ("cloud-ec2-test", "cloud-ec2-test-agent-eva")]
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert " RunnerUnits=tree:connect,agent:eva@connect " in _deploy(state)
+    assert " Runners=tree:connect,agent:eva@connect " in _deploy(state)
+    ecdh = _ecdh_deploy(state)
+    assert " Runner1=agent-eva " in ecdh and "Unit1" not in ecdh
 
 
 def test_in_place_always_invites_because_adopting_needs_approval(tmp_path, canopy):
     _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=INSTANCE_CHANGE, stack_workspace="connect")
     canopy.handler.runners = [{"kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
-    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--units", "tree:connect", "--in-place")
+    res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--runners", "tree:connect", "--in-place")
     assert res.returncode == 0, res.stdout + res.stderr
     assert any(p == "/api/harness/runner-invitations/" for p, _ in canopy.handler.posted)
 
@@ -563,25 +576,25 @@ def test_in_place_always_invites_because_adopting_needs_approval(tmp_path, canop
 
 def test_a_failed_slot_read_aborts_before_anything_is_deployed(tmp_path, canopy):
     """A transient AWS error must never read as "no slots" — that would blank
-    Unit1..4 and remove the runners' key aliases on the next -ecdh deploy."""
+    Runner1..4 and remove the runners' key aliases on the next -ecdh deploy."""
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  ecdh_slots="Unit1=marsh", ecdh_read="throttled")
+                  ecdh_slots="Runner1=marsh", ecdh_read="throttled")
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
     assert res.returncode != 0 and "runner key slots" in res.stderr and "Throttling" in res.stderr
     assert not any("cloudformation deploy" in c for c in _calls(state))
 
 
-def test_a_failed_units_read_aborts(tmp_path, canopy):
+def test_a_failed_runners_read_aborts(tmp_path, canopy):
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
-                  units_read="throttled")
+                  runners_read="throttled")
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
-    assert res.returncode != 0 and "RunnerUnits" in res.stderr
+    assert res.returncode != 0 and "Runners" in res.stderr
     assert not any("cloudformation deploy" in c for c in _calls(state))
 
 
 def test_a_missing_ecdh_stack_means_no_slots_yet(tmp_path, canopy):
     state = _fake(tmp_path, ecdh_read="missing")
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test", "--workspace", "dimagi",
-              "--units", "tree:dimagi,tree:connect")
+              "--runners", "tree:dimagi,tree:connect")
     assert res.returncode == 0, res.stdout + res.stderr
-    assert " Unit1=connect " in _ecdh_deploy(state)
+    assert " Runner1=connect " in _ecdh_deploy(state)

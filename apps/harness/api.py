@@ -29,6 +29,7 @@ from .models import (
     Runner,
     RunnerDrill,
     Turn,
+    with_serves_key,
 )
 from .schedule_services import serialize_schedule
 from .schemas import (
@@ -442,8 +443,9 @@ def declared_capabilities(caps: dict) -> dict:
     """What a pairing box may declare. `profiles` is REPORTED on heartbeat, never
     declared: a box that says at pairing it can confine a caller's session would
     be believed until its first beat. Dropped rather than refused, so an old
-    pairing script that copies a whole capabilities dict still pairs."""
-    return {k: v for k, v in (caps or {}).items() if k not in REPORTED_CAPABILITIES}
+    pairing script that copies a whole capabilities dict still pairs. What it serves
+    is kept under its current name (`with_serves_key`)."""
+    return with_serves_key({k: v for k, v in (caps or {}).items() if k not in REPORTED_CAPABILITIES})
 
 
 # The routes live in their own modules but on THIS router, registered in this

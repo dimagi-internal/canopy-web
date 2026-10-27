@@ -85,7 +85,7 @@ the rule, its claim/schedule parity test and the routing hint:
   one runner's token or proof never reads another runner's agents, and an agent's vault
   key is wrapped only to the runners that run it. Inside a runner, agents share a user:
   the runner, not a rail, is the boundary. Root on the machine is trusted.
-  → [runners.md § Setting up the runners on a machine](runners.md#setting-up-the-runners-on-a-machine-runnerunits)
+  → [runners.md § Setting up the runners on a machine](runners.md#setting-up-the-runners-on-a-machine-runners)
 - **Sessions a runner reports are filed inside its tenant.** A new agent-less
   session names its agent only among agents in `runner_tenant_slugs(runner)`
   (`harness.session_sync._agent_for_project`: `Agent.slug` is global). A session whose
