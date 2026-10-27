@@ -355,4 +355,4 @@ def embed_session_memory(request: HttpRequest, session_id: str) -> EmbedSessionM
     from apps.contacts.people_api import session_memory_payload
 
     return EmbedSessionMemoryOut(**session_memory_payload(person, session),
-                                 manage_path=f"/w/{session.workspace_id}/chat/{session.pk}")
+                                 manage_path=f"/w/{session.workspace_id}/sessions/{session.pk}")

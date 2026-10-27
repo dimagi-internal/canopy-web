@@ -58,6 +58,6 @@ describe('isDocumentable', () => {
 
   it('includes real surfaces', () => {
     expect(isDocumentable('/settings')).toBe(true)
-    expect(isDocumentable('/w/:workspace/chat/:id')).toBe(true)
+    expect(isDocumentable('/w/:workspace/sessions/:id')).toBe(true)
   })
 })

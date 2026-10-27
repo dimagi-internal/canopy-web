@@ -132,7 +132,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     flat: 'personal/global: one session open in the IDE; the session itself names its workspace',
     title: 'IDE — one session',
     audience: 'Someone running sessions on several runners or laptop logins (desktop)',
-    what: 'The IDE with one session open on the right: the same live chat as /w/:workspace/chat/:id, with the project tree still beside it. Arrow keys in the tree move between sessions.',
+    what: 'The IDE with one session open on the right: the same live chat as /w/:workspace/sessions/:id, with the project tree still beside it. Arrow keys in the tree move between sessions.',
     needsFirst: 'A session you can see.',
     actions: ['Send a message', 'Answer a question the agent is blocked on', 'Arrow up/down to the next session'],
   },
@@ -570,7 +570,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['See what fires this week', 'Jump into a schedule to edit or run it'],
   },
   {
-    path: '/w/:workspace/chat',
+    path: '/w/:workspace/sessions',
     title: 'Sessions',
     audience: 'An operator who wants work done',
     what: 'Your sessions in this workspace — chats with agents and the runner sessions filed here — so you can pick one up from any device.',
@@ -578,7 +578,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Start a new chat with an agent', 'Continue an existing session'],
   },
   {
-    path: '/w/:workspace/chat/:id',
+    path: '/w/:workspace/sessions/:id',
     title: 'One chat',
     audience: 'An operator',
     what: 'A live multiplayer chat with an agent. Sending enqueues a turn; the reply streams back as the agent works.',

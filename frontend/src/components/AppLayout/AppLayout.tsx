@@ -363,10 +363,10 @@ function AppShell() {
     // An individual Agent Workspace (/agents/<slug>) is a full-bleed workbench
     // like DDD; the bare /agents LIST stays in the standard container.
     /^\/agents\/[^/]+/.test(location.pathname) ||
-    // The standalone live chat (/w/:ws/chat/:id) is a full-height surface —
+    // The standalone live chat (/w/:ws/sessions/:id) is a full-height surface —
     // the composer must sit at the viewport bottom with the list scrolling
     // above it, not flow inside the padded max-w container.
-    /\/chat\/[^/]+/.test(location.pathname)
+    /\/sessions\/[^/]+/.test(location.pathname)
   // /ide can fold the app bar away for vertical room; its own ☰ brings it back.
   const appBarHidden = useAppBarHidden() && location.pathname.startsWith('/ide')
 

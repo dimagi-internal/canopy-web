@@ -69,7 +69,7 @@ def test_broadcast_posts_once_top_level_and_binds_nothing(slack, linked, alice, 
     assert post["channel"] == "C1" and "thread_ts" not in post
     assert f"<@{ALICE}>" in post["text"]
     assert "*share to Slack*" in post["text"]                 # Markdown → mrkdwn
-    assert f"/chat/{repo_session.id}" in post["text"]
+    assert f"/sessions/{repo_session.id}" in post["text"]
     repo_session.refresh_from_db()
     assert "slack_thread" not in repo_session.metadata
     assert Event.objects.filter(kind="slack.shared").exists()
@@ -84,7 +84,7 @@ def test_a_reply_to_a_broadcast_never_reaches_the_session(slack, linked, alice, 
 def test_broadcast_needs_no_session(slack, linked, alice):
     result = _share(alice)
     assert result.status == share.SHARED
-    assert "/chat/" not in slack.said("chat.postMessage")[0]["text"]
+    assert "/sessions/" not in slack.said("chat.postMessage")[0]["text"]
 
 
 # ---- bind --------------------------------------------------------------------

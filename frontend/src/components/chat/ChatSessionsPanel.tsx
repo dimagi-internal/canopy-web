@@ -84,7 +84,7 @@ function readList(archived: boolean, workspace?: string): Promise<ChatSession[]>
  * sessions (continue any from any device) + "New chat with <agent>". Each session
  * links to ITS OWN workspace's chat route, and a new chat is created in the chosen
  * agent's workspace. Given a `workspace`, it lists that workspace's sessions —
- * the chat home (/w/:ws/chat) is a page of one workspace; without one it spans
+ * the chat home (/w/:ws/sessions) is a page of one workspace; without one it spans
  * every workspace you are in, as the root-scoped supervisor Sessions tab does
  * (its single unified session list, no separate grouped-by-project view).
  */
@@ -402,7 +402,7 @@ export function ChatSessionsPanel({
                     invalid HTML and the anchor eats the click. */}
                 <div className="flex items-stretch">
                   <Link
-                    to={scopedPath(s.workspace, `/chat/${s.id}`)}
+                    to={scopedPath(s.workspace, `/sessions/${s.id}`)}
                     data-testid={parkedWhy ? `session-parked-${s.id}` : undefined}
                     className={`flex min-w-0 flex-1 items-center justify-between gap-3 px-3 py-2.5 hover:bg-muted${
                       parkedWhy || s.id in pendingClose ? ' opacity-60' : ''

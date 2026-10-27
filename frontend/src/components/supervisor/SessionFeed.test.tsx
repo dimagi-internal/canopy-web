@@ -163,7 +163,7 @@ describe('SessionFeed', () => {
     listSessions.mockResolvedValue([s('q', { waiting_on_you: true, running: true })])
     renderFeed()
     expect(await screen.findByText('needs an answer')).toBeTruthy()
-    expect(screen.getByRole('link', { name: /Answer it in the chat/ }).getAttribute('href')).toBe('/w/dimagi/chat/q')
+    expect(screen.getByRole('link', { name: /Answer it in the chat/ }).getAttribute('href')).toBe('/w/dimagi/sessions/q')
   })
 
   it('a short single-workspace feed shows no chips and no workspace names', async () => {

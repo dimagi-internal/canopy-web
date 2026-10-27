@@ -194,5 +194,5 @@ export function sessionReference(
   origin: string,
 ): string {
   const text = label.replace(/[[\]\\]/g, '\\$&')
-  return `[${text}](${origin}${scopedPath(s.workspace, `/chat/${s.id}`)})`
+  return `[${text}](${origin}${scopedPath(s.workspace, `/sessions/${s.id}`)})`
 }

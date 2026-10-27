@@ -23,8 +23,8 @@ function navItemPath(item: { path: string; tenant: boolean }): string {
 /**
  * Does `surface` belong under the nav item at `navPath`?
  *
- * Exact match, or a detail route beneath it — `/w/:workspace/chat/:id` belongs
- * with `/w/:workspace/chat`, because a reader looking for "the chat page" wants
+ * Exact match, or a detail route beneath it — `/w/:workspace/sessions/:id` belongs
+ * with `/w/:workspace/sessions`, because a reader looking for "the chat page" wants
  * the list and the single chat together. A page no menu links is matched by its
  * registry `home`, the page a reader reaches it from. (No nav item links the
  * bare tenant index any more — it redirects to Agents — so nothing here can

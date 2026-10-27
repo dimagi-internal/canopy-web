@@ -165,13 +165,13 @@ describe('deleteConsequence', () => {
 describe('sessionReference', () => {
   it('links the session page under its workspace, titled for the people reading', () => {
     expect(sessionReference({ id: 'abc', workspace: 'dimagi' }, 'Fix the runner', 'https://canopy.test')).toBe(
-      '[Fix the runner](https://canopy.test/w/dimagi/chat/abc)',
+      '[Fix the runner](https://canopy.test/w/dimagi/sessions/abc)',
     )
   })
 
   it('escapes brackets so a title cannot break the link', () => {
     expect(sessionReference({ id: 'abc', workspace: 'dimagi' }, '[wip] a]b', 'https://canopy.test')).toBe(
-      '[\\[wip\\] a\\]b](https://canopy.test/w/dimagi/chat/abc)',
+      '[\\[wip\\] a\\]b](https://canopy.test/w/dimagi/sessions/abc)',
     )
   })
 })

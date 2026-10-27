@@ -346,7 +346,7 @@ def notify_session_question(session, menu: dict) -> int:
             user,
             title=f"{session_label(session)} is asking",
             body=question,
-            url=f"/w/{session.workspace_id}/chat/{session.id}",
+            url=f"/w/{session.workspace_id}/sessions/{session.id}",
             urgency="high",
         )
     except Exception:  # noqa: BLE001 — never let a notification break the report
@@ -425,7 +425,7 @@ def _send_finish(session: Session, turn: Turn, user) -> int:
     try:
         return send_to_user(
             user, title=title, body=_finish_body(session, turn),
-            url=f"/w/{session.workspace_id}/chat/{session.id}",
+            url=f"/w/{session.workspace_id}/sessions/{session.id}",
         )
     except Exception:  # noqa: BLE001 — a notification must never break its caller
         logger.exception("push: session-finish notify failed for %s", session.pk)

@@ -76,7 +76,7 @@ export function AboutPage() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   {p.surfaces.map((s) => (
                     // Plain text, deliberately not a link — these are route
-                    // TEMPLATES (e.g. /w/:workspace/chat), not URLs an
+                    // TEMPLATES (e.g. /w/:workspace/sessions), not URLs an
                     // anonymous visitor could actually navigate to.
                     <code
                       key={s}

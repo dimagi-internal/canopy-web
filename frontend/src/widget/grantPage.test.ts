@@ -17,7 +17,7 @@ describe('which page the widget names when it mints', () => {
 
   it('names nothing anywhere else, so those mints carry no grant', () => {
     for (const path of ['/', '/w/connect', '/w/connect/agents/ace/work', '/w/connect/agents/ace/inbox', '/w/connect/agents/ace/skills',
-      '/w/connect/settings/members', '/w/connect/agents/ace/tasks/extra', '/w/connect/chat/123',
+      '/w/connect/settings/members', '/w/connect/agents/ace/tasks/extra', '/w/connect/sessions/123',
       // The retired Insights feed: no longer a grant page.
       '/insights', '/ide/a/b', '/ideas']) {
       expect(grantPageFor(path)).toBe('')

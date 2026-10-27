@@ -217,7 +217,7 @@ describe('ChatSessionMenu — Copy join link', () => {
     await openMenu()
     fireEvent.click(screen.getByTestId('copy-join-link'))
     await waitFor(() => expect(screen.getByText('Join link copied')).toBeTruthy())
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/dimagi/chat/s1`)
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/dimagi/sessions/s1`)
   })
 
   it('is hidden until the session knows its workspace', async () => {

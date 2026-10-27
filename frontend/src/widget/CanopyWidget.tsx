@@ -14,7 +14,7 @@ import { currentSpecs, onPageActionsChanged, runPageAction } from './pageActions
 /**
  * canopy-web embedding its own widget.
  *
- * Why bother, when canopy already has first-class chat at `/w/:ws/chat`: the
+ * Why bother, when canopy already has first-class chat at `/w/:ws/sessions`: the
  * reason to talk to an agent is usually about what is in front of you, and
  * that chat page is not in front of you. Two real cases drove this — an agent
  * inbox that has gone stale, and a feature set you decide to deprecate while
@@ -270,9 +270,9 @@ export function CanopyWidget() {
   return null
 }
 
-/** A chat session page, the chat home (`/w/:workspace/chat[/:id]`), or the
+/** A chat session page, the chat home (`/w/:workspace/sessions[/:id]`), or the
  *  session IDE (`/ide[/:id]`), which draws the same chat. Exported for its
  *  test — a route that is missed here puts the bubble back over a Send button. */
 export function isChatRoute(pathname: string): boolean {
-  return /\/w\/[^/]+\/chat(\/|$)/.test(pathname) || /^\/ide(\/|$)/.test(pathname)
+  return /\/w\/[^/]+\/sessions(\/|$)/.test(pathname) || /^\/ide(\/|$)/.test(pathname)
 }

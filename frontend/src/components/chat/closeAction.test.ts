@@ -69,8 +69,8 @@ describe('closeDestination', () => {
   })
 
   it('falls back to the chat list when the chat was opened directly', () => {
-    expect(closeDestination(0, 'dimagi')).toBe('/w/dimagi/chat')
-    expect(closeDestination(undefined, 'dimagi')).toBe('/w/dimagi/chat')
+    expect(closeDestination(0, 'dimagi')).toBe('/w/dimagi/sessions')
+    expect(closeDestination(undefined, 'dimagi')).toBe('/w/dimagi/sessions')
   })
 })
 

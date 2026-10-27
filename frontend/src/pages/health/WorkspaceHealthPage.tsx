@@ -423,7 +423,7 @@ function RecentSessions({ agent }: { agent: AgentHealthOut }): JSX.Element {
           <ul className="space-y-1">
             {agent.recent_sessions.map((s) => (
               <li key={s.id} className="flex items-baseline justify-between gap-2">
-                <Link to={scopedPath(s.workspace, `/chat/${s.id}`)} className="min-w-0 truncate text-primary hover:underline">
+                <Link to={scopedPath(s.workspace, `/sessions/${s.id}`)} className="min-w-0 truncate text-primary hover:underline">
                   {s.title || 'Untitled session'}
                 </Link>
                 <span className="shrink-0 text-muted-foreground">

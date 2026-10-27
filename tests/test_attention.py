@@ -63,7 +63,7 @@ def test_a_chat_blocked_on_you_is_listed(jj):
     RunnerBinding.objects.create(session=s, runner=runner, session_key="spark",
                                  live_seen_at=timezone.now(), pending_question=MENU)
     item = next(i for i in jj["client"].get("/api/me/attention/").json()["now"] if i["kind"] == "session")
-    assert item["key"] == f"session:{s.id}" and item["url"] == f"/w/connect/chat/{s.id}"
+    assert item["key"] == f"session:{s.id}" and item["url"] == f"/w/connect/sessions/{s.id}"
     assert item["reason"] == "Needs an answer" and item["state"] == "asking"
     assert item["organisation"] == "connect"
 

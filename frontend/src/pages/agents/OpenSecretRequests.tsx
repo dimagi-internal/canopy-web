@@ -28,7 +28,7 @@ export function OpenSecretRequests({ slug, onStored }: { slug: string; onStored?
         <div key={r.id}>
           <p className="text-[11px] text-muted-foreground">
             {r.session_id
-              ? <>Asked in <Link className="underline" to={scoped(`/chat/${r.session_id}`)}>a chat</Link></>
+              ? <>Asked in <Link className="underline" to={scoped(`/sessions/${r.session_id}`)}>a chat</Link></>
               : 'Asked outside any of its chats'}
           </p>
           <SecretSealCard slug={slug} name={r.name} requestId={r.id} onStored={onStored} />

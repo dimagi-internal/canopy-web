@@ -43,7 +43,7 @@ def _connect_transfer_requests():
         who = getattr(request.requested_by, "email", "") or "Someone"
         body = (f"{who} wants to move “{session_label(request.session, 'a conversation')}” "
                 f"onto {request.to_runner.name}.")
-        url = f"/w/{request.session.workspace_id}/chat/{request.session_id}"
+        url = f"/w/{request.session.workspace_id}/sessions/{request.session_id}"
         for user in approvers(request.to_runner):
             try:
                 send_to_user(user, "Transfer request", body, url)

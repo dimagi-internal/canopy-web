@@ -484,7 +484,7 @@ def test_slack_gets_the_result_text_and_a_link_for_a_view_and_nothing_for_other_
         "tool_use_id": CALL_ID, "content": [{"type": "text", "text": "Preview: coach worker 9"}]})
     line = _message_for(view_row, turn)
     assert line.startswith("Preview: coach worker 9\nOpen it to act: ")
-    assert line.endswith(f"/w/connect/chat/{w['session'].pk}")
+    assert line.endswith(f"/w/connect/sessions/{w['session'].pk}")
     other = SimpleNamespace(kind="tool_result", payload={"tool_use_id": "toolu_none", "content": "x"})
     assert _message_for(other, turn) == ""
 

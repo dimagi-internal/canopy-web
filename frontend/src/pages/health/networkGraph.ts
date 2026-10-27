@@ -162,7 +162,7 @@ export function hrefOf(n: NetworkNodeOut): string | null {
   if (n.id.startsWith('mail:')) {
     return n.agent ? scopedPath(n.workspace, `/agents/${encodeURIComponent(n.agent)}/mail`) : null
   }
-  return n.openable ? scopedPath(n.workspace, `/chat/${encodeURIComponent(n.ref)}`) : null
+  return n.openable ? scopedPath(n.workspace, `/sessions/${encodeURIComponent(n.ref)}`) : null
 }
 
 export const KIND_LABEL: Record<string, string> = {

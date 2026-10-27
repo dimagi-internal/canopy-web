@@ -486,7 +486,7 @@ def turn_page_url(turn: Turn) -> str:
     base = _base_url()
     ws = turn.tenant_slug
     if turn.chat_session_id and ws:
-        return f"{base}/w/{ws}/chat/{turn.chat_session_id}"
+        return f"{base}/w/{ws}/sessions/{turn.chat_session_id}"
     if turn.agent_id and ws:
         return f"{base}/w/{ws}/agents/{turn.agent.slug}/turns"
     if ws:

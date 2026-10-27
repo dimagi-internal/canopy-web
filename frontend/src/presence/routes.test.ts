@@ -6,7 +6,7 @@ const key = (path: string) => pageKeyFor('canopy', path, canopyPresenceRules)
 
 describe('canopyPresenceRules — which pages get presence at all', () => {
   it('covers the surfaces where two people can silently clobber each other', () => {
-    expect(key('/w/dimagi/chat/abc-123')).not.toBeNull()
+    expect(key('/w/dimagi/sessions/abc-123')).not.toBeNull()
     expect(key('/w/dimagi/ddd/bednet')).not.toBeNull()
     expect(key('/w/dimagi/ddd/bednet/run-001')).not.toBeNull()
     expect(key('/w/dimagi/review/abc')).not.toBeNull()
@@ -23,7 +23,7 @@ describe('canopyPresenceRules — which pages get presence at all', () => {
       '/w/dimagi/timeline',
       '/w/dimagi/walkthroughs',
       '/w/dimagi/inbound',
-      '/w/dimagi/chat',                  // the chat LIST, not a session
+      '/w/dimagi/sessions',                  // the chat LIST, not a session
       '/w/dimagi/ddd',                   // the DDD LIST, not a narrative
       '/w/dimagi/agents',
       '/w/dimagi/agents/echo/inbox',     // an Item decision is atomic + logged
@@ -50,8 +50,8 @@ describe('canopyPresenceRules — which pages get presence at all', () => {
 
 describe('canopyPresenceRules — keying', () => {
   it('gives two different chat sessions different keys', () => {
-    expect(key('/w/dimagi/chat/abc-123')?.pageKey).toBe('canopy:dimagi:session:abc-123')
-    expect(key('/w/dimagi/chat/def-456')?.pageKey).toBe('canopy:dimagi:session:def-456')
+    expect(key('/w/dimagi/sessions/abc-123')?.pageKey).toBe('canopy:dimagi:session:abc-123')
+    expect(key('/w/dimagi/sessions/def-456')?.pageKey).toBe('canopy:dimagi:session:def-456')
   })
 
   it('gives two different DDD runs of the same narrative different keys, distinct from the narrative editor', () => {
@@ -70,7 +70,7 @@ describe('canopyPresenceRules — keying', () => {
   })
 
   it('emits no ~global key: every page with presence is tenant-scoped', () => {
-    for (const path of ['/w/dimagi/chat/a', '/w/dimagi/ddd/n', '/w/dimagi/ddd/n/r', '/w/dimagi/review/x']) {
+    for (const path of ['/w/dimagi/sessions/a', '/w/dimagi/ddd/n', '/w/dimagi/ddd/n/r', '/w/dimagi/review/x']) {
       expect(key(path)?.pageKey.includes('~global'), path).toBe(false)
     }
   })

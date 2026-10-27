@@ -48,6 +48,8 @@ export const NOT_PAGES: Record<string, string> = {
   '/w/:workspace/settings/runners': 'redirect: → settings/topology/runners',
   '/w/:workspace/settings/agent-access': 'redirect: → the agents table in settings/topology',
   '/w/:workspace/huddles/groups/:slug': "redirect: a work group's old page, to the project its check-in lives on",
+  '/w/:workspace/chat': 'redirect: the old address of /w/:workspace/sessions',
+  '/w/:workspace/chat/:id': 'redirect: the old address of /w/:workspace/sessions/:id',
   '/w/:workspace/projects/:agent/:ref': "redirect: a project has one page, in its agent's console",
   '/w/:workspace/projects/:agent/:ref/people/:person': "redirect: a contributor page lives in its agent's console",
   // The four pages that became sections of /w/:workspace/settings.

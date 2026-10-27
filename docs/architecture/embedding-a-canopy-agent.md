@@ -1408,7 +1408,7 @@ has its own inbox — not a chat completion bound to your page.
 ## 11. Reference: canopy embedding its own pages
 
 canopy is also a host, and **not a special one**. The reason to talk to an agent
-is usually about what is in front of you, and `/w/:ws/chat` is not in front of
+is usually about what is in front of you, and `/w/:ws/sessions` is not in front of
 you — so the widget mounts on canopy's own authenticated pages, where two real
 cases live: an agent inbox that has gone stale, and a feature set you decide to
 deprecate while looking at it and have forgotten a minute later.

@@ -72,7 +72,7 @@ def test_the_widget_shows_the_effective_state_of_your_own_session(w):
     assert {k: body["record"][k] for k in ("available", "default", "override", "effective")} == {
         "available": True, "default": True, "override": None, "effective": True}
     assert body["use"]["available"] is True and body["use"]["effective"] is False
-    assert body["manage_path"] == f"/w/connect/chat/{s.pk}"
+    assert body["manage_path"] == f"/w/connect/sessions/{s.pk}"
 
 
 def test_nothing_available_still_answers_so_the_widget_can_hide_it(w):

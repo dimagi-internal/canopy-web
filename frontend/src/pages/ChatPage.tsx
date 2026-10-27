@@ -55,7 +55,7 @@ import { useTranscriptPaging } from './chat/useTranscriptPaging'
 import { cachedMessages, rememberMessages } from './chat/sessionCache'
 
 /**
- * Standalone live-chat route (/w/:workspace/chat/:id). Wires canopy's
+ * Standalone live-chat route (/w/:workspace/sessions/:id). Wires canopy's
  * WebSocket URL + REST session-meta/history/liveness + react-markdown into the
  * reusable `canopy-ui/chat` ChatPanel. All live chat state lives in
  * `useSessionSocket`; this page supplies seams (attach/detach, scroll-back,
