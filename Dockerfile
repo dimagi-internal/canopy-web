@@ -28,6 +28,23 @@ RUN VITE_BASE_PATH="$VITE_BASE_PATH" \
     npm run build
 
 
+# ─── Stage 1a: carry the earlier builds' assets into this one ────────
+# A page served by the previous build must still find its hashed scripts here,
+# or a rolling deploy (and a tab left open across one) 404s its entry script and
+# paints a black page — see frontend/scripts/carryAssets.mjs. Its own stage so
+# the fetch never busts the SPA build's cache. CARRY_ASSETS_FROM is the live
+# origin (empty: a local build carries nothing); CARRY_ASSETS_NONCE changes per
+# deploy so this step re-runs instead of reusing an older fetch.
+FROM frontend-build AS frontend-dist
+ARG CARRY_ASSETS_FROM=
+ARG CARRY_ASSETS_NONCE=
+RUN if [ -n "$CARRY_ASSETS_FROM" ]; then \
+      node scripts/carryAssets.mjs fetch "$CARRY_ASSETS_FROM" carried; \
+    fi \
+    && node scripts/carryAssets.mjs merge dist carried \
+    && rm -rf carried
+
+
 # ─── Stage 1b: build the public product site (site/, Astro) ─────────
 # Static HTML served at / to signed-out visitors (config/public_site.py). Its own
 # stage and lockfile: it shares nothing with the SPA, which is what lets it move
@@ -71,7 +88,7 @@ RUN pip install uv && uv pip install --system .
 COPY . .
 
 # Built SPA from stage 1
-COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+COPY --from=frontend-dist /app/frontend/dist ./frontend/dist
 # Built public site from stage 1b
 COPY --from=site-build /app/site/dist ./site/dist
 

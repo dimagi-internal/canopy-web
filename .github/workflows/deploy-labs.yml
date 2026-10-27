@@ -264,6 +264,8 @@ jobs:
           build-args: |
             VITE_BASE_PATH=/
             VITE_CSRF_COOKIE_NAME=csrftoken_canopy
+            CARRY_ASSETS_FROM=https://canopy.dimagi.com
+            CARRY_ASSETS_NONCE=${{ github.sha }}
             RUNNER_CODE_SHA=${{ steps.runner_sha.outputs.sha }}
             RUNNER_CODE_COMMITTED_AT=${{ steps.runner_sha.outputs.committed_at }}
             RUNNER_CLOUD_CODE_SHA=${{ steps.cloud_sha.outputs.sha }}

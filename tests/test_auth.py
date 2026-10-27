@@ -492,7 +492,8 @@ def test_rejection_page_shows_email_domain_and_contact(rf, db):
     assert "mallory@gmail.com" in body
     assert "dimagi.com" in body
     assert "mailto:jjackson@dimagi.com" in body
-    assert "accounts.google.com/Logout" in body
+    # The way to another account is Google's chooser, not "sign out first".
+    assert "auth_params=prompt%3Dselect_account" in body
 
 
 # ──────────────────────────────────────────────────────────────────────

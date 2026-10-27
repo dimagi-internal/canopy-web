@@ -119,7 +119,11 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
                 response = render(
                     request,
                     "auth/domain_rejected.html",
-                    {"email": email, "allowed_domain": allowed},
+                    {
+                        "email": email,
+                        "allowed_domain": allowed,
+                        "next": sociallogin.state.get("next") or "",
+                    },
                     status=403,
                 )
                 raise ImmediateHttpResponse(response)
