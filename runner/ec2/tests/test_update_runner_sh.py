@@ -586,7 +586,9 @@ class RunnersBox(Box):
             f"CANOPY_BASE_URL=https://labs.example/canopy\n{spec}=tree:dimagi,agent:eva\n")
         # cloud-init's canopy-fetch-env, which re-writes box.env on every start.
         self.fetch_env = tmp_path / "canopy-fetch-env"
-        self.fetch_env.write_text(f"#!/usr/bin/env bash\ncat > /etc/canopy-runner/box.env <<ENV\n"
+        self.fetch_env.write_text(f"#!/usr/bin/env bash\n# Replaced by `cloud_runner.py --install-{'units' if old_layout else 'runners'}` "
+                                  f"when this box moved to isolation\n# units in place: the old script re-wrote\n# on every start. A box of units reads its\n"
+                                  f"cat > /etc/canopy-runner/box.env <<ENV\n"
                                   f"{spec}=tree:dimagi,agent:eva\nRUNNER_NAME=cloud-ec2-9\nENV\n")
         # The systemd units `cloud_runner.py --install-runners` wrote, as they were then.
         self.systemd = tmp_path / "systemd"
@@ -597,8 +599,9 @@ class RunnersBox(Box):
         (self.systemd / "canopy-pair.service").write_text(
             f"[Unit]\nRequires={setup}.service\n[Service]\n"
             f"ExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner.py --pair-{flag}\n")
+        desc = "Canopy runner, isolation unit %i" if old_layout else "Canopy runner for %i"
         (self.systemd / "canopy-runner@.service").write_text(
-            f"[Unit]\nAfter={setup}.service canopy-kms-broker.service\nRequires={setup}.service\n")
+            f"[Unit]\nDescription={desc}\nAfter={setup}.service canopy-kms-broker.service\nRequires={setup}.service\n")
         (self.systemd / "canopy-runner-update.service").write_text(
             f"[Service]\nEnvironment={'UNITS_FILE' if old_layout else 'RUNNERS_FILE'}"
             f"=/etc/canopy-runner/{self.runners_file.name}\nExecStart=/usr/local/bin/canopy-runner-update\n")
@@ -696,7 +699,7 @@ NEW_NAMES_RUNNER = "#!/usr/bin/env python3\n# --setup-runners\nprint('new names'
 def _old_names_left(box: RunnersBox) -> list[str]:
     left = []
     for f in [*box.etc.glob("*.env"), box.fetch_env, *box.systemd.iterdir()]:
-        if re.search(r"CANOPY_UNIT|RUNNER_UNITS|canopy-units|-units\b|UNITS_FILE|units\.json", f.read_text()):
+        if re.search(r"CANOPY_UNIT|RUNNER_UNITS|canopy-units|-units\b|UNITS_FILE|units\.json|isolation|\bunits in", f.read_text()):
             left.append(f.name)
     return left + [p.name for p in (box.etc / "units.json", box.systemd / "canopy-units.service") if p.exists()]
 
@@ -734,7 +737,9 @@ def test_the_install_that_brings_the_new_names_moves_every_old_one(old_box):
     assert "new names" in old_box.installed
     assert _old_names_left(old_box) == []
     doc = json.loads((old_box.etc / "runners.json").read_text())
-    assert [r["id"] for r in doc["units"]] == list(old_box.RUNNERS)   # content kept as it was
+    assert [r["id"] for r in doc["runners"]] == list(old_box.RUNNERS) and "units" not in doc
+    assert "# runners in place:" in old_box.fetch_env.read_text()
+    assert "Such a machine reads its" in old_box.fetch_env.read_text()
     assert (old_box.etc / "agent-eva.env").read_text().startswith(
         "CANOPY_RUNNER_INSTANCE=agent-eva\nCANOPY_SERVES_KIND=agent\nCANOPY_SERVES_AGENT=eva\n")
     assert "RUNNERS=tree:dimagi,agent:eva" in (old_box.etc / "box.env").read_text()
@@ -742,6 +747,7 @@ def test_the_install_that_brings_the_new_names_moves_every_old_one(old_box):
     assert "--setup-runners" in (old_box.systemd / "canopy-runners.service").read_text()
     assert "Requires=canopy-runners.service" in (old_box.systemd / "canopy-runner@.service").read_text()
     assert "--pair-runners" in (old_box.systemd / "canopy-pair.service").read_text()
+    assert "Description=Canopy runner for %i\n" in (old_box.systemd / "canopy-runner@.service").read_text()
     assert "Environment=RUNNERS_FILE=/etc/canopy-runner/runners.json" in \
         (old_box.systemd / "canopy-runner-update.service").read_text()
     # The service swap, then the restarts the install does anyway — nothing more.

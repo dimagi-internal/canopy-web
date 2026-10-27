@@ -412,6 +412,17 @@ migrate_old_names() {
     log "moved $old to $new"
   fi
   [ -r "$new" ] && RUNNERS_FILE="$new"
+  # Its list key too: {"units": [...]} becomes {"runners": [...]}.
+  if [ -f "$new" ] && grep -q '"units"' "$new"; then
+    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.setdefault("runners", d.pop("units")); json.dump(d, open(p, "w"))' "$new" \
+      && log "renamed the list key in $new"
+  fi
+  # The comment an in-place move left at the top of canopy-fetch-env.
+  if [ -f "$FETCH_ENV" ] && grep -q -- '--install-units' "$FETCH_ENV"; then
+    sed -i.old-names -E -e 's/--install-units/--install-runners/g' \
+      -e 's/moved to isolation$/moved to several/' -e 's/^# units in place:/# runners in place:/' -e 's/A box of units reads its/Such a machine reads its/' "$FETCH_ENV" \
+      && rm -f "$FETCH_ENV.old-names"
+  fi
   for f in "$etc"/*.env "$FETCH_ENV"; do
     [ -f "$f" ] || continue
     grep -qE '^[[:space:]]*(CANOPY_UNIT|CANOPY_UNIT_KIND|CANOPY_UNIT_AGENT|CANOPY_UNIT_ETC|CANOPY_UNIT_HOME_ROOT|RUNNER_UNITS)=' "$f" || continue
@@ -430,7 +441,13 @@ migrate_old_names() {
     sed -i.old-names -E \
       -e 's/canopy-units\.service/canopy-runners.service/g' \
       -e 's/--setup-units/--setup-runners/g; s/--pair-units/--pair-runners/g; s/--install-units/--install-runners/g' \
-      -e 's#UNITS_FILE=([^[:space:]]*/)units\.json#RUNNERS_FILE=\1runners.json#' "$f" \
+      -e 's#UNITS_FILE=([^[:space:]]*/)units\.json#RUNNERS_FILE=\1runners.json#' \
+      -e "s/^Description=Canopy egress proxy: the only way out for an isolation unit when/Description=Canopy egress proxy: the only way out for a runner when/" \
+      -e "s/^Description=Canopy KMS broker: each unit's zero-knowledge ECDH key, for that unit only/Description=Canopy KMS broker: each runner's zero-knowledge ECDH key, for that runner only/" \
+      -e "s/^Description=Canopy pairing: every isolation unit on this box, one approval/Description=Canopy pairing: every runner on this machine, one approval/" \
+      -e "s/^Description=Canopy cloud runner auto-update \(every isolation unit\)/Description=Canopy cloud runner auto-update (every runner on this machine)/" \
+      -e "s/^Description=Canopy runner, isolation unit %i/Description=Canopy runner for %i/" \
+      -e "s/^Description=Canopy isolation units: /Description=Canopy runners: /" "$f" \
       && rm -f "$f.old-names"
   done
   $SYSTEMCTL disable canopy-units.service >/dev/null 2>&1 || true
