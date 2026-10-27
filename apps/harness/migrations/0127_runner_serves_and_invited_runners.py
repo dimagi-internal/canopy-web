@@ -31,7 +31,7 @@ def drop_serves(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("harness", "0123_runner_platform"),
+        ("harness", "0126_runner_refresh_outcome"),
     ]
 
     operations = [

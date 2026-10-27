@@ -539,7 +539,7 @@ def test_the_migration_copies_the_old_key_and_keeps_it_for_a_server_mid_deploy(t
 
     from django.apps import apps as registry
 
-    migration = importlib.import_module("apps.harness.migrations.0124_runner_serves_and_invited_runners")
+    migration = importlib.import_module("apps.harness.migrations.0127_runner_serves_and_invited_runners")
     old = Runner.objects.create(name="old-row", kind=Runner.CLOUD, owner=two_trees["user"],
                                 workspace=two_trees["ws"], capabilities={"unit": {"kind": "tree", "root": "connect"}})
     new = Runner.objects.create(name="new-row", kind=Runner.CLOUD, owner=two_trees["user"],
