@@ -121,20 +121,25 @@ TASK_SETTLE_SECONDS = 15
 TASK_POLL_SECONDS = 0.5
 
 
+def task_state_script(task: str) -> str:
+    """PowerShell printing `task`'s state. Get-ScheduledTask's State is an enum whose
+    NAME (Running, Ready, Disabled) is the same in every Windows language; the status
+    column `schtasks /Query` prints is translated, so on a German or French box
+    "Running" never matched and every good update read as failed."""
+    folder, _, name = task.rpartition("\\")
+    return (f"(Get-ScheduledTask -TaskPath '{folder}\\' -TaskName '{name}' "
+            "-ErrorAction Stop).State")
+
+
 def windows_task_running(task: str, *, run=subprocess.run) -> bool:
-    """Is `task` Running right now? `schtasks /Query /FO CSV /NH` prints one line,
-    `"<task>","<next run>","<status>"`. Any failure to ask reads as not running."""
+    """Is `task` Running right now? Any failure to ask reads as not running."""
     try:
-        p = run(["schtasks", "/Query", "/TN", task, "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=10, **no_window())
+        p = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                 task_state_script(task)],
+                capture_output=True, text=True, timeout=20, **no_window())
     except (OSError, subprocess.SubprocessError):
         return False
-    if p.returncode != 0:
-        return False
-    for line in (p.stdout or "").splitlines():
-        if line.rsplit(",", 1)[-1].strip().strip('"') == "Running":
-            return True
-    return False
+    return p.returncode == 0 and (p.stdout or "").strip() == "Running"
 
 
 def restart_windows_task(task: str, *, run=subprocess.run, sleep=None,

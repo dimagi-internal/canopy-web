@@ -6,7 +6,8 @@ set TASK=\Canopy\canopy-runner
 schtasks /Change /TN "%TASK%" /ENABLE >nul 2>&1
 schtasks /End /TN "%TASK%" >nul 2>&1
 for /l %%i in (1,1,15) do (
-  schtasks /Query /TN "%TASK%" /FO CSV /NH | find "Running" >nul || goto run
+  rem The State enum: the status column schtasks prints is translated.
+  powershell -NoProfile -NonInteractive -Command "if ((Get-ScheduledTask -TaskPath '\Canopy\' -TaskName 'canopy-runner').State -eq 'Running') { exit 0 } else { exit 1 }" || goto run
   ping -n 2 127.0.0.1 >nul
 )
 :run

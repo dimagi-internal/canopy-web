@@ -40,19 +40,22 @@ class Cmds:
                 rc, err = 5, "Bootstrap failed: 5: Input/output error"
             else:
                 self.loaded.add(os.path.basename(argv[3])[:-len(".plist")])
+        elif argv[0] == "powershell.exe" and "Get-ScheduledTask" in argv[-1]:
+            state = "Running" if getattr(self, "task_running", True) else "Ready"
+            return subprocess.CompletedProcess(argv, 0, state, "")
         elif argv[0] == "powershell.exe":
             rc, err = self.ps_rc, self.ps_err
         elif argv[:2] == ["schtasks", "/End"]:
             self.task_running = False
         elif argv[:2] == ["schtasks", "/Run"]:
             self.task_running = True
-        elif argv[:2] == ["schtasks", "/Query"]:
-            state = "Running" if getattr(self, "task_running", True) else "Ready"
-            return subprocess.CompletedProcess(argv, 0, f'"{argv[3]}","N/A","{state}"', "")
         return subprocess.CompletedProcess(argv, rc, "", err)
 
     def named(self, *prefix):
-        return [c for c in self.calls if c[:len(prefix)] == list(prefix)]
+        """Calls starting with `prefix`; a task-state query reads as "schtasks /State"."""
+        calls = [["schtasks", "/State"] if "Get-ScheduledTask" in c[-1] else c
+                 for c in self.calls]
+        return [c for c in calls if c[:len(prefix)] == list(prefix)]
 
 
 @pytest.fixture
@@ -248,7 +251,7 @@ def test_windows_registers_both_tasks_through_current(win):
     for script in (runner, updater):
         assert "-I -X utf8 -m canopy_runner.main" in script
     task = r"\Canopy\canopy-runner"
-    assert [c for c in cmds.named("schtasks") if c[1] != "/Query"] == [
+    assert [c for c in cmds.named("schtasks") if c[1] != "/State"] == [
         ["schtasks", "/End", "/TN", task], ["schtasks", "/Run", "/TN", task]]
     for c in cmds.named("powershell.exe"):
         assert c[1:5] == ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
@@ -272,8 +275,8 @@ def test_re_running_the_installer_restarts_the_daemon(win):
     assert rc == 0
     seq = [c[1] for c in cmds.named("schtasks")]
     end, run = seq.index("/End"), seq.index("/Run")
-    assert end < run and "/Query" in seq[end:run], "waits for /End before /Run"
-    assert seq[run + 1:] == ["/Query"], "and confirms it is Running"
+    assert end < run and "/State" in seq[end:run], "waits for /End before /Run"
+    assert seq[run + 1:] == ["/State"], "and confirms it is Running"
 
 
 def test_under_the_updater_setup_leaves_the_restart_to_self_update(win):

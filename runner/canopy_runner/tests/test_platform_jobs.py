@@ -151,3 +151,23 @@ def test_every_runner_module_imports_without_pwd():
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_task_state_reads_the_enum_not_the_translated_status():
+    """schtasks /Query prints a translated status ("Wird ausgeführt" on German
+    Windows), so a good update read as failed. Get-ScheduledTask's State is not."""
+    import subprocess
+
+    seen = []
+
+    def run(argv, **kw):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "Running\r\n", "")
+
+    assert platform_jobs.windows_task_running(r"\Canopy\canopy-runner", run=run)
+    assert "schtasks" not in seen[0]
+    assert ("(Get-ScheduledTask -TaskPath '\\Canopy\\' -TaskName 'canopy-runner' "
+            "-ErrorAction Stop).State") == seen[0][-1]
+    assert not platform_jobs.windows_task_running(
+        r"\Canopy\canopy-runner",
+        run=lambda a, **k: subprocess.CompletedProcess(a, 0, "Ready\r\n", ""))

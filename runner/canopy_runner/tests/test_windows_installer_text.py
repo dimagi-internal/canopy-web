@@ -39,7 +39,8 @@ def test_start_menu_has_log_restart_and_stop():
 def test_restart_script_waits_for_end_before_run():
     text = "\n".join(ln for ln in (WIN / "restart-runner.cmd").read_text().splitlines()
                      if not ln.startswith("rem "))
-    end, query, run = (text.index(s) for s in ("/End", "/Query", "/Run"))
+    end, query, run = (text.index(s) for s in ("/End", "Get-ScheduledTask", "/Run"))
+    assert "schtasks /Query" not in text, "its status column is translated"
     assert end < query < run and "/ENABLE" in text
     stop = (WIN / "stop-runner.cmd").read_text()
     assert "/DISABLE" in stop and "/End" in stop
@@ -53,6 +54,6 @@ def test_developer_install_waits_for_end_before_run():
     ps1 = (RUNNER / "canopy_runner" / "scripts" / "install-runner.ps1").read_text(
         encoding="utf-8")
     end = ps1.index('schtasks /End /TN "$TASK_FOLDER\\$RUNNER_TASK"')
-    query = ps1.index('schtasks /Query /TN "$TASK_FOLDER\\$RUNNER_TASK" /FO CSV /NH', end)
+    query = ps1.index('Get-ScheduledTask -TaskPath "$TASK_FOLDER\\" -TaskName $RUNNER_TASK', end)
     run = ps1.index('schtasks /Run /TN "$TASK_FOLDER\\$RUNNER_TASK"', query)
     assert end < query < run
