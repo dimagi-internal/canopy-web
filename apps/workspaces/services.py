@@ -1033,10 +1033,9 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
 
     The authority check (who may grant `role`) is the caller's, made before
     this is called; the row itself is created by `_grant`, the shared door."""
-    from django.contrib.auth import get_user_model
-
-    from .system_accounts import ROLES as SYSTEM_ROLES
-    from .system_accounts import is_system_user
+    # Lazy as in `set_member_role`: system_accounts imports this module back.
+    from .system_accounts import ROLES as SYSTEM_ROLES  # noqa: PLC0415 — cycle
+    from .system_accounts import is_system_user  # noqa: PLC0415 — cycle
 
     if role not in WorkspaceMembership.ROLE_RANK:
         raise MemberError("invalid_role")
@@ -1047,7 +1046,8 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
     theirs = user_workspace_slugs(user) & set(visible)
     if not theirs or root not in set(tree_roots(theirs).values()):
         raise MemberError("not_found")
-    if WorkspaceMembership.objects.filter(workspace=workspace, user=user).exists():  # authz-exempt: is the TARGET already here
+    # authz-exempt: is the TARGET already here
+    if WorkspaceMembership.objects.filter(workspace=workspace, user=user).exists():  # authz-exempt
         raise MemberError("already_member")
     if role not in SYSTEM_ROLES and is_system_user(user):
         raise MemberError("system_role")
