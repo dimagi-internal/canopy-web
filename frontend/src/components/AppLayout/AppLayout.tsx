@@ -384,7 +384,7 @@ function AppShell() {
             <span className="text-lg font-semibold text-foreground shrink-0"><CanopyWordmark /></span>
           )}
           <div className="flex min-w-0 items-center gap-2 md:gap-3">
-            {/* Home and Chats are links; Agents, Projects and Workspace are
+            {/* Home and Sessions are links; Agents, Projects and Workspace are
                 menus (they carry the chevron). See `nav.ts`. */}
             <nav className="hidden md:flex gap-0.5" aria-label="Main">
               {nav.map((entry) => (

@@ -13,7 +13,7 @@
  *   Demos ▾    — what the work produces (storyboards, walkthroughs, shareouts)
  *   Workspace ▾ — who is in it and how it is set up
  *
- * Chats sits beside Home as a plain link: it is where you talk to an agent, not
+ * Sessions sits beside Home as a plain link: it is where you talk to an agent, not
  * a set of pages to browse. Help (Guide, Get started, System) is not workspace
  * business and has its own `?` menu; personal pages are in the account menu.
  *
@@ -46,7 +46,7 @@ export type NavEntry =
 export const NAV: NavEntry[] = [
   // Personal, across every workspace you are in — see pages/home.
   { kind: 'link', item: { path: '/home', label: 'Home', tenant: false } },
-  { kind: 'link', item: { path: 'chat', label: 'Chats', tenant: true } },
+  { kind: 'link', item: { path: 'chat', label: 'Sessions', tenant: true } },
   {
     kind: 'menu',
     label: 'Agents',

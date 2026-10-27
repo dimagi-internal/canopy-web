@@ -51,10 +51,10 @@ function FilterToggle({
   )
 }
 
-// What this tab last listed, per filter. Opening a chat and coming back
+// What this tab last listed, per workspace and filter. Opening a chat and coming back
 // remounts the panel; it paints these rows at once and refreshes underneath,
 // instead of "Loading sessions…" every time.
-const listedBefore = new Map<SessionState, ChatSession[]>()
+const listedBefore = new Map<string, ChatSession[]>()
 
 // How old a fleet read another page made may be and still fill the
 // "+ New chat" menu, which only needs the runners' declared repos.
@@ -66,37 +66,41 @@ export function forgetListed(): void {
 }
 
 const listState = (archived: boolean): SessionState => (archived ? 'all' : 'active')
+const listKey = (archived: boolean, workspace?: string) => `${workspace ?? ''}:${listState(archived)}`
 
 /** The list as the server has it now, kept for the next mount, and each row
- *  marked so opening it skips the private-conversation read (as /ide's do). */
-function readList(archived: boolean): Promise<ChatSession[]> {
-  const state = listState(archived)
-  return listSessions(state).then((rows) => {
-    listedBefore.set(state, rows)
+ *  marked so opening it skips the private-conversation read (as /ide's do).
+ *  With a workspace, only that workspace's sessions (and those below it). */
+function readList(archived: boolean, workspace?: string): Promise<ChatSession[]> {
+  return listSessions(listState(archived), { workspace }).then((rows) => {
+    listedBefore.set(listKey(archived, workspace), rows)
     rememberListed(rows)
     return rows
   })
 }
 
 /**
- * Reusable, CROSS-WORKSPACE chat session surface: a findable list of your chat
+ * Reusable chat session surface: a findable list of your chat
  * sessions (continue any from any device) + "New chat with <agent>". Each session
  * links to ITS OWN workspace's chat route, and a new chat is created in the chosen
- * agent's workspace — the fleet spans workspaces. Used by the standalone chat home
- * (/w/:ws/chat) and by the root-scoped supervisor Sessions tab, which embeds this
- * as its single unified session list (no separate grouped-by-project view).
+ * agent's workspace. Given a `workspace`, it lists that workspace's sessions —
+ * the chat home (/w/:ws/chat) is a page of one workspace; without one it spans
+ * every workspace you are in, as the root-scoped supervisor Sessions tab does
+ * (its single unified session list, no separate grouped-by-project view).
  */
 export function ChatSessionsPanel({
   agents: agentsProp,
-  heading = 'Chats',
+  heading = 'Sessions',
+  workspace,
 }: {
   agents?: AgentOut[]
   heading?: string
+  workspace?: string
 }) {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => listedBefore.get('active') ?? [])
+  const [sessions, setSessions] = useState<ChatSession[]>(() => listedBefore.get(listKey(false, workspace)) ?? [])
   const [agents, setAgents] = useState<AgentOut[]>(agentsProp ?? [])
   const [runners, setRunners] = useState<RunnerOut[] | null>(() => recentRunners(FLEET_REUSE_MS))
-  const [loading, setLoading] = useState(() => !listedBefore.has('active'))
+  const [loading, setLoading] = useState(() => !listedBefore.has(listKey(false, workspace)))
   const [sort, setSort] = useState<SessionSort>('time')
   const [showArchived, setShowArchived] = useState(false)
   // Sessions whose bound runner is paused or offline are held back by default:
@@ -121,10 +125,10 @@ export function ChatSessionsPanel({
   // menu, so neither holds the rows back. A list read before paints at once.
   useEffect(() => {
     let live = true
-    const before = listedBefore.get(listState(showArchived))
+    const before = listedBefore.get(listKey(showArchived, workspace))
     if (before) setSessions(before)
     setLoading(!before)
-    readList(showArchived)
+    readList(showArchived, workspace)
       .then((rows) => {
         if (live) setSessions(rows)
       })
@@ -137,7 +141,7 @@ export function ChatSessionsPanel({
     return () => {
       live = false
     }
-  }, [showArchived])
+  }, [showArchived, workspace])
 
   useEffect(() => {
     if (recentRunners(FLEET_REUSE_MS)) return
@@ -174,8 +178,8 @@ export function ChatSessionsPanel({
   // list is a deferred follow-up; per-row liveness is live inside ChatPanel).
   // A failed refresh keeps last-good; the mount fetch owns first-error surfacing.
   usePolled(
-    () => readList(showArchived).then(setSessions).catch(() => {}),
-    { ms: 20_000, deps: [showArchived], immediate: false },
+    () => readList(showArchived, workspace).then(setSessions).catch(() => {}),
+    { ms: 20_000, deps: [showArchived, workspace], immediate: false },
   )
 
   const repos = useMemo(() => repoChoices(runners ?? []), [runners])
@@ -207,14 +211,14 @@ export function ChatSessionsPanel({
         const message = closeResultMessage(result, s)
         if (message) setCloseError(message)
         else if (result.closing) setPendingClose((prev) => ({ ...prev, [s.id]: Date.now() }))
-        else setSessions(await readList(showArchived))
+        else setSessions(await readList(showArchived, workspace))
       } catch {
         setCloseError('Couldn’t close this session')
       } finally {
         setClosingId(null)
       }
     },
-    [showArchived],
+    [showArchived, workspace],
   )
 
   // `result` is null on failure (the message is the error instead). A "moved"
@@ -235,9 +239,9 @@ export function ChatSessionsPanel({
         return
       }
       setTransferNote({ text: `Moved to ${result?.runner}.${handoffNote(result)}`, error: false })
-      void readList(showArchived).then(setSessions)
+      void readList(showArchived, workspace).then(setSessions)
     },
-    [showArchived],
+    [showArchived, workspace],
   )
 
   // Watch the relayed closes through to the end, quickly, rather than leaving
@@ -245,7 +249,7 @@ export function ChatSessionsPanel({
   const waitingOnCloses = Object.keys(pendingClose).length > 0
   usePolled(
     () =>
-      readList(showArchived)
+      readList(showArchived, workspace)
         .then((listed) => {
           setSessions(listed)
           setPendingClose((prev) => {
@@ -260,7 +264,7 @@ export function ChatSessionsPanel({
           })
         })
         .catch(() => { /* keep waiting; the next tick retries */ }),
-    { ms: 2_000, deps: [showArchived], enabled: waitingOnCloses, immediate: false },
+    { ms: 2_000, deps: [showArchived, workspace], enabled: waitingOnCloses, immediate: false },
   )
 
 

@@ -16,12 +16,12 @@ const authed = { isAuthed: true, active: 'connect', role: 'owner' }
 const label = (e: ResolvedNavEntry) => (e.kind === 'link' ? e.item.label : e.label)
 
 describe('NAV', () => {
-  it('answers the five questions a person arrives with, plus Chats', () => {
+  it('answers the five questions a person arrives with, plus Sessions', () => {
     // Home: what needs me. Agents: what they are doing. Work: the tasks and
     // projects. Demos: what the work produces. Workspace: who is in it and how
     // it is set up.
     expect(NAV.map((e) => (e.kind === 'link' ? e.item.label : e.label))).toEqual([
-      'Home', 'Chats', 'Agents', 'Work', 'Demos', 'Workspace',
+      'Home', 'Sessions', 'Agents', 'Work', 'Demos', 'Workspace',
     ])
   })
 
@@ -59,7 +59,7 @@ describe('resolveNav', () => {
   it('resolves tenant items under the active workspace and leaves Home at root', () => {
     const nav = resolveNav(authed)
     expect(nav[0]).toEqual({ kind: 'link', item: { href: '/home', label: 'Home' } })
-    expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/chat', label: 'Chats' } })
+    expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/chat', label: 'Sessions' } })
     const work = nav.find((e) => label(e) === 'Work')!
     expect(entryItems(work)[0]).toEqual({ href: '/w/connect/tasks', label: 'Tasks' })
   })
@@ -101,7 +101,7 @@ describe('active entry', () => {
   it('marks exactly one entry for any route the header owns', () => {
     const expected: Record<string, string> = {
       '/home': 'Home',
-      '/w/connect/chat/abc': 'Chats',
+      '/w/connect/chat/abc': 'Sessions',
       '/w/connect/agents/hal/turns': 'Agents',
       '/w/connect/agents/new': 'Agents',
       '/w/connect/activity': 'Agents',
