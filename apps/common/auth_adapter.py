@@ -1,36 +1,18 @@
 """Allauth adapters: close local signup, and gate social login on the
 email-domain allowlist (or a pending workspace invite)."""
 import logging
-from urllib.parse import urlencode
 
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 from django.contrib.auth import get_user_model
 from django.shortcuts import render
-from django.urls import reverse
 
 from apps.workspaces.login_gate import email_admitted_outside_domain
 
 from .auth_domains import allowed_email_domains, email_in_allowlist
 
 logger = logging.getLogger(__name__)
-
-
-def choose_account_url(next_url: str | None = None) -> str:
-    """Google sign-in that ASKS which account to use, back to `next_url` after.
-
-    A plain retry gets the same refused account straight back: Google signs in
-    with whichever account the browser already holds and never shows a chooser,
-    so "Try another account" looped on the rejection page (an invitee whose
-    phone was signed in to a different Google account got it five times in ten
-    seconds). `prompt=select_account` makes Google ask. `next` keeps an invitee
-    on their way back to the invite; allauth checks it is a safe local URL.
-    """
-    params = {"auth_params": "prompt=select_account"}
-    if next_url:
-        params["next"] = next_url
-    return f"{reverse('google_login')}?{urlencode(params)}"
 
 
 class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
@@ -140,7 +122,7 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
                     {
                         "email": email,
                         "allowed_domain": allowed,
-                        "retry_url": choose_account_url(sociallogin.state.get("next")),
+                        "next": sociallogin.state.get("next") or "",
                     },
                     status=403,
                 )

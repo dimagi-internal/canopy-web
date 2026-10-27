@@ -150,12 +150,13 @@ def test_rejection_offers_a_retry_that_asks_google_which_account(rf, settings):
     assert "next=%2Finvite%2Fabc123" in body
 
 
-def test_choose_account_url_reaches_google_with_the_chooser(client):
+
+def test_the_retry_link_reaches_google_with_the_chooser(client):
+    """The rejection page's link really makes allauth send Google
+    `prompt=select_account` — the page containing it is not enough."""
     from urllib.parse import parse_qs, urlparse
 
-    from apps.common.auth_adapter import choose_account_url
-
-    resp = client.get(choose_account_url("/invite/abc123"))
+    resp = client.get("/accounts/google/login/?auth_params=prompt%3Dselect_account&next=%2Finvite%2Fabc123")
 
     assert resp.status_code == 302
     target = urlparse(resp["Location"])
