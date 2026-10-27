@@ -2,6 +2,19 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.24.0 — 2026-10-27
+
+**Site sign-offs: a site asks canopy for a person's passkey approval of one action.**
+
+- `canopy_sdk.sign_offs`: `request_sign_off` (the site asks, signed with its own key, and
+  gets the `approve_url` to send the approver to), `fetch_status` (reads one request,
+  approval included), and `verify_approval` (checks canopy's signed approval: canopy's
+  client key, this site, the action, the pending action's `site_ref`, a passkey step-up,
+  optionally the subject). canopy's half is `verify_request` and `sign_approval`.
+- `canopy_sdk.django.sign_offs`: `request`, `status` and `verify` from `CANOPY_HOST`. The
+  host spends the approval's `jti` itself, in the transaction that acts on it.
+- Needs a canopy with `POST /api/sites/sign-offs`; an older one answers 404 (`refused`).
+
 ## 0.23.0 — 2026-10-26
 
 **An act-as-you permission lasts 30 minutes, and the panel asks for one only after the person sends.**

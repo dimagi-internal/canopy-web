@@ -368,6 +368,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
   (`auth/stepUp.ts`). Only the invitation's creator can open it (404 otherwise)
   or approve it, and a token cannot (`apps/harness/api_runner_invitations.py`,
   `docs/architecture/runners.md` § How a runner signs in).
+- **`/sign-offs/:signOffId`** — a connected site asking you to approve one action
+  with your passkey (labs creating a full-access MCP token): the `approve_url` the
+  site sends you to, also on Home. Shows the site, the action in its words, and the
+  account it is for (an agent's request names the agent). Approve asks for your
+  passkey (`auth/stepUp.ts`) and sends your browser back to the site with the signed
+  approval; Decline sends it back without one. Only the person it is for, or the
+  agent's owner and admins, can open it (404 otherwise); a token cannot approve
+  (`apps/host_grants/sign_offs_api.py`).
 - **`/health`** — admin+ (`logs.read`, per descendant). What is not set up right
   across this workspace and every one below it (`GET /api/workspaces/{slug}/health`,
   `apps/agents/health.py`): every agent with its setup checklist (the SAME steps

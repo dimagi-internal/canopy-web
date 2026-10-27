@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import threading
 
-from canopy_sdk import consumer, contract, keys, site_agents
+from canopy_sdk import consumer, contract, keys, sign_offs, site_agents
 from django.conf import settings
 
 # The wire values and the signing itself are the SDK's (`canopy_sdk.contract`,
@@ -225,6 +225,13 @@ def sign_site_agents(site_name: str, content: dict) -> str:
     """The site agents API (`site_agents.py`): signed by the same client key, so a site
     believes it exactly as it believes `Canopy-Execution`."""
     return site_agents.sign_site_agents(_client_key(), client_id(), site_name, content)
+
+
+def sign_sign_off(site_name: str, *, subject: str, sign_off: dict, now: float, jti: str) -> str:
+    """A site sign-off's approval (`sign_offs.py`): the same client key, so a site
+    believes it exactly as it believes the site agents list."""
+    return sign_offs.sign_approval(_client_key(), client_id(), site_name, subject=subject,
+                                   sign_off=sign_off, now=now, jti=jti)
 
 
 def credentials() -> consumer.ClientCredentials:

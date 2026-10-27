@@ -1,6 +1,6 @@
 # Site sign-offs: a connected site asks a person to approve something with their passkey
 
-Status: proposed (2026-10-27); open questions ruled the same day. First caller: connect-labs, before it mints a full-access MCP token.
+Status: built (2026-10-27). First caller: connect-labs, before it mints a full-access MCP token.
 
 ## Why
 
@@ -128,10 +128,12 @@ an agent, "asked for **ace**, an agent you own/administer". It has two buttons:
   - Requires a browser (`require_browser`), a person (`require_a_person`), and a passkey
     step-up within the last 5 minutes (`require_recent_step_up`). The SPA's existing
     step-up middleware turns the 403 into the passkey dialog and retries the request.
-  - Answers 303 to `return_url?sign_off=<jws>&id=<id>`. A JSON caller gets `{state, sign_off}`.
+  - Answers the request with `redirect_url` = `return_url?sign_off=<jws>&id=<id>`, and the
+    page sends the browser there (the SPA calls the API with `fetch`, so a 303 would not
+    move the page).
   - A token is refused (403 `browser_session_required`). **No agent or script can approve.**
-- **Decline**: `POST /api/sign-offs/{id}/decline`. It needs no step-up and answers 303 to
-  `return_url?declined=<id>`.
+- **Decline**: `POST /api/sign-offs/{id}/decline`. It needs no step-up and answers
+  `redirect_url` = `return_url?declined=<id>`.
 
 Anyone who is not an approver gets 404, the same as a missing request. Approving or
 declining twice, or after the request expired, is 409 `closed`.
@@ -167,14 +169,15 @@ where the approver's browser goes back to the site but the requester is somewher
 
 ## Records and audit
 
-- **`SiteSignOff`** (in `apps/host_grants`) records:
+- **`SiteSignOff`** (in `apps/tokens`, beside `AppCredential` and `HostGrant`) records:
   - the request: `app`, `subject`, `action_key`, `action_title`, `site_ref`, `return_url`;
   - the outcome: `approvers` kind, `state`, `decided_by`, `decided_at`, `created_at`,
     `expires_at`.
-- Every decision is recorded as a `SettingChange` (the route is `setting=True`) and as an
-  event `site.sign_off.approved` or `site.sign_off.declined`.
-- Approvers see open requests in their attention list, and a "Sign-offs you gave" list in
-  Settings → Passkeys.
+- Every decision is recorded as a `SettingChange` (the route is `setting=True`), which
+  names who decided, through what, and the row before and after.
+- Approvers see open requests on Home (`apps/host_grants/attention.py`).
+- The approval is never stored: it is signed from the row (`approval_jti`, `decided_at`)
+  each time it is handed out, so every copy is one approval with one `jti`.
 
 ## Tests
 
@@ -204,9 +207,8 @@ where the approver's browser goes back to the site but the requester is somewher
   client asks for the full `mcp` scope. It holds a pending row keyed by `site_ref` and mints
   only after a verified approval. Existing tokens, using tokens, and no-user-visit tokens are
   untouched.
-- **ACE.** `ace:labs-token-mint` stops clicking through. It starts the mint as ACE, sends
-  the `approve_url` to its owner, waits until the site has the approval, and stores the
-  minted token in its canopy vault as it does today.
+- **ACE.** Labs' self-mint setting is on for ACE (ruling 4), so `ace:labs-token-mint` keeps
+  minting on its own labs session; it only learns to say so when the setting is off.
 
 ## Rulings (Jonathan, 2026-10-27)
 
@@ -217,3 +219,7 @@ where the approver's browser goes back to the site but the requester is somewher
    `resolve_arrival` bar (a verified address plus membership of the site's workspace), not a
    second rule.
 3. **A person's own request lasts 15 minutes**; an agent's lasts 24 hours.
+4. **Labs may let named accounts mint full tokens themselves**, a per-user setting Dimagi
+   staff tick (labs Admin). It is on for ACE, which is never in a project space with real
+   data, so its `labs-token-mint` keeps working with nobody approving. The agent path here
+   stays for any agent that does not have it.
