@@ -79,11 +79,21 @@ jobs:
       - name: canopy_runner tests
         if: ${{ !cancelled() }}
         working-directory: runner/canopy_runner
-        run: uv run --with pytest --with pytest-timeout pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15
+        run: uv run --with pytest --with pytest-timeout --with pytest-reportlog pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15 --report-log "$env:RUNNER_TEMP\reportlog-$(Split-Path -Leaf $PWD).jsonl"
       - name: canopy_acp tests
         if: ${{ !cancelled() }}
         working-directory: runner/canopy_acp
-        run: uv run --with pytest --with pytest-timeout pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15
+        run: uv run --with pytest --with pytest-timeout --with pytest-reportlog pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15 --report-log "$env:RUNNER_TEMP\reportlog-$(Split-Path -Leaf $PWD).jsonl"
+
+      # Written test by test, so a suite killed by a hang still says what failed and why.
+      - name: Keep the per-test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: runner-windows-unit-reportlog
+          path: ${{ runner.temp }}/reportlog-*.jsonl
+          if-no-files-found: warn
+          retention-days: 14
 
   lifecycle:
     name: Installer lifecycle (Windows)

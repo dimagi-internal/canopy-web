@@ -652,6 +652,10 @@ def test_a_new_desktop_session_is_recorded_with_its_task_name(cfg, tmp_path, no_
 # ── opening a session gives focus back (canopy-web#1188, Focus round 2) ──────
 
 def _record_runs(monkeypatch, results):
+    # These drive the macOS branch (osascript, `open`); a Windows test turns
+    # is_windows back on after calling this.
+    from canopy_runner import platform_jobs
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: False)
     calls = []
 
     def run(argv, **kw):

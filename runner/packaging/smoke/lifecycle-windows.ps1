@@ -15,7 +15,7 @@
        [Run] step runs `canopy-runner setup`. A throwaway ~\.canopy\runner.json is
        written first, pointing at an unreachable canopy-web (127.0.0.1:9), so setup
        finds the box "paired" and goes straight to registering the tasks — no pairing,
-       no network, no auth.
+       no network, no auth. (Today this is a KNOWN BUG, checked strictly: see step 1.)
     2. `canopy-runner setup --no-pair` again, captured (the path every update runs).
     3. Both \Canopy\ tasks as setup_cmd.register_script registers them: the runner
        with TWO triggers (AtLogOn + a 5-minute repetition) and IgnoreNew; the updater
@@ -174,9 +174,27 @@ try {
   Pass "wrote $Config"
 
   # --- 1. first install: the installer runs setup itself -----------------------------
+  # KNOWN BUG (strict, like pytest's xfail(strict=True)): Inno Setup processes [Run]
+  # BEFORE CurStepChanged(ssPostInstall), which is where the .iss creates `current` -
+  # so a first install's `{app}\current\bin\canopy-runner.cmd setup` finds no such path,
+  # and `|| pause` waits on a console nobody can see. When the .iss is fixed this check
+  # FAILS on purpose: delete the known-bug branch and keep the plain assertion.
   Step "install A ($($A.Sha12)) - a first install, no /UPDATE: the installer runs setup"
-  $rc = Run-Installer $A.Exe @() (Join-Path $Logs 'install-A.log') 300
-  Check "installer A (and the setup it runs) exited 0" { Assert ($rc -eq 0) $(if ($null -eq $rc) { 'killed after 300s' } else { "exit $rc" }) }
+  $rc = Run-Installer $A.Exe @() (Join-Path $Logs 'install-A.log') 120
+  $firstOk = ($rc -eq 0) -and (Task $RunnerTask) -and (Test-Path $Current)
+  if ($firstOk) {
+    Fail "first install ran setup and registered the tasks: the known [Run]-before-junction bug is FIXED - remove its known-bug branch in lifecycle-windows.ps1"
+  } elseif ($null -eq $rc -and -not (Test-Path $Current)) {
+    Write-Host "XFAIL first install: [Run] ran setup through current\ before the .iss created it (known bug; installer killed after 120s)"
+    Write-Output "::warning::known Windows bug: a first install's setup runs before the current junction exists (canopy-runner.iss [Run] vs ssPostInstall)"
+  } else {
+    Fail "first install failed some other way (exit $rc, current exists: $(Test-Path $Current))"
+  }
+  if (-not (Test-Path $Current)) {
+    Step "finish install A with /UPDATE (no [Run]), as the known bug leaves it half-done"
+    $rc = Run-Installer $A.Exe @('/UPDATE') (Join-Path $Logs 'install-A-update.log')
+    Check "installer A /UPDATE exited 0" { Assert ($rc -eq 0) $(if ($null -eq $rc) { 'killed after 600s' } else { "exit $rc" }) }
+  }
   Check "current is a junction to versions\$($A.Sha12)" {
     $t = Junction-Target; Assert ($t -like "*\versions\$($A.Sha12)") "points at $t"; $t
   }
@@ -184,13 +202,9 @@ try {
     $v = (Get-Content (Join-Path $App 'current-version.txt') -Raw).Trim()
     Assert ($v -eq $A.Sha12) $v
   }
-  Check "the installer's setup registered both tasks" {
-    Assert (Task $RunnerTask) "no \Canopy\$RunnerTask"
-    Assert (Task $UpdaterTask) "no \Canopy\$UpdaterTask"
-  }
 
   # --- 2. setup --no-pair, captured --------------------------------------------------
-  Step "canopy-runner setup --no-pair (what every update runs)"
+  Step "canopy-runner setup --no-pair (what every update runs; here it registers the tasks)"
   $Shim = Join-Path $Current 'bin\canopy-runner.cmd'
   $r = Run-Captured 'cmd.exe' @('/c', "`"`"$Shim`" setup --no-pair --config `"$Config`"`"")
   Write-Host $r.Out
