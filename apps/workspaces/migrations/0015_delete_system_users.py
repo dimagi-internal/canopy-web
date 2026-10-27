@@ -1,8 +1,10 @@
-"""Retire system accounts (docs/superpowers/specs/2026-10-27-agent-triggers-design.md).
+"""Retire system accounts, step 1 (docs/superpowers/specs/2026-10-27-agent-triggers-design.md).
 
 `harness/0125` has already made each one into the inbound-mail triggers it amounted
 to and moved its turns onto them. Here its login-less user is deleted — taking its
-membership, the account and its sender bindings with it — and the two models go.
+membership, the account and its sender bindings with it. `0016` drops the models: on
+PostgreSQL the delete leaves deferred FK trigger events that forbid an ALTER TABLE in
+the same transaction, so the two are separate migrations.
 """
 from django.db import migrations
 
@@ -23,24 +25,4 @@ class Migration(migrations.Migration):
         ("mail", "0008_backfill_email_session_people"),
     ]
 
-    operations = [
-        migrations.RunPython(delete_system_users, migrations.RunPython.noop),
-        migrations.RemoveConstraint(
-            model_name="systemaccount",
-            name="uniq_ws_system_account_name",
-        ),
-        migrations.RemoveConstraint(
-            model_name="systemsender",
-            name="uniq_system_sender",
-        ),
-        migrations.RemoveField(
-            model_name="systemsender",
-            name="account",
-        ),
-        migrations.DeleteModel(
-            name="SystemAccount",
-        ),
-        migrations.DeleteModel(
-            name="SystemSender",
-        ),
-    ]
+    operations = [migrations.RunPython(delete_system_users, migrations.RunPython.noop)]
