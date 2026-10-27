@@ -905,6 +905,10 @@ class AgentTurnIn(StrictModel):
     # laptop agent recovers its emdash task from cwd (canopy's agent_client); a
     # cloud agent has none, and is joined on `cli_session_id` instead.
     session_key: str = Field(default="", max_length=200)
+    # The turn being closed, when the agent knows it (the runner hands it the id in
+    # its caller envelope). Wins over every other match: one Claude session can
+    # serve several dispatched turns, and only the id tells them apart.
+    turn_id: uuid.UUID | None = None
     emdash_task_id: str = LEGACY_SESSION_KEY
     # Structured provenance for the row — e.g. a huddle's anchor turn
     # (`{"kind": "huddle", "huddle": "<id>", ...}`, canopy `huddle`). MERGED into

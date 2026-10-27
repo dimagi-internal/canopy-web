@@ -225,6 +225,38 @@ def test_close_out_does_not_reclaim_an_already_reported_turn():
     assert Turn.objects.filter(agent=agent).count() == 2
 
 
+def test_close_out_names_its_turn_when_one_session_serves_two():
+    """The runner reused one live Claude session for a second turn on the same
+    thread: both closes carry the same cli_session_id. The turn id the agent names
+    is what puts the second close on the second turn (ada, 2026-10-27)."""
+    agent = _agent()
+    first = _dispatch(agent, key="k1")
+    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="First", turn_id=first.pk))
+    second = _dispatch(agent, key="k2")
+    landed = closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="Second",
+                                               turn_id=second.pk))
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert landed.pk == second.pk
+    assert first.report_title == "First" and first.cli_session_id == "s1"
+    assert second.report_title == "Second"
+    # re-posting the second close updates it in place, never the first
+    closeout.upsert_turn(agent, _turn(cli_session_id="s1", title="Second, again",
+                                      turn_id=second.pk))
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.report_title == "First" and second.report_title == "Second, again"
+    assert Turn.objects.filter(agent=agent).count() == 2
+
+
+def test_close_out_ignores_a_turn_id_from_another_agent():
+    agent, other = _agent(), _agent(slug="hal")
+    foreign = _dispatch(other, key="kx")
+    turn = closeout.upsert_turn(agent, _turn(cli_session_id="s5", turn_id=foreign.pk))
+    foreign.refresh_from_db()
+    assert turn.agent_id == agent.pk and foreign.report_title == ""
+
+
 def _skill_in(**kw):
     """Stand-in for AgentSkillIn. Mirrors its fields (and its defaults) — the
     service is deliberately strict rather than getattr-defensive, because its one
