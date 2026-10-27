@@ -1880,12 +1880,33 @@ class AgentProjectDetailOut(AgentProjectOut):
 
 
 # ---- shared ----
-class GoogleMintStartOut(StrictModel):
-    """Where to send the browser to consent. Declared rather than left implicit:
-    an undeclared response reaches the typed client as `undefined`, and the only
-    way to consume it is a cast — which silently survives the route changing."""
+class GoogleMintStartIn(StrictModel):
+    #: The Google account to preselect on the consent screen ("" = the agent's own).
+    login_hint: str = ""
 
-    url: str
+
+class GoogleMintOut(StrictModel):
+    """One "Connect Google mailbox" sign-in, as the person waiting on it sees it.
+
+    `status`: `requested` (the runner is preparing the link), `awaiting` (open
+    `authorize_url` with a top-level navigation), `completing` (Google answered; the
+    runner is finishing), `done` or `failed`. `outcome` is how it ended (ok, denied,
+    wrong-account, …). Never a code or a token: the token is exchanged and encrypted
+    on the runner, and canopy never holds it."""
+
+    id: uuid.UUID
+    status: Literal["requested", "awaiting", "completing", "done", "failed"]
+    outcome: str = ""
+    authorize_url: str = ""
+    #: The runner finishing the sign-in.
+    runner: str = ""
+    #: The Google account that consented, once known.
+    account: str = ""
+    #: The account the agent must sign in as ("" = any).
+    expected_account: str = ""
+    detail: str = ""
+    created_at: datetime
+    updated_at: datetime
 
 
 class SenderTrustIn(StrictModel):

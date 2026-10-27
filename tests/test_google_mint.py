@@ -1,28 +1,33 @@
-"""Minting a gog token from a browser.
+"""Connecting an agent's Google account — finished on one of its runners, so canopy-web
+never holds the token (apps/agents/credentials/google_mint.py).
 
-The shape assertions here are not designed — they are transcribed from the tokens
-that actually work. On 2026-09-06 the live items op://Agent-Echo/gog-token and
-op://Agent-Eva/gog-token both read:
+canopy-web's part: which scopes and account, the consent link around the RUNNER's PKCE
+challenge, relaying Google's single-use code to that runner exactly once, and storing
+only the ciphertext the runner sends back. The exchange itself (code + verifier + the
+client secret from the agent's vault) is `canopy vault google-mint`, tested in canopy.
 
-    services: [docs, drive, forms, gmail, sheets]
-    scopes:   [email, .../documents, .../drive, .../forms.body,
-               .../forms.responses.readonly, .../gmail.modify,
-               .../gmail.settings.basic, .../gmail.settings.sharing,
-               .../spreadsheets, .../userinfo.email, openid]
-
-Notably NO calendar and NO slides — a first draft of the mint requested both on
-the assumption they were wanted, and a token unlike every other token in the
-fleet is a new thing to debug rather than a replacement for the old one.
+The scope assertions are transcribed from the tokens that actually work: on 2026-09-06
+op://Agent-Echo/gog-token and op://Agent-Eva/gog-token both carried exactly
+LIVE_FLEET_SCOPES below.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import datetime as dt
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+from django.contrib.auth import get_user_model
+from django.test import Client
+from django.utils import timezone
 
-from apps.agents.credentials import google_oauth as g
+from apps.agents.credentials import google_mint, google_oauth as g, zk_seal
+from apps.agents.models import Agent, AgentCredential, AgentGoogleMint
+from apps.harness.models import Runner, RunnerAssignment
+from apps.passkeys.testing import give_vault_key
+from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures.machines import a_machine
+from tests.fixtures.vault_zk import ref
 
-# Exactly what echo's and eva's working tokens carry.
 LIVE_FLEET_SCOPES = [
     "email",
     "https://www.googleapis.com/auth/documents",
@@ -36,25 +41,22 @@ LIVE_FLEET_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "openid",
 ]
+# ace/config/agent.json: what its mailbox must be able to do (gog's service names),
+# keyed to the scope path that grants each.
+ACE_DECLARED = {"gmail": "gmail", "calendar": "calendar", "drive": "drive", "docs": "documents",
+                "slides": "presentations", "sheets": "spreadsheets", "forms": "forms"}
+GMAIL = "https://www.googleapis.com/auth/gmail"
+CALLBACK = "/api/oauth/google/callback"
+CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
 
 
-# ace/config/agent.json, verbatim — the DECLARATION of what its mailbox must be
-# able to do, alongside the note that two of them are missing from the fleet
-# default. This is the authority on scope, not the incumbent tokens.
-ACE_DECLARED_SERVICES = ["gmail", "calendar", "drive", "docs", "slides", "sheets", "forms"]
-
+# --- what is asked for ------------------------------------------------------------
 
 def test_the_request_covers_every_service_an_agent_declares():
-    """The correction that matters. A first version requested exactly what the
-    live tokens carry — but those record what was MINTED, not what is needed, and
-    ace's config says the fleet default is insufficient for it. Minting from that
-    set hands ACE a token that authorizes cleanly and fails its first slides
-    call: the silent breakage this feature exists to end, reintroduced by the
-    feature itself."""
-    granted = g.services_for(g.FLEET_SCOPES)
-    assert set(ACE_DECLARED_SERVICES) <= set(granted), (
-        f"declared but not requested: {sorted(set(ACE_DECLARED_SERVICES) - set(granted))}"
-    )
+    """The live tokens record what was MINTED, not what is needed; ace declares
+    slides and calendar too, and a token without them fails its first slides call."""
+    for service, path in ACE_DECLARED.items():
+        assert any(s.startswith(f"https://www.googleapis.com/auth/{path}") for s in g.FLEET_SCOPES), service
 
 
 def test_the_request_is_a_superset_of_what_the_live_fleet_already_has():
@@ -62,235 +64,210 @@ def test_the_request_is_a_superset_of_what_the_live_fleet_already_has():
     assert set(LIVE_FLEET_SCOPES) <= set(g.FLEET_SCOPES)
 
 
-def test_calendar_and_slides_are_asked_for_because_an_agent_declares_them():
-    assert "https://www.googleapis.com/auth/calendar" in g.FLEET_SCOPES
-    assert "https://www.googleapis.com/auth/presentations" in g.FLEET_SCOPES
-
-
-def test_services_are_derived_from_the_granted_scopes_not_declared():
-    assert g.services_for(LIVE_FLEET_SCOPES) == ["docs", "drive", "forms", "gmail", "sheets"]
-
-
-def test_a_scope_the_user_unchecked_drops_its_service():
-    """A consent screen lets scopes be declined. Claiming a service that was not
-    granted fails at call time, months later, instead of at mint time."""
-    without_forms = [s for s in LIVE_FLEET_SCOPES if "/forms" not in s]
-    assert "forms" not in g.services_for(without_forms)
-    assert "gmail" in g.services_for(without_forms)
-
-
-def test_sign_in_only_scopes_contribute_no_service():
-    assert g.services_for(["openid", "email", "https://www.googleapis.com/auth/userinfo.email"]) == []
-
-
-def test_the_token_has_exactly_the_five_keys_gog_imports():
-    tok = g.build_gog_token(
-        email="ace@dimagi-ai.com", refresh_token="1//rt", granted_scopes=LIVE_FLEET_SCOPES
-    )
-    assert set(tok) == {"email", "client", "services", "scopes", "created_at", "refresh_token"}
-
-
-def test_the_token_matches_a_live_one_field_for_field():
-    tok = g.build_gog_token(
-        email="eva@dimagi-ai.com",
-        refresh_token="1//rt",
-        granted_scopes=LIVE_FLEET_SCOPES,
-        now=datetime(2026, 7, 24, 4, 9, 54, tzinfo=timezone.utc),
-    )
-    assert tok["email"] == "eva@dimagi-ai.com"
-    assert tok["services"] == ["docs", "drive", "forms", "gmail", "sheets"]
-    assert tok["scopes"] == sorted(LIVE_FLEET_SCOPES)
-    assert tok["created_at"] == "2026-07-24T04:09:54Z"
-
-
-def test_the_token_declares_the_client_that_minted_it():
-    """The load-bearing invariant of the whole feature, and the one a wrong
-    inference broke on 2026-09-05: a refresh token works ONLY with the client it
-    was minted for. The browser flow can only run on the Web client, so the token
-    must say so — writing `canopy` here would name a Desktop client that never saw
-    this token and cannot refresh it."""
-    tok = g.build_gog_token(email="a@b.c", refresh_token="x", granted_scopes=["openid"])
-    assert tok["client"] == "canopy-web"
-    assert tok["client"] != "canopy"
-
-
-def test_created_at_is_utc_with_the_trailing_z():
-    """gog's importer reads this literally; a naive local timestamp would silently
-    date a token hours off."""
-    tok = g.build_gog_token(
-        email="a@b.c", refresh_token="x", granted_scopes=["openid"],
-        now=datetime(2026, 9, 6, 12, 0, 0, tzinfo=timezone.utc),
-    )
-    assert tok["created_at"].endswith("Z") and "+" not in tok["created_at"]
-
-
-# --- the authorize URL ----------------------------------------------------------
-
-def test_the_authorize_url_forces_a_refresh_token_to_be_reissued():
-    """Without prompt=consent a RE-mint for an already-consented account returns
-    no refresh_token at all, and the result imports cleanly and then cannot
-    refresh — a provisioned-looking dead mailbox, which is the exact failure this
-    whole feature was built to surface."""
-    url = g.authorize_url(client_id="cid", state="st")
-    assert "access_type=offline" in url
-    assert "prompt=consent" in url
+def test_the_consent_link_forces_a_refresh_token_and_carries_the_runners_challenge():
+    """Without prompt=consent a re-mint returns no refresh token; without the challenge
+    the code would be redeemable by whoever holds it — canopy-web included."""
+    url = g.authorize_url(client_id="cid", state="st", code_challenge=CHALLENGE)
+    q = parse_qs(urlparse(url).query)
+    assert q["access_type"] == ["offline"] and q["prompt"] == ["consent"]
+    assert q["code_challenge"] == [CHALLENGE] and q["code_challenge_method"] == ["S256"]
 
 
 def test_one_redirect_uri_serves_every_agent():
-    """A per-agent URI would need a Google console edit per new agent."""
-    import re
-
-    assert re.search(r"/api/oauth/google/callback$", g.callback_url())
-    a = g.authorize_url(client_id="cid", state=g.sign_state(agent_slug="ace", user_pk=1))
-    b = g.authorize_url(client_id="cid", state=g.sign_state(agent_slug="echo", user_pk=1))
-    from urllib.parse import parse_qs, urlparse
-
+    assert g.callback_url().endswith("/api/oauth/google/callback")
+    a = g.authorize_url(client_id="cid", state=g.sign_state(agent_slug="ace", user_pk=1), code_challenge=CHALLENGE)
+    b = g.authorize_url(client_id="cid", state=g.sign_state(agent_slug="echo", user_pk=1), code_challenge=CHALLENGE)
     assert parse_qs(urlparse(a).query)["redirect_uri"] == parse_qs(urlparse(b).query)["redirect_uri"]
 
 
 def test_state_round_trips_and_refuses_tampering():
-    state = g.sign_state(agent_slug="ace", user_pk=7)
-    assert g.unsign_state(state) == {"agent": "ace", "user": "7"}
-
     from django.core import signing
 
+    state = g.sign_state(agent_slug="ace", user_pk=7, mint="m1")
+    assert g.unsign_state(state) == {"agent": "ace", "user": "7", "mint": "m1"}
     with pytest.raises(signing.BadSignature):
         g.unsign_state(state[:-3] + "aaa")
 
 
-def test_the_agent_travels_in_signed_state_not_a_query_param():
-    """If the agent were a plain parameter, anyone who could get a user to follow
-    a link could attach a mailbox to an agent of their choosing."""
-    url = g.authorize_url(client_id="cid", state=g.sign_state(agent_slug="ace", user_pk=1))
-    from urllib.parse import parse_qs, urlparse
-
-    q = parse_qs(urlparse(url).query)
-    assert "agent" not in q
-    assert q["state"][0] != "ace"
+def test_canopy_web_keeps_no_way_to_exchange_a_code():
+    """The server-side exchange is gone: no token endpoint, no client secret read."""
+    for name in ("exchange_code", "build_gog_token", "email_from_id_token", "google_client_credentials",
+                 "TOKEN_ENDPOINT"):
+        assert not hasattr(g, name), name
 
 
-def test_the_id_token_payload_yields_the_mailbox():
-    import base64
-    import json
-
-    payload = base64.urlsafe_b64encode(json.dumps({"email": "ace@dimagi-ai.com"}).encode())
-    jwt = b"h." + payload.rstrip(b"=") + b".sig"
-    assert g.email_from_id_token(jwt.decode()) == "ace@dimagi-ai.com"
-
-
-# --- the flow through the routes -------------------------------------------------
-
-from django.contrib.auth import get_user_model  # noqa: E402
-
-from apps.agents.models import Agent, AgentCredential  # noqa: E402
-from apps.passkeys.testing import give_vault_key  # noqa: E402
-from apps.workspaces.models import Workspace, WorkspaceMembership  # noqa: E402
-
-CALLBACK = "/api/oauth/google/callback"
-
+# --- the flow ---------------------------------------------------------------------
 
 @pytest.fixture
-def fleet(client, settings):
+def fleet(settings):
     settings.SOCIALACCOUNT_PROVIDERS = {
-        "google": {"APP": {"client_id": "cid.apps.googleusercontent.com", "secret": "GOCSPX-x"}}
-    }
+        "google": {"APP": {"client_id": "cid.apps.googleusercontent.com", "secret": "GOCSPX-x"}}}
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     ws = Workspace.objects.create(slug="connect", display_name="Connect", created_by=jj)
     WorkspaceMembership.objects.create(workspace=ws, user=jj, role=WorkspaceMembership.OWNER)
-    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, runtime_secrets=["gog-token"])
-    # The minted token is sealed to whoever may read the agent: its owner, here.
+    agent = Agent.objects.create(slug="ace", name="ACE", workspace=ws, owner=jj, runtime_secrets=["gog-token"])
     key = give_vault_key(jj)
+    runner = Runner.objects.create(name="cloud-ec2-1", kind=Runner.CLOUD, owner=jj, workspace=ws,
+                                   last_heartbeat_at=timezone.now(), status=Runner.ONLINE,
+                                   capabilities={"google_mint": True})
+    RunnerAssignment.objects.create(agent=agent, runner=runner, rank=0)
+    machine, _, ecdh = a_machine(runner, jj)
+    client = Client()
     client.force_login(jj)
-    return {"client": client, "agent": agent, "user": jj, "ws": ws, "key": key}
+    return {"client": client, "agent": agent, "user": jj, "ws": ws, "key": key, "runner": runner,
+            "machine": machine, "ecdh": ecdh}
 
 
-def _google_response(*, refresh="1//refresh", scope=None):
-    import base64
-    import json
-
-    payload = base64.urlsafe_b64encode(json.dumps({"email": "ace@dimagi-ai.com"}).encode())
-    out = {
-        "id_token": "h." + payload.rstrip(b"=").decode() + ".sig",
-        "scope": " ".join(scope if scope is not None else LIVE_FLEET_SCOPES),
-    }
-    if refresh:
-        out["refresh_token"] = refresh
-    return out
+def _start(fleet, **body):
+    return fleet["client"].post("/api/agents/ace/google/mint", body, content_type="application/json")
 
 
-@pytest.mark.django_db
-def test_authorize_hands_back_a_url_rather_than_redirecting(fleet):
-    """A 302 out of an XHR is invisible — the fetch resolves on Google's HTML and
-    nothing appears on screen. Only a top-level navigation can show consent."""
-    res = fleet["client"].get("/api/agents/ace/google/authorize")
-    assert res.status_code == 200
-    url = res.json()["url"]
-    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
-    assert "login_hint=ace%40dimagi-ai.com" in url
+def _claim(fleet):
+    r = fleet["client"].get(f"/api/harness/runners/{fleet['runner'].pk}/mint/claim")
+    assert r.status_code == 200, r.content
+    return r.json()["google"]
 
 
-@pytest.mark.django_db
-def test_the_callback_stores_a_gog_importable_token(fleet, monkeypatch):
-    import json
-
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    assert res.status_code == 302 and res["Location"].endswith("?google=ok#credentials")
-
-    stored = json.loads(_stored_token(fleet))
-    assert stored["email"] == "ace@dimagi-ai.com"
-    assert stored["client"] == "canopy-web"
-    assert stored["refresh_token"] == "1//refresh"
-    assert stored["services"] == ["docs", "drive", "forms", "gmail", "sheets"]
+def _runner_post(fleet, mint_id, step, body):
+    return fleet["client"].post(f"/api/harness/runners/{fleet['runner'].pk}/google-mint/{mint_id}/{step}",
+                                body, content_type="application/json")
 
 
-def _stored_token(fleet) -> str:
-    """The stored gog-token, opened as its owner's browser would: canopy-web holds
-    only `zks1` ciphertext sealed to the agent's readers."""
-    import importlib.util
-    from pathlib import Path
+def _to_consent(fleet) -> tuple[str, str]:
+    """Start a sign-in and let the runner post its challenge: (mint id, consent link)."""
+    mint_id = _start(fleet).json()["id"]
+    work = _claim(fleet)
+    assert work == {**work, "id": mint_id, "agent": "ace", "status": "requested", "code": ""}
+    assert _runner_post(fleet, mint_id, "challenge", {"code_challenge": CHALLENGE}).status_code == 204
+    out = fleet["client"].get(f"/api/agents/ace/google/mint/{mint_id}").json()
+    assert out["status"] == "awaiting"
+    return mint_id, out["authorize_url"]
 
-    path = Path(__file__).resolve().parents[1] / "docs" / "vault" / "zk-v1" / "zk_v1_reference.py"
-    spec = importlib.util.spec_from_file_location("zk_v1_reference", path)
-    ref = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ref)
+
+def _return(fleet, url, **params):
+    state = parse_qs(urlparse(url).query)["state"][0]
+    return fleet["client"].get(CALLBACK, {"state": state, **params})
+
+
+def _sealed_token(fleet, token='{"refresh_token": "1//refresh"}'):
     agent = fleet["agent"]
-    stored = AgentCredential.objects.get(agent=agent, name="gog-token").value_zk
-    assert stored.startswith("zks1:")
-    return ref.open_sealed_value(stored, str(agent.pk), "gog-token", "member", str(fleet["user"].pk),
-                                 fleet["key"])
+    return zk_seal.seal_to(token, agent_id=str(agent.pk), name="gog-token", kv=agent.zk_kv,
+                           recipients=zk_seal.recipients_for(agent))
 
 
 @pytest.mark.django_db
-def test_it_lands_in_the_same_slot_a_hand_minted_token_does(fleet, monkeypatch):
-    """`gog-token` is the ref every agent's declaration and every vault already names.
-    A second slot would give one mailbox two sources of truth."""
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    assert AgentCredential.objects.filter(agent=fleet["agent"], name="gog-token").exists()
+def test_a_sign_in_runs_on_the_runner_and_only_ciphertext_comes_back(fleet):
+    mint_id, url = _to_consent(fleet)
+    assert url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "login_hint=ace%40dimagi-ai.com" in url and f"code_challenge={CHALLENGE}" in url
+
+    res = _return(fleet, url, code="4/code")
+    assert res.status_code == 302
+    assert res["Location"].endswith(f"/w/connect/agents/ace/settings?google=pending&mint={mint_id}#credentials")
+
+    work = _claim(fleet)
+    assert work["status"] == "completing" and work["code"] == "4/code"
+    assert work["client_id"] == "cid.apps.googleusercontent.com" and work["client"] == "canopy-web"
+    assert work["redirect_uri"].endswith(CALLBACK) and work["agent_id"] == str(fleet["agent"].pk)
+    assert {r["kind"] for r in work["recipients"]} == {"device", "member"}
+    assert "GOCSPX" not in str(work), "the client secret is the runner's, from the agent's vault"
+    assert _claim(fleet) is None, "the code is handed out once"
+    assert AgentGoogleMint.objects.get(pk=mint_id).code == "", "and not kept"
+
+    value = _sealed_token(fleet)
+    r = _runner_post(fleet, mint_id, "result", {"value_zk": value, "kv": 0, "account": "ace@dimagi-ai.com"})
+    assert r.status_code == 204, r.content
+    out = fleet["client"].get(f"/api/agents/ace/google/mint/{mint_id}").json()
+    assert (out["status"], out["outcome"], out["account"]) == ("done", "ok", "ace@dimagi-ai.com")
+    stored = AgentCredential.objects.get(agent=fleet["agent"], name="gog-token").value_zk
+    assert stored == value
+    assert ref.open_sealed_value(stored, str(fleet["agent"].pk), "gog-token", "member", str(fleet["user"].pk),
+                                 fleet["key"]) == '{"refresh_token": "1//refresh"}'
 
 
 @pytest.mark.django_db
-def test_a_response_without_a_refresh_token_is_refused_not_stored(fleet, monkeypatch):
-    """Google withholds it for an already-consented account. Storing what came
-    back yields a token that imports cleanly and can never refresh — a mailbox
-    that LOOKS provisioned, which is the exact failure mode this feature exists
-    to end."""
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response(refresh=""))
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    assert res["Location"].endswith("?google=no-refresh-token#credentials")
+def test_no_runner_online_says_so_and_starts_nothing(fleet):
+    Runner.objects.filter(pk=fleet["runner"].pk).update(last_heartbeat_at=timezone.now() - dt.timedelta(hours=1))
+    r = _start(fleet)
+    assert r.status_code == 409 and r.json()["error"] == "no_mint_runner"
+    assert "No runner that may hold ace is online" in r.json()["detail"]
+    assert not AgentGoogleMint.objects.exists()
+
+
+@pytest.mark.django_db
+def test_a_runner_that_cannot_finish_a_sign_in_is_not_chosen(fleet):
+    Runner.objects.filter(pk=fleet["runner"].pk).update(capabilities={})
+    assert _start(fleet).status_code == 409
+
+
+@pytest.mark.django_db
+def test_a_runner_whose_owner_may_not_hold_the_agent_is_not_chosen(fleet):
+    stranger = get_user_model().objects.create_user(username="s", email="s@dimagi.com")
+    Runner.objects.filter(pk=fleet["runner"].pk).update(owner=stranger)
+    assert _start(fleet).status_code == 409
+
+
+@pytest.mark.django_db
+def test_a_token_in_the_clear_is_refused(fleet):
+    mint_id, url = _to_consent(fleet)
+    _return(fleet, url, code="4/code")
+    _claim(fleet)
+    r = _runner_post(fleet, mint_id, "result", {"value_zk": '{"refresh_token": "1//x"}', "account": "ace@dimagi-ai.com"})
+    assert r.status_code == 422
     assert not AgentCredential.objects.filter(agent=fleet["agent"], name="gog-token").exists()
 
 
 @pytest.mark.django_db
+def test_a_token_sealed_to_a_stranger_is_refused(fleet):
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    mint_id, url = _to_consent(fleet)
+    _return(fleet, url, code="4/code")
+    _claim(fleet)
+    other = ec.generate_private_key(ec.SECP256R1()).public_key()
+    value = zk_seal.seal_to("x", agent_id=str(fleet["agent"].pk), name="gog-token", kv=0,
+                            recipients=[("device", ref.jkt(other), ref.jwk(other))])
+    r = _runner_post(fleet, mint_id, "result", {"value_zk": value, "kv": 0, "account": "ace@dimagi-ai.com"})
+    assert r.status_code == 422 and r.json()["error"] == "foreign_reader"
+
+
+@pytest.mark.django_db
+def test_a_consent_from_another_google_account_is_not_stored(fleet):
+    """The runner reads a Gmail agent's mailbox by its address, so a token for any other
+    account can never serve it — stored, it would read "connected" while mail fails."""
+    Agent.objects.filter(pk=fleet["agent"].pk).update(email="ace@dimagi-ai.com")
+    mint_id, url = _to_consent(fleet)
+    _return(fleet, url, code="4/code")
+    _claim(fleet)
+    _runner_post(fleet, mint_id, "result", {"value_zk": _sealed_token(fleet), "kv": 0, "account": "jj@gmail.com"})
+    out = fleet["client"].get(f"/api/agents/ace/google/mint/{mint_id}").json()
+    assert (out["status"], out["outcome"], out["account"]) == ("failed", "wrong-account", "jj@gmail.com")
+    assert out["expected_account"] == "ace@dimagi-ai.com"
+    assert not AgentCredential.objects.filter(agent=fleet["agent"], name="gog-token").exists()
+
+
+@pytest.mark.django_db
+def test_the_runner_reports_why_an_exchange_failed(fleet):
+    mint_id, url = _to_consent(fleet)
+    _return(fleet, url, code="4/code")
+    _claim(fleet)
+    _runner_post(fleet, mint_id, "result", {"error": "no-refresh-token", "detail": "Google returned no refresh token"})
+    out = fleet["client"].get(f"/api/agents/ace/google/mint/{mint_id}").json()
+    assert (out["status"], out["outcome"]) == ("failed", "no-refresh-token")
+
+
+@pytest.mark.django_db
+def test_a_denied_consent_ends_the_sign_in(fleet):
+    mint_id, url = _to_consent(fleet)
+    res = _return(fleet, url, error="access_denied")
+    assert res["Location"].endswith(f"?google=denied&mint={mint_id}#credentials")
+    assert _claim(fleet) is None
+
+
+@pytest.mark.django_db
 def test_the_callback_refuses_a_state_signed_for_someone_else(fleet):
-    """Otherwise a link followed by the wrong person attaches THEIR mailbox to
-    this agent."""
     other = get_user_model().objects.create_user(username="m", email="m@dimagi.com")
-    state = g.sign_state(agent_slug="ace", user_pk=other.pk)
+    state = g.sign_state(agent_slug="ace", user_pk=other.pk, mint="x")
     assert fleet["client"].get(CALLBACK, {"code": "c", "state": state}).status_code == 403
 
 
@@ -300,82 +277,54 @@ def test_the_callback_refuses_unsigned_state(fleet):
 
 
 @pytest.mark.django_db
-def test_a_denied_consent_stores_nothing_and_says_so(fleet):
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    res = fleet["client"].get(CALLBACK, {"error": "access_denied", "state": state})
-    assert res["Location"].endswith("?google=denied#credentials")
-    assert not AgentCredential.objects.filter(agent=fleet["agent"], name="gog-token").exists()
+def test_a_new_sign_in_supersedes_an_unfinished_one(fleet):
+    first = _start(fleet).json()["id"]
+    second = _start(fleet).json()["id"]
+    assert AgentGoogleMint.objects.get(pk=first).outcome == "superseded"
+    assert _claim(fleet)["id"] == second
 
 
 @pytest.mark.django_db
-def test_the_minted_value_never_comes_back_through_the_browser(fleet, monkeypatch):
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    body = fleet["client"].get("/api/agents/ace/credentials/status").content.decode()
-    assert "1//refresh" not in body
-    assert '"name": "gog-token"' in body or "gog-token" in body
+def test_an_old_sign_in_expires(fleet):
+    mint_id, _ = _to_consent(fleet)
+    AgentGoogleMint.objects.filter(pk=mint_id).update(
+        updated_at=timezone.now() - dt.timedelta(seconds=google_mint.TTL_SECONDS + 5))
+    out = fleet["client"].get(f"/api/agents/ace/google/mint/{mint_id}").json()
+    assert (out["status"], out["outcome"]) == ("failed", "expired")
 
 
 @pytest.mark.django_db
-def test_a_non_member_cannot_start_a_mint(client):
+def test_only_the_runner_it_was_handed_to_may_answer(fleet):
+    mint_id = _start(fleet).json()["id"]
+    other = Runner.objects.create(name="cloud-ec2-2", kind=Runner.CLOUD, owner=fleet["user"])
+    r = fleet["client"].post(f"/api/harness/runners/{other.pk}/google-mint/{mint_id}/challenge",
+                             {"code_challenge": CHALLENGE}, content_type="application/json")
+    assert r.status_code == 409
+
+
+@pytest.mark.django_db
+def test_a_non_member_cannot_start_a_mint():
     owner = get_user_model().objects.create_user(username="o", email="o@dimagi.com")
     ws = Workspace.objects.create(slug="private", display_name="P", created_by=owner)
     WorkspaceMembership.objects.create(workspace=ws, user=owner, role=WorkspaceMembership.OWNER)
     Agent.objects.create(slug="secret", name="S", workspace=ws, runtime_secrets=["gog-token"])
-    client.force_login(get_user_model().objects.create_user(username="x", email="x@dimagi.com"))
-    assert client.get("/api/agents/secret/google/authorize").status_code == 404
+    c = Client()
+    c.force_login(get_user_model().objects.create_user(username="x", email="x@dimagi.com"))
+    assert c.post("/api/agents/secret/google/mint", {}, content_type="application/json").status_code == 404
 
 
 @pytest.mark.django_db
-def test_the_return_trip_keeps_the_deployment_path_prefix(fleet, monkeypatch, settings):
-    """The mint worked and the operator saw Resolver404.
-
-    canopy-web is served under /canopy in production, so a root-relative redirect
-    lands outside the app. The token was stored, `?google=ok` was set, and the
-    page still read as a failure — the worst shape of bug on a screen whose whole
-    job is telling you whether a credential is healthy."""
+def test_the_return_trip_keeps_the_deployment_path_prefix(fleet, settings):
     settings.CANOPY_PUBLIC_BASE_URL = "https://labs.connect.dimagi.com/canopy"
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response())
-
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-
-    assert res["Location"] == (
-        "https://labs.connect.dimagi.com/canopy"
-        "/w/connect/agents/ace/settings?google=ok#credentials"
-    )
-
-
-@pytest.mark.django_db
-def test_a_failed_mint_returns_to_the_same_prefixed_page(fleet, monkeypatch, settings):
-    """Every exit uses the same builder — a failure that 404s is how an operator
-    concludes the whole feature is broken."""
-    settings.CANOPY_PUBLIC_BASE_URL = "https://labs.connect.dimagi.com/canopy"
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: _google_response(refresh=""))
-
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    res = fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-    assert res["Location"].startswith("https://labs.connect.dimagi.com/canopy/w/connect/")
-    assert res["Location"].endswith("?google=no-refresh-token#credentials")
+    mint_id, url = _to_consent(fleet)
+    res = _return(fleet, url, code="4/code")
+    assert res["Location"] == ("https://labs.connect.dimagi.com/canopy/w/connect/agents/ace/settings"
+                               f"?google=pending&mint={mint_id}#credentials")
 
 
 # --- only what the agent needs, and from the right account ------------------------
 
-GMAIL = "https://www.googleapis.com/auth/gmail"
-
-
-def _id_token_for(email: str) -> str:
-    import base64
-    import json
-
-    payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode())
-    return "h." + payload.rstrip(b"=").decode() + ".sig"
-
-
 def _hosted(agent, address="family@marshellis.com", status="verified"):
-    """Give `agent` an address on a canopy-hosted domain of its own workspace (apps/mail),
-    routed to it."""
     from apps.mail.models import MailDomain, MailRoute
 
     local, _, host = address.partition("@")
@@ -387,128 +336,46 @@ def _hosted(agent, address="family@marshellis.com", status="verified"):
 
 
 @pytest.mark.django_db
-def test_a_domain_registered_but_not_yet_verified_is_still_gmail(fleet, monkeypatch):
-    """A workspace can register its domain before the MX cut-over; until the domain verifies,
-    the address is still a Google mailbox — it keeps its Gmail scopes, its
-    hint, and the account check."""
+def test_a_domain_registered_but_not_yet_verified_is_still_gmail(fleet):
     agent = _hosted(fleet["agent"], "ace@dimagi-ai.com", status="pending")
     assert g.scopes_for(agent) == g.FLEET_SCOPES
     assert g.expected_account(agent) == "ace@dimagi-ai.com"
-    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
-    assert "gmail.modify" in url and "login_hint=ace%40dimagi-ai.com" in url
-    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
-    assert "google=wrong-account" in res["Location"]
-
-
-def _gmail(agent, address="ace@dimagi-ai.com"):
-    agent.email = address
-    agent.save(update_fields=["email"])
-    return agent
-
-
-def _mint(fleet, monkeypatch, resp):
-    monkeypatch.setattr(g, "exchange_code", lambda **kw: resp)
-    state = g.sign_state(agent_slug="ace", user_pk=fleet["user"].pk)
-    return fleet["client"].get(CALLBACK, {"code": "c", "state": state})
-
-
-@pytest.mark.django_db
-def test_a_gmail_agent_is_asked_for_everything(fleet):
-    assert g.scopes_for(_gmail(fleet["agent"])) == g.FLEET_SCOPES
 
 
 @pytest.mark.django_db
 def test_a_canopy_hosted_agent_is_never_asked_for_gmail(fleet):
-    """Its mail runs through canopy (SES), so a Gmail grant would be a line on the
-    consent screen for nothing — and access to whatever inbox the account has."""
     agent = _hosted(fleet["agent"])
-    scopes = g.scopes_for(agent)
-    assert not [s for s in scopes if s.startswith(GMAIL)]
-    assert set(g.services_for(scopes)) == {"calendar", "docs", "drive", "forms", "sheets", "slides"}
-    assert {"openid", "email"} <= set(scopes)
-
-    from urllib.parse import parse_qs, urlparse
-
-    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    assert not [s for s in g.scopes_for(agent) if s.startswith(GMAIL)]
+    _, url = _to_consent(fleet)
     q = parse_qs(urlparse(url).query)
     assert GMAIL not in q["scope"][0]
-    # The hosted address is not a Google account, so it is never the hint.
-    assert q["login_hint"] == ["ace@dimagi-ai.com"]
+    assert q["login_hint"] == ["ace@dimagi-ai.com"], "a hosted address is no Google account: the slug default"
+    assert g.expected_account(agent) == ""
 
 
 @pytest.mark.django_db
-def test_a_gmail_agent_is_hinted_at_its_own_address(fleet):
-    _gmail(fleet["agent"], "Scout@Example.org")
-    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
-    assert "login_hint=scout%40example.org" in url
-    assert "gmail.modify" in url
-
-
-@pytest.mark.django_db
-def test_a_consent_from_another_google_account_is_refused_and_nothing_stored(fleet, monkeypatch):
-    """The runner reads a Gmail agent's mailbox by its address (`gog --account
-    <agent.email>`), so a token for any other account can never serve it — storing one
-    would read as "connected" while every mail turn fails."""
-    agent = _gmail(fleet["agent"])
-    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
-    assert res.status_code == 302
-    assert res["Location"].endswith(
-        "?google=wrong-account&account=jj%40gmail.com&expected=ace%40dimagi-ai.com#credentials")
-    assert not AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
-
-
-@pytest.mark.django_db
-def test_the_account_check_ignores_case(fleet, monkeypatch):
-    _gmail(fleet["agent"], "ACE@dimagi-ai.com")
-    assert _mint(fleet, monkeypatch, _google_response())["Location"].endswith("?google=ok#credentials")
-
-
-@pytest.mark.django_db
-def test_a_hosted_agent_with_no_google_account_may_use_any(fleet, monkeypatch):
-    """A canopy-hosted address is not a Google account; with no `google_account` set,
-    nothing names the account its Drive/Docs login must be, so any will do."""
-    agent = _hosted(fleet["agent"])
-    resp = {**_google_response(scope=["openid", "email", "https://www.googleapis.com/auth/drive"]),
-            "id_token": _id_token_for("marshellis.agent@gmail.com")}
-    assert _mint(fleet, monkeypatch, resp)["Location"].endswith("?google=ok#credentials")
-    assert AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
-
-
-@pytest.mark.django_db
-def test_a_hosted_agent_with_a_google_account_must_sign_in_as_it(fleet, monkeypatch):
-    """`Agent.google_account` names the agent's Google login apart from its mailbox
-    (family@marshellis.com on SES, signing in to Drive as a Gmail account): the mint is
-    hinted at it and refuses any other account."""
+def test_a_hosted_agent_with_a_google_account_must_sign_in_as_it(fleet):
     agent = _hosted(fleet["agent"])
     agent.google_account = "Marshellis.Agent@gmail.com"
     agent.save(update_fields=["google_account"])
     assert g.expected_account(agent) == "marshellis.agent@gmail.com"
-    url = fleet["client"].get("/api/agents/ace/google/authorize").json()["url"]
+    _, url = _to_consent(fleet)
     assert "login_hint=marshellis.agent%40gmail.com" in url and "gmail.modify" not in url
-
-    res = _mint(fleet, monkeypatch, {**_google_response(), "id_token": _id_token_for("jj@gmail.com")})
-    assert "google=wrong-account" in res["Location"] and "expected=marshellis.agent%40gmail.com" in res["Location"]
-    assert not AgentCredential.objects.filter(agent=agent, name="gog-token").exists()
-    resp = {**_google_response(), "id_token": _id_token_for("marshellis.agent@gmail.com")}
-    assert _mint(fleet, monkeypatch, resp)["Location"].endswith("?google=ok#credentials")
-
-
-@pytest.mark.django_db
-def test_a_gmail_agent_with_a_separate_google_account_checks_that_account(fleet, monkeypatch):
-    agent = _gmail(fleet["agent"])
-    agent.google_account = "login@dimagi-ai.com"
-    agent.save(update_fields=["google_account"])
-    assert g.expected_account(agent) == "login@dimagi-ai.com"
-    res = _mint(fleet, monkeypatch, _google_response())  # consents as ace@dimagi-ai.com
-    assert "google=wrong-account" in res["Location"]
 
 
 @pytest.mark.django_db
 def test_a_hosted_agent_that_also_reads_a_gmail_address_keeps_gmail(fleet):
-    """Ada's shape: a hosted primary address and a Gmail mailbox the runner still reads
-    (an InboundMailbox) — the token must still carry Gmail."""
     from apps.inbound.models import InboundMailbox
 
     agent = _hosted(fleet["agent"])
     InboundMailbox.objects.create(address="ace@dimagi-ai.com", agent=agent)
     assert g.scopes_for(agent) == g.FLEET_SCOPES
+
+
+@pytest.mark.django_db
+def test_a_login_hint_overrides_the_default(fleet):
+    mint_id = _start(fleet, login_hint="x@y.com").json()["id"]
+    _claim(fleet)
+    _runner_post(fleet, mint_id, "challenge", {"code_challenge": CHALLENGE})
+    url = fleet["client"].get(f"/api/agents/ace/google/mint/{mint_id}").json()["authorize_url"]
+    assert "login_hint=x%40y.com" in url

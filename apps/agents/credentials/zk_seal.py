@@ -1,8 +1,9 @@
 """Server-minted secrets for a zero-knowledge agent — `zks1:` "sealed to
 recipients" (canopy-web#1550, §6 of docs/vault/zk-v1/zk_v1_reference.py).
 
-canopy-web itself creates some secrets: the Gmail token from "Connect Google
-mailbox", the rotated `canopy-pat`. It cannot encrypt them under a ZK agent's
+canopy-web itself creates some secrets: the rotated `canopy-pat`. (The Gmail
+token from "Connect Google mailbox" is made on a runner and arrives here already
+encrypted — `google_mint.py`.) It cannot encrypt them under a ZK agent's
 vault key (it never holds one), and storing them custodially would break the
 promise. So it seals each value directly to every principal that may read the
 agent — each eligible device's ECDH key and each member's vault key — and keeps

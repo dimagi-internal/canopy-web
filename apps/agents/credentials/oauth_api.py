@@ -1,15 +1,19 @@
-"""The two routes behind the "Connect Google mailbox" button.
+"""The routes behind the "Connect Google mailbox" button.
 
-Split from api.py because the callback CANNOT live under `/agents/{slug}/` — one
-redirect URI has to serve every agent (see google_oauth.callback_url), so the
-agent travels in signed state and the callback is mounted at a fixed path.
+The sign-in finishes on one of the agent's runners, so canopy-web never holds the
+token (`google_mint.py`): these routes start it, report it, and receive Google's
+return trip. The callback CANNOT live under `/agents/{slug}/` — one redirect URI has
+to serve every agent (see google_oauth.callback_url), so the agent and the sign-in
+travel in signed state and the callback is mounted at a fixed path.
 
 What lands at the end is an ordinary AgentCredential named `gog-token`, holding
-exactly the JSON that `gog auth tokens import` accepts. Nothing downstream learns
-that a browser was involved: the runner resolves it, writes it to a file, and
-imports it the same way it imports one a human minted at a terminal.
+ciphertext of exactly the JSON that `gog auth tokens import` accepts. Nothing
+downstream learns that a browser was involved.
 """
 from __future__ import annotations
+
+import uuid
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponseRedirect
@@ -17,85 +21,77 @@ from ninja import Router
 from ninja.errors import HttpError
 
 from apps.api.auth import session_auth
+from apps.api.errors import TYPE_CONFLICT, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
 
-from .. import services
 from ..gates import agent_for_admin
-from ..schemas import GoogleMintStartOut
-from . import google_oauth
-from .zk import ZkError
+from ..schemas import GoogleMintOut, GoogleMintStartIn
+from . import google_mint, google_oauth
 
 router = Router(auth=session_auth, tags=["agents"])
 
-# The credential slot the fleet already names in every agent's declaration and every
-# 1Password vault. Minting must land in the SAME slot a hand-minted token does,
-# or the box would have two sources of truth for one mailbox.
-GOG_TOKEN_REF = "gog-token"
+# The credential slot the fleet already names in every agent's declaration.
+GOG_TOKEN_REF = google_mint.GOG_TOKEN_REF
 
 
-def _agent_for_mint(request: HttpRequest, slug: str):
-    """An agent whose mailbox credential the caller may REPLACE — its owner or
-    an admin, the same tier as `PUT /{slug}/credentials`. The mint writes the
-    `gog-token` credential, so membership alone let a viewer attach their own
-    Google account as the agent's mailbox."""
+def mint_out(mint) -> GoogleMintOut:
+    return GoogleMintOut(
+        id=mint.id, status=mint.status, outcome=mint.outcome, authorize_url=mint.authorize_url,
+        runner=mint.runner.name if mint.runner_id else "", account=mint.account,
+        expected_account=google_oauth.expected_account(mint.agent), detail=mint.detail,
+        created_at=mint.created_at, updated_at=mint.updated_at)
 
-    return agent_for_admin(request, slug)
+
+def mint_problem(exc: google_mint.MintRefused) -> ProblemError:
+    return ProblemError(exc.status, "Google sign-in", detail=exc.detail, members={"error": exc.code},
+                        type_=TYPE_CONFLICT if exc.status == 409 else TYPE_VALIDATION)
 
 
-@router.get("/{slug}/google/authorize", response=GoogleMintStartOut,
-            summary="Start the Google mint for this agent's mailbox")
+@router.post("/{slug}/google/mint", response=GoogleMintOut,
+             summary="Start connecting this agent's Google account (finished on its runner)")
+# the mint's token is exchanged and encrypted on the runner: nothing secret here
+@gate("agent-admin", kind="action")
+def start_google_mint(request: HttpRequest, slug: str, payload: GoogleMintStartIn | None = None) -> GoogleMintOut:
+    """For the agent's owner or an admin (the mint replaces its `gog-token`). Hands
+    the sign-in to one of the agent's online runners; 409 `no_mint_runner` when none
+    is online — there is no fallback, because canopy never holds the token. Poll
+    `get_google_mint` until `authorize_url` is set (a few seconds), then open it with
+    a top-level navigation: a redirect followed inside a fetch shows nothing."""
+    agent = agent_for_admin(request, slug)
+    try:
+        mint = google_mint.start(agent, user=request.user, login_hint=payload.login_hint if payload else "")
+    except google_mint.MintRefused as exc:
+        raise mint_problem(exc) from exc
+    return mint_out(mint)
+
+
+@router.get("/{slug}/google/mint/{mint_id}", response=GoogleMintOut,
+            summary="How a Google sign-in for this agent is going")
 @gate("agent-admin")
-def start_google_mint(request: HttpRequest, slug: str, login_hint: str = "") -> GoogleMintStartOut:
-    """Returns the URL rather than redirecting, so the caller opens it itself.
-
-    A 302 out of an XHR is invisible — the browser follows it, the fetch resolves
-    on Google's HTML, and nothing happens on screen. Handing back the URL lets the
-    page do a top-level navigation, which is the only thing that can show a
-    consent screen.
-    """
-    agent = _agent_for_mint(request, slug)
-    client_id, _ = google_oauth.google_client_credentials()
-    if not client_id:
-        raise HttpError(503, "this deployment has no Google OAuth client configured")
-    state = google_oauth.sign_state(agent_slug=agent.slug, user_pk=request.user.pk)
-    # Default the account picker to the account the callback will insist on
-    # (`expected_account`: its `google_account`, else its mailbox when that is Google),
-    # else the fleet's convention as a guess — a hosted-mail agent commonly signs in to
-    # Google as <slug>@dimagi-ai.com. A hint, not the check: the account can still be
-    # changed on Google's side.
-    hint = login_hint or google_oauth.expected_account(agent) or f"{agent.slug}@dimagi-ai.com"
-    return GoogleMintStartOut(
-        url=google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint,
-                                       scopes=google_oauth.scopes_for(agent))
-    )
+def get_google_mint(request: HttpRequest, slug: str, mint_id: uuid.UUID) -> GoogleMintOut:
+    """`status` and, once it ends, `outcome` — never a code or a token."""
+    agent = agent_for_admin(request, slug)
+    mint = google_mint.get(agent, mint_id)
+    if mint is None:
+        raise HttpError(404, "no such sign-in")
+    return mint_out(mint)
 
 
 oauth_router = Router(auth=session_auth, tags=["agents"])
 
 
-@oauth_router.get("/google/callback", summary="Google returns here; the token is stored")
+@oauth_router.get("/google/callback", summary="Google returns here; a runner finishes the sign-in")
 @gate("signed-link", "agent-admin")  # signed state must name the caller
 def google_callback(request: HttpRequest, code: str = "", state: str = "", error: str = ""):
     from django.core import signing
 
-    def done(agent, status: str, **extra: str):
-        # ROOT-RELATIVE IS WRONG HERE. This deployment is served under a path
-        # prefix (/canopy), so "/w/…" lands outside the app entirely — the mint
-        # succeeded, the token was stored, and the operator got a Resolver404
-        # that reads exactly like a failure. Reported by Jonathan on the first
-        # real sign-in, 2026-09-07.
-        #
-        # CANOPY_PUBLIC_BASE_URL already carries the prefix and is already the
-        # authority for the OAuth redirect_uri, so the round trip starts and ends
-        # against the same base rather than two derivations that can disagree.
-        root = settings.CANOPY_PUBLIC_BASE_URL.rstrip("/")
-        # Credentials is a section of the agent's SETTINGS page (it moved off
-        # Overview with the rest of the agent's configuration, 2026-09-23); the
-        # fragment lands the person on it rather than at the top of the page.
-        # `/credentials` still redirects here too, so an older link survives.
-        from urllib.parse import urlencode
+    from ..models import AgentGoogleMint
 
-        query = urlencode({"google": status, **extra})
+    def back(agent, status: str, mint=None):
+        # The deployment's public base (it may carry a path prefix): the same base the
+        # redirect_uri is built from, so the round trip starts and ends on one address.
+        root = settings.CANOPY_PUBLIC_BASE_URL.rstrip("/")
+        query = urlencode({"google": status, **({"mint": str(mint.id)} if mint else {})})
         if agent is None:
             return HttpResponseRedirect(f"{root}/?{query}")
         path = f"/w/{agent.workspace.slug}/agents/{agent.slug}/settings"
@@ -106,53 +102,18 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
     try:
         claims = google_oauth.unsign_state(state)
     except signing.BadSignature as exc:
-        # Covers both tampering and expiry. Either way the only safe move is to
-        # start over — a code redeemed under a state we cannot vouch for could
+        # Tampering or expiry: a code redeemed under a state we cannot vouch for could
         # attach someone else's mailbox to this agent.
         raise HttpError(400, "the sign-in link expired or was altered — start again") from exc
-
     if str(claims.get("user")) != str(request.user.pk):
         raise HttpError(403, "this sign-in was started by a different user")
 
-    agent = _agent_for_mint(request, claims["agent"])
-    if error or not code:
-        return done(agent, "denied")
-
-    client_id, client_secret = google_oauth.google_client_credentials()
-    try:
-        tokens = google_oauth.exchange_code(code=code, client_id=client_id, client_secret=client_secret)
-    except Exception:  # noqa: BLE001 - the browser gets a status, the operator retries
-        return done(agent, "exchange-failed")
-
-    refresh = tokens.get("refresh_token", "")
-    if not refresh:
-        # Google withholds it when the account already consented and `prompt` was
-        # not forced. Storing what we got would produce a token that imports and
-        # then cannot refresh — worse than failing, because it looks provisioned.
-        return done(agent, "no-refresh-token")
-
-    email = google_oauth.email_from_id_token(tokens["id_token"]) if tokens.get("id_token") else ""
-    if not email:
-        return done(agent, "no-email")
-    expected = google_oauth.expected_account(agent)
-    if expected and email.strip().lower() != expected:
-        # Refused before anything is stored: a token for another account can never read
-        # this agent's mailbox, and stored it would read as "connected". The page names
-        # the account Google signed in as, so the person can tell which one they used.
-        return done(agent, "wrong-account", account=email, expected=expected)
-
-    token = google_oauth.build_gog_token(
-        email=email,
-        refresh_token=refresh,
-        granted_scopes=tokens.get("scope", "").split(),
-    )
-    import json as _json
-
-    try:
-        # Minted here: a zero-knowledge agent gets it sealed to its devices and
-        # members (`zks1`), never stored where canopy-web could read it.
-        services.set_agent_credentials(agent, {GOG_TOKEN_REF: _json.dumps(token)}, user=request.user,
-                                       minted=True)
-    except ZkError:
-        return done(agent, "zk-no-recipients")
-    return done(agent, "ok")
+    agent = agent_for_admin(request, claims["agent"])
+    mint = AgentGoogleMint.objects.filter(pk=claims.get("mint") or None, agent=agent).first() \
+        if claims.get("mint") else None
+    if mint is None:
+        return back(agent, "expired")
+    mint = google_mint.receive_code(mint, code=code, error=error)
+    if mint.status == AgentGoogleMint.COMPLETING:
+        return back(agent, "pending", mint)
+    return back(agent, mint.outcome or "expired", mint)

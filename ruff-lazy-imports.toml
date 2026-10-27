@@ -27,9 +27,8 @@
 "apps/agents/api_skills.py" = ["PLC0415"]  # 1
 "apps/agents/apps.py" = ["PLC0415"]  # 6
 "apps/agents/creation.py" = ["PLC0415"]  # 3
-"apps/agents/credentials/google_oauth.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/licenses.py" = ["PLC0415"]  # 2
-"apps/agents/credentials/oauth_api.py" = ["PLC0415"]  # 3
+"apps/agents/credentials/oauth_api.py" = ["PLC0415"]  # 2
 "apps/agents/credentials/vault_alerts.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk.py" = ["PLC0415"]  # 1
 "apps/agents/credentials/zk_notify.py" = ["PLC0415"]  # 1

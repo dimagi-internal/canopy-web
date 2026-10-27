@@ -1045,6 +1045,57 @@ class AgentSecretRequest(models.Model):
         return f"{self.agent_id}:{self.name} ({self.status})"
 
 
+class AgentGoogleMint(models.Model):
+    """One "Connect Google mailbox" sign-in, finished on one of the agent's runners
+    (`apps/agents/credentials/google_mint.py`, docs/architecture/vault.md).
+
+    canopy-web never holds the token: the runner makes the PKCE verifier and keeps
+    it, canopy-web builds the consent link from its challenge and relays the code
+    Google sends back, and the runner exchanges code + verifier with the OAuth
+    client's secret from the agent's vault, encrypts the token for the agent and
+    posts only ciphertext. A code is worthless without the verifier, so canopy-web,
+    which sees only the code, cannot redeem it.
+
+    POLLED by the runner on its existing tick (the `mint/claim` read), like the
+    runner's own Claude sign-in (`harness.RunnerMint`)."""
+
+    REQUESTED = "requested"    # the runner owes a PKCE challenge
+    AWAITING = "awaiting"      # the consent link is up; the person signs in
+    COMPLETING = "completing"  # Google sent a code; the runner owes the exchange
+    DONE, FAILED = "done", "failed"
+    STATUS_CHOICES = [(REQUESTED, "requested"), (AWAITING, "awaiting consent"),
+                      (COMPLETING, "completing"), (DONE, "done"), (FAILED, "failed")]
+    FINISHED = (DONE, FAILED)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent = models.ForeignKey(Agent, on_delete=models.CASCADE, related_name="google_mints")
+    runner = models.ForeignKey("harness.Runner", on_delete=models.CASCADE, related_name="google_mints")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+                                     blank=True, related_name="+")
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=REQUESTED)
+    #: How it ended, in the words the settings page reads (`?google=`): ok, denied,
+    #: exchange-failed, no-refresh-token, no-email, wrong-account, no-client,
+    #: zk-no-recipients, expired, interrupted.
+    outcome = models.CharField(max_length=32, blank=True, default="")
+    login_hint = models.CharField(max_length=254, blank=True, default="")
+    code_challenge = models.CharField(max_length=128, blank=True, default="")
+    authorize_url = models.TextField(blank=True, default="")
+    #: The single-use code, held only until the runner takes it (read-and-clear).
+    code = models.TextField(blank=True, default="")
+    #: The Google account that consented (never a secret), once the runner says.
+    account = models.CharField(max_length=254, blank=True, default="")
+    detail = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["runner", "status"]), models.Index(fields=["agent", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.agent_id} via {self.runner_id} ({self.status})"
+
+
 class ZkGrantNotice(models.Model):
     """A wrap target the agent's vault key has not reached yet, and whether the
     people who hold that key were told (canopy-web#1550; `apps/agents/credentials/zk_notify.py`).

@@ -1874,15 +1874,56 @@ class RunnerMintStartIn(Schema):
     login_key: str = ""
 
 
+class GoogleMintWorkOut(Schema):
+    """A Google sign-in for an agent this runner holds, at the step the runner owes
+    (`apps/agents/credentials/google_mint.py`). `requested`: make a PKCE verifier, keep
+    it, post its challenge. `completing`: exchange `code` (consumed by this read) with
+    the verifier and the OAuth client from the agent's vault, encrypt the token for the
+    agent (under its vault key at `kv`, else sealed to `recipients`) and post only
+    ciphertext. canopy-web never receives the token."""
+
+    id: str
+    agent: str
+    status: Literal["requested", "completing"]
+    code: str = ""
+    redirect_uri: str = ""
+    client_id: str = ""
+    #: gog's name for the OAuth client the token is bound to.
+    client: str = ""
+    expected_account: str = ""
+    agent_id: str = ""
+    kv: int = 0
+    #: `{kind, target, public_jwk}` — who may read the agent, for a box without its vault key.
+    recipients: list[dict] = []
+
+
 class RunnerMintClaimOut(Schema):
     """What the RUNNER polls for: the work it owes, and the code when there is one.
 
     Null `mint` is the ordinary answer — no sign-in is in progress — so this is
-    cheap to poll on the tick the runner already runs.
-    """
+    cheap to poll on the tick the runner already runs. `google` is an agent's Google
+    sign-in this runner owes a step on (a runner that declares `google_mint`)."""
 
     mint: RunnerMintOut | None = None
     code: str = ""
+    google: GoogleMintWorkOut | None = None
+
+
+class GoogleMintChallengeIn(Schema):
+    #: base64url(SHA-256(verifier)) — the verifier never leaves the box.
+    code_challenge: str = Field(max_length=128)
+
+
+class GoogleMintResultIn(Schema):
+    """How the runner's half ended: the token encrypted for the agent (`value_zk`, `zk1`
+    or `zks1`, at `kv`) and the account that consented — or `error` (an outcome the
+    settings page explains) with `detail`. Never a token in the clear."""
+
+    value_zk: str = ""
+    kv: int = 0
+    account: str = Field(default="", max_length=254)
+    error: str = Field(default="", max_length=32)
+    detail: str = Field(default="", max_length=900)
 
 
 class RunnerMintUrlIn(Schema):

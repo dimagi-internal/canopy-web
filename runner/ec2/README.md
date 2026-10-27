@@ -495,7 +495,9 @@ under either serves every turn, canopy `agent_email.FLEET_CLIENTS`):
 - **Browser (no terminal, no 1Password):** the agent's Settings → Credentials
   (`/w/<ws>/agents/<slug>/settings#credentials`) → **Connect Google mailbox**, as the
   agent's owner or an admin, signing in as the agent's mailbox. Mints under
-  `canopy-web` and stores the token in canopy-web.
+  `canopy-web`; one of the agent's online runners exchanges the code and stores the
+  token encrypted in the agent's vault, so canopy-web never sees it
+  (`_drain_google_mint`, `canopy vault google-mint`; `docs/architecture/vault.md`).
 - **Terminal:** `gog login <mailbox> --client canopy --services gmail,drive,docs,sheets,forms,appscript`
   on a laptop, then `gog auth tokens export` and `op` it into that agent's
   `Agent-<Name>/gog-token` item, field `credential`.

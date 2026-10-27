@@ -218,16 +218,20 @@ def test_credentials_resolve_names_the_google_account(w):
     assert ada["google_account"] == "ada@dimagi-ai.com"
 
 
-def test_the_google_mint_hints_the_google_account(w, monkeypatch):
-    from apps.agents.credentials import google_oauth
+def test_the_google_mint_hints_the_google_account(w, monkeypatch, settings):
+    from apps.agents.credentials import google_mint
+    from apps.harness.models import Runner
 
-    monkeypatch.setattr(google_oauth, "google_client_credentials", lambda: ("cid", "secret"))
+    settings.SOCIALACCOUNT_PROVIDERS = {"google": {"APP": {"client_id": "cid", "secret": "s"}}}
+    box = Runner.objects.create(name="box", kind=Runner.CLOUD, owner=w.owner)
+    monkeypatch.setattr(google_mint, "eligible_runners", lambda agent: [box])
     Agent.objects.filter(pk=w.ada.pk).update(email="ada@dimagi.ai", google_account="ada.g@dimagi-ai.com")
 
-    def hint(**params):
-        r = _c(w.owner).get("/api/agents/ada/google/authorize", params)
+    def hint(**body):
+        r = _c(w.owner).post("/api/agents/ada/google/mint", body, content_type="application/json")
         assert r.status_code == 200, r.content
-        return parse_qs(urlparse(r.json()["url"]).query)["login_hint"][0]
+        mint = google_mint.record_challenge(box, r.json()["id"], "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+        return parse_qs(urlparse(mint.authorize_url).query)["login_hint"][0]
 
     assert hint() == "ada.g@dimagi-ai.com"
     assert hint(login_hint="x@y.com") == "x@y.com"

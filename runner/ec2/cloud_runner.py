@@ -147,6 +147,9 @@ if _csv("RUNNER_PROJECTS"):
     RUNNER_CAPS["projects"] = _csv("RUNNER_PROJECTS")
 if _csv("RUNNER_AGENTS"):
     RUNNER_CAPS["agents"] = _csv("RUNNER_AGENTS")
+# This box can finish an agent's Google sign-in ("Connect Google mailbox") itself, so
+# canopy-web never holds the token (`_drain_google_mint`).
+RUNNER_CAPS["google_mint"] = True
 # The durable-record precondition below is now SATISFIED, and verified end to end
 # on cloud-ec2-1 (2026-07-28): a session turn ships its transcript rows via
 # POST /runners/{id}/session-stream -> services.persist_transcript_rows
@@ -9186,6 +9189,8 @@ def _drain_mint(runner_id: str) -> None:
         status, payload = _api("GET", f"/runners/{runner_id}/mint/claim")
         if status != 200 or not isinstance(payload, dict):
             return
+        if payload.get("google"):
+            _drain_google_mint(runner_id, payload["google"])
         mint = payload.get("mint")
         if not mint:
             # Nothing owed. Drop a pty we may still be holding: either the human
@@ -9288,6 +9293,80 @@ def _drain_mint(runner_id: str) -> None:
                 _MINT_LOGIN_KEY = ""
     except Exception as exc:  # noqa: BLE001 — never take the main loop down
         _log(f"mint drain error: {exc}")
+
+
+# ── an agent's Google sign-in ("Connect Google mailbox"), finished on this box ──
+# canopy-web never holds the token. This box makes the PKCE verifier and keeps it in
+# memory; canopy-web builds the consent link from the challenge and relays the code
+# Google sends back — useless without the verifier. `canopy vault google-mint` then
+# exchanges the code with the OAuth client's secret from the agent's vault, encrypts the
+# token for the agent and prints ciphertext, which is all that goes back to canopy-web.
+# Rides the `mint/claim` read this tick already makes (its `google` field).
+
+#: mint id -> the PKCE verifier this box made for it. A restart loses it, and the sign-in
+#: is then reported interrupted: a code can never be exchanged without its verifier.
+_GOOGLE_VERIFIERS: dict = {}
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """(verifier, S256 challenge) — RFC 7636: 43-128 unreserved characters."""
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+def _run_google_mint_cli(runner_id: str, slug: str, work: dict) -> dict:
+    """`canopy vault google-mint`, as this box: the work (code + verifier) goes in on stdin,
+    never argv; one JSON line comes back — ciphertext, or `{error, detail}`."""
+    env = _child_safe_env()
+    env.update(CANOPY_TOKEN=_bearer(min_life=300), CANOPY_BASE_URL=BASE_URL)
+    res = subprocess.run([_canopy_cli(), "vault", "google-mint", "--agent", slug, "--runner", runner_id],
+                         input=json.dumps(work), env=env, capture_output=True, text=True, timeout=120)
+    lines = (res.stdout or "").strip().splitlines()
+    try:
+        doc = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        doc = None
+    if not isinstance(doc, dict):
+        why = " ".join((res.stderr or "").split())[-300:] or f"exit {res.returncode}"
+        if "No such command" in why:
+            why = "this box's canopy CLI cannot finish a Google sign-in yet — it updates itself; try again later"
+        raise RuntimeError(why)
+    return doc
+
+
+def _drain_google_mint(runner_id: str, work: dict) -> None:
+    """Do the step canopy-web says this box owes on an agent's Google sign-in."""
+    mint_id, state, slug = str(work.get("id") or ""), work.get("status"), str(work.get("agent") or "")
+    if not mint_id or not slug:
+        return
+    base = f"/runners/{runner_id}/google-mint/{mint_id}"
+    if state == "requested":
+        verifier, challenge = _pkce_pair()
+        # Only the newest sign-in matters (canopy-web supersedes the rest).
+        _GOOGLE_VERIFIERS.clear()
+        _GOOGLE_VERIFIERS[mint_id] = verifier
+        status, _ = _api("POST", f"{base}/challenge", {"code_challenge": challenge})
+        _log(f"google mint {mint_id[:8]} ({slug}): consent link "
+             f"{'requested' if status == 204 else f'refused ({status})'}")
+        return
+    if state != "completing":
+        return
+    verifier = _GOOGLE_VERIFIERS.pop(mint_id, "")
+    if not verifier:
+        _api("POST", f"{base}/result", {"error": "interrupted", "detail": (
+            "the sign-in was interrupted on the runner (it restarted) — please start again")})
+        return
+    try:
+        doc = _run_google_mint_cli(runner_id, slug, {**work, "code_verifier": verifier})
+    except Exception as exc:  # noqa: BLE001 — always tell the waiting person
+        doc = {"error": "exchange-failed", "detail": f"the runner could not finish the sign-in: {exc}"}
+    verifier = ""
+    body = {k: doc[k] for k in ("value_zk", "kv", "account", "error", "detail") if k in doc}
+    status, _ = _api("POST", f"{base}/result", body)
+    _log(f"google mint {mint_id[:8]} ({slug}): "
+         + (f"stored for {doc.get('account')}" if doc.get("value_zk") and status == 204
+            else f"{doc.get('error') or 'not stored'} ({status})"))
 
 
 # ── inbox (the Gmail doorbell, and the timer that audits it) ───────────────
