@@ -507,6 +507,13 @@ def _iso(value) -> str:
 #: DIAGNOSTIC fields only — never `line` (what the composer held) or `screen_tail`
 #: (the screen), which can show the person's words.
 _EVIDENCE_STATUSES = re.compile(r"^(?:delivery_\w+|undelivered|composer_not_visible|not_retyped)$")
+#: The same statuses the runner posts as `kind="error"` rather than "status". A reuse
+#: whose CDP drive raised (`reuse_send_failed`, execute.py `_deliver_to_existing`)
+#: names WHICH error only in its `detail` — a sidecar string (COMPOSER_NOT_VISIBLE,
+#: FOCUS_LOST, could not click task …), never a person's words — and its result note
+#: leaves the error out. Investigation 15 (turn c3717cce, ace on stewari-mbp-cdp,
+#: 2026-10-27) could not tell a scrolled-up pane from a lost focus without it.
+_EVIDENCE_ERROR_STATUSES = re.compile(r"^reuse_send_failed$")
 #: `landed` is the RUNNER's own verdict on whether the message reached the
 #: session's transcript (yes / no / unknown — execute.py), so the debugger never
 #: needs the transcript to answer the first question every delivery failure asks.
@@ -518,8 +525,9 @@ LANDED_VALUES = ("yes", "no", "unknown")
 
 
 def _delivery_events(turn: Turn) -> list:
-    return [ev for ev in turn.events.filter(kind="status").order_by("seq")
-            if _EVIDENCE_STATUSES.match(str((ev.payload or {}).get("status") or ""))]
+    pattern = {"status": _EVIDENCE_STATUSES, "error": _EVIDENCE_ERROR_STATUSES}
+    return [ev for ev in turn.events.filter(kind__in=pattern).order_by("seq")
+            if pattern[ev.kind].match(str((ev.payload or {}).get("status") or ""))]
 
 
 def _delivery_evidence(turn: Turn) -> list[str]:
