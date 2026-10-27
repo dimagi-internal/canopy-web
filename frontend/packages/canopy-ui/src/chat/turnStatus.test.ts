@@ -54,6 +54,14 @@ describe("agentHasFloor", () => {
     expect(agentHasFloor({ status: s, awaitingReply: true })).toBe(false);
   });
 
+  it("shows it when the session is working on a prompt that made no Turn", () => {
+    // Typed straight into the session: the status is still the finished turn
+    // before it, and only the hook knows the agent is busy again.
+    const s = status({ state: "done", settled: true });
+    expect(agentHasFloor({ status: s, activity: "working" })).toBe(true);
+    expect(agentHasFloor({ status: s, activity: "idle" })).toBe(false);
+  });
+
   it("shows it for a queued turn a live runner is taking", () => {
     expect(agentHasFloor({ status: status({ state: "picking_up" }) })).toBe(true);
   });
