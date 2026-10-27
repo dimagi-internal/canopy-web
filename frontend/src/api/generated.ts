@@ -19100,6 +19100,10 @@ export interface components {
              */
             readonly self: boolean;
             readonly on_behalf_of?: components["schemas"]["InitiatorOnBehalfOut"] | null;
+            /** Trigger */
+            readonly trigger?: {
+                readonly [key: string]: unknown;
+            } | null;
             /** Credential */
             readonly credential?: {
                 readonly [key: string]: unknown;
