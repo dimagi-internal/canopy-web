@@ -259,7 +259,7 @@ export default defineConfig({
   // Unit tests (vitest) live under src/. e2e/ is Playwright (`npm run test:e2e`)
   // and must be excluded here, else vitest tries to collect its specs and fails.
   test: {
-    include: ['{src,packages}/**/*.{test,spec}.{ts,tsx}'],
+    include: ['{src,packages,scripts}/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['e2e/**', '**/node_modules/**', '**/dist/**'],
     // Testing Library's 1 s findBy/waitFor default is too tight on a loaded CI
     // runner (vitest.setup.ts); the test timeout sits above it.

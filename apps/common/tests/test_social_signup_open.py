@@ -130,3 +130,34 @@ def test_local_form_stays_closed_alongside():
     from allauth.account.adapter import get_adapter
 
     assert get_adapter().is_open_for_signup(None) is False
+
+
+def test_rejection_offers_a_retry_that_asks_google_which_account(rf, settings):
+    """A plain retry hands back the same refused account (Google never shows a
+    chooser), so the rejection's retry link must ask for one — and carry the
+    invitee back to the invite they were accepting."""
+    settings.AUTH_ALLOWED_EMAIL_DOMAIN = "dimagi.com"
+    request = _callback_request(rf)
+    sociallogin = _google_login("other-account@example.org", request)
+    sociallogin.state = {"next": "/invite/abc123"}
+
+    with request_context(request):
+        resp = complete_social_login(request, sociallogin)
+
+    assert resp.status_code == 403
+    body = resp.content.decode()
+    assert "auth_params=prompt%3Dselect_account" in body
+    assert "next=%2Finvite%2Fabc123" in body
+
+
+def test_choose_account_url_reaches_google_with_the_chooser(client):
+    from urllib.parse import parse_qs, urlparse
+
+    from apps.common.auth_adapter import choose_account_url
+
+    resp = client.get(choose_account_url("/invite/abc123"))
+
+    assert resp.status_code == 302
+    target = urlparse(resp["Location"])
+    assert target.netloc == "accounts.google.com"
+    assert parse_qs(target.query)["prompt"] == ["select_account"]

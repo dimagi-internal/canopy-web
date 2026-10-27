@@ -19,6 +19,56 @@
         }
       })()
     </script>
+    <!-- If this page's own scripts fail to load, nothing below can recover: no
+         app code runs and the page stays black. That happens mid-deploy, when
+         this HTML came from one task and its script request reached another
+         that never had that build. Retry a few times (the next request will
+         likely reach a task with the right build), then say so instead of
+         staying black. Only before the app has mounted: a lazy chunk failing
+         later is src/pwa/staleChunk.ts's job. -->
+    <script>
+      (function () {
+        var KEY = 'canopy:entry-reload'
+        var DELAYS = [500, 2000, 5000]
+        var started = false
+        function failed() {
+          if (started) return
+          var root = document.getElementById('root')
+          if (root && root.childNodes.length) return
+          started = true
+          var state = { n: 0, t: 0 }
+          try { state = JSON.parse(sessionStorage.getItem(KEY)) || state } catch (e) {}
+          if (Date.now() - state.t > 60000) state.n = 0
+          if (state.n >= DELAYS.length || !navigator.onLine) return show()
+          try {
+            sessionStorage.setItem(KEY, JSON.stringify({ n: state.n + 1, t: Date.now() }))
+          } catch (e) {
+            return show() // no way to bound the retries, so don't start them
+          }
+          setTimeout(function () {
+            var r = document.getElementById('root')
+            if (!r || !r.childNodes.length) location.reload()
+          }, DELAYS[state.n])
+        }
+        function show() {
+          var render = function () {
+            var root = document.getElementById('root')
+            if (!root || root.childNodes.length) return
+            root.innerHTML =
+              '<p style="font-family:system-ui,sans-serif;max-width:28rem;margin:20vh auto;padding:0 1rem;line-height:1.5">' +
+              'Canopy is updating and could not load just now. Wait a minute, then refresh this page.</p>'
+          }
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render)
+          else render()
+        }
+        window.addEventListener('error', function (e) {
+          var t = e.target
+          var url = t && (t.src || t.href)
+          if (typeof url === 'string' && url.indexOf('/assets/') !== -1 &&
+              (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) failed()
+        }, true)
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
