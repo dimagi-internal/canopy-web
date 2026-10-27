@@ -23502,6 +23502,8 @@ export interface components {
              * @default
              */
             readonly session_key: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
             /**
              * Emdash Task Id
              * @deprecated
