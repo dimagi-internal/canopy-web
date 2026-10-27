@@ -342,6 +342,8 @@ class RunnerOut(Schema):
     # claude-desktop or claude-cli. The runner reads it off its own heartbeat response, so this
     # field is also how a flip reaches the box (canopy-web#1188).
     engine: str = "emdash"
+    # The OS the box said it runs when it paired (macos, windows, linux); "" unknown.
+    platform: str = ""
     status: str
     status_note: str
     ready: bool
@@ -2784,6 +2786,9 @@ class RunnerPairingIn(Schema):
     account: str = Field(default="", max_length=100)
     platform: Literal["macos", "windows", "linux"]
     has_emdash: bool = False
+    # Its emdash is serving DevTools right now. On Windows only that makes the new
+    # runner drive emdash (`api_runner_pairings.drives_emdash`).
+    emdash_cdp_live: bool = False
     redirect_port: int = Field(ge=1024, le=65535)
     # The runner this box already is (its runner.json) when its token stopped working.
     reconnect_runner: uuid.UUID | None = None

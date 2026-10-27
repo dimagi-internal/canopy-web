@@ -32587,6 +32587,11 @@ export interface components {
              * @default false
              */
             readonly has_emdash: boolean;
+            /**
+             * Emdash Cdp Live
+             * @default false
+             */
+            readonly emdash_cdp_live: boolean;
             /** Redirect Port */
             readonly redirect_port: number;
             /** Reconnect Runner */
@@ -33313,6 +33318,11 @@ export interface components {
              * @default emdash
              */
             readonly engine: string;
+            /**
+             * Platform
+             * @default
+             */
+            readonly platform: string;
             /** Status */
             readonly status: string;
             /** Status Note */

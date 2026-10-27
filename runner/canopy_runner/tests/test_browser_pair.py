@@ -64,7 +64,7 @@ def _get(url):
         return e.code, e.read().decode()
 
 
-def _pair(tmp_path, canopy, *, open_browser):
+def _pair(tmp_path, canopy, *, open_browser, live_cdp_port=lambda h: None):
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     cfg = home / ".canopy" / "runner.json"
@@ -72,7 +72,7 @@ def _pair(tmp_path, canopy, *, open_browser):
     rc = browser_pair.run_browser_pair(
         cfg, base_url=BASE, allow_software=True, home=home, users_root=tmp_path / "Users",
         transport=canopy, open_browser=open_browser, is_free=lambda p: True,
-        live_cdp_port=lambda h: None, out=out.append)
+        live_cdp_port=live_cdp_port, out=out.append)
     return rc, cfg, home, out
 
 
@@ -105,6 +105,7 @@ def test_approved_in_the_browser_writes_a_config_with_no_token(tmp_path):
     assert start["kind"] == "software" and start["platform"] in ("macos", "windows", "linux")
     assert start["ecdh_public_jwk"] and start["ecdh_store"] == "software"
     assert start["hostname"] and start["account"] and isinstance(start["has_emdash"], bool)
+    assert start["emdash_cdp_live"] is False
     assert canopy.calls[-1] == (PAIRINGS + "p-1/claim", {"secret": "s3cret"})
 
     conf = json.loads(cfg.read_text())
@@ -205,3 +206,18 @@ def test_reconnect_needs_a_runner_to_name(tmp_path):
     with pytest.raises(PairError, match="names no runner"):
         browser_pair.run_browser_pair(cfg, base_url=BASE, allow_software=True, home=home,
                                       transport=FakeCanopy(), reconnect=True, out=lambda s: None)
+
+
+def test_an_emdash_serving_devtools_is_reported_live(tmp_path):
+    # canopy makes a Windows box an emdash runner only on this word: without a live
+    # DevTools port nothing there can reopen emdash with one.
+    canopy = FakeCanopy()
+
+    def browser(url):
+        _get(f"http://127.0.0.1:{canopy.port}/paired?pairing=p-1&secret=s3cret")
+        return True
+
+    rc, cfg, _, _ = _pair(tmp_path, canopy, open_browser=browser, live_cdp_port=lambda h: 9333)
+    assert rc == 0
+    assert canopy.calls[0][1]["emdash_cdp_live"] is True
+    assert json.loads(cfg.read_text())["cdp_port"] == 9333

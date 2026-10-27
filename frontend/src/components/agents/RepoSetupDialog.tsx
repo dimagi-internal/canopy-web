@@ -28,6 +28,7 @@ export function RepoSetupDialog({
   runnerIds?: readonly string[]
 }): JSX.Element {
   const command = cloneCommand(agentSlug, repoUrl)
+  const windowsCommand = cloneCommand(agentSlug, repoUrl, 'powershell')
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent className="w-[calc(100%-2rem)] max-w-lg bg-card" data-testid="repo-setup-dialog">
@@ -56,12 +57,17 @@ export function RepoSetupDialog({
         )}
         <p className="text-[13px] text-foreground-secondary">
           {runnerIds.length > 0 ? 'Or by hand: on' : 'On'} {runners.length === 1 ? 'that box' : 'each box'}, signed in
-          as its macOS account:
+          as the account its runner runs under:
         </p>
         <ol className="m-0 flex list-decimal flex-col gap-2 pl-5 text-[13px] text-foreground-secondary">
           <li>
-            {command ? (
-              <CopyCommand command={command} testId="repo-setup-command" />
+            {command && windowsCommand ? (
+              <div className="flex flex-col gap-1">
+                <span className="text-[12px] text-muted-foreground">macOS or Linux (Terminal)</span>
+                <CopyCommand command={command} testId="repo-setup-command" />
+                <span className="text-[12px] text-muted-foreground">Windows (PowerShell)</span>
+                <CopyCommand command={windowsCommand} testId="repo-setup-command-windows" />
+              </div>
             ) : (
               <span className="text-destructive">
                 {agentName} has no repo set, so there is nothing to clone. Set it on the agent&rsquo;s Settings first.
@@ -69,7 +75,8 @@ export function RepoSetupDialog({
             )}
           </li>
           <li>
-            In emdash, add <code className="font-mono">{repoFolder(agentSlug)}</code> as a project, named{' '}
+            In emdash, add that folder (<code className="font-mono">{repoFolder(agentSlug)}</code>, or{' '}
+            <code className="font-mono">{repoFolder(agentSlug, 'powershell')}</code> on Windows) as a project, named{' '}
             <code className="font-mono">{agentSlug}</code>.
           </li>
         </ol>

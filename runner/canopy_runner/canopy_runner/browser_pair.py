@@ -251,6 +251,9 @@ def run_browser_pair(config_path: Path, *, base_url: str = pair.DEFAULT_BASE_URL
         body = {"public_jwk": key.public_jwk, "kind": key.kind,
                 "hostname": short_hostname(), "account": process_account(),
                 "platform": platform_name(), "has_emdash": has_emdash(home),
+                # Only an emdash already serving DevTools can be driven on Windows (no
+                # "Emdash CDP" launcher there): canopy picks Claude CLI otherwise.
+                "emdash_cdp_live": live_cdp_port(home) is not None,
                 "redirect_port": lb.port}
         if ecdh is not None:
             body["ecdh_public_jwk"] = ecdh.public_jwk

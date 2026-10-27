@@ -86,6 +86,11 @@ class Runner(models.Model):
         help_text="The agent engine this runner drives (not assumed to be emdash).",
     )
     capabilities = models.JSONField(default=dict, help_text='e.g. {"agents": ["echo"]}')
+    # The operating system the box said it runs when it paired from the browser
+    # (`RunnerPairing.PLATFORMS`), refreshed by every pairing that reconnects it; ""
+    # when it never said (a PAT pairing, a cloud box). Self-reported and trusted for
+    # nothing but wording: a remedy names the fix that exists on that OS.
+    platform = models.CharField(max_length=10, blank=True, default="", db_default="")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=DISCONNECTED)
     status_note = models.CharField(max_length=255, blank=True, default="")
     # Can this runner actually FIRE a turn right now — distinct from being online.
@@ -539,6 +544,13 @@ class Runner(models.Model):
             return ("Claude Code on that machine has no sign-in. Run `claude` there and "
                     "`/login`; the runner takes turns again once Claude answers.")
         if "CDP unreachable" in note:
+            if self.platform == "windows":
+                # No "Emdash CDP" launcher exists on Windows (it is an AppleScript app).
+                return ("Emdash is running without its debug port, and Windows has no "
+                        '"Emdash CDP" launcher to reopen it with one. Switch this runner '
+                        "to Claude CLI (its page → Settings → Session runtime → Claude CLI), "
+                        "or quit Emdash and start it with --remote-debugging-port=<the "
+                        "cdp_port in its runner.json>.")
             return ('Emdash is running without its debug port. On that machine, open '
                     '"Emdash CDP" (Spotlight), which reopens Emdash with it.')
         return ""
@@ -2423,6 +2435,8 @@ class RunnerPairing(models.Model):
     hostname = models.CharField(max_length=100, blank=True, default="")
     account = models.CharField(max_length=100, blank=True, default="")
     platform = models.CharField(max_length=10)
+    #: The runner it makes drives emdash (else Claude CLI): an emdash the box can
+    #: actually drive, as `api_runner_pairings.drives_emdash` decides it.
     has_emdash = models.BooleanField(default=False)
     redirect_port = models.PositiveIntegerField()
     created_at = models.DateTimeField(default=timezone.now)

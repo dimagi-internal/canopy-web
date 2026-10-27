@@ -20,6 +20,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     paired_as: "Runner One",
     kind: "emdash",
     engine: "emdash",
+    platform: "",
     status: "online",
     status_note: "",
     ready: true,
