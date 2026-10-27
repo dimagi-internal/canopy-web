@@ -238,7 +238,18 @@ Every browser-facing address canopy-web serves. The SPA route table is
     `labs-jj-email`, on only with `CANOPY_EMAIL_ENABLED`); when it is not sent
     the page says so and leaves the link to copy. Pending + expired invites:
     copy, resend (a fresh link; the old one dies; revives an expired invite),
-    revoke.
+    revoke. Links to member-tree.
+  - **member-tree** — "Members across workspaces": this workspace and every
+    workspace below it the viewer is in, as a matrix (row per person, column
+    per workspace in tree order, the role in each; `GET
+    /api/workspaces/{slug}/member-tree`). Owners and admins of an ancestor show
+    read-only as "inherited from <ancestor>"; editors and viewers do not
+    inherit, so an empty cell is a person who is an outsider there. Where the
+    viewer has `members.manage`, each cell is a role picker limited to what
+    they may grant: a role in an empty cell adds someone already in the tree
+    (`POST /api/workspaces/{slug}/members/`, no invite), a new role PATCHes, "—"
+    removes after a confirm. Errors show on the cell. Filter by email, "only
+    show gaps", system accounts badged (editor or viewer only).
   - **access-requests** (+ `/:requestId`, the page the admins' notification
     links to) — requests to be invited; approve at a role or deny.
   - **slack** — the workspace's Slack connection (one Slack may serve several

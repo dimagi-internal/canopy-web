@@ -254,6 +254,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Invite someone by email', 'Change a member\'s role', 'Remove a member', 'Revoke a pending invite'],
   },
   {
+    path: '/w/:workspace/settings/member-tree',
+    home: '/w/:workspace/settings/members',
+    title: 'Members across workspaces',
+    audience: 'Any workspace member (changes by admins and owners)',
+    what: "Everyone in this workspace and the workspaces below it that you are in, as one table: a row per person, a column per workspace, their role in each. Owners and admins of a workspace are in every workspace below it (marked inherited, with where from); editors and viewers are not, so a gap in a row means that person is an outsider there. Where you manage members, picking a role in an empty cell adds someone already in the tree directly (no invite), changing it re-roles them, and picking \u201c\u2014\u201d removes them. Filter by email, or show only the people missing from somewhere.",
+    actions: ['Add someone from the tree to another workspace', "Change a member's role in any workspace", 'Remove a member', 'Show only the gaps'],
+  },
+  {
     path: '/w/:workspace/members/:userId',
     home: '/w/:workspace/settings/members',
     title: 'A member',
