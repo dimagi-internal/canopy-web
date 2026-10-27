@@ -526,7 +526,15 @@ def heartbeat(
             if "capabilities" not in fields:
                 fields.append("capabilities")
     if health is not None:
-        runner.health = {**health, "received_at": now.isoformat()}
+        # `bootstrapped_at` never goes backwards: a laptop reports health on every
+        # beat now (its updater's check), and one that restarted before its next
+        # refresh sends 0 — which would reopen a Refresh it already discharged.
+        try:
+            booted = max(float(health.get("bootstrapped_at") or 0),
+                         float((runner.health or {}).get("bootstrapped_at") or 0))
+        except (TypeError, ValueError):
+            booted = float(health.get("bootstrapped_at") or 0)
+        runner.health = {**health, "bootstrapped_at": booted, "received_at": now.isoformat()}
         fields.append("health")
     if mailboxes_readable is not None:
         # Lowercased and de-duplicated here, not trusted from the wire: the

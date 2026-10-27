@@ -329,3 +329,64 @@ def test_hold_updates_keeps_a_stale_box_where_it_is(tmp_path):
         out=out.append)
     assert rc == 0 and out[-1] == f"held {NEW}"
     assert _sha_of(app) == OLD
+
+
+# --- what the updater last did reaches the heartbeat --------------------------------
+
+
+def _state_cfg(tmp_path):
+    return SimpleNamespace(state_path=str(tmp_path / "runner-state.json"))
+
+
+def test_the_timer_records_each_answer_for_the_daemon(tmp_path):
+    app = mac_app(tmp_path / "home")
+    update.mark_busy(_state_cfg(tmp_path), 1)
+    kw = dict(if_stale=True, executable=mac_python(app), home=tmp_path / "home",
+              installed=OLD, downloader=lambda *a: pytest.fail("no download"),
+              system="Darwin", out=lambda *_: None)
+    self_update.run_self_update(_config(tmp_path), client_factory=lambda c: FakeClient(_rel()), **kw)
+    check = update.health_check(_state_cfg(tmp_path))
+    assert check["status"] == "warn" and "waiting for turns in flight" in check["detail"]
+
+    self_update.run_self_update(
+        _config(tmp_path), client_factory=lambda c: FakeClient(ClientError("x", status=404)), **kw)
+    check = update.health_check(_state_cfg(tmp_path))
+    assert check["status"] == "warn" and "no macos-arm64 build" in check["detail"]
+
+
+def test_a_failed_install_is_a_failing_check(tmp_path):
+    app = mac_app(tmp_path / "home")
+
+    def bad_download(rel, dest):
+        raise self_update.UpdateError("the download's sha256 does not match")
+
+    self_update.run_self_update(
+        _config(tmp_path), if_stale=True, executable=mac_python(app), home=tmp_path / "home",
+        client_factory=lambda c: FakeClient(_rel()), installed=OLD, downloader=bad_download,
+        system="Darwin", out=lambda *_: None)
+    check = update.health_check(_state_cfg(tmp_path))
+    assert check["status"] == "fail" and "sha256" in check["detail"]
+
+
+def test_a_dry_look_does_not_stand_in_for_the_timer(tmp_path):
+    app = mac_app(tmp_path / "home")
+    self_update.run_self_update(
+        _config(tmp_path), executable=mac_python(app), home=tmp_path / "home",
+        client_factory=lambda c: FakeClient(_rel()), installed=OLD, system="Darwin",
+        out=lambda *_: None)
+    assert update.health_check(_state_cfg(tmp_path)) is None
+
+
+def test_an_updater_that_stopped_running_fails_the_check(tmp_path):
+    cfg = _state_cfg(tmp_path)
+    update.record(cfg, update.CURRENT, NEW, installed=NEW, now=1000.0)
+    assert update.health_check(cfg, now=1000.0 + 60)["status"] == "ok"
+    late = update.health_check(cfg, now=1000.0 + update.UPDATER_SILENT_AFTER + 1)
+    assert late["status"] == "fail" and "has not run since" in late["detail"]
+
+
+def test_held_says_held_not_silent(tmp_path):
+    cfg = _state_cfg(tmp_path)
+    update.record(cfg, update.CURRENT, NEW, installed=NEW, now=0.0)
+    (tmp_path / "hold-updates").write_text("")
+    assert "held" in update.health_check(cfg)["detail"]

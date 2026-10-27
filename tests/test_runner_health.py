@@ -86,6 +86,20 @@ def test_refresh_is_pending_until_the_box_bootstraps_after_it(owner_and_runner):
     assert out["refresh_pending"] is False
 
 
+def test_a_report_without_a_bootstrap_does_not_reopen_a_discharged_refresh(owner_and_runner):
+    """A laptop now reports health every beat (its updater's check); one that
+    restarted before its next refresh sends bootstrapped_at 0."""
+    _, r, c = owner_and_runner
+    c.post(f"/api/harness/runners/{r.id}/refresh")
+    later = timezone.now().timestamp() + 5
+    assert _beat(c, r, health={**HEALTH, "bootstrapped_at": later}).json()["refresh_pending"] is False
+    out = _beat(c, r, health={"checks": [{"name": "update", "status": "ok", "detail": "current"}],
+                              "bootstrapped_at": 0}).json()
+    assert out["refresh_pending"] is False
+    assert out["health_bootstrapped_at"] == later
+    assert out["health_checks"]["update"]["status"] == "ok"
+
+
 def test_refresh_needs_the_administer_tier(owner_and_runner, django_user_model):
     _, r, _ = owner_and_runner
     stranger = django_user_model.objects.create_user(username="s", password="x")

@@ -85,6 +85,78 @@ def in_flight(cfg, *, now: float | None = None) -> int | None:
         return None
 
 
+# --- what the updater last did -----------------------------------------------
+#
+# The updater is a separate, read-only process that must never heartbeat (see
+# the module docstring), so until this existed nothing it decided reached
+# canopy-web: a laptop sat behind for five days (shayoni-win-cdp, 2026-10) and
+# "deferring while busy", "no build for this platform", "the install failed"
+# and "the updater task never runs" all looked identical — a stale code_sha.
+# So the updater writes its answer here, and the DAEMON reports it as the
+# `update` health check on its heartbeat.
+
+#: The timer runs every 30 min; two missed ticks and a bit means the updater is
+#: not running at all (task deleted, laptop asleep for hours, a crashing job).
+UPDATER_SILENT_AFTER = 2.5 * 3600
+FAILED = "failed"
+
+
+def _status_path(cfg) -> Path:
+    return _busy_path(cfg).with_name("update-status.json")
+
+
+def record(cfg, status: str, expected: str, *, installed: str = "", detail: str = "",
+           now: float | None = None) -> None:
+    """Remember the updater's answer for the daemon's heartbeat. Best-effort: a
+    failure here must never change what the updater does."""
+    try:
+        p = _status_path(cfg)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"status": status, "expected": expected or "",
+                                 "installed": installed or "", "detail": detail,
+                                 "at": time.time() if now is None else now}))
+    except OSError:
+        pass
+
+
+def health_check(cfg, *, now: float | None = None) -> dict | None:
+    """The `update` health check from the updater's last answer, or None when no
+    updater has written one (a box older than this, or one installed without it)."""
+    now = time.time() if now is None else now
+    # Held boxes skip the check entirely on the shell updaters' path, so their
+    # last answer goes old on purpose — say held, not "the updater is not running".
+    hold = _status_path(cfg).with_name("hold-updates")
+    if hold.exists():
+        return {"name": "update", "status": "warn",
+                "detail": f"updates are held ({hold}) — delete it to resume"}
+    try:
+        raw = json.loads(_status_path(cfg).read_text())
+        status, at = str(raw["status"]), float(raw["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    expected = str(raw.get("expected") or "")[:12] or "?"
+    installed = str(raw.get("installed") or "")[:12] or "?"
+    extra = str(raw.get("detail") or "")
+    when = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(at))
+    if now - at > UPDATER_SILENT_AFTER:
+        return {"name": "update", "status": "fail",
+                "detail": f"the updater has not run since {when} (last answer: {status}) — "
+                          "its scheduled job is missing, failing, or the machine slept"}
+    if status == CURRENT:
+        result, text = "ok", f"current ({installed})"
+    elif status == BUSY:
+        result, text = "warn", f"behind: {installed} → {expected}, waiting for turns in flight to finish"
+    elif status == STALE:
+        result, text = "warn", f"behind: {installed} → {expected}, installing"
+    elif status == FAILED:
+        result, text = "fail", f"behind: {installed} → {expected}, the install failed"
+    else:  # unknown, held, anything newer than this code
+        result, text = "warn", f"{status}: installed {installed}, expected {expected}"
+    if extra:
+        text = f"{text}: {extra}"
+    return {"name": "update", "status": result, "detail": f"{text} · checked {when}"[:2000]}
+
+
 # --- the update doorbell -----------------------------------------------------
 #
 # The server rings `update_available` down the control channel the moment a
