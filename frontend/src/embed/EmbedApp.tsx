@@ -1532,7 +1532,7 @@ function EmbedChat({
         // use a passkey, or the unlock failed — is it read in canopy itself, where the
         // vault has its own page.
         openElsewhere={(framePasskeys === false && unlockMethod === 'passkey') || sealed.state === 'error' ? (
-          <a href={`${currentFrameBaseUrl()}/w/${encodeURIComponent(agent.workspace)}/chat/${encodeURIComponent(sessionId)}`}
+          <a href={`${currentFrameBaseUrl()}/w/${encodeURIComponent(agent.workspace)}/sessions/${encodeURIComponent(sessionId)}`}
              target="_blank" rel="noopener noreferrer" className="text-primary underline">
             Read it in canopy
           </a>

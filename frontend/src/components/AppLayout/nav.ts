@@ -46,7 +46,7 @@ export type NavEntry =
 export const NAV: NavEntry[] = [
   // Personal, across every workspace you are in — see pages/home.
   { kind: 'link', item: { path: '/home', label: 'Home', tenant: false } },
-  { kind: 'link', item: { path: 'chat', label: 'Sessions', tenant: true } },
+  { kind: 'link', item: { path: 'sessions', label: 'Sessions', tenant: true } },
   {
     kind: 'menu',
     label: 'Agents',

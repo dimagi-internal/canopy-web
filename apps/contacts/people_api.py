@@ -808,7 +808,7 @@ def _searches(person: Person, before: str | None, limit: int) -> dict:
             "purpose": s.purpose, "query": s.query, "method": s.method, "model": s.model,
             "floor": s.floor, "weight": s.weight, "project_boost": s.project_boost, "embed_ms": s.embed_ms,
             "scored": s.scored, "turn_id": str(s.turn_id) if s.turn_id else None,
-            "session_href": f"/w/{sess.workspace_id}/chat/{sess.pk}" if sess and sess.workspace_id else None,
+            "session_href": f"/w/{sess.workspace_id}/sessions/{sess.pk}" if sess and sess.workspace_id else None,
             "session_title": (sess.title or None) if sess else None,
             "entries": _with_text(person, s.entries or []),
         })

@@ -75,7 +75,7 @@ export function useMessageFork(
       navigate(
         sessionPath
           ? sessionPath(fork)
-          : scopedPath(fork.workspace, `/chat/${encodeURIComponent(fork.id)}`),
+          : scopedPath(fork.workspace, `/sessions/${encodeURIComponent(fork.id)}`),
       )
     } catch (err) {
       setForkError(err instanceof ChatApiError ? err.message : 'Could not fork this session')

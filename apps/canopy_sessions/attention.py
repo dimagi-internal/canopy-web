@@ -42,7 +42,7 @@ def items(request, *, slugs: set[str]) -> list[AttentionRow]:
             # The folder /ide files it under: the emdash project its worktree lives
             # in (a repo, or the agent's own), so Home groups sessions the same way.
             project=row["emdash_project"] or row["project"] or "",
-            url=scoped_path(row["workspace"], f"/chat/{row['id']}"),
+            url=scoped_path(row["workspace"], f"/sessions/{row['id']}"),
             last_activity_at=row["last_activity_at"],
             actions=("open",),
             target={"session": str(row["id"])},

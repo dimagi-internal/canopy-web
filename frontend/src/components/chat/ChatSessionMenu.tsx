@@ -129,7 +129,7 @@ export function ChatSessionMenu({
     const t = window.setTimeout(() => setCopied(null), 1500);
     return () => window.clearTimeout(t);
   }, [copied]);
-  const joinUrl = workspace ? `${window.location.origin}${scopedPath(workspace, `/chat/${sessionId}`)}` : null;
+  const joinUrl = workspace ? `${window.location.origin}${scopedPath(workspace, `/sessions/${sessionId}`)}` : null;
   const canMove = Boolean(onMove && workspace && moveTargets && moveTargets.some((t) => t.slug !== workspace));
   // Every item is inset to the checkbox item's gutter, so the list is one column.
 

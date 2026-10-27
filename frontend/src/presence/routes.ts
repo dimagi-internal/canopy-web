@@ -41,7 +41,7 @@ export const canopyPresenceRules: RouteRule[] = [
   // Each session is its own roster — two people in different chats are not
   // "on the same page" just because both are chatting.
   {
-    pattern: /^\/w\/([^/]+)\/chat\/([^/]+)/,
+    pattern: /^\/w\/([^/]+)\/sessions\/([^/]+)/,
     build: (m) => ({ workspace: m[1], resource: `session:${m[2]}`, subLocation: 'Chat' }),
   },
 

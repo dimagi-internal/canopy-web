@@ -34,7 +34,7 @@ describe('OpenSecretRequests', () => {
     page()
     expect((await screen.findAllByTestId('seal-card')).map((c) => c.textContent)).toEqual(['kindora:r1', 'GITHUB_TOKEN:r2'])
     expect(screen.getByText('Asked outside any of its chats')).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'a chat' }).getAttribute('href')).toBe('/w/family/chat/s1')
+    expect(screen.getByRole('link', { name: 'a chat' }).getAttribute('href')).toBe('/w/family/sessions/s1')
   })
 
   it('shows nothing when nothing is waiting', async () => {

@@ -221,7 +221,7 @@ def test_a_new_question_pushes_to_the_runner_s_owner(
     assert kw["body"] == "How should the run proceed?"  # the question itself
     session = Session.objects.get(runner_binding__session_key="spark")
     # The CHAT, not /supervisor: the tap has to land on the buttons.
-    assert kw["url"] == f"/w/dimagi/chat/{session.id}"
+    assert kw["url"] == f"/w/dimagi/sessions/{session.id}"
 
 
 def test_the_same_question_does_not_push_again_every_ten_seconds(
@@ -419,4 +419,4 @@ def test_a_push_only_goes_to_someone_who_can_open_the_chat(monkeypatch):
     assert [u.username for u, _kw in sent] == ["jj"]
     c = Client()
     c.force_login(jj)
-    assert c.get(sent[0][1]["url"].replace("/w/connect/chat/", "/api/canopy-sessions/")).status_code == 200
+    assert c.get(sent[0][1]["url"].replace("/w/connect/sessions/", "/api/canopy-sessions/")).status_code == 200

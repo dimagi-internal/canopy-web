@@ -71,8 +71,8 @@ afterEach(() => {
 })
 
 const page = () => render(
-  <MemoryRouter initialEntries={['/w/w1/chat/s1']}>
-    <Routes><Route path="/w/:workspace/chat/:id" element={<ChatPage />} /></Routes>
+  <MemoryRouter initialEntries={['/w/w1/sessions/s1']}>
+    <Routes><Route path="/w/:workspace/sessions/:id" element={<ChatPage />} /></Routes>
   </MemoryRouter>,
 )
 

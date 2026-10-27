@@ -21,7 +21,7 @@ vi.mock('react-router-dom', async (orig) => ({
 
 const { ContributorPage } = await import('./ContributorPage')
 
-const said = 'https://canopy.test/w/connect/chat/abc'
+const said = 'https://canopy.test/w/connect/sessions/abc'
 
 function idea(over: Record<string, unknown>) {
   return {

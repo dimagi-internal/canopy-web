@@ -100,7 +100,7 @@ def test_mention_queues_a_slack_turn_on_a_private_session(slack, linked, hal, al
     (line,) = slack.said("chat.postMessage")
     assert line["thread_ts"] == "1700000000.000100"
     assert "no runner is set up to run `hal`" in line["text"]
-    assert f"/w/{hal.workspace_id}/chat/{session.id}" in line["text"]
+    assert f"/w/{hal.workspace_id}/sessions/{session.id}" in line["text"]
 
 
 def test_a_routed_runner_without_sessions_is_named_not_reported_as_no_runner(slack, linked, hal, alice):

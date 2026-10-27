@@ -134,7 +134,7 @@ describe('WorkspaceHealthPage', () => {
     expect(screen.getAllByText('Manual · asks first').length).toBe(3)
     expect(screen.getAllByText('1 open').length).toBe(3)
     fireEvent.click(screen.getByText('HAL'))
-    expect(screen.getByRole('link', { name: 'hal chat' }).getAttribute('href')).toBe('/w/connect/chat/s1')
+    expect(screen.getByRole('link', { name: 'hal chat' }).getAttribute('href')).toBe('/w/connect/sessions/s1')
   })
 
   it('links the fix when the viewer may make it, and offers the owner an email when not', async () => {

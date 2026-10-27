@@ -83,7 +83,7 @@ describe('SessionMemoryToggles', () => {
       load: vi.fn().mockResolvedValue({
         state: { session_id: 's1', record: feature(true, true), use: feature(true, false) },
         editable: false,
-        manageUrl: 'https://canopy.example/w/connect/chat/s1',
+        manageUrl: 'https://canopy.example/w/connect/sessions/s1',
       }),
       save,
       grant: vi.fn(),
@@ -94,7 +94,7 @@ describe('SessionMemoryToggles', () => {
     expect(screen.queryByRole('switch')).toBeNull()
     expect(save).not.toHaveBeenCalled()
     const link = screen.getByText('Change in canopy') as HTMLAnchorElement
-    expect(link.href).toBe('https://canopy.example/w/connect/chat/s1')
+    expect(link.href).toBe('https://canopy.example/w/connect/sessions/s1')
     expect(link.target).toBe('_blank')
   })
 
@@ -189,7 +189,7 @@ describe('SessionMemoryToggles', () => {
       load: vi.fn().mockResolvedValue({
         state: { session_id: 's1', agent: ADA, categories: CATS, record: feature(true, true, null, false), use: feature(false, false) },
         editable: false,
-        manageUrl: 'https://canopy.example/w/connect/chat/s1',
+        manageUrl: 'https://canopy.example/w/connect/sessions/s1',
       }),
       save: vi.fn(),
       grant: vi.fn(),
@@ -198,7 +198,7 @@ describe('SessionMemoryToggles', () => {
     fireEvent.click(await chip('Learn off'))
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByText(/Allow/)).toBeNull()
-    expect((screen.getByText('Change in canopy') as HTMLAnchorElement).href).toBe('https://canopy.example/w/connect/chat/s1')
+    expect((screen.getByText('Change in canopy') as HTMLAnchorElement).href).toBe('https://canopy.example/w/connect/sessions/s1')
     expect(source.grant).not.toHaveBeenCalled()
   })
 })

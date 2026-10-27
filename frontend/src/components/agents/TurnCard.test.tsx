@@ -62,7 +62,7 @@ describe('TurnCard', () => {
   it('links a turn to the chat that holds its work', () => {
     renderCard({ ...base, chat_session_id: 'e7bd5a55-9be3-4653-ba38-35a110a3e714' })
     const link = screen.getByRole('link', { name: /open chat/i })
-    expect(link.getAttribute('href')).toBe('/w/connect/chat/e7bd5a55-9be3-4653-ba38-35a110a3e714')
+    expect(link.getAttribute('href')).toBe('/w/connect/sessions/e7bd5a55-9be3-4653-ba38-35a110a3e714')
   })
 
   it('shows a cloud turn its own transcript, since it has no chat', async () => {

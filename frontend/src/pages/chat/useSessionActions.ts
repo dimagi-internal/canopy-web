@@ -191,7 +191,7 @@ export function useSessionActions({
     setMeta((prev) => (prev ? { ...prev, workspace: moved.workspace } : prev))
     if (onLeave) return
     // The URL names the workspace; keep it true so a reload lands here.
-    navigate(scopedPath(moved.workspace, `/chat/${encodeURIComponent(sessionId)}`), {
+    navigate(scopedPath(moved.workspace, `/sessions/${encodeURIComponent(sessionId)}`), {
       replace: true,
     })
   }, [sessionId, setMeta, onLeave, navigate])

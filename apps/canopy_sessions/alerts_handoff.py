@@ -54,7 +54,7 @@ def reconcile(now) -> list[Raise]:
             workspace=h.session.workspace_id,
             title=(f'Closing "{task}" on {source} after its transfer keeps failing' if failed
                    else f'"{task}" was left open on {source} after its transfer'),
-            url=scoped_path(h.session.workspace_id, f"/chat/{h.session_id}"),
+            url=scoped_path(h.session.workspace_id, f"/sessions/{h.session_id}"),
             scopes=(f"workspace:{h.session.workspace_id}",
                     *([f"runner:{h.source_runner_id}"] if h.source_runner_id else []),
                     *([f"agent:{h.session.agent.slug}"] if h.session.agent_id else [])),

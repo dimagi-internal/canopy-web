@@ -136,7 +136,7 @@ export function TurnCard({ turn }: { turn: AgentTurnOut }) {
   // that has no chat, its retained transcript, shown inline when opened.
   const { workspace } = useParams<{ workspace: string }>()
   const chatHref =
-    turn.chat_session_id && workspace ? scopedPath(workspace, `/chat/${turn.chat_session_id}`) : ''
+    turn.chat_session_id && workspace ? scopedPath(workspace, `/sessions/${turn.chat_session_id}`) : ''
   const showTranscript = !turn.chat_session_id && !!turn.has_transcript
   const body = turnBody(turn)
   const duration = turnDuration(turn)

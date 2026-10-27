@@ -73,7 +73,7 @@ def test_a_cloud_turn_names_the_session_its_runner_made(world):
     session = _record(world, turn)
     body = _get(world, turn)
     assert body["canopy_session_id"] == str(session.pk)
-    assert body["canopy_session_url"] == f"https://canopy.example/w/dimagi/chat/{session.pk}"
+    assert body["canopy_session_url"] == f"https://canopy.example/w/dimagi/sessions/{session.pk}"
     # Not the runner's live-session hint, which is a different thing.
     assert body["session_id"] != body["canopy_session_id"]
 
@@ -117,7 +117,7 @@ def test_a_chat_turn_names_its_own_chat(world):
                                prompt="hi", enqueued_by=world["owner"])
     body = _get(world, turn)
     assert body["canopy_session_id"] == str(chat.pk)
-    assert body["canopy_session_url"] == f"https://canopy.example/w/dimagi/chat/{chat.pk}"
+    assert body["canopy_session_url"] == f"https://canopy.example/w/dimagi/sessions/{chat.pk}"
 
 
 def test_the_list_reads_the_sessions_without_a_query_per_turn(world):

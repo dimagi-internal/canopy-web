@@ -281,7 +281,7 @@ export function IdePage() {
           return
         case 'copy-join-link':
           setNote(
-            (await copyText(`${window.location.origin}${scopedPath(s.workspace, `/chat/${s.id}`)}`))
+            (await copyText(`${window.location.origin}${scopedPath(s.workspace, `/sessions/${s.id}`)}`))
               ? { text: `Join link for “${label(s)}” copied`, error: false }
               : { text: 'Could not copy — the clipboard is blocked here', error: true },
           )

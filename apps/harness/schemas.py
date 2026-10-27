@@ -1193,7 +1193,7 @@ class TurnOut(Schema):
                    else obj.canopy_session if getattr(obj, "canopy_session_id", None) else None)
         if session is None:
             return None
-        return links.scoped_url_or_none(session.workspace_id, f"/chat/{session.pk}")
+        return links.scoped_url_or_none(session.workspace_id, f"/sessions/{session.pk}")
 
     @staticmethod
     def resolve_claimed_by_name(obj) -> str | None:

@@ -320,7 +320,7 @@ function FeedCard({
   const [busy, setBusy] = useState<'send' | 'clear' | 'done' | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  const chatHref = scopedPath(s.workspace, `/chat/${s.id}`)
+  const chatHref = scopedPath(s.workspace, `/sessions/${s.id}`)
   const reply = (s.last_reply ?? '').trim()
   // Long replies are clamped so one essay does not push every other card off
   // the screen; "Show more" opens it in place. In a long feed (compact) every

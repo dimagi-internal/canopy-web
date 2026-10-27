@@ -316,13 +316,15 @@ Every browser-facing address canopy-web serves. The SPA route table is
     - `settings/runners`, `settings/agent-access` redirect to these.
   - `/w/:ws/{members,inbound,slack,connected-apps}` redirect to their section,
     keeping query and hash. Distinct from root `/settings` (your account).
-- **`/chat`** — your chat sessions to continue from any device + "New chat with
-  `<agent>`" (`ChatSessionsPanel`, cross-workspace; also embedded in the
-  supervisor's Sessions screen). Coming back to the list paints the tab's
+- **`/sessions`** (header: Sessions) — this workspace's sessions (and those of the
+  workspaces below it) to continue from any device + "New chat with `<agent>`"
+  (`ChatSessionsPanel` on the pinned `/api/w/{ws}/canopy-sessions/`; the
+  supervisor's Sessions screen embeds it across every workspace). `/chat` and
+  `/chat/:id`, the old address, redirect here, keeping query and hash. Coming back to the list paints the tab's
   last copy at once and refreshes underneath; the rows never wait on the
   fleet or agent reads, which only feed "+ New chat". Listed rows open
   without the private-conversation read, as /ide's do.
-- **`/chat/:id`** — live multiplayer chat with an agent on the `canopy-ui/chat`
+- **`/sessions/:id`** — live multiplayer chat with an agent on the `canopy-ui/chat`
   kit (`ChatPanel` + `useSessionSocket` over `ws/canopy-sessions/{id}/`;
   per-person drafts, presence, streamed reply). A send enqueues a session
   `Turn` that a session-capable runner drives in the agent's emdash session.

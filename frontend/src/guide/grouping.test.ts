@@ -45,8 +45,8 @@ describe('guideGroups', () => {
   })
 
   it('puts a detail route with its list route', () => {
-    const chats = guideGroups().find((g) => g.surfaces.some((s) => s.path === '/w/:workspace/chat'))
-    expect(chats?.surfaces.map((s) => s.path)).toContain('/w/:workspace/chat/:id')
+    const chats = guideGroups().find((g) => g.surfaces.some((s) => s.path === '/w/:workspace/sessions'))
+    expect(chats?.surfaces.map((s) => s.path)).toContain('/w/:workspace/sessions/:id')
   })
 
   it('files every page under a menu, its home, or its own group', () => {

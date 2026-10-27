@@ -18,9 +18,9 @@ describe('embedMemorySource', () => {
     const json = vi
       .fn()
       .mockRejectedValueOnce(err(403))
-      .mockResolvedValueOnce({ ...state, manage_path: '/w/connect/chat/s1' })
+      .mockResolvedValueOnce({ ...state, manage_path: '/w/connect/sessions/s1' })
     const loaded = await embedMemorySource({ json }, 's1', 'https://c/canopy').load()
-    expect(loaded).toEqual({ state, editable: false, manageUrl: 'https://c/canopy/w/connect/chat/s1' })
+    expect(loaded).toEqual({ state, editable: false, manageUrl: 'https://c/canopy/w/connect/sessions/s1' })
     expect(json).toHaveBeenLastCalledWith('/api/embed/sessions/s1/agent-memory')
   })
 

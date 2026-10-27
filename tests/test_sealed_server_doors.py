@@ -168,7 +168,7 @@ def test_a_slack_reply_into_a_private_conversation_adds_nobody_and_sends_nothing
     assert not SessionKeyWrap.objects.filter(session=session, user=bob).exists()
     assert Turn.objects.count() == turns
     told = " ".join(p.get("text", "") for p in slack.said("chat.postEphemeral") + slack.said("chat.postMessage"))
-    assert "private" in told and f"/chat/{session.pk}" in told
+    assert "private" in told and f"/sessions/{session.pk}" in told
 
 
 @pytest.mark.usefixtures("slack_configured")

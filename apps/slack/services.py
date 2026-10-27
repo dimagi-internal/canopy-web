@@ -87,7 +87,7 @@ def public_url(path: str) -> str:
 
 
 def session_url(session: Session) -> str:
-    return public_url(f"/w/{session.workspace_id}/chat/{session.id}")
+    return public_url(f"/w/{session.workspace_id}/sessions/{session.id}")
 
 
 def settings_url(workspace_id: str) -> str:
@@ -487,7 +487,7 @@ def private_refusal(session: Session | None, *, agent: Agent | None = None) -> O
     where to go instead. None for an ordinary conversation."""
     if session is None or not sensitivity.is_sensitive(session):
         return None
-    url = links.scoped_url_or_none(session.workspace_id, f"/chat/{session.pk}") or ""
+    url = links.scoped_url_or_none(session.workspace_id, f"/sessions/{session.pk}") or ""
     where = f" Open it in canopy: {url}" if url else " Open it in canopy."
     return Outcome(PRIVATE, "This conversation is private, so canopy does not take messages into "
                    f"it from Slack, and nothing you wrote here was sent.{where}",
@@ -1209,7 +1209,7 @@ def _move_to_cloud(session: Session, user, via: str) -> Outcome:
     # re-asked by Slack sending into it (which it refuses), and a turn closed as lost
     # first would be lost for good. Its people move it from canopy.
     if sensitivity.is_sensitive(session):
-        url = links.scoped_url_or_none(session.workspace_id, f"/chat/{session.pk}") or ""
+        url = links.scoped_url_or_none(session.workspace_id, f"/sessions/{session.pk}") or ""
         where = f" Open it in canopy to run it elsewhere: {url}" if url else " Open it in canopy."
         return Outcome(PRIVATE, "This conversation is private, so canopy does not move it from "
                        f"Slack, and nothing was changed.{where}",

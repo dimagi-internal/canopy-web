@@ -915,7 +915,7 @@ describe('agent memory in the conversation header', () => {
           return {
             ok: true,
             status: 200,
-            json: async () => ({ ...MEMORY, manage_path: '/w/connect/chat/sess-1' }),
+            json: async () => ({ ...MEMORY, manage_path: '/w/connect/sessions/sess-1' }),
           } as Response
         }
         return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response

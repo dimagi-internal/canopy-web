@@ -93,7 +93,7 @@ def test_the_push_is_sent_once_due_and_lands_on_the_chat(session, user):
     payload = send.call_args.args[1]
     assert payload["title"] == "canopy-web · Fix the login bug is done"
     assert payload["body"] == "Fixed it — the cookie was scoped wrong."
-    assert payload["url"] == f"/w/canopy/chat/{session.id}"
+    assert payload["url"] == f"/w/canopy/sessions/{session.id}"
 
 
 def test_a_new_turn_cancels_the_pending_push(session, user):

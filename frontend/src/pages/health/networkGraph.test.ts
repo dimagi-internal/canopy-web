@@ -28,7 +28,7 @@ describe('networkGraph', () => {
   })
 
   it('opens a chat only when the viewer may, and an agent at its page', () => {
-    expect(hrefOf(node({ id: 'session:a', ref: 'a', openable: true }))).toBe('/w/dimagi/chat/a')
+    expect(hrefOf(node({ id: 'session:a', ref: 'a', openable: true }))).toBe('/w/dimagi/sessions/a')
     expect(hrefOf(node({ id: 'session:a', ref: 'a', openable: false }))).toBeNull()
     expect(hrefOf(node({ id: 'mail:m', ref: 'm', agent: 'hal' }))).toBe('/w/dimagi/agents/hal/mail')
     expect(hrefOf(node({ id: 'agent:hal', kind: 'agent', ref: 'hal', workspace: 'connect' }))).toBe('/w/connect/agents/hal')

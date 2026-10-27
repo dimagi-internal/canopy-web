@@ -60,7 +60,7 @@ export function closeResultMessage(r: CloseResult, s: CloseSubject): string | nu
  * the app, so it falls back to the workspace's chat list.
  */
 export function closeDestination(historyIdx: unknown, workspace: string): -1 | string {
-  return typeof historyIdx === 'number' && historyIdx > 0 ? -1 : scopedPath(workspace, '/chat')
+  return typeof historyIdx === 'number' && historyIdx > 0 ? -1 : scopedPath(workspace, '/sessions')
 }
 
 /** How often, and for how long, the page checks whether a close relayed to a

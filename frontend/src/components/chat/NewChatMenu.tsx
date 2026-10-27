@@ -33,7 +33,7 @@ export type NewChatTarget =
  * report (`repoChoices`) — the set a project chat can actually be claimed on.
  * `agents` and `runners` may be passed by a caller that already loaded them;
  * otherwise the menu loads them itself (Home passes neither). `onCreated` replaces the default of opening the new
- * chat at `/w/<ws>/chat/<id>` (/ide opens it in place). `target` skips the
+ * chat at `/w/<ws>/sessions/<id>` (/ide opens it in place). `target` skips the
  * list and opens straight on the "Run on" step for that agent or repo (/ide's
  * per-project +); with no `label` the trigger is the + alone.
  */
@@ -107,7 +107,7 @@ export function NewChatMenu({
             setSelectedRunnerId('')
             onCreated(s)
           } else {
-            navigate(scopedPath(s.workspace, `/chat/${s.id}`))
+            navigate(scopedPath(s.workspace, `/sessions/${s.id}`))
           }
         })
         .catch((err: unknown) => {

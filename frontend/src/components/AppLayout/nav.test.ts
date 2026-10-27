@@ -59,7 +59,7 @@ describe('resolveNav', () => {
   it('resolves tenant items under the active workspace and leaves Home at root', () => {
     const nav = resolveNav(authed)
     expect(nav[0]).toEqual({ kind: 'link', item: { href: '/home', label: 'Home' } })
-    expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/chat', label: 'Sessions' } })
+    expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/sessions', label: 'Sessions' } })
     const work = nav.find((e) => label(e) === 'Work')!
     expect(entryItems(work)[0]).toEqual({ href: '/w/connect/tasks', label: 'Tasks' })
   })
@@ -101,7 +101,7 @@ describe('active entry', () => {
   it('marks exactly one entry for any route the header owns', () => {
     const expected: Record<string, string> = {
       '/home': 'Home',
-      '/w/connect/chat/abc': 'Sessions',
+      '/w/connect/sessions/abc': 'Sessions',
       '/w/connect/agents/hal/turns': 'Agents',
       '/w/connect/agents/new': 'Agents',
       '/w/connect/activity': 'Agents',
@@ -143,7 +143,7 @@ describe('switchWorkspacePath', () => {
     expect(switchWorkspacePath('/w/dimagi/settings/topology/runners', 'm')).toBe('/w/m/settings/topology')
     // A page about one thing names something of the old workspace: its list instead.
     expect(switchWorkspacePath('/w/dimagi/agents/hal/settings', 'm')).toBe('/w/m/agents')
-    expect(switchWorkspacePath('/w/dimagi/chat/abc', 'm')).toBe('/w/m/chat')
+    expect(switchWorkspacePath('/w/dimagi/sessions/abc', 'm')).toBe('/w/m/sessions')
     expect(switchWorkspacePath('/w/dimagi/threads/7', 'm')).toBe('/w/m/huddles')
     expect(switchWorkspacePath('/w/dimagi', 'm')).toBe('/w/m/agents')
     expect(switchWorkspacePath('/home', 'm')).toBe('/w/m/agents')

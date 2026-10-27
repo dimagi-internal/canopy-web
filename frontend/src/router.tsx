@@ -225,6 +225,14 @@ function WorkspaceIndex() {
   return <Navigate to={scopedPath(workspace, '/agents')} replace />
 }
 
+// /w/:workspace/chat(/:id) → /w/:workspace/sessions(/:id), query and hash kept.
+export function SessionsRedirect() {
+  const { workspace = '', id } = useParams()
+  const { search, hash } = useLocation()
+  const page = scopedPath(workspace, id ? `/sessions/${encodeURIComponent(id)}` : '/sessions')
+  return <Navigate to={`${page}${search}${hash}`} replace />
+}
+
 // /w/:workspace/projects/:agent/:ref → the project's one page at its address;
 // with /people/:person, that contributor's page on the agent's board.
 export function ProjectPageRedirect() {
@@ -406,7 +414,7 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/projects/:agent/:ref/people/:person', element: <ProjectPageRedirect /> },
       { path: '/w/:workspace/schedules', element: <SchedulesPage /> },
       {
-        path: '/w/:workspace/chat',
+        path: '/w/:workspace/sessions',
         element: (
           <LazySection>
             <ChatListPage />
@@ -414,13 +422,16 @@ export const routeTable: RouteObject[] = [
         ),
       },
       {
-        path: '/w/:workspace/chat/:id',
+        path: '/w/:workspace/sessions/:id',
         element: (
           <LazySection>
             <ChatPageRoute />
           </LazySection>
         ),
       },
+      // The page's old address: Slack threads, pushes and mail already carry it.
+      { path: '/w/:workspace/chat', element: <SessionsRedirect /> },
+      { path: '/w/:workspace/chat/:id', element: <SessionsRedirect /> },
       { path: '/w/:workspace/activity', element: <ActivityPage /> },
       // A team of agents syncing in rounds (canopy `huddle`), derived from turns.
       { path: '/w/:workspace/huddles', element: <LazySection><HuddlesPage /></LazySection> },

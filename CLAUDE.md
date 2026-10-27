@@ -67,7 +67,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 - `projects/:handle` is a project's ONE page, for teammates and editors alike; `agents/:slug/projects/:ref` and `projects/:agent/:ref` redirect there. An idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
 - `runners/:id/<tab>`, `vaults/:id/<tab>` — one page per runner and per workspace vault, each tab a route; everything else links there (one editor per object, `components/objectPage/` → `docs/architecture/pages.md`)
 - `settings/<section>` — workspace settings: members, access-requests, slack, inbound, email, connected-apps, secrets, tasks, retention, admission-rules, topology (fleet map + runners/agents tables)
-- `chat`, `chat/:id` — your chat sessions; live multiplayer chat with an agent
+- `sessions`, `sessions/:id` — the workspace's sessions; live multiplayer chat with an agent (`chat`, `chat/:id` redirect here)
 - `huddles` (+ `/:id`), `threads/:id` — agent huddles; a bounded agent-to-agent thread
 - `schedules`, `activity`, `timeline` — schedule calendar, turn log, team activity feed
 - `health`, `analytics`, `network` — what is not set up right across the workspace; turns, outcomes and usage; who works with whom through which threads (`docs/architecture/analytics.md`)
