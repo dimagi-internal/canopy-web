@@ -10,11 +10,14 @@ name: CI
 # head. That second run is the one that matters — it tests what will actually
 # land on main — so a full PR run only doubled every merge's wait (~6 min PR +
 # ~6 min queue) to re-prove what the queue proves anyway. On a PR the two
-# required names are now GATES that pass on the PR-only guards (`PR guards`:
-# version bumps measured against the PR base, which the queue cannot see);
-# the real suites run in `merge_group`. A failure there ejects the PR from the
-# queue with the same logs a PR run would have shown. `Secret scan` still runs
-# on the PR, where it is useful before a secret spreads.
+# required names are now GATES that pass on the PR-only jobs: `PR guards`
+# (version bumps measured against the PR base, which the queue cannot see),
+# and `PR fast checks` / `PR frontend checks` (lint, ratchets, codegen sync, a
+# type check and the tests near the PR's changes — about a minute each). The
+# real suites run in `merge_group`. A failure there ejects the PR AND rebuilds
+# every queue entry behind it, which is why anything a PR alone can fail is
+# caught here first. `Secret scan` still runs on the PR, where it is useful
+# before a secret spreads.
 
 on:
   push:
@@ -561,6 +564,70 @@ jobs:
       - name: Run the migration tests
         run: uv run pytest -m needs_migrations
 
+  # The frontend half of the PR's fast checks: type-check the SPA and run the
+  # vitest files that import what this PR changed. Frontend failures were a
+  # fifth of merge-queue ejections, each one rebuilding every entry behind it.
+  # A change to the toolchain itself (package.json, the lockfile, a vite or ts
+  # config) can break any test, so that runs the whole suite instead.
+  pr-frontend-checks:
+    name: PR frontend checks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: What this PR changed in the frontend
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          ALL=$(git diff --name-only --diff-filter=d "$BASE_SHA"...HEAD -- frontend/)
+          SRC=$(echo "$ALL" | grep -E '^frontend/.*\.(ts|tsx|js|jsx|mts|css)$' \
+            | grep -vE '^frontend/(vite|vitest)[^/]*\.config\.' | sed 's#^frontend/##' | tr '\n' ' ' || true)
+          if echo "$ALL" | grep -qE '^frontend/(package(-lock)?\.json|tsconfig[^/]*\.json|vite[^/]*\.config\.[a-z]+)$'; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+          elif [ -n "$ALL" ]; then
+            echo "mode=related" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "files=$SRC" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        if: steps.changed.outputs.mode != 'none'
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        if: steps.changed.outputs.mode != 'none'
+        working-directory: frontend
+        run: npm ci
+
+      # The type-check half of `npm run build`, without the bundling.
+      - name: Type check
+        if: steps.changed.outputs.mode != 'none'
+        working-directory: frontend
+        run: npx tsc -b
+
+      - name: Vitest (files related to this PR's changes)
+        if: steps.changed.outputs.mode == 'related'
+        working-directory: frontend
+        env:
+          FILES: ${{ steps.changed.outputs.files }}
+        run: |
+          if [ -z "$FILES" ]; then echo "No source files changed."; exit 0; fi
+          npx vitest related --run --passWithNoTests $FILES
+
+      - name: Vitest (whole suite — the toolchain changed)
+        if: steps.changed.outputs.mode == 'all'
+        working-directory: frontend
+        run: npm run test
+
   test-backend-gate:
     name: Backend tests
     needs: [test-backend, test-backend-migrations, test-runner-packages, test-backend-postgres, pr-guards, pr-fast-checks]
@@ -599,7 +666,7 @@ jobs:
   # is a gate, so the suite itself can skip on a PR.
   test-frontend-gate:
     name: Frontend build
-    needs: [test-frontend, pr-guards]
+    needs: [test-frontend, pr-guards, pr-frontend-checks]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -612,15 +679,16 @@ jobs:
           echo "$RESULTS" | python3 -c '
           import json, os, sys
           needs = json.load(sys.stdin)
-          # On a PR only pr-guards runs (the suites run in the merge queue —
-          # see the top of this file); everywhere else everything but it runs.
+          # On a PR only the PR jobs run (the suites run in the merge queue —
+          # see the top of this file); everywhere else everything but them runs.
           # A job that was expected must have SUCCEEDED: skipped is not passed.
           on_pr = os.environ["EVENT"] == "pull_request"
+          pr_only = {"pr-guards", "pr-frontend-checks"}
           bad = {}
           for job, n in needs.items():
               result = n["result"]
               print(f"{job}: {result}")
-              expected = (job == "pr-guards") == on_pr
+              expected = (job in pr_only) == on_pr
               if result != "success" and (expected or result != "skipped"):
                   bad[job] = result
           if bad:

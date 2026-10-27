@@ -2,8 +2,17 @@
 import json
 import sqlite3
 
+import canopy_kb.kb
+import pytest
 from canopy_kb import KB, apply, build, records
 from test_canopy_kb import REVIEW, _bundle
+
+
+@pytest.fixture(autouse=True)
+def _one_clock(monkeypatch):
+    """Every build here stamps `first_seen` with the wall clock to the second, and these tests
+    compare two builds row for row — so two builds a second boundary apart differ. Pin it."""
+    monkeypatch.setattr(canopy_kb.kb, "_now", lambda: "2026-10-23T00:00:00Z")
 
 V2_ITEMS = [
     # p:1 changed text and card; b:1 unchanged; r:amf removed; r:amf2 card-only change; two new
@@ -126,11 +135,9 @@ def test_a_record_is_addressed_by_its_content_not_the_curators_paths(tmp_path):
     assert records.encode({"a": 1}) == records.encode({"a": 1})
 
 
-def test_a_first_version_built_from_records_is_the_full_build(tmp_path, monkeypatch):
+def test_a_first_version_built_from_records_is_the_full_build(tmp_path):
     """No machine builds kb.sqlite: a knowledge base's first version is its records
     applied to nothing, and that is the full build of the same content."""
-    import canopy_kb.kb
-    monkeypatch.setattr(canopy_kb.kb, "_now", lambda: "2026-10-23T00:00:00Z")  # both stamp first_seen
     v2 = _v2(tmp_path)
     full = tmp_path / "full.sqlite"
     build(v2, full)
