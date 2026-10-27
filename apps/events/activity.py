@@ -37,7 +37,7 @@ RUNNER_PAIRED = "runner.paired"
 #: (`apps/harness/api_runner_pairings.py`); `runner.paired` follows when it claims.
 RUNNER_PAIRING_APPROVED = "runner.pairing.approved"
 #: A cloud runner's device key was replaced by its box re-pairing (a replaced
-#: instance, or a box adopted into isolation units).
+#: instance, or a box adopted into running several runners).
 RUNNER_REKEYED = "runner.rekeyed"
 #: canopy-web changed a runner fleet's size (`apps/harness/fleets.py`): `from` and
 #: `to` are the group's desired capacity, so the series is how many members ran.

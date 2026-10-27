@@ -1,7 +1,8 @@
-"""The box half of isolation units (spec 2026-10-19-runner-isolation-units §1, §2, §5;
-plan Tasks 6.2 and 6.5): `RunnerUnits` parsing and naming, each unit's environment,
-root's setup (users, files, the IMDS rule), the ONE pair-by-role payload for every
-unit, and how the live single-unit box is adopted (its runner name and KMS key kept).
+"""The machine half of several runners on one machine (spec
+2026-10-19-runner-isolation-units §1, §2, §5; plan Tasks 6.2 and 6.5): `RunnerUnits`
+parsing and naming, each runner's environment, root's setup (users, files, the IMDS
+rule), the ONE pair-by-role payload for every runner, and how the live single-runner
+box is adopted (its runner name and KMS key kept).
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ BOX = {"RUNNER_NAME": "cloud-ec2-9", "RUNNER_WORKSPACE": "dimagi", "CANOPY_BASE_
 def test_no_units_means_one_tree_unit_named_as_the_box(cloud_runner):
     [unit] = cloud_runner.parse_units("", workspace="dimagi", box="cloud-ec2-2")
     assert unit["id"] == "dimagi" and unit["kind"] == "tree" and unit["workspace"] == "dimagi"
-    # The box's own name: the live box keeps its runner when it moves to units.
+    # The box's own name: the live box keeps its runner when it moves to several runners.
     assert unit["name"] == "cloud-ec2-2" and unit["user"] == "cu-dimagi"
 
 
@@ -55,7 +56,7 @@ def test_the_box_unit_keeps_the_boxs_original_kms_key(cloud_runner):
         f"alias/canopy-runner-ecdh/{role}/agent-eva"
 
 
-# ---- each unit's environment ------------------------------------------------------
+# ---- each runner's environment ----------------------------------------------------
 
 def test_a_unit_env_holds_no_pat_no_claude_token_no_box_keyring_password(cloud_runner):
     units = cloud_runner.parse_units(BOX["RUNNER_UNITS"], workspace="dimagi", box="cloud-ec2-9")
@@ -75,7 +76,7 @@ def test_a_unit_env_holds_no_pat_no_claude_token_no_box_keyring_password(cloud_r
 def test_agents_follow_their_units(cloud_runner):
     units = cloud_runner.parse_units(BOX["RUNNER_UNITS"], workspace="dimagi", box="cloud-ec2-9")
     by = {u["id"]: cloud_runner.unit_env(u, units, BOX, uid=1) for u in units}
-    # eva has a unit of its own: the box's tree unit no longer carries it.
+    # eva has a runner of its own: the box's tree runner no longer carries it.
     assert by["dimagi"]["RUNNER_AGENTS"] == "ace,ada" and by["dimagi"]["AGENT_SLUGS"] == "ace,ada"
     assert by["dimagi"]["RUNNER_PROJECTS"] == "canopy-web"
     assert by["agent-eva"]["RUNNER_AGENTS"] == "eva" and by["agent-eva"]["RUNNER_PROJECTS"] == ""
@@ -122,7 +123,7 @@ def host(cloud_runner, monkeypatch, tmp_path):
 
 
 def _setup(cloud_runner, host, box=BOX):
-    # parse_units reads UNIT_HOME_ROOT when it builds each unit's home.
+    # parse_units reads UNIT_HOME_ROOT when it builds each runner's home.
     return cloud_runner.setup_units(box, run=host.run, chown=host.chown, uid_of=host.uid_of, etc=host.etc,
                                     role_name="RunnerRole-ABC")
 
@@ -183,7 +184,7 @@ def test_without_the_imds_rule_setup_fails_loudly(cloud_runner, monkeypatch):
         cloud_runner.imds_rules(run=lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "denied"))
 
 
-# ---- canopy-pair: every unit in one call --------------------------------------------
+# ---- canopy-pair: every runner in one call ------------------------------------------
 
 def _jwk(n):
     return {"kty": "EC", "crv": "P-256", "x": f"x{n}", "y": f"y{n}"}
@@ -245,7 +246,7 @@ def test_canopy_pair_pairs_every_unit_and_writes_each_state(cloud_runner, paired
 
     assert cloud_runner.pair_units_main(run=paired_box.run, post=post, sleep=lambda s: None,
                                         chown=paired_box.host.chown) == 0
-    assert len(sent) == 2 and len(sent[1]["units"]) == 3   # one call per attempt, every unit in it
+    assert len(sent) == 2 and len(sent[1]["units"]) == 3   # one call per attempt, every runner in it
     for unit in paired_box.units:
         state = json.loads((pathlib.Path(unit["home"]) / ".canopy-cloud-runner.json").read_text())
         assert state == {"runner_id": f"rid-{unit['id']}", "paired_by": "invitation", "unit": unit["id"],
@@ -254,7 +255,7 @@ def test_canopy_pair_pairs_every_unit_and_writes_each_state(cloud_runner, paired
     registered = [c for c in paired_box.cli if "--registered" in c]
     assert len(registered) == 3
     assert all(c[:3] == ["runuser", "-u", c[2]] and c[2].startswith("cu-") for c in registered)
-    # Every CLI call ran AS the unit, never as root.
+    # Every CLI call ran AS the runner's user, never as root.
     assert all(c[0] == "runuser" for c in paired_box.cli)
 
 
@@ -280,7 +281,7 @@ def test_a_replaced_instance_pairs_again_with_its_new_keys(cloud_runner, paired_
 # ---- adopting the live box (Review Focus 1) ------------------------------------------
 
 def test_the_live_box_adopts_as_its_default_unit(cloud_runner, host, monkeypatch):
-    """cloud-ec2-2 today: no RunnerUnits. Its one unit is `tree:<workspace>`, named
+    """cloud-ec2-2 today: no RunnerUnits. Its one runner is `tree:<workspace>`, named
     cloud-ec2-2 (so canopy-web re-attaches its runner by machine and name, keeping the
     id), and its ECDH key is the stack's existing KMS key (so the broker hands out the
     same public key: same ecdh jkt, every wrap kept). The server half is
@@ -291,7 +292,7 @@ def test_the_live_box_adopts_as_its_default_unit(cloud_runner, host, monkeypatch
     assert unit["name"] == "cloud-ec2-2"
     assert doc["units"][0]["kms_key"] == "alias/canopy-runner-ecdh/RunnerRole-ABC"
     env = cloud_runner.read_env_file(host.etc / "dimagi.env")
-    # The single unit still runs the whole box's agents and repos.
+    # The single runner still runs the whole box's agents and repos.
     assert env["RUNNER_AGENTS"] == "ace,ada,eva" and env["RUNNER_PROJECTS"] == "canopy-web"
     keys = {"dimagi": {"public_jwk": _jwk("new"), "jkt": "j", "ecdh_public_jwk": _jwk("kms")}}
     body = cloud_runner.pair_units_payload("cloud-ec2-2", [unit], keys, "P", unit_envs={"dimagi": env})
@@ -307,7 +308,7 @@ def test_a_box_without_units_runs_exactly_as_before(cloud_runner):
     assert cloud_runner._no_pat_fallback() is False
 
 
-# ---- a unit never pairs or signs as the box -------------------------------------------
+# ---- a runner on a shared machine never pairs or signs as the box ----------------------
 
 def test_a_unit_has_no_pat_fallback(load_cloud_runner, monkeypatch, tmp_path):
     monkeypatch.setenv("CANOPY_UNIT", "dimagi")
@@ -367,7 +368,7 @@ def test_a_unit_waits_for_canopy_pair_instead_of_pairing(load_cloud_runner, monk
 
     monkeypatch.setattr(cr.time, "sleep", sleep)
     monkeypatch.setattr(cr, "_log", lambda m: None)
-    monkeypatch.setattr(cr, "pair_by_role", lambda: pytest.fail("a unit must not pair by role"))
+    monkeypatch.setattr(cr, "pair_by_role", lambda: pytest.fail("a runner on a shared machine must not pair by role"))
     monkeypatch.setattr(cr, "_api", lambda *a, **k: (200, {}))
     assert cr.pair_or_load() == "rid-u" and ticks
 
@@ -402,12 +403,12 @@ def test_the_template_installs_units_and_declares_runner_units():
 
 def test_the_ecdh_stack_gives_each_extra_unit_its_own_key():
     text = (EC2 / "ecdh-kms.cfn.yaml").read_text()
-    # The box's own unit keeps the key it always had (no wrap breaks).
+    # The box's own runner keeps the key it always had (no wrap breaks).
     assert "'alias/canopy-runner-ecdh/${RoleName}'" in text
     for i in range(1, 5):
         assert f"Unit{i}Key:\n    Type: AWS::KMS::Key\n    Condition: HasUnit{i}" in text
         block = text[text.index(f"  Unit{i}Key:"):text.index(f"  Unit{i}KeyAlias:")]
-        # A removed unit (or a replaced key) is never scheduled for deletion…
+        # A removed runner (or a replaced key) is never scheduled for deletion…
         assert "DeletionPolicy: Retain" in block and "UpdateReplacePolicy: Retain" in block
         # …and its alias (what the broker finds it by) is never removed by the stack.
         alias = text[text.index(f"  Unit{i}KeyAlias:"):][:200]
@@ -437,16 +438,16 @@ def test_an_in_place_move_writes_box_env_without_secrets(cloud_runner, tmp_path)
     assert (out.stat().st_mode & 0o777) == 0o600
     text = out.read_text()
     assert "pat" not in text and "sk-ant" not in text and "pw" not in text
-    # …and it is the live box's one default unit, named as the box.
+    # …and it is the live box's one default runner, named as the box.
     [unit] = cloud_runner.parse_units(box["RUNNER_UNITS"], workspace="dimagi", box="cloud-ec2-2")
     assert unit["name"] == "cloud-ec2-2"
 
 
 def test_install_units_moves_a_legacy_box_in_place(cloud_runner, monkeypatch, tmp_path):
-    """The operator step that moves a live box (README "Moving a box to units"): the
+    """The operator step that moves a live box (README "Moving a machine to several runners"): the
     legacy service is stopped, its secrets are gone before anything is made readable,
     box.env carries no secret, the old fetch-env that re-wrote them is replaced, and
-    every unit's runner is enabled."""
+    every runner is enabled."""
     home = tmp_path / "opt" / "canopy-runner"
     home.mkdir(parents=True)
     (home / "runner.env").write_text("CANOPY_TOKEN=pat\nRUNNER_NAME=cloud-ec2-2\nRUNNER_WORKSPACE=dimagi\n"
@@ -477,7 +478,7 @@ def test_install_units_moves_a_legacy_box_in_place(cloud_runner, monkeypatch, tm
     assert "runner.env" not in fetch_env.read_text().split("exit 0")[-1] and "exit 0" in fetch_env.read_text()
     box = cloud_runner.read_env_file(etc / "box.env")
     assert box == {"RUNNER_NAME": "cloud-ec2-2", "RUNNER_WORKSPACE": "dimagi", "RUNNER_UNITS": "tree:dimagi,agent:eva"}
-    assert (home / "build-info.json").stat().st_mode & 0o777 == 0o644   # every unit reads its provenance
+    assert (home / "build-info.json").stat().st_mode & 0o777 == 0o644   # every runner reads its provenance
     assert sorted(p.name for p in systemd.iterdir()) == sorted(cloud_runner.SYSTEMD_UNITS)
     enable = next(c for c in calls if c[:3] == ["systemctl", "enable", "--now"] and "canopy-pair.service" in c)
     assert "canopy-runner@agent-eva.service" in enable and "canopy-kms-broker.service" in enable

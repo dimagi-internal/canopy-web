@@ -24,8 +24,8 @@ const PAIR_POLL_MS = 5000
  * carries (`/w/:workspace/runner-invitations/:invitationId`).
  *
  * Shows what is being let in (name, workspace, instance role, who asked, when it
- * runs out — and, for a box of isolation units, every unit it pairs) and one
- * Approve button: one approval pairs every unit. Once approved it says so, re-reads
+ * runs out — and, for a machine running several runners, every runner it pairs)
+ * and one Approve button: one approval pairs every runner. Once approved it says so, re-reads
  * the invitation until the box pairs, then says that and links to the runner. The passkey step-up is the API client's: a
  * 403 `step_up_required` prompts for the passkey and retries, so this page has
  * no passkey code of its own. Only the invitation's creator can open it.
@@ -147,10 +147,10 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
           </p>
         ) : units.length > 0 ? (
           <>
-            <table className="mt-4 w-full text-left text-[13px]" aria-label="Units">
+            <table className="mt-4 w-full text-left text-[13px]" aria-label="Runners">
               <thead className="text-[12px] text-muted-foreground">
                 <tr>
-                  <th className="py-1 pr-3 font-medium">Unit runner</th>
+                  <th className="py-1 pr-3 font-medium">Runner</th>
                   <th className="py-1 pr-3 font-medium">Serves</th>
                   <th className="py-1 pr-3 font-medium">Workspace</th>
                   <th className="py-1 font-medium">Paired</th>
@@ -168,8 +168,8 @@ export function RunnerInvitationApprovePage(): JSX.Element | null {
               </tbody>
             </table>
             <p className="mt-3 text-[12px] text-muted-foreground">
-              Approving makes each of these {units.length} units your runner in its workspace: each is its own user on
-              the box with its own key, holds no token, and serves nothing until you route work to it
+              Approving makes each of these {units.length} runners yours in its workspace: each is its own user on
+              the machine with its own key, holds no token, and serves nothing until you route work to it
               {inv.has_ecdh_key ? '. Their keys for reading zero-knowledge secrets are approved with them' : ''}.
             </p>
           </>

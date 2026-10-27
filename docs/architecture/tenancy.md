@@ -76,16 +76,16 @@ the rule, its claim/schedule parity test and the routing hint:
 [runners.md § Which workspaces a runner serves](runners.md#which-workspaces-a-runner-serves-the-tenant-gate).
 
 - **One cloud runner, one tree.** A `kind=cloud` runner enrolls in one root's
-  tree only (422 otherwise); a box serving two trees runs a runner (an isolation
-  unit) per tree. A laptop may span trees and says so on its runner row.
-  → [runners.md § Isolation units](runners.md#isolation-units-one-runner-per-unit-on-a-cloud-box)
-- **On the box, a unit is a Unix user.** Each unit's secrets, logins, mail tokens,
-  transcripts and worktrees are its user's (home 0700); IMDS is root's, so a unit
-  cannot act as the box; its device key and its KMS ECDH key are its own, so one
-  unit's token or proof never reads another unit's agents, and an agent's vault key
-  is wrapped only to the units that run it. Inside a unit, agents share a user: the
-  unit, not a rail, is the boundary. Root on the box is trusted.
-  → [runners.md § Units on the box](runners.md#units-on-the-box-runnerunits)
+  tree only (422 otherwise); a machine serving two trees runs a runner per tree.
+  A laptop may span trees and says so on its runner row.
+  → [runners.md § Several runners on one machine](runners.md#several-runners-on-one-machine)
+- **On a machine, each runner is a Unix user.** Each runner's secrets, logins, mail
+  tokens, transcripts and worktrees are its user's (home 0700); IMDS is root's, so a
+  runner cannot act as the machine; its device key and its KMS ECDH key are its own, so
+  one runner's token or proof never reads another runner's agents, and an agent's vault
+  key is wrapped only to the runners that run it. Inside a runner, agents share a user:
+  the runner, not a rail, is the boundary. Root on the machine is trusted.
+  → [runners.md § Setting up the runners on a machine](runners.md#setting-up-the-runners-on-a-machine-runnerunits)
 - **Sessions a runner reports are filed inside its tenant.** A new agent-less
   session names its agent only among agents in `runner_tenant_slugs(runner)`
   (`harness.session_sync._agent_for_project`: `Agent.slug` is global). A session whose

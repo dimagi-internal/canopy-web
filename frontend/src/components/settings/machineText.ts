@@ -66,7 +66,7 @@ export function storePlace(store: string): string {
     case 'tpm':
       return 'key locked in the TPM chip'
     case 'aws-kms':
-    case 'kms-broker':  // a box of units: each unit's key, served by the box's KMS broker
+    case 'kms-broker':  // a machine running several runners: each runner's key, served by the machine's KMS broker
       return 'key held by AWS'
     case 'software':
       return 'key stored in a file'

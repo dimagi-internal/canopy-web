@@ -2,9 +2,9 @@
 people set for its runners (`apps/harness/egress.py`).
 
 Anonymous at the door (`auth=None`, public in `apps/common/middleware.py`): root
-holds no canopy token — its units do, and a unit must not be the one relaying its
-own lock, or a unit could loosen it. Root proves the box's instance role instead
-(IMDS is closed to units), and gets the settings of every live runner on that
+holds no canopy token — its runners do, and a runner must not be the one relaying its
+own lock, or a runner could loosen it. Root proves the box's instance role instead
+(IMDS is closed to runners), and gets the settings of every live runner on that
 machine (`Runner.machine_id`, the canonical role). One uniform 401 for any bad
 proof; nothing about which runners exist leaks to a caller without the role.
 """

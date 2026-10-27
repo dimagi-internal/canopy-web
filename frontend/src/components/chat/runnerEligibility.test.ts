@@ -31,6 +31,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     last_heartbeat_at: null,
     capabilities: { sessions: true }, agent_clis: {},
     host: "host",
+    machine: "",
     code_branch: "main",
     code_version: "",
     code_sha: "",

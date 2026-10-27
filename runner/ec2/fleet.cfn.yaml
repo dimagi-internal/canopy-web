@@ -91,7 +91,7 @@ Parameters:
   RunnerEgressAllow:
     Type: String
     Default: ''
-  # A fleet member is one runner (no isolation units) and never a sensitive-data box
+  # A fleet member is one runner (never several on one machine) and never a sensitive-data box
   # (a sealed conversation's key is wrapped to people, not to a fleet). Fixed, so the
   # shared cloud-init reads the same names it reads on a single box.
   RunnerUnits:

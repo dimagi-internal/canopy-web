@@ -1,4 +1,4 @@
-"""canopy-kms-broker: a unit's ECDH key, for that unit's uid only (spec §2).
+"""canopy-kms-broker: a runner's ECDH key, for that runner's uid only (spec §2).
 
 Pinned here: the uid→key mapping (an unknown uid gets an error and NO KMS call),
 the one-line request framing over a real Unix socket, the JWK↔SPKI conversion KMS
@@ -71,7 +71,7 @@ def test_an_unknown_uid_is_refused_without_a_kms_call(kb):
     kms = FakeKms()
     for uid in (0, 1000, 4242, -1):
         out = kb.answer(b'{"op":"public_key"}', uid, KEYS, kms)
-        assert "error" in out and "not an isolation unit" in out["error"]
+        assert "error" in out and "is not a runner on this machine" in out["error"]
     assert kms.calls == []
 
 
@@ -97,7 +97,7 @@ def test_units_json_maps_uids_to_keys(kb, tmp_path):
     doc = {"box": "cloud-ec2-9", "units": [
         {"id": "dimagi", "uid": 2001, "kms_key": KEYS[2001]},
         {"id": "agent-eva", "uid": 2002, "kms_key": KEYS[2002]},
-        {"id": "broken", "uid": 0, "kms_key": "alias/x"},       # root is never a unit
+        {"id": "broken", "uid": 0, "kms_key": "alias/x"},       # root is never a runner
         {"id": "nokey", "uid": 2003, "kms_key": ""},
     ]}
     (tmp_path / "units.json").write_text(json.dumps(doc))

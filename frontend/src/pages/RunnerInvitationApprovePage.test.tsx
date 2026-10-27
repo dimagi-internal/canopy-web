@@ -73,7 +73,7 @@ describe('RunnerInvitationApprovePage', () => {
     expect(getRunnerInvitation).toHaveBeenCalledWith(ID)
   })
 
-  it('lists every unit one approval pairs', async () => {
+  it('lists every runner one approval pairs', async () => {
     getRunnerInvitation.mockResolvedValue(
       invitation({
         units: [
@@ -90,7 +90,7 @@ describe('RunnerInvitationApprovePage', () => {
       expect.stringContaining('cloud-ec2-9-marsh'),
       expect.stringContaining('only agent eva'),
     ])
-    expect(screen.getByText(/each of these 3 units your runner/)).toBeTruthy()
+    expect(screen.getByText(/each of these 3 runners yours/)).toBeTruthy()
   })
 
   it('approve calls the approve endpoint and shows the new state', async () => {

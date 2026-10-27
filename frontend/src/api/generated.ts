@@ -8867,12 +8867,12 @@ export interface paths {
          *     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
          *     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
          *
-         *     A box of isolation units sends `units` (each unit's name, the public half of
-         *     its own signing key and its ECDH key) with ONE proof: one runner per unit with
-         *     an active software device key, `units` mapping each name to its runner id. A
-         *     replaced instance (the same role and unit names) re-attaches every unit, its
+         *     A machine running several runners sends `units` (each runner's name, the public
+         *     half of its own signing key and its ECDH key) with ONE proof: one runner per entry
+         *     with an active software device key, `units` mapping each name to its runner id. A
+         *     replaced instance (the same role and runner names) re-attaches every runner, its
          *     new key replacing the old in place, keeping each runner id; that needs no
-         *     invitation. A unit not yet paired needs the approved invitation that lists it.
+         *     invitation. A runner not yet paired needs the approved invitation that lists it.
          */
         readonly post: operations["pair_runner_by_role"];
         readonly delete?: never;
@@ -10759,7 +10759,7 @@ export interface paths {
         readonly get?: never;
         /**
          * Lock this runner's egress to an allowlist of hosts
-         * @description Set the runner's egress lock: `locked` (its units reach the network only
+         * @description Set the runner's egress lock: `locked` (its runners reach the network only
          *     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
          *     hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
          *     applies it within a minute, on top of the box's own setting, which it never
@@ -32058,7 +32058,7 @@ export interface components {
         };
         /**
          * RunnerInvitationUnitOut
-         * @description One unit an invitation pairs, and its runner once the box has paired.
+         * @description One runner an invitation pairs, and its id once the machine has paired.
          */
         readonly RunnerInvitationUnitOut: {
             /** Name */
@@ -32088,7 +32088,7 @@ export interface components {
          * @description Invite one new cloud box, by the name it will pair as and its EC2 instance
          *     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
          *     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
-         *     `units`: a box that runs several isolation units lists them, and the one
+         *     `units`: a machine that runs several runners lists them, and the one
          *     approval pairs every one.
          */
         readonly RunnerInvitationIn: {
@@ -32112,9 +32112,9 @@ export interface components {
         };
         /**
          * RunnerUnitIn
-         * @description One isolation unit on the invited box: a runner of its own, named `name`,
-         *     serving `workspace`'s tree (`kind` tree) or only agent `slug` (`kind` agent,
-         *     an agent of `workspace`). `ecdh_public_jwk` is that unit's zero-knowledge ECDH
+         * @description One runner on the invited machine, named `name`, serving `workspace`'s tree
+         *     (`kind` tree) or only agent `slug` (`kind` agent, an agent of `workspace`).
+         *     `ecdh_public_jwk` is that runner's zero-knowledge ECDH
          *     key (its KMS key in the `<stack>-ecdh` stack) when known.
          */
         readonly RunnerUnitIn: {
@@ -32462,8 +32462,8 @@ export interface components {
          * RunnerPairByRoleOut
          * @description `paired` (a new runner), `reattached` (this role's existing runner — a
          *     replaced instance), or `waiting` (the invitation is not approved yet; ask
-         *     again on the next poll). A box of units gets `units`, each unit's runner id by
-         *     its name (`paired` when any was made).
+         *     again on the next poll). A machine of several runners gets `units`, each
+         *     runner's id by its name (`paired` when any was made).
          */
         readonly RunnerPairByRoleOut: {
             /**
@@ -32532,9 +32532,9 @@ export interface components {
         };
         /**
          * RunnerPairUnitIn
-         * @description One unit of a box pairing all its units at once: its runner `name`, the
-         *     PUBLIC half of the unit's own signing key (`public_jwk`, a software P-256 key
-         *     in the unit's home), its zero-knowledge ECDH key, and what it declares.
+         * @description One runner of a machine pairing all its runners at once: its `name`, the
+         *     PUBLIC half of the runner's own signing key (`public_jwk`, a software P-256 key
+         *     in the runner's home), its zero-knowledge ECDH key, and what it declares.
          */
         readonly RunnerPairUnitIn: {
             /** Name */
@@ -33551,6 +33551,11 @@ export interface components {
             readonly power: string;
             /** Power Changed At */
             readonly power_changed_at?: string | null;
+            /**
+             * Machine
+             * @default
+             */
+            readonly machine: string;
             /**
              * Roots
              * @default []

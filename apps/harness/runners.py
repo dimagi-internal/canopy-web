@@ -595,7 +595,7 @@ def enroll_runner(runner, workspace_slug: str, *, by=None):
         raise EnrollmentRefused(
             f"a cloud runner serves one workspace tree: {runner.name} serves the "
             f"'{other_tree}' tree, and '{workspace_slug}' is not in it — pair another "
-            "runner unit on the box for that tree")
+            "runner on the machine for that tree")
     row, _ = RunnerEnrollment.objects.get_or_create(
         runner=runner, workspace_id=workspace_slug, defaults={"enrolled_by": by})
     return row
@@ -605,9 +605,9 @@ def _other_tree(runner, workspace_slug: str) -> str:
     """The root of a tree OTHER than `workspace_slug`'s that a CLOUD runner is
     already enrolled in — "" when there is none, or the runner is not a cloud box.
 
-    A cloud runner is one isolation unit on its box: its own Unix user, keys and
-    logins. Two trees on one unit would share all of that, so a cloud runner names
-    one tree, and a box that serves two runs two units. A laptop has one desktop
+    A cloud runner has its own Unix user, keys and logins on its machine. Two trees
+    on one runner would share all of that, so a cloud runner names one tree, and a
+    machine that serves two runs two runners. A laptop has one desktop
     user however many runners it pairs, so it may span trees; its runner page says
     so (`RunnerOut.roots`)."""
     from apps.workspaces import services as wsvc

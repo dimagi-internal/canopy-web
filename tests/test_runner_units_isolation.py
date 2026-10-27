@@ -1,12 +1,13 @@
-"""A unit's token reaches only its unit's agents (plan Task 6.4, Review Focus 2).
+"""A runner's token reaches only its own agents when it shares a machine (plan Task
+6.4, Review Focus 2).
 
-Two isolation units on one box — the `connect` tree and the agent unit for eva —
-each paired by the box's one approval, each with its own software key and its own
-runner token. The rule is per runner and already exists; this pins that a unit IS
-a runner for every door a secret could leave by:
+Two runners on one machine — one for the `connect` tree and one for agent eva —
+each paired by the machine's one approval, each with its own software key and its own
+runner token. The rule is per runner and already exists; this pins that it holds
+for every door a secret could leave by:
 
-* unit A's proof for an agent routed only to B is `401 not_routed`;
-* unit A's runner token is refused for that agent, and cannot open B's runner routes;
+* runner A's proof for an agent routed only to B is `401 not_routed`;
+* runner A's runner token is refused for that agent, and cannot open B's runner routes;
 * B's vault wraps are never addressed to A's ECDH key.
 """
 from __future__ import annotations
@@ -44,7 +45,7 @@ def _jwk(key) -> dict:
 
 @pytest.fixture
 def box(org):
-    """Units A (`tree:connect`) and B (`agent:eva`) on one machine, paired by one
+    """Runners A (`tree:connect`) and B (`agent:eva`) on one machine, paired by one
     approval; eva routed to B only; its secret stored in canopy-web and bound to an
     approved device."""
     eva = Agent.objects.create(slug="eva", name="Eva", workspace=org["ws"], owner=org["user"],
@@ -88,7 +89,7 @@ def test_unit_a_proof_for_an_agent_routed_only_to_b_is_not_routed(box):
 
 def test_even_a_routing_row_to_unit_a_does_not_let_a_read_eva(box):
     """An assignment that predates B (or a write that slipped past) does not make
-    A an eva runner: eva has its own unit on this machine (`routing.unit_refusal`)."""
+    A an eva runner: eva has its own runner on this machine (`routing.unit_refusal`)."""
     RunnerAssignment.objects.create(agent=box["eva"], runner=box["runners"][A], rank=1)
     res = _resolve(box["pat"], make_dpop_proof(box["signing"][A], "GET", HTU))
     assert res.status_code == 401 and res.json()["reason"] == "not_routed"

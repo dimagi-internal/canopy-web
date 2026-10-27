@@ -8,7 +8,7 @@
 #   ./wire.sh --name <same> [--standby --agents a,b] --drill   # then wire it
 #   ./down.sh --name <same>                  # tear it down (stack + canopy-web runner row)
 #   ./up.sh --name cloud-ec2-9 --workspace dimagi --units tree:dimagi,tree:marshellis,agent:eva
-#                                            # one box, several isolation units, ONE approval
+#                                            # one machine, several runners, ONE approval
 #
 # A new box holds no PAT. up.sh invites it (POST /api/harness/runner-invitations/,
 # with YOUR workbench token) into the workspace you name, bound to the stack's
@@ -68,17 +68,18 @@ usage: ./up.sh [options]
                             (refused by default: on the live stack that is an outage)
   --allow-dirty             publish a seed from uncommitted runner code (its provenance stamp
                             will not describe the bytes; the box reads as stale until it updates)
-  --units <spec>            isolation units: tree:<workspace>,agent:<slug>[@<workspace>],… — each its own
-                            user, runner and key on the box (RunnerUnits). The unit of the box's own
-                            workspace keeps the box's name; the others are <name>-<unit>. ONE
-                            invitation lists them all, so one passkey touch pairs every unit.
-  --remove-unit <id>        let this run drop unit <id>'s KMS key slot (repeatable). Without it a
-                            unit that already has a key is never dropped: its key would go, and
+  --units <spec>            the box's runners: tree:<workspace>,agent:<slug>[@<workspace>],… — each its
+                            own user, runner and key on the box (RunnerUnits). The runner of the box's
+                            own workspace keeps the box's name; the others are <name>-<id>. ONE
+                            invitation lists them all, so one passkey touch pairs every runner.
+  --remove-unit <id>        let this run drop runner <id>'s KMS key slot (repeatable). Without it a
+                            runner that already has a key is never dropped: its key would go, and
                             every vault wrap to it with it. The key itself is RETAINED in KMS.
   --in-place                with --units on an EXISTING stack: leave the runner stack (and the
-                            instance) alone — make the units' KMS keys and the invitation, and print
-                            the one command that moves the running box to units (README: "Moving a
-                            box to units"). Operator step; needs Jonathan's approval on a live box.
+                            instance) alone — make the runners' KMS keys and the invitation, and print
+                            the one command that moves the running box to several runners (README:
+                            "Moving a machine to several runners"). Operator step; needs Jonathan's
+                            approval on a live box.
   -h, --help                this
 
 Other template parameters: EXTRA_PARAMS='Key=Val Key=Val' ./up.sh ...
@@ -175,7 +176,7 @@ echo ">> account"
   || die "AWS credentials for profile '$PROFILE' are not valid — run: aws sso login --profile $PROFILE"
 
 # No Secrets Manager secret to stage: a new box pairs by invitation (no canopy PAT),
-# derives each agent's gog keyring password from its unit's own secret (spec
+# derives each agent's gog keyring password from its runner's own secret (spec
 # 2026-10-19-runner-isolation-units §6), and keeps its Claude credentials in a vault
 # its owner signs in on the runner's page (spec 2026-10-23-runner-claude-credentials-
 # in-the-vault-design.md) — there is no bootstrap Claude token any more.
@@ -222,29 +223,29 @@ else
     die "stack $STACK pairs into '$CURRENT_WS', not '$WORKSPACE'. An existing box keeps its workspace (enroll it in another from the runner page). Nothing was changed."
   fi
   WORKSPACE="${CURRENT_WS:-$WORKSPACE}"
-  # Its units too: a parameter not passed falls back to its default (one unit) on
-  # every update, which would shrink a box of units on its next start.
+  # Its runners too: a parameter not passed falls back to its default (one runner) on
+  # every update, which would shrink a box of several runners on its next start.
   if [[ -z "$UNITS" ]]; then
     # A failed read must stop the run: an empty answer here would shrink the box.
     UNITS=$(stack_read "$STACK" "Stacks[0].Parameters[?ParameterKey=='RunnerUnits'].ParameterValue") \
       || die "could not read stack $STACK's RunnerUnits — nothing was changed"
     [[ "$UNITS" == "None" ]] && UNITS=""
-    [[ -n "$UNITS" ]] && echo ">> units: the stack's own ($UNITS)"
+    [[ -n "$UNITS" ]] && echo ">> runners: the stack's own ($UNITS)"
   fi
 fi
 echo ">> workspace: ${WORKSPACE:-<the stack default>}"
-# A NEW box always runs as isolation units (cloud_runner.py --install-units): with
-# RunnerUnits empty it is ONE unit, tree:<RunnerWorkspace>, named the box, and it pairs
-# with `pair-by-role` listing that unit. The invitation must list it too, or canopy
+# A NEW box always runs its runners the --install-units way (cloud_runner.py): with
+# RunnerUnits empty it is ONE runner, tree:<RunnerWorkspace>, named the box, and it pairs
+# with `pair-by-role` listing that runner. The invitation must list it too, or canopy
 # refuses every pairing call (401) however the invitation is approved -- found standing
-# up the first sensitive-data box, 2026-10-22. So a new stack names its one unit explicitly. An existing
+# up the first sensitive-data box, 2026-10-22. So a new stack names its one runner explicitly. An existing
 # stack keeps what it has (above).
 if [[ -z "$UNITS" && "$STACK_STATUS" == "NONE" && -n "$WORKSPACE" ]]; then
   UNITS="tree:${WORKSPACE}"
-  echo ">> units: ${UNITS} (a new box's one unit)"
+  echo ">> runners: ${UNITS} (a new box's one runner)"
 fi
 
-# ── isolation units (spec 2026-10-19-runner-isolation-units §1) ─────────────────
+# ── several runners on one machine (spec 2026-10-19-runner-isolation-units §1) ──
 # Parsed and named by cloud_runner.py itself (one source of truth with the box).
 [[ "$IN_PLACE" == "1" && -z "$UNITS" ]] && die "--in-place moves a box to --units; name them"
 [[ "$IN_PLACE" == "1" && "$STACK_STATUS" == "NONE" ]] && die "--in-place is for an existing stack; a new box just takes --units"
@@ -262,27 +263,27 @@ except ValueError as exc:
     sys.exit(1)
 PY
 )" || exit 1
-  # Every workspace a unit serves passes the invitation's gates now, before AWS.
+  # Every workspace a runner serves passes the invitation's gates now, before AWS.
   for ws in $(printf '%s' "$UNITS_JSON" | python3 -c 'import json,sys; print(" ".join(sorted({u["workspace"] for u in json.load(sys.stdin)})))'); do
     canopy GET "/api/harness/runner-invitations/check?workspace=${ws}" > "$TMPC/check.json"
     [[ "$(cat "$TMPC/code")" == "200" ]] \
-      || die "unit workspace '$ws': you may not invite a runner there (HTTP $(cat "$TMPC/code")): $(cat "$TMPC/check.json")"
+      || die "runner workspace '$ws': you may not invite a runner there (HTTP $(cat "$TMPC/code")): $(cat "$TMPC/check.json")"
   done
-  echo ">> units: $(printf '%s' "$UNITS_JSON" | python3 -c 'import json,sys; print(", ".join(u["kind"]+":"+u["id"]+" as "+u["name"] for u in json.load(sys.stdin)))')"
+  echo ">> runners: $(printf '%s' "$UNITS_JSON" | python3 -c 'import json,sys; print(", ".join(u["kind"]+":"+u["id"]+" as "+u["name"] for u in json.load(sys.stdin)))')"
 fi
-# The units other than the box's own get KMS keys of their own (ecdh-kms.cfn.yaml
-# has four slots); the box's own unit keeps the key the box always had.
+# The runners other than the box's own get KMS keys of their own (ecdh-kms.cfn.yaml
+# has four slots); the box's own runner keeps the key the box always had.
 EXTRA_UNIT_IDS="$(printf '%s' "$UNITS_JSON" | NAME="$NAME" python3 -c 'import json,os,sys; print(" ".join(u["id"] for u in json.load(sys.stdin) if u["name"] != os.environ["NAME"]))')"
-# Each unit is PINNED to its key slot: a slot's value names the KMS key a unit's
-# wraps are addressed to, so a re-run must never move a unit to another slot (that
+# Each runner is PINNED to its key slot: a slot's value names the KMS key a runner's
+# wraps are addressed to, so a re-run must never move a runner to another slot (that
 # swaps aliases) or blank one (that removes the key). Read the -ecdh stack's
-# current slots, keep every unit where it is, put new units in free slots only, and
+# current slots, keep every runner where it is, put new runners in free slots only, and
 # drop a slot only for --remove-unit. Without --units every slot is kept as it is.
 # A failed read must stop the run: an empty answer would blank every slot and remove
-# the units' keys' aliases. Only "the -ecdh stack does not exist yet" means "no slots".
+# the runners' keys' aliases. Only "the -ecdh stack does not exist yet" means "no slots".
 EXISTING_SLOTS="$(stack_read "${STACK}-ecdh" \
   "Stacks[0].Parameters[?starts_with(ParameterKey, 'Unit')].[ParameterKey,ParameterValue]" missing-ok)" \
-  || die "could not read ${STACK}-ecdh's unit key slots — nothing was changed (a transient AWS error? re-run)"
+  || die "could not read ${STACK}-ecdh's runner key slots — nothing was changed (a transient AWS error? re-run)"
 EXISTING_SLOTS="$(printf '%s' "$EXISTING_SLOTS" | tr '\t' '=')"
 UNIT_SLOTS="$(EXISTING="$EXISTING_SLOTS" WANT="$EXTRA_UNIT_IDS" GIVEN="${UNITS:+1}" REMOVE="$REMOVE_UNITS" python3 - <<'PY'
 import os, sys
@@ -298,7 +299,7 @@ if remove & set(want):
     sys.exit(f"!! --remove-unit {sorted(remove & set(want))} is also in --units")
 unknown = remove - set(slots.values())
 if unknown:
-    sys.exit(f"!! --remove-unit {sorted(unknown)}: no such unit key slot")
+    sys.exit(f"!! --remove-unit {sorted(unknown)}: no such runner key slot")
 if os.environ.get("GIVEN"):
     dropped = [v for v in slots.values() if v and v not in want and v not in remove]
     if dropped:
@@ -312,12 +313,12 @@ for unit in want:
         continue                      # pinned where it already is
     free = [k for k, v in slots.items() if not v]
     if not free:
-        sys.exit("!! at most four units besides the box's own (ecdh-kms.cfn.yaml has four key slots)")
+        sys.exit("!! at most four runners besides the box's own (ecdh-kms.cfn.yaml has four key slots)")
     slots[free[0]] = unit
 print(" ".join(f"{k}={v}" for k, v in slots.items()))
 PY
 )" || exit 1
-echo ">> unit key slots: ${UNIT_SLOTS}"
+echo ">> runner key slots: ${UNIT_SLOTS}"
 
 # Provenance of the bytes about to be published: the SAME quantity
 # deploy-labs.yml computes for the server's `expected_code_sha`, over the same
@@ -485,12 +486,13 @@ if [[ "$STACK_STATUS" != "NONE" ]]; then
   [[ "$PAT_SECRET" == "None" ]] && PAT_SECRET=""
 fi
 if [[ -n "$UNITS" && "$IN_PLACE" == "1" ]]; then
-  # Moving a box to units ADOPTS its runner: its instance-role key becomes a unit
-  # key, which canopy-web does only under an approved invitation listing that unit.
-  echo ">> --in-place: an invitation listing every unit (adopting the box needs your approval)"
+  # Moving a box to several runners ADOPTS its runner: its instance-role key becomes
+  # that runner's own key, which canopy-web does only under an approved invitation
+  # listing it.
+  echo ">> --in-place: an invitation listing every runner (adopting the box needs your approval)"
 elif [[ -n "$UNITS" ]]; then
-  # A box of units: an invitation unless EVERY unit is already a live runner (a
-  # replaced instance re-attaches each unit by the box's role and the unit's name).
+  # A box of several runners: an invitation unless EVERY one is already live (a
+  # replaced instance re-attaches each runner by the box's role and the runner's name).
   canopy GET /api/harness/runners/ > "$TMPC/runners.json"
   if UNITS_JSON="$UNITS_JSON" python3 - "$TMPC/runners.json" <<'PY'
 import json, os, sys
@@ -504,7 +506,7 @@ sys.exit(0 if all(u["name"] in live for u in json.loads(os.environ["UNITS_JSON"]
 PY
   then
     NEED_INVITE=0
-    echo ">> every unit is already paired — no invitation needed (each re-attaches by the box's role)"
+    echo ">> every runner is already paired — no invitation needed (each re-attaches by the box's role)"
   fi
 elif [[ "$STACK_STATUS" != "NONE" && -n "${PAT_SECRET:-}" ]]; then
   # An older stack hands its box a PAT (CanopyTokenSecret), and a box with a
@@ -538,8 +540,8 @@ if [[ "$NEED_INVITE" == "1" ]]; then
   if [[ -n "$ECDH_ARN" && "$ECDH_ARN" != "None" ]]; then
     ECDH_DER=$("${AWS[@]}" kms get-public-key --key-id "$ECDH_ARN" --query PublicKey --output text 2>/dev/null || true)
   fi
-  # Each extra unit's KMS public key, by the alias the -ecdh stack gave it, so the one
-  # approval covers the unit's ECDH key too.
+  # Each extra runner's KMS public key, by the alias the -ecdh stack gave it, so the one
+  # approval covers the runner's ECDH key too.
   : > "$TMPC/unit-ders"
   for uid in $EXTRA_UNIT_IDS; do
     der=$("${AWS[@]}" kms get-public-key --key-id "alias/canopy-runner-ecdh/${ROLE_NAME}/${uid}" \
@@ -593,7 +595,7 @@ PY
   echo "   approve: $APPROVE_URL"
   echo "   (one passkey touch; also emailed to you. Waiting up to ${APPROVE_MINUTES} min for the box to pair…)"
   if [[ "$IN_PLACE" == "1" ]]; then
-    echo "   then move the running box to units (Jonathan's approval first — README \"Moving a box to units\"):"
+    echo "   then move the running box to several runners (Jonathan's approval first — README \"Moving a machine to several runners\"):"
     echo "     aws ssm send-command --instance-ids <instance> --document-name AWS-RunShellScript \\"
     echo "       --parameters 'commands=[\"sudo RUNNER_UNITS=${UNITS} python3 /opt/canopy-runner/cloud_runner.py --install-units\"]'"
   fi
@@ -619,14 +621,14 @@ except Exception:
   if [[ -n "$UNITS" ]]; then
     python3 -c 'import json,sys
 for u in (json.load(open(sys.argv[1])).get("units") or []):
-    print("    unit %s: runner %s" % (u.get("name"), u.get("runner_id") or "(not paired)"))' "$TMPC/inv-state.json" || true
+    print("    runner %s: %s" % (u.get("name"), u.get("runner_id") or "(not paired)"))' "$TMPC/inv-state.json" || true
   fi
 fi
 
 WIRE="./wire.sh --name $NAME --drill"
 [[ "$STANDBY" == "1" ]] && WIRE="./wire.sh --name $NAME --standby --agents <a,b> --drill"
 [[ "$TEST" == "1" ]] && WIRE="./wire.sh --name $NAME --test"
-# A box of units: the box's own unit is --name; each other unit is --unit <id>.
+# A box of several runners: the box's own runner is --name; each other one is --unit <id>.
 for uid in $EXTRA_UNIT_IDS; do WIRE="$WIRE; ./wire.sh --name $NAME --unit $uid --standby --agents <a,b>"; done
 echo ""
 echo "==> UP. stack=$STACK runner=$NAME${RUNNER_ID:+ ($RUNNER_ID)} ip=$IP"

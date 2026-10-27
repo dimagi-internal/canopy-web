@@ -160,7 +160,7 @@ def test_an_entry_removed_from_the_set_leaves_every_trees_vault(fleet):
 def test_a_tree_vault_serves_only_one_isolation_boundary(fleet):
     _with_token(fleet["runner"])
     cset = _share(fleet, fleet["runner"])
-    # Same tree, but an agent unit: it may not share the tree's vault.
+    # Same tree, but one agent's runner: it may not share the tree's vault.
     unit = _runner(fleet, name="ec2-box-eva", capabilities={"unit": {"kind": "agent", "slug": "eva"}})
     res = _choose(fleet, unit, cset)
     assert res.status_code == 422 and res.json()["error"] == "vault_crosses_isolation"
