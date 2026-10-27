@@ -352,6 +352,98 @@ jobs:
   # The checks that only make sense on a PR, because they compare against the
   # PR's BASE — which a merge-group run does not have. On a PR these are the
   # whole of what the two required gates wait for.
+  # The cheap, deterministic half of the backend checks, run on the PR so an
+  # agent learns about them BEFORE it enters the queue. Tests still run once
+  # (in the queue, see the top of this file); these are the checks that fail
+  # identically on the PR and in the queue, so moving them earlier costs ~1
+  # min of PR time and saves a queue ejection.
+  #
+  # Why (measured 2026-10-27): after the suites left the PR (2026-10-19), the
+  # merge-queue failure rate went from ~3% to 25-50% a day, re-queued PRs from
+  # 3% to 25%, and p90 queue->merge from 8 to 75 min. An ejection is not one
+  # PR's ~5 min: with ALLGREEN and max_entries_to_build=5, every entry built
+  # on top of the failed one is thrown away and rebuilt. Of a sample of the
+  # failed queue runs, ~40% failed only these static gates (lazy-import and
+  # layered-import ratchets, generated.ts out of date, test-module imports);
+  # most of the rest failed a test in a file the PR itself changed, which is
+  # why those test files run here too.
+  #
+  # What this cannot catch: two PRs that each pass alone and conflict once
+  # combined (two edits to a ratchet baseline). Only the queue sees that.
+  pr-fast-checks:
+    name: PR fast checks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      # The same commands `Backend pytest (1/2)` runs; keep them in step.
+      - name: Lint (ruff — pyflakes + lazy imports)
+        run: uv run ruff check . --select F,PLC0415 --ignore F403,F405
+
+      - name: Check migrations are in sync
+        run: uv run python manage.py makemigrations --check --dry-run
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+
+      - name: Django system checks
+        run: uv run python manage.py check
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Check generated frontend types are in sync
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.test
+        run: |
+          uv run python -c "
+          import django, json
+          django.setup()
+          from apps.api.api import api
+          with open('frontend/openapi.json', 'w') as f:
+              json.dump(api.get_openapi_schema(), f, indent=2)
+          "
+          npx --yes 'openapi-typescript@^7.13.0' frontend/openapi.json \
+            --output frontend/src/api/generated.ts --immutable
+          if ! git diff --quiet frontend/src/api/generated.ts; then
+            echo "::error file=frontend/src/api/generated.ts::generated.ts is out of date with the OpenAPI schema."
+            echo "Regenerate it locally and commit the result: cd frontend && npm run gen:api"
+            git --no-pager diff frontend/src/api/generated.ts
+            exit 1
+          fi
+
+      # The source-walking ratchets (no DB, seconds), plus every Django-suite
+      # test file this PR touched. A file deleted by the PR is skipped.
+      - name: Guard tests and the test files this PR changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          CHANGED=$(git diff --name-only --diff-filter=d "$BASE_SHA"...HEAD \
+            | grep -E '^(tests|apps/[^/]+/tests)/(.*/)?test_[^/]*\.py$' || true)
+          uv run pytest -n auto --nomigrations -m "not needs_migrations" -q \
+            tests/test_lazy_import_baseline.py \
+            tests/test_layered_app_imports.py \
+            tests/test_no_test_module_imports.py \
+            tests/test_architecture_boundary.py \
+            $CHANGED
+
   pr-guards:
     name: PR guards
     if: github.event_name == 'pull_request'
@@ -471,7 +563,7 @@ jobs:
 
   test-backend-gate:
     name: Backend tests
-    needs: [test-backend, test-backend-migrations, test-runner-packages, test-backend-postgres, pr-guards]
+    needs: [test-backend, test-backend-migrations, test-runner-packages, test-backend-postgres, pr-guards, pr-fast-checks]
     # always(): without it a failed `needs` SKIPS this job, and a skipped
     # required check counts as passing — the gate would wave failures through.
     if: always()
@@ -486,15 +578,16 @@ jobs:
           echo "$RESULTS" | python3 -c '
           import json, os, sys
           needs = json.load(sys.stdin)
-          # On a PR only pr-guards runs (the suites run in the merge queue —
-          # see the top of this file); everywhere else everything but it runs.
+          # On a PR only the PR jobs run (the suites run in the merge queue —
+          # see the top of this file); everywhere else everything but them runs.
           # A job that was expected must have SUCCEEDED: skipped is not passed.
           on_pr = os.environ["EVENT"] == "pull_request"
+          pr_only = {"pr-guards", "pr-fast-checks"}
           bad = {}
           for job, n in needs.items():
               result = n["result"]
               print(f"{job}: {result}")
-              expected = (job == "pr-guards") == on_pr
+              expected = (job in pr_only) == on_pr
               if result != "success" and (expected or result != "skipped"):
                   bad[job] = result
           if bad:
