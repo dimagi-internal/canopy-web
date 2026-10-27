@@ -1,5 +1,6 @@
 """`canopy-runner self-update` — the bundled updater, with every download and command faked."""
 from __future__ import annotations
+import sys
 
 import functools
 import hashlib
@@ -144,6 +145,7 @@ def _sha_of(app):
     return json.loads((app / "Contents/Resources/runtime/release.json").read_text())["sha"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS .app swap (POSIX paths)")
 def test_mac_swap_installs_runs_the_new_setup_and_relaunches_the_menu_bar(tmp_path):
     app = mac_app(tmp_path)
     cmds = MacCmds(teams={"running": "TEAM1", "new": "TEAM1"})

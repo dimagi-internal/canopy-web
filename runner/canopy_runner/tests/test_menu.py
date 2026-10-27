@@ -534,7 +534,7 @@ def test_every_control_key_the_driver_emits_is_named_for_the_real_transport():
     from pathlib import Path
 
     sidecar = (Path(__file__).resolve().parents[1]
-               / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text()
+               / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text(encoding="utf-8")
     named = re.search(r"const NAMED_KEYS = \{([^}]*)\}", sidecar)
     assert named, "the sidecar's key map moved — this test cannot see it any more"
     mapped = set(re.findall(r"'((?:\\u[0-9a-fA-F]{4}|\\.|[^'\\])+)'\s*:", named.group(1)))
@@ -651,7 +651,7 @@ def test_the_text_marker_is_distinguishable_from_a_keypress():
 
     assert len(TEXT_PREFIX) > 1 and not TEXT_PREFIX.isdigit()
     sidecar = (pathlib.Path(__file__).resolve().parents[1]
-               / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text()
+               / "canopy_runner" / "cdp" / "emdash_control.mjs").read_text(encoding="utf-8")
     assert f"'{TEXT_PREFIX}'" in sidecar, "the sidecar does not know the text marker"
 
 

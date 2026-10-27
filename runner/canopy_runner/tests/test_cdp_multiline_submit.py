@@ -19,7 +19,7 @@ SIDECAR = Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp" / "emdas
 
 
 def _open_send_branch() -> str:
-    src = SIDECAR.read_text()
+    src = SIDECAR.read_text(encoding="utf-8")
     start = src.index("command === 'open-send'")
     end = src.index("command === 'interrupt'", start)
     return "\n".join(ln for ln in src[start:end].splitlines() if not ln.lstrip().startswith("//"))
@@ -84,7 +84,7 @@ def test_focus_is_confirmed_immediately_before_every_keystroke_burst():
     body = branch[branch.index("const submit = async"):]
     assert body.index("await ensureFocus(task);") < body.index("insertText(")
     assert "await ensureFocus(task);\n      await page.keyboard.press('Control+U');" in branch
-    src = SIDECAR.read_text()
+    src = SIDECAR.read_text(encoding="utf-8")
     focus = src[src.index("const focusTerminal"):src.index("const ensureFocus")]
     assert "document.activeElement === ta" in focus
     ensure = src[src.index("const ensureFocus"):src.index("const readComposer")]

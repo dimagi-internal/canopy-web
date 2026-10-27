@@ -1,4 +1,6 @@
 """The caller envelope reaches the agent as a file, and a command prompt names it."""
+import sys
+import pytest
 import json
 import os
 import stat
@@ -9,6 +11,7 @@ TID = "3f2b8c1e-0000-4000-8000-000000000001"
 ENV = {"version": 1, "turn_id": TID, "who": {"kind": "contact"}, "verified": True}
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes: Windows has no 0o600; privacy there comes from the profile ACL")
 def test_writes_the_envelope_privately(tmp_path):
     root = tmp_path / "caller"
     p = caller.write_caller_file({"id": TID, "caller_context": ENV}, root=root)

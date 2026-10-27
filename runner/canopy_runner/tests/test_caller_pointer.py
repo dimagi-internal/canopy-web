@@ -1,6 +1,7 @@
 """Every prompt a canopy turn delivers leaves the plugin's UserPromptSubmit hook a
 pointer to who is asking — keyed by the emdash task, written BEFORE the text lands,
 withdrawn when the text did not land, and never inside the person's words."""
+import sys
 import json
 import os
 import stat
@@ -33,6 +34,7 @@ def _pending(tmp_path, task):
 
 # --- the pointer itself --------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes: Windows has no 0o600; privacy there comes from the profile ACL")
 def test_the_pointer_names_the_turn_and_its_envelope_privately(tmp_path):
     env = caller.write_caller_file({"id": TID, "caller_context": ENV})
     p = caller.write_pending("c-slack-4a4e", {"id": TID}, env, now=lambda: 1000.0)

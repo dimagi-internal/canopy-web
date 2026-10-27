@@ -30,7 +30,7 @@ SIDECAR = Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp" / "emdas
 def _code_lines():
     """Source with comment-only lines dropped — the rule is about calls, and the
     comments explaining the rule necessarily name the thing they forbid."""
-    return [ln for ln in SIDECAR.read_text().splitlines()
+    return [ln for ln in SIDECAR.read_text(encoding="utf-8").splitlines()
             if not ln.lstrip().startswith("//")]
 
 
@@ -52,7 +52,7 @@ def test_sidecar_waits_poll_on_a_timer_not_animation_frames():
         if "waitForFunction(" not in ln:
             continue
         # The call spans lines; check the whole statement it opens.
-        src = SIDECAR.read_text()
+        src = SIDECAR.read_text(encoding="utf-8")
         for call in re.findall(r"waitForFunction\((?:[^()]|\([^()]*\))*\)", src, re.S):
             assert re.search(r"polling:\s*\d", call), (
                 "waitForFunction must pass a numeric `polling` — the default 'raf' "

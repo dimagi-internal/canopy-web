@@ -2,6 +2,7 @@
 
 The load-bearing property is idempotency: a box that is already paired must never
 get a second runner, however many times the installer runs."""
+import sys
 import json
 import os
 import stat
@@ -102,6 +103,7 @@ def _run(env, client, **kw):
 # --- fresh pairing --------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS pairing flow (macos_user, ~/Library/Application Support/Emdash)")
 def test_fresh_account_pairs_once_and_writes_config(env, monkeypatch):
     monkeypatch.setattr(pair, "macos_user", lambda: "newbie")
     fake = FakeClient()
@@ -250,6 +252,7 @@ def test_sibling_ports_skip_own_home_and_junk(tmp_path):
 
 
 @pytest.mark.parametrize("dirname", ["Emdash", "emdash"])
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS emdash layout (~/Library/Application Support); Windows reads %APPDATA%")
 def test_find_emdash_db_keeps_the_real_case(tmp_path, dirname):
     d = tmp_path / "Library" / "Application Support" / dirname
     d.mkdir(parents=True)
@@ -257,6 +260,7 @@ def test_find_emdash_db_keeps_the_real_case(tmp_path, dirname):
     assert pair.find_emdash_db(tmp_path).parent.name == dirname
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS emdash layout (~/Library/Application Support); Windows reads %APPDATA%")
 def test_find_emdash_db_defaults_when_emdash_never_ran(tmp_path):
     assert pair.find_emdash_db(tmp_path) == (
         tmp_path / "Library" / "Application Support" / "emdash" / "emdash4.db")
@@ -331,6 +335,7 @@ def _devtools(env, port):
     f.write_text(f"{port}\n/devtools/browser/abc\n")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS emdash layout (DevToolsActivePort under ~/Library/Application Support)")
 def test_running_emdash_port_is_used_rather_than_the_next_free_one(env, monkeypatch):
     """emdash already listens on 9225 on this account: pair must drive THAT port.
     The picker alone would choose a port nothing listens on (cdp_down forever)."""

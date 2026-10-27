@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="bash + launchctl install script (macOS/Linux only)")
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install-runner.sh"
 

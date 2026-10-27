@@ -1,6 +1,8 @@
 """A laptop chat turn held on a site's page leaves a marker its agent's MCP helper finds
 (`page_site.py`): the runner cannot set an emdash session's environment."""
 from __future__ import annotations
+import sys
+import pytest
 
 import json
 
@@ -9,6 +11,7 @@ from canopy_runner import page_site
 PAGE = {"page_site": {"site": "connect-labs", "withheld": ["LABS_MCP_TOKEN", "bad name"]}}
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes: Windows has no 0o600; privacy there comes from the profile ACL")
 def test_a_page_turn_leaves_a_private_marker_by_task(tmp_path):
     path = page_site.write(PAGE, task="ace-chat-1", root=tmp_path)
     assert path == tmp_path / "task" / "ace-chat-1.json"

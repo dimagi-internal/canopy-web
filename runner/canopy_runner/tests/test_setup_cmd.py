@@ -4,6 +4,7 @@ No test reaches launchctl, plutil, PowerShell or schtasks: every command goes to
 recording fake.
 """
 from __future__ import annotations
+import sys
 
 import json
 import os
@@ -90,6 +91,7 @@ def test_linux_is_not_supported(tmp_path):
     assert rc == 1 and "macOS and Windows only" in out[0]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS launchd plists (':'-separated PATH)")
 def test_macos_renders_three_jobs_into_the_app_and_starts_them(mac, monkeypatch):
     home, app, cfg = mac
     monkeypatch.setattr(setup_cmd.shutil, "which", lambda n: "/usr/bin/plutil")
