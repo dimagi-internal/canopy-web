@@ -451,7 +451,8 @@ def posix_path(path: str) -> str:
     m = re.match(r"([A-Za-z]):[\\/]", path)
     if not m:
         return path
-    return f"/{m.group(1).lower()}/{path[3:].replace(chr(92), "/")}"  # chr(92) = backslash
+    rest = path[3:].replace("\\", "/")
+    return f"/{m.group(1).lower()}/{rest}"
 
 
 def _path_rule(tool: str, path: str) -> str:
