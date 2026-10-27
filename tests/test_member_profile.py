@@ -39,7 +39,7 @@ def team():
 
 
 def _get(user, target):
-    return _client(user).get(f"/api/workspaces/{WS}/members/{target.id}/")
+    return _client(user).get(f"/api/workspaces/{WS}/members/{target.id}/profile/")
 
 
 def test_viewer_sees_basics_not_admin_detail(team):

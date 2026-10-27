@@ -54,7 +54,7 @@ export async function listMembers(slug: string): Promise<MemberOut[]> {
 
 /** One member as the caller may see them; `admin` is null below members.manage. */
 export async function getMember(slug: string, userId: number): Promise<MemberProfileOut> {
-  const res = await apiV2.GET('/api/workspaces/{slug}/members/{user_id}/', {
+  const res = await apiV2.GET('/api/workspaces/{slug}/members/{user_id}/profile/', {
     params: { path: { slug, user_id: userId } },
   })
   ensureOk(res, 'Failed to load member')

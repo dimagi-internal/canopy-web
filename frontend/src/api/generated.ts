@@ -7684,14 +7684,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /**
-         * One member's profile (member-only; detail by role)
-         * @description One member as the caller may see them. Any member sees the basics; a
-         *     caller who manages members also gets `admin` (who invited them, last
-         *     sign-in, how many chats they started here). 404 for a non-member caller
-         *     and for a user who is not in this workspace alike.
-         */
-        readonly get: operations["get_member"];
+        readonly get?: never;
         readonly put?: never;
         readonly post?: never;
         /** Remove a member (admin or owner) */
@@ -8373,6 +8366,29 @@ export interface paths {
          *     differ. Nothing is saved: adopt the values with the create or update route.
          */
         readonly get: operations["discover_site"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/members/{user_id}/profile/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One member's profile (member-only; detail by role)
+         * @description One member as the caller may see them. Any member sees the basics; a
+         *     caller who manages members also gets `admin` (who invited them, last
+         *     sign-in, how many chats they started here). 404 for a non-member caller
+         *     and for a user who is not in this workspace alike.
+         */
+        readonly get: operations["get_member"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -29820,89 +29836,6 @@ export interface components {
              */
             readonly system: boolean;
         };
-        /**
-         * MemberAdminDetail
-         * @description What only someone who manages members sees about one (`members.manage`).
-         */
-        readonly MemberAdminDetail: {
-            /** Invited By Email */
-            readonly invited_by_email?: string | null;
-            /** Last Login */
-            readonly last_login?: string | null;
-            /**
-             * Chats Started
-             * @default 0
-             */
-            readonly chats_started: number;
-        };
-        /** MemberAgentRef */
-        readonly MemberAgentRef: {
-            /** Slug */
-            readonly slug: string;
-            /** Name */
-            readonly name: string;
-        };
-        /**
-         * MemberProfileOut
-         * @description One member's page in a workspace, as the CALLER may see it. Every member
-         *     sees who they are, their role and the agents they operate here; the rest is
-         *     filled in only for a caller whose role allows it (`admin` is null below).
-         */
-        readonly MemberProfileOut: {
-            /** User Id */
-            readonly user_id: number;
-            /** Email */
-            readonly email: string;
-            /**
-             * Name
-             * @default
-             */
-            readonly name: string;
-            /** Role */
-            readonly role: string;
-            /**
-             * Joined At
-             * Format: date-time
-             */
-            readonly joined_at: string;
-            /**
-             * Inherited
-             * @default false
-             */
-            readonly inherited: boolean;
-            /**
-             * Kind
-             * @default person
-             * @enum {string}
-             */
-            readonly kind: "person" | "agent" | "system";
-            /**
-             * Is You
-             * @default false
-             */
-            readonly is_you: boolean;
-            readonly agent?: components["schemas"]["MemberAgentRef"] | null;
-            /**
-             * Operates
-             * @default []
-             */
-            readonly operates: readonly components["schemas"]["MemberAgentRef"][];
-            /**
-             * Shared Workspaces
-             * @default []
-             */
-            readonly shared_workspaces: readonly components["schemas"]["MemberWorkspaceRef"][];
-            readonly admin?: components["schemas"]["MemberAdminDetail"] | null;
-        };
-        /** MemberWorkspaceRef */
-        readonly MemberWorkspaceRef: {
-            /** Slug */
-            readonly slug: string;
-            /** Display Name */
-            readonly display_name: string;
-            /** Role */
-            readonly role: string;
-        };
         /** MemberRoleUpdateIn */
         readonly MemberRoleUpdateIn: {
             /**
@@ -31603,6 +31536,89 @@ export interface components {
             readonly issuer: string;
             /** Mcp Resource */
             readonly mcp_resource: string;
+        };
+        /**
+         * MemberAdminDetail
+         * @description What only someone who manages members sees about one (`members.manage`).
+         */
+        readonly MemberAdminDetail: {
+            /** Invited By Email */
+            readonly invited_by_email?: string | null;
+            /** Last Login */
+            readonly last_login?: string | null;
+            /**
+             * Chats Started
+             * @default 0
+             */
+            readonly chats_started: number;
+        };
+        /** MemberAgentRef */
+        readonly MemberAgentRef: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * MemberProfileOut
+         * @description One member's page in a workspace, as the CALLER may see it. Every member
+         *     sees who they are, their role and the agents they operate here; the rest is
+         *     filled in only for a caller whose role allows it (`admin` is null below).
+         */
+        readonly MemberProfileOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /** Role */
+            readonly role: string;
+            /**
+             * Joined At
+             * Format: date-time
+             */
+            readonly joined_at: string;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
+            /**
+             * Kind
+             * @default person
+             * @enum {string}
+             */
+            readonly kind: "person" | "agent" | "system";
+            /**
+             * Is You
+             * @default false
+             */
+            readonly is_you: boolean;
+            readonly agent?: components["schemas"]["MemberAgentRef"] | null;
+            /**
+             * Operates
+             * @default []
+             */
+            readonly operates: readonly components["schemas"]["MemberAgentRef"][];
+            /**
+             * Shared Workspaces
+             * @default []
+             */
+            readonly shared_workspaces: readonly components["schemas"]["MemberWorkspaceRef"][];
+            readonly admin?: components["schemas"]["MemberAdminDetail"] | null;
+        };
+        /** MemberWorkspaceRef */
+        readonly MemberWorkspaceRef: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Role */
+            readonly role: string;
         };
         /** ResourcesUpdatedOut */
         readonly ResourcesUpdatedOut: {
@@ -51215,29 +51231,6 @@ export interface operations {
             };
         };
     };
-    readonly get_member: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly user_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["MemberProfileOut"];
-                };
-            };
-        };
-    };
     readonly remove_member: {
         readonly parameters: {
             readonly query?: never;
@@ -52183,6 +52176,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SiteDiscoveryOut"];
+                };
+            };
+        };
+    };
+    readonly get_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberProfileOut"];
                 };
             };
         };
