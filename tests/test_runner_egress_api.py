@@ -4,7 +4,7 @@ and read by root on the box by its instance role (`POST …/box-egress`).
 The rules that matter: an administrator may lock a box and name hosts from any
 client (UI or MCP); a sensitive-data box is always locked, and adding a host to one is a
 person's act in a browser behind a passkey; every change is an audited setting; and
-the box reads only its own runners, by a proof its units cannot make.
+the box reads only its own runners, by a proof its runners cannot make.
 """
 from __future__ import annotations
 

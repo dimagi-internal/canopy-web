@@ -104,8 +104,8 @@ def cannot_serve(runner: Runner, slug: str) -> str:
         and the turn ended without doing anything (cloud-ec2-2, fizzy, 2026-10-15).
 
     A box can only refuse work for itself here, so a self-report is safe to trust
-    in this direction. And its isolation unit (`unit_refusal`), which is the same
-    kind of self-restriction. Reads the runner row; the unit's machine siblings
+    in this direction. And what it serves on its machine (`unit_refusal`), which is
+    the same kind of self-restriction. Reads the runner row; its machine siblings
     come from `prime_machine_units` when the caller loaded them (one query per
     call otherwise, and none for a box with no machine)."""
     if not slug:
@@ -122,22 +122,22 @@ def cannot_serve(runner: Runner, slug: str) -> str:
     return ""
 
 
-# ---- isolation units (docs/architecture/runners.md § Isolation units) --------
+# ---- several runners on one machine (docs/architecture/runners.md) -----------
 #
-# A cloud box runs one runner per isolation unit: a workspace tree, or a single
-# agent that has a unit of its own. Each unit is its own Unix user with its own
-# keys, so an agent's secrets reach only the unit that runs it. Two refusals keep
-# routing inside that: an agent unit runs its one agent, and no OTHER runner on
+# A cloud machine can run several runners, each serving a workspace tree or a
+# single agent that has a runner of its own. Each runner is its own Unix user with
+# its own keys, so an agent's secrets reach only the runner that runs it. Two
+# refusals keep routing inside that: an agent's runner runs its one agent, and no OTHER runner on
 # the same machine (`Runner.machine_id`) runs that agent. Both are restrictions
 # a box declares on itself, so trusting its declaration is safe.
 
-#: The attribute `prime_machine_units` caches a runner's machine siblings' agent
-#: units on: {agent slug: sibling runner name}.
+#: The attribute `prime_machine_units` caches a runner's machine siblings that run
+#: one agent on: {agent slug: sibling runner name}.
 _MACHINE_UNITS = "_machine_agent_units"
 
 
 def _agent_unit_slug(unit: dict) -> str | None:
-    """The agent an agent unit runs ("" when it names none); None: not an agent unit."""
+    """The agent an agent's runner runs ("" when it names none); None: not one agent's runner."""
     if unit.get("kind") != "agent":
         return None
     return str(unit.get("slug") or "")
@@ -167,8 +167,8 @@ def _dedicated_refusal(runner: Runner, only: set[str]) -> str:
 
 
 def prime_machine_units(runners) -> None:
-    """Cache, on each of `runners`, the agent units of the OTHER live runners on
-    its machine — one query for them all, so the claim and the coverage report
+    """Cache, on each of `runners`, which agent each OTHER live runner on its
+    machine runs alone — one query for them all, so the claim and the coverage report
     ask `unit_refusal` of every candidate without a query each. Primes their
     dedicated agents too (`prime_dedicated_agents`), which `unit_refusal` also asks."""
     runners = [r for r in runners if r is not None]
@@ -189,8 +189,8 @@ def prime_machine_units(runners) -> None:
 
 
 def machine_agent_units(runner: Runner) -> dict:
-    """{agent slug: runner name} for the agent units on `runner`'s machine other
-    than itself — {} for a runner on no known machine."""
+    """{agent slug: runner name} for the runners on `runner`'s machine that run one
+    agent, other than itself — {} for a runner on no known machine."""
     if not runner.machine_id:
         return {}
     if not hasattr(runner, _MACHINE_UNITS):
@@ -199,13 +199,13 @@ def machine_agent_units(runner: Runner) -> dict:
 
 
 def unit_refusal(runner: Runner, slug: str) -> str:
-    """Why `runner`'s isolation unit keeps it from running agent `slug` — "" when
-    it does not:
+    """Why what `runner` serves on its machine keeps it from running agent `slug` —
+    "" when it does not:
 
-      - it is an AGENT unit, and `slug` is not its agent;
+      - it is ONE AGENT's runner, and `slug` is not its agent;
       - a person dedicated it to other agents (`dedicated_agent_slugs`);
-      - another live runner on its machine is the agent unit for `slug`, so the
-        agent's secrets stay in that unit.
+      - another live runner on its machine is the runner for agent `slug`, so the
+        agent's secrets stay with that runner.
 
     Unlike the rest of `cannot_serve`, a pin does not get past this: the claim
     asks it above the pin, and the vault through `runner_routes_agent`."""
@@ -213,26 +213,26 @@ def unit_refusal(runner: Runner, slug: str) -> str:
         return ""
     own = _agent_unit_slug(runner.unit())
     if own is not None and slug != own:
-        return f"{runner.name} is the agent unit for {own or '(no agent named)'}"
+        return f"{runner.name} is the runner for agent {own or '(no agent named)'}"
     only = dedicated_agent_slugs(runner)
     if only is not None and slug not in only:
         return _dedicated_refusal(runner, only)
     sibling = machine_agent_units(runner).get(slug)
     if sibling and own != slug:
-        return f"{slug} has its own unit on this machine ({sibling})"
+        return f"{slug} has its own runner on this machine ({sibling})"
     return ""
 
 
 def turn_unit_refusal(runner: Runner, turn) -> str:
-    """`unit_refusal` for a whole turn: an agent unit refuses every turn that does
+    """`unit_refusal` for a whole turn: an agent's runner refuses every turn that does
     not run AS its agent — another agent's, and one with no acting agent at all
     (a repo turn, an agentless chat) — and any runner refuses a turn whose agent
-    has its own unit elsewhere on its machine. A runner a person dedicated to
+    has its own runner elsewhere on its machine. A runner a person dedicated to
     some agents refuses the same way. "" when it takes the turn."""
     agent = turn.acting_agent
     own = _agent_unit_slug(runner.unit())
     if own is not None and (agent is None or agent.slug != own):
-        return f"{runner.name} is the agent unit for {own or '(no agent named)'}"
+        return f"{runner.name} is the runner for agent {own or '(no agent named)'}"
     only = dedicated_agent_slugs(runner)
     if only is not None and agent is None:
         return _dedicated_refusal(runner, only)
@@ -316,7 +316,7 @@ class ServingFacts:
         self.agents = list(agents)
         self._by_pk = {r.pk: r for r in self.runners}
         # Each runner's flags (`runner_may_hold_agent`), enrollments
-        # (`runner_tenant_slugs_of`) and units (`unit_refusal`) without a query each.
+        # (`runner_tenant_slugs_of`) and what each serves (`unit_refusal`) without a query each.
         bare = [r for r in self.runners if "declared_flags" not in getattr(r, "_prefetched_objects_cache", {})]
         if bare:
             prefetch_related_objects(bare, "declared_flags", "enrollments")
@@ -490,7 +490,7 @@ def inherited_orders(agent_ids) -> dict:
             elif not may_hold(r, agent):
                 inh.cannot_hold.append(r)
             elif unit_refusal(r, agent.slug):
-                continue  # another agent's unit, or the agent has its own: not for it
+                continue  # another agent's runner, or the agent has its own: not for it
             else:
                 inh.runners.append(r)
         out[agent.id] = inh
@@ -981,7 +981,7 @@ def runner_target_q(runner: Runner, exclude_slugs: list[str] | None = None,
         )
     own = None if ignore_unit else _agent_unit_slug(runner.unit())
     if own is not None:
-        # An agent unit targets its one agent's turns and chats, nothing else —
+        # An agent's runner targets its one agent's turns and chats, nothing else —
         # no repo turns, no agentless chats (`turn_unit_refusal`). `ignore_unit`
         # is the unclaimable report's counterfactual only.
         q &= Q(agent__slug=own) | Q(chat_session__agent__slug=own)

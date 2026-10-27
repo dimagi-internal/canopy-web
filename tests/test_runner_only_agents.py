@@ -3,7 +3,7 @@
 Listed, the box runs only those agents' turns and chats — no other agent's, no
 repo turn, no agentless chat — however they reach it, a pin included. It never
 adds work: an agent still reaches the box only through its runner list or the
-order it follows. The person-set counterpart of a box's own agent unit
+order it follows. The person-set counterpart of a box declaring it runs one agent
 (`test_runner_units.py`), asked through the same `routing.unit_refusal`, so the
 claim, the turn status, the unclaimable report and the vault agree.
 """

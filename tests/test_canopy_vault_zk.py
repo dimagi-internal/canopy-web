@@ -1147,7 +1147,7 @@ def test_a_new_agent_in_another_enrolled_workspace_seals_to_the_box(fleet):
     assert zk.eligible_device_keys(helper) == []
 
     # A cloud runner serves one tree (`runners._other_tree`): the family tree is
-    # this box's unit only once it leaves its first one.
+    # this runner's tree only once it leaves its first one.
     unenroll_runner(f.runner, f.ws.slug)
     enroll_runner(f.runner, "family", by=f.user)
     WorkspaceRunnerOrder.objects.create(workspace=family, runner=f.runner, rank=0)

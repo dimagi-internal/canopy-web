@@ -234,7 +234,7 @@ STREAM_IDLE_POLL_SECONDS = float(os.environ.get("STREAM_IDLE_POLL_SECONDS", "15"
 # apps/harness/services.py) or a long turn gets swept LOST mid-execution.
 LEASE_HEARTBEAT_SECONDS = int(os.environ.get("LEASE_HEARTBEAT_SECONDS", "60"))
 STATE_FILE = pathlib.Path(os.environ.get("STATE_FILE", str(pathlib.Path.home() / ".canopy-cloud-runner.json")))
-#: When this unit last finished a bootstrap (unix seconds), beside its state file.
+#: When this runner last finished a bootstrap (unix seconds), beside its state file.
 BOOTSTRAPPED_MARKER = STATE_FILE.with_name(".canopy-bootstrapped-at")
 
 # Where this runner's bytes live, and the two files the auto-updater
@@ -292,8 +292,8 @@ RUNNER_TOKEN_RETRY_SECONDS = 60
 
 
 def _exchange_device_proof(runner_id: str) -> bool:
-    """Trade a fresh device proof for a runner token — the instance role's, or for an
-    isolation unit its own software key's (`_exchange_unit_proof`). Never raises."""
+    """Trade a fresh device proof for a runner token — the instance role's, or for a
+    runner on a machine of several its own software key's (`_exchange_unit_proof`). Never raises."""
     if UNIT:
         raw, exp = _exchange_unit_proof(runner_id)
         if not raw:
@@ -302,7 +302,7 @@ def _exchange_device_proof(runner_id: str) -> bool:
         _share_runner_token(raw, exp)
         if not _RUNNER_TOKEN["announced"]:
             _RUNNER_TOKEN["announced"] = True
-            _log(f"keyless: unit {UNIT} signed in with its own device key (no PAT, no instance role)")
+            _log(f"keyless: runner {UNIT} signed in with its own device key (no PAT, no instance role)")
         return True
     url = f"{BASE_URL}/api/runner-sessions/"
     headers = _aws_proof_headers(url)
@@ -377,7 +377,7 @@ def _bearer(min_life: float = RUNNER_TOKEN_RENEW_SECONDS) -> str:
             # An unexpired token is still good while the renewal is retried.
             if _RUNNER_TOKEN["raw"] and _RUNNER_TOKEN["exp"] > now:
                 return _RUNNER_TOKEN["raw"]
-    # No PAT fallback for a box that holds none by design (spec §5): a unit, or a box
+    # No PAT fallback for a box that holds none by design (spec §5): a runner sharing its machine, or a box
     # paired by invitation. Without a token it reports itself unauthenticated and its
     # device-key path asks the owner — it never borrows a person's credential.
     if _no_pat_fallback():
@@ -572,7 +572,8 @@ def _nudge_updater(expected_sha: str, *, now: float | None = None) -> bool:
     if now - _last_update_nudge < UPDATE_NUDGE_MIN_SECONDS:
         return False
     if os.environ.get("CANOPY_UNIT", "").strip():
-        # A unit has no sudo: root's updater timer (30 min) installs for every unit.
+        # A runner sharing its machine has no sudo: root's updater timer (30 min)
+        # installs for every runner on it.
         return False
     # Advance the throttle on the ATTEMPT, not the success: a broken systemctl
     # would otherwise warn on every ~20s beat, and the timer rescues that case.
@@ -740,9 +741,9 @@ def _disk_check() -> None:
 
 
 #: Where the space is, measured by root's update tick (update_runner.sh
-#: record_disk_usage) while the volume is at warn: a unit's runner cannot read the
+#: record_disk_usage) while the volume is at warn: a runner cannot read the
 #: other homes, and its sweep reaches only its own files — so a warning whose space
-#: sits elsewhere (cloud-ec2-2, 2026-10-26: 35 GB in the pre-units user's home)
+#: sits elsewhere (cloud-ec2-2, 2026-10-26: 35 GB in the home of the user from before several runners)
 #: says where. Older than two ticks and it is not quoted.
 DISK_USAGE_FILE = pathlib.Path(os.environ.get("DISK_USAGE_FILE", str(RUNNER_HOME / "disk-usage.json")))
 DISK_USAGE_MAX_AGE_SECONDS = 2 * 3600
@@ -1316,7 +1317,8 @@ def _start_lease_renewal(runner_id: str, turn_id: str) -> threading.Event:
 
 def pair_or_load() -> str:
     if UNIT and not STATE_FILE.exists():
-        # A unit never pairs itself: root's canopy-pair pairs every unit at once.
+        # A runner sharing its machine never pairs itself: root's canopy-pair pairs
+        # every runner on the machine at once.
         if not _wait_for_unit_state():
             sys.exit(0)
     if STATE_FILE.exists():
@@ -1356,7 +1358,7 @@ def pair_or_load() -> str:
                 # belongs to nobody now, whatever this box pairs as next.
                 forget_all_kept_conversations("this runner was retired")
     if UNIT:
-        _log(f"FATAL: unit {UNIT}'s runner is gone from canopy-web (retired?) — re-run "
+        _log(f"FATAL: runner {UNIT} is gone from canopy-web (retired?) — re-run "
              "canopy-pair (`sudo systemctl restart canopy-pair`) after a new invitation")
         sys.exit(1)
     if not TOKEN:
@@ -1714,7 +1716,7 @@ def aws_proof(url: str, *, creds: dict | None = None, now: float | None = None) 
 
 def _aws_proof_headers(url: str) -> dict:
     """{X-Canopy-Aws-Proof: …} for every resolve this box makes, or {} — never raises.
-    A unit has no instance role to prove (IMDS is root's): {}."""
+    A runner sharing its machine has no instance role to prove (IMDS is root's): {}."""
     if os.environ.get("CANOPY_DEVICE_KEY", "1") == "0" or UNIT:
         return {}
     try:
@@ -1848,28 +1850,29 @@ def start_aws_device_key_enrollment(runner_id: str) -> threading.Thread:
     return t
 
 
-# ── Isolation units: one box, many tenants (spec 2026-10-19-runner-isolation-units) ──
+# ── Several runners on one machine (spec 2026-10-19-runner-isolation-units) ──
 #
-# A box may run several isolation units — a workspace TREE, or a single AGENT —
-# each its own Unix user (`cu-<unit>`), home, runner process
-# (`canopy-runner@<unit>.service`), `Runner` row and device identity. The instance
-# role is root's: an iptables rule rejects IMDS for every other uid, so a unit can
-# neither sign as the box nor call KMS. A unit therefore holds:
+# A machine may run several runners — each serving a workspace TREE, or a single
+# AGENT — each its own Unix user (`cu-<id>`), home, runner process
+# (`canopy-runner@<id>.service`), `Runner` row and device identity. The instance
+# role is root's: an iptables rule rejects IMDS for every other uid, so a runner can
+# neither sign as the machine nor call KMS. A runner therefore holds:
 #
 # * a SOFTWARE signing key in its home (`~/.canopy/device-key/sw.pem`), made by the
 #   canopy CLI (`canopy vault device --public-jwk --kind software`) — this file has
 #   no EC crypto (stdlib-only), so the CLI also signs its DPoP proofs
 #   (`canopy vault runner-session`);
-# * an ECDH key in KMS, one per unit, which only the root-owned broker
+# * an ECDH key in KMS, one per runner, which only the root-owned broker
 #   (`kms_broker.py`, a Unix socket checked by SO_PEERCRED) derives with on its
 #   behalf (`CANOPY_ECDH_BROKER`);
-# * its own gog secret (`/etc/canopy-runner/<unit>.gog-secret`), from which each
+# * its own gog secret (`/etc/canopy-runner/<id>.gog-secret`), from which each
 #   agent's keyring password is derived (`gog_env`).
 #
 # Root does the box-wide parts from this same file: `--setup-units` (users, files,
 # the IMDS rule; every start) and `--pair-units` (one `pair-by-role` call for every
-# unit, under ONE approval). A box with no `CANOPY_UNIT` in its environment — a
-# laptop-shaped single box, or a box built before units — behaves exactly as before.
+# runner, under ONE approval). A box with no `CANOPY_UNIT` in its environment — a
+# laptop-shaped single box, or a box built before several runners — behaves exactly
+# as before.
 
 UNIT = os.environ.get("CANOPY_UNIT", "").strip()
 UNIT_KIND = os.environ.get("CANOPY_UNIT_KIND", "").strip()
@@ -1888,30 +1891,32 @@ IMDS_V4, IMDS_V6 = "169.254.169.254", "fd00:ec2::254"
 #: `cu-<id>` must fit Linux's 32-character user names.
 _UNIT_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,27}$")
 _RUNNER_NAME = re.compile(r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
-#: The KMS alias the `<stack>-ecdh` stack gives a unit's key. The unit that keeps
+#: The KMS alias the `<stack>-ecdh` stack gives a runner's key. The runner that keeps
 #: the box's name keeps the box's ORIGINAL key (`alias/canopy-runner-ecdh/<role>`),
-#: so a box moved to units loses no wrap; every other unit's has its id appended.
+#: so a box moved to several runners loses no wrap; every other runner's has its id
+#: appended.
 KMS_ALIAS_PREFIX = "alias/canopy-runner-ecdh/"
 
 
 def parse_units(spec: str, *, workspace: str, box: str) -> list[dict]:
-    """`RunnerUnits` (`tree:dimagi,tree:marshellis,agent:eva`) as unit records.
+    """`RunnerUnits` (`tree:dimagi,tree:marshellis,agent:eva`) as runner records.
 
-    Empty means ONE unit, `tree:<workspace>`, so a single-tree box keeps its shape.
-    `agent:<slug>[@<workspace>]` is an agent unit (its workspace defaults to the
-    box's). The tree unit of the box's own workspace keeps the BOX's name — the
-    live box keeps its runner (and its id) when it moves to units; every other unit
-    is `<box>-<id>`. Raises ValueError on anything it cannot make a unit of."""
+    Empty means ONE runner, `tree:<workspace>`, so a single-tree box keeps its shape.
+    `agent:<slug>[@<workspace>]` is an agent's runner (its workspace defaults to the
+    box's). The runner for the box's own workspace tree keeps the BOX's name — the
+    live box keeps its runner (and its id) when it moves to several runners; every
+    other runner is `<box>-<id>`. Raises ValueError on anything it cannot make a
+    runner of."""
     items = [x.strip() for x in (spec or "").split(",") if x.strip()]
     if not items:
         if not workspace:
-            raise ValueError("no RunnerUnits and no RunnerWorkspace: nothing to make a unit of")
+            raise ValueError("no RunnerUnits and no RunnerWorkspace: nothing to make a runner of")
         items = [f"tree:{workspace}"]
     out: list[dict] = []
     for item in items:
         kind, sep, rest = item.partition(":")
         if not sep or kind not in ("tree", "agent") or not rest:
-            raise ValueError(f"unit '{item}': expected tree:<workspace> or agent:<slug>[@<workspace>]")
+            raise ValueError(f"runner '{item}': expected tree:<workspace> or agent:<slug>[@<workspace>]")
         if kind == "tree":
             ws, slug, uid = rest, "", rest
         else:
@@ -1919,16 +1924,16 @@ def parse_units(spec: str, *, workspace: str, box: str) -> list[dict]:
             ws = ws or workspace
             uid = f"agent-{slug}"
         if not _UNIT_ID.match(uid) or not ws:
-            raise ValueError(f"unit '{item}': '{uid}' is not a usable unit id (lowercase, digits, '-')")
+            raise ValueError(f"runner '{item}': '{uid}' is not a usable runner id (lowercase, digits, '-')")
         name = box if kind == "tree" and ws == workspace else f"{box}-{uid}"
         if not _RUNNER_NAME.match(name):
-            raise ValueError(f"unit '{item}': runner name '{name}' is not a valid runner name")
+            raise ValueError(f"runner '{item}': runner name '{name}' is not a valid runner name")
         out.append({"id": uid, "kind": kind, "workspace": ws, "slug": slug, "name": name,
                     "user": f"cu-{uid}", "home": f"{UNIT_HOME_ROOT}/cu-{uid}"})
     for field in ("id", "name"):
         seen = [u[field] for u in out]
         if len(set(seen)) != len(seen):
-            raise ValueError(f"RunnerUnits names a unit twice ({field})")
+            raise ValueError(f"RunnerUnits names a runner twice ({field})")
     trees = [u["workspace"] for u in out if u["kind"] == "tree"]
     if len(set(trees)) != len(trees):
         raise ValueError("RunnerUnits names one workspace tree twice")
@@ -1936,7 +1941,7 @@ def parse_units(spec: str, *, workspace: str, box: str) -> list[dict]:
 
 
 def unit_kms_key(unit: dict, box: str, role_name: str) -> str:
-    """The KMS key id (an alias) of `unit`'s ECDH key."""
+    """The KMS key id (an alias) of the runner `unit`'s ECDH key."""
     suffix = "" if unit["name"] == box else f"/{unit['id']}"
     return f"{KMS_ALIAS_PREFIX}{role_name}{suffix}"
 
@@ -1946,14 +1951,14 @@ def _csv_minus(value: str, drop: set) -> str:
 
 
 def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int, locked: bool | None = None) -> dict:
-    """The environment `canopy-runner@<unit>` runs with (`/etc/canopy-runner/<id>.env`).
+    """The environment `canopy-runner@<id>` runs with (`/etc/canopy-runner/<id>.env`).
 
     Deliberately WITHOUT `CANOPY_TOKEN` (no PAT on a runner), `CLAUDE_CODE_OAUTH_TOKEN`
-    (the Claude bundle comes from canopy-web per unit) and `GOG_KEYRING_PASSWORD`
-    (each agent's is derived from the unit's own secret). An agent unit runs only its
-    agent; the box's own tree unit runs the box's agents and repos minus every agent
-    that has a unit of its own; another tree unit starts with neither and takes what
-    canopy-web routes to it."""
+    (the Claude bundle comes from canopy-web per runner) and `GOG_KEYRING_PASSWORD`
+    (each agent's is derived from the runner's own secret). An agent's runner runs only
+    its agent; the runner for the box's own tree runs the box's agents and repos minus
+    every agent that has a runner of its own; another tree's runner starts with neither
+    and takes what canopy-web routes to it."""
     if locked is None:
         # What the box alone says (`apply_egress` passes canopy-web's answer too).
         locked = egress_locked(box) or bool(str(box.get("RUNNER_DATA_MODE", "")).strip())
@@ -1977,7 +1982,7 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int, locked: bool
         "RUNNER_AGENTS": agents, "AGENT_SLUGS": slugs, "RUNNER_PROJECTS": projects,
         "RUNNER_SESSIONS": box.get("RUNNER_SESSIONS", "1"),
         "RUNNER_EXECUTOR": box.get("RUNNER_EXECUTOR", "acp"),
-        # A box in sensitive-data mode runs every unit in it (one key, the locked profile).
+        # A box in sensitive-data mode runs every runner on it (one key, the locked profile).
         "RUNNER_DATA_MODE": box.get("RUNNER_DATA_MODE", ""),
         "RUNNER_EGRESS": "locked" if locked else "",
         "HOME": home, "USER": unit["user"], "LOGNAME": unit["user"],
@@ -1996,7 +2001,7 @@ def unit_env(unit: dict, units: list[dict], box: dict, *, uid: int, locked: bool
     }
     env["CANOPY_EGRESS_PORT"] = str(egress_port(uid))
     if locked:
-        # Every tool the unit runs reads these (urllib, git, node, websocket-client);
+        # Every tool the runner runs reads these (urllib, git, node, websocket-client);
         # one that ignores them is rejected by CANOPY-EGRESS rather than let out.
         for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
             env[name] = f"http://127.0.0.1:{egress_port(uid)}"
@@ -2024,7 +2029,7 @@ def read_env_file(path: pathlib.Path) -> dict:
 
 
 def _write_owned(path: pathlib.Path, data: bytes, *, uid: int, gid: int, mode: int, chown) -> None:
-    """Write `data` atomically at `mode`, owned by uid:gid (root writes for a unit)."""
+    """Write `data` atomically at `mode`, owned by uid:gid (root writes for a runner)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
@@ -2042,7 +2047,7 @@ def _mkdir_owned(path: pathlib.Path, *, uid: int, gid: int, mode: int, chown) ->
 
 
 def imds_rules(run=subprocess.run) -> list[str]:
-    """Reject IMDS for every uid but root's (spec §2): no unit process can fetch the
+    """Reject IMDS for every uid but root's (spec §2): no runner's process can fetch the
     instance role's credentials. Idempotent (`-C` before `-I`). IPv6 only where the
     tool exists. Returns what it changed."""
     changed = []
@@ -2066,39 +2071,39 @@ def imds_rules(run=subprocess.run) -> list[str]:
 
 # ── Egress lock (spec 2026-10-22-sensitive-data-agents §1, "Egress locked") ──
 #
-# A locked isolation unit's processes — its runner, Claude, every tool — reach the
-# network only through the box's CONNECT proxy, on that unit's own loopback port,
-# which admits that unit's allowlist of hostnames on 443. Root's chain CANOPY-EGRESS
-# rejects everything else the unit's uid sends, including DNS on loopback (a lookup
-# is itself a way out) and the other units' proxy ports. Root and the proxy's own
-# user are not in the chain: units cannot become either (no sudo, NoNewPrivileges).
+# A locked runner's processes — the runner itself, Claude, every tool — reach the
+# network only through the box's CONNECT proxy, on that runner's own loopback port,
+# which admits that runner's allowlist of hostnames on 443. Root's chain CANOPY-EGRESS
+# rejects everything else the runner's uid sends, including DNS on loopback (a lookup
+# is itself a way out) and the other runners' proxy ports. Root and the proxy's own
+# user are not in the chain: runners cannot become either (no sudo, NoNewPrivileges).
 #
-# Who decides a unit is locked, and what it admits — it only ever ratchets up:
+# Who decides a runner is locked, and what it admits — it only ever ratchets up:
 #
-# * the box's floor, `RUNNER_EGRESS` in box.env (the stack parameter): locks every unit;
-# * Sensitive-data mode (`RUNNER_DATA_MODE`): locks every unit, whatever else says;
+# * the box's floor, `RUNNER_EGRESS` in box.env (the stack parameter): locks every runner;
+# * Sensitive-data mode (`RUNNER_DATA_MODE`): locks every runner, whatever else says;
 # * canopy-web: a person sets each runner's lock and extra hosts on its runner page
 #   or by MCP (`PUT /api/harness/runners/{id}/egress`). Root reads it every minute by
 #   the box's instance role (`--egress-sync`, `POST …/box-egress`) — never relayed by
-#   a unit, which could otherwise loosen its own lock. On a failed read root keeps
+#   a runner, which could otherwise loosen its own lock. On a failed read root keeps
 #   the last answer it had: an outage never opens a box.
 #
-# A lock turning on or off rewrites the unit's env (the proxy variables) and restarts
-# its runner, so it waits until the unit carries no turn. Allowlist changes apply at
+# A lock turning on or off rewrites the runner's env (the proxy variables) and restarts
+# it, so it waits until the runner carries no turn. Allowlist changes apply at
 # once (the proxy re-reads per connection). The proxy narrows HOSTS, not paths:
 # GitHub stays reachable for the runner's own code and clones; a sensitive-data turn cannot use
 # it (no shell, no GitHub token).
 
 EGRESS_CHAIN = "CANOPY-EGRESS"
 EGRESS_USER = "canopy-egress"
-#: A unit's proxy port: stable per uid, so adding a unit moves no one's port.
+#: A runner's proxy port: stable per uid, so adding a runner moves no one's port.
 EGRESS_PORT_BASE = 20000
-#: This unit's port (its env file names it); 3128 outside a box of units.
+#: This runner's port (its env file names it); 3128 outside a machine of several runners.
 EGRESS_PORT = int(os.environ.get("CANOPY_EGRESS_PORT", "3128"))
 EGRESS_PROXY_URL = f"http://127.0.0.1:{EGRESS_PORT}"
-#: Root's: each unit's port and allowlist file, for the proxy.
+#: Root's: each runner's port and allowlist file, for the proxy.
 EGRESS_CONFIG_FILE = UNIT_ETC / "egress.json"
-#: Root's: the last canopy-web answer, and which units are locked now.
+#: Root's: the last canopy-web answer, and which runners are locked now.
 EGRESS_STATE_FILE = UNIT_ETC / "egress.state.json"
 BOX_EGRESS_PATH = "/api/harness/runners/box-egress"
 #: The only port the proxy tunnels to.
@@ -2139,7 +2144,7 @@ def _hosts(items, *, strict: bool, what: str) -> set[str]:
 
 
 def egress_allowlist(box: dict, extra=()) -> list[str]:
-    """The hostnames a locked unit admits: the base set, canopy-web's host, the box's
+    """The hostnames a locked runner admits: the base set, canopy-web's host, the box's
     own `RUNNER_EGRESS_ALLOW` (comma-separated; `.example.com` admits every subdomain)
     and `extra` (canopy-web's hosts for that runner). Raises ValueError on a box.env
     entry that is not a hostname; a bad `extra` entry is skipped."""
@@ -2159,7 +2164,7 @@ def egress_host_allowed(host: str, allow) -> bool:
 
 
 def egress_plan(box: dict, units: list[dict], server: dict) -> dict:
-    """{unit id: {"locked", "allow"}} — the box's floor and sensitive-data mode lock every unit;
+    """{runner id: {"locked", "allow"}} — the box's floor and sensitive-data mode lock every runner;
     canopy-web's answer (`server`, by runner name) can lock more and add hosts, never
     unlock what the box locks."""
     floor = egress_locked(box) or bool(str(box.get("RUNNER_DATA_MODE", "")).strip())
@@ -2172,11 +2177,11 @@ def egress_plan(box: dict, units: list[dict], server: dict) -> dict:
 
 
 def egress_rules(units: list[dict], *, locked: bool | set = False, run=subprocess.run) -> list[str]:
-    """ROOT: rebuild CANOPY-EGRESS. Each locked unit (`locked`: True for all, or a
-    set of unit ids) may send only on loopback — not to port 53 there, nor to another
-    unit's proxy port; everything else it sends is rejected. Nothing locked: the chain
+    """ROOT: rebuild CANOPY-EGRESS. Each locked runner (`locked`: True for all, or a
+    set of runner ids) may send only on loopback — not to port 53 there, nor to another
+    runner's proxy port; everything else it sends is rejected. Nothing locked: the chain
     is emptied, which lets everything through. Returns the tools it wrote. Raises if
-    iptables refuses a locked unit's rules: a unit asked to be locked does not come
+    iptables refuses a locked runner's rules: a runner asked to be locked does not come
     up open."""
     lock_ids = {u["id"] for u in units} if locked is True else set(locked or ())
     any_locked = bool(lock_ids)
@@ -2221,7 +2226,7 @@ def egress_rules(units: list[dict], *, locked: bool | set = False, run=subproces
 
 def fetch_box_egress(base_url: str, *, post=None, proof=None) -> dict | None:
     """ROOT: canopy-web's egress settings for this box's runners, by name — read by
-    the box's instance role (units cannot make that proof). None when it cannot be
+    the box's instance role (its runners cannot make that proof). None when it cannot be
     read (no role, unreachable, refused): the caller keeps what it had."""
     url = base_url.rstrip("/") + BOX_EGRESS_PATH
     signed = (proof or aws_proof)(url)
@@ -2244,7 +2249,7 @@ def _read_json(path: pathlib.Path) -> dict:
 
 
 def unit_idle(unit: dict, *, now=time.time) -> bool:
-    """No turn in flight on this unit: its in-flight marker says 0, or is stale
+    """No turn in flight on this runner: its in-flight marker says 0, or is stale
     (older than 120 s: its runner is not running its loop, so nothing is mid-turn)."""
     doc = _read_json(pathlib.Path(unit["home"]) / ".canopy-runner" / "in-flight")
     if not doc:
@@ -2270,9 +2275,9 @@ def apply_egress(box: dict, units: list[dict], *, boot: bool, run=subprocess.run
                  etc: pathlib.Path | None = None, systemd: pathlib.Path | None = None,
                  fetch=None, idle=None) -> dict:
     """ROOT: bring the box to its egress plan (`--setup-units` at boot, `--egress-sync`
-    every minute). Allowlists apply at once; a unit's lock turning on or off rewrites
-    its env and restarts its runner, only while it carries no turn (at boot nothing
-    is running yet). Returns {unit id: locked} as applied."""
+    every minute). Allowlists apply at once; a runner's lock turning on or off rewrites
+    its env and restarts it, only while it carries no turn (at boot nothing is
+    running yet). Returns {runner id: locked} as applied."""
     etc = etc or UNIT_ETC
     state = _read_json(etc / EGRESS_STATE_FILE.name)
     said = (fetch or (lambda: fetch_box_egress(box.get("CANOPY_BASE_URL", ""))))()
@@ -2311,7 +2316,7 @@ def apply_egress(box: dict, units: list[dict], *, boot: bool, run=subprocess.run
         if old_config.get("units") != config["units"]:
             run(["systemctl", "restart", "--no-block", "canopy-egress.service"], capture_output=True)
     # Rules after the proxy is asked up, and before any restarted runner starts
-    # sending: a unit just locked never has a moment open.
+    # sending: a runner just locked never has a moment open.
     egress_rules(units, locked=locked_ids, run=run)
     if not locked_ids:
         run(["systemctl", "disable", "--now", "canopy-egress.service"], capture_output=True)
@@ -2408,8 +2413,8 @@ async def _egress_handle(reader, writer, allow_file: pathlib.Path) -> None:
 
 def egress_proxy_main(config_file: pathlib.Path | None = None) -> int:
     """`cloud_runner.py --egress-proxy`, as EGRESS_USER: one loopback listener per
-    unit (`egress.json`: its port and allowlist file) until stopped. An allowlist is
-    re-read per connection, so a change needs no restart; a unit added or removed
+    runner (`egress.json`: its port and allowlist file) until stopped. An allowlist is
+    re-read per connection, so a change needs no restart; a runner added or removed
     restarts the proxy (`apply_egress`)."""
     import asyncio
 
@@ -2423,7 +2428,7 @@ def egress_proxy_main(config_file: pathlib.Path | None = None) -> int:
                 lambda r, w, _allow=allow: _egress_handle(r, w, _allow), "127.0.0.1", int(unit["port"])))
             _log(f"egress proxy: {unit['id']} on 127.0.0.1:{unit['port']}, allowlist {allow}")
         if not servers:
-            _log("egress proxy: no units in egress.json; nothing to serve")
+            _log("egress proxy: no runners in egress.json; nothing to serve")
             return
         await asyncio.gather(*(srv.serve_forever() for srv in servers))
 
@@ -2433,9 +2438,9 @@ def egress_proxy_main(config_file: pathlib.Path | None = None) -> int:
 
 def setup_units(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
                 etc: pathlib.Path | None = None, role_name: str = "") -> list[dict]:
-    """ROOT, on every start (`cloud_runner.py --setup-units`): make each unit's user,
+    """ROOT, on every start (`cloud_runner.py --setup-units`): make each runner's user,
     home, env file, gog secret and tmpfs root; write `units.json` for the broker and
-    `canopy-pair`; install the IMDS rule. Idempotent. Returns the units, with uids."""
+    `canopy-pair`; install the IMDS rule. Idempotent. Returns the runners, with uids."""
     import pwd
 
     etc = etc or UNIT_ETC
@@ -2446,7 +2451,7 @@ def setup_units(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
     for unit in units:
         if run(["id", "-u", unit["user"]], capture_output=True).returncode != 0:
             res = run(["useradd", "--create-home", "--home-dir", unit["home"], "--shell", "/bin/bash",
-                       "--comment", f"canopy isolation unit {unit['id']}", unit["user"]],
+                       "--comment", f"canopy runner {unit['id']}", unit["user"]],
                       capture_output=True)
             if res.returncode != 0:
                 raise RuntimeError(f"useradd {unit['user']} failed: {res.stderr!r}")
@@ -2463,7 +2468,7 @@ def setup_units(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
         secret = etc / f"{unit['id']}.gog-secret"
         if not secret.exists():
             # 32 random bytes, never rotated by a restart: every agent's gog keyring
-            # password in this unit is derived from it (`gog_env`).
+            # password on this runner is derived from it (`gog_env`).
             _write_owned(secret, secrets.token_bytes(32), uid=uid, gid=gid, mode=0o400, chown=chown)
         else:
             os.chmod(secret, 0o400)
@@ -2486,7 +2491,7 @@ def load_units(path: pathlib.Path | None = None) -> dict:
 
 
 def _role_name() -> str:
-    """The instance role's NAME (root only: IMDS is closed to units)."""
+    """The instance role's NAME (root only: IMDS is closed to runners)."""
     try:
         token = _imds("/latest/api/token", put=True, headers={"X-aws-ec2-metadata-token-ttl-seconds": "300"})
         names = _imds("/latest/meta-data/iam/security-credentials/", token=token).split()
@@ -2497,14 +2502,14 @@ def _role_name() -> str:
 
 def _as_unit(unit: dict, argv: list[str], *, run=subprocess.run, env: dict | None = None,
              timeout: float = 300) -> subprocess.CompletedProcess:
-    """Run `argv` AS the unit's user, in its environment (`runuser`, root only)."""
+    """Run `argv` AS the runner's user, in its environment (`runuser`, root only)."""
     base = read_env_file(UNIT_ETC / f"{unit['id']}.env")
     pairs = [f"{k}={v}" for k, v in {**base, **(env or {})}.items()]
     return run(["runuser", "-u", unit["user"], "--", "env", "-i", *pairs, *argv],
                capture_output=True, text=True, timeout=timeout)
 
 
-#: How a unit gets the canopy CLI before it is paired. canopy is a public repo, so
+#: How a runner gets the canopy CLI before it is paired. canopy is a public repo, so
 #: this needs no token — which is what lets a fresh box make its keys at all.
 CANOPY_CLI_URL = os.environ.get("CANOPY_PLUGIN_URL", "https://github.com/dimagi-internal/canopy.git")
 _ENSURE_CLI = (
@@ -2514,7 +2519,7 @@ _ENSURE_CLI = (
 
 
 def _unit_keys(unit: dict, *, run=subprocess.run) -> dict:
-    """The unit's PUBLIC keys, made by the canopy CLI as the unit: its software signing
+    """The runner's PUBLIC keys, made by the canopy CLI as the runner's user: its software signing
     key (`--public-jwk --kind software`) and its broker-held ECDH key (`--ecdh-jwk`).
     `{public_jwk, jkt, ecdh_public_jwk?}`; raises RuntimeError without a signing key."""
     res = _as_unit(unit, ["bash", "-c", _ENSURE_CLI], run=run, env={"CANOPY_CLI_URL": CANOPY_CLI_URL},
@@ -2534,7 +2539,7 @@ def _unit_keys(unit: dict, *, run=subprocess.run) -> dict:
         doc = json.loads((res.stdout or "").strip().splitlines()[-1])
         if set(doc["jwk"]) == {"kty", "crv", "x", "y"}:
             out["ecdh_public_jwk"] = doc["jwk"]
-    except Exception:  # noqa: BLE001 — no ECDH key yet (no KMS key for this unit): it waits
+    except Exception:  # noqa: BLE001 — no ECDH key yet (no KMS key for this runner): it waits
         _log(f"pair-units: {unit['id']} has no ECDH key from the broker yet — its zero-knowledge "
              "agents wait until its <stack>-ecdh key exists")
     return out
@@ -2549,8 +2554,8 @@ def _unit_state(unit: dict) -> dict:
 
 def pair_units_payload(box: str, units: list[dict], keys: dict, proof: str,
                        unit_envs: dict | None = None) -> dict:
-    """The ONE pair-by-role body for every unit (spec §2): the box's name, one role
-    proof, and each unit's name, public keys and declared capabilities."""
+    """The ONE pair-by-role body for every runner (spec §2): the box's name, one role
+    proof, and each runner's name, public keys and declared capabilities."""
     out = []
     for unit in units:
         k = keys[unit["id"]]
@@ -2570,7 +2575,7 @@ def pair_units_payload(box: str, units: list[dict], keys: dict, proof: str,
 
 def write_unit_states(units: list[dict], reply: dict, keys: dict, *, run=subprocess.run,
                       chown=os.chown) -> None:
-    """Each unit's state file (owned by the unit), and canopy's record that its key is
+    """Each runner's state file (owned by its user), and canopy's record that its key is
     registered (`canopy vault device --registered`), so its DPoP proofs are sent."""
     ids, key_ids = reply.get("units") or {}, reply.get("device_keys") or {}
     for unit in units:
@@ -2589,7 +2594,7 @@ def write_unit_states(units: list[dict], reply: dict, keys: dict, *, run=subproc
 
 def pair_units_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=os.chown) -> int:
     """ROOT (`canopy-pair.service`, `cloud_runner.py --pair-units`): one `pair-by-role`
-    call for every unit on the box, under the box's ONE approved invitation. Units
+    call for every runner on the box, under the box's ONE approved invitation. Runners
     already paired with the keys they hold are left alone; a replaced instance (new
     keys, same role and names) re-attaches and keeps its runner ids."""
     doc = load_units()
@@ -2601,7 +2606,7 @@ def pair_units_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=os
     keys = {u["id"]: _unit_keys(u, run=run) for u in units}
     if all(_unit_state(u).get("runner_id") and _unit_state(u).get("jkt") == keys[u["id"]]["jkt"]
            for u in units):
-        _log("pair-units: every unit is paired with the key it holds — nothing to do")
+        _log("pair-units: every runner is paired with the key it holds — nothing to do")
         return 0
     url = BASE_URL + PAIR_BY_ROLE_PATH
     post = post or _post_unauthenticated
@@ -2619,27 +2624,28 @@ def pair_units_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=os
         if status == 202:
             _log(f"pair-units: waiting for the invitation for {box} to be approved")
         else:
-            _log(f"pair-units: HTTP {status} — no approved invitation lists these units yet "
+            _log(f"pair-units: HTTP {status} — no approved invitation lists these runners yet "
                  f"(./up.sh --units …); asking again in {POLL_SECONDS}s")
         sleep(POLL_SECONDS)
     return 1
 
 
-# ── systemd for a box of units (`cloud_runner.py --install-units`, root) ─────
+# ── systemd for a machine running several runners (`cloud_runner.py --install-units`, root) ─────
 #
 # The unit files live HERE, not in runner.cfn.yaml's UserData: UserData is capped at
 # 16 KB, and cloud-init writes it only on an instance's first boot — so a box built
-# before units could never be moved in place. `--install-units` is the one path for
-# both: cloud-init runs it on a new box, and an operator runs it (with Jonathan's
-# approval) to move a live box to units (runner/ec2/README.md "Moving a box to units").
+# before several runners could never be moved in place. `--install-units` is the one
+# path for both: cloud-init runs it on a new box, and an operator runs it (with
+# Jonathan's approval) to move a live box to several runners (runner/ec2/README.md
+# "Moving a machine to several runners").
 SYSTEMD_DIR = pathlib.Path(os.environ.get("CANOPY_SYSTEMD_DIR", "/etc/systemd/system"))
 RUNNER_PY = "/opt/canopy-runner/cloud_runner.py"
 
 SYSTEMD_UNITS = {
-    # Every start: re-read the stack's parameters, then (re)make every unit's user,
+    # Every start: re-read the stack's parameters, then (re)make every runner's user,
     # files and secrets and the IMDS rule — iptables does not survive a reboot.
     "canopy-units.service": f"""[Unit]
-Description=Canopy isolation units: users, env files, secrets, the IMDS and egress rules
+Description=Canopy runners: users, env files, secrets, the IMDS and egress rules
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -2651,7 +2657,7 @@ ExecStart=/usr/bin/python3 {RUNNER_PY} --setup-units
 WantedBy=multi-user.target
 """,
     "canopy-kms-broker.service": """[Unit]
-Description=Canopy KMS broker: each unit's zero-knowledge ECDH key, for that unit only
+Description=Canopy KMS broker: each runner's zero-knowledge ECDH key, for that runner only
 After=canopy-units.service
 Requires=canopy-units.service
 [Service]
@@ -2662,9 +2668,9 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 """,
-    # Pairs every unit in ONE pair-by-role call; waits for the invitation's approval.
+    # Pairs every runner in ONE pair-by-role call; waits for the invitation's approval.
     "canopy-pair.service": f"""[Unit]
-Description=Canopy pairing: every isolation unit on this box, one approval
+Description=Canopy pairing: every runner on this machine, one approval
 After=canopy-kms-broker.service network-online.target
 Requires=canopy-units.service
 [Service]
@@ -2678,10 +2684,10 @@ RestartSec=30
 [Install]
 WantedBy=multi-user.target
 """,
-    # The egress proxy (`RUNNER_EGRESS=locked`): the only way out for a unit. Its own
+    # The egress proxy (`RUNNER_EGRESS=locked`): the only way out for a runner. Its own
     # user, outside CANOPY-EGRESS; loopback only; no home, nothing writable.
     "canopy-egress.service": f"""[Unit]
-Description=Canopy egress proxy: the only way out for an isolation unit when egress is locked
+Description=Canopy egress proxy: the only way out for a runner when egress is locked
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -2717,7 +2723,7 @@ AccuracySec=10s
 WantedBy=timers.target
 """,
     # Root, every minute, on a FLEET member only (`fleet_ready_main`): complete the
-    # group's launch lifecycle hook once every unit has bootstrapped this boot.
+    # group's launch lifecycle hook once every runner has bootstrapped this boot.
     "canopy-fleet-ready.service": f"""[Unit]
 Description=Canopy fleet member: tell the group this box is ready
 After=network-online.target canopy-units.service
@@ -2735,10 +2741,10 @@ AccuracySec=10s
 [Install]
 WantedBy=timers.target
 """,
-    # One runner per unit, as that unit's user. No sudo, no instance role (IMDS is
+    # One runner per `%i`, as its own user (`cu-%i`). No sudo, no instance role (IMDS is
     # root's), its own /tmp.
     "canopy-runner@.service": f"""[Unit]
-Description=Canopy runner, isolation unit %i
+Description=Canopy runner for %i
 After=network-online.target canopy-units.service canopy-kms-broker.service canopy-egress.service
 Wants=network-online.target
 Requires=canopy-units.service
@@ -2756,9 +2762,10 @@ PrivateTmp=yes
 [Install]
 WantedBy=multi-user.target
 """,
-    # The auto-updater, as ROOT on a box of units: one install, every unit restarted.
+    # The auto-updater, as ROOT on a machine of several runners: one install, every
+    # runner restarted.
     "canopy-runner-update.service": """[Unit]
-Description=Canopy cloud runner auto-update (every isolation unit)
+Description=Canopy cloud runner auto-update (every runner on this machine)
 [Service]
 Type=oneshot
 User=root
@@ -2795,15 +2802,15 @@ def install_broker(*, run=subprocess.run) -> bool:
     return False
 
 
-#: The stack parameters a box of units needs (never a secret), as the legacy
+#: The stack parameters a machine of several runners needs (never a secret), as the legacy
 #: runner.env names them — what an in-place move carries over into box.env.
 BOX_ENV_KEYS = ("CANOPY_BASE_URL", "RUNNER_PROJECTS", "RUNNER_AGENTS", "RUNNER_SESSIONS",
                 "RUNNER_EXECUTOR", "RUNNER_WORKSPACE", "RUNNER_NAME", "AGENT_SLUGS", "RUNNER_UNITS",
                 "RUNNER_DATA_MODE", "RUNNER_EGRESS", "RUNNER_EGRESS_ALLOW")
 _IN_PLACE_FETCH_ENV = """#!/bin/sh
-# Replaced by `cloud_runner.py --install-units` when this box moved to isolation
-# units in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the
-# Claude token, the box-wide gog password) on every start. A box of units reads its
+# Replaced by `cloud_runner.py --install-units` when this box moved to several
+# runners in place: the old script re-wrote /opt/canopy-runner/runner.env (a PAT, the
+# Claude token, the box-wide gog password) on every start. Such a machine reads its
 # parameters from /etc/canopy-runner/box.env, which holds no secret.
 exit 0
 """
@@ -2812,7 +2819,7 @@ exit 0
 def write_box_env_from_legacy(*, units_spec: str, legacy: pathlib.Path | None = None,
                               out: pathlib.Path | None = None) -> dict:
     """An in-place move: box.env from the legacy runner.env's NON-secret keys, plus
-    the units the operator asked for. Leaves an existing box.env alone."""
+    the runners the operator asked for. Leaves an existing box.env alone."""
     out = out or BOX_ENV_FILE
     if out.exists():
         return read_env_file(out)
@@ -2829,11 +2836,11 @@ def write_box_env_from_legacy(*, units_spec: str, legacy: pathlib.Path | None = 
 def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None,
                   fetch_env: pathlib.Path = pathlib.Path("/usr/local/bin/canopy-fetch-env"),
                   sudoers: pathlib.Path = pathlib.Path("/etc/sudoers.d/canopy-runner-update")) -> list[str]:
-    """ROOT: the systemd units for a box of isolation units, the legacy single runner
+    """ROOT: the systemd units for a machine running several runners, the legacy single runner
     retired, root ownership of the shared code, and everything enabled and started.
     Idempotent. Returns the runner services it enabled.
 
-    On a box built before units (an in-place move), box.env is made from the legacy
+    On a box built before several runners (an in-place move), box.env is made from the legacy
     runner.env's non-secret keys and `$RUNNER_UNITS`, and the legacy fetch-env that
     re-wrote runner.env's secrets on every start is replaced."""
     systemd = systemd or SYSTEMD_DIR
@@ -2845,10 +2852,10 @@ def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None,
         pass
     for name, text in SYSTEMD_UNITS.items():
         (systemd / name).write_text(text)
-    # The shared, read-only parts: root's, so no unit can rewrite what the others run.
+    # The shared, read-only parts: root's, so no runner can rewrite what the others run.
     home = RUNNER_HOME
     # The legacy single runner's credentials go first: they must never become
-    # readable by a unit (its runner.env held a PAT, the Claude token and the
+    # readable by a runner (its runner.env held a PAT, the Claude token and the
     # box-wide gog password; runner-token.json its runner token).
     for stale in ("runner.env", "runner-token.json", "runner-token.json.tmp", "in-flight", "turn-env-root"):
         try:
@@ -2869,7 +2876,7 @@ def install_units(*, run=subprocess.run, systemd: pathlib.Path | None = None,
     except OSError:
         pass
     # The legacy single runner (User=ubuntu, the box-wide runner.env) stops here;
-    # its runner row is adopted by the unit that keeps the box's name.
+    # its runner row is adopted by the runner that keeps the box's name.
     run(["systemctl", "disable", "--now", "canopy-runner.service"], capture_output=True)
     for stale in (sudoers,):
         try:
@@ -2904,7 +2911,7 @@ def _boot_time() -> float:
 
 def fleet_ready_main(*, run=subprocess.run, imds=None, boot_time=None) -> int:
     """ROOT, every minute on a FLEET member (`RUNNER_FLEET_GROUP` in box.env; spec
-    2026-10-24-runner-fleets-design.md): once every unit has finished a bootstrap
+    2026-10-24-runner-fleets-design.md): once every runner has finished a bootstrap
     since this boot, complete the group's launch lifecycle hook. Until then AWS
     holds the instance where it is — a member warming up is not stopped into the
     warm pool half-installed, and one leaving the pool is not put in service before
@@ -2946,7 +2953,7 @@ def fleet_ready_main(*, run=subprocess.run, imds=None, boot_time=None) -> int:
 
 
 def _wait_for_unit_state() -> str:
-    """A unit never pairs itself (it has no role to prove): it waits for root's
+    """A runner sharing its machine never pairs itself (it has no role to prove): it waits for root's
     `canopy-pair` to write its state file."""
     said = False
     while not _stop:
@@ -2957,24 +2964,24 @@ def _wait_for_unit_state() -> str:
         if rid:
             return str(rid)
         if not said:
-            _log(f"unit {UNIT}: not paired yet — waiting for canopy-pair to write {STATE_FILE}")
+            _log(f"runner {UNIT}: not paired yet — waiting for canopy-pair to write {STATE_FILE}")
             said = True
         time.sleep(POLL_SECONDS)
     return ""
 
 
 def _exchange_unit_proof(runner_id: str) -> tuple[str, float]:
-    """A unit's runner token, bought with ITS software key: `canopy vault runner-session`
+    """A runner's token, bought with ITS software key: `canopy vault runner-session`
     signs the DPoP proof (this file has no EC crypto). ("", 0) on any failure."""
     try:
         res = subprocess.run([_canopy_cli(), "vault", "runner-session", "--runner", runner_id,
                               "--base-url", BASE_URL], capture_output=True, text=True, timeout=60,
                              env=_child_safe_env())
     except Exception as exc:  # noqa: BLE001
-        _log(f"unit {UNIT}: could not run canopy vault runner-session ({exc})")
+        _log(f"runner {UNIT}: could not run canopy vault runner-session ({exc})")
         return "", 0.0
     if res.returncode != 0:
-        _log(f"unit {UNIT}: canopy-web refused this unit's device proof — "
+        _log(f"runner {UNIT}: canopy-web refused this runner's device proof — "
              f"{' '.join((res.stderr or res.stdout or '').split())[-200:]}")
         return "", 0.0
     try:
@@ -3002,13 +3009,13 @@ def hkdf_sha256(ikm: bytes, info: bytes, length: int = 32, salt: bytes = b"") ->
 
 
 def gog_password(secret: bytes, slug: str) -> str:
-    """An agent's gog keyring password: HKDF-SHA256(unit secret, info=b"gog:"+slug), hex
+    """An agent's gog keyring password: HKDF-SHA256(runner secret, info=b"gog:"+slug), hex
     — canopy's `gog_home` derives the same, so either side can open the keyring."""
     return hkdf_sha256(secret, b"gog:" + slug.encode()).hex()
 
 
 def _gog_secret() -> bytes | None:
-    """The unit secret's bytes; None when no secret is configured (a box before units:
+    """The runner secret's bytes; None when no secret is configured (a box before several runners:
     today's box-wide GOG_* in this process's env stand) — and b"" when one IS
     configured but cannot be read, which must give nobody a password."""
     path = os.environ.get(GOG_SECRET_ENV, "").strip()
@@ -3022,7 +3029,7 @@ def _gog_secret() -> bytes | None:
 
 def gog_env(slug: str) -> dict:
     """`slug`'s own gog home and keyring password, and nothing of any other agent's.
-    {} when there is no unit secret (legacy: the process env's GOG_* apply) or it is
+    {} when there is no runner secret (legacy: the process env's GOG_* apply) or it is
     unreadable."""
     secret = _gog_secret()
     if not secret or not slug:
@@ -3069,9 +3076,9 @@ def _forget_cli_version() -> None:
 
 
 def _turn_env_root(*, create: bool = True) -> pathlib.Path | None:
-    """Where this runner writes per-turn env files: `$CANOPY_TURN_ENV_ROOT` (a unit's
+    """Where this runner writes per-turn env files: `$CANOPY_TURN_ENV_ROOT` (a runner's
     `/run/canopy/<uid>`), else `/run/canopy/<uid>` when it exists and is ours, else a
-    0700 `/dev/shm/canopy-<uid>` (tmpfs, which a box built before units can still
+    0700 `/dev/shm/canopy-<uid>` (tmpfs, which a box built before several runners can still
     make). None when none is usable: the turn then runs the legacy way."""
     uid = os.getuid()
     env = os.environ.get("CANOPY_TURN_ENV_ROOT", "").strip()
@@ -3096,8 +3103,8 @@ def _turn_env_root(*, create: bool = True) -> pathlib.Path | None:
 def secrets_off_disk() -> bool:
     """Do this runner's turns get their env on tmpfs (and no `~/.<slug>/.env`)?
 
-    By default only on an isolation unit (`CANOPY_UNIT`, or a box with units.json): a
-    box built before units keeps its files until an operator opts it in with
+    By default only on a machine of several runners (`CANOPY_UNIT`, or a box with
+    units.json): a box built before several runners keeps its files until an operator opts it in with
     `RUNNER_SECRET_FILES=0` — a new runner deploying must never change how a live box
     hands its agents their secrets. `RUNNER_SECRET_FILES=1` keeps the files anywhere.
     And only when the installed canopy CLI can read `CANOPY_AGENT_ENV_FILE` — on an
@@ -3110,7 +3117,7 @@ def secrets_off_disk() -> bool:
         return False
     if choice not in ("0", "false", "no") and not (UNIT or UNITS_FILE.exists()):
         _set_check("secrets", "ok", "agent secrets are in ~/.<agent>/.env files (a box without "
-                   "isolation units; RUNNER_SECRET_FILES=0 moves them off disk)")
+                   "several runners; RUNNER_SECRET_FILES=0 moves them off disk)")
         return False
     v = _canopy_cli_version()
     want = ".".join(map(str, OFF_DISK_MIN_CLI))
@@ -3136,7 +3143,7 @@ _TURN_VALUES_LOCK = threading.Lock()
 #: Fields of /credentials/resolve the runner needs beside the env values, taken
 #: from `canopy cred env --runner --print-json` when it includes them (top-level
 #: keys, same names as the resolve response). canopy 0.2.736 prints only
-#: {agent, source, values}; until it adds these, a unit's own (proofless) resolve
+#: {agent, source, values}; until it adds these, a runner's own (proofless) resolve
 #: stands, which a device-bound or zero-knowledge agent refuses.
 RESOLVE_EXTRAS = ("op_sa_token", "op_vault", "delegated")
 #: slug -> why its env could not be had (the turn's failure note says it).
@@ -3211,7 +3218,7 @@ def _turn_values(slug: str, *, now: float | None = None) -> dict | None:
     note_cred_success(slug)
     # The resolve-time extras, when the CLI hands them over (`RESOLVE_EXTRAS`): it
     # resolved WITH this runner's device proof (and unwrapped a zero-knowledge
-    # vault), which a unit's own resolve cannot attach.
+    # vault), which a runner's own (proofless) resolve cannot attach.
     if isinstance(doc.get("delegated"), dict):
         _AGENT_DELEGATED[slug] = {str(k): str(v) for k, v in doc["delegated"].items() if v}
     extras = {k: str(doc.get(k) or "") for k in RESOLVE_EXTRAS if k in doc and k != "delegated"}
@@ -3566,7 +3573,7 @@ def _agent_env(slug: str | None) -> dict:
     if sf_home is not None:
         env["CHROME_SALES_HOME"] = str(sf_home)
     # The agent's OWN gog home and keyring password (spec §6) — never another
-    # agent's, never a box-wide one. {} on a box without a unit secret.
+    # agent's, never a box-wide one. {} on a box without a runner secret.
     env.update(gog_env(slug))
     if secrets_off_disk():
         # Off disk (spec §4): the values the canopy CLI resolved in memory, and the
@@ -4059,8 +4066,8 @@ def sensitive_data_readiness() -> tuple[bool, str]:
         return False, ("Sensitive-data mode runs only on API keys (a zero-data-retention "
                        "organisation's), and none is staged")
     if not EGRESS_LOCKED:
-        return False, ("Sensitive-data mode needs egress locked, and this unit was started open "
-                       "(root locks a sensitive-data box's units at its next start: "
+        return False, ("Sensitive-data mode needs egress locked, and this runner was started open "
+                       "(root locks a sensitive-data box's runners at its next start: "
                        "systemctl restart canopy-units)")
     status, detail = egress_probe()
     if status != "ok":
@@ -4068,7 +4075,7 @@ def sensitive_data_readiness() -> tuple[bool, str]:
     return True, ""
 
 
-#: This unit's egress setting (`RUNNER_EGRESS`, from box.env via its env file);
+#: This runner's egress setting (`RUNNER_EGRESS`, from box.env via its env file);
 #: root sets up the proxy and rules (`apply_egress`), this process only checks them.
 RUNNER_EGRESS = os.environ.get("RUNNER_EGRESS", "").strip().lower()
 EGRESS_LOCKED = bool(RUNNER_EGRESS)
@@ -7072,7 +7079,7 @@ def bootstrap_agent_fleet() -> None:
         # is what discharges a refresh request. The checks say how it went.
         _BOOTSTRAPPED_AT = time.time()
         # And on disk, for root's `--fleet-ready`: a fleet member is put in service
-        # (or into its warm pool) only once every unit has bootstrapped this boot.
+        # (or into its warm pool) only once every runner has bootstrapped this boot.
         try:
             BOOTSTRAPPED_MARKER.write_text(f"{_BOOTSTRAPPED_AT:.0f}\n")
         except OSError as exc:
@@ -9513,7 +9520,7 @@ def mailboxes_readable() -> list | None:
 
 
 def _gog_config_dir(slug: str = "") -> pathlib.Path:
-    """gog's own config dir on Linux — `slug`'s own home on a box with a unit secret
+    """gog's own config dir on Linux — `slug`'s own home on a box with a runner secret
     (`gog_env`), else $GOG_HOME, else $XDG_CONFIG_HOME/gogcli, else ~/.config/gogcli.
     Mirrors bootstrap_agents.sh `gog_config_dir`."""
     own = gog_env(slug).get("GOG_HOME") if slug else ""
@@ -10875,8 +10882,8 @@ def _confined_env(slug: str | None, cap: dict, extra: dict) -> dict:
            if k in _CONFINED_ENV_KEEP or k.startswith(_CONFINED_ENV_KEEP_PREFIXES)}
     if _capability_uses_mail(cap):
         if _gog_secret() is not None:
-            # A unit (spec §6): ONLY this agent's gog home and password, derived from
-            # the unit secret — never the secret's path, never another agent's pair.
+            # A runner with its own secret (spec §6): ONLY this agent's gog home and
+            # password, derived from the runner secret — never the secret's path, never another agent's pair.
             # A secret that cannot be read gives nothing.
             env.update(gog_env(slug or ""))
         else:
@@ -11931,7 +11938,7 @@ def main() -> None:
     _KEPT_STATE["at"] = time.time()
     sensitive_data_sweep_leftovers()
     if UNIT:
-        # A unit's key was registered by canopy-pair; it has no instance role to enroll.
+        # This runner's key was registered by canopy-pair; it has no instance role to enroll.
         enrollment = threading.Thread(target=lambda: None, daemon=True)
         enrollment.start()
     else:
@@ -12004,16 +12011,16 @@ def _finish_stop(*, drain_seconds: float | None = None) -> None:
 
 
 def _units_cli(argv: list[str]) -> int:
-    """Root's box-wide steps for isolation units (systemd runs them; see runner.cfn.yaml):
+    """Root's box-wide steps for a machine of several runners (systemd runs them; see runner.cfn.yaml):
     `--install-units` (the systemd units, once — cloud-init, or an operator moving a
     live box), `--setup-units` (users, env files, secrets, the IMDS rule; every
-    start) and `--pair-units` (canopy-pair: every unit in one pair-by-role call)."""
+    start) and `--pair-units` (canopy-pair: every runner in one pair-by-role call)."""
     if os.geteuid() != 0:
         print("--install-units / --setup-units / --pair-units run as root", file=sys.stderr)
         return 2
     if argv[0] == "--install-units":
         services = install_units()
-        _log(f"install-units: {', '.join(services) or 'no units'} enabled")
+        _log(f"install-units: {', '.join(services) or 'no runners'} enabled")
         return 0
     if argv[0] == "--setup-units":
         box = read_env_file(BOX_ENV_FILE)
@@ -12029,7 +12036,7 @@ def _units_cli(argv: list[str]) -> int:
         _log("setup-units: egress " + ", ".join(f"{u} {'locked' if on else 'open'}"
                                                 for u, on in sorted(applied.items())))
         _log("setup-units: " + ", ".join(f"{u['id']} ({u['user']}, {u['name']})" for u in units))
-        # A unit added to RunnerUnits later: start its runner, and pair it.
+        # A runner added to RunnerUnits later: start it, and pair it.
         for u in units:
             subprocess.run(["systemctl", "enable", "--now", "--no-block",
                             f"canopy-runner@{u['id']}.service"], capture_output=True)

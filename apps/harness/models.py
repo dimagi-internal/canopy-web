@@ -316,8 +316,7 @@ class Runner(models.Model):
     meta = models.JSONField(default=dict, blank=True)
     # The MACHINE this runner is on: the canonical IAM role ARN its box proved
     # (`services.set_runner_machine`, from an approved aws-iam device key and from
-    # pairing by role). Several runners — one per isolation unit — share a box,
-    # and so share this. "" = not known (a laptop, or a box that never proved a
+    # pairing by role). Several runners can share a machine, and so share this. "" = not known (a laptop, or a box that never proved a
     # role). Read by `routing.unit_refusal` and the topology's grouping; never a
     # grant on its own.
     machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
@@ -331,7 +330,7 @@ class Runner(models.Model):
     #: they reach it (an assignment, an inherited order, a pin). Empty = no
     #: restriction. Set by a person on the runner page, never reported by the box,
     #: and it only ever narrows what the box takes — the person-set counterpart of a
-    #: box's own agent unit (`unit()`); both apply when both are set
+    #: box declaring it runs one agent (`unit()`); both apply when both are set
     #: (`routing.dedicated_agent_slugs`).
     only_agents = models.ManyToManyField("agents.Agent", blank=True, related_name="dedicated_runners")
     #: Directed only: the box takes only what is PUT on it (`directed_only`). A
@@ -382,8 +381,15 @@ class Runner(models.Model):
             setattr(self, self.ONLY_AGENTS_CACHE, cached)
         return cached
 
+    def machine_name(self) -> str:
+        """The machine this runner is on, as a person reads it: the instance role's
+        name without its account or the generated `-RunnerRole-…` suffix — the
+        stack's name (canopy-cloud-runner-2). "" when not known (a laptop)."""
+        role = self.machine_id.rsplit("/", 1)[-1] if self.machine_id else ""
+        return role.split("-RunnerRole", 1)[0]
+
     def unit(self) -> dict:
-        """The isolation unit this runner says it is (`capabilities.unit`):
+        """What this runner says it serves (`capabilities.unit`):
         `{"kind": "tree", "root": <slug>}` or `{"kind": "agent", "slug": <slug>}`;
         {} for a runner that declares none. Box-declared, and only ever a
         restriction on what the box takes (`routing.unit_refusal`)."""
@@ -2257,8 +2263,8 @@ class RunnerInvitation(models.Model):
     #: The box's zero-knowledge ECDH public key (the `<stack>-ecdh` KMS key), when
     #: `up.sh` could read it: one approval covers both. {} when none.
     ecdh_public_jwk = models.JSONField(default=dict, blank=True)
-    #: The isolation units the box will pair as, one runner each
-    #: (`docs/architecture/runners.md § Isolation units`): `[{name, workspace, kind, slug,
+    #: The runners the machine will pair as
+    #: (`docs/architecture/runners.md § Several runners on one machine`): `[{name, workspace, kind, slug,
     #: ecdh_public_jwk, runner_id}]`. `kind` is "tree" or "agent" (`slug` names the
     #: agent). Empty for a single-runner invitation, which pairs as `name` in
     #: `workspace` by its instance role (`units_of`). `runner_id` is filled in when

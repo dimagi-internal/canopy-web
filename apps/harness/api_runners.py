@@ -1187,7 +1187,7 @@ def set_runner_only_agents(request: HttpRequest, runner_id: uuid.UUID, payload: 
             summary="Lock this runner's egress to an allowlist of hosts")
 @gate("runner-admin", setting=True, step_up=True)
 def set_runner_egress(request: HttpRequest, runner_id: uuid.UUID, payload: RunnerEgressIn):
-    """Set the runner's egress lock: `locked` (its units reach the network only
+    """Set the runner's egress lock: `locked` (its runners reach the network only
     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
     hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
     applies it within a minute, on top of the box's own setting, which it never
@@ -1426,9 +1426,9 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
     for key in reported:
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]
-    # The isolation unit is SERVER-OWNED once it is set (`unit_pairing` records it
+    # What a runner serves (`capabilities.unit`) is SERVER-OWNED once it is set (`unit_pairing` records it
     # from the invitation a person approved): a write can neither replace nor clear
-    # it, or an agent unit could lift its own restriction. A box-sent value is
+    # it, or an agent's runner could lift its own restriction. A box-sent value is
     # ignored; a runner with none may still declare one (a self-restriction).
     if runner.capabilities.get("unit"):
         caps["unit"] = runner.capabilities["unit"]

@@ -41,15 +41,14 @@ def code_current(runner) -> bool | None:
 
 
 def machine_label(runner) -> str:
-    """The machine a runner is on, as the topology groups it: the instance role's
-    NAME (`Runner.machine_id` without its account), "" when not known. Every unit
-    on one box shares it."""
-    return runner.machine_id.rsplit("/", 1)[-1] if runner.machine_id else ""
+    """The machine a runner is on, as the topology groups it (`Runner.machine_name`).
+    Every runner on one machine shares it."""
+    return runner.machine_name()
 
 
 def unit_label(runner) -> str:
-    """`tree:<root>` / `agent:<slug>` for a runner that declares its isolation
-    unit (`Runner.unit`), "" otherwise."""
+    """`tree:<root>` / `agent:<slug>` for a runner that declares what it serves
+    (`Runner.unit`), "" otherwise."""
     unit = runner.unit()
     if unit.get("kind") == "agent":
         return f"agent:{unit.get('slug') or ''}"
@@ -216,7 +215,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "machine": machine_label(r),
             "unit": unit_label(r),
         })
-    # A box's units sit together, as one group: rows on one machine share a sort
+    # A machine's runners sit together, as one group: rows on one machine share a sort
     # key (the machine), and a runner on no known machine is a group of its own.
     runner_rows.sort(key=lambda row: (not row["in_tree"], (row["machine"] or row["name"]).lower(),
                                       row["name"].lower()))

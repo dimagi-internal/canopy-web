@@ -147,7 +147,7 @@ export async function setRunnerDirected(runnerId: string, directed: boolean): Pr
   return toRunner(unwrap(res, 'setRunnerDirected'))
 }
 
-// Lock a runner's egress: its units reach only canopy-web, the model, GitHub and
+// Lock a runner's egress: its runners reach only canopy-web, the model, GitHub and
 // `allow` (`.example.com` = every subdomain). A sensitive-data box is always locked; adding a
 // host to one asks for a passkey (the API client answers `step_up_required`).
 export async function setRunnerEgress(

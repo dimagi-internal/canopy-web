@@ -27,14 +27,20 @@ type Props = {
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
+/** What a cloud runner serves, from the server's `tree:<root>` / `agent:<slug>`. */
+function servesText(unit: string): string {
+  const [kind, name] = unit.split(':', 2)
+  return kind === 'agent' ? `only agent ${name}` : `serves ${name}`
+}
+
 export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Props): JSX.Element {
   const now = new Date()
   const [own, setOwn] = useState<string | null>(null)
   const open = openProp === undefined ? own : openProp
   const toggle = (id: string) => (onOpen ?? setOwn)(open === id ? null : id)
   if (runners.length === 0) return <p className="py-3 text-[12px] text-muted-foreground">No runner lives in or serves this tree.</p>
-  // A box running several isolation units lists them together (the server
-  // orders them so); each row says which machine and which unit it is.
+  // A machine running several runners lists them together (the server orders
+  // them so); each row says what it serves and, when it shares one, which machine.
   const perMachine = new Map<string, number>()
   for (const r of runners) if (r.machine) perMachine.set(r.machine, (perMachine.get(r.machine) ?? 0) + 1)
   return (
@@ -68,7 +74,7 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                       directed only
                     </span>
                   )}
-                  {r.unit && <span className="ml-1 text-muted-foreground" data-testid="runner-unit">· unit {r.unit}</span>}
+                  {r.unit && <span className="ml-1 text-muted-foreground" data-testid="runner-unit">· {servesText(r.unit)}</span>}
                   {r.machine && (perMachine.get(r.machine) ?? 0) > 1 && (
                     <span className="ml-1 text-muted-foreground" data-testid="runner-machine">· on {r.machine}</span>
                   )}

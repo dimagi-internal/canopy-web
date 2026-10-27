@@ -63,7 +63,7 @@ class Box:
         self.needrestart_conf = tmp_path / "etc-needrestart" / "conf.d" / "50-canopy-runner.conf"
         (tmp_path / "etc-tmpfiles").mkdir()
         self.tmpfiles_conf = tmp_path / "etc-tmpfiles" / "tmp.conf"
-        # The pre-units user's home, the volume's fill and its processes: stubbed,
+        # The pre-several-runners user's home, the volume's fill and its processes: stubbed,
         # so a test never measures, or deletes from, the machine it runs on.
         self.legacy_home = tmp_path / "legacy-home"
         self.legacy_home.mkdir()
@@ -545,11 +545,11 @@ def test_the_credentials_refresh_mints_a_token_when_the_daemon_shared_none(box):
     assert "CANOPY_TOKEN=crt_box" in seen.read_text().splitlines()
 
 
-# --- a box of isolation units (spec 2026-10-19-runner-isolation-units §1) -----
+# --- a machine of several runners (spec 2026-10-19-runner-isolation-units §1) --
 #
-# One install for every unit, deferred while ANY unit has a turn in flight, every
-# `canopy-runner@*` restarted (and the KMS broker), and each unit's credentials
-# refreshed AS that unit.
+# One install for every runner, deferred while ANY runner has a turn in flight, every
+# `canopy-runner@*` restarted (and the KMS broker), and each runner's credentials
+# refreshed AS that runner.
 
 class UnitsBox(Box):
     UNITS = ("dimagi", "agent-eva")
@@ -603,14 +603,14 @@ def units_box(tmp_path):
 
 def test_units_one_install_restarts_every_unit_and_the_broker(units_box):
     units_box.stamp("0" * 40)
-    sha = units_box.seed_repo("#!/usr/bin/env python3\nprint('shipped to every unit')\n")
+    sha = units_box.seed_repo("#!/usr/bin/env python3\nprint('shipped to every runner')\n")
     units_box.expect(sha)
     out = units_box.run()
     assert out.returncode == 0, out.stderr
-    assert "shipped to every unit" in units_box.installed
+    assert "shipped to every runner" in units_box.installed
     restarted = units_box.restart_log.read_text()
     assert "canopy-runner@*.service" in restarted and "canopy-kms-broker.service" in restarted
-    # It read the fleet list with a UNIT's own token, never a PAT.
+    # It read the fleet list with a RUNNER's own token, never a PAT.
     assert "Bearer crt_dimagi" in units_box.curl_log.read_text()
 
 
@@ -622,7 +622,7 @@ def test_units_any_unit_in_flight_defers_the_install(units_box):
     assert units_box.run("--check").stdout.startswith("busy")
     assert units_box.run().returncode == 0
     assert not units_box.restarted
-    # A unit whose marker went stale is not busy (it is the one to rescue).
+    # A runner whose marker went stale is not busy (it is the one to rescue).
     units_box.busy_unit("agent-eva", 3, age_seconds=600)
     assert units_box.run("--check").stdout.startswith("stale")
 
@@ -638,7 +638,7 @@ def test_units_each_refreshes_its_credentials_as_itself(units_box):
         assert line.startswith(f"cu-{uid} -- env -i CANOPY_UNIT={uid}")
         # The token never rides the command line (visible in /proc/<pid>/cmdline)…
         assert "crt_" not in line
-        # …the unit's own process read it from its own file.
+        # …the runner's own process read it from its own file.
         assert (units_box.home_of(uid) / "refreshed-with").read_text().strip() == \
             f"crt_{uid} --credentials-only"
 
@@ -649,7 +649,7 @@ def test_units_each_refreshes_its_credentials_as_itself(units_box):
 # turn on cloud-ec2-2 (failure investigation 7) and killed it. This updater
 # refuses to restart a busy runner; needrestart does not check, so it is told to
 # skip every canopy unit. Boxes already up never re-run cloud-init, so the
-# updater is what lays the rule down — on every tick, legacy box and units alike.
+# updater is what lays the rule down — on every tick, legacy box and several-runner box alike.
 NEEDRESTART_RULE = "$nrconf{override_rc}->{qr(^canopy-)} = 0;"
 
 
@@ -677,7 +677,7 @@ def test_the_rule_matches_the_runner_the_units_and_the_broker():
 
 def test_an_older_narrower_rule_is_replaced(box):
     # cloud-ec2-2 got `qr(^canopy-runner)` by hand on 2026-10-16: it misses the
-    # broker, whose restart takes every unit's KMS calls down with it.
+    # broker, whose restart takes every runner's KMS calls down with it.
     box.needrestart_conf.write_text("$nrconf{override_rc}->{qr(^canopy-runner)} = 0;\n")
     box.run()
     assert NEEDRESTART_RULE in box.needrestart_conf.read_text()
@@ -718,10 +718,10 @@ def test_new_boxes_get_the_same_rule_from_the_template():
     assert NEEDRESTART_RULE in SCRIPT.read_text()
 
 
-# --- what no unit cleans ----------------------------------------------------
-# Each unit sweeps only its own files while its `disk` check measures the whole
+# --- what no runner cleans --------------------------------------------------
+# Each runner sweeps only its own files while its `disk` check measures the whole
 # volume. On cloud-ec2-2 (2026-10-26) it warned at 89% while every sweep freed
-# 0 MB: 35 GB in the pre-units user's home, 12 GB of /tmp owned by users no unit
+# 0 MB: 35 GB in the pre-several-runners user's home, 12 GB of /tmp owned by users no runner
 # may delete. Root's tick is the one place that sees all of it.
 TMP_RULE = "D /tmp 1777 root root 3d"
 

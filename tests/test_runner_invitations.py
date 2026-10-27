@@ -392,7 +392,7 @@ def test_replaced_instance_reattaches_without_an_invitation(org):
 @pytest.mark.usefixtures("sts")
 def test_pairing_and_reattaching_record_the_machine(org):
     """The verified role is the runner's machine (`Runner.machine_id`), the key
-    the isolation-unit rules group a box's runners by."""
+    the rules for several runners on one machine group them by."""
     canonical = aws_iam_proof.canonical_role_arn(ROLE)
     _approved(org)
     rid = _pair().json()["runner_id"]

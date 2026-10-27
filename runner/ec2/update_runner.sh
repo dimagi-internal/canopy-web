@@ -86,13 +86,13 @@ SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner
 # NOT busy: it is the case this script exists to rescue, so it must never block.
 BUSY_MAX_AGE=120
 
-# --- isolation units (spec 2026-10-19-runner-isolation-units §1) -------------
-# A box of units (`cloud_runner.py --setup-units` wrote units.json) runs one
-# `canopy-runner@<unit>` per unit, each its own user. This script then runs as ROOT
-# (canopy-runner-update.service, installed by `cloud_runner.py --install-units`):
-# ONE install for every unit, deferred while ANY unit has a turn in flight, and a
+# --- several runners on one machine (spec 2026-10-19-runner-isolation-units §1) --
+# A machine of several runners (`cloud_runner.py --setup-units` wrote units.json)
+# runs one `canopy-runner@<id>` per runner, each its own user. This script then runs
+# as ROOT (canopy-runner-update.service, installed by `cloud_runner.py --install-units`):
+# ONE install for every runner, deferred while ANY runner has a turn in flight, and a
 # restart of every `canopy-runner@*`. The runner bytes in /opt/canopy-runner and
-# the clone in /opt/canopy-web are root's there, so no unit can rewrite the code
+# the clone in /opt/canopy-web are root's there, so no runner can rewrite the code
 # the others run.
 UNITS_FILE="${UNITS_FILE:-/etc/canopy-runner/units.json}"
 UNITS_MODE=0
@@ -102,7 +102,7 @@ if [ -r "$UNITS_FILE" ]; then
   SERVICE="${SERVICE_UNITS:-canopy-runner@*.service canopy-kms-broker.service}"
   [ -n "$RESTART_GIVEN" ] || RESTART_CMD="systemctl restart"
 fi
-# `unit_rows` -> "<id> <user> <home>" per unit, from units.json.
+# `unit_rows` -> "<id> <user> <home>" per runner, from units.json.
 unit_rows() {
   python3 -c '
 import json, sys
@@ -116,8 +116,8 @@ for u in doc.get("units") or []:
 ' "$UNITS_FILE" 2>/dev/null
 }
 if [ "$UNITS_MODE" = "1" ]; then
-  # The runner id (any unit's: they share an owner, so the runner list it reads
-  # names every unit) and a token to read it with.
+  # The runner id (any runner's: they share an owner, so the runner list it reads
+  # names every runner on the box) and a token to read it with.
   read -r _FIRST_ID _FIRST_USER FIRST_HOME <<<"$(unit_rows | head -1)"
   STATE_FILE="${FIRST_HOME:-/nonexistent}/.canopy-cloud-runner.json"
   RUNNER_TOKEN_FILE="${FIRST_HOME:-/nonexistent}/.canopy-runner/runner-token.json"
@@ -173,7 +173,7 @@ in_flight() {  # echoes a count, or "" when no marker can be trusted
     in_flight_of "$BUSY"
     return
   fi
-  # A box of units is busy while ANY unit is: the restart reaches them all.
+  # A box of several runners is busy while ANY of them is: the restart reaches them all.
   local total="" id user home n
   while read -r id user home; do
     [ -n "$home" ] || continue
@@ -245,7 +245,7 @@ except Exception as exc:
 '
 minted_runner_token() {  # <base> <runner id>
   [ "${CANOPY_DEVICE_KEY:-1}" = "0" ] && return 0
-  # A unit's key is in the unit's home, not root's: only its shared token is read.
+  # A runner's key is in the runner's home, not root's: only its shared token is read.
   [ "$UNITS_MODE" = "1" ] && return 0
   [ -n "$1" ] && [ -n "$2" ] && [ -r "$TARGET" ] || return 0
   python3 -c "$MINT_HELPER" "$TARGET" "$1" "$2" 2>/dev/null | tail -1
@@ -358,8 +358,8 @@ PY
   log "installed ${sha:-<unknown>} ($ref) -> $TARGET; restarting $SERVICE"
   # The only privileged step, and the only reason this box grants the service user
   # any sudo at all — scoped to this exact command by a sudoers drop-in. On a box of
-  # units this runs as root and restarts every unit (and the broker) at once.
-  # A box of units re-runs root's setup first (users, env files, the IMDS rule, the
+  # several runners this runs as root and restarts every runner (and the broker) at once.
+  # Such a box re-runs root's setup first (users, env files, the IMDS rule, the
   # egress lock and its sync timer), so what the new code sets up is in place before
   # its runners start. Its runners Require it, so they restart with it.
   if [ "$UNITS_MODE" = "1" ]; then
@@ -369,7 +369,7 @@ PY
   $RESTART_CMD $SERVICE
 }
 
-install_broker_from_git() {  # <ref> — the units' KMS broker, beside the runner it serves
+install_broker_from_git() {  # <ref> — the runners' KMS broker, beside the runner it serves
   [ "$UNITS_MODE" = "1" ] || return 0
   local tmp="$RUNNER_HOME/kms_broker.py.new"
   if git -C "$REPO_DIR" show "$1:runner/ec2/kms_broker.py" > "$tmp" 2>/dev/null \
@@ -460,15 +460,15 @@ PY
 # 25 minutes into an ACE turn (failure investigation 7, a libsystemd0 update) and
 # the turn died with the unit's cgroup. This updater refuses to restart a busy
 # runner; needrestart does not check, so it is told to skip every canopy unit —
-# the runner (`canopy-runner`, `canopy-runner@<unit>`) and what a box of units
-# runs beside it (`canopy-units`, `canopy-kms-broker`, `canopy-pair`), any of
+# the runner (`canopy-runner`, `canopy-runner@<id>`) and what a box of several
+# runners runs beside it (`canopy-units`, `canopy-kms-broker`, `canopy-pair`), any of
 # which takes the turns down with it. A new library is picked up at the next
 # deliberate restart (an install above, or a reboot).
 #
 # The template bakes this file into new boxes; cloud-init never re-runs on boxes
 # already up, so every tick lays it down too, replacing a rule that differs (the
 # narrower `^canopy-runner` one written by hand on 2026-10-16). As the service
-# user it goes through `sudo -n`; on a box of units this already runs as root. It
+# user it goes through `sudo -n`; on a box of several runners this already runs as root. It
 # is skipped when the box has no needrestart and never fails the tick.
 NEEDRESTART_CONF="${NEEDRESTART_CONF:-/etc/needrestart/conf.d/50-canopy-runner.conf}"
 if [ "$(id -u)" = "0" ]; then PRIV_CMD="${PRIV_CMD-}"; else PRIV_CMD="${PRIV_CMD-sudo -n}"; fi
@@ -488,13 +488,13 @@ ensure_needrestart_exclusion() {
   rm -f "$tmp"
 }
 
-# --- what no unit cleans ----------------------------------------------------
+# --- what no runner cleans --------------------------------------------------
 #
-# Each unit's runner sweeps only its own files (cloud_runner.py maybe_sweep_disk),
+# Each runner sweeps only its own files (cloud_runner.py maybe_sweep_disk),
 # while its `disk` check measures the whole volume. On cloud-ec2-2 (2026-10-26)
 # that check warned at 89% while every sweep freed 0 MB: 35 GB sat in the home of
-# the user the box ran as before it had units, and 12 GB of /tmp belonged to users
-# no unit may delete. Root's tick is the one place that can see all of it.
+# the user the box ran as before it had several runners, and 12 GB of /tmp belonged
+# to users no runner may delete. Root's tick is the one place that can see all of it.
 
 # /tmp: Ubuntu's own rule (/usr/lib/tmpfiles.d/tmp.conf, `D /tmp ... -`) empties
 # /tmp only at boot, and a runner box is not rebooted. A file of the same name in
@@ -518,10 +518,10 @@ ensure_tmp_age_rule() {
   rm -f "$tmp"
 }
 
-# The user a box ran as before it had units keeps a home full of caches nothing
-# reads any more (on cloud-ec2-2: plugin versions at 1.8 GB each, uv's cache).
+# The user a box ran as before it had several runners keeps a home full of caches
+# nothing reads any more (on cloud-ec2-2: plugin versions at 1.8 GB each, uv's cache).
 # Only regenerable caches go, never work, keys or config, and only on a box of
-# units, when that user is not one of them and runs nothing.
+# several runners, when that user is not one of theirs and runs nothing.
 LEGACY_USER="${LEGACY_USER:-ubuntu}"
 LEGACY_CACHES=(".claude/plugins/cache" ".cache/uv" ".cache/ms-playwright" ".npm/_cacache")
 retire_legacy_caches() {
@@ -529,7 +529,7 @@ retire_legacy_caches() {
   local home="${LEGACY_HOME:-}" rel size
   [ -n "$home" ] || home="$(getent passwd "$LEGACY_USER" 2>/dev/null | cut -d: -f6)"
   [ -n "$home" ] && [ -d "$home" ] || return 0
-  # A unit's own user is never legacy.
+  # A runner's own user is never legacy.
   unit_rows | awk '{print $2}' | grep -qxF "$LEGACY_USER" && return 0
   # Someone (or something) is working as it: leave its caches alone.
   pgrep -u "$LEGACY_USER" >/dev/null 2>&1 && return 0
@@ -537,11 +537,11 @@ retire_legacy_caches() {
     [ -d "$home/$rel" ] && [ ! -L "$home/$rel" ] || continue
     size="$(du -sh "$home/$rel" 2>/dev/null | cut -f1)"
     rm -rf "${home:?}/$rel" \
-      && log "removed $home/$rel (${size:-?}): $LEGACY_USER runs nothing on this box of units"
+      && log "removed $home/$rel (${size:-?}): $LEGACY_USER runs nothing on this box of runners"
   done
 }
 
-# Where the space is, for the runners' `disk` check: they run as their units and
+# Where the space is, for the runners' `disk` check: they run as their own users and
 # cannot read the other homes, so root measures them and leaves the answer here.
 # Only when the volume is at warn — du over every home is not free.
 DISK_USAGE_FILE="${DISK_USAGE_FILE:-$RUNNER_HOME/disk-usage.json}"
@@ -652,9 +652,9 @@ BOOT_DIR="${RUNNER_SRC_DIR:-$RUNNER_HOME/src}"
 # prepare --runner` then writes no env files in this pass either (spec §4).
 TURN_ENV_ROOT_MARKER="${TURN_ENV_ROOT_MARKER:-$RUNNER_HOME/turn-env-root}"
 AS_UNIT="${AS_UNIT:-runuser -u}"
-# Run AS a unit: its own token (shared by its daemon, 0600 in its home) and tmpfs
+# Run AS a runner's user: its own token (shared by its daemon, 0600 in its home) and tmpfs
 # root, read in its own process; then its bootstrap's credentials pass.
-# shellcheck disable=SC2016 # expanded by the unit's shell, not this one
+# shellcheck disable=SC2016 # expanded by the runner user's shell, not this one
 UNIT_REFRESH='
 t="$(python3 -c "
 import json, sys, time
@@ -669,7 +669,7 @@ r="$(tr -d "[:space:]" < "$HOME/.canopy-runner/turn-env-root" 2>/dev/null)"
 [ -n "$r" ] && export CANOPY_TURN_ENV_ROOT="$r"
 exec bash "$0" --credentials-only'
 if [ "$UNITS_MODE" = "1" ]; then
-  # Each unit refreshes as ITSELF — its user, its env file, its own runner token —
+  # Each runner refreshes as ITSELF — its user, its env file, its own runner token —
   # from its own runner clone. Root never runs an agent's prepare.
   if [ "$V" = "busy" ]; then
     log "busy — skipping the credentials refresh too."
@@ -677,15 +677,15 @@ if [ "$UNITS_MODE" = "1" ]; then
     while read -r id user home; do
       [ -n "$home" ] || continue
       script="$home/.canopy-runner/src/runner/ec2/bootstrap_agents.sh"
-      [ -x "$script" ] || { log "unit $id: no runner clone yet; skipping its credentials refresh"; continue; }
-      log "unit $id: refreshing credentials"
-      # The unit reads its OWN runner token and tmpfs root, inside its own process:
+      [ -x "$script" ] || { log "runner $id: no runner clone yet; skipping its credentials refresh"; continue; }
+      log "runner $id: refreshing credentials"
+      # The runner reads its OWN runner token and tmpfs root, inside its own process:
       # a token passed here would sit in /proc/<pid>/cmdline for any local process
       # to read. The env file holds no secret, so its words on the command line are safe.
-      # shellcheck disable=SC2046,SC2016 # the unit's env file, one KEY=value per word; $HOME is the unit's
+      # shellcheck disable=SC2046,SC2016 # the runner's env file, one KEY=value per word; $HOME is the runner user's
       $AS_UNIT "$user" -- env -i $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${UNIT_ETC:-/etc/canopy-runner}/$id.env" 2>/dev/null) \
         bash -c "$UNIT_REFRESH" "$script" \
-        || log "unit $id: credentials refresh returned non-zero — the unit is otherwise untouched."
+        || log "runner $id: credentials refresh returned non-zero — the runner is otherwise untouched."
     done <<<"$(unit_rows)"
   fi
   exit 0

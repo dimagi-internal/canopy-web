@@ -306,7 +306,7 @@ def test_creates_invitation_and_prints_approve_url(tmp_path, canopy):
 
 
 def test_a_new_boxs_invitation_lists_its_one_unit(tmp_path, canopy):
-    # A new box runs as isolation units (one: tree:<workspace>, named the box) and
+    # A new box runs its runners the --install-units way (one: tree:<workspace>, named the box) and
     # pairs listing it; an invitation without it is refused at every pairing call
     # however it is approved (found standing up the first sensitive-data box, 2026-10-22).
     _fake(tmp_path)
@@ -445,7 +445,7 @@ def test_up_workspace_names_where_the_box_pairs(tmp_path, canopy):
     assert "directed" not in body
 
 
-# ---- isolation units (spec 2026-10-19-runner-isolation-units, plan Task 6.6) -----
+# ---- several runners on one machine (spec 2026-10-19-runner-isolation-units, plan Task 6.6) --
 
 def test_up_units_invites_every_unit_in_one_invitation(tmp_path, canopy):
     state = _fake(tmp_path)
@@ -456,7 +456,7 @@ def test_up_units_invites_every_unit_in_one_invitation(tmp_path, canopy):
     ecdh = next(c for c in _calls(state) if "cloudformation deploy" in c and "-ecdh" in c)
     for p in ("Unit1=connect", "Unit2=agent-eva", "Unit3=", "Unit4="):
         assert f" {p}" in ecdh + " ", (p, ecdh)
-    # Each extra unit's key is read by the alias the -ecdh stack gives it.
+    # Each extra runner's key is read by the alias the -ecdh stack gives it.
     assert any("get-public-key --key-id alias/canopy-runner-ecdh/canopy-cloud-runner-test-RunnerRole-X/agent-eva"
                in c for c in _calls(state))
     [(_, body)] = [(p, b) for p, b in canopy.handler.posted if p == "/api/harness/runner-invitations/"]
@@ -465,7 +465,7 @@ def test_up_units_invites_every_unit_in_one_invitation(tmp_path, canopy):
         ("cloud-ec2-test", "dimagi", "tree", ""), ("cloud-ec2-test-connect", "connect", "tree", ""),
         ("cloud-ec2-test-agent-eva", "dimagi", "agent", "eva")]
     assert all("ecdh_public_jwk" in u for u in body["units"])
-    # Every unit workspace passed the invitation's gates before AWS was touched.
+    # Every runner's workspace passed the invitation's gates before AWS was touched.
     assert {"dimagi", "connect"} <= set(canopy.handler.checked)
 
 
@@ -478,7 +478,7 @@ def test_up_units_refuses_a_workspace_you_cannot_run_work_in(tmp_path, canopy):
 
 
 def test_up_units_in_place_leaves_the_runner_stack_alone(tmp_path, canopy):
-    """Moving a live box to units: the KMS keys and the invitation, never an
+    """Moving a live box to several runners: the KMS keys and the invitation, never an
     instance stop/start or replacement — the box moves itself (--install-units)."""
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=INSTANCE_CHANGE, stack_workspace="connect")
     canopy.handler.runners = [{"kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
@@ -494,7 +494,7 @@ def test_up_units_in_place_leaves_the_runner_stack_alone(tmp_path, canopy):
 
 
 
-# ---- unit key slots are pinned (review: HIGH for units) ------------------------------
+# ---- runner key slots are pinned (review: HIGH for several runners) ------------------
 
 def _ecdh_deploy(state):
     return next(c for c in _calls(state) if "cloudformation deploy" in c and "-ecdh" in c) + " "
@@ -502,7 +502,7 @@ def _ecdh_deploy(state):
 
 def test_a_plain_rerun_keeps_every_unit_key_slot(tmp_path, canopy):
     """`./up.sh --name cloud-ec2-2` after a move must not blank Unit1..4: that would
-    remove the units' KMS keys and break every wrap to them."""
+    remove the runners' KMS keys and break every wrap to them."""
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
                   ecdh_slots="Unit1=marsh Unit2=agent-eva Unit3= Unit4=")
     canopy.handler.runners = [{"kind": "cloud", "name": "cloud-ec2-test", "status": "online"}]
@@ -563,11 +563,11 @@ def test_in_place_always_invites_because_adopting_needs_approval(tmp_path, canop
 
 def test_a_failed_slot_read_aborts_before_anything_is_deployed(tmp_path, canopy):
     """A transient AWS error must never read as "no slots" — that would blank
-    Unit1..4 and remove the units' key aliases on the next -ecdh deploy."""
+    Unit1..4 and remove the runners' key aliases on the next -ecdh deploy."""
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
                   ecdh_slots="Unit1=marsh", ecdh_read="throttled")
     res = _up(tmp_path, canopy, "--name", "cloud-ec2-test")
-    assert res.returncode != 0 and "unit key slots" in res.stderr and "Throttling" in res.stderr
+    assert res.returncode != 0 and "runner key slots" in res.stderr and "Throttling" in res.stderr
     assert not any("cloudformation deploy" in c for c in _calls(state))
 
 

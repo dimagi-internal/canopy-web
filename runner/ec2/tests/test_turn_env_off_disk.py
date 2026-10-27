@@ -25,7 +25,7 @@ TID = "0b6c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3"
 @pytest.fixture
 def off_disk(cloud_runner, monkeypatch, tmp_path):
     """A runner whose canopy CLI is new enough, with a tmpfs root under tmp_path."""
-    monkeypatch.setenv("RUNNER_SECRET_FILES", "0")   # a box without units opts in
+    monkeypatch.setenv("RUNNER_SECRET_FILES", "0")   # an older single-runner box opts in
     root = tmp_path / "run" / str(os.getuid())
     root.parent.mkdir(parents=True)
     monkeypatch.setenv("CANOPY_TURN_ENV_ROOT", str(root))
@@ -73,8 +73,9 @@ def test_the_escape_hatch_keeps_files(off_disk, monkeypatch):
 
 
 def test_a_box_without_units_keeps_its_files_unless_it_opts_in(off_disk, monkeypatch, tmp_path):
-    """Deploy safety: new runner code on the live box (no units) must not move its
-    agents' secrets on its own. Only a unit is off disk by default."""
+    """Deploy safety: new runner code on the live box (one runner, set up the old way)
+    must not move its agents' secrets on its own. Only a runner set up by
+    --install-units is off disk by default."""
     mod, _ = off_disk
     monkeypatch.delenv("RUNNER_SECRET_FILES", raising=False)
     monkeypatch.setattr(mod, "UNITS_FILE", tmp_path / "no-units.json")
@@ -84,7 +85,7 @@ def test_a_box_without_units_keeps_its_files_unless_it_opts_in(off_disk, monkeyp
     monkeypatch.setenv("RUNNER_SECRET_FILES", "0")       # the operator's opt-in
     assert mod.secrets_off_disk() is True
     monkeypatch.delenv("RUNNER_SECRET_FILES")
-    monkeypatch.setattr(mod, "UNIT", "dimagi")           # a unit: on by default
+    monkeypatch.setattr(mod, "UNIT", "dimagi")           # a runner set up by --install-units: on by default
     assert mod.secrets_off_disk() is True
     monkeypatch.setattr(mod, "UNIT", "")
     (tmp_path / "units.json").write_text("{}")
@@ -208,7 +209,7 @@ def test_values_are_resolved_in_memory_and_cached_for_the_ttl(off_disk, monkeypa
 
 def test_resolve_extras_from_the_cli_are_used_instead_of_a_proofless_resolve(off_disk, monkeypatch):
     """When `--print-json` carries the resolve's op key / vault (it
-    resolved with the unit's proof), the runner uses them and makes no resolve of
+    resolved with the runner's proof), the runner uses them and makes no resolve of
     its own; without them it keeps its own resolve."""
     mod, _ = off_disk
     doc = {"agent": "eva", "source": "canopy-web", "values": {"X": "1"},

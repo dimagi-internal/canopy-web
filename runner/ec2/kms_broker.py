@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""canopy-kms-broker: each isolation unit's zero-knowledge ECDH key, for that unit only.
+"""canopy-kms-broker: each runner's zero-knowledge ECDH key, for that runner only.
 
-Spec docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md §2. A box runs
-several isolation units, each its own Unix user. A unit's ECDH key (the key an agent's
-vault key is wrapped to) lives in AWS KMS, one key per unit in the `<stack>-ecdh`
-stack, so wraps survive an instance replacement. But a unit cannot call KMS: IMDS is
+Spec docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md §2. A machine
+runs several runners, each its own Unix user. A runner's ECDH key (the key an agent's
+vault key is wrapped to) lives in AWS KMS, one key per runner in the `<stack>-ecdh`
+stack, so wraps survive an instance replacement. But a runner cannot call KMS: IMDS is
 root-only (an iptables rule), so only root holds the instance role's credentials.
 
-This root-owned daemon does the derivation for a unit, and only with THAT unit's key:
+This root-owned daemon does the derivation for a runner, and only with THAT runner's key:
 
 * a Unix socket at `/run/canopy-kms/sock`;
 * the caller's uid from the kernel (`SO_PEERCRED`), never from the request, mapped to
@@ -157,7 +157,7 @@ def sigv4_headers(creds: dict, *, region: str, service: str, host: str, body: st
 
 
 class Kms:
-    """The two KMS calls a unit needs, with the instance role."""
+    """The two KMS calls a runner needs, with the instance role."""
 
     def __init__(self, creds: Credentials, opener=urllib.request.urlopen):
         self.creds = creds
@@ -210,7 +210,7 @@ class Kms:
 # ── who is asking, and what they may have ───────────────────────────────────
 
 def load_keys(path: str = UNITS_FILE) -> dict[int, str]:
-    """{uid: KMS key id} from units.json — only units with both."""
+    """{uid: KMS key id} from units.json — only runners with both."""
     try:
         doc = json.loads(open(path).read())
     except (OSError, ValueError):
@@ -234,7 +234,7 @@ def answer(line: bytes, uid: int, keys: dict[int, str], kms) -> dict:
     """The reply to ONE request line from `uid`. Never raises."""
     key = keys.get(uid)
     if key is None:
-        return {"error": f"uid {uid} is not an isolation unit on this box"}
+        return {"error": f"uid {uid} is not a runner on this machine"}
     try:
         req = json.loads(line.decode() or "{}")
     except (ValueError, UnicodeDecodeError):
@@ -259,7 +259,7 @@ class Broker(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
         self.kms, self.keys_loader, self.uid_of = kms, keys_loader, uid_of
         self.deadline = CONNECTION_DEADLINE_SECONDS if deadline is None else deadline
         # Any local process may connect: a bound on threads, so a flood of idle
-        # connections cannot exhaust root's broker for every unit.
+        # connections cannot exhaust root's broker for every runner.
         self._slots = threading.BoundedSemaphore(max_connections)
         super().__init__(path, _Handler)
 
@@ -332,7 +332,7 @@ class _Handler(socketserver.BaseRequestHandler):
         if line is None:
             reply = {"error": "request too long"}
         else:
-            # units.json is re-read per request: a unit added by --setup-units is
+            # units.json is re-read per request: a runner added by --setup-units is
             # served without restarting the broker.
             reply = answer(line.strip(), uid, server.keys_loader(), server.kms)
         if "error" in reply:
@@ -352,9 +352,9 @@ def serve(path: str = SOCKET_PATH) -> None:
         pass
     kms = Kms(Credentials())
     server = Broker(path, kms)
-    # Any local process may CONNECT; only a unit's uid is ever answered with a key.
+    # Any local process may CONNECT; only a runner's uid is ever answered with a key.
     os.chmod(path, 0o666)
-    _log(f"listening on {path} for {len(load_keys())} unit(s)")
+    _log(f"listening on {path} for {len(load_keys())} runner(s)")
     server.serve_forever()
 
 

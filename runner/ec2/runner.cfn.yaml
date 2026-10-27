@@ -2,8 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Canopy cloud runner (Wave 4 SP2b) — an ephemeral EC2 instance that pairs a
   kind=cloud runner with canopy-web, claims harness Turns in its capabilities, and
-  runs `claude -p` on each — as one or more isolation units (RunnerUnits), each its
-  own Unix user, runner and device key, with IMDS closed to all but root. The box
+  runs `claude -p` on each — as one or more runners (RunnerUnits), each its own
+  Unix user, runner and device key, with IMDS closed to all but root. The box
   holds no PAT, no Claude token and no box-wide keyring password. cloud_runner.py's
   first-boot seed is delivered via Secrets Manager (up.sh publishes it there as a
   manifest + parts); single source of truth is runner/ec2/cloud_runner.py.
@@ -47,7 +47,7 @@ Parameters:
     AllowedValues: ['', 'locked']
     Default: ''
     Description: >
-      `locked`: the box's isolation units reach the network only through a local
+      `locked`: the box's runners reach the network only through a local
       proxy that admits an allowlist of hostnames on 443 (canopy-web, the model,
       GitHub, plus RunnerEgressAllow); root's iptables chain rejects the rest,
       DNS included. Any box may lock its egress; sensitive-data mode requires it.
@@ -115,11 +115,11 @@ Parameters:
     Default: ''
     AllowedPattern: '^((tree|agent):[a-z0-9][a-z0-9@-]*)?(,(tree|agent):[a-z0-9][a-z0-9@-]*)*$'
     Description: >
-      The box's isolation units (spec 2026-10-19-runner-isolation-units §1), e.g.
-      `tree:dimagi,tree:marshellis,agent:eva` — each its own Unix user (cu-<unit>),
-      runner (canopy-runner@<unit>), Runner row and device key. Empty = ONE unit,
+      The box's runners (spec 2026-10-19-runner-isolation-units §1), e.g.
+      `tree:dimagi,tree:marshellis,agent:eva` — each its own Unix user (cu-<id>),
+      service (canopy-runner@<id>), Runner row and device key. Empty = ONE runner,
       `tree:<RunnerWorkspace>`, named <RunnerName> — so a single-tree box keeps its
-      shape and its runner. Every other unit is <RunnerName>-<unit>. An agent unit
+      shape and its runner. Every other runner is <RunnerName>-<id>. An agent's runner
       for <slug> needs its ECDH key in the -ecdh stack (up.sh --units passes it).
   RunnerWorkspace:
     Type: String

@@ -9,32 +9,32 @@ Parameters:
   RunnerRoleArn:
     Type: String
     Description: The runner stack's RunnerRole ARN — the only principal that may derive.
-  # Isolation units (spec 2026-10-19-runner-isolation-units §2): every unit other than
-  # the one named as the box gets its OWN key, so a unit's agents are wrapped to a key
-  # no other unit can use (the box's root-only broker derives for each unit with its
-  # own key only). The box's own unit keeps EcdhKey below — the key a box moved to
-  # units already had — so no existing wrap breaks. Four slots: CloudFormation has no
-  # loop that survives an empty list.
+  # Several runners on one machine (spec 2026-10-19-runner-isolation-units §2): every
+  # runner other than the one named as the machine gets its OWN key, so a runner's agents
+  # are wrapped to a key no other runner can use (the machine's root-only broker derives
+  # for each runner with its own key only). The machine's own runner keeps EcdhKey below —
+  # the key a machine moved to several runners already had — so no existing wrap breaks.
+  # Four slots: CloudFormation has no loop that survives an empty list.
   Unit1:
     Type: String
     Default: ''
     AllowedPattern: '^([a-z0-9][a-z0-9-]{0,27})?$'
-    Description: An isolation unit's id (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
+    Description: A runner's id on this machine (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
   Unit2:
     Type: String
     Default: ''
     AllowedPattern: '^([a-z0-9][a-z0-9-]{0,27})?$'
-    Description: An isolation unit's id (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
+    Description: A runner's id on this machine (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
   Unit3:
     Type: String
     Default: ''
     AllowedPattern: '^([a-z0-9][a-z0-9-]{0,27})?$'
-    Description: An isolation unit's id (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
+    Description: A runner's id on this machine (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
   Unit4:
     Type: String
     Default: ''
     AllowedPattern: '^([a-z0-9][a-z0-9-]{0,27})?$'
-    Description: An isolation unit's id (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
+    Description: A runner's id on this machine (e.g. marshellis, agent-eva) — its own ECDH key. '' = none.
 
 Conditions:
   HasUnit1: !Not [!Equals [!Ref Unit1, '']]
@@ -104,12 +104,12 @@ Resources:
   Unit1Key:
     Type: AWS::KMS::Key
     Condition: HasUnit1
-    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # A runner's agents' vault keys are wrapped to this key: removing the runner from the
     # stack (or a slot change) must never schedule it for deletion.
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: !Sub '${AWS::StackName} unit ${Unit1} zero-knowledge vault ECDH key'
+      Description: !Sub '${AWS::StackName} runner ${Unit1} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
       KeyUsage: KEY_AGREEMENT
       KeyPolicy:
@@ -151,7 +151,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
+      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<the runner's id>.
       AliasName: !Sub
         - 'alias/canopy-runner-ecdh/${RoleName}/${Unit1}'
         - RoleName: !Select [1, !Split ['/', !Ref RunnerRoleArn]]
@@ -160,12 +160,12 @@ Resources:
   Unit2Key:
     Type: AWS::KMS::Key
     Condition: HasUnit2
-    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # A runner's agents' vault keys are wrapped to this key: removing the runner from the
     # stack (or a slot change) must never schedule it for deletion.
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: !Sub '${AWS::StackName} unit ${Unit2} zero-knowledge vault ECDH key'
+      Description: !Sub '${AWS::StackName} runner ${Unit2} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
       KeyUsage: KEY_AGREEMENT
       KeyPolicy:
@@ -207,7 +207,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
+      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<the runner's id>.
       AliasName: !Sub
         - 'alias/canopy-runner-ecdh/${RoleName}/${Unit2}'
         - RoleName: !Select [1, !Split ['/', !Ref RunnerRoleArn]]
@@ -216,12 +216,12 @@ Resources:
   Unit3Key:
     Type: AWS::KMS::Key
     Condition: HasUnit3
-    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # A runner's agents' vault keys are wrapped to this key: removing the runner from the
     # stack (or a slot change) must never schedule it for deletion.
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: !Sub '${AWS::StackName} unit ${Unit3} zero-knowledge vault ECDH key'
+      Description: !Sub '${AWS::StackName} runner ${Unit3} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
       KeyUsage: KEY_AGREEMENT
       KeyPolicy:
@@ -263,7 +263,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
+      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<the runner's id>.
       AliasName: !Sub
         - 'alias/canopy-runner-ecdh/${RoleName}/${Unit3}'
         - RoleName: !Select [1, !Split ['/', !Ref RunnerRoleArn]]
@@ -272,12 +272,12 @@ Resources:
   Unit4Key:
     Type: AWS::KMS::Key
     Condition: HasUnit4
-    # A unit's agents' vault keys are wrapped to this key: removing the unit from the
+    # A runner's agents' vault keys are wrapped to this key: removing the runner from the
     # stack (or a slot change) must never schedule it for deletion.
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: !Sub '${AWS::StackName} unit ${Unit4} zero-knowledge vault ECDH key'
+      Description: !Sub '${AWS::StackName} runner ${Unit4} zero-knowledge vault ECDH key'
       KeySpec: ECC_NIST_P256
       KeyUsage: KEY_AGREEMENT
       KeyPolicy:
@@ -319,7 +319,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<unit id>.
+      # cloud_runner.unit_kms_key: alias/canopy-runner-ecdh/<role name>/<the runner's id>.
       AliasName: !Sub
         - 'alias/canopy-runner-ecdh/${RoleName}/${Unit4}'
         - RoleName: !Select [1, !Split ['/', !Ref RunnerRoleArn]]

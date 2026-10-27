@@ -158,7 +158,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
     if not ignore_serve and turn_unit_refusal(r, t):
-        return False  # the box's isolation unit: above the pin and the binding too
+        return False  # what the runner serves on its machine: above the pin and the binding too
     if not ignore_cli and clis.choose(t, r, ignore_signed_in=True,
                                       ignore_requirements=ignore_requirements) is None:
         return False  # the agent CLI: above the pin, as in claim_next_turn
@@ -542,7 +542,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
                                              ignore_hold=True).values()) if unheld else set()
     # And for a box's own report that it cannot run the agent: a turn only such
     # boxes would take is a setup gap on those boxes, named with what each said.
-    # Its isolation unit counts here too, for every turn (an agent unit refuses
+    # What it serves on its machine counts here too, for every turn (an agent's runner refuses
     # the agentless ones as well).
     unserved = {t.pk for t in queued if t.pk not in claimable_ever}
     by_unserving = _coverage(unserved, runners, defaults, priorities,
@@ -595,8 +595,8 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
                           f"'{t.acting_agent.slug}': {said} — set it up on that box and "
                           "refresh the runner, or route the agent to a box that has it")
             else:
-                reason = (f"the runners that {what} cannot take it: {said} — an agent "
-                          "unit runs only its own agent's work")
+                reason = (f"the runners that {what} cannot take it: {said} — an agent's "
+                          "runner runs only its own agent's work")
         elif t.pk in blocked_by_hold:
             kind = "config"
             reason = (f"the runners {what} are owned by people who are not admins of "
@@ -645,7 +645,7 @@ def _unclaimable_row(user, t: Turn, target: str, kind: str, reason: str) -> dict
 
 def _unserving_said(t: Turn, by_unserving: dict) -> str:
     """What each runner that would take `t` but for its own report says about it:
-    its isolation unit (`turn_unit_refusal`), else `cannot_serve` for the turn's
+    what it serves on its machine (`turn_unit_refusal`), else `cannot_serve` for the turn's
     agent. "" when none would."""
     agent = t.acting_agent
     said = []
@@ -866,10 +866,10 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
                 trusted[held.id] = runner_may_hold_agent(runner, held)
             if not trusted[held.id]:
                 continue
-        # Its isolation unit, above the pin and the binding like the hold: an agent
-        # unit runs only turns that act as its agent (none of a repo's or an
-        # agentless chat's), and an agent with a unit of its own runs on no other
-        # unit of the machine — a pinned or bound turn would otherwise hand it the
+        # What it serves on its machine, above the pin and the binding like the hold:
+        # an agent's runner runs only turns that act as its agent (none of a repo's or an
+        # agentless chat's), and an agent with a runner of its own runs on no other
+        # runner of the machine — a pinned or bound turn would otherwise hand it the
         # agent's secrets (`device_keys.runner_serves_agent`).
         if turn_unit_refusal(runner, turn):
             continue

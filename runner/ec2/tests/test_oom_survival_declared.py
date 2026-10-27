@@ -15,7 +15,7 @@ TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "runner.cfn.yaml"
 
 
 def _unit() -> str:
-    """The runner's systemd unit — one per isolation unit, written by
+    """The runner's systemd unit — one per runner, written by
     `cloud_runner.py --install-units` (the template's UserData runs it)."""
     import importlib.util
     import sys

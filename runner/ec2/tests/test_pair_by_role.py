@@ -128,9 +128,9 @@ def test_main_starts_without_a_token(box, monkeypatch):
 
 
 def test_the_stack_writes_no_pat_no_claude_token_and_no_keyring_password():
-    """A box of isolation units holds no PAT (it pairs by invitation, each unit signs in
-    with its own key), no Claude token (each unit's logins come from canopy-web) and no
-    box-wide gog password (each agent's is derived from its unit's secret) — spec
+    """A box of several runners holds no PAT (it pairs by invitation, each runner signs in
+    with its own key), no Claude token (each runner's logins come from canopy-web) and no
+    box-wide gog password (each agent's is derived from its runner's secret) — spec
     2026-10-19-runner-isolation-units §5."""
     cfn = (EC2 / "runner.cfn.yaml").read_text()
     for banned in ("CANOPY_TOKEN=", "CLAUDE_CODE_OAUTH_TOKEN=", "GOG_KEYRING_PASSWORD=",

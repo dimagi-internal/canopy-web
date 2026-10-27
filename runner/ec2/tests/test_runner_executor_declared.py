@@ -19,7 +19,7 @@ def _text() -> str:
 
 
 def test_the_env_file_carries_the_executor():
-    """The heredoc that BUILDS box.env (every unit's env is made from it on every
+    """The heredoc that BUILDS box.env (every runner's env is made from it on every
     start) has to emit it, or nothing does."""
     text = _text()
     heredoc = re.search(r"cat > /etc/canopy-runner/box\.env <<ENV(.*?)\n\s*ENV\n",

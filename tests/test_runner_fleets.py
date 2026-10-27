@@ -605,7 +605,7 @@ def test_the_fleets_routing_outlives_every_member(world, sts, aws):
     assert _routes(new) == ([("echo", "", True)], [])
 
 
-# ---- a member built as a box of units ---------------------------------------------------
+# ---- a member built as a machine of several runners --------------------------------------
 
 def _unit_jwk() -> dict:
     from canopy_sdk.keys import header_jwk
@@ -638,7 +638,7 @@ def test_a_member_built_as_one_unit_joins_and_signs_in_with_the_units_own_key(or
     assert key.jkt == device_keys.thumbprint(jwk)
     # It holds the fleet's ECDH key, approved with the fleet, so the fleet's vault copies go to it.
     assert key.ecdh_jkt == device_keys.thumbprint(ECDH) and key.ecdh_approved_at is not None
-    # The same instance again re-attaches: one runner, the same unit key.
+    # The same instance again re-attaches: one runner, the same runner key.
     cache.clear()
     again = _join_as_unit(sts, I1, jwk)
     assert again.status_code == 200 and again.json()["device_keys"] == body["device_keys"]

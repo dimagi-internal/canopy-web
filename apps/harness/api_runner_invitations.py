@@ -15,8 +15,8 @@ through pairing; when it expired, nothing said so. Now (spec
   BROWSER, behind a fresh passkey step-up. A token cannot (403), so neither
   `up.sh` nor the box can approve its own invitation.
 
-A box of isolation units (`docs/architecture/runners.md § Isolation units`) is invited
-with `units`, and its one approval pairs every unit: `pair-by-role` with `units`
+A machine running several runners (`docs/architecture/runners.md § Several runners on
+one machine`) is invited with `units`, and its one approval pairs every runner: `pair-by-role` with `units`
 is `unit_pairing.pair_units`.
 
 Who approves: only the creator, who becomes the runner's owner — as only a box's
@@ -108,8 +108,8 @@ def fleet_out(fleet) -> RunnerFleetOut:
 
 
 def _invited_units(request: HttpRequest, payload: RunnerInvitationIn) -> list[dict]:
-    """The units a box of isolation units will pair as, each checked as the box's
-    own workspace is: the inviter may run work in its workspace, an agent unit
+    """The runners a machine will pair as, each checked as the machine's
+    own workspace is: the inviter may run work in its workspace, an agent's runner
     names an agent of that workspace, and no name is used twice. [] for a box that
     pairs as one runner."""
     if not payload.units:
@@ -126,7 +126,7 @@ def _invited_units(request: HttpRequest, payload: RunnerInvitationIn) -> list[di
         if unit.kind == "agent":
             agent = (unit.slug or "").strip()
             if not agent or not Agent.objects.filter(slug=agent, workspace_id=slug).exists():
-                raise HttpError(422, f"units: '{unit.name}' is an agent unit, and '{agent}' is not an "
+                raise HttpError(422, f"units: '{unit.name}' is an agent's runner, and '{agent}' is not an "
                                      f"agent of {slug}")
         ecdh: dict = {}
         if unit.ecdh_public_jwk:
@@ -318,12 +318,12 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
 
-    A box of isolation units sends `units` (each unit's name, the public half of
-    its own signing key and its ECDH key) with ONE proof: one runner per unit with
-    an active software device key, `units` mapping each name to its runner id. A
-    replaced instance (the same role and unit names) re-attaches every unit, its
+    A machine running several runners sends `units` (each runner's name, the public
+    half of its own signing key and its ECDH key) with ONE proof: one runner per entry
+    with an active software device key, `units` mapping each name to its runner id. A
+    replaced instance (the same role and runner names) re-attaches every runner, its
     new key replacing the old in place, keeping each runner id; that needs no
-    invitation. A unit not yet paired needs the approved invitation that lists it."""
+    invitation. A runner not yet paired needs the approved invitation that lists it."""
     from .api import declared_capabilities
 
     try:
@@ -335,12 +335,12 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     if fleet is not None:
         # An instance of a fleet's group: it joins on AWS's word that it is the
         # group's, under the fleet a person approved (`fleets.join`).
-        # A member is ONE runner: built as a box of units (runner.cfn.yaml's cloud-init),
-        # that is its one workspace-tree unit, which signs in with its own key.
+        # A member is ONE runner: built like a machine of several runners (runner.cfn.yaml's
+        # cloud-init), it runs one runner for a workspace tree, which signs in with its own key.
         unit = None
         if payload.units:
             if len(payload.units) != 1:
-                raise _refuse_pairing(f"{role_arn} is fleet {fleet.name}'s role; a member is one unit")
+                raise _refuse_pairing(f"{role_arn} is fleet {fleet.name}'s role; a member is one runner")
             unit = payload.units[0]
         joined = fleets.join(fleet=fleet, caller_arn=caller, name=unit.name if unit else payload.name,
                              host=(unit.host if unit else payload.host) or payload.host,
@@ -357,7 +357,7 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
                 device_keys={unit.name: joined.unit_key.pk}))
         return Status(code, RunnerPairByRoleOut(status=status, runner_id=joined.runner.pk))
     if payload.units:
-        # A box of isolation units: every unit, one runner each, in one call.
+        # A machine running several runners: every runner, in one call.
         return unit_pairing.pair_units(request, payload, role_arn, refuse=_refuse_pairing,
                                        out_cls=RunnerPairByRoleOut, status_cls=Status)
     jkt = aws_iam_proof.role_jkt(role_arn)
