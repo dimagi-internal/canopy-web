@@ -21,7 +21,7 @@ class _Cfg:
 def _touch(path, when):
     """A real write: append a record (the only way a transcript changes)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as f:
+    with path.open("a", newline="\n") as f:  # 3 bytes on every OS
         f.write("{}\n")
     os.utime(path, (when, when))
 

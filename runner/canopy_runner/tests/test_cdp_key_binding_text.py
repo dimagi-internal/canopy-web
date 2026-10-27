@@ -54,14 +54,14 @@ def test_everything_else_is_typed_exactly_as_sent(body):
 
 
 def _submit_src() -> str:
-    src = SIDECAR.read_text()
+    src = SIDECAR.read_text(encoding="utf-8")
     start = src.index("const submit = async")
     return src[start:src.index("if (clearFirst)", start)]
 
 
 def test_open_send_submit_types_through_as_typed():
     assert "insertText(asTyped(body))" in _submit_src()
-    assert "import { asTyped } from './typed_text.mjs';" in SIDECAR.read_text()
+    assert "import { asTyped } from './typed_text.mjs';" in SIDECAR.read_text(encoding="utf-8")
 
 
 def test_the_recheck_still_compares_the_original_body():

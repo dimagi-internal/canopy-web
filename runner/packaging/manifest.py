@@ -3,12 +3,16 @@
 
     manifest.py record   --platform windows-x86_64 --sha <sha> --installer X.exe --update X.exe \
                          [--signed] [--notarized] --out windows-x86_64.json
-    manifest.py assemble --sha <sha> --committed-at <epoch> --built-at <iso> --records DIR --out manifest.json
+    manifest.py assemble --sha <sha> --committed-at <epoch> --built-at <iso> --records DIR --out manifest.json \
+                         [--allow-partial]
 
 A record is what one build job knows: its files' sha256 + size and whether it was
 ACTUALLY signed / notarized (macos/build_app.sh writes the same shape itself).
 `assemble` is the publish job's: it refuses records for another sha or a missing
-platform, so a manifest can never describe a half-built release. The schema is the
+platform, so a manifest can never describe a half-built release — unless the publish
+job says --allow-partial because a platform's build or smoke test failed: then the
+manifest names only the platforms that passed (at least one), and canopy-web serves
+nothing for the others at that sha (`runner_releases.artifact` answers None). The schema is the
 contract in docs/superpowers/specs/2026-10-19-runner-installers-design.md § Releases.
 """
 from __future__ import annotations
@@ -54,10 +58,12 @@ def assemble(args) -> int:
             "signed": bool(rec["signed"]), "notarized": bool(rec["notarized"]),
         }
     missing = [p for p in PLATFORMS if p not in artifacts]
-    if missing:
+    if missing and not (args.allow_partial and artifacts):
         raise SystemExit(f"no build record for {', '.join(missing)} — refusing a partial manifest")
+    if missing:
+        print(f"partial manifest: no {', '.join(missing)}", file=sys.stderr)
     manifest = {"sha": args.sha, "committed_at": int(args.committed_at), "built_at": args.built_at,
-                "artifacts": {p: artifacts[p] for p in PLATFORMS}}
+                "artifacts": {p: artifacts[p] for p in PLATFORMS if p in artifacts}}
     Path(args.out).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
     return 0
@@ -80,6 +86,8 @@ def main() -> int:
     a.add_argument("--built-at", required=True)
     a.add_argument("--records", required=True)
     a.add_argument("--out", required=True)
+    a.add_argument("--allow-partial", action="store_true",
+                   help="publish the platforms that have a record (at least one) instead of refusing")
     args = ap.parse_args()
     return record(args) if args.cmd == "record" else assemble(args)
 

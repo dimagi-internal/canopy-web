@@ -1,5 +1,6 @@
 """Wrapper-level tests for the emdash CDP control (the sidecar itself needs a live
 emdash on the debug port — validated separately)."""
+import sys
 import json
 import urllib.error
 from pathlib import Path
@@ -314,7 +315,7 @@ def _evaluate_bodies():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     # DISCOVERED, not listed. A hardcoded roster silently exempts the next helper
     # someone adds: its `${NEW_FN}` survives into the body, `new Function` chokes on
     # the literal `${`, and the failure reads as "your JS is broken" rather than
@@ -348,7 +349,7 @@ def test_every_evaluate_string_is_valid_javascript():
     for i, body in enumerate(bodies, start=1):
         check = subprocess.run(
             [node, "-e", "new Function('return ' + require('fs').readFileSync(0, 'utf8'))"],
-            input=body, capture_output=True, text=True, timeout=30)
+            input=body, capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert check.returncode == 0, f"evaluate #{i} is invalid JS: {check.stderr[:300]}"
 
 
@@ -357,7 +358,7 @@ def test_the_evaluate_sites_use_string_raw():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     assert "page.evaluate(`" not in src, "use String.raw` for evaluate source"
     assert len(re.findall(r"page\.evaluate\(String\.raw`", src)) >= 4
 
@@ -374,7 +375,7 @@ def _composer_fn_source():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     m = re.search(r"const COMPOSER_FN = String\.raw`([\s\S]*?)`;", src)
     assert m, "COMPOSER_FN not found in emdash_control.mjs"
     return m.group(1)
@@ -500,7 +501,7 @@ def _bright_fn_source():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     m = re.search(r"const BRIGHT_FN = String\.raw`([\s\S]*?)`;", src)
     assert m, "BRIGHT_FN not found in emdash_control.mjs"
     return m.group(1)
@@ -622,6 +623,7 @@ def test_all_dim_structure_falls_back_to_a_collision_not_a_send():
     assert r["typed"] == "something already here"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="pwd/os.getuid are POSIX-only")
 def test_host_id_account_comes_from_the_uid_not_logname(monkeypatch, tmp_path):
     """A session launched with LOGNAME=root must not pin `root@…` (2026-09-28)."""
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", tmp_path / "host-id")
@@ -685,7 +687,8 @@ def _read_args(argv_extra, stdin_text):
     # Under -e, argv[1] is the first extra word: pad to the sidecar's own shape,
     # [node, emdash_control.mjs, command, args].
     out = subprocess.run(["node", "--input-type=module", "-e", script, "sidecar", "cmd", *argv_extra],
-                         input=stdin_text, capture_output=True, text=True, timeout=30, check=True)
+                         input=stdin_text, capture_output=True, text=True, encoding="utf-8",
+                         timeout=30, check=True)
     return json.loads(out.stdout)
 
 
@@ -700,6 +703,6 @@ def test_the_sidecar_still_reads_arguments_given_on_the_command_line():
 
 
 def test_the_sidecar_reads_its_arguments_through_the_shared_reader():
-    src = cdp_control.SIDECAR.read_text()
+    src = cdp_control.SIDECAR.read_text(encoding="utf-8")
     assert "import { readArgs } from './sidecar_args.mjs';" in src
     assert "process.argv[3]" not in src

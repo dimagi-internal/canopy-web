@@ -3,6 +3,7 @@ accepts. A box installed from the download has no canopy CLI, so the runner make
 the key itself; if it disagreed with canopy about where or what the key is, a later
 `canopy vault …` on the same box would make a second one."""
 from __future__ import annotations
+import sys
 
 import ctypes
 import json
@@ -62,6 +63,7 @@ def test_htu_drops_query_and_fragment():
 # --- software ---------------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes: Windows has no 0o600; privacy there comes from the profile ACL")
 def test_software_key_round_trip_and_its_proof_verifies():
     key, created = device_proof.ensure(allow_software=True)
     assert created and key.kind == "software"
@@ -409,6 +411,7 @@ def test_windows_software_keys_are_sealed_at_rest(dpapi):
     assert device_proof.load_ecdh().jkt == ecdh.jkt
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a host without DPAPI to write the old plain PEM; on Windows ensure() seals it with the live DPAPI")
 def test_a_plain_pem_from_an_older_runner_still_works_and_is_resealed(monkeypatch):
     key, _ = device_proof.ensure(allow_software=True)       # plain, as before (no DPAPI)
     assert device_proof.sw_path().read_bytes().startswith(b"-----BEGIN")

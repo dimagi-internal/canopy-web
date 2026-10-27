@@ -1,4 +1,5 @@
 """The canopy CLI follows the plugin: reinstalled when behind, left alone otherwise."""
+import sys
 import json
 import subprocess
 
@@ -73,6 +74,7 @@ def test_start_checks_on_a_cadence_and_can_be_turned_off(box, monkeypatch):
     assert cli_refresh.start() is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="plants the receipt in uv's POSIX data dir (~/.local/share); cli_extras.receipt_path reads %APPDATA% on Windows")
 def test_a_reinstall_keeps_what_was_installed_beside_canopy(box, monkeypatch):
     """A bare reinstall drops every `--with`: the KB engine vanished from cloud-ec2-2 on the
     next canopy release and `canopy kb build` failed there (canopy-web#1891)."""

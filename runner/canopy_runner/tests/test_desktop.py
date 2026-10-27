@@ -5,6 +5,7 @@ file protocol simulated — no Claude app. The live half (a real app importing t
 session, the real mod submitting) was proven by hand on a background macOS user.
 """
 from __future__ import annotations
+import sys
 
 import json
 import subprocess
@@ -487,6 +488,7 @@ def test_the_cli_is_found_in_local_bin_without_it_on_path(monkeypatch, tmp_path)
     assert desktop.claude_cli() == cli
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS app bundle layout (~/Library/Application Support/Claude)")
 def test_the_apps_bundled_cli_is_the_last_resort(monkeypatch, tmp_path):
     _no_cli_anywhere(monkeypatch, tmp_path)
     bundled = _exe(tmp_path / "Library" / "Application Support" / "Claude" / "claude-code"
@@ -506,6 +508,7 @@ def test_no_cli_means_new_threads_stay_on_emdash_and_readiness_says_why(cfg, mon
     assert ready is False and "no Claude Code CLI" in note
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX PATH (':'-separated, '/' paths)")
 def test_the_cli_runs_with_a_real_path(tmp_path):
     env = desktop._cli_env(Path("/somewhere/bin/claude"))
     assert env["PATH"].split(":")[:2] == ["/somewhere/bin", str(Path.home() / ".local" / "bin")]
@@ -652,6 +655,10 @@ def test_a_new_desktop_session_is_recorded_with_its_task_name(cfg, tmp_path, no_
 # ── opening a session gives focus back (canopy-web#1188, Focus round 2) ──────
 
 def _record_runs(monkeypatch, results):
+    # These drive the macOS branch (osascript, `open`); a Windows test turns
+    # is_windows back on after calling this.
+    from canopy_runner import platform_jobs
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: False)
     calls = []
 
     def run(argv, **kw):
