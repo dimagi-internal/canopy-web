@@ -156,6 +156,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Filter by agent, trigger or status', 'Expand a turn to see its raw event ledger'],
   },
   {
+    path: '/me',
+    flat: 'personal/global: your own profile, the same in every workspace',
+    title: 'Your profile',
+    audience: 'Everyone',
+    what: 'Your own page: who you are and every workspace you are in (with the page other members there see for you), with your memory and your account settings as its other tabs.',
+    actions: ['See how members of each workspace see you', 'Open your memory', 'Open your account settings'],
+  },
+  {
     path: '/settings',
     flat: 'personal/global: your own account',
     title: 'Your settings',
@@ -244,6 +252,14 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'Any workspace member (owner-only actions)',
     what: 'Admin surface for who is in the workspace: the member list with roles, and pending invites — each invite is emailed and is also a copy-linkable `/invite/:token` URL. An invite grants the role chosen when it was sent (viewer unless you pick otherwise).',
     actions: ['Invite someone by email', 'Change a member\'s role', 'Remove a member', 'Revoke a pending invite'],
+  },
+  {
+    path: '/w/:workspace/members/:userId',
+    home: '/w/:workspace/settings/members',
+    title: 'A member',
+    audience: 'Any workspace member (more detail for admins and owners)',
+    what: 'One member of the workspace: their role, when they joined, whether they are a person, an agent or a system account, the agents they operate here and the other workspaces you share with them. Admins and owners also see who invited them, when they last signed in and how many chats they started here.',
+    actions: ['Open an agent they operate', 'Jump to the same person in a shared workspace'],
   },
   {
     path: '/w/:workspace/settings/access-requests',

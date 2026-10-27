@@ -110,6 +110,7 @@ export const HELP_ITEMS: NavItem[] = [
 
 /** The account menu: pages about you, the same in every workspace. */
 export const ACCOUNT_ITEMS: (NavItem & { desktopOnly?: boolean })[] = [
+  { path: '/me', label: 'Your profile', tenant: false },
   { path: '/settings', label: 'Account settings', tenant: false },
   { path: '/people/me', label: 'What agents know about me', tenant: false },
   { path: '/sessions', label: 'Shared transcripts', tenant: false },
