@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.24.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.25.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.24.0/dimagi_canopy-0.24.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.25.0/dimagi_canopy-0.25.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -50,6 +50,7 @@ library, address-pinned.
 | `canopy_sdk.stores` | a host | `JtiStore` (also the DPoP replay cache), `TokenStore`, `IssuedToken`, in-memory implementations |
 | `canopy_sdk.fetch` | a host | SSRF-safe `get_json` / `get_text` / `post_form` (https only, vetted + pinned addresses, no redirects, bounded) |
 | `canopy_sdk.django` | a Django host | settings (`CANOPY_HOST`), views, models + migrations, the DPoP ASGI gate, `execution.verify_execution(request)`, `execution.verify_view(request, uri=, subject=)`, `site_agents.current()` / `last_error()` / `refresh()`, `canopy/site.json`, `{% canopy_panel %}` |
+| `canopy_sdk.agent_tasks` | anything that calls an agent | `AgentTasks` (`create`, `get(id, wait_s=)`, `wait`, `cancel`, `run` → the result), `AgentTaskError` (`status`, `detail`, `errors`), `AgentTaskFailed`, `AgentTaskTimeout`; see [Agent tasks](#agent-tasks-call-an-agent-get-a-structured-result) |
 | `canopy_sdk.ondemand` | a site that runs a dedicated capability | `OnDemandInstance`, `EphemeralInstance`, `run_command`, `send_command`, `Lease`, `JobStore`, `Job`, `assets.asset_path`; see [On-demand capabilities](#on-demand-capabilities) |
 | `canopy_sdk.conformance` | anyone | `check_metadata`, `check_jwks`, `check_client`, `check_grant`, `check_mcp`, `run`; the live grant: `request_probe`, `check_live_grant`, `check_probe_tool`, `check_out_of_scope_refused`, `check_requires_dpop`, `run_live`; pytest fixtures |
 
@@ -526,6 +527,39 @@ def site_needs():
 
 CANOPY_HOST = {..., "SITE_NEEDS": "myapp.canopy.site_needs"}
 ```
+
+## Agent tasks: call an agent, get a structured result
+
+A page's backend, or any script, can call a canopy agent INLINE: hand it a task, its
+input and the JSON Schema of the answer, and get back a result that validates against
+it — not a chat panel, not a transcript. The token is a canopy personal access token
+of someone who may run a turn for the agent (an editor of its workspace, or above).
+
+```python
+from canopy_sdk.agent_tasks import AgentTasks, AgentTaskFailed
+
+SCHEMA = {"type": "object", "required": ["decisions"], "properties": {"decisions": {
+    "type": "array", "items": {"type": "object", "required": ["id", "action", "reason"],
+    "properties": {"id": {"type": "string"}, "action": {"enum": ["keep", "archive"]},
+                   "reason": {"type": "string"}}}}}}
+
+tasks = AgentTasks("https://canopy.dimagi.com", token=os.environ["CANOPY_PAT"])
+try:
+    result = tasks.run("bailey", "gmail-triage.review", {"emails": batch}, SCHEMA,
+                       instructions="Decide each email.", timeout_s=900)
+except AgentTaskFailed as exc:
+    print(exc.task["error"])                 # e.g. "the agent ended without a result"
+```
+
+`run` is `create` then `wait`, which loops the server's long-poll (`get(id, wait_s=20)`)
+until the task is `done`, `failed` or `cancelled`. canopy queues one turn for the agent;
+the task is done only when the agent submits a valid result — a turn that ends without
+one is followed up twice, then the task fails, and it fails at `timeout_s` (≤ 3600)
+regardless. `input` is at most 1 MiB of JSON. `name` names the agent's skill to use
+(`gmail-triage.review` → `gmail-triage`). The task is read-and-answer only: the agent
+is told to take no outbound action. Requests go through `canopy_sdk.fetch` (https only);
+pass `transport=` for anything else. Contract: canopy-web
+`docs/architecture/agent-tasks.md`.
 
 ## Site sign-offs: a person's passkey behind one action
 

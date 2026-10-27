@@ -6532,6 +6532,110 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agent-tasks/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Give an agent a task and get a structured result
+         * @description Ask an agent to do one task and answer with JSON that validates against
+         *     `output_schema`. Queues one turn for the agent; poll `get_agent_task` (with
+         *     `wait_s`) until `status` is done (read `result`), failed or cancelled (read
+         *     `error`). The task is done ONLY when the agent submits a valid result — a turn
+         *     that ends without one is followed up, and the task fails after `timeout_s`
+         *     (30–3600, default 900). `name` (e.g. `gmail-triage.review`) tells the agent which
+         *     of its skills to use. Read-and-answer only: the agent is told to take no
+         *     outbound action. `output_schema` must be a valid JSON Schema (422); `input` is at
+         *     most 1 MiB as JSON (413). Who may create one: whoever may enqueue a turn for
+         *     the agent.
+         */
+        readonly post: operations["create_agent_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agent-tasks/{task_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Read an agent task (long-poll with wait_s)
+         * @description An agent task's status, its `result` once done and `error` once failed or
+         *     cancelled. `wait_s` (0–20) long-polls: the request returns as soon as the status
+         *     changes from the one it had, else after `wait_s`.
+         *
+         *     Called by the agent itself (its own login), this is how it READS its task:
+         *     `instructions`, `input` and `output_schema`, and the task becomes `running`. It
+         *     then answers with `submit_agent_task_result`. Readable by its creator, the
+         *     agent's admins and the agent's own login; 404 for anyone else.
+         */
+        readonly get: operations["get_agent_task"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agent-tasks/{task_id}/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Submit an agent task's result
+         * @description The agent's answer to its task — the ONLY way a task completes. `result` must
+         *     validate against the task's `output_schema`: if it does not, 422 with `errors`, a
+         *     list of `{path, message}` (`path` a JSON Pointer into `result`, "" for the whole
+         *     of it), and the task stays open — fix every path and submit again. Valid → the
+         *     task is `done`. Only the agent's own login, while the task is queued or running
+         *     (409 once it has ended); at most 1 MiB as JSON (413).
+         */
+        readonly post: operations["submit_agent_task_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agent-tasks/{task_id}/cancel": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Cancel an agent task
+         * @description Stop waiting for an agent task: an open task becomes `cancelled` and its turn,
+         *     if no runner has started it, is cancelled too (a running one finishes on its own;
+         *     its result is then refused). Idempotent: an ended task is returned as it is. For
+         *     its creator or the agent's admins.
+         */
+        readonly post: operations["cancel_agent_task"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/passkeys/": {
         readonly parameters: {
             readonly query?: never;
@@ -28690,6 +28794,118 @@ export interface components {
             /** Expires In S */
             readonly expires_in_s: number;
         };
+        /** AgentTaskCallOut */
+        readonly AgentTaskCallOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "queued" | "running" | "done" | "failed" | "cancelled";
+            /** Result */
+            readonly result?: unknown;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            /** Nudges */
+            readonly nudges: number;
+            /** Turn Id */
+            readonly turn_id?: string | null;
+            /** Timeout S */
+            readonly timeout_s: number;
+            /**
+             * Deadline At
+             * Format: date-time
+             */
+            readonly deadline_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /**
+             * Instructions
+             * @default
+             */
+            readonly instructions: string;
+            /** Output Schema */
+            readonly output_schema: {
+                readonly [key: string]: unknown;
+            };
+            /** Input */
+            readonly input?: unknown;
+        };
+        /** AgentTaskCallIn */
+        readonly AgentTaskCallIn: {
+            /** Agent */
+            readonly agent: string;
+            /** Name */
+            readonly name: string;
+            /**
+             * Instructions
+             * @default
+             */
+            readonly instructions: string;
+            /** Input */
+            readonly input: unknown;
+            /** Output Schema */
+            readonly output_schema: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Routing
+             * @default prefer_local
+             * @enum {string}
+             */
+            readonly routing: "prefer_local" | "local_only" | "any";
+            /**
+             * Timeout S
+             * @default 900
+             */
+            readonly timeout_s: number;
+            readonly parent?: components["schemas"]["ParentIn"] | null;
+        };
+        /**
+         * ParentIn
+         * @description What the caller was running INSIDE when it asked for this work — recorded
+         *     on the new turn/session as `parent_*` + `provenance.parent`. Every field is
+         *     optional and none is checked: an id that does not resolve is recorded as
+         *     given and never refuses the request. The `X-Canopy-Parent-Turn`,
+         *     `X-Canopy-Parent-Session` and `X-Canopy-Claude-Session` headers say the same
+         *     thing; a field here wins over its header. Nothing runner-specific: the parent
+         *     turn names the runner that claimed it.
+         */
+        readonly ParentIn: {
+            /**
+             * Turn
+             * @default
+             */
+            readonly turn: string;
+            /**
+             * Session
+             * @default
+             */
+            readonly session: string;
+            /**
+             * Claude Session
+             * @default
+             */
+            readonly claude_session: string;
+        };
+        /** AgentTaskResultIn */
+        readonly AgentTaskResultIn: {
+            /** Result */
+            readonly result: unknown;
+        };
         /** PasskeyOut */
         readonly PasskeyOut: {
             /** Id */
@@ -36047,33 +36263,6 @@ export interface components {
              * @default false
              */
             readonly can_cancel: boolean;
-        };
-        /**
-         * ParentIn
-         * @description What the caller was running INSIDE when it asked for this work — recorded
-         *     on the new turn/session as `parent_*` + `provenance.parent`. Every field is
-         *     optional and none is checked: an id that does not resolve is recorded as
-         *     given and never refuses the request. The `X-Canopy-Parent-Turn`,
-         *     `X-Canopy-Parent-Session` and `X-Canopy-Claude-Session` headers say the same
-         *     thing; a field here wins over its header. Nothing runner-specific: the parent
-         *     turn names the runner that claimed it.
-         */
-        readonly ParentIn: {
-            /**
-             * Turn
-             * @default
-             */
-            readonly turn: string;
-            /**
-             * Session
-             * @default
-             */
-            readonly session: string;
-            /**
-             * Claude Session
-             * @default
-             */
-            readonly claude_session: string;
         };
         /** TurnIn */
         readonly TurnIn: {
@@ -50045,6 +50234,102 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["CapabilityArtifactsOut"];
+                };
+            };
+        };
+    };
+    readonly create_agent_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentTaskCallIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskCallOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_task: {
+        readonly parameters: {
+            readonly query?: {
+                readonly wait_s?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly task_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskCallOut"];
+                };
+            };
+        };
+    };
+    readonly submit_agent_task_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly task_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["AgentTaskResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskCallOut"];
+                };
+            };
+        };
+    };
+    readonly cancel_agent_task: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly task_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentTaskCallOut"];
                 };
             };
         };

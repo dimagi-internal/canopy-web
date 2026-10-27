@@ -122,6 +122,7 @@ INSTALLED_APPS = [
     "apps.admission",
     "apps.plugins",
     "apps.capabilities",
+    "apps.agent_tasks",
     "apps.passkeys",
     # The canopy SDK's Django half (app label `canopy_host`): the single-use jti
     # table and the delegated-token table canopy-web uses as a HOST of its own

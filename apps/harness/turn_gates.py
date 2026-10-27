@@ -41,8 +41,9 @@ def capped_origin_ref(request: HttpRequest, payload: TurnIn) -> dict:
     # carries the cap for the claim, its envelope and its credential reads. The cap is
     # the server's to stamp, never a client's origin_ref to assert.
     # `on_behalf_of` is the server's too (`turn_asker`): only a checked claim stamps it.
+    # So is `agent_task`: only `POST /api/agent-tasks/` names the task a turn holds.
     origin_ref = {k: v for k, v in (payload.origin_ref or {}).items()
-                  if k not in ("acts_as", "on_behalf_of")}
+                  if k not in ("acts_as", "on_behalf_of", "agent_task", "agent_task_nudge")}
     if payload.acts_as:
         role_cap.apply(request.user, payload.acts_as)
         origin_ref["acts_as"] = role_cap.cap_of(request.user)

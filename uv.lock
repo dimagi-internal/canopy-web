@@ -497,6 +497,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "google-api-python-client" },
     { name = "google-auth" },
+    { name = "jsonschema" },
     { name = "orjson" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
@@ -548,6 +549,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=4.0,<5.0" },
     { name = "google-api-python-client", specifier = ">=2.120,<3.0" },
     { name = "google-auth", specifier = ">=2.29,<3.0" },
+    { name = "jsonschema", specifier = ">=4.26,<5.0" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "pgvector", specifier = ">=0.4,<1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1,<4.0" },
@@ -998,7 +1000,7 @@ wheels = [
 
 [[package]]
 name = "dimagi-canopy"
-version = "0.24.0"
+version = "0.25.0"
 source = { editable = "sdk/python" }
 dependencies = [
     { name = "pyjwt", extra = ["crypto"] },
