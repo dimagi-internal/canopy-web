@@ -44,6 +44,7 @@ from apps.mcp.auth import CanopyPATVerifier
 from apps.mcp.models import MCPAuditLog
 from apps.mcp.server import mcp
 from apps.tokens.models import HostGrant
+from tests.fixtures import passkey_confirm
 from tests.fixtures.self_host import BASE, _ctx, _in_lifespan, _mint
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("self_host_base")]
@@ -116,8 +117,16 @@ def test_a_member_on_the_tasks_page_gets_an_agent_that_reads_as_them(world, gate
     assert issued.subject == str(visitor.pk) and issued.client_id == client_identity.client_id()
     assert issued.actor == client_identity.client_id()
 
-    # 3: the agent's call, through canopy's mounted MCP, into canopy's own MCP.
+    # Until the person confirms it with their passkey, the agent cannot use it.
     turn = _visitor_turn(world)
+    with _as_visitor(turn), pytest.raises(Exception, match="confirm it with your passkey"):
+        _in_lifespan(inner, lambda: mcp.call_tool("site_call", {"tool": "list_fleet_tasks",
+                                                                "arguments": {}}))
+    confirmed = passkey_confirm.confirm(r.json()["token"], passkey_confirm.give_passkey(visitor))
+    assert confirmed.status_code == 200, confirmed.content
+    assert confirmed.json()["grant"]["confirmed"] is True
+
+    # 3: the agent's call, through canopy's mounted MCP, into canopy's own MCP.
     with _as_visitor(turn):
         out = _in_lifespan(inner, lambda: mcp.call_tool("site_call", {"tool": "list_fleet_tasks",
                                                                       "arguments": {}}))
@@ -135,7 +144,8 @@ def test_a_member_on_the_tasks_page_gets_an_agent_that_reads_as_them(world, gate
 
 def test_the_site_lists_only_the_tools_the_grant_allows(world, gateway_to_self):
     inner, _app = gateway_to_self
-    _mint(world["visitor"], "agent.tasks")
+    r = _mint(world["visitor"], "agent.tasks")
+    passkey_confirm.confirm(r.json()["token"], passkey_confirm.give_passkey(world["visitor"]))
     turn = _visitor_turn(world)
     with _as_visitor(turn):
         out = _in_lifespan(inner, lambda: mcp.call_tool("site_tools", {}))

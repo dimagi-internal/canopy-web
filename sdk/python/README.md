@@ -720,7 +720,11 @@ presses "Stop" in the panel or on canopy's Settings). **A host issues an `id_jag
 only for a mint whose body says `"grant": true`** — `canopy_sdk.django`'s
 `panel_token` does exactly that. Expect the first mint with a grant only after the
 person's first send, and roughly one every five minutes after that while the tab
-stays open.
+stays open. canopy keeps the grant unusable until the person confirms it with their
+canopy passkey in the panel; it then lasts 30 minutes from that touch, and the later
+grants of the same page carry the same end. A visitor who arrives as a contact (no
+canopy account) is never redeemed one: an `id_jag` with a contact's arrival is
+ignored.
 
 ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant):
 - header: `typ: "oauth-id-jag+jwt"`, `alg` EdDSA|ES256, `kid` = the host's

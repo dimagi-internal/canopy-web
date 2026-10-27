@@ -496,6 +496,11 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
         chrome.close()
         return
       }
+      case 'unavailable': {
+        // Nothing this visitor can use: no launcher, as if they had pressed ×.
+        chrome.dismiss()
+        return
+      }
       case 'resize': {
         chrome.setHeight(message.height)
         return

@@ -71,7 +71,14 @@ def site():
     app.host_mcp_resource = RESOURCE
     app.save()
     AppCredentialAgent.objects.create(app=app, agent=agent)
-    return {"app": app, "priv": priv, "ws": ws, "agent": agent, "owner": owner}
+    # The visitor: a member the site vouches for by verified email, so they arrive as
+    # themselves. Only a canopy user is redeemed a grant (a contact has no passkey).
+    from allauth.account.models import EmailAddress
+
+    visitor = User.objects.create_user("gillian", "gillian@dimagi.com", "pw")
+    EmailAddress.objects.create(user=visitor, email=visitor.email, verified=True, primary=True)
+    WorkspaceMembership.objects.create(user=visitor, workspace=ws, role=WorkspaceMembership.VIEWER)
+    return {"app": app, "priv": priv, "ws": ws, "agent": agent, "owner": owner, "visitor": visitor}
 
 
 def _now():
@@ -125,7 +132,10 @@ def host(monkeypatch):
     return fake
 
 
-def _arrive(site, *, id_jag=None, sub="u-42", **extra):
+def _arrive(site, *, id_jag=None, sub="u-42", member=True, **extra):
+    """The site's arrival: as the member (`email_verified`), or as a contact."""
+    if member:
+        extra = {"email": "gillian@dimagi.com", "email_verified": True, **extra}
     body = {"assertion": _assertion(site["priv"], sub=sub, **extra), "agent_slug": "ace"}
     if id_jag is not None:
         body["id_jag"] = id_jag
@@ -221,7 +231,10 @@ def test_an_id_jag_is_redeemed_per_the_contract_and_stored_encrypted(site, host)
     assert proof["htm"] == "POST" and proof["htu"] == TOKEN_ENDPOINT and "ath" not in proof
 
     grant = HostGrant.objects.get()
-    assert grant.subject == "u-42" and grant.contact_id == r.json()["contact_id"]
+    assert grant.subject == "u-42" and grant.user == site["visitor"] and grant.contact_id is None
+    assert r.json()["kind"] == "user"
+    # Stored, but nobody may use it until the person confirms it with their passkey.
+    assert grant.confirmed_at is None
     assert grant.scope == "marketplace:read" and grant.resource == RESOURCE
     assert "host-at-SECRET" not in grant.access_token_enc
     assert decrypt_secret(grant.access_token_enc) == "host-at-SECRET"
@@ -231,6 +244,17 @@ def test_an_id_jag_is_redeemed_per_the_contract_and_stored_encrypted(site, host)
     expires = dt.datetime.fromisoformat(r.json()["expires_at"])
     assert expires <= timezone.now() + dt.timedelta(minutes=10, seconds=5)
     assert Event.objects.filter(kind="host_grant.redeemed").exists()
+
+
+def test_a_contacts_arrival_is_never_redeemed_a_grant(site, host):
+    """A contact has no passkey to confirm an act-as-you permission with, so canopy
+    never spends the grant the site sent, records no refusal (the site is not
+    misconfigured), and the chat still opens."""
+    r = _arrive(site, id_jag=_id_jag(site["priv"]), member=False)
+    assert r.status_code == 200 and r.json()["token"]
+    assert r.json()["host_grant"] is False
+    assert host.posts == [] and not HostGrant.objects.exists()
+    assert not Event.objects.filter(kind__startswith="host_grant.").exists()
 
 
 def test_the_grant_remembers_the_runner_requirements_it_was_minted_under(site, host):

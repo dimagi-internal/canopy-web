@@ -106,6 +106,8 @@ export interface HostLink {
   invalidate(resource: string): void
   /** Ask the host to close the panel (our own close button). */
   requestClose(): void
+  /** Tell the host there is nothing here for this visitor: it removes the launcher. */
+  reportUnavailable(): void
   /** Ask for a panel height, in the modes where the host owns it. */
   requestHeight(px: number): void
   /** Ask the host to expand (or collapse) the panel. The host answers with
@@ -359,6 +361,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     },
     invalidate: (resource: string) => send({ type: 'invalidate', resource }),
     requestClose: () => send({ type: 'close' }),
+    reportUnavailable: () => send({ type: 'unavailable' }),
     requestHeight: (px) => send({ type: 'resize', height: px }),
     requestExpand: (next) => send({ type: 'expand', expanded: next }),
     isExpanded: () => expanded,

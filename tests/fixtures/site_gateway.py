@@ -36,10 +36,10 @@ from apps.workspaces.models import Workspace, WorkspaceMembership
 RESOURCE = "https://host.test/mcp/"
 HOST_TOKEN = "host-at-SECRET"
 IFACE = {"capabilities": {
-    "connect": {"callers": ["contact"], "sites": ["connect-labs"],
+    "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
                 "ceiling": ["mcp__*connect_labs__marketplace_*"],
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
-    "ask": {"callers": ["contact"], "tools": ["mcp__*canopy-web__who_is_asking"]},
+    "ask": {"callers": ["contact", "member"], "tools": ["mcp__*canopy-web__who_is_asking"]},
 }}
 
 
@@ -148,24 +148,33 @@ def world():
     app.host_mcp_resource = RESOURCE
     app.save()
     AppCredentialAgent.objects.create(app=app, agent=agent)
+    # The visitor is a canopy USER arriving as themselves — a viewer of the workspace,
+    # so the interface confines them. Only a user holds an act-as-you permission (a
+    # contact has no passkey to confirm one with); the contact row is kept for the
+    # tests that need one.
+    visitor = User.objects.create_user("gillian", "gillian@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=visitor, workspace=ws, role=WorkspaceMembership.VIEWER)
     contact = Contact.objects.create(workspace=ws, app=app, external_id="u-42",
                                      display_name="Gillian", source=Contact.SOURCE_EMBED)
-    session = Session.objects.create(workspace=ws, agent=agent, contact=contact,
+    session = Session.objects.create(workspace=ws, agent=agent, created_by=visitor,
                                      metadata={"embed_app": "connect-labs"},
                                      page_state={"resource": "labs-marketplace://orgs",
                                                  "backing_tool": "marketplace_orgs_get"})
     turn = Turn.objects.create(chat_session=session, prompt="which orgs?",
-                               initiator_contact=contact, initiator_kind="contact",
+                               initiator_user=visitor, initiator_kind="user",
                                capability="connect")
     return {"owner": owner, "ws": ws, "agent": agent, "app": app, "contact": contact,
-            "session": session, "turn": turn}
+            "visitor": visitor, "session": session, "turn": turn}
 
 
 def grant(w, *, acted=True, **over):
-    fields = {"app": w["app"], "subject": "u-42", "contact": w["contact"],
+    """A grant for the world's visitor, confirmed with their passkey unless
+    `confirmed_at=None` says it is still waiting."""
+    now = timezone.now()
+    fields = {"app": w["app"], "subject": "u-42", "user": w["visitor"],
               "access_token_enc": encrypt_secret(HOST_TOKEN), "scope": "marketplace:read",
               "resource": RESOURCE, "dpop_jkt": client_identity.dpop_jkt(),
-              "expires_at": timezone.now() + timedelta(minutes=10)}
+              "expires_at": now + timedelta(minutes=10), "confirmed_at": now}
     fields.update(over)
     row = HostGrant.objects.create(**fields)
     return acted_with(row) if acted else row

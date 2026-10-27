@@ -847,6 +847,8 @@ def _refresh(app_id: int, grant_id: int) -> None:
 
     try:
         app = AppCredential.objects.filter(pk=app_id, revoked_at__isnull=True).first()
+        # Listing the site's tools is acting as the person: `context_for_grant` below
+        # refuses a grant they have not confirmed with their passkey.
         grant = HostGrant.objects.filter(pk=grant_id).first()
         if app is None or grant is None or not app.issues_host_grants():
             return

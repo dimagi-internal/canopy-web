@@ -20,7 +20,6 @@ from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import encrypt_secret
-from apps.contacts.models import Contact
 from apps.harness import caller_tokens
 from apps.harness.models import Turn
 from apps.mcp.auth import CanopyPATVerifier
@@ -37,7 +36,7 @@ pytestmark = pytest.mark.django_db
 RESOURCE = "https://labs.test/mcp/"
 TOKEN = "grant-visitor"
 IFACE = {"capabilities": {
-    "connect": {"callers": ["contact"], "sites": ["connect-labs"],
+    "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
 }}
 
@@ -62,19 +61,20 @@ def w():
     app.allowed_frame_origins = ["https://labs.test"]
     app.save()
     AppCredentialAgent.objects.create(app=app, agent=agent)
-    contact = Contact.objects.create(workspace=ws, app=app, external_id="u-42",
-                                     display_name="Gillian", source=Contact.SOURCE_EMBED)
-    session = Session.objects.create(workspace=ws, agent=agent, contact=contact,
+    # A member arriving as themselves: only a user holds an act-as-you permission.
+    visitor = User.objects.create_user("gillian", "gillian@dimagi.com", "pw")
+    WorkspaceMembership.objects.create(user=visitor, workspace=ws, role=WorkspaceMembership.VIEWER)
+    session = Session.objects.create(workspace=ws, agent=agent, created_by=visitor,
                                      metadata={"embed_app": "connect-labs"})
     turn = Turn.objects.create(chat_session=session, prompt="coach them",
-                               initiator_contact=contact, initiator_kind="contact",
+                               initiator_user=visitor, initiator_kind="user",
                                capability="connect")
     from tests.fixtures.site_gateway import acted_with
 
     acted_with(HostGrant.objects.create(
-        app=app, subject="u-42", contact=contact, access_token_enc=encrypt_secret(TOKEN),
+        app=app, subject="u-42", user=visitor, access_token_enc=encrypt_secret(TOKEN),
         scope="workflow:act", resource=RESOURCE, dpop_jkt=client_identity.dpop_jkt(),
-        expires_at=timezone.now() + timedelta(minutes=10)))
+        expires_at=timezone.now() + timedelta(minutes=10), confirmed_at=timezone.now()))
     return {"app": app, "turn": turn, "session": session}
 
 

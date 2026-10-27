@@ -146,7 +146,7 @@ def run(app) -> ProbeReport:
     grant = None
     try:
         try:
-            grant = host_grants.redeem(app, probe.id_jag, subject=probe.subject)
+            grant = host_grants.redeem(app, probe.id_jag, subject=probe.subject, probe=True)
         except host_grants.HostGrantError as exc:
             report.add("live_grant_redeemed", "fail", f"{exc.code}: {exc.message}")
             return report

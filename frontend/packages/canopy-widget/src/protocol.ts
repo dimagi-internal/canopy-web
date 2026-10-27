@@ -61,6 +61,10 @@ export type FrameMessage =
   | { source: typeof SOURCE; type: 'invalidate'; resource: string }
   /** The frame wants the panel closed (the user hit its close button). */
   | { source: typeof SOURCE; type: 'close' }
+  /** There is nothing here for this visitor — every agent the site offers needs an
+   *  act-as-you permission, which a contact (no passkey) can never give. The host
+   *  removes the launcher for the rest of the page load, as the visitor's × does. */
+  | { source: typeof SOURCE; type: 'unavailable' }
   /** Desired panel height in `inline` mode, where the host owns layout. */
   | { source: typeof SOURCE; type: 'resize'; height: number }
   /** The user pressed the panel's expand control (or Esc while expanded).
@@ -163,7 +167,8 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
   // arriving here is not something to interpret — the host is the only party
   // that issues those, so seeing one means something is impersonating it.
   return [
-    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'resize', 'expand', 'snap',
+    'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'unavailable',
+    'resize', 'expand', 'snap',
     'session',
   ].includes(m.type)
 }

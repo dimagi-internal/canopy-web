@@ -36,8 +36,9 @@ export function ActAsYouPanel() {
       <div>
         <h2 className="text-sm font-semibold text-foreground">Act-as-you permissions</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          When you send a message in an agent panel on a connected site, that page lets the agent
-          act as you there, within your own access, for 30 minutes at a time. Stop ends it now.
+          When you send a message in an agent panel on a connected site and confirm with your
+          passkey, that page lets the agent act as you there, within your own access, for 30
+          minutes. Stop ends it now.
         </p>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}

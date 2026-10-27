@@ -321,6 +321,9 @@ export function EmbedApp({ link, app }: Props) {
         setAgentCount(agents.length)
 
         if (agents.length === 0) {
+          // A contact is offered no agent that acts on this site (they cannot give
+          // it an act-as-you permission): when that leaves nothing, no panel at all.
+          if (who.kind === 'contact') link.reportUnavailable()
           setPhase({
             kind: 'failed',
             message:
@@ -403,6 +406,9 @@ export function EmbedApp({ link, app }: Props) {
       // act-as-you permission, and the conversation is created (and so stamped)
       // with the token that carries it.
       await pageGrant.ensure()
+      // The permission the host just granted is usable only once the person
+      // confirms it with their passkey (or declines): the turn waits for that.
+      await pageGrant.settled()
       const declared = link.pageState()
       const context = declared ? null : pendingContext.current
       const body = context ? `${text}\n\n${context}` : text
@@ -664,8 +670,15 @@ export function EmbedApp({ link, app }: Props) {
     )
   }
 
+  const confirmPrompt = principal?.kind === 'contact' ? null : (
+    <PageGrantConfirm pageGrant={pageGrant}
+      agentName={phase.kind === 'ready' || phase.kind === 'chatting' ? phase.agent.name : 'The agent'} />
+  )
+
   if (phase.kind === 'ready') {
     return (
+      <>
+      {confirmPrompt}
       <EmbedStart
         // Remounted with an unsent question, so the composer starts from it.
         key={unsent ? `unsent-${unsent.n}` : 'start'}
@@ -690,10 +703,13 @@ export function EmbedApp({ link, app }: Props) {
           </>
         }
       />
+      </>
     )
   }
 
   return (
+    <>
+    {confirmPrompt}
     <EmbedChat
       key={phase.sessionId}
       sessionId={phase.sessionId}
@@ -710,6 +726,7 @@ export function EmbedApp({ link, app }: Props) {
       snappable={snappable}
       pageGrant={pageGrant}
     />
+    </>
   )
 }
 
@@ -1114,9 +1131,12 @@ function EmbedChat({
    *  declaration stamps the conversation with the new token's grant) — before the
    *  turn this send starts, so the turn reads through it. */
   const withGrant = useCallback(async () => {
-    if (pageGrant && await pageGrant.ensure()) {
+    if (!pageGrant) return
+    if (await pageGrant.ensure()) {
       await declarePage(client, link, sessionBase(isContact, sessionId))
     }
+    // Usable only once confirmed with the passkey (or declined): wait for it.
+    await pageGrant.settled()
   }, [pageGrant, client, link, isContact, sessionId])
   // No tool calls ever arrive here: canopy withholds them from every widget
   // connection, decided by the token rather than asked for (consumers.py).
@@ -1654,12 +1674,12 @@ function embedAppHost(client: CanopyClient, sessionPath: string, expanded = fals
 
 
 /** The panel's act-as-you line: what the agent may do as the person on this page,
- *  until when, and the person's Stop. Shown only while a grant is live. */
+ *  until when, and the person's Stop. Shown only while a confirmed grant is live. */
 function PageGrantLine({ pageGrant, agentName }: { pageGrant: PageGrant; agentName: string }) {
   const [grant, setGrant] = useState(() => pageGrant.current())
   const [stopping, setStopping] = useState(false)
   useEffect(() => pageGrant.subscribe(() => setGrant(pageGrant.current())), [pageGrant])
-  if (!grant) return null
+  if (!grant?.confirmed) return null
   const who = grant.agent_name || agentName
   const until = untilLabel(grant.expires_at)
   return (
@@ -1674,6 +1694,60 @@ function PageGrantLine({ pageGrant, agentName }: { pageGrant: PageGrant; agentNa
               className="text-destructive hover:underline disabled:opacity-50">
         Stop
       </button>
+    </div>
+  )
+}
+
+
+/** The passkey prompt for an act-as-you permission the page is waiting on. Nothing
+ *  the host granted is usable until the person confirms here, in canopy's frame;
+ *  "Not now" stops it and the message goes without. Its own button, because
+ *  Safari runs WebAuthn only inside a click. */
+function PageGrantConfirm({ pageGrant, agentName }: { pageGrant: PageGrant; agentName: string }) {
+  const [grant, setGrant] = useState(() => pageGrant.current())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => pageGrant.subscribe(() => setGrant(pageGrant.current())), [pageGrant])
+  if (!grant || grant.confirmed) return null
+  const who = grant.agent_name || agentName
+  const confirm = () => {
+    setBusy(true)
+    setError(null)
+    pageGrant.confirm()
+      // canopy's own sentence (no passkey yet: where to register one), else the browser's.
+      .catch((e: unknown) => setError((e as { detail?: string })?.detail
+        || (e instanceof Error && e.name !== 'NotAllowedError' ? e.message : '')
+        || 'The passkey was not confirmed.'))
+      .finally(() => setBusy(false))
+  }
+  const decline = () => {
+    setBusy(true)
+    void pageGrant.stop().finally(() => setBusy(false))
+  }
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Confirm act as you"
+         className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
+         data-testid="page-grant-confirm">
+      <div className="w-full max-w-sm space-y-3 rounded-lg border border-border bg-card p-4">
+        <p className="text-sm text-foreground">
+          Let {who} act as you on this page for 30 minutes?
+        </p>
+        <p className="text-[12px] text-muted-foreground">
+          It can do what you can do on {grant.site} for this page ({grant.scope || 'this page'}),
+          and nothing more. Confirm with your passkey; you can stop it at any time.
+        </p>
+        {error && <p className="text-[12px] text-destructive">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={decline} disabled={busy}
+                  className="rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted disabled:opacity-50">
+            Not now
+          </button>
+          <button type="button" onClick={confirm} disabled={busy}
+                  className="rounded bg-primary px-3 py-1 text-[12px] text-primary-foreground hover:opacity-90 disabled:opacity-50">
+            Confirm with passkey
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

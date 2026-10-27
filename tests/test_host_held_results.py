@@ -171,12 +171,12 @@ def _grant(app, token, user):
     return sg.acted_with(HostGrant.objects.create(
         app=app, subject=token, user=user, access_token_enc=encrypt_secret(token), scope="data:read",
         resource=sg.RESOURCE, dpop_jkt=client_identity.dpop_jkt(),
-        expires_at=timezone.now() + timedelta(minutes=10)))
+        expires_at=timezone.now() + timedelta(minutes=10), confirmed_at=timezone.now()))
 
 
 @pytest.fixture()
 def w():
-    """sg.world (a contact visitor's conversation, for `site_read`) plus a member's own
+    """sg.world (a visitor's conversation, for `site_read`) plus a member's own
     conversation on the same site with two colleagues, each with their own grant."""
     w = sg.world()
     w["agent"].interface = parse(IFACE)
@@ -1128,8 +1128,10 @@ def test_view_facts_only_for_a_person_in_the_conversation(w):
     outsider = User.objects.create_user("olga", "olga@dimagi.com", "pw")
     assert mcp_apps_views.view_facts(session, mcp_apps_views.Viewer(user=outsider, person=True), grant) is None
     # A contact, in their own conversation only.
+    theirs = Session.objects.create(workspace=w["ws"], agent=w["agent"], contact=w["contact"],
+                                    metadata={"embed_app": "connect-labs"})
     own = mcp_apps_views.Viewer(contact=w["contact"], person=True)
-    assert mcp_apps_views.view_facts(w["session"], own, grant)["viewer"] == f"contact:{w['contact'].pk}"
+    assert mcp_apps_views.view_facts(theirs, own, grant)["viewer"] == f"contact:{w['contact'].pk}"
     assert mcp_apps_views.view_facts(session, own, grant) is None
 
 

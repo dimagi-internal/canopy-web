@@ -1685,8 +1685,9 @@ export interface paths {
          *     `page` names the canopy page the panel is on. When it is one canopy lets an
          *     agent act on as you (read-only, within your own access) AND the body says
          *     `"grant": true` — the panel sends it only once you have sent a message in it —
-         *     canopy also takes a short grant to its own tools for that page; `host_grant`
-         *     says whether it did. Any other value, or none, is simply no grant.
+         *     canopy also takes a short grant to its own tools for that page, usable once you
+         *     confirm it with your passkey in the panel; `host_grant` says whether it did. Any
+         *     other value, or none, is simply no grant.
          */
         readonly post: operations["embed_self_token"];
         readonly delete?: never;
@@ -1753,19 +1754,62 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * What this panel's page lets the agent read as me
-         * @description The live grant the panel's own token carries — the page it is on — or
-         *     null. The panel shows it as "can read what this page shows, as you, until …".
+         * What this panel's page lets the agent do as me
+         * @description The grant the panel's own token carries — the page it is on — or null. The
+         *     panel shows a confirmed one as "can act as you on this page until …", and asks
+         *     for your passkey while one waits (`confirmed: false`).
          */
         readonly get: operations["panel_host_grant"];
         readonly put?: never;
         readonly post?: never;
         /**
-         * Stop this panel's page letting the agent read as me
+         * Stop this panel's page letting the agent act as me
          * @description Stop the grant the panel's token carries, and every live grant of the same
          *     page. The panel then asks for none until you send again.
          */
         readonly delete: operations["stop_panel_host_grant"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/host-grant/confirm/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start confirming this page's act-as-you permission with my passkey
+         * @description Options for navigator.credentials.get(), to confirm the permission this
+         *     panel's page is waiting on with one of your passkeys.
+         */
+        readonly post: operations["begin_confirm_host_grant"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/host-grant/confirm/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Confirm this page's act-as-you permission with my passkey
+         * @description Verify the passkey assertion and confirm the permission: from now, for 30
+         *     minutes, the agent may act as you on this page.
+         */
+        readonly post: operations["finish_confirm_host_grant"];
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -1782,8 +1826,8 @@ export interface paths {
          * The sites that may let an agent read as me, right now
          * @description Every live host grant held for you: which site, which agent, what it may
          *     read, and until when — one row per page you sent from. A grant is taken only
-         *     once you send a message in a site's panel, and lasts 30 minutes unless that
-         *     page grants again.
+         *     once you send a message in a site's panel and confirm it with your passkey,
+         *     and lasts 30 minutes from that confirmation.
          */
         readonly get: operations["list_my_host_grants"];
         readonly put?: never;
@@ -2502,31 +2546,6 @@ export interface paths {
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/contact/host-grant": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * What this panel's page lets the agent read as me
-         * @description The live grant your panel's token carries — the page it is on — or null.
-         */
-        readonly get: operations["contact_host_grant"];
-        readonly put?: never;
-        readonly post?: never;
-        /**
-         * Stop this panel's page letting the agent read as me
-         * @description Stop the grant your panel's token carries, and every live grant of the
-         *     same page. The panel asks for none until you send again.
-         */
-        readonly delete: operations["contact_stop_host_grant"];
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -18630,10 +18649,29 @@ export interface components {
              * Format: date-time
              */
             readonly expires_at: string;
+            /**
+             * Confirmed
+             * @default false
+             */
+            readonly confirmed: boolean;
         };
         /** PanelGrantOut */
         readonly PanelGrantOut: {
             readonly grant?: components["schemas"]["HostGrantOut"] | null;
+        };
+        /** PasskeyOptionsOut */
+        readonly PasskeyOptionsOut: {
+            /** Options */
+            readonly options: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /** PasskeyAssertIn */
+        readonly PasskeyAssertIn: {
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
         };
         /**
          * MyDelegatedCredentialOut
@@ -28289,13 +28327,6 @@ export interface components {
             /** Prf Enabled */
             readonly prf_enabled?: boolean | null;
         };
-        /** PasskeyOptionsOut */
-        readonly PasskeyOptionsOut: {
-            /** Options */
-            readonly options: {
-                readonly [key: string]: unknown;
-            };
-        };
         /** PasskeyRegisterIn */
         readonly PasskeyRegisterIn: {
             /** Credential */
@@ -28320,13 +28351,6 @@ export interface components {
             readonly browser: boolean;
             /** Window Seconds */
             readonly window_seconds: number;
-        };
-        /** PasskeyAssertIn */
-        readonly PasskeyAssertIn: {
-            /** Credential */
-            readonly credential: {
-                readonly [key: string]: unknown;
-            };
         };
         /** VaultSetupOut */
         readonly VaultSetupOut: {
@@ -42975,6 +42999,50 @@ export interface operations {
             };
         };
     };
+    readonly begin_confirm_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_confirm_host_grant: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PasskeyAssertIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PanelGrantOut"];
+                };
+            };
+        };
+    };
     readonly list_my_host_grants: {
         readonly parameters: {
             readonly query?: never;
@@ -43859,46 +43927,6 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    readonly contact_host_grant: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PanelGrantOut"];
-                };
-            };
-        };
-    };
-    readonly contact_stop_host_grant: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["PanelGrantOut"];
-                };
             };
         };
     };

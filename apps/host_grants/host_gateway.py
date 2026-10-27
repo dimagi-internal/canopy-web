@@ -85,14 +85,23 @@ def page_grant_stopped(agent_name: str) -> str:
             "to grant it for another 30 minutes.")
 
 
+#: The page asked, and the person has not confirmed it with their passkey
+#: (`host_grants.UNCONFIRMED`).
+def page_grant_unconfirmed(agent_name: str) -> str:
+    return (f"{agent_name} can act as you on this page only once you confirm it with your "
+            "passkey — send again and confirm when the panel asks.")
+
+
 def no_grant_message(site: str, reason: str, agent_name: str = "the agent") -> str:
     """What to tell the person when `host_grants.lookup` found no grant, by its reason."""
-    from .host_grants import EXPIRED, REVOKED  # noqa: PLC0415 — as `resolve`: host_grants reads models, loaded with a call
+    from .host_grants import EXPIRED, REVOKED, UNCONFIRMED  # noqa: PLC0415 — as `resolve`: host_grants reads models, loaded with a call
 
     if reason == EXPIRED:
         return page_grant_expired(agent_name)
     if reason == REVOKED:
         return page_grant_stopped(agent_name)
+    if reason == UNCONFIRMED:
+        return page_grant_unconfirmed(agent_name)
     return f"{site} has not given me access on your behalf — " + BACK_ON_THE_PAGE
 
 
@@ -237,14 +246,15 @@ def resolve(turn_id: str) -> SiteContext:
     # WHICH agent: a grant a page bound to another agent is not this one's. And
     # from WHICH page: the one that last acted in this conversation as them, while
     # it lives — never another page's, never their latest.
-    from .host_grants import EXPIRED, REVOKED, lookup  # noqa: PLC0415 — host_grants reads models, loaded with a call
+    from .host_grants import EXPIRED, REVOKED, UNCONFIRMED, lookup  # noqa: PLC0415 — host_grants reads models, loaded with a call
 
     found = lookup(app, agent=agent, contact=turn.initiator_contact,
                    user=turn.initiator_user if not turn.initiator_contact_id else None,
                    session=session)
     grant = found.grant
     if grant is None:
-        code = {EXPIRED: "expired", REVOKED: "revoked"}.get(found.reason, "no_grant")
+        code = {EXPIRED: "expired", REVOKED: "revoked",
+                UNCONFIRMED: "unconfirmed"}.get(found.reason, "no_grant")
         raise GatewayRefusal(code, no_grant_message(site, found.reason, agent.name or agent.slug))
 
     # The grant is per arrival, not per conversation: a visitor who
@@ -290,6 +300,8 @@ def context_for_grant(app, grant, *, turn_id: str, agent_slug: str, ceiling: lis
 
     if grant.revoked_at is not None:
         raise GatewayRefusal("revoked", page_grant_stopped(agent_slug))
+    if grant.confirmed_at is None:
+        raise GatewayRefusal("unconfirmed", page_grant_unconfirmed(agent_slug))
     if grant.expires_at <= timezone.now() + EXPIRY_MARGIN:
         raise GatewayRefusal("expired", page_grant_expired(agent_slug))
     if grant.resource.rstrip("/") != app.host_mcp_resource.rstrip("/"):

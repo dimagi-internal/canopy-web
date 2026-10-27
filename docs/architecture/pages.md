@@ -579,7 +579,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
   Supervisor or IDE, also settable from the app's right-click menu → Opens on; it loads `/runner-app/`, a bare view that redirects to the
   choice, `RunnerAppPreference`), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
   plus the MCP address and `claude mcp add` line), act-as-you permissions (each connected
-  site whose panel you sent from, letting an agent act as you there until a time — Stop
+  site whose panel you sent from and confirmed with your passkey, letting an agent act as you there until a time — Stop
   ends it, `/api/me/host-grants/`), personal access tokens, and
   runner device keys (`#device-keys`, shown when you have any or arrive by a
   box's `approve_url` with `?device_key=<id>`, which marks that row; approve /

@@ -1131,7 +1131,12 @@ In three steps — every claim, lifetime, header and refusal is in
    it sends `{"grant": true}` once the person sends their first message in the panel (or opens a
    conversation whose live card needs to read your site as them), and on every mint of that tab
    after, until they press **Stop**. Expect your first grant only after that first send.
-   `canopy_sdk.django`'s `panel_token` already does this.
+   `canopy_sdk.django`'s `panel_token` already does this. canopy holds the grant unusable until
+   the person confirms it with their canopy passkey in the panel (30 minutes from that touch;
+   your later grants for the same page carry the same end). Only a visitor who arrives as a
+   canopy user can: an ID-JAG sent with a contact's arrival is ignored, and an agent that
+   serves your site on pages is not offered to a contact at all — when that is every agent
+   you offer, canopy's frame tells the loader and the launcher is removed for them.
 2. **Redeem.** canopy (client id `{canopy base}/oauth/client.json`, keys at
    `{canopy base}/oauth/jwks.json`) redeems it at your token endpoint with
    `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`, `private_key_jwt` and DPoP;
@@ -1180,7 +1185,8 @@ so a page's other tools need not be re-listed in its state.
 30 minutes (`ACCESS_TOKEN_MAX_LIFETIME`). While the person's tab holds a grant
 the widget re-mints about every five minutes, so you issue a fresh ID-JAG on
 that cadence. A conversation reads ONLY through the grant of the page that last
-acted in it as that person (sent, declared its page, or made a View call) —
+acted in it as that person (sent, declared its page, or made a View call), and
+only once they confirmed it with their passkey —
 never another of their pages' grants, however recent, and never the agent's own
 credential. Once that grant runs out (or they press Stop, in the panel or on
 canopy's Settings), a call in their turn is REFUSED and the agent tells them:

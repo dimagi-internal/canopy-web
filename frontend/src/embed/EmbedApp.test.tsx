@@ -37,6 +37,7 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     reportSession: () => undefined,
     invalidate: () => undefined,
     requestClose: () => undefined,
+    reportUnavailable: () => undefined,
     requestHeight: () => undefined,
     requestExpand: () => undefined,
     isExpanded: () => false,
@@ -488,6 +489,33 @@ describe('a contact behind the frame', () => {
 
     expect(await screen.findByText('Echo')).toBeTruthy()
     expect(screen.getByText('Hal')).toBeTruthy()
+  })
+
+  it('tells the host to remove the launcher when canopy offers a contact no agent', async () => {
+    // Every agent the site offers acts on it as the visitor, which a contact (no
+    // passkey) can never permit, so canopy lists none: no panel at all.
+    ME.agents = []
+    asContact()
+    const reportUnavailable = vi.fn()
+    render(<EmbedApp link={fakeLink({ reportUnavailable })} app="connect-labs" />)
+    await waitFor(() => expect(reportUnavailable).toHaveBeenCalledTimes(1))
+  })
+
+  it('never asks a contact to let the agent act as them', async () => {
+    ME.agents = [{ slug: 'echo', name: 'Echo', description: '' }]
+    asContact()
+    const requestToken = vi.fn(async () => ({ token: 't2', expiresAt: '' }))
+    render(
+      <EmbedApp
+        link={fakeLink({ waitForInit: async () => ({ token: 't', agent: 'echo', actions: [] }), requestToken })}
+        app="connect-labs"
+      />,
+    )
+    await say()
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(requestToken).not.toHaveBeenCalledWith({ grant: true })
+    expect(calls.some((c) => c.url.includes('host-grant'))).toBe(false)
+    expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
   })
 })
 
@@ -1162,6 +1190,10 @@ describe('the act-as-you permission', () => {
       return { token: options?.grant ? 'granted' : 'plain', expiresAt: '' }
     })
     let stopped = false
+    let confirmed = false
+    const grantBody = () => ({
+      id: 7, site: 'connect-labs', agent: '', agent_name: '', scope: 'marketplace:read',
+      granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z', confirmed })
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
@@ -1170,42 +1202,82 @@ describe('the act-as-you permission', () => {
         if (String(url).includes('/api/embed/agents')) {
           return { ok: true, status: 200, json: async () => AGENTS } as Response
         }
+        if (String(url).endsWith('/api/embed/host-grant/confirm/begin')) {
+          return { ok: true, status: 200, json: async () => ({ options: { challenge: 'AAAA' } }) } as Response
+        }
+        if (String(url).endsWith('/api/embed/host-grant/confirm/finish')) {
+          confirmed = true
+          return { ok: true, status: 200, json: async () => ({ grant: grantBody() }) } as Response
+        }
         if (String(url).endsWith('/api/embed/host-grant')) {
           if (init?.method === 'DELETE') stopped = true
           const live = auth.endsWith('granted') && !stopped && init?.method !== 'DELETE'
-          return { ok: true, status: 200, json: async () => ({ grant: live ? {
-            id: 7, site: 'connect-labs', agent: '', agent_name: '', scope: 'marketplace:read',
-            granted_at: '2026-10-26T15:12:00Z', expires_at: '2026-10-26T15:42:00Z' } : null }) } as Response
+          return { ok: true, status: 200, json: async () => ({ grant: live ? grantBody() : null }) } as Response
         }
         return { ok: true, status: 200, json: async () => ({ id: 'sess-1' }) } as Response
       }),
     )
-    return { asked, requestToken }
+    const get = vi.fn(async () => ({
+      id: 'cred', rawId: new Uint8Array([1]).buffer, type: 'public-key',
+      response: { clientDataJSON: new Uint8Array([2]).buffer, authenticatorData: new Uint8Array([3]).buffer,
+                  signature: new Uint8Array([4]).buffer },
+      getClientExtensionResults: () => ({}),
+    }))
+    Object.defineProperty(navigator, 'credentials', { value: { get }, configurable: true })
+    return { asked, requestToken, get }
   }
 
-  it('is never asked for on load, only when the person sends — and then shows, with Stop', async () => {
-    const { asked, requestToken } = grantingWorld()
+  function renderGranting(requestToken: ReturnType<typeof grantingWorld>['requestToken']) {
     render(
       <EmbedApp
         link={fakeLink({ waitForInit: async () => ({ token: 'tok', agent: 'hal', actions: [] }), requestToken })}
         app="connect-labs"
       />,
     )
+  }
+
+  it('is never asked for on load; a send asks, and waits for the passkey before it goes', async () => {
+    const { asked, requestToken, get } = grantingWorld()
+    renderGranting(requestToken)
     await screen.findByPlaceholderText(/^Type a message/)
     expect(asked).not.toContain(true)
     expect(calls.some((c) => c.url.endsWith('/host-grant'))).toBe(false)
 
     await say('what am I looking at?')
+    const prompt = await screen.findByTestId('page-grant-confirm')
+    expect(prompt.textContent).toMatch(/Let Hal act as you on this page for 30 minutes\?/)
+    // Nothing is sent until the person decides.
+    expect(created()).toBeUndefined()
+    expect(screen.queryByTestId('page-grant-line')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm with passkey' }))
     await waitFor(() => expect(created()).toBeDefined())
+    expect(get).toHaveBeenCalledTimes(1)
     expect(asked).toContain(true)
     // The conversation is created with the token that carries the grant.
     expect(String((created()?.init?.headers as Record<string, string>).Authorization)).toBe('Bearer granted')
 
     const line = await screen.findByTestId('page-grant-line')
     expect(line.textContent).toMatch(/^Hal can act as you on this page until /)
+    expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
     await waitFor(() => expect(screen.queryByTestId('page-grant-line')).toBeNull())
     expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant') && c.init?.method === 'DELETE')).toBe(true)
+  })
+
+  it('"Not now" stops the permission and the message goes without it', async () => {
+    const { requestToken, get } = grantingWorld()
+    renderGranting(requestToken)
+    await screen.findByPlaceholderText(/^Type a message/)
+    await say('what am I looking at?')
+    await screen.findByTestId('page-grant-confirm')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+    await waitFor(() => expect(created()).toBeDefined())
+    expect(get).not.toHaveBeenCalled()
+    expect(calls.some((c) => c.url.endsWith('/api/embed/host-grant') && c.init?.method === 'DELETE')).toBe(true)
+    expect(screen.queryByTestId('page-grant-line')).toBeNull()
+    expect(screen.queryByTestId('page-grant-confirm')).toBeNull()
   })
 })

@@ -59,6 +59,11 @@ def site(key):
     app.public_keys = [public_pem(key)]
     app.save()
     AppCredentialAgent.objects.create(app=app, agent=agent)
+    # What a contact may talk to: an agent that does not act on the site's pages (one
+    # that does, `ace`, reaches the site only through a passkey-confirmed permission a
+    # contact cannot hold, so is never offered to them).
+    helper = Agent.objects.create(slug="helper", name="Helper", workspace=ws, owner=owner)
+    AppCredentialAgent.objects.create(app=app, agent=helper)
     return {"owner": owner, "ws": ws, "agent": agent, "app": app}
 
 
@@ -92,7 +97,7 @@ def _member(site):
 
 
 def _contact_session(raw):
-    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "ace"},
+    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "helper"},
                           content_type="application/json")
     assert r.status_code == 200, r.content
     return Session.objects.get(pk=r.json()["id"])
@@ -129,7 +134,7 @@ def test_a_contact_cannot_start_one_under_that_token(site, key):
     """A contact has no vault key, so it cannot hold a conversation sealed to its people
     (spec 2026-10-23 §2): refused in a sentence, before anything exists."""
     raw = _arrive(key, requirements=["sensitive_data"]).json()["token"]
-    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "ace"}, content_type="application/json")
+    r = _bearer(raw).post("/api/contact/sessions", {"agent_slug": "helper"}, content_type="application/json")
     assert r.status_code == 422 and "vault key" in r.json()["detail"]
     assert not Session.objects.exists()
 

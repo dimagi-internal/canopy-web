@@ -48,6 +48,7 @@ function fakeLink(): HostLink {
     reportSession: () => undefined,
     invalidate: () => undefined,
     requestClose: () => undefined,
+    reportUnavailable: () => undefined,
     requestHeight: () => undefined,
     requestExpand: () => undefined,
     isExpanded: () => false,
