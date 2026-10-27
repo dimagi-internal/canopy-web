@@ -330,8 +330,9 @@ if (-not $NoAutoUpdate) {
 # as platform_jobs.restart_windows_task.
 & schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
 for ($i = 0; $i -lt 30; $i++) {
-    $state = (& schtasks /Query /TN "$TASK_FOLDER\$RUNNER_TASK" /FO CSV /NH 2> $null) -join ''
-    if ($state -notmatch '"Running"') { break }
+    # The State enum, not schtasks' status column: that one is translated.
+    $state = (Get-ScheduledTask -TaskPath "$TASK_FOLDER\" -TaskName $RUNNER_TASK -ErrorAction SilentlyContinue).State
+    if ("$state" -ne 'Running') { break }
     Start-Sleep -Milliseconds 500
 }
 & schtasks /Run /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null

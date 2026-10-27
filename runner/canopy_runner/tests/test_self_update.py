@@ -327,12 +327,12 @@ class WinCmds:
         elif argv[:2] == ["schtasks", "/Run"]:
             if not self.query_until_ended:
                 self.running = self.comes_up
-        elif argv[:2] == ["schtasks", "/Query"]:
+        elif argv[0] == "powershell.exe" and "Get-ScheduledTask" in argv[-1]:
             if getattr(self, "query_until_ended", 0):
                 self.query_until_ended -= 1
-                out = f'"{argv[3]}","N/A","Running"'
+                out = "Running"
             else:
-                out = f'"{argv[3]}","N/A","{"Running" if self.running else "Ready"}"'
+                out = "Running" if self.running else "Ready"
         elif argv[:3] == ["cmd", "/c", "rmdir"]:
             Path(argv[3]).unlink()
         elif argv[:4] == ["cmd", "/c", "mklink", "/J"]:
@@ -342,7 +342,9 @@ class WinCmds:
         return subprocess.CompletedProcess(argv, 0, out, "")
 
     def argvs(self, *prefix):
-        return [a for a, _ in self.calls if a[:len(prefix)] == list(prefix)]
+        """Calls starting with `prefix`, leaving out the task-state polls."""
+        return [a for a, _ in self.calls if a[:len(prefix)] == list(prefix)
+                and "Get-ScheduledTask" not in a[-1]]
 
 
 def _install(tmp_path, app, cmds, **kw):
@@ -360,7 +362,7 @@ def test_windows_runs_the_installer_then_setup_restart_and_prune(tmp_path):
     _install(tmp_path, app, cmds)
     assert cmds.popened[0][0] == [str(tmp_path / "Setup.exe"), "/VERYSILENT",
                                   "/SUPPRESSMSGBOXES", "/NORESTART", "/UPDATE"]
-    argvs = [a for a, _ in cmds.calls if a[:2] != ["schtasks", "/Query"]]
+    argvs = [a for a, _ in cmds.calls if "Get-ScheduledTask" not in a[-1]]
     assert argvs[0][0] == str(app / "current" / "python" / "python.exe")
     assert argvs[0][1:] == ["-m", "canopy_runner.main", "setup", "--no-pair", "--config",
                             str(tmp_path / "runner.json")]
@@ -411,14 +413,17 @@ def test_restart_waits_for_end_to_settle_before_run(tmp_path):
     app = windows_install(tmp_path)
     cmds = WinCmds(app, end_settles_after=3)
     _install(tmp_path, app, cmds)
-    seq = [a[1] for a, _ in cmds.calls if a[0] == "schtasks"]
+    def step(argv):
+        return "/State" if "Get-ScheduledTask" in argv[-1] else argv[1]
+    seq = [step(a) for a, _ in cmds.calls
+           if a[0] == "schtasks" or "Get-ScheduledTask" in a[-1]]
     end, run = seq.index("/End"), seq.index("/Run")
-    assert seq[end + 1:run] == ["/Query"] * 4, "polls until no longer Running, then /Run"
-    assert seq[run + 1] == "/Query", "and confirms /Run took"
+    assert seq[end + 1:run] == ["/State"] * 4, "polls until no longer Running, then /Run"
+    assert seq[run + 1] == "/State", "and confirms /Run took"
     for argv, kw in cmds.calls:
-        if argv[:2] == ["schtasks", "/Query"]:
-            assert argv[2:] == ["/TN", r"\Canopy\canopy-runner", "/FO", "CSV", "/NH"]
-            assert kw["timeout"] <= 10
+        if "Get-ScheduledTask" in argv[-1]:
+            assert "-TaskPath '\\Canopy\\' -TaskName 'canopy-runner'" in argv[-1]
+            assert kw["timeout"] <= 20
 
 
 def test_a_runner_that_never_comes_back_is_a_failed_update(tmp_path, monkeypatch):
