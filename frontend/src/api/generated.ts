@@ -34569,6 +34569,11 @@ export interface components {
              */
             readonly host: string;
             /**
+             * Platform
+             * @default
+             */
+            readonly platform: string;
+            /**
              * Ready
              * @default true
              */
