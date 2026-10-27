@@ -8,7 +8,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0101_drop_custodial_agent_values"),
+        ("agents", "0102_drop_delegation_lender"),
         ("harness", "0122_turn_requested_cli"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
