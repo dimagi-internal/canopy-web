@@ -7464,7 +7464,11 @@ def _default_adopted() -> bool:
 #: ciphertext and opens it here. What it opened is kept until the bundle changes or an
 #: hour passes, so the five-minute bundle re-read is not a vault read (each is logged).
 VAULT_REREAD_SECONDS = int(os.environ.get("VAULT_REREAD_SECONDS", "3600"))
-_VAULT_VALUES: dict = {"stamp": None, "at": 0.0, "values": {}}
+#: A read that found a vault this box holds no key to is kept only this long: the
+#: grant that gives it the key changes nothing in the bundle, so the hour above
+#: would leave a new fleet's first member waiting an hour after its grant.
+VAULT_SHUT_REREAD_SECONDS = int(os.environ.get("VAULT_SHUT_REREAD_SECONDS", "60"))
+_VAULT_VALUES: dict = {"stamp": None, "at": 0.0, "values": {}, "shut": False}
 
 
 def _run_vault_cli(runner_id: str) -> dict:
@@ -7484,9 +7488,11 @@ def _run_vault_cli(runner_id: str) -> dict:
 def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dict:
     """The values this box opened from its vault: cached while `stamp` (the bundle's
     `updated_at` and the names it points at) is unchanged and younger than
-    VAULT_REREAD_SECONDS; the last good ones when a read fails."""
+    VAULT_REREAD_SECONDS (VAULT_SHUT_REREAD_SECONDS while a vault stayed shut); the
+    last good ones when a read fails."""
     now = time.time() if now is None else now
-    if _VAULT_VALUES["stamp"] == stamp and now - _VAULT_VALUES["at"] < VAULT_REREAD_SECONDS:
+    keep = VAULT_SHUT_REREAD_SECONDS if _VAULT_VALUES["shut"] else VAULT_REREAD_SECONDS
+    if _VAULT_VALUES["stamp"] == stamp and now - _VAULT_VALUES["at"] < keep:
         return _VAULT_VALUES["values"]
     try:
         doc = _run_vault_cli(runner_id)
@@ -7498,7 +7504,7 @@ def _vault_values(runner_id: str, stamp: tuple, now: float | None = None) -> dic
     values = {str(k): str(v) for k, v in doc["values"].items()}
     shut = [str(layer.get("vault")) for layer in doc.get("vault_layers") or []
             if isinstance(layer, dict) and not layer.get("opened")]
-    _VAULT_VALUES.update(stamp=stamp, at=now, values=values)
+    _VAULT_VALUES.update(stamp=stamp, at=now, values=values, shut=bool(shut))
     if shut:
         _set_check("claude.vault", "warn", f"{len(values)} credential(s) opened from the vault; this box "
                    f"holds no copy of the key to {', '.join(shut)} — grant it on the vault's page")
