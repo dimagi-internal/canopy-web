@@ -8,7 +8,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("agents", "0103_agentgooglemint"),
+        ("agents", "0091_default_agent"),
         ("tokens", "0039_host_grant_confirmed_at"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
