@@ -73,6 +73,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/people/me',
+    home: '/me',
     flat: 'personal/global: what agents know about you, the subject',
     title: 'Your memory',
     audience: 'Anyone who talks to an agent',
@@ -165,6 +166,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/settings',
+    home: '/me',
     flat: 'personal/global: your own account',
     title: 'Your settings',
     audience: 'Everyone',

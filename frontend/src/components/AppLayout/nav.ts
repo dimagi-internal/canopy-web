@@ -108,11 +108,11 @@ export const HELP_ITEMS: NavItem[] = [
   { path: '/system', label: 'System', tenant: false },
 ]
 
-/** The account menu: pages about you, the same in every workspace. */
+/** The account menu: pages about you, the same in every workspace. Profile is
+ *  one entry: your memory (/people/me) and account settings (/settings) are its
+ *  tabs. */
 export const ACCOUNT_ITEMS: (NavItem & { desktopOnly?: boolean })[] = [
-  { path: '/me', label: 'Your profile', tenant: false },
-  { path: '/settings', label: 'Account settings', tenant: false },
-  { path: '/people/me', label: 'What agents know about me', tenant: false },
+  { path: '/me', label: 'Profile', tenant: false },
   { path: '/sessions', label: 'Shared transcripts', tenant: false },
   { path: '/supervisor', label: 'Supervisor', tenant: false },
   { path: '/ide', label: 'IDE', tenant: false, desktopOnly: true },
