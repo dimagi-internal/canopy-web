@@ -253,15 +253,24 @@ def _cmd_quote(text: str) -> str:
 
 
 def windows_commands(app_dir: Path, home: Path, config: Path) -> dict[str, tuple[str, str]]:
-    """task name → (executable, arguments), always through `current`."""
+    """task name → (executable, arguments), always through `current`.
+
+    `-X utf8`: without it every bare open()/read_text()/text=True in the runner uses
+    the Windows code page (cp1252), which cannot decode the UTF-8 that node, git, the
+    Claude app and Claude Code write — the class of bug behind failure investigation
+    11 (a right double quote killed the ACP reader). `-I` as the .cmd shim does: a
+    machine-wide PYTHONHOME or PYTHONPATH left by another install must not reach
+    the bundled interpreter. Changing these arguments re-registers both tasks on the
+    next update (the updater's stamp is these arguments)."""
     pyw = app_dir / "current" / "python" / "pythonw.exe"
     canopy = home / ".canopy"
+    py_flags = ["-I", "-X", "utf8"]
     return {
         "canopy-runner": (str(pyw), " ".join([
-            "-m", "canopy_runner.main", "run", "--config", _cmd_quote(str(config)),
+            *py_flags, "-m", "canopy_runner.main", "run", "--config", _cmd_quote(str(config)),
             "--log-file", _cmd_quote(str(canopy / "runner.log"))])),
         "canopy-runner-updater": (str(pyw), " ".join([
-            "-m", "canopy_runner.main", "self-update", "--if-stale", "--config",
+            *py_flags, "-m", "canopy_runner.main", "self-update", "--if-stale", "--config",
             _cmd_quote(str(config)), "--log-file", _cmd_quote(str(canopy / "updater.log"))])),
     }
 
@@ -277,7 +286,14 @@ def register_script(name: str, exe: str, args: str, *, updater: bool) -> str:
         settings = ("New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries "
                     "-DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew")
     else:
-        trigger = "New-ScheduledTaskTrigger -AtLogOn -User $u"
+        # Logon starts it; the 5-minute repeat is what brings it BACK. Task Scheduler's
+        # RestartCount covers only a task that fails to launch: a daemon that crashes,
+        # or is ended by an update whose /Run lands while /End is still settling, is a
+        # finished run, and stayed down until the next sign-in. IgnoreNew makes the
+        # repeat a no-op while it is up (macOS gets this from KeepAlive).
+        trigger = ("@((New-ScheduledTaskTrigger -AtLogOn -User $u), "
+                   "(New-ScheduledTaskTrigger -Once -At (Get-Date) "
+                   "-RepetitionInterval (New-TimeSpan -Minutes 5)))")
         settings = ("New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries "
                     "-DontStopIfGoingOnBatteries -RestartCount 999 "
                     "-RestartInterval (New-TimeSpan -Minutes 1) "

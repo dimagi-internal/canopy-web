@@ -69,12 +69,27 @@ def hook_command(port: int, nonce: str) -> str:
     )
 
 
-def _load(path: Path) -> dict:
+_warned_unreadable: set[str] = set()
+
+
+def _load(path: Path) -> dict | None:
+    """The settings, {} when there is no file, None when there is one we can't parse.
+
+    None means "don't write": rewriting a file we could not read replaces the person's
+    permissions, plugins and env with canopy's hooks alone. Read as UTF-8, never the
+    locale's: on Windows that is cp1252, and a settings file with a curly quote in it
+    read as unparseable and was wiped on every runner start."""
     try:
-        data = json.loads(path.read_text())
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as exc:
+        if str(path) not in _warned_unreadable:  # once: the drift check asks every tick
+            _warned_unreadable.add(str(path))
+            logger.warning("could not read %s (%s); leaving it untouched, so canopy's "
+                           "hook is not installed until it parses", path, exc)
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _is_ours(entry: dict) -> bool:
@@ -90,6 +105,8 @@ def install(settings_path: Path, *, port: int, nonce: str) -> bool:
     anything else — emdash's, the user's own — are preserved untouched.
     """
     settings = _load(settings_path)
+    if settings is None:
+        return False
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         logger.warning("hooks in %s is not an object; refusing to touch it", settings_path)
@@ -102,7 +119,7 @@ def install(settings_path: Path, *, port: int, nonce: str) -> bool:
         hooks[event] = entries
     try:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     except OSError as exc:
         logger.warning("could not write %s: %s", settings_path, exc)
         return False
@@ -118,7 +135,7 @@ def is_current(settings_path: Path, *, port: int, nonce: str) -> bool:
     out means a rotated nonce counts as drift too — a stale nonce is rejected by
     the listener, which is silent in the same way a dead port is.
     """
-    settings = _load(settings_path)
+    settings = _load(settings_path) or {}
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return False
@@ -141,7 +158,7 @@ def remove(settings_path: Path) -> bool:
     calls this, so turning the feature off actually un-installs rather than
     leaving a dangling curl to a port nothing is listening on.
     """
-    settings = _load(settings_path)
+    settings = _load(settings_path) or {}
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
         return False
@@ -159,7 +176,7 @@ def remove(settings_path: Path) -> bool:
     if not changed:
         return False
     try:
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     except OSError as exc:
         logger.warning("could not write %s: %s", settings_path, exc)
         return False

@@ -8,7 +8,7 @@ from pathlib import Path
 def read_records(path) -> list[dict]:
     """Every JSONL record in the transcript, best-effort (never raises)."""
     try:
-        text = Path(path).read_text(errors="replace")
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
     out: list[dict] = []

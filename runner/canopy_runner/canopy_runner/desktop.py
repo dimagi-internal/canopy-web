@@ -318,7 +318,7 @@ def fork_session(cfg, source: str, records: int, project: str) -> str:
         raise ForkError(f"session {source}'s transcript has {len(kept)} records, not {records}")
     sid = str(uuid.uuid4())
     lines = [json.dumps({**r, "sessionId": sid} if "sessionId" in r else r) for r in kept]
-    (src.parent / f"{sid}.jsonl").write_text("".join(f"{line}\n" for line in lines))
+    (src.parent / f"{sid}.jsonl").write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
     _remember(cfg, sid, wt, project, runtime=CLAUDE_CLI)
     return sid
 
@@ -837,7 +837,7 @@ def read_events(channel: Path) -> list[dict]:
     evs = []
     for p in channel.glob("ev-*.json"):
         try:
-            e = json.loads(p.read_text())
+            e = json.loads(p.read_text(encoding="utf-8"))
             # `ev-<t>-<seq>-<kind>`: the mod's own counter orders two events of one
             # millisecond (a card drawn and answered at once), which `t` cannot.
             seq = int(p.name.split("-")[2])
@@ -1248,7 +1248,7 @@ class TurnRun:
             path = transcript_path(sid)
             offset = path.stat().st_size if path else 0  # this turn's record starts here
             n = next_followup_index(channel)
-            (channel / f"fu-{n}.txt").write_text(prompt)
+            (channel / f"fu-{n}.txt").write_text(prompt, encoding="utf-8")
             which = f"fu-{n}"
             self.client.start(self.id, sid)
             woke = not channel_alive(channel)
@@ -1275,7 +1275,7 @@ class TurnRun:
             # else (found live, #1188).
             seeded = transcript_path(sid)
             offset = seeded.stat().st_size if seeded else 0
-            (channel / "task.txt").write_text(prompt)
+            (channel / "task.txt").write_text(prompt, encoding="utf-8")
             if not started:
                 (channel / "seeded").write_text(sid)
             which = "task"
@@ -1311,7 +1311,7 @@ class TurnRun:
             if channel_held_for(channel, sid):
                 # The person opened it in the app: its process owns the session.
                 n = next_followup_index(channel)
-                (channel / f"fu-{n}.txt").write_text(prompt)
+                (channel / f"fu-{n}.txt").write_text(prompt, encoding="utf-8")
                 self.client.start(self.id, sid)
                 self.status("reused_session", runtime=CLAUDE_CLI, session=sid, held_by="claude-desktop")
                 self._follow(sid, channel, f"fu-{n}", offset, wait_for_completion=True)

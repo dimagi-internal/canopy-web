@@ -401,3 +401,55 @@ def test_a_reader_that_fails_says_so():
     with pytest.raises(Exception) as err:
         pending.result(timeout=5)
     assert "the reader failed: UnicodeDecodeError" in str(err.value)
+
+
+def _windows_locale(monkeypatch):
+    """Make every text open() that names no encoding use cp1252, as on Windows."""
+    import builtins
+    import pathlib
+
+    real_open, real_read, real_write = builtins.open, pathlib.Path.read_text, pathlib.Path.write_text
+
+    def open_(file, mode="r", *a, **kw):
+        if "b" not in mode and kw.get("encoding") is None and len(a) < 3:
+            kw["encoding"] = "cp1252"
+        return real_open(file, mode, *a, **kw)
+
+    monkeypatch.setattr(builtins, "open", open_)
+    monkeypatch.setattr(pathlib.Path, "read_text",
+                        lambda self, encoding=None, errors=None, **kw:
+                        real_read(self, encoding=encoding or "cp1252", errors=errors, **kw))
+    monkeypatch.setattr(pathlib.Path, "write_text",
+                        lambda self, data, encoding=None, errors=None, newline=None, **kw:
+                        real_write(self, data, encoding=encoding or "cp1252", errors=errors,
+                                   newline=newline, **kw))
+
+
+def test_the_agents_own_file_reads_and_writes_are_utf8_on_windows(tmp_path, monkeypatch):
+    """The adapter sends the agent's Read/Write through these handlers. Under the
+    Windows default (cp1252) a curly quote garbled on read and an arrow or emoji
+    refused to write; writes also turned \\n into \\r\\n."""
+    import io
+
+    from canopy_acp.client import AcpConnection
+
+    _windows_locale(monkeypatch)
+    agent = AcpConnection(write_to=io.StringIO(), read_from=io.StringIO(), fs_root=tmp_path)
+    text = "a “quoted” note → done ✓ 🎉\nsecond line\n"
+    agent._write_file({"path": str(tmp_path / "notes.md"), "content": text})
+    assert (tmp_path / "notes.md").read_bytes() == text.encode("utf-8")
+    assert agent._read_file({"path": str(tmp_path / "notes.md")}) == text
+
+
+def test_the_session_root_is_a_path_not_a_string_prefix(tmp_path):
+    import io
+
+    from canopy_acp.client import AcpConnection
+
+    root = tmp_path / "wt"
+    root.mkdir()
+    (tmp_path / "wt2").mkdir()
+    agent = AcpConnection(write_to=io.StringIO(), read_from=io.StringIO(), fs_root=root)
+    with pytest.raises(PermissionError):
+        agent._resolve_path({"path": str(tmp_path / "wt2" / "x.txt")})
+    assert agent._resolve_path({"path": str(root / "x.txt")}) == (root / "x.txt").resolve()
