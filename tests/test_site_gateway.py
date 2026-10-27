@@ -20,7 +20,6 @@ from django.utils import timezone
 
 from apps.agents.interface import GATEWAY_TOOLS, parse, profile
 from apps.agents.models import Agent
-from apps.contacts.models import Contact
 from apps.harness.models import Turn
 from apps.host_grants import host_gateway
 from apps.mcp.models import MCPAuditLog
