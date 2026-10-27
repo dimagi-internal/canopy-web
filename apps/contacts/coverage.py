@@ -9,7 +9,7 @@ brain must be loud.
 What is counted, for each agent of the workspace, over the last `days`:
 
 * `human_turns` — turns WITH the agent (directly or in one of its chats) that a
-  human started: a canopy user who is not an agent's login or a system account,
+  human started: a canopy user who is not an agent's login,
   or a contact — and only humans who make recording AVAILABLE
   (`Person.hcp_record_available`; a session may still turn it off, which this
   count does not see). Every other count below is over these turns.
@@ -41,15 +41,14 @@ MIN_DAYS, MAX_DAYS = 1, 90
 
 
 def human_turn_q(prefix: str = "") -> Q:
-    """Turns a HUMAN started: a canopy user who is not an agent's own login nor a
-    system account, or a contact. The same rule as `people.initiator_person`,
+    """Turns a HUMAN started: a canopy user who is not an agent's own login, or a
+    contact. The same rule as `people.initiator_person`,
     as a query."""
     p = prefix
     return (
         Q(**{f"{p}initiator_kind": "contact", f"{p}initiator_contact__isnull": False})
         | Q(**{f"{p}initiator_kind": "user", f"{p}initiator_user__isnull": False,
-               f"{p}initiator_user__agent_identity__isnull": True,
-               f"{p}initiator_user__system_account__isnull": True})
+               f"{p}initiator_user__agent_identity__isnull": True})
     )
 
 

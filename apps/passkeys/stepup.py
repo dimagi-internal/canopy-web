@@ -91,7 +91,7 @@ def require_a_person(request: HttpRequest, what: str = "this") -> None:
     if user is not None and user.is_authenticated and not login_test_key.is_person(user):
         raise ProblemError(
             403, "Not a person", type_=TYPE_FORBIDDEN,
-            detail=f"{what} is for a person; an agent's login or a system account cannot.",
+            detail=f"{what} is for a person; an agent's login cannot.",
             members={"error": NOT_A_PERSON},
         )
 

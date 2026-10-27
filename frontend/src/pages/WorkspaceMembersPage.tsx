@@ -9,7 +9,6 @@ import {
   createInvite,
   listInvites,
   listMembers,
-  listSystemAccounts,
   reissueInvite,
   removeMember,
   revokeInvite,
@@ -19,9 +18,7 @@ import {
   type InviteRole,
   type MemberOut,
   type MemberRole,
-  type SystemAccountOut,
 } from '@/api/workspaces'
-import { SystemAccountsSection } from '@/components/people/SystemAccountsSection'
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
 import { scopedPath } from '@/lib/scopedLinks'
@@ -70,7 +67,6 @@ export function WorkspaceMembersPage(): JSX.Element | null {
 
   const [members, setMembers] = useState<MemberOut[] | null>(null)
   const [invites, setInvites] = useState<InviteOut[] | null>(null)
-  const [systemAccounts, setSystemAccounts] = useState<SystemAccountOut[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [rowError, setRowError] = useState<string | null>(null)
 
@@ -88,7 +84,6 @@ export function WorkspaceMembersPage(): JSX.Element | null {
     let cancelled = false
     setMembers(null)
     setInvites(null)
-    setSystemAccounts(null)
     setLoadError(null)
     Promise.all([listMembers(slug), listInvites(slug)])
       .then(([m, i]) => {
@@ -106,22 +101,12 @@ export function WorkspaceMembersPage(): JSX.Element | null {
         }
         setLoadError(e instanceof Error ? e.message : 'Failed to load members')
       })
-    // Separately, so an older backend without the route still shows members.
-    listSystemAccounts(slug)
-      .then((a) => {
-        if (!cancelled) setSystemAccounts(a)
-      })
-      .catch(() => {
-        if (!cancelled) setSystemAccounts([])
-      })
     return () => {
       cancelled = true
     }
   }, [slug, navigate])
 
-  // System accounts are members server-side but are listed and managed in
-  // their own section below, not among the people.
-  const people = useMemo(() => (members === null ? null : members.filter((m) => !m.system)), [members])
+  const people = members
 
   const outstandingInvites = useMemo(() => (invites ?? []).filter(isInviteOutstanding), [invites])
   // Owners of a parent workspace own this one too (`inherited`). They count
@@ -296,17 +281,6 @@ export function WorkspaceMembersPage(): JSX.Element | null {
           )}
         </div>
       )}
-
-      <SystemAccountsSection
-        slug={slug}
-        accounts={systemAccounts}
-        canManage={canManage}
-        onChange={(next) => {
-          setSystemAccounts(next)
-          // Membership follows the account (created, deleted, re-roled).
-          void listMembers(slug).then(setMembers).catch(() => {})
-        }}
-      />
 
       <div className="mb-8">
         <WorkbenchSubHeader title="Pending invites" count={outstandingInvites.length} />

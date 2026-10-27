@@ -1473,6 +1473,82 @@ class ScheduleOut(Schema):
     updated_at: dt.datetime
 
 
+# ---- triggers: every kind (docs/superpowers/specs/2026-10-27-agent-triggers-design.md)
+
+
+class TriggerIn(Schema):
+    """Create a trigger. `cron` (default): exactly one of `cron` / `run_once_at`, and
+    a prompt. `inbound_mail`: `sender_address` (+ optional `subject_pattern`); its
+    prompt is optional and, when set, leads the mail turn's own prompt."""
+
+    kind: Literal["cron", "inbound_mail"] = "cron"
+    name: str
+    prompt: str = ""
+    cron: str | None = None
+    run_once_at: dt.datetime | None = None
+    timezone: str = "UTC"
+    sender_address: str = ""
+    subject_pattern: str = ""
+    # "" = the agent's routing decides (bounded by you); manual | auto (agent admin).
+    turn_mode: Literal["", "manual", "auto"] = ""
+    enabled: bool = True
+    routing: str = "prefer_local"
+    grace_minutes: int = 120
+    always_run: bool = False
+    notify: list[str] = ["inbox"]
+    cli: cli_vocab.CliOrDefault = ""
+
+    @field_validator("cron")
+    @classmethod
+    def _check_cron(cls, v: str | None) -> str | None:
+        return validate_cron(v) if v else None
+
+    @field_validator("timezone")
+    @classmethod
+    def _check_tz(cls, v: str) -> str:
+        return validate_timezone(v)
+
+    @field_validator("name")
+    @classmethod
+    def _non_blank(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("must not be blank")
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _shape(self):
+        if self.kind == "cron":
+            if bool(self.cron) == bool(self.run_once_at):
+                raise ValueError("a cron trigger needs exactly one of cron (recurring) or "
+                                 "run_once_at (one-off)")
+            if not self.prompt.strip():
+                raise ValueError("a cron trigger needs a prompt")
+        elif not self.sender_address.strip():
+            raise ValueError("an inbound_mail trigger needs a sender_address")
+        return self
+
+
+class TriggerPatch(SchedulePatch):
+    """Partial update of any trigger. Its kind is fixed once made: naming a
+    different one is refused (422) rather than ignored."""
+
+    kind: Literal["cron", "inbound_mail"] | None = None
+    sender_address: str | None = None
+    subject_pattern: str | None = None
+    turn_mode: Literal["", "manual", "auto"] | None = None
+
+
+class TriggerOut(ScheduleOut):
+    kind: str
+    # inbound_mail: the bound sender and the subject regex it must match.
+    sender_address: str = ""
+    subject_pattern: str = ""
+    turn_mode: str = ""
+    # Why this trigger may not fire now (its creator lost the right to it), or null.
+    stopped: str | None = None
+    updated_by_email: str | None = None
+
+
 class ScheduledFireOut(Schema):
     schedule: ScheduleOut
     workspace_slug: str | None = None

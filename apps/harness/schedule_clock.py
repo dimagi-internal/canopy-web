@@ -49,11 +49,13 @@ def tick(*, now: dt.datetime | None = None) -> dict:
     from canopy_cron import due_slot
 
     from .schedule_turns import OneOffSlotMismatch, fire_after_of, fire_schedule
+    from .triggers import TriggerRefused  # noqa: PLC0415 — as the two above: the clock loads at startup
 
     now = now or timezone.now()
     fired: list[dict] = []
     failed: list[int] = []
-    for schedule in AgentSchedule.objects.filter(enabled=True).select_related("agent"):
+    for schedule in (AgentSchedule.objects.filter(enabled=True, kind=AgentSchedule.CRON)
+                     .select_related("agent", "agent__owner", "created_by")):
         try:
             slot = due_slot(schedule.cron, schedule.timezone,
                             after=fire_after_of(schedule), now=now)
@@ -67,6 +69,12 @@ def tick(*, now: dt.datetime | None = None) -> dict:
             turn, created = fire_schedule(schedule, slot)
         except OneOffSlotMismatch as exc:
             logger.warning("schedule %s: %s", schedule.id, exc)
+            failed.append(schedule.id)
+            continue
+        except TriggerRefused as exc:
+            # Recorded and alerted where it is refused (schedule_turns, alerts_trigger).
+            logger.info("schedule %s (%s): slot %s not fired — %s",
+                        schedule.id, schedule.agent.slug, slot.isoformat(), exc.reason)
             failed.append(schedule.id)
             continue
         except Exception:  # noqa: BLE001 — one bad schedule never stops the others

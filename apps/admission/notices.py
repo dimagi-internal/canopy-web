@@ -94,8 +94,8 @@ def sender_text(agent) -> str:
 
 def _why_not_reply(turn, agent, sender: str) -> str:
     """Why this sender must not get an automatic reply, or ""."""
+    from apps.harness.models import AgentSchedule
     from apps.inbound.models import InboundMailbox
-    from apps.workspaces.models import SystemSender
 
     if not sender:
         return "no sender address on the turn"
@@ -118,8 +118,9 @@ def _why_not_reply(turn, agent, sender: str) -> str:
     if (Agent.objects.filter(Q(email__iexact=sender) | Q(user__email__iexact=sender)).exists()
             or InboundMailbox.objects.filter(address__iexact=sender).exists()):
         return "the sender is another agent"
-    if SystemSender.objects.filter(account__workspace_id=agent.workspace_id, address__iexact=sender).exists():
-        return "a system sender of this workspace"
+    if AgentSchedule.objects.filter(agent=agent, kind=AgentSchedule.INBOUND_MAIL,
+                                    sender_address__iexact=sender).exists():
+        return "a sender bound to one of the agent's triggers"
     return ""
 
 

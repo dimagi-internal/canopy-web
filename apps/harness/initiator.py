@@ -209,14 +209,6 @@ def describe(turn) -> dict:
             "email": user.email,
             "name": user.get_full_name() or user.email,
         }
-        # A SYSTEM ACCOUNT is a user with a member's standing and no person
-        # behind it (apps/workspaces/system_accounts.py) — the agent must know
-        # it is reading an automated sender, and not address it as someone.
-        from apps.workspaces.system_accounts import describe as describe_system
-
-        system = describe_system(user)
-        if system is not None:
-            out["system_account"] = system
         # AN AGENT'S OWN LOGIN is not a person either: a turn it started (an agent
         # driving a widget to test itself, calling canopy as itself) must never be
         # read as someone's request. 2026-10-08: ACE saw its own Labs-widget test
@@ -238,6 +230,15 @@ def describe(turn) -> dict:
         }
     if turn.initiator_agent:
         out["agent"] = turn.initiator_agent
+    if out["kind"] == SYSTEM:
+        # A TRIGGER fired it (apps/harness/triggers.py) — a schedule, or alarm mail
+        # from a bound sender. The agent must know no person is asking: `user` here
+        # is who SET IT UP and is accountable for it, not who wrote in.
+        from .triggers import describe as describe_trigger  # noqa: PLC0415 — triggers imports models
+
+        trigger = describe_trigger(turn)
+        if trigger is not None:
+            out["trigger"] = trigger
     # WHICH credential and program, and what it was started from — the half an
     # assurance grade cannot say: `pat` is every script on that person's token
     # AND their CLI. See apps/harness/provenance.py.

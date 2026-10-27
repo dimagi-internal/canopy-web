@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Schedule, ScheduleWeekItem } from "@/api/schedules";
 import { getScheduleWeek } from "@/api/schedules";
-import { ScheduleEditor } from "@/components/agents/ScheduleEditor";
+import { TriggerEditor } from "@/components/agents/TriggerEditor";
 import { bucketByDay, matchesFilters, type Filters } from "./calendarGrid";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -120,9 +120,9 @@ export function ScheduleCalendar({ showWorkspaceFilter }: { showWorkspaceFilter:
       )}
 
       {editing && (
-        <ScheduleEditor
+        <TriggerEditor
           agentSlug={editing.agentSlug}
-          schedule={editing.schedule}
+          trigger={editing.schedule}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); void load(); }}
         />

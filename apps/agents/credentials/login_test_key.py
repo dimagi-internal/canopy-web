@@ -1,8 +1,7 @@
 """An agent login's TEST vault key: the one exception to "only people hold a vault key".
 
-An agent's own canopy login (`Agent.user`) and a workspace's system account are not
-people (`vault_members.not_a_person`): they are never vault members and hold no vault
-key. A headless test harness signed in as an agent still needs to take part in that
+An agent's own canopy login (`Agent.user`) is not a person
+(`vault_members.not_a_person`): it is never a vault member and holds no vault key. A headless test harness signed in as an agent still needs to take part in that
 agent's own SENSITIVE conversations, which are sealed to their people's vault keys
 (`apps/canopy_sessions/conversation_keys.py`). So, per agent and off by default:
 
@@ -91,12 +90,12 @@ def may_hold_vault_key(user_or_id) -> bool:
 def check_keyset_write(user, *, seals: list, exists: bool) -> None:
     """Whether `user` may write their own vault keyset (`zk.put_keyset`). A person:
     always. An agent login: only while its agent's test vault key is on, a first key
-    only, and only passphrase (+ recovery) seals. A system account: never."""
+    only, and only passphrase (+ recovery) seals."""
     if is_person(user):
         return
     if not is_test_key_login(user):
         raise NotAPerson(403, "not_a_person",
-                         "an agent's login or a system account holds no vault key; an admin of the "
+                         "an agent's login holds no vault key; an admin of the "
                          "agent can turn on a test vault key for it (agent Settings → Test vault key)")
     if any(isinstance(s, dict) and s.get("alg") == "prf" for s in seals):
         raise NotAPerson(422, "test_key_passphrase_only",

@@ -48,7 +48,7 @@ and fails on a `WorkspaceMembership` **read** filtered by **both** a workspace k
 key outside that file — that pair is the signature of an access decision.
 
 - Escape hatch: an inline `# authz-exempt: <why>`, for a question about someone ELSE (e.g. is
-  the TARGET already a member — `apps/agents/api.py`, `apps/workspaces/system_accounts.py`).
+  the TARGET already a member — `apps/agents/api.py`).
 - Deliberately narrow: user-only filters (my workspaces) and workspace-only filters (who is in
   this) are listings; writes are not decisions. Membership creation has its own guards
   (`tests/test_no_implicit_enrolment.py`, `apps/workspaces/tests/test_access_requests.py`).

@@ -4,17 +4,15 @@ Everyone on the thread — From, To and Cc of each inbound message, the recipien
 of the agent's own replies — who is a canopy MEMBER of the session's workspace is
 an editor participant, added as each message arrives. Only on this message's
 proof: an unaligned From admits nobody, not even its To/Cc. Never a non-member,
-an agent's login or a system account; never into a sensitive conversation.
+an agent's login; never into a sensitive conversation.
 """
 from __future__ import annotations
 
-import importlib
 import types
 import uuid
 
 import pytest
 from allauth.account.models import EmailAddress
-from django.apps import apps as django_apps
 from django.contrib.auth.models import User
 
 from apps.agents.models import Agent
@@ -124,15 +122,6 @@ def test_an_unverified_address_or_ambiguous_holder_is_not_admitted(w):
     assert _people(t.chat_session) == {"sam"}
 
 
-def test_a_system_account_is_not_a_participant(w):
-    from apps.workspaces.models import SystemAccount
-
-    sys_user = _person("alarms", w["ws"])
-    SystemAccount.objects.create(workspace=w["ws"], user=sys_user, name="AWS alarms")
-    t = _email(w["agent"], "sam@dimagi.com", "1", _hdr("pass"), cc=["alarms@dimagi.com"])
-    assert _people(t.chat_session) == {"sam"}
-
-
 def test_never_into_a_sensitive_conversation(w):
     session = session_sync.email_thread_session(w["agent"], "t1", "Plan")
     session_services.add_runner_requirements(session, {"sensitive_data"})
@@ -152,51 +141,3 @@ def test_the_agents_own_replies_admit_their_recipients(w):
                                 to=["bob@dimagi.com", "fatima@llo.org"], cc=["x@dimagi.com"])
     agent_mail._admit_recipients(route, out)
     assert _people(session) == {"bob"}
-
-
-# --- the backfill (apps/mail/migrations/0008): delete once it has deployed ----------
-
-
-def _backfill():
-    return importlib.import_module("apps.mail.migrations.0008_backfill_email_session_people").backfill
-
-
-def test_backfill_admits_gmail_senders_from_their_turns(w):
-    session = session_sync.email_thread_session(w["agent"], "gmail-thread", "Plan")
-    for i, (frm, hdr) in enumerate([("sam@dimagi.com", _hdr("pass")), ("bob@dimagi.com", _hdr("fail"))]):
-        Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_EMAIL, idempotency_key=f"k{i}",
-                            prompt="/ace:turn", origin_ref={"from": frm, "headers": hdr,
-                                                            "backend": "gmail"})
-    assert _backfill()(django_apps) == 1
-    assert _people(session) == {"sam"}
-    assert _backfill()(django_apps) == 0      # idempotent
-
-
-def test_backfill_reads_a_mail_domain_threads_stored_messages(w, settings):
-    from apps.mail.models import MailMessage, MailThread
-
-    settings.MAIL_SES_AUTHSERV_ID = "amazonses.com"
-    thread = MailThread.objects.create(workspace=w["ws"], subject="Plan")
-    session = session_sync.email_thread_session(w["agent"], str(thread.uuid), "Plan")
-    ok = "amazonses.com; spf=pass; dkim=pass header.i=@dimagi.com; dmarc=pass header.from=dimagi.com"
-    MailMessage.objects.create(thread=thread, workspace=w["ws"], direction=MailMessage.IN,
-                               mailbox="ace@x.org", message_id="<1@x>", from_addr="sam@dimagi.com",
-                               to=["ace@x.org"], cc=["cat@dimagi.com", "x@dimagi.com"], auth_results=ok)
-    MailMessage.objects.create(thread=thread, workspace=w["ws"], direction=MailMessage.IN,
-                               mailbox="ace@x.org", message_id="<2@x>", from_addr="op@dimagi.com",
-                               to=["ace@x.org"], cc=["bob@dimagi.com"], auth_results="")
-    MailMessage.objects.create(thread=thread, workspace=w["ws"], direction=MailMessage.OUT,
-                               mailbox="ace@x.org", message_id="<3@x>", from_addr="ace@x.org",
-                               to=["op@dimagi.com"])
-    _backfill()(django_apps)
-    # sam + cat from the aligned message, op from the agent's reply; bob only rode an unaligned one
-    assert _people(session) == {"sam", "cat", "op"}
-
-
-def test_backfill_skips_a_sensitive_session(w):
-    session = session_sync.email_thread_session(w["agent"], "g2", "Plan")
-    session_services.add_runner_requirements(session, {"sensitive_data"})
-    Turn.objects.create(chat_session=session, origin=Turn.ORIGIN_EMAIL, idempotency_key="k",
-                        prompt="/ace:turn", origin_ref={"from": "sam@dimagi.com", "headers": _hdr("pass")})
-    _backfill()(django_apps)
-    assert _people(session) == set()

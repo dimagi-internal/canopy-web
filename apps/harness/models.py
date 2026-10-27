@@ -1180,7 +1180,20 @@ def _default_notify() -> list:
 
 
 class AgentSchedule(models.Model):
-    """A recurring turn declaration — "Echo's weekly manager report, Fridays 9am ET".
+    """An agent's TRIGGER: something that starts a turn on this agent, with the
+    authority of the person who set it up. Two kinds (`kind`):
+
+    * `cron` — a recurring (or one-off) turn: "Echo's weekly manager report,
+      Fridays 9am ET". Everything below about slots, supersede and nags is this kind.
+    * `inbound_mail` — aligned mail from `sender_address` (subject matching
+      `subject_pattern`) to this agent's mailbox fires it: AWS CloudWatch alarm mail
+      to Hal. See `apps/harness/triggers.py` and `channels/email.arrive`.
+
+    The model keeps its historical name (schedules were the first trigger kind);
+    the concept, the UI and `/api/agents/{slug}/triggers/` say trigger. A trigger's
+    turn runs with no more authority than its creator has on the agent, and one
+    whose creator lost that right stops firing, loudly (`triggers.refusal`,
+    `alerts_trigger`). docs/superpowers/specs/2026-10-27-agent-triggers-design.md.
 
     Config lives here (server-side, so it is visible and editable in the Agent
     UI); canopy-web fires it itself (schedule_clock.py, a loop in the web
@@ -1215,9 +1228,28 @@ class AgentSchedule(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="schedules_updated",
     )
+    CRON, INBOUND_MAIL = "cron", "inbound_mail"
+    KIND_CHOICES = [(CRON, "Schedule"), (INBOUND_MAIL, "Inbound mail")]
+    kind = models.CharField(max_length=16, choices=KIND_CHOICES, default=CRON, db_default=CRON)
     name = models.CharField(max_length=200, help_text='e.g. "Weekly manager report"')
-    prompt = models.TextField(help_text="What the turn is seeded with, e.g. /echo:manager-report")
-    cron = models.CharField(max_length=120, help_text="5-field cron expression, e.g. '0 9 * * 5'")
+    prompt = models.TextField(
+        blank=True,
+        help_text="What the turn is seeded with, e.g. /echo:manager-report. Optional for "
+        "inbound_mail: when set it leads the mail turn's own prompt.")
+    cron = models.CharField(max_length=120, blank=True,
+                            help_text="5-field cron expression, e.g. '0 9 * * 5' (cron kind only)")
+    # inbound_mail only: the sender this trigger answers to. Mail from it fires the
+    # trigger only when THIS message is aligned (DMARC, or DKIM signed by the From:
+    # domain) on our own receiver's verdict — an automated address such as
+    # no-reply@sns.amazonaws.com is every AWS customer's, so the address alone
+    # proves nothing; the binding is the agent's decision about some of its mail.
+    sender_address = models.CharField(max_length=254, blank=True, default="", db_default="")
+    # A Python regex (`re.search`, case-sensitive) narrowing the sender's mail to
+    # what is actually this trigger's. Blank matches any subject.
+    subject_pattern = models.CharField(max_length=300, blank=True, default="", db_default="")
+    # "" = the agent's routing decides (bounded by the creator); manual | auto. Auto
+    # holds only while the creator is an agent admin (turn_mode.trigger_posture).
+    turn_mode = models.CharField(max_length=8, blank=True, default="", db_default="")
     # A ONE-OFF: set, and the schedule fires exactly once, at this instant, then
     # disables itself. `cron` is still stored — derived from this in `timezone`
     # (schedule_services.one_off_cron) — so a runner that predates the field keeps
@@ -1261,10 +1293,19 @@ class AgentSchedule(models.Model):
         indexes = [models.Index(fields=["agent", "enabled"])]
         constraints = [
             models.UniqueConstraint(fields=["agent", "name"], name="uniq_agent_schedule_name"),
+            # A cron trigger has a cron and no sender; a mail trigger the reverse.
+            models.CheckConstraint(
+                condition=(
+                    (models.Q(kind="cron") & ~models.Q(cron="") & models.Q(sender_address=""))
+                    | (models.Q(kind="inbound_mail") & models.Q(cron="")
+                       & ~models.Q(sender_address=""))
+                ),
+                name="agent_trigger_kind_shape",
+            ),
         ]
 
     def __str__(self) -> str:  # pragma: no cover
-        return f"sched:{self.agent.slug}:{self.name}"
+        return f"{'sched' if self.kind == self.CRON else 'trigger'}:{self.agent.slug}:{self.name}"
 
     @property
     def agent_slug(self) -> str:
@@ -1760,8 +1801,7 @@ class RunnerAccessToken(models.Model):
             .filter(token_hash=hash_token(raw),
                     expires_at__gt=timezone.now(),
                     device_key__status=RunnerDeviceKey.ACTIVE,
-                    runner__owner__is_active=True,
-                    runner__owner__system_account__isnull=True)
+                    runner__owner__is_active=True)
             .exclude(runner__status=Runner.RETIRED)
             .first()
         )

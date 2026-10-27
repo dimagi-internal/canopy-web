@@ -208,7 +208,7 @@ unavailable; Jonathan is record available + on by default, use not available
   audit) never changes.
 - **Only the person changes them** — the canopy level as themself, a session's override
   only for a session they created (`created_by`; anyone else 404) — never an agent's
-  login, a caller token, a system account or an admin; the routes are off MCP.
+  login, a caller token or an admin; the routes are off MCP.
 - **Each change is its own audit event:** `agentRecord|agentUse.enabled|disabled`
   (available), `.defaultOn|defaultOff` (default), and `sessionRecord|sessionUse.
   on|off|inherit` (a session's override) — canopy's own types, beyond the spec's

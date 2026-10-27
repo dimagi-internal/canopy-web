@@ -47,7 +47,6 @@ function tree(): MemberTreeOut {
       {
         user_id: 1,
         email: 'owner@dimagi.com',
-        system: false,
         cells: {
           org: { role: 'owner', inherited: false, inherited_from: null },
           connect: { role: 'owner', inherited: true, inherited_from: 'org' },
@@ -56,13 +55,11 @@ function tree(): MemberTreeOut {
       {
         user_id: 2,
         email: 'wvink@dimagi.com',
-        system: false,
         cells: { org: { role: 'editor', inherited: false, inherited_from: null } },
       },
       {
         user_id: 3,
-        email: 'alarms@system.canopy.invalid',
-        system: true,
+        email: 'sam@dimagi.com',
         cells: {
           org: { role: 'editor', inherited: false, inherited_from: null },
           connect: { role: 'viewer', inherited: false, inherited_from: null },
@@ -96,15 +93,11 @@ describe('WorkspaceMemberTreePage', () => {
     expect(await screen.findByText('wvink@dimagi.com')).toBeTruthy()
     expect(screen.getByText('Connect')).toBeTruthy()
     expect(screen.getByText('inherited from Org')).toBeTruthy()
-    expect(screen.getByText('system')).toBeTruthy()
     // The inherited cell is not a control.
     expect(screen.queryByLabelText('owner@dimagi.com in Connect')).toBeNull()
     // The gap is an empty select.
     const gap = screen.getByLabelText('wvink@dimagi.com in Connect') as HTMLSelectElement
     expect(gap.value).toBe('')
-    // A system account is offered only editor and viewer.
-    const sys = screen.getByLabelText('alarms@system.canopy.invalid in Connect') as HTMLSelectElement
-    expect(Array.from(sys.options).map((o) => o.value)).toEqual(['', 'viewer', 'editor'])
   })
 
   it('picking a role on an empty cell adds them to that workspace', async () => {
@@ -121,15 +114,15 @@ describe('WorkspaceMemberTreePage', () => {
 
   it('changing a held role patches it, and a failure shows on the cell', async () => {
     getMemberTree.mockResolvedValue(tree())
-    setMemberRole.mockRejectedValue(new Error('a system account may only be an editor or a viewer'))
+    setMemberRole.mockRejectedValue(new Error('cannot demote the last owner'))
     renderPage()
 
-    fireEvent.change(await screen.findByLabelText('alarms@system.canopy.invalid in Connect'), {
+    fireEvent.change(await screen.findByLabelText('sam@dimagi.com in Connect'), {
       target: { value: 'editor' },
     })
 
     await waitFor(() => expect(setMemberRole).toHaveBeenCalledWith('connect', 3, 'editor'))
-    expect((await screen.findByRole('alert')).textContent).toContain('system account')
+    expect((await screen.findByRole('alert')).textContent).toContain('last owner')
   })
 
   it('only show gaps hides people who are everywhere', async () => {
@@ -141,6 +134,6 @@ describe('WorkspaceMemberTreePage', () => {
 
     expect(screen.getByText('wvink@dimagi.com')).toBeTruthy()
     expect(screen.queryByText('owner@dimagi.com')).toBeNull()
-    expect(screen.queryByText('alarms@system.canopy.invalid')).toBeNull()
+    expect(screen.queryByText('sam@dimagi.com')).toBeNull()
   })
 })

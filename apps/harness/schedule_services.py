@@ -23,7 +23,7 @@ from apps.agents.models import Agent
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import clis, schedule_turns
+from . import clis, schedule_turns, triggers
 from .models import AgentSchedule
 from .schedule_turns import fire_after_of
 
@@ -58,6 +58,14 @@ class DuplicateScheduleName(Exception):
         self.name = name
 
 
+class TriggerStopped(Exception):
+    """Run now on a trigger whose creator lost the right to it (`triggers.refusal`)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class InvalidSchedule(ValueError):
     """The timing fields do not describe a schedule that can fire: neither or both
     of cron / run_once_at, or a one-off whose instant has already passed. REST
@@ -85,6 +93,12 @@ def _apply_timing(fields: dict, *, current: AgentSchedule | None = None) -> dict
     fields = dict(fields)
     cron = fields.pop("cron", None)
     once = fields.pop("run_once_at", None)
+    kind = fields.get("kind") or (current.kind if current else AgentSchedule.CRON)
+    if kind == AgentSchedule.INBOUND_MAIL:
+        # Mail fires it, not a clock: no cron, no instant.
+        if cron or once:
+            raise InvalidSchedule("an inbound_mail trigger has no cron or run_once_at")
+        return _apply_mail(fields, current=current)
     if cron and once:
         raise InvalidSchedule("give either cron (recurring) or run_once_at (one-off), not both")
     if current is None and not (cron or once):
@@ -114,12 +128,63 @@ def _apply_timing(fields: dict, *, current: AgentSchedule | None = None) -> dict
     return fields
 
 
-# The role floor for every schedule WRITE. A schedule is prompt text the runner
-# later executes as the agent, holding the agent's credentials — the same
-# reshaping tier as apps/agents/gates.py::agent_for_work, which is where the
-# rest of that surface's writes already sit. Reads (list, preview) stay at bare
-# membership: seeing when your team's agent runs is interaction, not authorship.
-WRITE_CAPABILITY = perms.AGENT_WORK
+def _apply_mail(fields: dict, *, current: AgentSchedule | None) -> dict:
+    """Validate an inbound_mail trigger's sender binding (`triggers`)."""
+    if "sender_address" in fields or current is None:
+        try:
+            fields["sender_address"] = triggers.normalize_address(fields.get("sender_address") or "")
+        except triggers.InvalidTrigger as exc:
+            raise InvalidSchedule(str(exc)) from None
+    if "subject_pattern" in fields:
+        try:
+            fields["subject_pattern"] = triggers.validate_pattern(fields["subject_pattern"])
+        except triggers.InvalidTrigger as exc:
+            raise InvalidSchedule(str(exc)) from None
+    if current is None:
+        fields["cron"] = ""
+        fields["run_once_at"] = None
+    return fields
+
+
+def _apply_kind(fields: dict, *, current: AgentSchedule | None = None) -> dict:
+    """Kind, turn mode and the per-kind shape. A trigger's kind is fixed once made."""
+    fields = dict(fields)
+    if current is not None:
+        if "kind" in fields and fields["kind"] != current.kind:
+            raise InvalidSchedule("a trigger's kind cannot change; make a new one")
+        fields.pop("kind", None)
+        kind = current.kind
+    else:
+        kind = fields.setdefault("kind", AgentSchedule.CRON)
+    if kind not in triggers.KINDS:
+        raise InvalidSchedule(f"kind must be one of {', '.join(triggers.KINDS)}")
+    if "turn_mode" in fields and (fields["turn_mode"] or "") not in triggers.TURN_MODES:
+        raise InvalidSchedule("turn_mode must be manual, auto or blank")
+    if kind == AgentSchedule.CRON:
+        if fields.get("sender_address") or fields.get("subject_pattern"):
+            raise InvalidSchedule("a cron trigger has no sender_address or subject_pattern")
+        fields.pop("sender_address", None)
+        fields.pop("subject_pattern", None)
+        prompt = fields.get("prompt", current.prompt if current else "")
+        if not (prompt or "").strip():
+            raise InvalidSchedule("a cron trigger needs a prompt")
+    return _apply_timing(fields, current=current)
+
+
+def _check_may_set_up(user, agent, *, kind: str, turn_mode: str) -> None:
+    """The gate for every trigger write (`triggers.may_set_up`): `agent.work` for a
+    cron trigger, an agent admin for an inbound_mail trigger or an auto one."""
+    needed = triggers.may_set_up(user, agent, kind=kind, turn_mode=turn_mode)
+    if needed is not None:
+        raise ScheduleForbidden(agent.slug, required=needed)
+
+
+# Every trigger WRITE is gated by `triggers.may_set_up` (`_check_may_set_up`): a
+# cron trigger is prompt text the runner later executes as the agent — the
+# reshaping tier, `agent.work`, as apps/agents/gates.py::agent_for_work; an
+# inbound_mail trigger (an outside sender making the agent work) or an auto one is
+# an agent admin's. Reads (list, preview) stay at bare membership: seeing when
+# your team's agent runs is interaction, not authorship.
 
 
 def _resolve_agent(
@@ -182,11 +247,16 @@ def _resolve_schedule(
     *,
     workspace_slug: str | None = None,
     require: str | None = None,
+    kind: str | None = None,
 ) -> AgentSchedule:
+    """`kind` narrows the lookup: the /schedules/ routes reach cron triggers only."""
     agent = _resolve_agent(
         user, agent_slug, workspace_slug=workspace_slug, require=require
     )
-    schedule = AgentSchedule.objects.filter(pk=schedule_id, agent=agent).first()
+    qs = AgentSchedule.objects.filter(pk=schedule_id, agent=agent)
+    if kind is not None:
+        qs = qs.filter(kind=kind)
+    schedule = qs.first()
     if schedule is None:
         raise ScheduleNotFound(f"{agent_slug}/{schedule_id}")
     return schedule
@@ -207,7 +277,9 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
     latest = schedule_turns.latest_occurrence_turn(schedule)
     now = timezone.now()
     fire_after = fire_after_of(schedule)
-    if schedule.run_once_at:
+    if schedule.kind != AgentSchedule.CRON:
+        next_runs = []
+    elif schedule.run_once_at:
         pending = schedule.enabled and schedule.run_once_at > now
         next_runs = [schedule.run_once_at] if pending else []
     else:
@@ -236,19 +308,38 @@ def serialize_schedule(schedule: AgentSchedule) -> dict:
     }
 
 
-def list_schedules(user, agent_slug: str, *, workspace_slug: str | None = None) -> list[AgentSchedule]:
+def serialize_trigger(trigger: AgentSchedule) -> dict:
+    """`serialize_schedule` plus what only a trigger list shows: its kind, its
+    sender binding, its own turn mode, and why it is stopped (or None)."""
+    return {
+        **serialize_schedule(trigger),
+        "kind": trigger.kind,
+        "sender_address": trigger.sender_address,
+        "subject_pattern": trigger.subject_pattern,
+        "turn_mode": trigger.turn_mode,
+        "stopped": triggers.refusal(trigger) if trigger.enabled else None,
+        "updated_by_email": trigger.updated_by.email if trigger.updated_by_id else None,
+    }
+
+
+def list_schedules(user, agent_slug: str, *, workspace_slug: str | None = None,
+                   kind: str | None = AgentSchedule.CRON) -> list[AgentSchedule]:
+    """The agent's triggers — cron only by default (the /schedules/ routes); the
+    /triggers/ routes pass `kind=None` for every kind."""
     agent = _resolve_agent(user, agent_slug, workspace_slug=workspace_slug)
-    return list(agent.schedules.all())
+    qs = agent.schedules.select_related("agent", "agent__owner", "created_by", "updated_by")
+    return list(qs.filter(kind=kind) if kind else qs.all())
 
 
 def create_schedule(
     user, agent_slug: str, fields: dict, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
-    agent = _resolve_agent(
-        user, agent_slug, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
-    )
+    """Create a trigger (`fields["kind"]`, default cron). Gated by
+    `triggers.may_set_up`; the caller becomes its creator, whose authority it fires with."""
+    agent = _resolve_agent(user, agent_slug, workspace_slug=workspace_slug)
     creator = user if getattr(user, "is_authenticated", False) else None
-    fields = _apply_timing(fields)
+    fields = _apply_kind(fields)
+    _check_may_set_up(user, agent, kind=fields["kind"], turn_mode=fields.get("turn_mode") or "")
     _check_cli(agent, fields)
     try:
         # Own savepoint: an IntegrityError from uniq_agent_schedule_name must not
@@ -263,12 +354,19 @@ def create_schedule(
 
 
 def update_schedule(
-    user, agent_slug: str, schedule_id: int, fields: dict, *, workspace_slug: str | None = None
+    user, agent_slug: str, schedule_id: int, fields: dict, *, workspace_slug: str | None = None,
+    kind: str | None = AgentSchedule.CRON,
 ) -> AgentSchedule:
+    """Change a trigger. The caller must be able to set up the trigger as it is AND
+    as it will be (an editor cannot touch an auto trigger, nor make one). Its
+    creator — whose authority it fires with — does not change."""
     schedule = _resolve_schedule(
-        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=kind
     )
-    fields = _apply_timing(fields, current=schedule)
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode)
+    fields = _apply_kind(fields, current=schedule)
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind,
+                      turn_mode=fields.get("turn_mode", schedule.turn_mode) or "")
     _check_cli(schedule.agent, fields)
     for key, value in fields.items():
         setattr(schedule, key, value)
@@ -283,14 +381,16 @@ def update_schedule(
 
 
 def delete_schedule(
-    user, agent_slug: str, schedule_id: int, *, workspace_slug: str | None = None
+    user, agent_slug: str, schedule_id: int, *, workspace_slug: str | None = None,
+    kind: str | None = AgentSchedule.CRON,
 ) -> None:
     """Retire open occurrences FIRST — see the module docstring and the spec.
     There is no Turn->AgentSchedule FK, so nothing cascades; an executing
     occurrence would otherwise hold one_executing_turn_per_agent forever."""
     schedule = _resolve_schedule(
-        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=kind
     )
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode)
     schedule_turns.supersede_open_turns(schedule, reason="schedule deleted")
     schedule.delete()
 
@@ -298,10 +398,16 @@ def delete_schedule(
 def run_schedule_now(
     user, agent_slug: str, schedule_id: int, *, workspace_slug: str | None = None
 ) -> AgentSchedule:
+    """Fire a cron trigger off-cycle. Mail fires an inbound_mail trigger, nothing else
+    (404 here, as for any trigger this route does not reach)."""
     schedule = _resolve_schedule(
-        user, agent_slug, schedule_id, workspace_slug=workspace_slug, require=WRITE_CAPABILITY
+        user, agent_slug, schedule_id, workspace_slug=workspace_slug, kind=AgentSchedule.CRON
     )
-    schedule_turns.run_schedule_now(schedule, clicked_by=user)
+    _check_may_set_up(user, schedule.agent, kind=schedule.kind, turn_mode=schedule.turn_mode)
+    try:
+        schedule_turns.run_schedule_now(schedule, clicked_by=user)
+    except triggers.TriggerRefused as exc:
+        raise TriggerStopped(exc.reason) from None
     return schedule
 
 
@@ -331,7 +437,7 @@ def week_schedules(workspace_ids: set, start: dt.datetime, *, created_by=None) -
     # so widening the window never double-counts or shows next week's fires.
     end = start + dt.timedelta(days=8)
     schedules = (
-        AgentSchedule.objects.filter(enabled=True)
+        AgentSchedule.objects.filter(enabled=True, kind=AgentSchedule.CRON)
         .filter(agent__workspace_id__in=workspace_ids)
         .select_related("agent")
     )

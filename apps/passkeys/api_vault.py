@@ -58,7 +58,7 @@ def get_vault_setup(request: HttpRequest) -> VaultSetupOut:
 
     has_key = UserVaultKeyset.objects.filter(user=request.user).exists()
     return VaultSetupOut(
-        # Never asked of an agent's login or a system account: they are not people.
+        # Never asked of an agent's login: it is not a person.
         required=stepup.is_browser(request) and not has_key and login_test_key.is_person(request.user),
         has_passkey=Passkey.objects.filter(user=request.user).exists(),
         has_vault_key=has_key,

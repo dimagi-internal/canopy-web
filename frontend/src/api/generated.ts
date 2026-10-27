@@ -5914,6 +5914,77 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/agents/{slug}/triggers/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List an agent's triggers (schedules and inbound mail)
+         * @description Every trigger of the agent: `cron` (a schedule) and `inbound_mail` (mail from
+         *     a bound sender). `stopped` says why one may not fire — its creator lost the
+         *     right to it — and an alert stays open on the agent until that is fixed.
+         */
+        readonly get: operations["list_triggers"];
+        readonly put?: never;
+        /**
+         * Create a trigger
+         * @description A cron trigger needs `agent.work` (editor); an inbound_mail trigger, or any
+         *     trigger with `turn_mode: auto`, needs an admin of the agent. You become its
+         *     creator: it fires with no more authority than yours on the agent.
+         */
+        readonly post: operations["create_trigger"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/triggers/{trigger_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /** Delete a trigger */
+        readonly delete: operations["delete_trigger"];
+        readonly options?: never;
+        readonly head?: never;
+        /**
+         * Update a trigger
+         * @description Its kind and its creator are fixed; the rest may change, by anyone who may
+         *     set up the trigger both as it is and as it will be.
+         */
+        readonly patch: operations["update_trigger"];
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/triggers/{trigger_id}/run-now": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Fire a cron trigger off-cycle, now
+         * @description Cron triggers only — mail is what fires an inbound_mail trigger (404 here).
+         *     409 when its creator lost the right to it.
+         */
+        readonly post: operations["run_trigger_now"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/agents/{slug}/projects/{ref}/team/": {
         readonly parameters: {
             readonly query?: never;
@@ -7675,8 +7746,7 @@ export interface paths {
          * @description Adds a person who is already a member of another workspace in this tree
          *     (one you are in too) directly, at `role` — no invite, no email. 404 for
          *     anyone else, so this never adds an arbitrary user id; 409 if they already
-         *     hold a role here (change it with PATCH); 403 for a role you may not grant;
-         *     422 for a system account above editor.
+         *     hold a role here (change it with PATCH); 403 for a role you may not grant.
          */
         readonly post: operations["add_member"];
         readonly delete?: never;
@@ -7727,91 +7797,6 @@ export interface paths {
         readonly head?: never;
         /** Change a member's role (admin or owner) */
         readonly patch: operations["set_member_role"];
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/system-accounts/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /**
-         * List system accounts (member-only)
-         * @description Automated senders (e.g. CloudWatch alarm mail) that hold a member's
-         *     standing here and can never sign in, with the addresses bound to each.
-         */
-        readonly get: operations["list_system_accounts"];
-        readonly put?: never;
-        /**
-         * Create a system account (admin or owner)
-         * @description Creates a member that cannot sign in (editor by default, never above),
-         *     and binds any `senders` given: aligned mail from a bound address, in THIS
-         *     workspace, whose subject matches the pattern, then makes agent turns as
-         *     this account instead of as an outside contact.
-         */
-        readonly post: operations["create_system_account"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/system-accounts/{account_id}/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        /** Get a system account (member-only) */
-        readonly get: operations["get_system_account"];
-        readonly put?: never;
-        readonly post?: never;
-        /**
-         * Delete a system account (admin or owner)
-         * @description Deletes it, its membership and its bindings. Its past turns lose their
-         *     initiator; to keep the name on them, disable it instead.
-         */
-        readonly delete: operations["delete_system_account"];
-        readonly options?: never;
-        readonly head?: never;
-        /** Rename, re-role, disable or re-enable a system account (admin or owner) */
-        readonly patch: operations["update_system_account"];
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/system-accounts/{account_id}/senders/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        /** Bind an inbound address to a system account (admin or owner) */
-        readonly post: operations["add_system_sender"];
-        readonly delete?: never;
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
-        readonly trace?: never;
-    };
-    readonly "/api/workspaces/{slug}/system-accounts/{account_id}/senders/{sender_id}/": {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path?: never;
-            readonly cookie?: never;
-        };
-        readonly get?: never;
-        readonly put?: never;
-        readonly post?: never;
-        /** Unbind an inbound address from a system account (admin or owner) */
-        readonly delete: operations["remove_system_sender"];
-        readonly options?: never;
-        readonly head?: never;
-        readonly patch?: never;
         readonly trace?: never;
     };
     readonly "/api/workspaces/{slug}/invites/": {
@@ -13613,8 +13598,8 @@ export interface paths {
         };
         /**
          * Who you could add to this chat
-         * @description The workspace's members you may add: not in it yet, not its creator, no
-         *     system account. Agents' own logins carry their agent's slug. 403 unless you
+         * @description The workspace's members you may add: not in it yet, not its creator. Agents'
+         *     own logins carry their agent's slug. 403 unless you
          *     may add people (`access.can_add_people`).
          */
         readonly get: operations["participant_candidates"];
@@ -27399,6 +27384,218 @@ export interface components {
             /** Cli */
             readonly cli?: ("" | "claude-code" | "codex") | null;
         };
+        /** Page[TriggerOut] */
+        readonly Page_TriggerOut_: {
+            /** Items */
+            readonly items: readonly components["schemas"]["TriggerOut"][];
+            /** Total */
+            readonly total: number;
+            /** Offset */
+            readonly offset: number;
+            /** Limit */
+            readonly limit: number;
+        };
+        /** TriggerOut */
+        readonly TriggerOut: {
+            /** Id */
+            readonly id: number;
+            /** Agent Slug */
+            readonly agent_slug: string;
+            /** Name */
+            readonly name: string;
+            /** Prompt */
+            readonly prompt: string;
+            /** Cron */
+            readonly cron: string;
+            /** Run Once At */
+            readonly run_once_at?: string | null;
+            /** Timezone */
+            readonly timezone: string;
+            /** Enabled */
+            readonly enabled: boolean;
+            /** Routing */
+            readonly routing: string;
+            /** Grace Minutes */
+            readonly grace_minutes: number;
+            /**
+             * Always Run
+             * @default false
+             */
+            readonly always_run: boolean;
+            /** Notify */
+            readonly notify: readonly string[];
+            /**
+             * Cli
+             * @default
+             */
+            readonly cli: string;
+            /** Last Slot */
+            readonly last_slot?: string | null;
+            /**
+             * Fire After
+             * Format: date-time
+             */
+            readonly fire_after: string;
+            /**
+             * Next Runs
+             * @default []
+             */
+            readonly next_runs: readonly string[];
+            /**
+             * Last Status
+             * @default
+             */
+            readonly last_status: string;
+            /** Created By Email */
+            readonly created_by_email?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+            /** Kind */
+            readonly kind: string;
+            /**
+             * Sender Address
+             * @default
+             */
+            readonly sender_address: string;
+            /**
+             * Subject Pattern
+             * @default
+             */
+            readonly subject_pattern: string;
+            /**
+             * Turn Mode
+             * @default
+             */
+            readonly turn_mode: string;
+            /** Stopped */
+            readonly stopped?: string | null;
+            /** Updated By Email */
+            readonly updated_by_email?: string | null;
+        };
+        /**
+         * TriggerIn
+         * @description Create a trigger. `cron` (default): exactly one of `cron` / `run_once_at`, and
+         *     a prompt. `inbound_mail`: `sender_address` (+ optional `subject_pattern`); its
+         *     prompt is optional and, when set, leads the mail turn's own prompt.
+         */
+        readonly TriggerIn: {
+            /**
+             * Kind
+             * @default cron
+             * @enum {string}
+             */
+            readonly kind: "cron" | "inbound_mail";
+            /** Name */
+            readonly name: string;
+            /**
+             * Prompt
+             * @default
+             */
+            readonly prompt: string;
+            /** Cron */
+            readonly cron?: string | null;
+            /** Run Once At */
+            readonly run_once_at?: string | null;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            readonly timezone: string;
+            /**
+             * Sender Address
+             * @default
+             */
+            readonly sender_address: string;
+            /**
+             * Subject Pattern
+             * @default
+             */
+            readonly subject_pattern: string;
+            /**
+             * Turn Mode
+             * @default
+             * @enum {string}
+             */
+            readonly turn_mode: "" | "manual" | "auto";
+            /**
+             * Enabled
+             * @default true
+             */
+            readonly enabled: boolean;
+            /**
+             * Routing
+             * @default prefer_local
+             */
+            readonly routing: string;
+            /**
+             * Grace Minutes
+             * @default 120
+             */
+            readonly grace_minutes: number;
+            /**
+             * Always Run
+             * @default false
+             */
+            readonly always_run: boolean;
+            /**
+             * Notify
+             * @default [
+             *       "inbox"
+             *     ]
+             */
+            readonly notify: readonly string[];
+            /**
+             * Cli
+             * @default
+             * @enum {string}
+             */
+            readonly cli: "" | "claude-code" | "codex";
+        };
+        /**
+         * TriggerPatch
+         * @description Partial update of any trigger. Its kind is fixed once made: naming a
+         *     different one is refused (422) rather than ignored.
+         */
+        readonly TriggerPatch: {
+            /** Name */
+            readonly name?: string | null;
+            /** Prompt */
+            readonly prompt?: string | null;
+            /** Cron */
+            readonly cron?: string | null;
+            /** Run Once At */
+            readonly run_once_at?: string | null;
+            /** Timezone */
+            readonly timezone?: string | null;
+            /** Enabled */
+            readonly enabled?: boolean | null;
+            /** Routing */
+            readonly routing?: string | null;
+            /** Grace Minutes */
+            readonly grace_minutes?: number | null;
+            /** Always Run */
+            readonly always_run?: boolean | null;
+            /** Notify */
+            readonly notify?: readonly string[] | null;
+            /** Cli */
+            readonly cli?: ("" | "claude-code" | "codex") | null;
+            /** Kind */
+            readonly kind?: ("cron" | "inbound_mail") | null;
+            /** Sender Address */
+            readonly sender_address?: string | null;
+            /** Subject Pattern */
+            readonly subject_pattern?: string | null;
+            /** Turn Mode */
+            readonly turn_mode?: ("" | "manual" | "auto") | null;
+        };
         /** ContributorBriefOut */
         readonly ContributorBriefOut: {
             /** Id */
@@ -29866,11 +30063,6 @@ export interface components {
              * @default false
              */
             readonly inherited: boolean;
-            /**
-             * System
-             * @default false
-             */
-            readonly system: boolean;
         };
         /** MemberAddIn */
         readonly MemberAddIn: {
@@ -29909,11 +30101,6 @@ export interface components {
             readonly user_id: number;
             /** Email */
             readonly email: string;
-            /**
-             * System
-             * @default false
-             */
-            readonly system: boolean;
             /** Cells */
             readonly cells: {
                 readonly [key: string]: components["schemas"]["MemberTreeCellOut"];
@@ -29941,91 +30128,6 @@ export interface components {
              * @enum {string}
              */
             readonly role: "owner" | "admin" | "editor" | "viewer";
-        };
-        /** SystemAccountOut */
-        readonly SystemAccountOut: {
-            /** Id */
-            readonly id: number;
-            /** User Id */
-            readonly user_id: number;
-            /** Name */
-            readonly name: string;
-            /** Description */
-            readonly description: string;
-            /** Role */
-            readonly role: string | null;
-            /** Disabled */
-            readonly disabled: boolean;
-            /** Disabled At */
-            readonly disabled_at: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-            /** Created By Email */
-            readonly created_by_email: string | null;
-            /** Senders */
-            readonly senders: readonly components["schemas"]["SystemSenderOut"][];
-        };
-        /** SystemSenderOut */
-        readonly SystemSenderOut: {
-            /** Id */
-            readonly id: number;
-            /** Address */
-            readonly address: string;
-            /** Subject Pattern */
-            readonly subject_pattern: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            readonly created_at: string;
-        };
-        /** SystemAccountCreateIn */
-        readonly SystemAccountCreateIn: {
-            /** Name */
-            readonly name: string;
-            /**
-             * Description
-             * @default
-             */
-            readonly description: string;
-            /**
-             * Role
-             * @default editor
-             * @enum {string}
-             */
-            readonly role: "editor" | "viewer";
-            /** Senders */
-            readonly senders?: readonly components["schemas"]["SystemSenderIn"][];
-        };
-        /**
-         * SystemSenderIn
-         * @description Bind an inbound address to the account, in this workspace only.
-         */
-        readonly SystemSenderIn: {
-            /**
-             * Address
-             * Format: email
-             */
-            readonly address: string;
-            /**
-             * Subject Pattern
-             * @default
-             */
-            readonly subject_pattern: string;
-        };
-        /** SystemAccountUpdateIn */
-        readonly SystemAccountUpdateIn: {
-            /** Name */
-            readonly name?: string | null;
-            /** Description */
-            readonly description?: string | null;
-            /** Role */
-            readonly role?: ("editor" | "viewer") | null;
-            /** Disabled */
-            readonly disabled?: boolean | null;
         };
         /** InviteOut */
         readonly InviteOut: {
@@ -31690,7 +31792,7 @@ export interface components {
              * @default person
              * @enum {string}
              */
-            readonly kind: "person" | "agent" | "system";
+            readonly kind: "person" | "agent";
             /**
              * Is You
              * @default false
@@ -48874,6 +48976,127 @@ export interface operations {
             };
         };
     };
+    readonly list_triggers: {
+        readonly parameters: {
+            readonly query?: {
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Page_TriggerOut_"];
+                };
+            };
+        };
+    };
+    readonly create_trigger: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TriggerIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TriggerOut"];
+                };
+            };
+        };
+    };
+    readonly delete_trigger: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly trigger_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly update_trigger: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly trigger_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TriggerPatch"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TriggerOut"];
+                };
+            };
+        };
+    };
+    readonly run_trigger_now: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly trigger_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Accepted */
+            readonly 202: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TriggerOut"];
+                };
+            };
+        };
+    };
     readonly project_team: {
         readonly parameters: {
             readonly query?: never;
@@ -51442,174 +51665,6 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["MemberOut"];
                 };
-            };
-        };
-    };
-    readonly list_system_accounts: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": readonly components["schemas"]["SystemAccountOut"][];
-                };
-            };
-        };
-    };
-    readonly create_system_account: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SystemAccountCreateIn"];
-            };
-        };
-        readonly responses: {
-            /** @description Created */
-            readonly 201: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SystemAccountOut"];
-                };
-            };
-        };
-    };
-    readonly get_system_account: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly account_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SystemAccountOut"];
-                };
-            };
-        };
-    };
-    readonly delete_system_account: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly account_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    readonly update_system_account: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly account_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SystemAccountUpdateIn"];
-            };
-        };
-        readonly responses: {
-            /** @description OK */
-            readonly 200: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SystemAccountOut"];
-                };
-            };
-        };
-    };
-    readonly add_system_sender: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly account_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody: {
-            readonly content: {
-                readonly "application/json": components["schemas"]["SystemSenderIn"];
-            };
-        };
-        readonly responses: {
-            /** @description Created */
-            readonly 201: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content: {
-                    readonly "application/json": components["schemas"]["SystemSenderOut"];
-                };
-            };
-        };
-    };
-    readonly remove_system_sender: {
-        readonly parameters: {
-            readonly query?: never;
-            readonly header?: never;
-            readonly path: {
-                readonly slug: string;
-                readonly account_id: number;
-                readonly sender_id: number;
-            };
-            readonly cookie?: never;
-        };
-        readonly requestBody?: never;
-        readonly responses: {
-            /** @description No Content */
-            readonly 204: {
-                headers: {
-                    readonly [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

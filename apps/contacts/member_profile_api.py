@@ -17,7 +17,7 @@ from apps.api.route_gates import gate
 from apps.canopy_sessions.models import Session as ChatSession
 from apps.workspaces import permissions as perms
 from apps.workspaces import services
-from apps.workspaces.models import SystemAccount, WorkspaceMembership
+from apps.workspaces.models import WorkspaceMembership
 from apps.workspaces.schemas import MemberAdminDetail, MemberAgentRef, MemberProfileOut, MemberWorkspaceRef
 
 router = Router(tags=["workspaces"], auth=session_auth)
@@ -41,8 +41,7 @@ def get_member(request: HttpRequest, slug: str, user_id: int) -> MemberProfileOu
     user = row.user
 
     own_agent = Agent.objects.filter(user_id=user_id, workspace=ws).first()
-    is_system = SystemAccount.objects.filter(user_id=user_id).exists()
-    kind = "system" if is_system else "agent" if own_agent else "person"
+    kind = "agent" if own_agent else "person"
 
     operates = [MemberAgentRef(slug=a.slug, name=a.name)
                 for a in Agent.objects.filter(owner_id=user_id, workspace=ws).order_by("name")]

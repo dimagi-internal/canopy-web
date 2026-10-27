@@ -66,7 +66,7 @@ def _owner_token_ok(raw: str, runner: Runner) -> bool:
     since = timezone.now() - timedelta(days=STALE_TOKEN_DAYS)
     return (PersonalToken.objects
             .filter(token_hash=hash_token(raw), user_id=runner.owner_id,
-                    user__is_active=True, user__system_account__isnull=True)
+                    user__is_active=True)
             .filter(Q(revoked_at__isnull=True) | Q(revoked_at__gte=since))
             .exists())
 

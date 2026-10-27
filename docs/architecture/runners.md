@@ -754,6 +754,13 @@ its schedules. A laptop runner still evaluates them too
 both reach the same slot key, so whichever fires second collapses onto the first's
 turn. Firing only queues a turn — which box runs it is decided on the claim.
 
+A schedule is an agent **trigger** of kind `cron` (access.md § Triggers); the server
+clock, the runner's sync and fire, and the week calendar read `kind=cron` only. Its
+turn is accountable to whoever set it up: a slot whose creator has since lost the
+right to it (`triggers.refusal`) is not fired — it is consumed (`last_slot`), logged
+(`harness.triggers` / `trigger.refused`), answered 409 to a runner, and the
+`trigger_stopped` alert stays open until it is fixed.
+
 - **Anchor on `fire_after`, never `last_slot`.** `schedule_turns.fire_after_of`
   (`last_slot or created_at`, pinned just before a one-off's instant; served to
   runners as `ScheduleOut.fire_after`) is what the server clock and the runner pass

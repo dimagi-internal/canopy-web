@@ -25,10 +25,9 @@ from apps.canopy_sessions.participants import ensure_participant
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import SystemAccount
 
 from .. import initiator as who
-from .. import sensitivity, session_sync
+from .. import sensitivity, session_sync, triggers
 from ..ledger import append_events
 from ..models import Turn
 
@@ -39,13 +38,15 @@ logger = logging.getLogger(__name__)
 class EmailArrival:
     """What an email turn is, once its sender and thread are known: the target
     (`agent`, or `session` with agent None once bound to the thread), the
-    `initiator`, and — for a blocked sender — the `(turn, created)` already
-    written CANCELLED, which is the whole answer."""
+    `initiator`, the agent's `trigger` this mail fires (or None), and — for a
+    blocked sender — the `(turn, created)` already written CANCELLED, which is the
+    whole answer."""
 
     agent: object
     session: object
     initiator: object
     refusal: tuple | None = None
+    trigger: object = None
 
 
 def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
@@ -80,14 +81,21 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
             idempotency_key=idempotency_key, prompt=prompt,
             origin_ref=origin_ref, routing=routing,
         ))
+    trigger = None
     if initiator is None:
         # The one door whose asker canopy can know on its own. NOT
         # `enqueued_by`: on an email turn that is the runner's account, and
         # recording it as the initiator is exactly the confusion this field
         # exists to end. No recordable sender -> unknown, honestly.
-        member = member_behind_email(
-            agent, email_contact, str((origin_ref or {}).get("subject") or ""))
-        if member is not None:
+        subject = str((origin_ref or {}).get("subject") or "")
+        member = member_behind_email(agent, email_contact)
+        if member is None:
+            trigger = trigger_behind_email(agent, email_contact, subject)
+        if trigger is not None:
+            # Not a person: the agent's own trigger, fired with the authority of
+            # whoever set it up. The sender's contact rides along.
+            initiator = triggers.initiator(trigger, contact=email_contact)
+        elif member is not None:
             # A MEMBER of the agent's workspace, proven by THIS message's DMARC
             # alignment. The contact rides along so its profile still reaches
             # the agent; the person is who the turn acts for.
@@ -122,7 +130,7 @@ def arrive(agent, origin_ref, *, initiator=None, session=None, authserv_id=None,
                 # a surface that tolerates one.
                 logger.exception("could not bind an email turn to a session")
                 session = None
-    return EmailArrival(agent, session, initiator)
+    return EmailArrival(agent, session, initiator, trigger=trigger)
 
 
 def admit_thread_people(session, origin_ref, contact) -> list:
@@ -143,7 +151,7 @@ def admit_thread_people(session, origin_ref, contact) -> list:
 
     Each address must resolve to exactly one canopy user who provably holds it
     (`address_holder`) AND is a member of the session's workspace. A non-member, a
-    contact, an agent's own login or a system account is never added. Never into a
+    contact, an agent's own login is never added. Never into a
     sensitive conversation (`admit_addresses`). Returns the users added or already in.
     """
     if session is None or contact is None or not contact.email:
@@ -162,7 +170,7 @@ def admit_addresses(session, addresses) -> list:
     people (`admit_thread_people`: an aligned inbound message; `apps/mail` sending:
     the agent's own reply). This only resolves and admits, by the same rule for
     every address: one provable holder, a member of the session's workspace, a
-    person (not an agent login or a system account). Never into a sensitive
+    person (not an agent login). Never into a sensitive
     conversation — `ensure_participant` refuses one anyway; this says so first.
     """
     if session is None or sensitivity.is_sensitive(session):
@@ -197,11 +205,10 @@ def _address_list(value) -> list[str]:
 
 
 def _is_person(user) -> bool:
-    """A human account: not an agent's own login, not a workspace system account.
-    Participation is for people; an agent reaches another agent's work through a
-    thread or a dispatch, never as an editor of its conversations."""
-    return not (Agent.objects.filter(user=user).exists()
-                or SystemAccount.objects.filter(user=user).exists())
+    """A human account, not an agent's own login. Participation is for people; an
+    agent reaches another agent's work through a thread or a dispatch, never as an
+    editor of its conversations."""
+    return not Agent.objects.filter(user=user).exists()
 
 
 def record_email_contact(agent, origin_ref, *, authserv_id: str | None = None):
@@ -253,7 +260,7 @@ def address_holder(email: str, workspace_id: str):
     return user, wsvc.member_role(user, workspace_id)
 
 
-def member_behind_email(agent, contact, subject: str = ""):
+def member_behind_email(agent, contact):
     """The canopy user who sent this email, when that can be PROVEN — else None.
 
     Why: an email sender is otherwise always a contact, so once an agent
@@ -279,13 +286,7 @@ def member_behind_email(agent, contact, subject: str = ""):
     DKIM-signed but unaligned message from it passes the first check. Every other
     check still applies, and the contact is not linked.
 
-    Failing that, a SYSTEM ACCOUNT of the agent's workspace bound to this
-    address and subject (`workspaces.system_accounts.account_for_inbound`) —
-    the same alignment requirement, and the binding is per workspace, because
-    an automated address is shared: `no-reply@sns.amazonaws.com` sends every
-    AWS customer's alarms. Its contact is NOT linked to it: the contact is the
-    shared address, and linking it would make the binding look like proof of
-    the address rather than a workspace's decision about some of its mail.
+    An automated sender is not a member: see `trigger_behind_email`.
     """
     if contact is None or not contact.email:
         return None
@@ -295,18 +296,8 @@ def member_behind_email(agent, contact, subject: str = ""):
         if trust is None:
             return None
     user, role = address_holder(contact.email, agent.workspace_id)
-    if user is None and trust is not None:
-        # A trust rule names a MEMBER's address; it never reaches system accounts.
-        return None
     if user is None:
-        from apps.workspaces.system_accounts import account_for_inbound  # cycle: system_accounts reaches the harness
-
-        account = account_for_inbound(agent.workspace_id, contact.email, subject)
-        # Still a member: removing it from the workspace is how an admin who
-        # does not know about `disabled` switches it off.
-        if account is None or not wsvc.is_member(account.user, agent.workspace_id):
-            return None
-        return account.user
+        return None
     if contact.user_id is not None and contact.user_id != user.pk:
         return None
     # A question about the SENDER's membership, asked through the one authorizer
@@ -318,6 +309,39 @@ def member_behind_email(agent, contact, subject: str = ""):
     if contact.user_id is None and trust is None:
         contacts.promote_to_user(contact, user)
     return user
+
+
+def trigger_behind_email(agent, contact, subject: str = ""):
+    """The agent's `inbound_mail` trigger this message fires, when that can be
+    PROVEN — else None. All of:
+
+      * THIS message is aligned (DMARC, or DKIM signed BY the From: domain) on our
+        own receiver's verdict — the same rule as a member's mail. A `SenderTrust`
+        exception never applies: it names a member's address.
+      * no canopy user provably holds the address (that is a member's mail, or a
+        stranger account's; never a trigger's).
+      * exactly one enabled trigger of THIS agent is bound to the address and its
+        subject pattern matches (`triggers.for_inbound`). The binding is the
+        agent's: an automated address is shared — `no-reply@sns.amazonaws.com`
+        sends every AWS customer's alarms — so it is the agent's decision about
+        some of its mail, not proof of who sent it.
+      * its creator still holds the right to it (`triggers.refusal`). A stopped
+        trigger does not fire; the mail stays the contact it is, and the
+        `trigger_stopped` alert says why.
+
+    The contact is NOT linked to anyone.
+    """
+    if contact is None or not contact.email:
+        return None
+    if contact.last_auth_result not in Contact.EMAIL_ALIGNED:
+        return None
+    user, _role = address_holder(contact.email, agent.workspace_id)
+    if user is not None:
+        return None
+    trigger = triggers.for_inbound(agent, contact.email, subject)
+    if trigger is None or triggers.refusal(trigger) is not None:
+        return None
+    return trigger
 
 
 def trusted_unaligned_sender(agent, contact):

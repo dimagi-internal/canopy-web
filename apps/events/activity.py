@@ -50,11 +50,8 @@ KINDS = (TURN_ENQUEUED, TURN_FINISHED, CHAT_SESSION_CREATED, CHAT_MESSAGE, SETTI
 def _actor_kind(actor, agent=None) -> str:
     """Who `actor` is, from the one record of each: an agent's own canopy login
     (`Agent.user`) is the agent — Ada sending Hal work is not a person, whichever
-    agent the fact is about — and a system account (`system_accounts`, e.g. a
-    CloudWatch sender) is the system. Everyone else is a person."""
+    agent the fact is about. No actor is the system. Everyone else is a person."""
     from django.core.exceptions import ObjectDoesNotExist
-
-    from apps.workspaces.system_accounts import is_system_user
 
     if actor is None:
         return Activity.SYSTEM
@@ -65,16 +62,15 @@ def _actor_kind(actor, agent=None) -> str:
             return Activity.AGENT
     except ObjectDoesNotExist:
         pass
-    return Activity.SYSTEM if is_system_user(actor) else Activity.USER
+    return Activity.USER
 
 
 def reclassify() -> int:
     """Re-apply `_actor_kind` to facts already recorded as a person — for facts
-    written before an actor's login was known to be an agent's or a system's.
-    Returns how many changed."""
+    written before an actor's login was known to be an agent's. Returns how many
+    changed."""
     people = Activity.objects.filter(actor_kind=Activity.USER)
-    n = people.filter(actor__agent_identity__isnull=False).update(actor_kind=Activity.AGENT)
-    return n + people.filter(actor__system_account__isnull=False).update(actor_kind=Activity.SYSTEM)
+    return people.filter(actor__agent_identity__isnull=False).update(actor_kind=Activity.AGENT)
 
 
 def repo_of(*, turn=None, session=None) -> str:
@@ -145,7 +141,10 @@ def for_turn(kind: str, turn, *, at=None, dedupe: bool = False, **meta) -> Activ
     still says where after the box is retired."""
     agent = turn.acting_agent
     actor = turn_actor(turn)
-    kind_of_actor = (Activity.CONTACT if turn.initiator_contact_id and actor is None
+    # A turn a TRIGGER fired (a schedule, alarm mail) is canopy's, though it names
+    # the person accountable for it (apps/harness/triggers.py).
+    kind_of_actor = (Activity.SYSTEM if turn.initiator_kind == "system"
+                     else Activity.CONTACT if turn.initiator_contact_id and actor is None
                      else Activity.AGENT if turn.initiator_agent and actor is None
                      else _actor_kind(actor, agent))
     return emit(kind, workspace=turn.tenant_slug, actor=actor, actor_kind=kind_of_actor,

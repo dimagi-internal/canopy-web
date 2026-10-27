@@ -25,7 +25,7 @@ from apps.events.models import SettingChange
 from apps.passkeys.models import Passkey, UserVaultKeyset
 from apps.passkeys.testing import grant_step_up
 from apps.tokens.models import PersonalToken
-from apps.workspaces.models import SystemAccount, WorkspaceMembership
+from apps.workspaces.models import WorkspaceMembership
 from tests.fixtures.sensitive import SENSITIVE, rewrap_for, unwrap, world
 from tests.fixtures.vault_zk import ref
 
@@ -159,20 +159,6 @@ def test_a_test_key_is_made_once_and_never_replaced(w):
         r = Client().put("/api/vault/keyset", {**body, "replace": replace}, content_type="application/json",
                          **_bearer(w["login_pat"]))
         assert r.status_code == 409 and r.json()["error"] == "test_key_exists"
-
-
-def test_a_system_account_never_makes_a_key(w):
-    alarms = User.objects.create_user("alarms", "alarms@dimagi.com", "pw")
-    SystemAccount.objects.create(workspace=w["ws"], user=alarms, name="alarms")
-    c = Client()
-    c.force_login(alarms)
-    grant_step_up(c)
-    body, _ = _passphrase_keyset(alarms)
-    r = c.put("/api/vault/keyset", body, content_type="application/json")
-    assert r.status_code == 403 and r.json()["error"] == "not_a_person"
-    with pytest.raises(zk.ZkError) as e:
-        zk.put_keyset(alarms, public_jwk=body["public_jwk"], seals=body["seals"])
-    assert e.value.code == "not_a_person"
 
 
 def test_the_setup_screen_is_never_asked_of_an_agent_login(w):

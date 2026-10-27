@@ -136,7 +136,7 @@ describe('AgentHowItRuns', () => {
     expect((await within(own).findByTestId('vault-cloud-1')).textContent).toBe('grant pending')
     expect(within(own).getByTestId('grant-pending').textContent).toMatch(/1 runner cannot open its vault/)
     expect(within(own).getByTestId('schedule-count').textContent).toMatch(/2 schedules on/)
-    expect(within(own).getByRole('link', { name: 'Schedules' }).getAttribute('href')).toBe('/w/connect/agents/hal/schedules')
+    expect(within(own).getByRole('link', { name: 'Triggers' }).getAttribute('href')).toBe('/w/connect/agents/hal/triggers')
   })
 
   it('asks nothing of the vault for someone who is not an admin', async () => {

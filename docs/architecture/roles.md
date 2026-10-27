@@ -215,11 +215,9 @@ tenant the caller is already in and refuses with 422 when there is none. Calling
 `ensure_member` from a create path would let an invite-admitted user become an editor of the
 org default by posting one row; `tests/test_no_implicit_enrolment.py` pins it.
 
-**A member who is not a person: system accounts.** An admin can also create a *system
-account*, an automated sender such as CloudWatch alarm mail. It joins as an editor (or
-viewer, never above) and **can never sign in**. Inbound mail becomes it only through a
-sender binding in that workspace. Membership is created through the same `_grant` door as
-an invite. See `docs/architecture/access.md` § "System accounts".
+**Every member is a person or an agent's own login.** An automated sender (CloudWatch
+alarm mail, CI) is not a member: it is one agent's inbound-mail *trigger*, firing with the
+authority of whoever set it up. See `docs/architecture/access.md` § "Triggers".
 
 ## What enforces the membership tiers
 

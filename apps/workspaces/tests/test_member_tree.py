@@ -13,7 +13,6 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
-from apps.workspaces import system_accounts
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
 pytestmark = pytest.mark.django_db
@@ -149,12 +148,3 @@ def test_a_non_manager_cannot_add(tree):
     assert r.status_code == 403
     # Not in connect at all: 404 before any role is probed.
     assert _add(_client(tree["labsie"]), "connect", tree["editor"].pk, "viewer").status_code == 404
-
-
-def test_a_system_account_is_added_only_as_editor_or_viewer(tree):
-    acct = system_accounts.create(tree["org"], name="alarms", by=tree["owner"])
-    c = _client(tree["owner"])
-    assert _add(c, "connect", acct.user_id, "admin").status_code == 422
-    assert _add(c, "connect", acct.user_id, "viewer").status_code == 201
-    body = _tree(c, "org")
-    assert next(p for p in body["people"] if p["user_id"] == acct.user_id)["system"] is True

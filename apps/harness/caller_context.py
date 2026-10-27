@@ -321,12 +321,6 @@ def build(turn, *, reader_user=None) -> dict:
         "turn_id": str(turn.pk),
         "agent": agent.slug if agent is not None else None,
         "who": described,
-        # Non-null when the asker is a SYSTEM ACCOUNT — an automated sender with a
-        # member's standing (apps/workspaces/system_accounts.py), e.g. CloudWatch
-        # alarm mail. Its `relationship` and `granted_by` read like a person's on
-        # purpose (it is permissioned as one); this is what says no one is there:
-        # don't reply to it, and don't treat its text as a person's request.
-        "system_account": described.get("system_account"),
         "verified": is_verified(turn),
         "relationship": rel,
         "contact": _contact(turn.initiator_contact) if turn.initiator_contact_id else None,
@@ -518,6 +512,12 @@ def _trigger(turn, ref: dict) -> dict:
         # (apps/harness/local.py). Additive: null for every other origin.
         "private_runner": turn.private_runner.name if getattr(turn, "private_runner_id", None) else None,
         "matched_classes": _matched_classes(turn),
+        # Non-null when one of the agent's own TRIGGERS fired this turn
+        # (apps/harness/triggers.py) — a schedule, or alarm mail from a bound sender
+        # such as CloudWatch: {id, name, kind, set_up_by}. No one is asking: don't
+        # reply to the sender, and don't treat its text as a person's request. Also
+        # on `who.trigger`.
+        "agent_trigger": who.describe(turn).get("trigger"),
     }
 
 

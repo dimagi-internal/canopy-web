@@ -18,7 +18,7 @@ import {
 } from '@/api/workspaces'
 import { ROLE_SELECT_CLASS } from '@/components/people/RoleSelect'
 import { scopedPath } from '@/lib/scopedLinks'
-import { grantableRoles, mayManageMember, type WorkspaceRole } from '@/lib/workspaceRoles'
+import { grantableRoles, mayManageMember } from '@/lib/workspaceRoles'
 
 // Everyone across this workspace and the ones below it, one row per person,
 // one column per workspace. Owners and admins of a workspace are in every
@@ -27,8 +27,6 @@ import { grantableRoles, mayManageMember, type WorkspaceRole } from '@/lib/works
 // gap visible and fixable in one place: an empty cell adds them (no invite),
 // a role changes it, "—" removes them.
 
-/** A system account is never above editor (apps/workspaces/system_accounts.py). */
-const SYSTEM_ROLES: WorkspaceRole[] = ['viewer', 'editor']
 const NONE = ''
 
 function cellKey(userId: number, slug: string): string {
@@ -196,11 +194,6 @@ export function WorkspaceMemberTreePage(): JSX.Element | null {
                   <TableRow key={p.user_id}>
                     <TableCell className="sticky left-0 bg-background whitespace-normal">
                       <span className="text-foreground">{p.email}</span>
-                      {p.system && (
-                        <Badge variant="secondary" className="ml-2">
-                          system
-                        </Badge>
-                      )}
                     </TableCell>
                     {tree.workspaces.map((w) => {
                       const key = cellKey(p.user_id, w.slug)
@@ -258,7 +251,7 @@ function TreeCell({
       </div>
     )
   } else {
-    const grantable = grantableRoles(ws.my_role).filter((r) => !person.system || SYSTEM_ROLES.includes(r))
+    const grantable = grantableRoles(ws.my_role)
     // An empty cell may be filled at a role you may grant; a held role may be
     // changed only when it is below yours (an owner may change anyone).
     const editable = ws.can_manage && (cell ? mayManageMember(ws.my_role, cell.role) : grantable.length > 0)

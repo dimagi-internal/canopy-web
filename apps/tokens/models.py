@@ -108,15 +108,7 @@ class PersonalToken(models.Model):
 
         The caller is responsible for delivering the raw value to the
         token owner (UI display, env-var dump, etc.).
-
-        Never for a SYSTEM ACCOUNT (`apps/workspaces/system_accounts.py`): it
-        cannot authenticate, and a PAT — or an OAuth access token, which is one —
-        would be a login. `lookup` refuses one too, in case a row predates this.
         """
-        from apps.workspaces.system_accounts import is_system_user
-
-        if is_system_user(user):
-            raise ValueError("a system account cannot hold a token: it never signs in")
         if ttl is not None:
             # A sub-day lifetime (an OAuth access token lives an hour).
             expires_at = timezone.now() + ttl
@@ -157,8 +149,6 @@ class PersonalToken(models.Model):
         return (
             cls.objects.select_related("user")
             .filter(token_hash=token_hash, revoked_at__isnull=True, user__is_active=True)
-            # A system account never authenticates (apps/workspaces/system_accounts.py).
-            .filter(user__system_account__isnull=True)
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
             .first()
         )
@@ -569,9 +559,7 @@ class DelegatedToken(models.Model):
             cls.objects.select_related("user", "app")
             .filter(token_hash=hash_token(raw),
                     expires_at__gt=timezone.now(),
-                    app__revoked_at__isnull=True,
-                    # A system account never authenticates (apps/workspaces/system_accounts.py).
-                    user__system_account__isnull=True)
+                    app__revoked_at__isnull=True)
             .first()
         )
 

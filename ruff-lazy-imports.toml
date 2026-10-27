@@ -77,7 +77,7 @@
 "apps/capabilities/services.py" = ["PLC0415"]  # 6
 "apps/capabilities/signals.py" = ["PLC0415"]  # 3
 "apps/common/api.py" = ["PLC0415"]  # 11
-"apps/common/auth_adapter.py" = ["PLC0415"]  # 6
+"apps/common/auth_adapter.py" = ["PLC0415"]  # 4
 "apps/common/email.py" = ["PLC0415"]  # 1
 "apps/common/legacy_prefix.py" = ["PLC0415"]  # 1
 "apps/common/legacy_traffic.py" = ["PLC0415"]  # 2
@@ -104,7 +104,7 @@
 "apps/contacts/hcp_oauth_views.py" = ["PLC0415"]  # 4
 "apps/contacts/management/commands/mirror_contact_notes.py" = ["PLC0415"]  # 1
 "apps/contacts/management/commands/people_coverage.py" = ["PLC0415"]  # 1
-"apps/contacts/people.py" = ["PLC0415"]  # 18
+"apps/contacts/people.py" = ["PLC0415"]  # 17
 "apps/contacts/people_api.py" = ["PLC0415"]  # 30
 "apps/contacts/services.py" = ["PLC0415"]  # 11
 "apps/embedding/apps.py" = ["PLC0415"]  # 2
@@ -117,7 +117,7 @@
 "apps/embedding/embed_api.py" = ["PLC0415"]  # 9
 "apps/embedding/embed_apps.py" = ["PLC0415"]  # 5
 "apps/embedding/jwks.py" = ["PLC0415"]  # 2
-"apps/events/activity.py" = ["PLC0415"]  # 2
+"apps/events/activity.py" = ["PLC0415"]  # 1
 "apps/events/analytics.py" = ["PLC0415"]  # 8
 "apps/events/api.py" = ["PLC0415"]  # 4
 "apps/events/audit.py" = ["PLC0415"]  # 11
@@ -144,7 +144,7 @@
 "apps/harness/aws_iam_proof.py" = ["PLC0415"]  # 2
 "apps/harness/caller_context.py" = ["PLC0415"]  # 15
 "apps/harness/caller_tokens.py" = ["PLC0415"]  # 3
-"apps/harness/channels/email.py" = ["PLC0415"]  # 4
+"apps/harness/channels/email.py" = ["PLC0415"]  # 3
 "apps/harness/claim.py" = ["PLC0415"]  # 11
 "apps/harness/claiming.py" = ["PLC0415"]  # 4
 "apps/harness/closing.py" = ["PLC0415"]  # 8
@@ -153,7 +153,7 @@
 "apps/harness/device_keys.py" = ["PLC0415"]  # 10
 "apps/harness/dispatch.py" = ["PLC0415"]  # 1
 "apps/harness/drills.py" = ["PLC0415"]  # 8
-"apps/harness/initiator.py" = ["PLC0415"]  # 2
+"apps/harness/initiator.py" = ["PLC0415"]  # 1
 "apps/harness/ledger.py" = ["PLC0415"]  # 4
 "apps/harness/local.py" = ["PLC0415"]  # 4
 "apps/harness/models.py" = ["PLC0415"]  # 2
@@ -276,7 +276,7 @@
 "apps/tokens/api.py" = ["PLC0415"]  # 1
 "apps/tokens/cli_authorize_views.py" = ["PLC0415"]  # 1
 "apps/tokens/middleware.py" = ["PLC0415"]  # 13
-"apps/tokens/models.py" = ["PLC0415"]  # 5
+"apps/tokens/models.py" = ["PLC0415"]  # 4
 "apps/tokens/principal.py" = ["PLC0415"]  # 4
 "apps/walkthroughs/api.py" = ["PLC0415"]  # 1
 "apps/walkthroughs/apps.py" = ["PLC0415"]  # 2
@@ -284,13 +284,12 @@
 "apps/walkthroughs/models.py" = ["PLC0415"]  # 1
 "apps/walkthroughs/timeline.py" = ["PLC0415"]  # 1
 "apps/workspaces/access_requests.py" = ["PLC0415"]  # 3
-"apps/workspaces/api.py" = ["PLC0415"]  # 26
+"apps/workspaces/api.py" = ["PLC0415"]  # 25
 "apps/workspaces/departure.py" = ["PLC0415"]  # 7
 "apps/workspaces/login_gate.py" = ["PLC0415"]  # 1
 "apps/workspaces/models.py" = ["PLC0415"]  # 1
 "apps/workspaces/permissions.py" = ["PLC0415"]  # 5
 "apps/workspaces/role_cap.py" = ["PLC0415"]  # 3
-"apps/workspaces/services.py" = ["PLC0415"]  # 7
-"apps/workspaces/system_accounts.py" = ["PLC0415"]  # 5
+"apps/workspaces/services.py" = ["PLC0415"]  # 5
 "apps/workspaces/testing.py" = ["PLC0415"]  # 2
 "config/views.py" = ["PLC0415"]  # 1

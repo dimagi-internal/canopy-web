@@ -268,7 +268,7 @@ export const SURFACES: SurfaceDescriptor[] = [
     home: '/w/:workspace/settings/members',
     title: 'A member',
     audience: 'Any workspace member (more detail for admins and owners)',
-    what: 'One member of the workspace: their role, when they joined, whether they are a person, an agent or a system account, the agents they operate here and the other workspaces you share with them. Admins and owners also see who invited them, when they last signed in and how many chats they started here.',
+    what: 'One member of the workspace: their role, when they joined, whether they are a person or an agent, the agents they operate here and the other workspaces you share with them. Admins and owners also see who invited them, when they last signed in and how many chats they started here.',
     actions: ['Open an agent they operate', 'Jump to the same person in a shared workspace'],
   },
   {
@@ -659,13 +659,13 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Open a huddle to read the conversation'],
   },
   {
-    path: '/w/:workspace/agents/:slug/schedules',
+    path: '/w/:workspace/agents/:slug/triggers',
     group: 'Agent workspace',
-    title: 'Agent schedules',
+    title: 'Agent triggers',
     audience: 'The person(s) who own this agent',
-    what: "A dense table of this agent's recurring activities — each row's server-computed next fire time and last outcome, plus the controls to run it off-cycle, pause it, or edit it.",
-    needsFirst: 'At least one schedule configured for this agent.',
-    actions: ['Run a schedule now', 'Pause or edit a schedule', 'Create a new schedule'],
+    what: "What starts this agent on its own, as one dense table of its triggers: schedules (a cron cadence or one instant, each with its server-computed next fire time) and inbound mail (aligned mail from a bound sender, such as CloudWatch alarm mail, optionally narrowed by subject). Each row says who set it up — a trigger fires with that person's authority on the agent, never more — its last outcome, and, when that person has left or lost the right, that it has stopped and why (an alert says so too). Controls run a schedule off-cycle, pause, edit or delete a trigger; an editor may make schedules, and only an admin of the agent may make an inbound-mail trigger or an auto one.",
+    needsFirst: 'At least one trigger configured for this agent.',
+    actions: ['Run a schedule now', 'Pause or edit a trigger', 'Create a schedule or an inbound-mail trigger'],
   },
   {
     path: '/w/:workspace/agents/:slug/mail',

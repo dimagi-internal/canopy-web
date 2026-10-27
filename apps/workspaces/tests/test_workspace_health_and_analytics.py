@@ -255,25 +255,20 @@ def test_health_and_analytics_count_an_agents_turns_the_same_way(tree):
     assert health["hal"]["last_turn_at"] is not None
 
 
-def test_an_agents_login_and_a_system_account_are_not_people(tree):
-    """Ada sending Hal work is Ada, not a person; nor is a CloudWatch sender."""
-    from apps.workspaces.models import SystemAccount
-
+def test_an_agents_login_is_not_a_person(tree):
+    """Ada sending Hal work is Ada, not a person."""
     ada_login = _user("ada@dimagi-ai.com")
     Agent.objects.create(slug="ada", name="Ada", workspace_id="dimagi", user=ada_login)
-    alarms = _user("alarms@system.canopy.invalid")
-    SystemAccount.objects.create(user=alarms, workspace_id="dimagi", name="alarms")
     _turn(tree["hal"], "p1", ada_login)
-    _turn(tree["eva"], "p2", alarms)
     _turn(tree["eva"], "p3", tree["ceo"])
     kinds = dict(Activity.objects.filter(kind=activity.TURN_ENQUEUED).values_list("actor__email", "actor_kind"))
-    assert kinds == {"ada@dimagi-ai.com": "agent", "alarms@system.canopy.invalid": "system", "ceo@dimagi.com": "user"}
+    assert kinds == {"ada@dimagi-ai.com": "agent", "ceo@dimagi.com": "user"}
     body = _get(tree["ceo"], "/api/workspaces/dimagi/analytics?days=7").json()
     assert [u["email"] for u in body["users"]] == ["ceo@dimagi.com"] and body["totals"]["active_users"] == 1
 
     # Facts recorded before the login was known to be an agent's are fixed by the backfill.
     Activity.objects.update(actor_kind="user")
-    assert activity.reclassify() == 2
+    assert activity.reclassify() == 1
 
 
 def test_health_counts_projects_open_tasks_and_waits_like_the_agent_pages(tree):

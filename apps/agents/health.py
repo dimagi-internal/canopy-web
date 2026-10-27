@@ -108,7 +108,8 @@ def _counts(agents: list[Agent]) -> dict[int, dict]:
     out: dict[int, dict] = {i: {} for i in ids}
     kinds = {
         "skills": Agent.skills.rel.related_model.objects.all(),
-        "schedules": Agent.schedules.rel.related_model.objects.all(),
+        # Cron triggers only: the column says "schedules" (an inbound-mail trigger is not one).
+        "schedules": Agent.schedules.rel.related_model.objects.filter(kind="cron"),
         "projects": AgentProject.objects.filter(status=AgentProject.ACTIVE),
         "open_tasks": AgentTask.objects.filter(status__in=AgentTask.LIVE_STATUSES),
         "waiting_tasks": AgentTask.objects.filter(waiting_q()),

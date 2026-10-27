@@ -34,7 +34,6 @@ from apps.harness import runner_requirements as rr
 from apps.passkeys import stepup
 from apps.realtime import groups
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import SystemAccount
 
 from . import (
     access,
@@ -1516,8 +1515,8 @@ def list_participants(request: HttpRequest, session_id: uuid.UUID):
             summary="Who you could add to this chat")
 @gate("session-acl")  # can_add_people
 def participant_candidates(request: HttpRequest, session_id: uuid.UUID):
-    """The workspace's members you may add: not in it yet, not its creator, no
-    system account. Agents' own logins carry their agent's slug. 403 unless you
+    """The workspace's members you may add: not in it yet, not its creator. Agents'
+    own logins carry their agent's slug. 403 unless you
     may add people (`access.can_add_people`)."""
     session = _session_or_404(request, session_id)
     if not access.can_add_people(request.user, session):
@@ -1526,12 +1525,11 @@ def participant_candidates(request: HttpRequest, session_id: uuid.UUID):
     taken.update(i for i in (session.created_by_id, request.user.pk) if i)
     users = [m.user for m in wsvc.effective_memberships(session.workspace_id) if m.user_id not in taken]
     ids = [u.pk for u in users]
-    system = set(SystemAccount.objects.filter(user_id__in=ids).values_list("user_id", flat=True))
     agents = dict(Agent.objects.filter(user_id__in=ids).values_list("user_id", "slug"))
     rows = [{"user_id": u.pk, "email": u.email,
              "display_name": (u.get_full_name() or "").strip() or u.email,
              "agent_slug": agents.get(u.pk, "")}
-            for u in users if u.pk not in system and u.email and u.is_active]
+            for u in users if u.email and u.is_active]
     return sorted(rows, key=lambda r: (bool(r["agent_slug"]), r["display_name"].lower()))
 
 

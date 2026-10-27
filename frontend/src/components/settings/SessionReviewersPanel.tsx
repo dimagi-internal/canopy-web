@@ -28,7 +28,7 @@ export function SessionReviewersPanel() {
     listMySessionReviewers()
       .then(setData)
       .catch(() => {
-        // Only a person has this (an agent's login or a system account is
+        // Only a person has this (an agent's login is
         // refused): a failed load just leaves the panel out.
       })
   }, []) // once, on mount

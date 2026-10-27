@@ -71,13 +71,8 @@ def initiator_person(turn) -> Person | None:
 
 def is_human_account(user) -> bool:
     """A canopy account a PERSON is behind — not an agent's own login (another
-    agent dispatching work arrives as one) and not a system account (CloudWatch
-    mail with a member's standing). Neither has anything to remember."""
-    from apps.workspaces.system_accounts import is_system_user
-
-    if user is None or agent_of_login(user) is not None:
-        return False
-    return not is_system_user(user)
+    agent dispatching work arrives as one), which has nothing to remember."""
+    return user is not None and agent_of_login(user) is None
 
 
 def display_name(person: Person) -> str:
