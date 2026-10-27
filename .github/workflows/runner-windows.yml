@@ -63,7 +63,7 @@ jobs:
   unit:
     name: Runner unit tests (Windows)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: pwsh
@@ -79,11 +79,11 @@ jobs:
       - name: canopy_runner tests
         if: ${{ !cancelled() }}
         working-directory: runner/canopy_runner
-        run: uv run --with pytest pytest -q -rfEsx
+        run: uv run --with pytest --with pytest-timeout pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15
       - name: canopy_acp tests
         if: ${{ !cancelled() }}
         working-directory: runner/canopy_acp
-        run: uv run --with pytest pytest -q -rfEsx
+        run: uv run --with pytest --with pytest-timeout pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15
 
   lifecycle:
     name: Installer lifecycle (Windows)

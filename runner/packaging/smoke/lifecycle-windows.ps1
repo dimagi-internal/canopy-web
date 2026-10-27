@@ -106,14 +106,43 @@ function App-Processes {
   @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($App, [StringComparison]::OrdinalIgnoreCase) })
 }
+function Kill-Tree([int]$id) {
+  Get-CimInstance Win32_Process -Filter "ParentProcessId=$id" -ErrorAction SilentlyContinue |
+    ForEach-Object { Kill-Tree $_.ProcessId }
+  Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+}
+function Show-Tree([int]$id, [string]$indent = '  ') {
+  Get-CimInstance Win32_Process -Filter "ParentProcessId=$id" -ErrorAction SilentlyContinue | ForEach-Object {
+    Write-Host "$indent$($_.ProcessId) $($_.Name): $($_.CommandLine)"
+    Show-Tree $_.ProcessId "$indent  "
+  }
+}
+# Returns the exit code, or $null when it had to be killed (after showing what it
+# was stuck in) - so the checks after it still run and say what state it left.
 function Run-Installer($exe, [string[]]$extra, $log, [int]$timeoutSeconds = 600) {
   $argList = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$log") + $extra
   $p = Start-Process -FilePath $exe -ArgumentList $argList -PassThru
+  $null = $p.Handle  # without it ExitCode reads back empty
   if (-not $p.WaitForExit($timeoutSeconds * 1000)) {
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-    throw "installer still running after ${timeoutSeconds}s (setup's '|| pause' waiting on a failure?)"
+    Write-Host "installer still running after ${timeoutSeconds}s; its process tree:"
+    Show-Tree $p.Id
+    Kill-Tree $p.Id
+    return $null
   }
   $p.ExitCode
+}
+# A command with a deadline, its output captured: @{ Exit; Out } (Exit $null = killed).
+function Run-Captured([string]$file, [string[]]$argList, [int]$timeoutSeconds = 300) {
+  $o = New-TemporaryFile; $e = New-TemporaryFile
+  $p = Start-Process -FilePath $file -ArgumentList $argList -PassThru -NoNewWindow `
+    -RedirectStandardOutput $o -RedirectStandardError $e
+  $null = $p.Handle
+  $exit = $null
+  if ($p.WaitForExit($timeoutSeconds * 1000)) { $p.WaitForExit(); $exit = $p.ExitCode }
+  else { Write-Host "still running after ${timeoutSeconds}s; its process tree:"; Show-Tree $p.Id; Kill-Tree $p.Id }
+  $out = (Get-Content $o -Raw) + (Get-Content $e -Raw)
+  Remove-Item $o, $e -ErrorAction SilentlyContinue
+  @{ Exit = $exit; Out = $out }
 }
 function Dump-Logs {
   foreach ($f in @($RunnerLog, $UpdaterLog)) {
@@ -146,8 +175,8 @@ try {
 
   # --- 1. first install: the installer runs setup itself -----------------------------
   Step "install A ($($A.Sha12)) - a first install, no /UPDATE: the installer runs setup"
-  $rc = Run-Installer $A.Exe @() (Join-Path $Logs 'install-A.log')
-  Check "installer A exited 0" { Assert ($rc -eq 0) "exit $rc" }
+  $rc = Run-Installer $A.Exe @() (Join-Path $Logs 'install-A.log') 300
+  Check "installer A (and the setup it runs) exited 0" { Assert ($rc -eq 0) $(if ($null -eq $rc) { 'killed after 300s' } else { "exit $rc" }) }
   Check "current is a junction to versions\$($A.Sha12)" {
     $t = Junction-Target; Assert ($t -like "*\versions\$($A.Sha12)") "points at $t"; $t
   }
@@ -163,10 +192,9 @@ try {
   # --- 2. setup --no-pair, captured --------------------------------------------------
   Step "canopy-runner setup --no-pair (what every update runs)"
   $Shim = Join-Path $Current 'bin\canopy-runner.cmd'
-  $out = & cmd /c "`"$Shim`" setup --no-pair --config `"$Config`" 2>&1" | Out-String
-  $setupExit = $LASTEXITCODE; $global:LASTEXITCODE = 0
-  Write-Host $out
-  if ($setupExit -ne 0) { Fail "setup --no-pair exited $setupExit" } else { Pass "setup --no-pair exited 0" }
+  $r = Run-Captured 'cmd.exe' @('/c', "`"`"$Shim`" setup --no-pair --config `"$Config`"`"")
+  Write-Host $r.Out
+  if ($r.Exit -ne 0) { Fail "setup --no-pair: $(if ($null -eq $r.Exit) { 'killed after 300s' } else { "exit $($r.Exit)" })" } else { Pass "setup --no-pair exited 0" }
 
   # --- 3. the tasks, as registered ---------------------------------------------------
   Step "the \Canopy\ tasks"
@@ -249,11 +277,10 @@ try {
   $code = 'import sys; from pathlib import Path; from canopy_runner import self_update as s; ' +
           's.install_windows(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4]))'
   $env:CANOPY_RUNNER_UNDER_JOB = 'updater'
-  $out = & $PyCur -I -X utf8 -c $code $B.Exe $B.Sha $App $Config 2>&1 | Out-String
-  $updExit = $LASTEXITCODE; $global:LASTEXITCODE = 0
+  $r = Run-Captured $PyCur @('-I', '-X', 'utf8', '-c', "`"$code`"", "`"$($B.Exe)`"", $B.Sha, "`"$App`"", "`"$Config`"") 900
   Remove-Item Env:\CANOPY_RUNNER_UNDER_JOB
-  Write-Host $out
-  if ($updExit -ne 0) { Fail "install_windows exited $updExit" } else { Pass "install_windows returned" }
+  Write-Host $r.Out
+  if ($r.Exit -ne 0) { Fail "install_windows: $(if ($null -eq $r.Exit) { 'killed after 900s' } else { "exit $($r.Exit)" })" } else { Pass "install_windows returned" }
   Check "current -> versions\$($B.Sha12)" { $t = Junction-Target; Assert ($t -like "*\versions\$($B.Sha12)") "points at $t"; $t }
   Check "A kept (it was running), B present" {
     $v = Versions
@@ -268,7 +295,7 @@ try {
   # --- 7. B -> C with the bare installer over the running daemon ---------------------
   Step "update B -> C ($($C.Sha12)) with the installer /UPDATE, daemon still running from B"
   $rc = Run-Installer $C.Exe @('/UPDATE') (Join-Path $Logs 'install-C.log')
-  Check "installer C /UPDATE exited 0 with B running" { Assert ($rc -eq 0) "exit $rc" }
+  Check "installer C /UPDATE exited 0 with B running" { Assert ($rc -eq 0) $(if ($null -eq $rc) { 'killed after 600s' } else { "exit $rc" }) }
   Check "current -> versions\$($C.Sha12)" { $t = Junction-Target; Assert ($t -like "*\versions\$($C.Sha12)") "points at $t"; $t }
   Check "A pruned, B kept (previous), C present" {
     $v = Versions
