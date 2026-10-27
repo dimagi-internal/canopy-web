@@ -95,6 +95,9 @@ describe('reading the checklists after the table', () => {
     expect(getWorkspaceHealth).toHaveBeenCalledWith('dimagi', { setup: false })
     expect(within(hal).getAllByLabelText('loading')).toHaveLength(2)
     expect(screen.getByRole('button', { name: /Fully set up/ }).textContent).toContain('…')
+    // `release` is assigned only once the page has made the setup call; releasing
+    // before that resolves nothing and the row never fills (flaked the merge queue).
+    await waitFor(() => expect(getWorkspaceHealthSetup).toHaveBeenCalled())
     release()
     await waitFor(() => expect(within(hal).getByLabelText('1 steps left')).toBeTruthy())
     expect(screen.getByRole('button', { name: /Fully set up/ }).textContent).toContain('1')
