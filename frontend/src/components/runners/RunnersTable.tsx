@@ -28,8 +28,8 @@ type Props = {
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation()
 
 /** What a cloud runner serves, from the server's `tree:<root>` / `agent:<slug>`. */
-function servesText(unit: string): string {
-  const [kind, name] = unit.split(':', 2)
+function servesText(serves: string): string {
+  const [kind, name] = serves.split(':', 2)
   return kind === 'agent' ? `only agent ${name}` : `serves ${name}`
 }
 
@@ -74,7 +74,7 @@ export function RunnersTable({ runners, workspace, open: openProp, onOpen }: Pro
                       directed only
                     </span>
                   )}
-                  {r.unit && <span className="ml-1 text-muted-foreground" data-testid="runner-unit">· {servesText(r.unit)}</span>}
+                  {r.serves && <span className="ml-1 text-muted-foreground" data-testid="runner-serves">· {servesText(r.serves)}</span>}
                   {r.machine && (perMachine.get(r.machine) ?? 0) > 1 && (
                     <span className="ml-1 text-muted-foreground" data-testid="runner-machine">· on {r.machine}</span>
                   )}

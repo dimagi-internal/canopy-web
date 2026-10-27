@@ -21,7 +21,7 @@ from apps.agents.models import Agent, AgentCredential
 from apps.harness import device_keys, runner_auth
 from apps.harness.models import Runner, RunnerAccessToken, RunnerAssignment, RunnerDeviceKey
 from tests.fixtures.runner_invitations import make_org
-from tests.fixtures.runner_units import BOX, _approve, _invite, _pair_units
+from tests.fixtures.machine_runners import BOX, _approve, _invite, _pair_runners
 
 pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("sts", "fresh_cache")]
 
@@ -54,15 +54,15 @@ def box(org):
     # What canopy-web stores is ciphertext (the agent vault is zero-knowledge); its
     # shape does not matter here, only who is handed it.
     AgentCredential.objects.create(agent=eva, name="canopy-pat", value_zk=SEALED, kv=0)
-    units = [{"name": A, "workspace": "connect", "kind": "tree"},
+    runners = [{"name": A, "workspace": "connect", "kind": "tree"},
              {"name": B, "workspace": "connect", "kind": "agent", "slug": "eva"}]
     signing = {A: ec.generate_private_key(ec.SECP256R1()), B: ec.generate_private_key(ec.SECP256R1())}
     ecdh = {A: _jwk(ec.generate_private_key(ec.SECP256R1())), B: _jwk(ec.generate_private_key(ec.SECP256R1()))}
-    inv = _invite(org, units=[{**u, "ecdh_public_jwk": ecdh[u["name"]]} for u in units]).json()
+    inv = _invite(org, runners=[{**u, "ecdh_public_jwk": ecdh[u["name"]]} for u in runners]).json()
     _approve(org, inv["id"])
-    res = _pair_units({n: {"public_jwk": _jwk(signing[n]), "ecdh_public_jwk": ecdh[n]} for n in signing})
+    res = _pair_runners({n: {"public_jwk": _jwk(signing[n]), "ecdh_public_jwk": ecdh[n]} for n in signing})
     assert res.status_code == 201, res.content
-    ids = res.json()["units"]
+    ids = res.json()["runners"]
     runners = {n: Runner.objects.get(pk=ids[n]) for n in ids}
     Runner.objects.filter(pk__in=ids.values()).update(status=Runner.ONLINE)
     RunnerAssignment.objects.create(agent=eva, runner=runners[B], rank=0)
@@ -77,7 +77,7 @@ def _resolve(bearer: str, proof: str | None = None):
     return Client().get(RESOLVE, **headers)
 
 
-def test_unit_a_proof_for_an_agent_routed_only_to_b_is_not_routed(box):
+def test_runner_a_proof_for_an_agent_routed_only_to_b_is_not_routed(box):
     res = _resolve(box["pat"], make_dpop_proof(box["signing"][A], "GET", HTU))
     assert res.status_code == 401, res.content
     assert res.json()["reason"] == "not_routed"
@@ -87,15 +87,15 @@ def test_unit_a_proof_for_an_agent_routed_only_to_b_is_not_routed(box):
     assert ok.status_code == 200 and ok.json()["values"] == {"canopy-pat": SEALED}
 
 
-def test_even_a_routing_row_to_unit_a_does_not_let_a_read_eva(box):
+def test_even_a_routing_row_to_runner_a_does_not_let_a_read_eva(box):
     """An assignment that predates B (or a write that slipped past) does not make
-    A an eva runner: eva has its own runner on this machine (`routing.unit_refusal`)."""
+    A an eva runner: eva has its own runner on this machine (`routing.serves_refusal`)."""
     RunnerAssignment.objects.create(agent=box["eva"], runner=box["runners"][A], rank=1)
     res = _resolve(box["pat"], make_dpop_proof(box["signing"][A], "GET", HTU))
     assert res.status_code == 401 and res.json()["reason"] == "not_routed"
 
 
-def test_unit_a_token_is_refused_for_bs_agent(box):
+def test_runner_a_token_is_refused_for_bs_agent(box):
     res = _resolve(box["tokens"][A])
     assert res.status_code == 403 and SEALED not in res.content.decode()
     res = _resolve(box["tokens"][A], make_dpop_proof(box["signing"][A], "GET", HTU))
@@ -107,7 +107,7 @@ def test_unit_a_token_is_refused_for_bs_agent(box):
     assert ok.status_code == 200
 
 
-def test_unit_a_token_cannot_open_bs_runner_routes(box):
+def test_runner_a_token_cannot_open_bs_runner_routes(box):
     a, b = box["runners"][A], box["runners"][B]
     assert runner_auth.reaches("POST", f"/api/harness/runners/{a.pk}/heartbeat", a.pk)
     assert not runner_auth.reaches("POST", f"/api/harness/runners/{b.pk}/heartbeat", a.pk)

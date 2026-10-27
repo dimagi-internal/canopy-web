@@ -46,14 +46,14 @@ def machine_label(runner) -> str:
     return runner.machine_name()
 
 
-def unit_label(runner) -> str:
+def serves_label(runner) -> str:
     """`tree:<root>` / `agent:<slug>` for a runner that declares what it serves
-    (`Runner.unit`), "" otherwise."""
-    unit = runner.unit()
-    if unit.get("kind") == "agent":
-        return f"agent:{unit.get('slug') or ''}"
-    if unit.get("kind") == "tree":
-        return f"tree:{unit.get('root') or ''}"
+    (`Runner.serves`), "" otherwise."""
+    serves = runner.serves()
+    if serves.get("kind") == "agent":
+        return f"agent:{serves.get('slug') or ''}"
+    if serves.get("kind") == "tree":
+        return f"tree:{serves.get('root') or ''}"
     return ""
 
 
@@ -213,7 +213,7 @@ def build(root: Workspace, visible: Callable[[str], bool] = lambda _slug: True, 
             "agents": sorted((by_pk[a] for a in serves.get(r.pk, ()) if a in by_pk), key=lambda a: a["slug"]),
             "problems": problems(r),
             "machine": machine_label(r),
-            "unit": unit_label(r),
+            "serves": serves_label(r),
         })
     # A machine's runners sit together, as one group: rows on one machine share a sort
     # key (the machine), and a runner on no known machine is a group of its own.

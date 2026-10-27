@@ -6,7 +6,7 @@ single agent, each its own Unix user. The machine's instance role belongs
 to root (IMDS is root-only), so a runner signs in with a SOFTWARE key of its own,
 made in its home. Pairing extends the invitation (`api_runner_invitations`):
 
-* the invitation `up.sh` makes lists the runners (`RunnerInvitation.units`), and the
+* the invitation `up.sh` makes lists the runners (`RunnerInvitation.runners`), and the
   creator's ONE passkey approval covers every one;
 * the box's root-only `canopy-pair` makes ONE `pair-by-role` call with the
   instance-role proof and every runner's public keys;
@@ -37,23 +37,23 @@ from apps.workspaces import permissions as perms
 
 from . import aws_iam_proof, device_keys
 from .api_device_keys import ECDH_STORES
-from .models import Runner, RunnerAccessToken, RunnerDeviceKey, RunnerInvitation
+from .models import SERVES, Runner, RunnerAccessToken, RunnerDeviceKey, RunnerInvitation, with_serves_key
 
 #: Where such a runner's ECDH key lives: the machine's root-only KMS broker (canopy's
 #: `kms-broker` store). Display only, like every `ecdh_store`.
 BROKER_STORE = "kms-broker"
 
 
-def units_of(invitation: RunnerInvitation) -> list[dict]:
+def invited_runners(invitation: RunnerInvitation) -> list[dict]:
     """The runners an invitation pairs. [] for a one-runner invitation."""
-    return [u for u in (invitation.units or []) if isinstance(u, dict) and u.get("name")]
+    return [r for r in (invitation.runners or []) if isinstance(r, dict) and r.get("name")]
 
 
-def unit_capability(unit: dict, root: str) -> dict:
-    """`capabilities.unit` for a runner paired from invitation entry `unit` — set by
+def serves_capability(entry: dict, root: str) -> dict:
+    """`capabilities.serves` for a runner paired from invitation entry `entry` — set by
     canopy-web from the invitation a person approved, not taken from what the box says."""
-    if unit.get("kind") == "agent":
-        return {"kind": "agent", "slug": unit.get("slug") or ""}
+    if entry.get("kind") == "agent":
+        return {"kind": "agent", "slug": entry.get("slug") or ""}
     return {"kind": "tree", "root": root}
 
 
@@ -109,7 +109,7 @@ def _announce_rekey(runner: Runner, adopted: bool) -> None:
         device_key_notify.notify_rekeyed_on_commit(key, adopted=adopted)
 
 
-def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls, status_cls):
+def pair_runners(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls, status_cls):
     """`pair-by-role` for a machine running several runners. `refuse(why)` builds the uniform refusal;
     `out_cls`/`status_cls` are the route's response types (kept out of this module's
     imports so it has no Ninja coupling)."""
@@ -117,14 +117,14 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
 
     machine = aws_iam_proof.canonical_role_arn(role_arn)
     role_jkt = aws_iam_proof.role_jkt(role_arn)
-    units = list(payload.units or [])
-    names = [u.name for u in units]
-    if not units or len(set(names)) != len(names):
-        raise refuse("units: empty, or a name twice")
+    runners = list(payload.runners or [])
+    names = [u.name for u in runners]
+    if not runners or len(set(names)) != len(names):
+        raise refuse("runners: empty, or a name twice")
 
     # Each runner's keys, checked before anything is decided.
     keys: dict[str, tuple] = {}
-    for u in units:
+    for u in runners:
         try:
             jwk = device_keys.normalize_public_jwk(u.public_jwk)
             ecdh = device_keys.normalize_public_jwk(u.ecdh_public_jwk) if u.ecdh_public_jwk else None
@@ -155,7 +155,7 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
     # runner's identity for good.
     adopt = [name for name, runner in existing.items()
              if not (_active_key(runner).kind == RunnerDeviceKey.SOFTWARE and runner.machine_id == machine)]
-    new = [u for u in units if u.name not in existing]
+    new = [u for u in runners if u.name not in existing]
     for u in new:
         clash = (Runner.objects.filter(name=u.name, kind=Runner.CLOUD).exclude(status=Runner.RETIRED)
                  .exclude(machine_id=machine).first())
@@ -171,7 +171,7 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
                          f"(new runners: {', '.join(u.name for u in new)}; to adopt: {', '.join(adopt)})")
         if invitation.expired:
             raise refuse(f"invitation {invitation.pk} expired")
-        invited = {u["name"]: u for u in units_of(invitation)}
+        invited = {u["name"]: u for u in invited_runners(invitation)}
         if not invited:
             raise refuse(f"invitation {invitation.pk} names no runners")
         missing = [u.name for u in new if u.name not in invited] + [n for n in adopt if n not in invited]
@@ -205,28 +205,28 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
             for name, runner in existing.items():
                 jwk, jkt, ecdh, ecdh_jkt, store = keys[name]
                 _rekey(_active_key(runner), name, jwk, jkt, ecdh, ecdh_jkt, store)
-                u = next(x for x in units if x.name == name)
+                u = next(x for x in runners if x.name == name)
                 caps = declared_capabilities(u.capabilities)
-                caps.pop("unit", None)
-                prior_unit = runner.unit()
+                caps.pop(SERVES, None)
+                prior = runner.serves()
                 if name in adopt:
                     # Adopted under the invitation a person approved: what it serves is
                     # what that invitation names — an agent's runner is restricted at once.
-                    spec = next(x for x in units_of(invitation) if x["name"] == name)
-                    caps["unit"] = unit_capability(spec, roots.get(spec["workspace"], spec["workspace"]))
-                elif prior_unit:
-                    caps["unit"] = prior_unit
+                    spec = next(x for x in invited_runners(invitation) if x["name"] == name)
+                    caps[SERVES] = serves_capability(spec, roots.get(spec["workspace"], spec["workspace"]))
+                elif prior:
+                    caps[SERVES] = prior
                 Runner.objects.filter(pk=runner.pk).update(
                     host=u.host or runner.host, machine_id=machine,
-                    capabilities={**(runner.capabilities or {}), **caps})
+                    capabilities={**with_serves_key(runner.capabilities), **caps})
             if invitation is not None:
-                invited = {x["name"]: x for x in units_of(invitation)}
+                invited = {x["name"]: x for x in invited_runners(invitation)}
                 now = timezone.now()
                 for u in new:
                     spec = invited[u.name]
                     jwk, jkt, ecdh, ecdh_jkt, store = keys[u.name]
                     caps = declared_capabilities(u.capabilities)
-                    caps["unit"] = unit_capability(spec, roots.get(spec["workspace"], spec["workspace"]))
+                    caps[SERVES] = serves_capability(spec, roots.get(spec["workspace"], spec["workspace"]))
                     runner = Runner.objects.create(
                         name=u.name, kind=Runner.CLOUD, host=u.host, capabilities=caps,
                         owner=invitation.created_by, workspace_id=spec["workspace"], machine_id=machine,
@@ -254,10 +254,10 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
                 for name, runner in existing.items():   # re-attached in the same call
                     if name in invited:
                         invited[name]["runner_id"] = str(runner.pk)
-                locked.units = [invited[x["name"]] for x in units_of(invitation)]
+                locked.runners = [invited[x["name"]] for x in invited_runners(invitation)]
                 locked.consumed_at = now
                 locked.runner = created[0] if created else None
-                locked.save(update_fields=["units", "consumed_at", "runner"])
+                locked.save(update_fields=["runners", "consumed_at", "runner"])
     except IntegrityError:
         # A runner's key is already some other runner's (unique jkt), or a concurrent
         # pairing of the same machine won.
@@ -269,7 +269,7 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
     for runner in created:
         activity.emit(activity.RUNNER_PAIRED, workspace=runner.workspace_id, actor=runner.owner,
                       surface="runner", ref=str(runner.pk),
-                      meta={"name": runner.name, "invitation": str(invitation.pk), "unit": True})
+                      meta={"name": runner.name, "invitation": str(invitation.pk), "on_shared_machine": True})
     ids = {name: r.pk for name, r in existing.items()}
     ids.update({r.name: r.pk for r in created})
     key_ids = {r.name: k for r in [*existing.values(), *created]
@@ -277,4 +277,4 @@ def pair_units(request: HttpRequest, payload, role_arn: str, *, refuse, out_cls,
     first = created[0].pk if created else next(iter(ids.values()))
     status = "paired" if created else "reattached"
     return status_cls(201 if created else 200,
-                      out_cls(status=status, runner_id=first, units=ids, device_keys=key_ids))
+                      out_cls(status=status, runner_id=first, runners=ids, device_keys=key_ids))

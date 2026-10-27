@@ -16,8 +16,8 @@ through pairing; when it expired, nothing said so. Now (spec
   `up.sh` nor the box can approve its own invitation.
 
 A machine running several runners (`docs/architecture/runners.md § Several runners on
-one machine`) is invited with `units`, and its one approval pairs every runner: `pair-by-role` with `units`
-is `unit_pairing.pair_units`.
+one machine`) is invited with `runners`, and its one approval pairs every runner: `pair-by-role` with `runners`
+is `machine_pairing.pair_runners`.
 
 Who approves: only the creator, who becomes the runner's owner — as only a box's
 owner or its runner admins approve a device key, and no runner admin can exist
@@ -44,7 +44,7 @@ from apps.workspaces import links as wslinks
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import aws_iam_proof, credential_sets, device_key_notify, device_keys, fleets, unit_pairing
+from . import aws_iam_proof, credential_sets, device_key_notify, device_keys, fleets, machine_pairing
 from .api_device_keys import ECDH_STORES
 from .models import Runner, RunnerDeviceKey, RunnerFleet, RunnerInvitation
 from .runners import set_runner_machine
@@ -53,7 +53,7 @@ from .schemas import (
     RunnerInvitationCheckOut,
     RunnerInvitationIn,
     RunnerInvitationOut,
-    RunnerInvitationUnitOut,
+    InvitationRunnerOut,
     RunnerPairByRoleIn,
     RunnerPairByRoleOut,
 )
@@ -76,18 +76,18 @@ def approve_url(invitation: RunnerInvitation) -> str:
 
 
 def invitation_out(invitation: RunnerInvitation) -> RunnerInvitationOut:
-    units = unit_pairing.units_of(invitation)
+    runners = machine_pairing.invited_runners(invitation)
     return RunnerInvitationOut(
         id=invitation.pk, name=invitation.name, workspace=invitation.workspace_id,
         role_arn=invitation.role_arn, status=invitation.status, approve_url=approve_url(invitation),
         created_at=invitation.created_at, expires_at=invitation.expires_at,
         created_by_email=invitation.created_by.email or "", approved_at=invitation.approved_at,
-        has_ecdh_key=bool(invitation.ecdh_public_jwk) or any(u.get("ecdh_public_jwk") for u in units),
+        has_ecdh_key=bool(invitation.ecdh_public_jwk) or any(r.get("ecdh_public_jwk") for r in runners),
         runner_id=invitation.runner_id, directed=invitation.directed,
-        units=[RunnerInvitationUnitOut(
-            name=u["name"], workspace=u["workspace"], kind=u.get("kind") or "tree",
-            slug=u.get("slug") or "", has_ecdh_key=bool(u.get("ecdh_public_jwk")),
-            runner_id=u.get("runner_id") or None) for u in units],
+        runners=[InvitationRunnerOut(
+            name=r["name"], workspace=r["workspace"], kind=r.get("kind") or "tree",
+            slug=r.get("slug") or "", has_ecdh_key=bool(r.get("ecdh_public_jwk")),
+            runner_id=r.get("runner_id") or None) for r in runners],
         fleet=fleet_out(invitation.fleet) if invitation.fleet_id else None,
     )
 
@@ -107,34 +107,34 @@ def fleet_out(fleet) -> RunnerFleetOut:
     )
 
 
-def _invited_units(request: HttpRequest, payload: RunnerInvitationIn) -> list[dict]:
+def _invited_runners(request: HttpRequest, payload: RunnerInvitationIn) -> list[dict]:
     """The runners a machine will pair as, each checked as the machine's
     own workspace is: the inviter may run work in its workspace, an agent's runner
     names an agent of that workspace, and no name is used twice. [] for a box that
     pairs as one runner."""
-    if not payload.units:
+    if not payload.runners:
         return []
 
     out: list[dict] = []
     seen: set[str] = set()
-    for unit in payload.units:
-        if unit.name in seen:
-            raise HttpError(422, f"units: '{unit.name}' is named twice")
-        seen.add(unit.name)
-        slug = _may_invite_into(request, unit.workspace)
+    for invited in payload.runners:
+        if invited.name in seen:
+            raise HttpError(422, f"runners: '{invited.name}' is named twice")
+        seen.add(invited.name)
+        slug = _may_invite_into(request, invited.workspace)
         agent = ""
-        if unit.kind == "agent":
-            agent = (unit.slug or "").strip()
+        if invited.kind == "agent":
+            agent = (invited.slug or "").strip()
             if not agent or not Agent.objects.filter(slug=agent, workspace_id=slug).exists():
-                raise HttpError(422, f"units: '{unit.name}' is an agent's runner, and '{agent}' is not an "
+                raise HttpError(422, f"runners: '{invited.name}' is an agent's runner, and '{agent}' is not an "
                                      f"agent of {slug}")
         ecdh: dict = {}
-        if unit.ecdh_public_jwk:
+        if invited.ecdh_public_jwk:
             try:
-                ecdh = device_keys.normalize_public_jwk(unit.ecdh_public_jwk)
+                ecdh = device_keys.normalize_public_jwk(invited.ecdh_public_jwk)
             except device_keys.KeyError_ as exc:
-                raise HttpError(422, f"units: '{unit.name}' ecdh_public_jwk: {exc}") from exc
-        out.append({"name": unit.name, "workspace": slug, "kind": unit.kind, "slug": agent,
+                raise HttpError(422, f"runners: '{invited.name}' ecdh_public_jwk: {exc}") from exc
+        out.append({"name": invited.name, "workspace": slug, "kind": invited.kind, "slug": agent,
                     "ecdh_public_jwk": ecdh, "runner_id": None})
     return out
 
@@ -202,7 +202,7 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
     if fleets.fleet_of_role(role_arn) is not None:
         # A fleet's role is no one box's identity: its instances join the fleet.
         raise HttpError(422, f"role_arn: {role_arn} is a runner fleet's role")
-    units = _invited_units(request, payload)
+    runners = _invited_runners(request, payload)
     try:
         with transaction.atomic():
             live = (RunnerInvitation.objects.select_for_update()
@@ -215,7 +215,7 @@ def create_runner_invitation(request: HttpRequest, payload: RunnerInvitationIn):
             live.delete()
             invitation = RunnerInvitation.objects.create(
                 name=payload.name, workspace_id=slug, created_by=request.user,
-                role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh, units=units,
+                role_arn=role_arn, role_jkt=jkt, ecdh_public_jwk=ecdh, runners=runners,
                 directed=payload.directed,
             )
     except IntegrityError:  # a concurrent create for the same role and name won
@@ -318,9 +318,9 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
 
-    A machine running several runners sends `units` (each runner's name, the public
+    A machine running several runners sends `runners` (each runner's name, the public
     half of its own signing key and its ECDH key) with ONE proof: one runner per entry
-    with an active software device key, `units` mapping each name to its runner id. A
+    with an active software device key, `runners` mapping each name to its runner id. A
     replaced instance (the same role and runner names) re-attaches every runner, its
     new key replacing the old in place, keeping each runner id; that needs no
     invitation. A runner not yet paired needs the approved invitation that lists it."""
@@ -337,28 +337,28 @@ def pair_runner_by_role(request: HttpRequest, payload: RunnerPairByRoleIn):
         # group's, under the fleet a person approved (`fleets.join`).
         # A member is ONE runner: built like a machine of several runners (runner.cfn.yaml's
         # cloud-init), it runs one runner for a workspace tree, which signs in with its own key.
-        unit = None
-        if payload.units:
-            if len(payload.units) != 1:
+        member = None
+        if payload.runners:
+            if len(payload.runners) != 1:
                 raise _refuse_pairing(f"{role_arn} is fleet {fleet.name}'s role; a member is one runner")
-            unit = payload.units[0]
-        joined = fleets.join(fleet=fleet, caller_arn=caller, name=unit.name if unit else payload.name,
-                             host=(unit.host if unit else payload.host) or payload.host,
-                             capabilities=unit.capabilities if unit else payload.capabilities,
-                             ecdh_public_jwk=unit.ecdh_public_jwk if unit else payload.ecdh_public_jwk,
-                             ecdh_store=unit.ecdh_store if unit else payload.ecdh_store,
-                             refuse=_refuse_pairing, unit_jwk=unit.public_jwk if unit else None)
+            member = payload.runners[0]
+        joined = fleets.join(fleet=fleet, caller_arn=caller, name=member.name if member else payload.name,
+                             host=(member.host if member else payload.host) or payload.host,
+                             capabilities=member.capabilities if member else payload.capabilities,
+                             ecdh_public_jwk=member.ecdh_public_jwk if member else payload.ecdh_public_jwk,
+                             ecdh_store=member.ecdh_store if member else payload.ecdh_store,
+                             refuse=_refuse_pairing, runner_jwk=member.public_jwk if member else None)
         if joined.status == "waiting":
             return Status(202, RunnerPairByRoleOut(status="waiting"))
         code, status = (201, "paired") if joined.status == "joined" else (200, "reattached")
-        if unit is not None:
+        if member is not None:
             return Status(code, RunnerPairByRoleOut(
-                status=status, runner_id=joined.runner.pk, units={unit.name: joined.runner.pk},
-                device_keys={unit.name: joined.unit_key.pk}))
+                status=status, runner_id=joined.runner.pk, runners={member.name: joined.runner.pk},
+                device_keys={member.name: joined.runner_key.pk}))
         return Status(code, RunnerPairByRoleOut(status=status, runner_id=joined.runner.pk))
-    if payload.units:
+    if payload.runners:
         # A machine running several runners: every runner, in one call.
-        return unit_pairing.pair_units(request, payload, role_arn, refuse=_refuse_pairing,
+        return machine_pairing.pair_runners(request, payload, role_arn, refuse=_refuse_pairing,
                                        out_cls=RunnerPairByRoleOut, status_cls=Status)
     jkt = aws_iam_proof.role_jkt(role_arn)
 

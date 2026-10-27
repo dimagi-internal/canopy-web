@@ -20,9 +20,9 @@ from apps.harness.routing import (
     cannot_serve,
     default_order_source,
     inherited_orders,
-    prime_machine_units,
+    prime_machine_runners,
     runner_tenant_slugs_of,
-    unit_refusal,
+    serves_refusal,
 )
 from apps.harness.schemas import RoutableSource
 
@@ -121,17 +121,17 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
             "grant you admin (POST /api/harness/runners/{id}/admins)",
         )
     _refuse_runners_that_cannot_hold(agent, [by_id[rid] for rid in added])
-    _refuse_other_units(agent, [by_id[rid] for rid in added])
+    _refuse_runners_serving_others(agent, [by_id[rid] for rid in added])
     return by_id
 
 
-def _refuse_other_units(agent, runners) -> None:
+def _refuse_runners_serving_others(agent, runners) -> None:
     """422 naming every runner kept from this agent by what it serves
-    (`routing.unit_refusal`): an agent's runner runs only its own agent, and an agent
+    (`routing.serves_refusal`): an agent's runner runs only its own agent, and an agent
     with a runner of its own runs on no other runner of that machine. The claim
     refuses them anyway; refusing the write says so while someone is looking."""
 
-    said = sorted({why for why in (unit_refusal(r, agent.slug) for r in runners) if why})
+    said = sorted({why for why in (serves_refusal(r, agent.slug) for r in runners) if why})
     if said:
         raise HttpError(422, f"cannot route {agent.slug} there: {'; '.join(said)}")
 
@@ -221,7 +221,7 @@ def list_agent_pinnable_runners(request: HttpRequest, slug: str) -> list[AgentPi
         mine = harness_runners.administered_runner_ids(who, runners)
         runners = [r for r in runners if r.pk in mine]
     standings = Standings({r.owner for r in runners}, [agent])
-    prime_machine_units(runners)
+    prime_machine_runners(runners)
     offered = set(clis.offered(agent))
     runners = [
         r for r in runners

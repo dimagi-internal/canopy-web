@@ -86,39 +86,53 @@ SHA_PATHS=("runner/ec2/cloud_runner.py" "runner/ec2/bootstrap_agents.sh" "runner
 # NOT busy: it is the case this script exists to rescue, so it must never block.
 BUSY_MAX_AGE=120
 
-# --- several runners on one machine (spec 2026-10-19-runner-isolation-units §1) --
-# A machine of several runners (`cloud_runner.py --setup-units` wrote units.json)
+# --- several runners on one machine (docs/architecture/runners.md) ---------------
+# A machine of several runners (`cloud_runner.py --setup-runners` wrote runners.json)
 # runs one `canopy-runner@<id>` per runner, each its own user. This script then runs
-# as ROOT (canopy-runner-update.service, installed by `cloud_runner.py --install-units`):
+# as ROOT (canopy-runner-update.service, installed by `cloud_runner.py --install-runners`):
 # ONE install for every runner, deferred while ANY runner has a turn in flight, and a
 # restart of every `canopy-runner@*`. The runner bytes in /opt/canopy-runner and
 # the clone in /opt/canopy-web are root's there, so no runner can rewrite the code
 # the others run.
-UNITS_FILE="${UNITS_FILE:-/etc/canopy-runner/units.json}"
-UNITS_MODE=0
-if [ -r "$UNITS_FILE" ]; then
-  UNITS_MODE=1
+# A box not yet moved to the new names (`migrate_old_names`) has units.json beside where
+# runners.json goes, and its canopy-runner-update.service names that as UNITS_FILE.
+# Old name, read until every runner reports the new one: remove in the follow-up.
+if [ -z "${RUNNERS_FILE:-}" ] && [ -n "${UNITS_FILE:-}" ]; then
+  RUNNERS_FILE="$(dirname "$UNITS_FILE")/runners.json"
+fi
+RUNNERS_FILE="${RUNNERS_FILE:-/etc/canopy-runner/runners.json}"
+OLD_RUNNERS_FILE="$(dirname "$RUNNERS_FILE")/units.json"
+if [ ! -r "$RUNNERS_FILE" ] && [ -r "$OLD_RUNNERS_FILE" ]; then
+  RUNNERS_FILE="$OLD_RUNNERS_FILE"  # Old name, read until every runner reports the new one: remove in the follow-up.
+fi
+RUNNERS_MODE=0
+if [ -r "$RUNNERS_FILE" ]; then
+  RUNNERS_MODE=1
   ENV_FILE="${BOX_ENV_FILE:-/etc/canopy-runner/box.env}"
   SERVICE="${SERVICE_UNITS:-canopy-runner@*.service canopy-kms-broker.service}"
   [ -n "$RESTART_GIVEN" ] || RESTART_CMD="systemctl restart"
 fi
-# `unit_rows` -> "<id> <user> <home>" per runner, from units.json.
-unit_rows() {
+SYSTEMCTL="${SYSTEMCTL:-systemctl}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+FETCH_ENV="${FETCH_ENV:-/usr/local/bin/canopy-fetch-env}"
+# `runner_rows` -> "<id> <user> <home>" per runner, from runners.json.
+runner_rows() {
   python3 -c '
 import json, sys
 try:
     doc = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
-for u in doc.get("units") or []:
-    if u.get("id") and u.get("user") and u.get("home"):
-        print(u["id"], u["user"], u["home"])
-' "$UNITS_FILE" 2>/dev/null
+# Old name, read until every runner reports the new one: remove in the follow-up.
+for r in doc.get("runners") or doc.get("units") or []:
+    if r.get("id") and r.get("user") and r.get("home"):
+        print(r["id"], r["user"], r["home"])
+' "$RUNNERS_FILE" 2>/dev/null
 }
-if [ "$UNITS_MODE" = "1" ]; then
+if [ "$RUNNERS_MODE" = "1" ]; then
   # The runner id (any runner's: they share an owner, so the runner list it reads
   # names every runner on the box) and a token to read it with.
-  read -r _FIRST_ID _FIRST_USER FIRST_HOME <<<"$(unit_rows | head -1)"
+  read -r _FIRST_ID _FIRST_USER FIRST_HOME <<<"$(runner_rows | head -1)"
   STATE_FILE="${FIRST_HOME:-/nonexistent}/.canopy-cloud-runner.json"
   RUNNER_TOKEN_FILE="${FIRST_HOME:-/nonexistent}/.canopy-runner/runner-token.json"
 fi
@@ -169,7 +183,7 @@ except Exception:
 PY
 }
 in_flight() {  # echoes a count, or "" when no marker can be trusted
-  if [ "$UNITS_MODE" != "1" ]; then
+  if [ "$RUNNERS_MODE" != "1" ]; then
     in_flight_of "$BUSY"
     return
   fi
@@ -179,7 +193,7 @@ in_flight() {  # echoes a count, or "" when no marker can be trusted
     [ -n "$home" ] || continue
     n="$(in_flight_of "$home/.canopy-runner/in-flight")"
     [ -n "$n" ] && total=$(( ${total:-0} + n ))
-  done <<<"$(unit_rows)"
+  done <<<"$(runner_rows)"
   printf '%s' "$total"
 }
 
@@ -246,7 +260,7 @@ except Exception as exc:
 minted_runner_token() {  # <base> <runner id>
   [ "${CANOPY_DEVICE_KEY:-1}" = "0" ] && return 0
   # A runner's key is in the runner's home, not root's: only its shared token is read.
-  [ "$UNITS_MODE" = "1" ] && return 0
+  [ "$RUNNERS_MODE" = "1" ] && return 0
   [ -n "$1" ] && [ -n "$2" ] && [ -r "$TARGET" ] || return 0
   python3 -c "$MINT_HELPER" "$TARGET" "$1" "$2" 2>/dev/null | tail -1
 }
@@ -361,16 +375,73 @@ PY
   # several runners this runs as root and restarts every runner (and the broker) at once.
   # Such a box re-runs root's setup first (users, env files, the IMDS rule, the
   # egress lock and its sync timer), so what the new code sets up is in place before
-  # its runners start. Its runners Require it, so they restart with it.
-  if [ "$UNITS_MODE" = "1" ]; then
-    systemctl restart canopy-units.service || log "canopy-units did not restart cleanly"
+  # its runners start. Its runners Require it, so they restart with it. A box still
+  # on the names from before the rename moves to the new ones first (`migrate_old_names`).
+  if [ "$RUNNERS_MODE" = "1" ]; then
+    migrate_old_names
+    local setup="canopy-runners.service"
+    if [ ! -f "$SYSTEMD_DIR/$setup" ] && [ -f "$SYSTEMD_DIR/canopy-units.service" ]; then
+      setup="canopy-units.service"  # Old name, read until every runner reports the new one: remove in the follow-up.
+    fi
+    $SYSTEMCTL restart "$setup" || log "$setup did not restart cleanly"
   fi
   # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
   $RESTART_CMD $SERVICE
 }
 
+# --- the names from before the rename ----------------------------------------
+#
+# A box of several runners was set up under the word "unit": /etc/canopy-runner/
+# units.json, `CANOPY_UNIT*` in each runner's env file, `RUNNER_UNITS` in box.env AND in
+# canopy-fetch-env (cloud-init's, which re-writes box.env on every start), and
+# canopy-units.service, whose units call `--setup-units` / `--pair-units` and pass the
+# updater `UNITS_FILE`. They move here, at an install, right before the restart that
+# install does anyway, and only once the INSTALLED runner reads the new names (it
+# reads the old ones too, so nothing breaks either way round). Idempotent: on a box
+# already moved, or one never set up the old way, it changes nothing.
+# Old name, read until every runner reports the new one: remove in the follow-up.
+migrate_old_names() {
+  [ "$RUNNERS_MODE" = "1" ] || return 0
+  grep -qF -- '--setup-runners' "$TARGET" 2>/dev/null || return 0
+  local etc old new f
+  etc="$(dirname "$RUNNERS_FILE")"
+  old="$etc/units.json"
+  new="$etc/runners.json"
+  if [ -f "$old" ]; then
+    if [ -e "$new" ]; then rm -f "$old"; else mv "$old" "$new"; fi
+    log "moved $old to $new"
+  fi
+  [ -r "$new" ] && RUNNERS_FILE="$new"
+  for f in "$etc"/*.env "$FETCH_ENV"; do
+    [ -f "$f" ] || continue
+    grep -qE '^[[:space:]]*(CANOPY_UNIT|CANOPY_UNIT_KIND|CANOPY_UNIT_AGENT|CANOPY_UNIT_ETC|CANOPY_UNIT_HOME_ROOT|RUNNER_UNITS)=' "$f" || continue
+    sed -i.old-names -E \
+      -e 's/^([[:space:]]*)CANOPY_UNIT=/\1CANOPY_RUNNER_INSTANCE=/' \
+      -e 's/^([[:space:]]*)CANOPY_UNIT_KIND=/\1CANOPY_SERVES_KIND=/' \
+      -e 's/^([[:space:]]*)CANOPY_UNIT_AGENT=/\1CANOPY_SERVES_AGENT=/' \
+      -e 's/^([[:space:]]*)CANOPY_UNIT_ETC=/\1CANOPY_RUNNER_ETC=/' \
+      -e 's/^([[:space:]]*)CANOPY_UNIT_HOME_ROOT=/\1CANOPY_RUNNER_HOME_ROOT=/' \
+      -e 's/^([[:space:]]*)RUNNER_UNITS=/\1RUNNERS=/' "$f" \
+      && rm -f "$f.old-names" && log "renamed the old variable names in $f"
+  done
+  [ -f "$SYSTEMD_DIR/canopy-units.service" ] || return 0
+  for f in "$SYSTEMD_DIR"/canopy-*.service; do
+    [ -f "$f" ] || continue
+    sed -i.old-names -E \
+      -e 's/canopy-units\.service/canopy-runners.service/g' \
+      -e 's/--setup-units/--setup-runners/g; s/--pair-units/--pair-runners/g; s/--install-units/--install-runners/g' \
+      -e 's#UNITS_FILE=([^[:space:]]*/)units\.json#RUNNERS_FILE=\1runners.json#' "$f" \
+      && rm -f "$f.old-names"
+  done
+  $SYSTEMCTL disable canopy-units.service >/dev/null 2>&1 || true
+  mv "$SYSTEMD_DIR/canopy-units.service" "$SYSTEMD_DIR/canopy-runners.service"
+  $SYSTEMCTL daemon-reload || log "daemon-reload failed after renaming canopy-units.service"
+  $SYSTEMCTL enable canopy-runners.service >/dev/null 2>&1 || log "could not enable canopy-runners.service"
+  log "canopy-units.service is canopy-runners.service now"
+}
+
 install_broker_from_git() {  # <ref> — the runners' KMS broker, beside the runner it serves
-  [ "$UNITS_MODE" = "1" ] || return 0
+  [ "$RUNNERS_MODE" = "1" ] || return 0
   local tmp="$RUNNER_HOME/kms_broker.py.new"
   if git -C "$REPO_DIR" show "$1:runner/ec2/kms_broker.py" > "$tmp" 2>/dev/null \
      && python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$tmp" 2>/dev/null; then
@@ -461,7 +532,7 @@ PY
 # the turn died with the unit's cgroup. This updater refuses to restart a busy
 # runner; needrestart does not check, so it is told to skip every canopy unit —
 # the runner (`canopy-runner`, `canopy-runner@<id>`) and what a box of several
-# runners runs beside it (`canopy-units`, `canopy-kms-broker`, `canopy-pair`), any of
+# runners runs beside it (`canopy-runners`, `canopy-kms-broker`, `canopy-pair`), any of
 # which takes the turns down with it. A new library is picked up at the next
 # deliberate restart (an install above, or a reboot).
 #
@@ -525,12 +596,12 @@ ensure_tmp_age_rule() {
 LEGACY_USER="${LEGACY_USER:-ubuntu}"
 LEGACY_CACHES=(".claude/plugins/cache" ".cache/uv" ".cache/ms-playwright" ".npm/_cacache")
 retire_legacy_caches() {
-  [ "$UNITS_MODE" = "1" ] || return 0
+  [ "$RUNNERS_MODE" = "1" ] || return 0
   local home="${LEGACY_HOME:-}" rel size
   [ -n "$home" ] || home="$(getent passwd "$LEGACY_USER" 2>/dev/null | cut -d: -f6)"
   [ -n "$home" ] && [ -d "$home" ] || return 0
   # A runner's own user is never legacy.
-  unit_rows | awk '{print $2}' | grep -qxF "$LEGACY_USER" && return 0
+  runner_rows | awk '{print $2}' | grep -qxF "$LEGACY_USER" && return 0
   # Someone (or something) is working as it: leave its caches alone.
   pgrep -u "$LEGACY_USER" >/dev/null 2>&1 && return 0
   for rel in "${LEGACY_CACHES[@]}"; do
@@ -651,11 +722,11 @@ BOOT_DIR="${RUNNER_SRC_DIR:-$RUNNER_HOME/src}"
 # A runner that keeps secrets off disk records its tmpfs root here; `canopy agent
 # prepare --runner` then writes no env files in this pass either (spec §4).
 TURN_ENV_ROOT_MARKER="${TURN_ENV_ROOT_MARKER:-$RUNNER_HOME/turn-env-root}"
-AS_UNIT="${AS_UNIT:-runuser -u}"
+AS_RUNNER="${AS_RUNNER:-runuser -u}"
 # Run AS a runner's user: its own token (shared by its daemon, 0600 in its home) and tmpfs
 # root, read in its own process; then its bootstrap's credentials pass.
 # shellcheck disable=SC2016 # expanded by the runner user's shell, not this one
-UNIT_REFRESH='
+RUNNER_REFRESH='
 t="$(python3 -c "
 import json, sys, time
 try:
@@ -668,7 +739,7 @@ except Exception:
 r="$(tr -d "[:space:]" < "$HOME/.canopy-runner/turn-env-root" 2>/dev/null)"
 [ -n "$r" ] && export CANOPY_TURN_ENV_ROOT="$r"
 exec bash "$0" --credentials-only'
-if [ "$UNITS_MODE" = "1" ]; then
+if [ "$RUNNERS_MODE" = "1" ]; then
   # Each runner refreshes as ITSELF — its user, its env file, its own runner token —
   # from its own runner clone. Root never runs an agent's prepare.
   if [ "$V" = "busy" ]; then
@@ -683,10 +754,10 @@ if [ "$UNITS_MODE" = "1" ]; then
       # a token passed here would sit in /proc/<pid>/cmdline for any local process
       # to read. The env file holds no secret, so its words on the command line are safe.
       # shellcheck disable=SC2046,SC2016 # the runner's env file, one KEY=value per word; $HOME is the runner user's
-      $AS_UNIT "$user" -- env -i $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${UNIT_ETC:-/etc/canopy-runner}/$id.env" 2>/dev/null) \
-        bash -c "$UNIT_REFRESH" "$script" \
+      $AS_RUNNER "$user" -- env -i $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${RUNNER_ETC:-/etc/canopy-runner}/$id.env" 2>/dev/null) \
+        bash -c "$RUNNER_REFRESH" "$script" \
         || log "runner $id: credentials refresh returned non-zero — the runner is otherwise untouched."
-    done <<<"$(unit_rows)"
+    done <<<"$(runner_rows)"
   fi
   exit 0
 fi

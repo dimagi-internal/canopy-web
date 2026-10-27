@@ -103,7 +103,7 @@ at boot:
     and `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` set;
   - no SessionStart auto-update fetch, and no credential probes against the model
     beyond the one key.
-- **Nothing kept on the box.** Each turn in its own isolation unit; after it finishes,
+- **Nothing kept on the box.** Each turn on a runner with its own Unix user; after it finishes,
   its transcript under `~/.claude/projects`, its caller envelope, its profile and its
   per-turn work directory are deleted. Encrypted EBS. (Since
   `2026-10-23-sensitive-conversations-sealed-to-their-people-design.md` §1, a sensitive
@@ -116,8 +116,8 @@ at boot:
 - **Egress locked.** Agent processes reach only an allowlist of hosts: canopy-web,
   `api.anthropic.com` and what the box itself needs. Egress is its own runner setting,
   set in canopy-web (runner page or MCP, an audited setting) and read by root on the box
-  by its instance role, never relayed by a unit. Any box may be locked; sensitive-data mode locks
-  every unit of its box, canopy-web refuses to unlock a sensitive-data box, and adding a host to
+  by its instance role, never relayed by a runner. Any box may be locked; sensitive-data mode locks
+  every runner on its box, canopy-web refuses to unlock a sensitive-data box, and adding a host to
   one is a person behind a passkey.
 - **Posture on every heartbeat.** The box reports `data_mode: "sensitive_data"` and a hash of the
   config that produced it (settings, MCP config, environment allowlist, credential slot
@@ -387,7 +387,7 @@ Each step ships on its own and fails closed until the next lands.
 4. **Stand up the box.** Jonathan obtains the ZDR-org key; a dedicated cloud box in
    sensitive-data mode; Jonathan declares `sensitive_data`. Done: `cloud-zdr-1`, declared and reporting sensitive-data mode.
    The box holds only `data: sensitive` agents (§1, `is_sensitive_data_box`). The egress lock is built
-   (a loopback CONNECT proxy per unit plus root's `CANOPY-EGRESS` chain, set in
+   (a loopback CONNECT proxy per runner plus root's `CANOPY-EGRESS` chain, set in
    canopy-web and applied by root every minute; `runner/ec2/README.md` § Egress lock),
    and sensitive-data mode is not ready without it.
 5. **canopy-web: storage rules** (§4). Done (#1847).

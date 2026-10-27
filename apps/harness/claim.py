@@ -48,7 +48,7 @@ from .routing import (
     kind_allows,
     load_assignment_rows,
     load_workspace_orders,
-    prime_machine_units,
+    prime_machine_runners,
     profile_q,
     project_session_allows,
     project_session_covers,
@@ -60,7 +60,7 @@ from .routing import (
     runner_target_q,
     runner_tenant_slugs,
     runner_tenant_slugs_of,
-    turn_unit_refusal,
+    turn_serves_refusal,
 )
 from .turn_agent_tokens import revoke_stale
 
@@ -157,7 +157,7 @@ def _refined_allows(r: Runner, t: Turn, defaults: dict, priorities: dict,
         return False  # above the pin and the binding, as in claim_next_turn
     if not ignore_hold and not _may_hold(r, t, holds):
         return False  # likewise above the pin and the binding
-    if not ignore_serve and turn_unit_refusal(r, t):
+    if not ignore_serve and turn_serves_refusal(r, t):
         return False  # what the runner serves on its machine: above the pin and the binding too
     if not ignore_cli and clis.choose(t, r, ignore_signed_in=True,
                                       ignore_requirements=ignore_requirements) is None:
@@ -232,7 +232,7 @@ def _coverage(ids, runners, defaults: dict, priorities: dict,
         # Same coarse target predicate the claim path uses (assignments +
         # projects + binding-sticky sessions), plus the pin arm — a turn
         # pinned to an offline standby must read "offline", not "config".
-        q = runner_target_q(r, ignore_unit=ignore_serve) | Q(pinned_runner=r)
+        q = runner_target_q(r, ignore_serves=ignore_serve) | Q(pinned_runner=r)
         covered = set()
         for t in (
             Turn.objects.filter(pk__in=ids).filter(q)
@@ -349,7 +349,7 @@ def turn_reach(turn: Turn) -> Reach:
                       .select_related("owner").prefetch_related("declared_flags", "enrollments").order_by("name"))
     tenants = runner_tenant_slugs_of(candidates)
     runners = [r for r in candidates if ws in tenants[r.pk]]
-    prime_machine_units(runners)
+    prime_machine_runners(runners)
     defaults, priorities = _assignment_rows_for_turns([turn])
     covering = [r for r, pks in _coverage({turn.pk}, runners, defaults, priorities).items() if pks]
     online = [r for r in covering if r.live_status == Runner.ONLINE]
@@ -518,7 +518,7 @@ def unclaimable_queued_turns(user=None, *, ws_slugs=None, turn_q=None) -> list[d
                       .select_related("owner").prefetch_related("declared_flags", "enrollments"))
     tenants = runner_tenant_slugs_of(candidates)
     runners = [r for r in candidates if tenants[r.pk] & ws_slugs]
-    prime_machine_units(runners)
+    prime_machine_runners(runners)
     ids = {t.id for t in queued}
     defaults, priorities = _assignment_rows_for_turns(queued)
 
@@ -645,14 +645,14 @@ def _unclaimable_row(user, t: Turn, target: str, kind: str, reason: str) -> dict
 
 def _unserving_said(t: Turn, by_unserving: dict) -> str:
     """What each runner that would take `t` but for its own report says about it:
-    what it serves on its machine (`turn_unit_refusal`), else `cannot_serve` for the turn's
+    what it serves on its machine (`turn_serves_refusal`), else `cannot_serve` for the turn's
     agent. "" when none would."""
     agent = t.acting_agent
     said = []
     for r, pks in by_unserving.items():
         if t.pk not in pks:
             continue
-        why = turn_unit_refusal(r, t) or (cannot_serve(r, agent.slug) if agent is not None else "")
+        why = turn_serves_refusal(r, t) or (cannot_serve(r, agent.slug) if agent is not None else "")
         if why:
             said.append(why)
     return "; ".join(said)
@@ -871,7 +871,7 @@ def claim_next_turn(runner: Runner, *, lease_seconds: int = DEFAULT_LEASE_SECOND
         # agentless chat's), and an agent with a runner of its own runs on no other
         # runner of the machine — a pinned or bound turn would otherwise hand it the
         # agent's secrets (`device_keys.runner_serves_agent`).
-        if turn_unit_refusal(runner, turn):
+        if turn_serves_refusal(runner, turn):
             continue
         # The agent CLI it runs on (`clis.choose`), above the pin like the hold: a
         # pin cannot put a turn on a CLI the box lacks, or a caller's turn on one

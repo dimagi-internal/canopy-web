@@ -32,10 +32,10 @@
 # credential to answer (a test box with a dead token tests nothing), then prints
 # how to point a chat at the box.
 #
-# --unit <id> wires ONE runner of a machine running several (up.sh --units): it is
+# --instance <id> wires ONE runner of a machine running several (up.sh --runners): it is
 # `<name>-<id>` (the machine's own tree runner is just `--name <box>`), found through the
-# box's one invitation. Each runner is its own isolation boundary, so it gets its own
-# vault and is signed in on its own runner page.
+# box's one invitation. Each runner is kept apart from the others on its machine, so it
+# gets its own vault and is signed in on its own runner page.
 #
 # Pure curl + python3 — no deps, matching up.sh/down.sh/secrets.sh's house style.
 set -euo pipefail
@@ -52,7 +52,7 @@ DRILL=0
 STANDBY=0
 TEST=0
 VAULT_ID=""   # a vault to share (one isolation boundary); default: the box's own (see step 2)
-UNIT=""       # one runner of the machine --name names (up.sh --units)
+INSTANCE=""   # one runner of the machine --name names (up.sh --runners)
 DISCOVER_MINUTES=15   # cloud-init (node, claude, aws, gh, op) takes 4-6 min before the first pair
 BOOTSTRAP_MINUTES=40  # first bootstrap clones + provisions every registered agent
 PROBE_MINUTES=15      # how long to wait for a credential on the box to answer (a person signs it in)
@@ -79,7 +79,7 @@ usage: ./wire.sh [options]
                          at it.
   --drill                wait for the box's first bootstrap, fire a readiness drill, poll to
                          completion, print the grid; exits non-zero unless every drill passes
-  --unit <id>            one runner of the machine --name names (up.sh --units): wires the
+  --instance <id>        one runner of the machine --name names (up.sh --runners): wires the
                          runner <name>-<id>, found through the box's invitation, with its own vault
   --vault <id>           share this vault's Claude credentials instead of giving the box its own
                          (same owner, same workspace tree or agent, same sensitive-data standing; the
@@ -104,7 +104,7 @@ while [[ $# -gt 0 ]]; do
       echo "!! --credential-from is gone: credentials are never copied. A box's live in a vault;" >&2
       echo "!!   share one with --vault <id> (same owner and same tree or agent), or sign the box in." >&2
       exit 2 ;;
-    --unit) UNIT="$2"; shift 2 ;;
+    --instance) INSTANCE="$2"; shift 2 ;;
     --discover-minutes) DISCOVER_MINUTES="$2"; shift 2 ;;
     --probe-minutes) PROBE_MINUTES="$2"; shift 2 ;;
     --agents) AGENTS="$2"; shift 2 ;;
@@ -116,11 +116,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 runner_name_ok "$RUNNER_NAME" || { echo "!! invalid runner name '$RUNNER_NAME'" >&2; exit 1; }
-# The box (its stack and its one invitation) and, with --unit, that runner.
+# The box (its stack and its one invitation) and, with --instance, that runner.
 BOX_NAME="$RUNNER_NAME"
-if [[ -n "$UNIT" ]]; then
-  [[ "$UNIT" =~ ^[a-z0-9][a-z0-9-]{0,27}$ ]] || { echo "!! invalid runner id '$UNIT'" >&2; exit 1; }
-  RUNNER_NAME="${BOX_NAME}-${UNIT}"
+if [[ -n "$INSTANCE" ]]; then
+  [[ "$INSTANCE" =~ ^[a-z0-9][a-z0-9-]{0,27}$ ]] || { echo "!! invalid runner id '$INSTANCE'" >&2; exit 1; }
+  RUNNER_NAME="${BOX_NAME}-${INSTANCE}"
   runner_name_ok "$RUNNER_NAME" || { echo "!! '$RUNNER_NAME' is not a valid runner name" >&2; exit 1; }
 fi
 if [[ "$TEST" == "1" && ( "$STANDBY" == "1" || -n "$AGENTS" || "$DRILL" == "1" ) ]]; then
@@ -276,8 +276,10 @@ if not isinstance(d, dict) or d.get("name") != os.environ["BOX"]:
     print("unknown -")
 else:
     # A machine of several runners: this one, by its name, from the one invitation.
-    units = {u.get("name"): u.get("runner_id") for u in d.get("units") or []}
-    rid = units.get(os.environ["NAME"]) if units else d.get("runner_id")
+    # Old name, read until every runner reports the new one: remove in the follow-up.
+    listed = d.get("runners") or d.get("units") or []
+    runners = {r.get("name"): r.get("runner_id") for r in listed}
+    rid = runners.get(os.environ["NAME"]) if runners else d.get("runner_id")
     print(d.get("status") or "unknown", rid or "-")
 PY
 )

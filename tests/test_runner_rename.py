@@ -12,7 +12,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.events.models import SettingChange
-from apps.harness import unit_pairing
+from apps.harness import machine_pairing
 from apps.harness.models import Runner, RunnerAdmin
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -67,7 +67,7 @@ def test_a_blank_or_overlong_name_is_refused(box, name):
     assert Runner.objects.get(pk=box["runner"].pk).name == "cloud-ec2-2"
 
 
-def test_a_renamed_unit_is_still_found_by_the_name_it_paired_as(box):
+def test_a_renamed_runner_is_still_found_by_the_name_it_paired_as(box):
     _rename(box["jj"], box["runner"], "cloud-ec2-live")
-    found = unit_pairing._machine_runner("arn:aws:iam::1:role/box", "no-such-key", "cloud-ec2-2")
+    found = machine_pairing._machine_runner("arn:aws:iam::1:role/box", "no-such-key", "cloud-ec2-2")
     assert found is not None and found.pk == box["runner"].pk

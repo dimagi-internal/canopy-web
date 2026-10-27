@@ -4,7 +4,7 @@ Listed, the box runs only those agents' turns and chats — no other agent's, no
 repo turn, no agentless chat — however they reach it, a pin included. It never
 adds work: an agent still reaches the box only through its runner list or the
 order it follows. The person-set counterpart of a box declaring it runs one agent
-(`test_runner_units.py`), asked through the same `routing.unit_refusal`, so the
+(`test_runners_on_one_machine.py`), asked through the same `routing.serves_refusal`, so the
 claim, the turn status, the unclaimable report and the vault agree.
 """
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _client(user):
 
 def test_an_undedicated_runner_is_unrestricted(fleet):
     assert routing.dedicated_agent_slugs(fleet["box"]) is None
-    assert routing.unit_refusal(fleet["box"], "ace") == ""
+    assert routing.serves_refusal(fleet["box"], "ace") == ""
 
 
 def test_a_dedicated_runner_claims_only_its_agents(fleet):

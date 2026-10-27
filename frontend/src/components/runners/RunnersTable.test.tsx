@@ -15,7 +15,7 @@ function row(name: string, over: Partial<TopologyRunnerOut> = {}): TopologyRunne
     paused: false, host: name, last_heartbeat_at: null, workspace: 'dimagi', in_tree: true,
     owner_email: null, flags: [], agent_count: 0, code_current: null, problems: [], status_note: '',
     remedy: '', code_sha: '', expected_code_sha: '', agents: [], usage_reported_at: null,
-    can_administer: false, machine: '', unit: '',
+    can_administer: false, machine: '', serves: '',
     ...over,
   } as TopologyRunnerOut
 }
@@ -27,18 +27,18 @@ describe('RunnersTable runners on one machine', () => {
     render(
       <MemoryRouter>
         <RunnersTable workspace="dimagi" runners={[
-          row('cloud-ec2-2-agent-eva', { machine: 'ec2-2-role', unit: 'agent:eva' }),
-          row('cloud-ec2-2-dimagi', { machine: 'ec2-2-role', unit: 'tree:dimagi' }),
-          row('cloud-ec2-9', { machine: 'ec2-9-role', unit: 'tree:dimagi' }),
+          row('cloud-ec2-2-agent-eva', { machine: 'ec2-2-role', serves: 'agent:eva' }),
+          row('cloud-ec2-2-dimagi', { machine: 'ec2-2-role', serves: 'tree:dimagi' }),
+          row('cloud-ec2-9', { machine: 'ec2-9-role', serves: 'tree:dimagi' }),
           row('jj-mbp', { kind: 'emdash' }),
         ]} />
       </MemoryRouter>,
     )
     const cell = (name: string) => within(document.querySelector(`[data-runner="${name}"]`) as HTMLElement)
-    expect(cell('cloud-ec2-2-agent-eva').getByTestId('runner-unit').textContent).toBe('· only agent eva')
+    expect(cell('cloud-ec2-2-agent-eva').getByTestId('runner-serves').textContent).toBe('· only agent eva')
     expect(cell('cloud-ec2-2-dimagi').getByTestId('runner-machine').textContent).toBe('· on ec2-2-role')
     expect(cell('cloud-ec2-9').queryByTestId('runner-machine')).toBeNull()
-    expect(cell('jj-mbp').queryByTestId('runner-unit')).toBeNull()
+    expect(cell('jj-mbp').queryByTestId('runner-serves')).toBeNull()
     expect(screen.getAllByTestId('runner-machine')).toHaveLength(2)
   })
 })

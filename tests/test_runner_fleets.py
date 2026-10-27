@@ -607,32 +607,32 @@ def test_the_fleets_routing_outlives_every_member(world, sts, aws):
 
 # ---- a member built as a machine of several runners --------------------------------------
 
-def _unit_jwk() -> dict:
+def _runner_jwk() -> dict:
     from canopy_sdk.keys import header_jwk
     from cryptography.hazmat.primitives.asymmetric import ec
 
     return device_keys.normalize_public_jwk(header_jwk(ec.generate_private_key(ec.SECP256R1())))
 
 
-def _join_as_unit(sts, instance, jwk, *, units=None):
+def _join_as_member(sts, instance, jwk, *, runners=None):
     sts.arn = assumed(instance)
     name = f"dimagi-{instance.removeprefix('i-')}"
     one = {"name": name, "public_jwk": jwk, "ecdh_public_jwk": ECDH, "ecdh_store": "kms-broker",
            "host": name, "capabilities": {"sessions": True}}
-    body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), "units": units or [one]}
+    body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), "runners": runners or [one]}
     return Client().post(PAIR, data=body, content_type="application/json")
 
 
-def test_a_member_built_as_one_unit_joins_and_signs_in_with_the_units_own_key(org, sts, aws):
+def test_a_member_built_as_one_runner_joins_and_signs_in_with_its_own_key(org, sts, aws):
     fleet = _approved_fleet(org)
     aws.add(I1)
-    jwk = _unit_jwk()
-    res = _join_as_unit(sts, I1, jwk)
+    jwk = _runner_jwk()
+    res = _join_as_member(sts, I1, jwk)
     assert res.status_code == 201, res.content
     body = res.json()
     member = Runner.objects.get(pk=body["runner_id"])
-    assert body["units"] == {member.name: str(member.pk)} and member.fleet == fleet
-    assert member.capabilities["unit"] == {"kind": "tree", "root": "connect"}
+    assert body["runners"] == {member.name: str(member.pk)} and member.fleet == fleet
+    assert member.capabilities["serves"] == {"kind": "tree", "root": "connect"}
     key = RunnerDeviceKey.objects.get(pk=body["device_keys"][member.name])
     assert key.kind == RunnerDeviceKey.SOFTWARE and key.status == RunnerDeviceKey.ACTIVE
     assert key.jkt == device_keys.thumbprint(jwk)
@@ -640,14 +640,14 @@ def test_a_member_built_as_one_unit_joins_and_signs_in_with_the_units_own_key(or
     assert key.ecdh_jkt == device_keys.thumbprint(ECDH) and key.ecdh_approved_at is not None
     # The same instance again re-attaches: one runner, the same runner key.
     cache.clear()
-    again = _join_as_unit(sts, I1, jwk)
+    again = _join_as_member(sts, I1, jwk)
     assert again.status_code == 200 and again.json()["device_keys"] == body["device_keys"]
     assert Runner.objects.filter(fleet=fleet).count() == 1
 
 
-def test_a_member_is_one_unit_never_several(org, sts, aws):
+def test_a_member_is_one_runner_never_several(org, sts, aws):
     _approved_fleet(org)
     aws.add(I1)
-    two = [{"name": f"dimagi-{I1.removeprefix('i-')}", "public_jwk": _unit_jwk()},
-           {"name": "dimagi-other", "public_jwk": _unit_jwk()}]
-    assert _join_as_unit(sts, I1, None, units=two).status_code == 401
+    two = [{"name": f"dimagi-{I1.removeprefix('i-')}", "public_jwk": _runner_jwk()},
+           {"name": "dimagi-other", "public_jwk": _runner_jwk()}]
+    assert _join_as_member(sts, I1, None, runners=two).status_code == 401

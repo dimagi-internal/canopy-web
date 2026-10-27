@@ -106,7 +106,7 @@ def test_a_runner_in_another_tree_gets_that_trees_own_vault(fleet):
     dimagi_vault = _with_token(fleet["runner"])
     cset = _share(fleet, fleet["runner"])
     marsh = _runner(fleet, name="cloud-ec2-2-marsh", ws=_family(fleet),
-                    capabilities={"unit": {"kind": "tree", "root": "marsh"}})
+                    capabilities={"serves": {"kind": "tree", "root": "marsh"}})
 
     res = _choose(fleet, marsh, cset)
     assert res.status_code == 200, res.content
@@ -133,7 +133,7 @@ def test_a_runner_in_another_tree_gets_that_trees_own_vault(fleet):
 
     # A second runner of that tree joins the tree's vault, not a third one.
     marsh2 = _runner(fleet, name="cloud-ec2-3-marsh", ws=marsh.workspace,
-                     capabilities={"unit": {"kind": "tree", "root": "marsh"}})
+                     capabilities={"serves": {"kind": "tree", "root": "marsh"}})
     assert _choose(fleet, marsh2, cset).status_code == 200
     assert workspace_vaults.runner_vaults(marsh2) == [marsh_vault]
     assert cset.vaults.count() == 2
@@ -161,11 +161,11 @@ def test_a_tree_vault_serves_only_one_isolation_boundary(fleet):
     _with_token(fleet["runner"])
     cset = _share(fleet, fleet["runner"])
     # Same tree, but one agent's runner: it may not share the tree's vault.
-    unit = _runner(fleet, name="ec2-box-eva", capabilities={"unit": {"kind": "agent", "slug": "eva"}})
-    res = _choose(fleet, unit, cset)
+    eva_runner = _runner(fleet, name="ec2-box-eva", capabilities={"serves": {"kind": "agent", "slug": "eva"}})
+    res = _choose(fleet, eva_runner, cset)
     assert res.status_code == 422 and res.json()["error"] == "vault_crosses_isolation"
-    unit.refresh_from_db()
-    assert unit.credential_set_id is None and not VaultAttachment.objects.filter(runner=unit).exists()
+    eva_runner.refresh_from_db()
+    assert eva_runner.credential_set_id is None and not VaultAttachment.objects.filter(runner=eva_runner).exists()
 
 
 # ── what a join refuses ───────────────────────────────────────────────────────

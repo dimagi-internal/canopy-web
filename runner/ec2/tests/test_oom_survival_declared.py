@@ -16,13 +16,13 @@ TEMPLATE = pathlib.Path(__file__).resolve().parent.parent / "runner.cfn.yaml"
 
 def _unit() -> str:
     """The runner's systemd unit — one per runner, written by
-    `cloud_runner.py --install-units` (the template's UserData runs it)."""
+    `cloud_runner.py --install-runners` (the template's UserData runs it)."""
     import importlib.util
     import sys
 
-    spec = importlib.util.spec_from_file_location("cloud_runner_units", TEMPLATE.with_name("cloud_runner.py"))
+    spec = importlib.util.spec_from_file_location("cloud_runner_systemd", TEMPLATE.with_name("cloud_runner.py"))
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["cloud_runner_units"] = mod
+    sys.modules["cloud_runner_systemd"] = mod
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     text = mod.SYSTEMD_UNITS["canopy-runner@.service"]
     m = re.search(r"ExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner\.py(.*?)\[Install\]",

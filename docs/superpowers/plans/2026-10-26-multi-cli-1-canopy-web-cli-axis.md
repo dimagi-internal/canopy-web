@@ -95,7 +95,7 @@
 - Consumes: `clis.choose`, `clis.reported`, `clis.confines`.
 - Produces: the early return becomes `if not any(r.signed_in for r in clis.reported(runner).values()): return None`.
 - Produces: `profile_q(runner)` returns `Q()` when any reported CLI `confines`, else `Q(capability="")`.
-- Produces: in the candidate loop, after the unit refusal and before the pin check, `cli = clis.choose(turn, runner, reports=reports)`; `None` → `continue`. The `Turn.objects.filter(...).update(...)` adds `cli=cli`; after it, `Session.objects.filter(pk=turn.chat_session_id, cli="").update(cli=cli)` and the same for `turn.canopy_session_id` when set. The claimed `status` event payload gains `"cli": cli`.
+- Produces: in the candidate loop, after the serves refusal and before the pin check, `cli = clis.choose(turn, runner, reports=reports)`; `None` → `continue`. The `Turn.objects.filter(...).update(...)` adds `cli=cli`; after it, `Session.objects.filter(pk=turn.chat_session_id, cli="").update(cli=cli)` and the same for `turn.canopy_session_id` when set. The claimed `status` event payload gains `"cli": cli`.
 - Produces: `TurnOut.cli: str = ""`; `ClaimedTurnOut.cli_model: str = ""` = `agent.cli_models.get(turn.cli, "")` for an agent turn, else `""`.
 
 - [ ] **Step 1: Write failing tests** — `test_codex_agent_claims_on_codex_box_and_stamps` (turn.cli == "codex", session.cli == "codex", payload `cli`/`cli_model`); `test_codex_agent_waits_on_claude_only_box` (claim returns None); `test_legacy_box_claims_as_before` (no `clis` report, claude agent → claimed, `cli == "claude-code"`); `test_confined_turn_skips_codex_without_profiles` (box reports claude-code unconfining and codex confining with an agent allowing only claude-code → not claimed; with codex allowed → claimed on codex); `test_pin_does_not_bypass_cli` (pinned turn, no allowed CLI signed in → not claimed); `test_box_signed_out_everywhere_claims_nothing`; `test_rider_runs_on_session_cli` (a follow-up to a running codex session is claimed as a rider with `cli == "codex"`).
@@ -112,7 +112,7 @@
 
 **Interfaces:**
 - Consumes: `clis.choose(..., ignore_signed_in=...)`.
-- Produces: `_refined_allows(..., ignore_cli_sign_in: bool = False)` returns False when `clis.choose(t, r, ignore_signed_in=ignore_cli_sign_in)` is None — placed where the claim places it (after the unit refusal, above the pin).
+- Produces: `_refined_allows(..., ignore_cli_sign_in: bool = False)` returns False when `clis.choose(t, r, ignore_signed_in=ignore_cli_sign_in)` is None — placed where the claim places it (after the serves refusal, above the pin).
 - Produces: `turn_reach` builds `covering` with `ignore_cli_sign_in=True`, and `live = [r for r in online if clis.choose(turn, r) is not None]`; online-but-none-chosen is `Reach(SIGNED_OUT, online)`, whose message names the CLI: `Reach.reason = "no runner has <cli> signed in"` (the first CLI `allowed(turn)` names).
 
 - [ ] **Step 1: Write failing tests** — `test_reach_signed_out_codex` (codex session, box online with only claude-code signed in → `SIGNED_OUT`, reason `"no runner has codex signed in"`); `test_unclaimable_report_matches_claim_for_cli` (a codex turn on a claude-only box is listed by `unclaimable_queued_turns`; after the box reports codex signed in it is claimed and no longer listed).

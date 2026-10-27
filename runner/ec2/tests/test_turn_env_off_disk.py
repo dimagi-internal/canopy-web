@@ -1,5 +1,5 @@
 """Secrets off disk: each turn's env on tmpfs, gone when the turn ends (spec
-2026-10-19-runner-isolation-units §4, §5, §6; plan Task 6.3).
+2026-10-19-runner-isolation-runners §4, §5, §6; plan Task 6.3).
 
 * Review Focus 4: the turn's env file is gone after a turn that finished, raised,
   timed out or was stopped — and leftovers are swept at start.
@@ -72,24 +72,24 @@ def test_the_escape_hatch_keeps_files(off_disk, monkeypatch):
     assert mod.secrets_off_disk() is False
 
 
-def test_a_box_without_units_keeps_its_files_unless_it_opts_in(off_disk, monkeypatch, tmp_path):
+def test_a_box_without_runners_keeps_its_files_unless_it_opts_in(off_disk, monkeypatch, tmp_path):
     """Deploy safety: new runner code on the live box (one runner, set up the old way)
     must not move its agents' secrets on its own. Only a runner set up by
-    --install-units is off disk by default."""
+    --install-runners is off disk by default."""
     mod, _ = off_disk
     monkeypatch.delenv("RUNNER_SECRET_FILES", raising=False)
-    monkeypatch.setattr(mod, "UNITS_FILE", tmp_path / "no-units.json")
-    monkeypatch.setattr(mod, "UNIT", "")
+    monkeypatch.setattr(mod, "RUNNERS_FILE", tmp_path / "no-runners.json")
+    monkeypatch.setattr(mod, "RUNNER_INSTANCE", "")
     assert mod.secrets_off_disk() is False
     assert "RUNNER_SECRET_FILES=0" in mod._HEALTH["secrets"]["detail"]
     monkeypatch.setenv("RUNNER_SECRET_FILES", "0")       # the operator's opt-in
     assert mod.secrets_off_disk() is True
     monkeypatch.delenv("RUNNER_SECRET_FILES")
-    monkeypatch.setattr(mod, "UNIT", "dimagi")           # a runner set up by --install-units: on by default
+    monkeypatch.setattr(mod, "RUNNER_INSTANCE", "dimagi")           # a runner set up by --install-runners: on by default
     assert mod.secrets_off_disk() is True
-    monkeypatch.setattr(mod, "UNIT", "")
-    (tmp_path / "units.json").write_text("{}")
-    monkeypatch.setattr(mod, "UNITS_FILE", tmp_path / "units.json")
+    monkeypatch.setattr(mod, "RUNNER_INSTANCE", "")
+    (tmp_path / "runners.json").write_text("{}")
+    monkeypatch.setattr(mod, "RUNNERS_FILE", tmp_path / "runners.json")
     assert mod.secrets_off_disk() is True
 
 
@@ -430,7 +430,7 @@ def test_gog_password_matches_canopys_vectors(cloud_runner):
 
 
 @pytest.fixture
-def unit_secret(cloud_runner, monkeypatch, tmp_path):
+def runner_secret(cloud_runner, monkeypatch, tmp_path):
     secret = tmp_path / "dimagi.gog-secret"
     secret.write_bytes(bytes(range(32)))
     monkeypatch.setenv("CANOPY_GOG_SECRET_FILE", str(secret))
@@ -438,17 +438,17 @@ def unit_secret(cloud_runner, monkeypatch, tmp_path):
     return secret
 
 
-def test_each_agent_gets_its_own_gog_home_and_password(cloud_runner, unit_secret, tmp_path):
+def test_each_agent_gets_its_own_gog_home_and_password(cloud_runner, runner_secret, tmp_path):
     eva, ace = cloud_runner.gog_env("eva"), cloud_runner.gog_env("ace")
     assert eva == {"GOG_HOME": str(tmp_path / "home" / ".gog" / "eva"), "GOG_KEYRING_BACKEND": "file",
                    "GOG_KEYRING_PASSWORD": "ab2166c77a1c7ae28294765e11a5cac5758470a68352a5e872402d33388047fc"}
     assert ace["GOG_KEYRING_PASSWORD"] != eva["GOG_KEYRING_PASSWORD"] and ace["GOG_HOME"].endswith("/ace")
 
 
-def test_a_confined_mail_turn_gets_only_its_agents_three_variables(cloud_runner, unit_secret, monkeypatch):
+def test_a_confined_mail_turn_gets_only_its_agents_three_variables(cloud_runner, runner_secret, monkeypatch):
     monkeypatch.setattr(cloud_runner, "_child_safe_env",
                         lambda: {"PATH": "/bin", "GOG_KEYRING_PASSWORD": "box-wide", "GOG_HOME": "/box",
-                                 "CANOPY_GOG_SECRET_FILE": str(unit_secret)})
+                                 "CANOPY_GOG_SECRET_FILE": str(runner_secret)})
     cap = {"name": "ask", "bash": ["canopy email reply"]}
     env = cloud_runner._confined_env("eva", cap, {})
     assert env["GOG_KEYRING_PASSWORD"] == cloud_runner.gog_env("eva")["GOG_KEYRING_PASSWORD"]
@@ -457,27 +457,27 @@ def test_a_confined_mail_turn_gets_only_its_agents_three_variables(cloud_runner,
     assert cloud_runner.gog_env("ace")["GOG_KEYRING_PASSWORD"] not in env.values()
 
 
-def test_an_unreadable_unit_secret_gives_a_confined_turn_nothing(cloud_runner, unit_secret, monkeypatch):
-    unit_secret.chmod(0o000)
+def test_an_unreadable_runner_secret_gives_a_confined_turn_nothing(cloud_runner, runner_secret, monkeypatch):
+    runner_secret.chmod(0o000)
     monkeypatch.setattr(cloud_runner, "_child_safe_env",
                         lambda: {"PATH": "/bin", "GOG_KEYRING_PASSWORD": "box-wide"})
     try:
-        if os.access(unit_secret, os.R_OK):
+        if os.access(runner_secret, os.R_OK):
             pytest.skip("running as root: the file stays readable")
         env = cloud_runner._confined_env("eva", {"bash": ["canopy email send"]}, {})
         assert not any(k.startswith("GOG_") for k in env)
     finally:
-        unit_secret.chmod(0o400)
+        runner_secret.chmod(0o400)
 
 
-def test_without_a_unit_secret_a_confined_turn_keeps_todays_variables(cloud_runner, monkeypatch):
+def test_without_a_runner_secret_a_confined_turn_keeps_todays_variables(cloud_runner, monkeypatch):
     monkeypatch.setattr(cloud_runner, "_child_safe_env",
                         lambda: {"PATH": "/bin", "GOG_KEYRING_PASSWORD": "box-wide", "GOG_KEYRING_BACKEND": "file"})
     env = cloud_runner._confined_env("eva", {"bash": ["canopy email send"]}, {})
     assert env["GOG_KEYRING_PASSWORD"] == "box-wide"
 
 
-def test_the_inbox_poller_reads_each_mailbox_with_its_agents_password(cloud_runner, unit_secret, monkeypatch):
+def test_the_inbox_poller_reads_each_mailbox_with_its_agents_password(cloud_runner, runner_secret, monkeypatch):
     calls = []
 
     def fake_run(argv, **kw):
@@ -493,7 +493,7 @@ def test_the_inbox_poller_reads_each_mailbox_with_its_agents_password(cloud_runn
     assert eva_env["GOG_HOME"].endswith("/eva") and ace_env["GOG_HOME"].endswith("/ace")
 
 
-def test_drain_inbox_probes_each_mailbox_in_its_agents_gog_home(cloud_runner, unit_secret, monkeypatch):
+def test_drain_inbox_probes_each_mailbox_in_its_agents_gog_home(cloud_runner, runner_secret, monkeypatch):
     probes = []
 
     class _Inbox:

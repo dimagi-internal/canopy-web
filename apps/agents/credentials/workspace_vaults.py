@@ -122,11 +122,11 @@ def isolation_boundary(runner: Runner) -> tuple:
     declared ones), and whether it is a sensitive-data
     box. A box holds every value in every vault it opens, so two boxes share one only
     when either could already have held the other's work."""
-    unit = runner.unit()
-    if unit.get("kind") == "agent":
-        where: tuple = ("agent", str(unit.get("slug") or ""))
-    elif unit.get("kind") == "tree":
-        where = ("tree", str(unit.get("root") or ""))
+    serves = runner.serves()
+    if serves.get("kind") == "agent":
+        where: tuple = ("agent", str(serves.get("slug") or ""))
+    elif serves.get("kind") == "tree":
+        where = ("tree", str(serves.get("root") or ""))
     else:
         where = ("box", tuple(enrolled_roots(runner)))
     return (runner.owner_id, where, runner_requirements.is_sensitive_data_box(runner))

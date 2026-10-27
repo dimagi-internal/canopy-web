@@ -37,10 +37,10 @@ Nothing new is built here that the vault already does. The one extension is that
 Every runner attached to one vault must be in one boundary. `attach` refuses (422 `vault_crosses_isolation`) unless the new runner and every runner already attached share:
 
 - the **same owner**;
-- the **same unit** (`routing.unit_refusal`'s notion): the same workspace tree root for a tree unit, or the same agent for an agent unit;
+- the **same thing served** (`routing.serves_refusal`'s notion): the same workspace tree root for a runner serving a tree, or the same agent for an agent's runner;
 - the **same data mode and flags that change what a box may hold**: a `zdr` box shares only with `zdr` boxes of the same data mode.
 
-So cloud-zdr-1 can never share with cloud-ec2-2, and an agent's own unit only ever shares with that agent's other unit boxes. The check runs on every attach and again on every read (`serving_runners`, measured against the vault's first attached runner): a runner whose boundary changed after it was attached (re-enrolled, flags changed) is handed nothing from the vault until it is detached or put back, and its `claude.vault` check says so.
+So cloud-zdr-1 can never share with cloud-ec2-2, and an agent's own runner only ever shares with that agent's other runners. The check runs on every attach and again on every read (`serving_runners`, measured against the vault's first attached runner): a runner whose boundary changed after it was attached (re-enrolled, flags changed) is handed nothing from the vault until it is detached or put back, and its `claude.vault` check says so.
 
 ### What `RunnerLogin` keeps
 
@@ -52,7 +52,7 @@ A list row that names a secret in a vault the runner is not attached to is refus
 
 A new route `GET /api/harness/runners/{id}/credential/resolve`, modelled on `/agents/{slug}/credentials/resolve` and sharing its machinery (`credential_resolve`): **runner token only** (`runner_auth`, the box's own `RunnerAccessToken`; a person's PAT or session gets 403 `runner_only`), **with a device proof** of an active key on that runner, returning each attached vault's ciphertext values for the names on the list, plus this device's wrap of each vault key (`wrap: null` when it may not hold one). Every read writes the read log (a runner-scoped sibling of `AgentCredentialRead`) and the fleet event.
 
-The box decrypts with the `canopy` CLI it already uses for vault work (`canopy vault …`, with the box's device key, an isolation unit's own software key), never in `cloud_runner.py`, which stays stdlib-only. The cascade and probes are unchanged; only where the values come from changes.
+The box decrypts with the `canopy` CLI it already uses for vault work (`canopy vault …`, with the box's device key, or the runner's own software key on a machine running several runners), never in `cloud_runner.py`, which stays stdlib-only. The cascade and probes are unchanged; only where the values come from changes.
 
 The plaintext `GET /runners/{id}/credential` keeps serving the non-secret parts (the list, `logins`, `updated_at`) and stops returning any value once every row has moved (below).
 
@@ -77,12 +77,12 @@ The plaintext `GET /runners/{id}/credential` keeps serving the non-secret parts 
 
 - Full logins (they stay on the box).
 - Laptops: an `emdash` runner uses its person's own ambient Claude login and holds no stored credential.
-- Agent turns on the box can still see the token in their environment: `claude` needs it, and commands an agent runs inherit it. Isolation units and confined turns are the protection there, and this design does not change it.
+- Agent turns on the box can still see the token in their environment: `claude` needs it, and commands an agent runs inherit it. Separate runners (each its own Unix user) and confined turns are the protection there, and this design does not change it.
 
 ## Tests
 
 - Eligibility: a runner attachment makes the runner's active, ECDH-approved key eligible only while its owner is a member; once the owner leaves, the copy it still holds is handed out to nobody.
-- `attach` refuses across owners, across tree roots, across agent units, and between a sensitive-data box and another; a box whose boundary changes after attaching is no longer served.
+- `attach` refuses across owners, across tree roots, across agents' runners, and between a sensitive-data box and another; a box whose boundary changes after attaching is no longer served.
 - `…/credential/resolve`: refuses a PAT, a browser session and a missing or foreign device proof; logs every read; returns `wrap: null` to a key that may not hold one.
 - Mint: the box seals and canopy-web stores only ciphertext; a box without a key copy falls back to `zks1`.
 - Migration: dry run changes nothing; apply leaves no `value_enc` and every value readable by the box.

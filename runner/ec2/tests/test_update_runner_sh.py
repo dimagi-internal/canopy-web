@@ -545,21 +545,24 @@ def test_the_credentials_refresh_mints_a_token_when_the_daemon_shared_none(box):
     assert "CANOPY_TOKEN=crt_box" in seen.read_text().splitlines()
 
 
-# --- a machine of several runners (spec 2026-10-19-runner-isolation-units §1) --
+# --- a machine of several runners --------------------------------------------
 #
 # One install for every runner, deferred while ANY runner has a turn in flight, every
 # `canopy-runner@*` restarted (and the KMS broker), and each runner's credentials
 # refreshed AS that runner.
 
-class UnitsBox(Box):
-    UNITS = ("dimagi", "agent-eva")
+class RunnersBox(Box):
+    RUNNERS = ("dimagi", "agent-eva")
 
-    def __init__(self, tmp_path: pathlib.Path):
+    def __init__(self, tmp_path: pathlib.Path, *, old_layout: bool = False):
+        """`old_layout`: a box set up before the rename — units.json, `CANOPY_UNIT*`,
+        `RUNNER_UNITS` and canopy-units.service (`migrate_old_names` moves them)."""
         super().__init__(tmp_path)
+        self.old_layout = old_layout
         self.etc = tmp_path / "etc"
         self.etc.mkdir()
-        units = []
-        for i, uid in enumerate(self.UNITS):
+        runners = []
+        for i, uid in enumerate(self.RUNNERS):
             home = tmp_path / "home" / f"cu-{uid}"
             (home / ".canopy-runner").mkdir(parents=True)
             (home / ".canopy-cloud-runner.json").write_text(json.dumps({"runner_id": RUNNER_ID}))
@@ -570,77 +573,208 @@ class UnitsBox(Box):
             (src / "bootstrap_agents.sh").write_text(
                 f'#!/bin/bash\necho "$CANOPY_TOKEN $1" > "{home}/refreshed-with"\n')
             (src / "bootstrap_agents.sh").chmod(0o755)
-            (self.etc / f"{uid}.env").write_text(f"CANOPY_UNIT={uid}\nHOME={home}\n")
-            units.append({"id": uid, "user": f"cu-{uid}", "home": str(home), "uid": 2001 + i})
-        (self.etc / "units.json").write_text(json.dumps({"box": "cloud-ec2-9", "units": units}))
-        (self.etc / "box.env").write_text("CANOPY_BASE_URL=https://labs.example/canopy\n")
-        self.as_unit_log = tmp_path / "as-unit.log"
+            kind, agent = ("agent", "eva") if uid.startswith("agent-") else ("tree", "")
+            names = (("CANOPY_UNIT", "CANOPY_UNIT_KIND", "CANOPY_UNIT_AGENT") if old_layout else
+                     ("CANOPY_RUNNER_INSTANCE", "CANOPY_SERVES_KIND", "CANOPY_SERVES_AGENT"))
+            (self.etc / f"{uid}.env").write_text(
+                f"{names[0]}={uid}\n{names[1]}={kind}\n{names[2]}={agent}\nHOME={home}\n")
+            runners.append({"id": uid, "user": f"cu-{uid}", "home": str(home), "uid": 2001 + i})
+        key, spec = ("units", "RUNNER_UNITS") if old_layout else ("runners", "RUNNERS")
+        self.runners_file = self.etc / ("units.json" if old_layout else "runners.json")
+        self.runners_file.write_text(json.dumps({"box": "cloud-ec2-9", key: runners}))
+        (self.etc / "box.env").write_text(
+            f"CANOPY_BASE_URL=https://labs.example/canopy\n{spec}=tree:dimagi,agent:eva\n")
+        # cloud-init's canopy-fetch-env, which re-writes box.env on every start.
+        self.fetch_env = tmp_path / "canopy-fetch-env"
+        self.fetch_env.write_text(f"#!/usr/bin/env bash\ncat > /etc/canopy-runner/box.env <<ENV\n"
+                                  f"{spec}=tree:dimagi,agent:eva\nRUNNER_NAME=cloud-ec2-9\nENV\n")
+        # The systemd units `cloud_runner.py --install-runners` wrote, as they were then.
+        self.systemd = tmp_path / "systemd"
+        self.systemd.mkdir()
+        setup, flag = ("canopy-units", "units") if old_layout else ("canopy-runners", "runners")
+        (self.systemd / f"{setup}.service").write_text(
+            f"[Service]\nExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner.py --setup-{flag}\n")
+        (self.systemd / "canopy-pair.service").write_text(
+            f"[Unit]\nRequires={setup}.service\n[Service]\n"
+            f"ExecStart=/usr/bin/python3 /opt/canopy-runner/cloud_runner.py --pair-{flag}\n")
+        (self.systemd / "canopy-runner@.service").write_text(
+            f"[Unit]\nAfter={setup}.service canopy-kms-broker.service\nRequires={setup}.service\n")
+        (self.systemd / "canopy-runner-update.service").write_text(
+            f"[Service]\nEnvironment={'UNITS_FILE' if old_layout else 'RUNNERS_FILE'}"
+            f"=/etc/canopy-runner/{self.runners_file.name}\nExecStart=/usr/local/bin/canopy-runner-update\n")
+        self.systemctl_log = tmp_path / "systemctl.log"
+        self._write_stub("fake-systemctl", f'echo "$*" >> "{self.systemctl_log}"\n')
+        self.as_runner_log = tmp_path / "as-runner.log"
         # Records its argv, then runs the command as runuser would (minus the user).
-        self._write_stub("fake-as-unit", f'echo "$*" | tr "\\n" " " >> "{self.as_unit_log}"; echo >> "{self.as_unit_log}"\nshift 2\nexec "$@"\n')
+        self._write_stub("fake-as-runner", f'echo "$*" | tr "\\n" " " >> "{self.as_runner_log}"; echo >> "{self.as_runner_log}"\nshift 2\nexec "$@"\n')
 
     def home_of(self, uid: str) -> pathlib.Path:
         return self.root / "home" / f"cu-{uid}"
 
-    def busy_unit(self, uid: str, count: int, age_seconds: float = 0.0) -> None:
+    def busy_runner(self, uid: str, count: int, age_seconds: float = 0.0) -> None:
         (self.home_of(uid) / ".canopy-runner" / "in-flight").write_text(
             json.dumps({"count": count, "at": time.time() - age_seconds}))
 
     def run(self, *args: str) -> subprocess.CompletedProcess:
+        # A box set up before the rename runs this under the canopy-runner-update.service
+        # it was given then, which names its runner list as UNITS_FILE.
+        listed = {"UNITS_FILE" if self.old_layout else "RUNNERS_FILE": str(self.runners_file)}
         return subprocess.run(
             ["bash", str(SCRIPT), *args], capture_output=True, text=True,
             env={"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.root),
                  "RUNNER_HOME": str(self.home), "CANOPY_WEB_REPO_DIR": str(self.repo),
-                 "RESTART_CMD": str(self.bin / "fake-restart"), "UNITS_FILE": str(self.etc / "units.json"),
-                 "BOX_ENV_FILE": str(self.etc / "box.env"), "UNIT_ETC": str(self.etc),
-                 "AS_UNIT": str(self.bin / "fake-as-unit"),
+                 "RESTART_CMD": str(self.bin / "fake-restart"), **listed,
+                 "BOX_ENV_FILE": str(self.etc / "box.env"), "RUNNER_ETC": str(self.etc),
+                 "AS_RUNNER": str(self.bin / "fake-as-runner"),
+                 "SYSTEMCTL": str(self.bin / "fake-systemctl"), "SYSTEMD_DIR": str(self.systemd),
+                 "FETCH_ENV": str(self.fetch_env),
                  **self.env()})
 
 
 @pytest.fixture
-def units_box(tmp_path):
-    return UnitsBox(tmp_path)
+def runners_box(tmp_path):
+    return RunnersBox(tmp_path)
 
 
-def test_units_one_install_restarts_every_unit_and_the_broker(units_box):
-    units_box.stamp("0" * 40)
-    sha = units_box.seed_repo("#!/usr/bin/env python3\nprint('shipped to every runner')\n")
-    units_box.expect(sha)
-    out = units_box.run()
+@pytest.fixture
+def old_box(tmp_path):
+    return RunnersBox(tmp_path, old_layout=True)
+
+
+def test_runners_one_install_restarts_every_runner_and_the_broker(runners_box):
+    runners_box.stamp("0" * 40)
+    sha = runners_box.seed_repo("#!/usr/bin/env python3\nprint('shipped to every runner')\n")
+    runners_box.expect(sha)
+    out = runners_box.run()
     assert out.returncode == 0, out.stderr
-    assert "shipped to every runner" in units_box.installed
-    restarted = units_box.restart_log.read_text()
+    assert "shipped to every runner" in runners_box.installed
+    restarted = runners_box.restart_log.read_text()
     assert "canopy-runner@*.service" in restarted and "canopy-kms-broker.service" in restarted
     # It read the fleet list with a RUNNER's own token, never a PAT.
-    assert "Bearer crt_dimagi" in units_box.curl_log.read_text()
+    assert "Bearer crt_dimagi" in runners_box.curl_log.read_text()
 
 
-def test_units_any_unit_in_flight_defers_the_install(units_box):
-    units_box.stamp("0" * 40)
-    units_box.expect(units_box.seed_repo(GOOD_RUNNER))
-    units_box.busy_unit("dimagi", 0)
-    units_box.busy_unit("agent-eva", 1)
-    assert units_box.run("--check").stdout.startswith("busy")
-    assert units_box.run().returncode == 0
-    assert not units_box.restarted
+def test_runners_any_runner_in_flight_defers_the_install(runners_box):
+    runners_box.stamp("0" * 40)
+    runners_box.expect(runners_box.seed_repo(GOOD_RUNNER))
+    runners_box.busy_runner("dimagi", 0)
+    runners_box.busy_runner("agent-eva", 1)
+    assert runners_box.run("--check").stdout.startswith("busy")
+    assert runners_box.run().returncode == 0
+    assert not runners_box.restarted
     # A runner whose marker went stale is not busy (it is the one to rescue).
-    units_box.busy_unit("agent-eva", 3, age_seconds=600)
-    assert units_box.run("--check").stdout.startswith("stale")
+    runners_box.busy_runner("agent-eva", 3, age_seconds=600)
+    assert runners_box.run("--check").stdout.startswith("stale")
 
 
-def test_units_each_refreshes_its_credentials_as_itself(units_box):
-    sha = units_box.seed_repo(GOOD_RUNNER)
-    units_box.stamp(sha)
-    units_box.expect(sha)
-    assert units_box.run().returncode == 0
-    lines = units_box.as_unit_log.read_text().splitlines()
+def test_runners_each_refreshes_its_credentials_as_itself(runners_box):
+    sha = runners_box.seed_repo(GOOD_RUNNER)
+    runners_box.stamp(sha)
+    runners_box.expect(sha)
+    assert runners_box.run().returncode == 0
+    lines = runners_box.as_runner_log.read_text().splitlines()
     assert len(lines) == 2
-    for uid, line in zip(units_box.UNITS, lines):
-        assert line.startswith(f"cu-{uid} -- env -i CANOPY_UNIT={uid}")
+    for uid, line in zip(runners_box.RUNNERS, lines):
+        assert line.startswith(f"cu-{uid} -- env -i CANOPY_RUNNER_INSTANCE={uid}")
         # The token never rides the command line (visible in /proc/<pid>/cmdline)…
         assert "crt_" not in line
         # …the runner's own process read it from its own file.
-        assert (units_box.home_of(uid) / "refreshed-with").read_text().strip() == \
+        assert (runners_box.home_of(uid) / "refreshed-with").read_text().strip() == \
             f"crt_{uid} --credentials-only"
+
+
+# --- a box set up before the rename (remove in the follow-up) -----------------
+#
+# The live machine was set up under "unit" names. Until it installs runner code that
+# reads the new ones it keeps working on the old ones; the install that brings that
+# code moves every old name, right before the restart it does anyway.
+
+#: Runner bytes that read the new names (`migrate_old_names` checks for this flag).
+NEW_NAMES_RUNNER = "#!/usr/bin/env python3\n# --setup-runners\nprint('new names')\n"
+
+
+def _old_names_left(box: RunnersBox) -> list[str]:
+    left = []
+    for f in [*box.etc.glob("*.env"), box.fetch_env, *box.systemd.iterdir()]:
+        if re.search(r"CANOPY_UNIT|RUNNER_UNITS|canopy-units|-units\b|UNITS_FILE|units\.json", f.read_text()):
+            left.append(f.name)
+    return left + [p.name for p in (box.etc / "units.json", box.systemd / "canopy-units.service") if p.exists()]
+
+
+def test_an_old_box_on_old_code_keeps_working_and_is_not_moved(old_box):
+    sha = old_box.seed_repo(GOOD_RUNNER)
+    old_box.stamp(sha)
+    old_box.expect(sha)
+    out = old_box.run()
+    assert out.returncode == 0, out.stderr
+    # It found its runners in units.json, under the old key, and refreshed each as itself.
+    assert "Bearer crt_dimagi" in old_box.curl_log.read_text()
+    assert len(old_box.as_runner_log.read_text().splitlines()) == 2
+    assert (old_box.etc / "units.json").exists() and not (old_box.etc / "runners.json").exists()
+    assert not old_box.systemctl_log.exists()
+
+
+def test_an_install_of_old_code_moves_nothing_and_restarts_canopy_units(old_box):
+    old_box.stamp("0" * 40)
+    old_box.expect(old_box.seed_repo(GOOD_RUNNER))
+    out = old_box.run()
+    assert out.returncode == 0, out.stderr
+    assert sorted(_old_names_left(old_box)) == sorted(
+        ["dimagi.env", "agent-eva.env", "box.env", "canopy-fetch-env", "canopy-units.service",
+         "canopy-pair.service", "canopy-runner@.service", "canopy-runner-update.service", "units.json",
+         "canopy-units.service"])
+    assert old_box.systemctl_log.read_text().splitlines() == ["restart canopy-units.service"]
+
+
+def test_the_install_that_brings_the_new_names_moves_every_old_one(old_box):
+    old_box.stamp("0" * 40)
+    old_box.expect(old_box.seed_repo(NEW_NAMES_RUNNER))
+    out = old_box.run()
+    assert out.returncode == 0, out.stderr
+    assert "new names" in old_box.installed
+    assert _old_names_left(old_box) == []
+    doc = json.loads((old_box.etc / "runners.json").read_text())
+    assert [r["id"] for r in doc["units"]] == list(old_box.RUNNERS)   # content kept as it was
+    assert (old_box.etc / "agent-eva.env").read_text().startswith(
+        "CANOPY_RUNNER_INSTANCE=agent-eva\nCANOPY_SERVES_KIND=agent\nCANOPY_SERVES_AGENT=eva\n")
+    assert "RUNNERS=tree:dimagi,agent:eva" in (old_box.etc / "box.env").read_text()
+    assert "RUNNERS=tree:dimagi,agent:eva" in old_box.fetch_env.read_text()
+    assert "--setup-runners" in (old_box.systemd / "canopy-runners.service").read_text()
+    assert "Requires=canopy-runners.service" in (old_box.systemd / "canopy-runner@.service").read_text()
+    assert "--pair-runners" in (old_box.systemd / "canopy-pair.service").read_text()
+    assert "Environment=RUNNERS_FILE=/etc/canopy-runner/runners.json" in \
+        (old_box.systemd / "canopy-runner-update.service").read_text()
+    # The service swap, then the restarts the install does anyway — nothing more.
+    assert old_box.systemctl_log.read_text().splitlines() == [
+        "disable canopy-units.service", "daemon-reload", "enable canopy-runners.service",
+        "restart canopy-runners.service"]
+    restarted = old_box.restart_log.read_text()
+    assert "canopy-runner@*.service" in restarted and "canopy-kms-broker.service" in restarted
+    assert not list(old_box.etc.glob("*.old-names")) and not list(old_box.systemd.glob("*.old-names"))
+
+
+def test_moving_the_names_twice_changes_nothing_the_second_time(old_box):
+    old_box.stamp("0" * 40)
+    old_box.expect(old_box.seed_repo(NEW_NAMES_RUNNER))
+    assert old_box.run().returncode == 0
+    before = {f: f.read_text() for f in [*old_box.etc.iterdir(), old_box.fetch_env, *old_box.systemd.iterdir()]}
+    old_box.systemctl_log.unlink()
+    old_box.stamp("0" * 40)
+    old_box.expect(old_box.seed_repo(NEW_NAMES_RUNNER + "# again\n"))
+    out = old_box.run()   # it still runs as the old update service, naming UNITS_FILE
+    assert out.returncode == 0, out.stderr
+    after = {f: f.read_text() for f in [*old_box.etc.iterdir(), old_box.fetch_env, *old_box.systemd.iterdir()]}
+    assert after == before
+    assert old_box.systemctl_log.read_text().splitlines() == ["restart canopy-runners.service"]
+
+
+def test_a_box_set_up_with_the_new_names_has_nothing_to_move(runners_box):
+    runners_box.stamp("0" * 40)
+    runners_box.expect(runners_box.seed_repo(NEW_NAMES_RUNNER))
+    before = {f: f.read_text() for f in [*runners_box.etc.iterdir(), *runners_box.systemd.iterdir()]}
+    assert runners_box.run().returncode == 0
+    assert {f: f.read_text() for f in [*runners_box.etc.iterdir(), *runners_box.systemd.iterdir()]} == before
+    assert runners_box.systemctl_log.read_text().splitlines() == ["restart canopy-runners.service"]
 
 
 # --- needrestart ------------------------------------------------------------
@@ -662,15 +796,15 @@ def test_every_tick_tells_needrestart_to_skip_every_canopy_unit(box):
     assert NEEDRESTART_RULE in box.needrestart_conf.read_text()
 
 
-def test_a_box_of_units_gets_the_same_rule(units_box):
-    assert units_box.run().returncode == 0
-    assert NEEDRESTART_RULE in units_box.needrestart_conf.read_text()
+def test_a_box_of_runners_gets_the_same_rule(runners_box):
+    assert runners_box.run().returncode == 0
+    assert NEEDRESTART_RULE in runners_box.needrestart_conf.read_text()
 
 
-def test_the_rule_matches_the_runner_the_units_and_the_broker():
+def test_the_rule_matches_the_runner_the_runners_and_the_broker():
     pattern = re.search(r"qr\((.*?)\)", NEEDRESTART_RULE).group(1)
     for unit in ("canopy-runner.service", "canopy-runner@dimagi.service",
-                 "canopy-units.service", "canopy-kms-broker.service", "canopy-pair.service"):
+                 "canopy-runners.service", "canopy-kms-broker.service", "canopy-pair.service"):
         assert re.search(pattern, unit), unit
     assert not re.search(pattern, "irqbalance.service")
 
@@ -758,9 +892,9 @@ def _legacy_work(home: pathlib.Path) -> list[pathlib.Path]:
     return keep
 
 
-def test_a_box_of_units_drops_the_pre_units_users_caches_and_keeps_its_work(units_box):
-    caches, work = _legacy_caches(units_box.legacy_home), _legacy_work(units_box.legacy_home)
-    out = units_box.run()
+def test_a_box_of_runners_drops_the_pre_runners_users_caches_and_keeps_its_work(runners_box):
+    caches, work = _legacy_caches(runners_box.legacy_home), _legacy_work(runners_box.legacy_home)
+    out = runners_box.run()
     assert out.returncode == 0, out.stderr
     for c in caches:
         assert not c.exists(), c
@@ -769,33 +903,33 @@ def test_a_box_of_units_drops_the_pre_units_users_caches_and_keeps_its_work(unit
     assert "removed" in out.stdout + out.stderr
 
 
-def test_the_caches_stay_while_that_user_runs_something(units_box):
-    caches = _legacy_caches(units_box.legacy_home)
-    units_box.legacy_busy.write_text("")
-    assert units_box.run().returncode == 0
+def test_the_caches_stay_while_that_user_runs_something(runners_box):
+    caches = _legacy_caches(runners_box.legacy_home)
+    runners_box.legacy_busy.write_text("")
+    assert runners_box.run().returncode == 0
     assert all(c.exists() for c in caches)
 
 
-def test_a_box_without_units_keeps_its_own_users_caches(box):
+def test_a_box_without_runners_keeps_its_own_users_caches(box):
     # There the "legacy" user IS the runner.
     caches = _legacy_caches(box.legacy_home)
     assert box.run().returncode == 0
     assert all(c.exists() for c in caches)
 
 
-def test_at_warn_root_records_where_the_space_is_for_the_runners(units_box):
-    units_box.disk_pct.write_text("89")
-    (units_box.root / "home" / "ubuntu").mkdir(parents=True, exist_ok=True)
-    (units_box.root / "tmp").mkdir(exist_ok=True)
-    units_box._write_stub("du", 'for p in "$@"; do case "$p" in -*) ;; '
+def test_at_warn_root_records_where_the_space_is_for_the_runners(runners_box):
+    runners_box.disk_pct.write_text("89")
+    (runners_box.root / "home" / "ubuntu").mkdir(parents=True, exist_ok=True)
+    (runners_box.root / "tmp").mkdir(exist_ok=True)
+    runners_box._write_stub("du", 'for p in "$@"; do case "$p" in -*) ;; '
                                 '*ubuntu) printf "37580963840\\t%s\\n" "$p";; '
                                 '*) printf "1024\\t%s\\n" "$p";; esac; done\n')
-    assert units_box.run().returncode == 0
-    doc = json.loads((units_box.home / "disk-usage.json").read_text())
+    assert runners_box.run().returncode == 0
+    doc = json.loads((runners_box.home / "disk-usage.json").read_text())
     assert doc["pct"] == 89
-    assert doc["largest"][0] == [str(units_box.root / "home" / "ubuntu"), 37580963840]
-    assert str(units_box.root / "tmp") in [p for p, _ in doc["largest"]]
+    assert doc["largest"][0] == [str(runners_box.root / "home" / "ubuntu"), 37580963840]
+    assert str(runners_box.root / "tmp") in [p for p, _ in doc["largest"]]
     # Below warn the record goes away, so a runner never quotes a stale one.
-    units_box.disk_pct.write_text("40")
-    assert units_box.run().returncode == 0
-    assert not (units_box.home / "disk-usage.json").exists()
+    runners_box.disk_pct.write_text("40")
+    assert runners_box.run().returncode == 0
+    assert not (runners_box.home / "disk-usage.json").exists()

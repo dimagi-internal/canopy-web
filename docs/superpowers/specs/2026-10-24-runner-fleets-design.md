@@ -77,7 +77,7 @@ One stack per fleet holds:
 ## Out of scope
 
 - Sensitive-data boxes: a sealed conversation's key is wrapped to people, not boxes.
-- Boxes of isolation units.
+- Machines running several runners.
 - Laptops.
 
-A fleet is one workspace-tree unit, and its members are refused sensitive-data mode.
+A fleet serves one workspace tree, and its members are refused sensitive-data mode.

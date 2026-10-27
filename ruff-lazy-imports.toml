@@ -178,7 +178,7 @@
 "apps/harness/turn_gates.py" = ["PLC0415"]  # 1
 "apps/harness/turn_mode.py" = ["PLC0415"]  # 8
 "apps/harness/turn_status.py" = ["PLC0415"]  # 8
-"apps/harness/unit_pairing.py" = ["PLC0415"]  # 4
+"apps/harness/machine_pairing.py" = ["PLC0415"]  # 4
 "apps/harness/views.py" = ["PLC0415"]  # 6
 "apps/host_grants/client_identity.py" = ["PLC0415"]  # 3
 "apps/host_grants/host_gateway.py" = ["PLC0415"]  # 23

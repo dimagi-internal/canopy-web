@@ -139,7 +139,7 @@ Docs:
 **Benefit.** The confinement layer stops depending on files the confined agent can write.
 
 **Risk/cost.** Medium.
-- Managed settings apply to every Claude process on the box, including credential probes and setup-token mints. Test the per-unit (`UNIT`) layout.
+- Managed settings apply to every Claude process on the box, including credential probes and setup-token mints. Test the layout with several runners on one machine, each its own Unix user (`CANOPY_RUNNER_INSTANCE`).
 - Do not lock agent plugins there (it conflicts with finding 4).
 
 **Confidence.** Medium-high. The precedence is documented; the exact interaction with a project-level `disableAllHooks` on plugin hooks was read in the docs, not measured.

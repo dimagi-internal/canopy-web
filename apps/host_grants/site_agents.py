@@ -45,7 +45,7 @@ from apps.agents.setup import runner_takers
 from apps.embedding import assertions
 from apps.embedding.embed_apps import AmbiguousSite, SiteTenantMismatch, resolve_site
 from apps.harness.models import Runner
-from apps.harness.routing import unit_refusal
+from apps.harness.routing import serves_refusal
 from apps.harness.runner_requirements import MEANINGS, SENSITIVE_DATA, in_force
 from apps.workspaces.links import scoped_url
 
@@ -164,7 +164,7 @@ def _runners(agent: Agent) -> tuple[list[Runner], list[Runner]]:
     """`(takers, ready)`: the boxes that would take its turns, and those of them
     that could take one now. A cloud box serves an agent only once its bootstrap
     has reported for it (the setup checklist's rule)."""
-    takers = [r for r in runner_takers(agent)[0] if not unit_refusal(r, agent.slug)]
+    takers = [r for r in runner_takers(agent)[0] if not serves_refusal(r, agent.slug)]
     reported = set(AgentBootstrapReport.objects.filter(agent=agent)
                    .values_list("runner_name", flat=True))
     ready = [r for r in takers if r.is_available

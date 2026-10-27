@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """canopy-kms-broker: each runner's zero-knowledge ECDH key, for that runner only.
 
-Spec docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md §2. A machine
+docs/architecture/runners.md § Several runners on one machine. A machine
 runs several runners, each its own Unix user. A runner's ECDH key (the key an agent's
 vault key is wrapped to) lives in AWS KMS, one key per runner in the `<stack>-ecdh`
 stack, so wraps survive an instance replacement. But a runner cannot call KMS: IMDS is
@@ -11,8 +11,8 @@ This root-owned daemon does the derivation for a runner, and only with THAT runn
 
 * a Unix socket at `/run/canopy-kms/sock`;
 * the caller's uid from the kernel (`SO_PEERCRED`), never from the request, mapped to
-  one KMS key by `/etc/canopy-runner/units.json` (written by `cloud_runner.py
-  --setup-units`) — an unknown uid gets an error and no KMS call;
+  one KMS key by `/etc/canopy-runner/runners.json` (written by `cloud_runner.py
+  --setup-runners`) — an unknown uid gets an error and no KMS call;
 * one JSON line per connection, one JSON line back (canopy's `kms-broker` ECDH store,
   `orchestrator.device_key`):
 
@@ -43,7 +43,11 @@ import urllib.error
 import urllib.request
 
 SOCKET_PATH = os.environ.get("CANOPY_KMS_BROKER_SOCKET", "/run/canopy-kms/sock")
-UNITS_FILE = os.environ.get("CANOPY_UNITS_FILE", "/etc/canopy-runner/units.json")
+RUNNERS_FILE = os.environ.get("CANOPY_RUNNERS_FILE", "/etc/canopy-runner/runners.json")
+#: Where runners.json was before the rename, and the list key it had then. Old name,
+#: read until every runner reports the new one: remove in the follow-up.
+OLD_RUNNERS_FILE = os.environ.get("CANOPY_UNITS_FILE", "/etc/canopy-runner/units.json")
+OLD_RUNNERS_KEY = "units"
 IMDS = (os.environ.get("CANOPY_AWS_IMDS_URL", "") or "http://169.254.169.254").rstrip("/")
 #: One request line, at most. A JWK is ~200 bytes.
 MAX_REQUEST = 16 * 1024
@@ -209,15 +213,20 @@ class Kms:
 
 # ── who is asking, and what they may have ───────────────────────────────────
 
-def load_keys(path: str = UNITS_FILE) -> dict[int, str]:
-    """{uid: KMS key id} from units.json — only runners with both."""
+def load_keys(path: str | None = None) -> dict[int, str]:
+    """{uid: KMS key id} from runners.json — only runners with both."""
+    if path is None:
+        path = RUNNERS_FILE
+        if not os.path.exists(path) and os.path.exists(OLD_RUNNERS_FILE):
+            path = OLD_RUNNERS_FILE  # Old name, read until every runner reports the new one: remove in the follow-up.
     try:
         doc = json.loads(open(path).read())
     except (OSError, ValueError):
         return {}
     out = {}
-    for unit in doc.get("units") or []:
-        uid, key = unit.get("uid"), unit.get("kms_key")
+    # Old name, read until every runner reports the new one: remove in the follow-up.
+    for runner in doc.get("runners") or doc.get(OLD_RUNNERS_KEY) or []:
+        uid, key = runner.get("uid"), runner.get("kms_key")
         if isinstance(uid, int) and uid > 0 and key:
             out[uid] = str(key)
     return out
@@ -332,7 +341,7 @@ class _Handler(socketserver.BaseRequestHandler):
         if line is None:
             reply = {"error": "request too long"}
         else:
-            # units.json is re-read per request: a runner added by --setup-units is
+            # runners.json is re-read per request: a runner added by --setup-runners is
             # served without restarting the broker.
             reply = answer(line.strip(), uid, server.keys_loader(), server.kms)
         if "error" in reply:
