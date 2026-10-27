@@ -183,6 +183,24 @@ function WorkspaceSwitcher() {
       </select>
     )
   }
+  // One workspace: nothing to switch to, but still say which one this is. With
+  // only "+ Workspace" in the bar, a member of exactly one workspace read as
+  // belonging to none.
+  if (workspaces.length === 1) {
+    const [w] = workspaces
+    return (
+      <span className="flex items-center gap-3">
+        <Link
+          to={`/w/${w.slug}`}
+          className="max-w-40 truncate text-[13px] text-foreground hover:underline"
+          aria-label={`Workspace: ${w.display_name}`}
+        >
+          {w.display_name}
+        </Link>
+        <NewWorkspaceLink />
+      </span>
+    )
+  }
   return <NewWorkspaceLink />
 }
 

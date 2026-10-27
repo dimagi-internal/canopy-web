@@ -371,3 +371,63 @@ def test_reissue_refuses_a_finished_invite(finish):
 
     assert exc_info.value.code == ("already_accepted" if finish == "accept" else "revoked")
     assert WorkspaceInvite.objects.get(pk=inv.pk).token == token_before
+
+
+# Gmail delivers every dot spelling to one account, and Google signs the person
+# in under the spelling the account was created with — which need not be the one
+# they were invited at (an invite to marshallleejackson@ refused the same person
+# signing in as marshall.lee.jackson@).
+
+
+def test_a_gmail_invite_admits_and_is_accepted_by_another_dot_spelling():
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    inv = create_invite(workspace=ws, email="marshallleejackson@gmail.com", role="editor",
+                        invited_by=owner)
+
+    assert pending_invite_for_email("Marshall.Lee.Jackson@gmail.com") == inv
+    assert pending_invite_for_email("marshall.lee.jackson@googlemail.com") == inv
+
+    _, role = accept_invite(token=inv.token, user=_user("marshall.lee.jackson@gmail.com"))
+    assert role == "editor"
+
+
+def test_dots_fold_only_for_gmail_and_plus_never_folds():
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner)
+    other = create_invite(workspace=ws, email="first.last@example.org", role="editor",
+                          invited_by=owner)
+    plus = create_invite(workspace=ws, email="kid+canopy@gmail.com", role="editor",
+                         invited_by=owner)
+
+    # Another provider may give different dot spellings to different people.
+    assert pending_invite_for_email("firstlast@example.org") is None
+    with pytest.raises(InviteError) as exc_info:
+        accept_invite(token=other.token, user=_user("firstlast@example.org"))
+    assert exc_info.value.code == "email_mismatch"
+
+    # A plus address is only ever the invitee's own choice, not Google's.
+    assert pending_invite_for_email("kid@gmail.com") is None
+    with pytest.raises(InviteError):
+        accept_invite(token=plus.token, user=_user("kid@gmail.com"))
+
+
+def test_my_invites_lists_only_the_callers_own_live_invites(client):
+    owner = _user("a@dimagi.com")
+    ws = _ws(owner, slug="marshellis")
+    mine = create_invite(workspace=ws, email="marshallleejackson@gmail.com", role="editor",
+                         invited_by=owner)
+    create_invite(workspace=ws, email="someone.else@gmail.com", role="editor", invited_by=owner)
+    gone = create_invite(workspace=_ws(owner, slug="other"), email="marshall.lee.jackson@gmail.com",
+                         role="viewer", invited_by=owner)
+    revoke_invite(invite=gone)
+
+    client.force_login(_user("marshall.lee.jackson@gmail.com"))
+    rows = client.get("/api/workspaces/invites/mine").json()
+
+    assert [(r["token"], r["workspace_slug"], r["role"]) for r in rows] == [
+        (mine.token, "marshellis", "editor")]
+
+
+def test_my_invites_needs_a_signed_in_person(client):
+    assert client.get("/api/workspaces/invites/mine").status_code == 401

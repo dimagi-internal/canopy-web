@@ -5,12 +5,35 @@ from __future__ import annotations
 import datetime as dt
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import Workspace, WorkspaceInvite, generate_invite_token
 from .services import _grant
 
 INVITE_TTL_DAYS = 14
+
+# Gmail delivers every dot spelling of an address to one account and Google
+# signs that account in under the spelling it was CREATED with, so an invite to
+# marshallleejackson@ never matched the marshall.lee.jackson@ that Google
+# reported for the same person: sign-in refused him, and accept would have too.
+_GMAIL_DOMAINS = ("gmail.com", "googlemail.com")
+
+
+def mailbox_key(email: str) -> str:
+    """`email` reduced to the mailbox it delivers to: lowercased, and for Gmail
+    without the dots in its local part (and googlemail.com as gmail.com).
+
+    Only dots, only Gmail — Google guarantees those are one account, which is
+    what lets an invite to one spelling admit and be accepted by another
+    without widening who can accept it. Plus-addressing and other providers'
+    rules are deliberately not folded: a different string there may be a
+    different person."""
+    email = (email or "").strip().lower()
+    local, sep, domain = email.partition("@")
+    if sep and domain in _GMAIL_DOMAINS:
+        return f"{local.replace('.', '')}@gmail.com"
+    return email
 
 
 # ---- invites ----
@@ -115,7 +138,7 @@ def accept_invite(*, token: str, user) -> tuple[Workspace, str]:
         raise InviteError("revoked")
     if inv.expires_at <= timezone.now():
         raise InviteError("expired")
-    if inv.email and (getattr(user, "email", "") or "").lower() != inv.email.lower():
+    if inv.email and mailbox_key(getattr(user, "email", "")) != mailbox_key(inv.email):
         raise InviteError("email_mismatch")
     m = _grant(inv.workspace, user, inv.role, invited_by=inv.invited_by)
     inv.accepted_at = timezone.now()
@@ -191,7 +214,7 @@ def mask_email(email: str) -> str:
 def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
     """The most recent LIVE (pending) invite addressed to `email`, or None.
 
-    Case-insensitive; ignores expired/revoked/accepted rows. Used by the OAuth
+    Matched by `mailbox_key` (case, and Gmail's dots); ignores expired/revoked/accepted rows. Used by the OAuth
     login adapter to help decide whether an otherwise-non-allowlisted email
     may clear the login gate (see `email_admitted_outside_domain`). This
     function does NOT itself join anyone to anything — it does not auto-join
@@ -199,16 +222,31 @@ def pending_invite_for_email(email: str) -> WorkspaceInvite | None:
     WorkspaceMembership from an invite is `accept_invite`, called explicitly
     by the user after they sign in. Do not "restore" auto-join behavior here.
     """
-    email = (email or "").strip().lower()
-    if not email:
-        return None
-    candidate = (
-        WorkspaceInvite.objects.filter(
-            email=email, accepted_at__isnull=True, revoked_at__isnull=True
-        )
-        .order_by("-created_at")
-        .first()
-    )
+    candidate = next(iter(_unactioned_invites_for(email)), None)
     if candidate is not None and candidate.is_pending():
         return candidate
     return None
+
+
+def pending_invites_for(email: str) -> list[WorkspaceInvite]:
+    """Every live invite addressed to `email`'s mailbox, newest first — what a
+    signed-in person may still accept. Like `pending_invite_for_email`, it joins
+    nobody to anything: Home lists these so a person who signed in without
+    opening their invite link can still find it."""
+    return [inv for inv in _unactioned_invites_for(email) if inv.is_pending()]
+
+
+def _unactioned_invites_for(email: str) -> list[WorkspaceInvite]:
+    """Invites to `email`'s mailbox never accepted or revoked (expired ones
+    included), newest first."""
+    key = mailbox_key(email)
+    if not key:
+        return []
+    live = WorkspaceInvite.objects.filter(
+        accepted_at__isnull=True, revoked_at__isnull=True).select_related("workspace", "invited_by")
+    if key.endswith("@gmail.com"):
+        # Any dot spelling, at either Gmail domain: narrow in SQL, match exactly here.
+        live = live.filter(Q(email__iendswith="@gmail.com") | Q(email__iendswith="@googlemail.com"))
+    else:
+        live = live.filter(email=key)
+    return [inv for inv in live.order_by("-created_at") if mailbox_key(inv.email) == key]

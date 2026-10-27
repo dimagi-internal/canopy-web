@@ -59,6 +59,7 @@ from .schemas import (
     MemberTreeOut,
     MemberTreePersonOut,
     MemberTreeWorkspaceOut,
+    MyInviteOut,
     RequestableWorkspaceOut,
     RunnerOrderIn,
     RunnerOrderRowOut,
@@ -243,6 +244,24 @@ def list_workspaces(request: HttpRequest) -> list[WorkspaceOut]:
         if m is not None:
             rows.append(_m_out(m))
     return sorted(rows, key=lambda w: w.inherited)  # stable: keeps -created_at within each group
+
+
+@router.get("/invites/mine", response=list[MyInviteOut], summary="Invites waiting for me")
+@gate("authenticated", step_up="the caller's own invite links, already emailed to them")
+def my_invites(request: HttpRequest) -> list[MyInviteOut]:
+    """Invites addressed to you that you have not accepted yet, newest first.
+    Open `/invite/<token>` to accept one."""
+    # Matched on the signed-in email's mailbox (`invites.mailbox_key`), so a Gmail
+    # invite sent to another dot spelling still shows. Listing joins nothing:
+    # only accepting does.
+    return [
+        MyInviteOut(
+            token=inv.token, workspace_slug=inv.workspace.slug,
+            workspace_display_name=inv.workspace.display_name, role=inv.role,
+            invited_by_email=inv.invited_by.email or None, expires_at=inv.expires_at,
+        )
+        for inv in invites.pending_invites_for(request.user.email)
+    ]
 
 
 @router.get("/{slug}/", response=WorkspaceOut, summary="Get a workspace (member-only)",)

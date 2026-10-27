@@ -69,6 +69,18 @@ describe('AppLayout — WorkspaceSwitcher gating', () => {
     expect(await screen.findByText('+ Workspace')).toBeTruthy()
   })
 
+  it('with exactly one workspace, names it beside "+ Workspace"', async () => {
+    // Only "+ Workspace" read as "you are in no workspace" to a one-workspace member.
+    listWorkspaces.mockResolvedValue([
+      { slug: 'marshellis', display_name: 'Marshellis' },
+    ] as WorkspaceOut[])
+    renderAs('authenticated')
+
+    const name = await screen.findByLabelText('Workspace: Marshellis')
+    expect(name.getAttribute('href')).toBe('/w/marshellis')
+    expect(screen.getByText('+ Workspace')).toBeTruthy()
+  })
+
   it('with several workspaces, CREATE is the picker\'s last option, not a second control', async () => {
     // The top bar on a phone had no room for both: "+ Workspace" broke onto two
     // lines between the picker and the avatar.
