@@ -304,7 +304,8 @@ $updaterLog = Join-Path $CanopyDir "updater.log"
 
 Register-CanopyTask -Name $RUNNER_TASK -RestartOnFailure `
     -CommandLine "`"$Bin`" run --config `"$Config`" >> `"$runnerLog`" 2>&1" `
-    -Triggers @(New-ScheduledTaskTrigger -AtLogOn -User $TASK_USER)
+    -Triggers @((New-ScheduledTaskTrigger -AtLogOn -User $TASK_USER),
+                (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)))
 
 if (-not $NoAutoUpdate) {
     # A COPY of this installer, frozen at the last install -- so a stray

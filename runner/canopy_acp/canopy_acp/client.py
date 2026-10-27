@@ -314,18 +314,30 @@ class AcpConnection:
         path = pathlib.Path(str(params.get("path") or "")).expanduser()
         if self.fs_root is not None:
             resolved = path.resolve()
-            if not str(resolved).startswith(str(self.fs_root)):
+            # is_relative_to, not a string prefix: `…\wt2` must not pass for a root
+            # of `…\wt`, and Windows compares paths case-insensitively.
+            root = self.fs_root
+            if os.name == "nt":
+                resolved_cmp = pathlib.Path(os.path.normcase(resolved))
+                root = pathlib.Path(os.path.normcase(root))
+            else:
+                resolved_cmp = resolved
+            if not resolved_cmp.is_relative_to(root):
                 raise PermissionError(f"path outside the session root: {resolved}")
             return resolved
         return path
 
+    # UTF-8 named and no newline translation: the locale default on Windows is cp1252,
+    # which garbled or refused the agent's own reads and writes of any file holding a
+    # curly quote, an arrow or an emoji (the same class as failure investigation 11).
     def _read_file(self, params: dict) -> str:
-        return self._resolve_path(params).read_text()
+        return self._resolve_path(params).read_text(encoding="utf-8", errors="replace")
 
     def _write_file(self, params: dict) -> None:
         target = self._resolve_path(params)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(str(params.get("content") or ""))
+        with open(target, "w", encoding="utf-8", newline="") as fh:
+            fh.write(str(params.get("content") or ""))
 
 
 # -- the adapter process ---------------------------------------------------
@@ -448,6 +460,10 @@ class AcpAgent:
             self._argv, cwd=str(self.cwd), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            # No console window for node under the runner's pythonw: closing one
+            # killed the adapter mid-turn (CREATE_NO_WINDOW; inline, canopy_acp does
+            # not import the runner).
+            creationflags=0x08000000 if os.name == "nt" else 0,
         )
         threading.Thread(target=self._drain_stderr, daemon=True, name="acp-stderr").start()
         self.conn = AcpConnection(

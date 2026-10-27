@@ -232,6 +232,13 @@ def test_windows_registers_both_tasks_through_current(win):
     assert "-TaskName 'canopy-runner' -TaskPath '\\Canopy'" in runner
     assert "self-update --if-stale" in updater and "updater.log" in updater
     assert "-RepetitionInterval (New-TimeSpan -Minutes 30)" in updater
+    # A crashed or update-ended daemon comes back (RestartCount only covers a failed
+    # launch); IgnoreNew makes the repeat a no-op while it is up.
+    assert "-RepetitionInterval (New-TimeSpan -Minutes 5)" in runner
+    assert "-MultipleInstances IgnoreNew" in runner
+    # UTF-8 mode and an isolated interpreter for both tasks (cp1252 is the default).
+    for script in (runner, updater):
+        assert "-I -X utf8 -m canopy_runner.main" in script
     assert cmds.named("schtasks") == [["schtasks", "/Run", "/TN", r"\Canopy\canopy-runner"]]
     for c in cmds.named("powershell.exe"):
         assert c[1:5] == ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
