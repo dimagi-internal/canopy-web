@@ -776,3 +776,15 @@ def test_the_person_sees_what_they_delegated_and_withdraws_it_after_leaving(agen
     assert row["in_force"] is False
     assert c.delete(f"/api/me/delegated-credentials/{row['id']}").status_code == 204
     assert not AgentCredential.objects.exists()
+
+
+def test_the_access_check_names_what_a_local_user_must_bring_themselves(agent, owner, github, machine):
+    """`canopy agent use` reads this before any resolve: on your own machine, each
+    credential someone delegated to the agent is theirs, so you use your own."""
+    _lend(agent, owner, github)
+    editor = User.objects.create_user("eve", "eve@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
+    body = _client(editor).get("/api/agents/echo/credentials/access").json()
+    [w] = body["delegated_withheld"]
+    assert (w["provider"], w["delegated_by_email"]) == ("github", "olive@dimagi.com")
+    assert "github_pat" not in str(body)

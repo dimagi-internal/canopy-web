@@ -210,7 +210,8 @@ def test_access_for_an_admin_says_admin(cs):
     res = _session(cs["admin"]).get("/api/agents/csbot/credentials/access")
     assert res.status_code == 200
     assert res.json() == {"agent": "csbot", "credential_source": "1password",
-                          "may_resolve": True, "via": "admin", "reason": ""}
+                          "may_resolve": True, "via": "admin", "reason": "",
+                          "delegated_withheld": []}
 
 
 def test_access_for_a_runner_pair_says_runner_over_bearer(cs):
