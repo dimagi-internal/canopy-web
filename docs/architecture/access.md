@@ -794,13 +794,21 @@ agent call a connected site's tools as that person, within their own access on t
 site, for the page they are on. It is the only way an agent acts as a person *on a
 host* (the header above is canopy-web's own decisions):
 
-- **Given by acting, never by loading.** The panel asks the site for one only when
-  the person sends from it (or opens a conversation whose live card needs it), and
-  then shows "<agent> can act as you on this page until <time> · Stop". 30 minutes.
+- **Given by acting, never by loading, and only with the person's passkey.** The
+  panel asks the site for one only when the person sends from it (or opens a
+  conversation whose live card needs it); nothing can use it until they confirm it
+  with their passkey in the panel ("Let <agent> act as you on this page for 30
+  minutes?"), and the send waits for that. It then shows "<agent> can act as you on
+  this page until <time> · Stop". 30 minutes from the passkey: the panel's token
+  renewals carry the same end, never extend it.
+- **Never a contact's.** Only a canopy user has a passkey, so a contact is never
+  given one, and an agent that serves the site on pages is not offered to a contact
+  there at all; when no agent is left, the site shows them no panel.
 - **Read by one lookup, with no fallback.** `host_grants.lookup`: a turn (gateway) or
   a View in a conversation reads only the grant of the page that last acted in that
   conversation as the person who started the turn / is viewing — expired or stopped
-  is a refusal ("…has ended — send again to grant it for another 30 minutes"), never
+  is a refusal ("…has ended — send again to grant it for another 30 minutes"), and so
+  is one not confirmed with the passkey, never
   another page's grant or the agent's own credential.
 - **A chat on a page reaches that site only as the person, under their act-as-you
   permission — owners included.** The gateway (`site_tools` / `site_call` /
@@ -824,8 +832,8 @@ host* (the header above is canopy-web's own decisions):
   reaches the site only through the gateway as the person, and has no account of its
   own there in this conversation.
 - **The person sees and stops theirs**: Settings → Act-as-you permissions
-  (`/api/me/host-grants/`), and Stop in the panel (`/api/embed/host-grant`, and
-  `/api/contact/host-grant` for a contact). Stop takes effect on the next call.
+  (`/api/me/host-grants/`), and Stop in the panel (`/api/embed/host-grant`). Stop
+  takes effect on the next call.
 
 Mechanics: [`embedding-internals.md`](embedding-internals.md) § Act-as-you
 permissions; the wire contract: `sdk/python/README.md` § Host grant contract v1.

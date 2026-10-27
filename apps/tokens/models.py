@@ -801,6 +801,11 @@ class HostGrant(models.Model):
     see their live grants and stop any of them (`revoked_at`,
     `host_grants.revoke`): a revoked grant is refused at once by the gateway and
     by Views, exactly like an expired one.
+
+    **Nothing uses a grant until the person confirmed it with their passkey**
+    (`confirmed_at`, `host_grants.confirm`), and it lasts `CONFIRM_SECONDS` from that
+    touch: a re-mint of the same page inherits the confirmation and its end, never
+    extends it. Only a canopy user has a passkey, so a contact never holds one.
     """
 
     app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="host_grants")
@@ -836,6 +841,9 @@ class HostGrant(models.Model):
     #: When the person stopped it (the panel's "Stop", or Settings). A revoked
     #: grant is never used again; its access token is wiped at the same moment.
     revoked_at = models.DateTimeField(null=True, blank=True)
+    #: When the person confirmed this page's permission with their passkey. Null =
+    #: not confirmed: the gateway and Views refuse it as if there were none.
+    confirmed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

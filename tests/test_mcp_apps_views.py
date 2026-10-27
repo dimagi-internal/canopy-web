@@ -55,13 +55,15 @@ def _member(ws, name, role=WorkspaceMembership.EDITOR):
     return u
 
 
-def _grant(app, *, token, user=None, contact=None, minutes=10):
+def _grant(app, *, token, user=None, contact=None, minutes=10, confirmed=True):
+    """A grant the person confirmed with their passkey, unless `confirmed=False`."""
     from tests.fixtures.site_gateway import acted_with
 
+    now = timezone.now()
     return acted_with(HostGrant.objects.create(
         app=app, subject=token, user=user, contact=contact, access_token_enc=encrypt_secret(token),
         scope="workflow:act", resource=RESOURCE, dpop_jkt=client_identity.dpop_jkt(),
-        expires_at=timezone.now() + timedelta(minutes=minutes)))
+        expires_at=now + timedelta(minutes=minutes), confirmed_at=now if confirmed else None))
 
 
 def _tool_pair(session, *, call_id=CALL_ID, name="mcp__claude_ai_connect_labs__workflow_run_action",
@@ -415,7 +417,10 @@ def test_ui_message_through_a_sensitive_site_stamps_the_sites_requirements(w):
 # --- the contact path (the embed panel) ---------------------------------------------------
 
 
-def test_a_contact_in_their_own_session_acts_with_their_own_grant(w, labs):
+def test_a_contact_never_acts_through_a_view_even_with_a_grant_row(w, labs):
+    """A contact has no passkey, so holds no act-as-you permission: a grant row naming
+    them (written some other way) leaves their View read-only, and a call is refused
+    without reaching the site."""
     contact = Contact.objects.create(workspace=w["ws"], app=w["app"], external_id="c-1",
                                      display_name="Gillian", source=Contact.SOURCE_EMBED)
     s = Session.objects.create(workspace=w["ws"], agent=w["agent"], contact=contact,
@@ -425,19 +430,15 @@ def test_a_contact_in_their_own_session_acts_with_their_own_grant(w, labs):
     raw, _ = ContactToken.issue(app=w["app"], contact=contact, ttl_seconds=600)
     c = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
     url = f"/api/contact/sessions/{s.pk}/apps/toolu_C"
-    # The widget's transcript carries the View row, stripped.
     page = c.get(f"/api/contact/sessions/{s.pk}/messages?before=99").json()["messages"]
     assert [m["role"] for m in page] == ["tool_result"]
-    assert page[0]["app"]["tool_call_id"] == "toolu_C" and page[0]["plaintext"] == ""
+    # With no grant there is nothing to fetch the View with (and nothing cached).
     r = through(labs, lambda: c.get(url + "/resource"))
-    assert r.status_code == 200 and r.json()["can_act"] is True
+    assert r.status_code == 404 or r.json()["can_act"] is False
     out = through(labs, lambda: post(c, url + "/call", {
         "name": "workflow_action_preview_view", "arguments": {"run_id": 5, "action": "coach"}}))
-    assert out.json()["structuredContent"]["confirm"] == f"confirm-{TOKENS['contact']}"
-    # Another contact's session is not theirs.
-    other = Session.objects.create(workspace=w["ws"], agent=w["agent"],
-                                   metadata={"embed_app": "connect-labs"})
-    assert c.get(f"/api/contact/sessions/{other.pk}/apps/toolu_C/resource").status_code == 404
+    assert out.status_code >= 400
+    assert labs.seen == [], "the site is never reached as a contact"
 
 
 # --- keeping the index warm ---------------------------------------------------------------
@@ -453,6 +454,21 @@ def test_a_visitor_arrival_refreshes_the_index_in_the_background(w, labs, monkey
     async_to_sync(main)()
     w["app"].refresh_from_db()
     assert "workflow_run_action" in w["app"].mcp_apps_index["tools"]
+
+
+def test_an_unconfirmed_grant_never_refreshes_the_index(w, labs):
+    """Listing the site's tools is acting as the person: not before their passkey."""
+    AppCredential.objects.filter(pk=w["app"].pk).update(mcp_apps_index={})
+    w["app"].refresh_from_db()
+    grant = HostGrant.objects.get(user=w["editor"])
+    HostGrant.objects.filter(pk=grant.pk).update(confirmed_at=None)
+    async def main():
+        async with labs.lifespan():
+            await sync_to_async(mcp_apps_views._refresh, thread_sensitive=True)(w["app"].pk, grant.pk)
+    async_to_sync(main)()
+    w["app"].refresh_from_db()
+    assert not (w["app"].mcp_apps_index or {}).get("tools")
+    assert labs.seen == []
 
 
 # --- §9 Slack: the text fallback and a link, never a button ---------------------------------

@@ -20,7 +20,6 @@ from django.utils import timezone
 
 from apps.agents.interface import GATEWAY_TOOLS, parse, profile
 from apps.agents.models import Agent
-from apps.contacts.models import Contact
 from apps.harness.models import Turn
 from apps.host_grants import host_gateway
 from apps.mcp.models import MCPAuditLog
@@ -87,7 +86,7 @@ def test_with_no_ceiling_canopy_adds_no_narrowing_of_its_own(w, host):
     the visitor's grant (this stand-in host lists all three, a real one lists only its
     scopes' tools) is offered, and canopy names none of them."""
     w["agent"].interface = parse({"capabilities": {
-        "connect": {"callers": ["contact"], "sites": ["connect-labs"],
+        "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
                     "tools": ["mcp__*canopy-web__who_is_asking"]}}})
     w["agent"].save()
     _grant(w)
@@ -174,15 +173,32 @@ def test_a_capability_that_does_not_name_the_site_is_refused(w, host):
     _grant(w)
     Turn.objects.filter(pk=w["turn"].pk).update(capability="ask")
     w["agent"].interface = parse({"capabilities": {
-        "ask": {"callers": ["contact"], "tools": list(GATEWAY_TOOLS)}}})
+        "ask": {"callers": ["contact", "member"], "tools": list(GATEWAY_TOOLS)}}})
     w["agent"].save()
     _refused(w, host, "not set up to use")
 
 
 def test_another_visitors_grant_is_never_used(w, host):
-    other = Contact.objects.create(workspace=w["ws"], app=w["app"], external_id="u-99",
-                                   source=Contact.SOURCE_EMBED)
-    _grant(w, subject="u-99", contact=other)
+    from django.contrib.auth.models import User
+
+    other = User.objects.create_user("other", "other@dimagi.com", "pw")
+    _grant(w, subject="u-99", user=other)
+    _refused(w, host, "back on the page")
+
+
+def test_a_contacts_turn_never_reaches_the_site(w, host):
+    """A contact has no passkey, so holds no act-as-you permission: even a grant row
+    naming them (written some other way) is never one a turn of theirs reads."""
+    from apps.host_grants.host_grants import NONE, lookup
+
+    contact = w["contact"]
+    _grant(w, user=None, contact=contact)
+    session = w["session"]
+    session.created_by, session.contact = None, contact
+    session.save()
+    Turn.objects.filter(pk=w["turn"].pk).update(initiator_user=None, initiator_contact=contact,
+                                                initiator_kind="contact")
+    assert lookup(w["app"], agent=w["agent"], contact=contact, session=session).reason == NONE
     _refused(w, host, "back on the page")
 
 
@@ -398,9 +414,9 @@ def test_the_agents_own_bound_grant_wins_over_an_unbound_one(w):
     labsdata = _labsdata(w)
     unbound = _grant(w)
     bound = _grant(w, agent=labsdata, scope="data:read")
-    assert grant_for(w["app"], agent=labsdata, contact=w["contact"]) == bound
-    assert grant_for(w["app"], agent=w["agent"], contact=w["contact"]) == unbound
-    assert grant_for(w["app"], agent=None, contact=w["contact"]) == unbound
+    assert grant_for(w["app"], agent=labsdata, user=w["visitor"]) == bound
+    assert grant_for(w["app"], agent=w["agent"], user=w["visitor"]) == unbound
+    assert grant_for(w["app"], agent=None, user=w["visitor"]) == unbound
 
 
 def test_a_turn_reaches_the_site_through_its_own_pages_grant_not_the_latest(w):
@@ -411,7 +427,7 @@ def test_a_turn_reaches_the_site_through_its_own_pages_grant_not_the_latest(w):
     from apps.canopy_sessions.services import note_host_grant
 
     this_page = _grant(w, scope="data:read")
-    note_host_grant(w["session"], this_page.pk, contact=w["contact"])
+    note_host_grant(w["session"], this_page.pk, user=w["visitor"])
     _grant(w, scope="data:read", acted=False,
            expires_at=timezone.now() + timedelta(minutes=14))  # another tab, later
     ctx = host_gateway.resolve(str(w["turn"].pk))

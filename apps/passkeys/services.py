@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import HttpRequest
 from django.utils import timezone
 
@@ -58,16 +59,27 @@ def _user_handle(user) -> bytes:
 
 # ---- challenges -------------------------------------------------------------
 
-def _stash(request: HttpRequest, key: str, challenge: bytes) -> None:
+def _stash(request: HttpRequest, key: str, challenge: bytes, slot: str = "") -> None:
+    """Keep a ceremony's challenge: in the session, or — for a caller with none (the
+    embedded panel, signed in by its token) — in the cache under `slot`, a key the
+    caller makes unique to what is being confirmed."""
     from webauthn.helpers import bytes_to_base64url
 
-    request.session[key] = {"c": bytes_to_base64url(challenge), "at": time.time()}
+    entry = {"c": bytes_to_base64url(challenge), "at": time.time()}
+    if slot:
+        cache.set(f"{key}:{slot}", entry, CHALLENGE_TTL)
+        return
+    request.session[key] = entry
 
 
-def _pop(request: HttpRequest, key: str) -> bytes:
+def _pop(request: HttpRequest, key: str, slot: str = "") -> bytes:
     from webauthn.helpers import base64url_to_bytes
 
-    raw = request.session.pop(key, None)
+    if slot:
+        raw = cache.get(f"{key}:{slot}")
+        cache.delete(f"{key}:{slot}")
+    else:
+        raw = request.session.pop(key, None)
     if not isinstance(raw, dict) or not raw.get("c"):
         raise CeremonyError("no passkey ceremony in progress — start again")
     if time.time() - float(raw.get("at") or 0) > CHALLENGE_TTL:
@@ -164,8 +176,9 @@ def finish_registration(request: HttpRequest, credential: dict, label: str = "")
 
 # ---- assertion (the step-up) ------------------------------------------------
 
-def begin_assertion(request: HttpRequest) -> dict[str, Any] | None:
-    """Options for navigator.credentials.get(), or None when the caller has no passkey."""
+def begin_assertion(request: HttpRequest, *, slot: str = "") -> dict[str, Any] | None:
+    """Options for navigator.credentials.get(), or None when the caller has no passkey.
+    `slot` keeps the challenge in the cache rather than the session (`_stash`)."""
     from webauthn import generate_authentication_options
     from webauthn.helpers import options_to_json_dict
     from webauthn.helpers.structs import UserVerificationRequirement
@@ -178,15 +191,15 @@ def begin_assertion(request: HttpRequest) -> dict[str, Any] | None:
         allow_credentials=_descriptors(passkeys),
         user_verification=UserVerificationRequirement.REQUIRED,
     )
-    _stash(request, _AUTH_KEY, options.challenge)
+    _stash(request, _AUTH_KEY, options.challenge, slot)
     return options_to_json_dict(options)
 
 
-def finish_assertion(request: HttpRequest, credential: dict) -> Passkey:
+def finish_assertion(request: HttpRequest, credential: dict, *, slot: str = "") -> Passkey:
     """Verify the assertion against one of the CALLER's own passkeys."""
     from webauthn import verify_authentication_response
 
-    challenge = _pop(request, _AUTH_KEY)
+    challenge = _pop(request, _AUTH_KEY, slot)
     cred_id = credential.get("id") if isinstance(credential, dict) else None
     # Scoped to request.user: a valid assertion from SOMEONE ELSE's passkey is
     # not a step-up for this session, however good its signature.

@@ -239,8 +239,9 @@ def embed_self_token(request: HttpRequest, page: str = "") -> EmbedSelfTokenOut:
     `page` names the canopy page the panel is on. When it is one canopy lets an
     agent act on as you (read-only, within your own access) AND the body says
     `"grant": true` — the panel sends it only once you have sent a message in it —
-    canopy also takes a short grant to its own tools for that page; `host_grant`
-    says whether it did. Any other value, or none, is simply no grant.
+    canopy also takes a short grant to its own tools for that page, usable once you
+    confirm it with your passkey in the panel; `host_grant` says whether it did. Any
+    other value, or none, is simply no grant.
     """
     # Session-authenticated means ONLY a session. This route sits inside the
     # delegated-token surface (`^/api/embed/`), so without this a connected

@@ -45,7 +45,6 @@ from apps.agents.interface import parse
 from apps.agents.models import Agent
 from apps.canopy_sessions.models import Session
 from apps.common.encryption import decrypt_secret
-from apps.contacts.models import Contact
 from apps.harness import caller_tokens
 from apps.harness.models import Turn
 from apps.mcp.auth import CanopyPATVerifier
@@ -54,6 +53,7 @@ from apps.host_grants import client_identity, host_gateway, outbound
 from apps.embedding import assertions
 from apps.tokens.models import AppCredential, AppCredentialAgent, HostGrant
 from apps.workspaces.models import Workspace, WorkspaceMembership
+from tests.fixtures import passkey_confirm
 
 pytestmark = pytest.mark.django_db
 
@@ -62,7 +62,7 @@ RESOURCE = "https://host.test/mcp/"
 TOKEN_ENDPOINT = "https://host.test/o/token/"
 SUBJECT = "u-42"
 IFACE = {"capabilities": {
-    "connect": {"callers": ["contact"], "sites": ["connect-labs"],
+    "connect": {"callers": ["contact", "member"], "sites": ["connect-labs"],
                 "ceiling": ["mcp__*connect_labs__marketplace_*"],
                 "tools": ["mcp__*canopy-web__who_is_asking"]},
 }}
@@ -163,12 +163,22 @@ def site(host):
     app.host_mcp_resource = RESOURCE
     app.save()
     AppCredentialAgent.objects.create(app=app, agent=agent)
-    return {"owner": owner, "ws": ws, "agent": agent, "app": app}
+    # The visitor: a member the site vouches for by verified email, so they arrive as
+    # themselves — only a canopy user holds an act-as-you permission.
+    from allauth.account.models import EmailAddress
+
+    visitor = User.objects.create_user("gillian", "gillian@dimagi.com", "pw")
+    EmailAddress.objects.create(user=visitor, email=visitor.email, verified=True, primary=True)
+    WorkspaceMembership.objects.create(user=visitor, workspace=ws, role=WorkspaceMembership.VIEWER)
+    return {"owner": owner, "ws": ws, "agent": agent, "app": app, "visitor": visitor}
 
 
-def _arrive(host, *, scopes=("marketplace:read",)):
+def _arrive(host, *, scopes=("marketplace:read",), member=True):
+    """The site's arrival for its visitor: as the member (`email_verified`), or — with
+    `member=False` — a visitor canopy knows only as a contact."""
+    vouched = {"email": "gillian@dimagi.com", "email_verified": True} if member else {}
     body = {
-        "assertion": sign_visitor_assertion(host.config, SUBJECT, name="Gillian"),
+        "assertion": sign_visitor_assertion(host.config, SUBJECT, name="Gillian", **vouched),
         "agent_slug": "ace",
     }
     if scopes:
@@ -200,8 +210,8 @@ def _call(host, name, args):
     return out
 
 
-def _turn_for_the_visitor(site, contact):
-    session = Session.objects.create(workspace=site["ws"], agent=site["agent"], contact=contact,
+def _turn_for_the_visitor(site, visitor):
+    session = Session.objects.create(workspace=site["ws"], agent=site["agent"], created_by=visitor,
                                      metadata={"embed_app": "connect-labs"},
                                      page_state={"resource": "labs-marketplace://orgs",
                                                  "backing_tool": "marketplace_orgs_get"})
@@ -209,10 +219,10 @@ def _turn_for_the_visitor(site, contact):
     from apps.tokens.models import HostGrant
     from tests.fixtures.site_gateway import acted_with
 
-    for grant in HostGrant.objects.filter(contact=contact).order_by("pk"):
+    for grant in HostGrant.objects.filter(user=visitor).order_by("pk"):
         acted_with(grant)
-    return Turn.objects.create(chat_session=session, prompt="which orgs?", initiator_contact=contact,
-                               initiator_kind="contact", capability="connect")
+    return Turn.objects.create(chat_session=session, prompt="which orgs?", initiator_user=visitor,
+                               initiator_kind="user", capability="connect")
 
 
 def test_the_sdk_host_and_canopy_complete_the_whole_contract(site, host):
@@ -233,9 +243,13 @@ def test_the_sdk_host_and_canopy_complete_the_whole_contract(site, host):
     assert contract.token_checksum(raw) == issued.token_checksum, "canopy stored the token the host issued"
     assert grant.dpop_jkt == issued.cnf_jkt and grant.scope == "marketplace:read"
 
+    # The person confirms it with their passkey, in canopy's panel, with its token.
+    assert grant.user == site["visitor"] and grant.confirmed_at is None
+    confirmed = passkey_confirm.confirm(r.json()["token"], passkey_confirm.give_passkey(site["visitor"]))
+    assert confirmed.status_code == 200, confirmed.content
+
     # 3: the agent's call, through canopy's mounted MCP, verified by the SDK.
-    contact = Contact.objects.get(external_id=SUBJECT)
-    turn = _turn_for_the_visitor(site, contact)
+    turn = _turn_for_the_visitor(site, site["visitor"])
     with _as_visitor(turn):
         out = _call(host, "site_call", {"tool": "marketplace_orgs_get", "arguments": {}})
     body = out.structured_content
@@ -253,20 +267,32 @@ def test_the_sdk_host_and_canopy_complete_the_whole_contract(site, host):
 def test_a_replayed_arrival_grant_is_refused_by_the_sdk_host_and_the_chat_still_opens(site, host):
     id_jag = issue_id_jag(host.config, SUBJECT, ["marketplace:read"])
     for expected in (True, False):
-        body = {"assertion": sign_visitor_assertion(host.config, SUBJECT), "agent_slug": "ace",
-                "id_jag": id_jag}
+        body = {"assertion": sign_visitor_assertion(host.config, SUBJECT, email="gillian@dimagi.com",
+                                                    email_verified=True),
+                "agent_slug": "ace", "id_jag": id_jag}
         r = Client().post(contract.ARRIVAL_PATH, data=body, content_type="application/json")
         assert r.status_code == 200 and r.json()["token"]
         assert r.json()["host_grant"] is expected
     assert len(host.tokens._tokens) == 1
 
 
+def test_a_contacts_arrival_grant_is_never_redeemed(site, host):
+    """A visitor canopy knows only as a contact has no passkey to confirm an act-as-you
+    permission with, so canopy never spends the grant the site sent: the host issues
+    nothing, and the chat still opens."""
+    r = _arrive(host, member=False)
+    assert r.status_code == 200 and r.json()["token"] and r.json().get("kind") != "user"
+    assert r.json()["host_grant"] is False
+    assert not host.tokens._tokens and not HostGrant.objects.exists()
+
+
 def test_a_grant_canopy_refuses_never_reaches_the_sdk_host(site, host):
     other = HostConfig(signing_key=host.key, issuer=ISSUER, resource="https://host.test/other/",
                        token_endpoint=TOKEN_ENDPOINT, canopy_client_id=client_identity.client_id(),
                        scope_tools={"marketplace:read": ["x"]})
-    body = {"assertion": sign_visitor_assertion(host.config, SUBJECT), "agent_slug": "ace",
-            "id_jag": issue_id_jag(other, SUBJECT, ["marketplace:read"])}
+    body = {"assertion": sign_visitor_assertion(host.config, SUBJECT, email="gillian@dimagi.com",
+                                                email_verified=True),
+            "agent_slug": "ace", "id_jag": issue_id_jag(other, SUBJECT, ["marketplace:read"])}
     r = Client().post(contract.ARRIVAL_PATH, data=body, content_type="application/json")
     assert r.json()["host_grant"] is False
     assert host.fetched == [] and not host.tokens._tokens, "canopy checked first and sent nothing"
@@ -300,15 +326,15 @@ def test_a_host_requiring_sensitive_keeps_its_visitor_off_a_ordinary_runner(site
     site["agent"].interface = parse({"capabilities": {"connect": {
         **IFACE["capabilities"]["connect"], "data": "sensitive"}}})
     site["agent"].save(update_fields=["interface"])
-    r = _arrive(host, scopes=())
+    r = _arrive(host, scopes=(), member=False)
     assert r.status_code == 200, r.content
     auth = {"HTTP_AUTHORIZATION": f"Bearer {r.json()['token']}"}
     c = Client()
-    # A visitor with no canopy account has no vault key, so cannot hold a conversation
-    # sealed to its people (spec 2026-10-23 §2): refused in a sentence.
+    # A visitor with no canopy account is never offered an agent that serves the site
+    # on its pages (it could act there only as them, under a passkey they do not have).
     refused = c.post("/api/contact/sessions", data={"agent_slug": "ace"},
                      content_type="application/json", **auth)
-    assert refused.status_code == 422 and "vault key" in refused.json()["detail"]
+    assert refused.status_code == 404
     # A member with a vault key, arriving through the same site, can.
     from allauth.account.models import EmailAddress
 

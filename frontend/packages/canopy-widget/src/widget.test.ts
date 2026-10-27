@@ -201,6 +201,14 @@ describe('open/close', () => {
     expect(widget.isOpen()).toBe(false)
   })
 
+  it('removes the launcher when the frame says there is nothing here for this visitor', async () => {
+    const { widget, root, fromFrame } = widgetHarness({ open: true })
+    await fromFrame({ source: SOURCE, type: 'unavailable' })
+    expect(widget.isOpen()).toBe(false)
+    expect(widget.isDismissed()).toBe(true)
+    expect(root.querySelector('.launcher')).toBeNull()
+  })
+
   it('lets the frame set its own height in overlay mode', async () => {
     const { root, fromFrame } = widgetHarness()
     await fromFrame({ source: SOURCE, type: 'resize', height: 300 })

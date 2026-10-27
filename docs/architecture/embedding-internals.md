@@ -249,17 +249,39 @@ page within their own access. The rules:
   conversation is created; or a later one, followed by a page declaration so the
   conversation is stamped before the turn), when a View sends a `ui/message`, and
   when a card in a conversation they open loads read-only or is refused `no_grant`
-  (opening their own conversation is their act; the line then shows). From then on
-  every mint of that tab asks again (a granted contact token lives 10 minutes, so
-  about every 5) until they press Stop.
-- **30 minutes** (`canopy_sdk.contract.ACCESS_TOKEN_MAX_LIFETIME`, which
-  `host_grants.MAX_TOKEN_SECONDS` follows).
+  (opening their own conversation is their act). From then on every mint of that
+  tab asks again (a granted token lives 10 minutes, so about every 5) until they
+  press Stop.
+- **Unusable until confirmed with the person's passkey.** A redeemed grant has no
+  `confirmed_at`; `host_grants.live`, `lookup` (→ `UNCONFIRMED`) and
+  `host_gateway.context_for_grant` refuse it. The panel shows a prompt
+  (`PageGrantConfirm` in `EmbedApp.tsx`) and the send waits for it
+  (`pageGrant.settled`): **Confirm with passkey** runs a WebAuthn assertion in
+  canopy's frame against `POST /api/embed/host-grant/confirm/begin|finish` (the
+  panel's own token; the challenge in the cache, keyed to the grant), which
+  `host_grants.confirm`s it; **Not now** stops it and the message goes without.
+  The token is the host's to hold, so it proves nothing about the person; the
+  assertion is signed over canopy's origin, which the framing page cannot produce.
+  The frame's `allow="publickey-credentials-get"` is set by the loader.
+- **30 minutes from the passkey, never extended.** `host_grants.confirm` caps the
+  grant at `CONFIRM_SECONDS` after the touch (and never past the host token's own
+  30, `canopy_sdk.contract.ACCESS_TOKEN_MAX_LIFETIME`). Each re-mint of the same
+  page (`same_page`) inherits the newest live confirmation AND its end
+  (`host_grants._inherit`), so renewing the token never prompts and never extends;
+  after the 30 minutes the next send asks for the passkey again.
+- **Never a contact's.** A contact has no passkey: `redeem` refuses a grant with no
+  user (only the live probe's synthetic principal, `probe=True`, is exempt and is
+  deleted with the probe), `contact_api` sends no ID-JAG on to it, and `lookup`
+  finds none for a contact. An agent that serves the site on pages
+  (`interface.page_sites`) is left off a contact's list there and cannot be started
+  by one (`contact_api._for_contacts`); when that leaves no agent, the frame posts
+  `unavailable` and the loader removes the launcher (as the visitor's × does).
 - **A conversation reads only through its own page's grant.** `host_grants.lookup`
   (the gateway's and Views' one lookup): with a session, only the grant
   `note_host_grant` stamped for that person — by a send, a page-state/actions
   declaration, the create, or a View call (stamped in `resolve_for_viewer` after the
   View's gates) — while it lives. Expired/pruned → `EXPIRED`, stopped → `REVOKED`,
-  none → `NONE`; never another page's grant. The agent says
+  not confirmed → `UNCONFIRMED`, none → `NONE`; never another page's grant. The agent says
   `host_gateway.no_grant_message`. Outside a conversation, the latest LIVE grant
   (bound to the agent first, then unbound). So a turn never reads through a grant
   the person did not give by acting in that conversation's page.
@@ -269,8 +291,8 @@ page within their own access. The rules:
   page and wipes their tokens. Routes (`apps/host_grants/grants_api.py`):
   `GET/DELETE /api/me/host-grants/` (Settings → Act-as-you permissions; by person,
   like a token — a site in a workspace you are not in can hold one for you),
-  `GET/DELETE /api/embed/host-grant` (a canopy user's panel line and Stop) and
-  `GET/DELETE /api/contact/host-grant` (a contact's). The panel re-reads its grant
+  `GET/DELETE /api/embed/host-grant` (the panel's line, its passkey prompt while
+  `confirmed` is false, and Stop). The panel re-reads its grant
   every minute and stops asking when it is gone; a Stop pressed on Settings can
   race one re-mint of an open tab, which then shows in both places to stop again.
 - **A View's card button says it is the person's.** `host_gateway.view_call` carries

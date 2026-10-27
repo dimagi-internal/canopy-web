@@ -20,6 +20,12 @@ MCP server, as this visitor, with this page's scope". canopy redeems it here:
 4. **Store** the access token encrypted, as this ARRIVAL's grant: one row per
    arrival, which the token minted with it points at, so a conversation reaches
    the site through the grant of the page it is on (`grant_for(session=)`).
+5. **Wait for the person's passkey.** A stored grant is unusable until the person
+   confirms it in the panel (`confirm`), and lasts `CONFIRM_SECONDS` from that
+   touch. A re-mint of a page whose permission is confirmed and live inherits the
+   confirmation and its end (`_inherit`), so renewing the panel's token never asks
+   again and never extends the permission. Only a canopy user has a passkey: a
+   contact is never redeemed a grant at all.
 
 **Everything here fails closed, and none of it fails the arrival.** The caller
 (`contact_api.contact_token`) catches `HostGrantError`, records an Event and
@@ -58,6 +64,8 @@ METADATA_CACHE_SECONDS = 600
 #: An ID-JAG is a handful of claims; anything this large is not one, and is
 #: refused before a signature check spends CPU on it.
 MAX_ID_JAG_BYTES = contract.MAX_JWT_BYTES
+#: How long one passkey confirmation lets an agent act as the person on a page.
+CONFIRM_SECONDS = 30 * 60
 
 #: A refusal with a stable `code`. The message never contains a credential. The
 #: SDK's class, so a refusal from `consumer.check_id_jag` is this type.
@@ -153,7 +161,7 @@ def _token_request(endpoint: str, form: dict):
 
 
 def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
-           runner_requirements=(), agent=None):
+           runner_requirements=(), agent=None, probe: bool = False):
     """Redeem the host's ID-JAG for a DPoP-bound access token and store it.
 
     `runner_requirements` are the arrival's (already parsed from the verified
@@ -162,13 +170,21 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     arrival was BOUND to (`canopy_agent`), or None: a bound grant is kept apart
     from the visitor's other grants and only that agent reaches it.
 
-    Returns the `HostGrant`. Raises `HostGrantError` for every refusal — the
-    caller decides that a refusal does not fail the arrival.
+    Returns the `HostGrant`, unconfirmed unless the same page's permission is
+    confirmed and live (`_inherit`). Raises `HostGrantError` for every refusal — the
+    caller decides that a refusal does not fail the arrival. A contact (no `user`) is
+    always refused: confirming takes a passkey, which only a canopy user has. The
+    live probe (`probe=True`) is the one grant with no person: its synthetic principal
+    is no canopy account, `lookup` never reaches it, and it is deleted when the probe
+    ends, so it is stored confirmed.
     """
     from apps.common.encryption import encrypt_secret
 
     from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
+    if user is None and not probe:
+        raise HostGrantError("contact", "an act-as-you permission is confirmed with a passkey, "
+                                        "which only a canopy user has")
     if not app.issues_host_grants():
         raise HostGrantError("not_configured",
                              f"{app.name!r} has no host issuer / MCP resource configured")
@@ -198,8 +214,8 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
     # longer lives once it expires, so the visitor's expired ones go now.
     now = timezone.now()
     HostGrant.objects.filter(app=app, subject=subject, expires_at__lte=now).delete()
-    return HostGrant.objects.create(
-        app=app, subject=subject, agent=agent, contact=contact, user=user,
+    grant = HostGrant(
+        app=app, subject=subject, agent=agent, contact=None, user=user,
         access_token_enc=encrypt_secret(token),
         scope=scope,
         resource=app.host_mcp_resource,
@@ -207,15 +223,47 @@ def redeem(app, id_jag: str, *, subject: str, contact=None, user=None,
         runner_requirements=sorted(set(runner_requirements or ())),
         expires_at=now + timedelta(seconds=lifetime),
     )
+    if probe:
+        grant.confirmed_at = now
+    else:
+        _inherit(grant)
+    grant.save()
+    return grant
+
+
+def _inherit(grant) -> None:
+    """Carry the same page's live confirmation onto a re-mint, ending when it ends.
+
+    The panel renews its token every few minutes while its tab is open, and each
+    renewal is a fresh row; asking for the passkey on each would be a prompt every
+    few minutes, and letting each renewal start a new 30 minutes would make one
+    touch last as long as the tab. So a row inherits the confirmation of the page's
+    newest live confirmed row, and its end."""
+    held = (confirmed(unexpired(same_page(grant)))
+            .order_by("-confirmed_at", "-pk").first())
+    if held is None:
+        return
+    grant.confirmed_at = held.confirmed_at
+    grant.expires_at = min(grant.expires_at, held.confirmed_at + timedelta(seconds=CONFIRM_SECONDS))
+
+
+def confirm(grant, *, now=None) -> None:
+    """The person just confirmed `grant` with their passkey: usable from now, for
+    `CONFIRM_SECONDS` at most (never past the host token's own end)."""
+    now = now or timezone.now()
+    grant.confirmed_at = now
+    grant.expires_at = min(grant.expires_at, now + timedelta(seconds=CONFIRM_SECONDS))
+    grant.save(update_fields=["confirmed_at", "expires_at", "updated_at"])
 
 
 #: Why `lookup` found no grant: the person has none this conversation may use, the
-#: page's grant ran out, or the person stopped it.
-NONE, EXPIRED, REVOKED = "none", "expired", "revoked"
+#: page's grant ran out, the person stopped it, or never confirmed it with a passkey.
+NONE, EXPIRED, REVOKED, UNCONFIRMED = "none", "expired", "revoked", "unconfirmed"
 
 
 class Lookup:
-    """`lookup`'s answer: the grant, or why there is none (`NONE`/`EXPIRED`/`REVOKED`)."""
+    """`lookup`'s answer: the grant, or why there is none (`NONE`/`EXPIRED`/`REVOKED`/
+    `UNCONFIRMED`)."""
 
     __slots__ = ("grant", "reason")
 
@@ -223,19 +271,33 @@ class Lookup:
         self.grant, self.reason = grant, ("" if grant is not None else (reason or NONE))
 
 
-def live(rows):
-    """The rows of `rows` that can still be used: not expired, not revoked."""
+def unexpired(rows):
+    """Not expired, not revoked — confirmed or not."""
     return rows.filter(expires_at__gt=timezone.now(), revoked_at__isnull=True)
 
 
+def confirmed(rows):
+    return rows.filter(confirmed_at__isnull=False)
+
+
+def live(rows):
+    """The rows of `rows` that can be used: confirmed with a passkey, not expired,
+    not revoked. Every reader that spends a grant goes through this (or `lookup`)."""
+    return confirmed(unexpired(rows))
+
+
+def pending(rows):
+    """The rows of `rows` waiting for the person's passkey: unexpired, unconfirmed."""
+    return unexpired(rows).filter(confirmed_at__isnull=True)
+
+
 def _principal_rows(app, *, contact=None, user=None):
+    """A user's grants at `app`; None for a contact, who never holds one."""
     from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
-    if contact is not None:
-        return HostGrant.objects.filter(app=app, contact=contact)
-    if user is not None:
-        return HostGrant.objects.filter(app=app, user=user)
-    return None
+    if contact is not None or user is None:
+        return None
+    return HostGrant.objects.filter(app=app, user=user, contact__isnull=True)
 
 
 def lookup(app, *, agent, contact=None, user=None, session=None) -> Lookup:
@@ -248,12 +310,15 @@ def lookup(app, *, agent, contact=None, user=None, session=None) -> Lookup:
     call it makes (`canopy_sessions.services.note_host_grant`). A host may hold a
     page's grant to what that page shows, so a conversation on one page must never
     read through the grant another of their pages minted — not even once its own
-    has run out: then the answer is `EXPIRED` ("reload the page"), and a stopped
-    grant is `REVOKED`. A page only holds a grant once the person sent from it (the
+    has run out: then the answer is `EXPIRED` ("reload the page"), a stopped
+    grant is `REVOKED`, and one the person has not confirmed with their passkey is
+    `UNCONFIRMED`. A page only holds a grant once the person sent from it (the
     panel asks its host for one then, never on load), so a turn never reaches a
     grant the person did not trigger.
 
-    **Outside one (`session=None`)**: their latest LIVE grant — one bound to `agent`
+    A contact has none (`_principal_rows`).
+
+    **Outside one (`session=None`)**: their latest LIVE (confirmed) grant — one bound to `agent`
     first (the page that chose this agent granted those scopes for it), then an
     unbound one (an arrival that named no binding); expired and stopped rows never.
 
@@ -283,6 +348,8 @@ def lookup(app, *, agent, contact=None, user=None, session=None) -> Lookup:
             return Lookup(reason=REVOKED)
         if grant.expires_at <= timezone.now():
             return Lookup(reason=EXPIRED)
+        if grant.confirmed_at is None:
+            return Lookup(reason=UNCONFIRMED)
         return Lookup(grant)
     # Bound before unbound (NULLs last), then the latest arrival — live rows only,
     # so an expired bound grant can never sort ahead of a live unbound one.
@@ -312,24 +379,22 @@ def same_page(grant):
 
 
 def revoke(grant) -> int:
-    """Stop `grant` and every live grant of the same page (`same_page`), at once: the
-    gateway and Views refuse them from now on (`lookup` → `REVOKED`), and their
-    access tokens are wiped. Returns how many rows it stopped."""
-    return live(same_page(grant)).update(revoked_at=timezone.now(), access_token_enc="")
+    """Stop `grant` and every unexpired grant of the same page (`same_page`),
+    confirmed or still waiting, at once: the gateway and Views refuse them from now on
+    (`lookup` → `REVOKED`), and their access tokens are wiped. Returns how many rows
+    it stopped."""
+    return unexpired(same_page(grant)).update(revoked_at=timezone.now(), access_token_enc="")
 
 
 def live_for(*, user=None, contact=None) -> list:
-    """The person's live grants, one per page (`same_page`) — the newest row of each,
-    newest first. A user's are every grant redeemed for their account, whichever
-    site and workspace; a contact's are their own."""
+    """The person's live (confirmed) grants, one per page (`same_page`) — the newest
+    row of each, newest first: every grant redeemed for their account, whichever site
+    and workspace. A contact holds none."""
     from apps.tokens.models import HostGrant  # noqa: PLC0415 — a model read: loads with a call, as this module's other model reads
 
-    if contact is not None:
-        rows = HostGrant.objects.filter(contact=contact)
-    elif user is not None and getattr(user, "is_authenticated", False):
-        rows = HostGrant.objects.filter(user=user)
-    else:
+    if contact is not None or user is None or not getattr(user, "is_authenticated", False):
         return []
+    rows = HostGrant.objects.filter(user=user)
     out, seen = [], set()
     for grant in live(rows).select_related("app", "agent").order_by("-expires_at", "-pk"):
         key = (grant.app_id, grant.agent_id, grant.scope)

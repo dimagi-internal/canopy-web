@@ -261,7 +261,7 @@ from apps.embedding.connected_apps_api import connected_apps_router  # noqa: E40
 from apps.host_grants.api import needs_router as site_needs_router  # noqa: E402
 from apps.contacts.member_profile_api import router as member_profile_router  # noqa: E402
 from apps.host_grants.api import sites_router  # noqa: E402
-from apps.host_grants.grants_api import contact_grant_router, embed_grant_router  # noqa: E402
+from apps.host_grants.grants_api import embed_grant_router  # noqa: E402
 from apps.host_grants.grants_api import me_router as host_grants_me_router  # noqa: E402
 from apps.agents.api_delegated import me_router as delegated_me_router  # noqa: E402
 from apps.embedding.embed_api import embed_router
@@ -338,7 +338,6 @@ api.add_router("", delegated_me_router)  # /api/me/delegated-credentials/
 # apps/common/middleware.py. `/api/auth/contact-token` mints one and is
 # unauthenticated because the signed assertion is the credential.
 api.add_router("/contact", contact_router)
-api.add_router("/contact", contact_grant_router)  # the panel's "Stop" for a contact
 api.add_router("/auth", contact_token_router)
 api.add_router("/reviews", reviews_router)
 api.add_router("/ddd", runs_router)

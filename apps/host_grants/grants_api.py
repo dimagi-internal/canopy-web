@@ -1,8 +1,9 @@
-"""A person's own host grants: see them, and stop them.
+"""A person's own host grants: confirm them, see them, and stop them.
 
 A host grant (`tokens.HostGrant`, `host_grants.py`) lets an agent read a connected
-site's tools AS the person, for the page they sent from. The person sees and stops
-them in three places, all reading the same rows (`host_grants.live_for`,
+site's tools AS the person, for the page they sent from — once they confirmed it
+with their passkey. Only a canopy user holds one; a contact never does. The person
+sees and stops them in two places, reading the same rows (`host_grants.live_for`,
 `host_grants.revoke`):
 
 * **Settings** — `GET /api/me/host-grants/` and `DELETE /api/me/host-grants/{id}`:
@@ -10,11 +11,16 @@ them in three places, all reading the same rows (`host_grants.live_for`,
   minted on. It is your own credential, like a token on the same page, so it is
   read by person, not per organisation: a site in a workspace you are not a member
   of can still hold a grant for you.
-* **The panel, as a canopy user** — `GET /api/embed/host-grant` and
-  `DELETE /api/embed/host-grant`: the grant the panel's own token carries (the
-  page it is on), for the "can read what this page shows, as you · Stop" line.
-* **The panel, as a contact** — `GET /api/contact/host-grant` and
-  `DELETE /api/contact/host-grant`: the same, on the contact surface.
+* **The panel** — `GET /api/embed/host-grant` and `DELETE /api/embed/host-grant`:
+  the grant the panel's own token carries (the page it is on), for the "can act as
+  you on this page · Stop" line, or the passkey prompt while it waits.
+
+**Confirming** is the panel's too: `POST /api/embed/host-grant/confirm/begin` and
+`/finish` are a WebAuthn assertion with one of the token's user's own passkeys,
+made in canopy's frame. The panel's token is held by the site that framed it, so
+the token alone proves nothing about the person; the assertion does — it is signed
+over canopy's origin, which no other page can produce. A confirmed grant lasts
+`host_grants.CONFIRM_SECONDS` from the touch.
 
 Stopping a grant stops the page's whole permission (`host_grants.same_page`: the
 panel re-mints while its tab is open, so one page's permission is several rows),
@@ -28,18 +34,18 @@ from django.http import HttpRequest
 from ninja import Router, Schema, Status
 
 from apps.api.auth import session_auth
-from apps.api.errors import TYPE_NOT_FOUND, ProblemError
+from apps.api.errors import TYPE_CONFLICT, TYPE_NOT_FOUND, TYPE_VALIDATION, ProblemError
 from apps.api.route_gates import gate
-from apps.contacts.contact_api import contact_auth
 from apps.events import audit
+from apps.passkeys import services as passkeys
+from apps.passkeys import stepup
+from apps.passkeys.schemas import PasskeyAssertIn, PasskeyOptionsOut
 from apps.tokens.models import HostGrant
 
 from . import host_grants
 
 me_router = Router(auth=session_auth, tags=["host grants"])
 embed_grant_router = Router(auth=session_auth, tags=["host grants"])
-#: The contact surface's twin (`/api/contact/host-grant`), on the contact's own auth.
-contact_grant_router = Router(auth=contact_auth, tags=["contact"])
 
 
 class HostGrantOut(Schema):
@@ -53,12 +59,15 @@ class HostGrantOut(Schema):
     scope: str = ""
     #: Since when this page's permission has been held (its newest grant).
     granted_at: datetime
-    #: When it runs out, unless the page re-grants first.
+    #: When it runs out: 30 minutes after the passkey confirmed it, at most.
     expires_at: datetime
+    #: Whether the person confirmed it with their passkey. Until then no agent may use it.
+    confirmed: bool = False
 
 
 class PanelGrantOut(Schema):
-    #: The live grant the panel's own token carries, or null: none, run out or stopped.
+    #: The grant the panel's own token carries — confirmed, or waiting for the
+    #: person's passkey — or null: none, run out or stopped.
     grant: HostGrantOut | None = None
 
 
@@ -67,7 +76,8 @@ def _out(grant) -> HostGrantOut:
         id=grant.pk, site=grant.app.name,
         agent=grant.agent.slug if grant.agent_id else "",
         agent_name=(grant.agent.name or grant.agent.slug) if grant.agent_id else "",
-        scope=grant.scope, granted_at=grant.created_at, expires_at=grant.expires_at)
+        scope=grant.scope, granted_at=grant.created_at, expires_at=grant.expires_at,
+        confirmed=grant.confirmed_at is not None)
 
 
 def _stop(grant) -> int:
@@ -90,8 +100,8 @@ def _stop(grant) -> int:
 def list_my_host_grants(request: HttpRequest) -> list[HostGrantOut]:
     """Every live host grant held for you: which site, which agent, what it may
     read, and until when — one row per page you sent from. A grant is taken only
-    once you send a message in a site's panel, and lasts 30 minutes unless that
-    page grants again."""
+    once you send a message in a site's panel and confirm it with your passkey,
+    and lasts 30 minutes from that confirmation."""
     return [_out(g) for g in host_grants.live_for(user=request.user)]
 
 
@@ -112,28 +122,28 @@ def revoke_my_host_grant(request: HttpRequest, grant_id: int) -> Status:
 
 
 def _token_grant(request):
-    """The live grant the request's own token carries — the page the panel is on."""
+    """The unexpired grant the request's own token carries — the page the panel is
+    on — confirmed or still waiting for the person's passkey. A user's only."""
     grant_id = getattr(request, "host_grant_id", None)
-    if not grant_id:
+    if not grant_id or getattr(request, "contact", None) is not None:
         return None
-    rows = HostGrant.objects.filter(pk=grant_id).select_related("app", "agent")
-    contact = getattr(request, "contact", None)
-    rows = rows.filter(contact=contact) if contact is not None else rows.filter(user=request.user)
-    return host_grants.live(rows).first()
+    rows = HostGrant.objects.filter(pk=grant_id, user=request.user, contact__isnull=True)
+    return host_grants.unexpired(rows).select_related("app", "agent").first()
 
 
 @embed_grant_router.get("/host-grant", response=PanelGrantOut,
-                        summary="What this panel's page lets the agent read as me")
+                        summary="What this panel's page lets the agent do as me")
 @gate("self")
 def panel_host_grant(request: HttpRequest) -> PanelGrantOut:
-    """The live grant the panel's own token carries — the page it is on — or
-    null. The panel shows it as "can read what this page shows, as you, until …"."""
+    """The grant the panel's own token carries — the page it is on — or null. The
+    panel shows a confirmed one as "can act as you on this page until …", and asks
+    for your passkey while one waits (`confirmed: false`)."""
     grant = _token_grant(request)
     return PanelGrantOut(grant=_out(grant) if grant is not None else None)
 
 
 @embed_grant_router.delete("/host-grant", response=PanelGrantOut,
-                           summary="Stop this panel's page letting the agent read as me")
+                           summary="Stop this panel's page letting the agent act as me")
 @gate("self", setting=True)
 def stop_panel_host_grant(request: HttpRequest) -> PanelGrantOut:
     """Stop the grant the panel's token carries, and every live grant of the same
@@ -144,22 +154,64 @@ def stop_panel_host_grant(request: HttpRequest) -> PanelGrantOut:
     return PanelGrantOut(grant=None)
 
 
-@contact_grant_router.get("/host-grant", response=PanelGrantOut,
-                          summary="What this panel's page lets the agent read as me")
-@gate("contact")
-def contact_host_grant(request: HttpRequest) -> PanelGrantOut:
-    """The live grant your panel's token carries — the page it is on — or null."""
+def _waiting_grant(request):
     grant = _token_grant(request)
-    return PanelGrantOut(grant=_out(grant) if grant is not None else None)
+    if grant is None:
+        raise ProblemError(404, "No permission is waiting on this page", type_=TYPE_NOT_FOUND,
+                           detail="Send from the panel to ask for one.")
+    return grant
 
 
-@contact_grant_router.delete("/host-grant", response=PanelGrantOut,
-                             summary="Stop this panel's page letting the agent read as me")
-@gate("contact", setting=True)
-def contact_stop_host_grant(request: HttpRequest) -> PanelGrantOut:
-    """Stop the grant your panel's token carries, and every live grant of the
-    same page. The panel asks for none until you send again."""
-    grant = _token_grant(request)
-    if grant is not None:
-        _stop(grant)
-    return PanelGrantOut(grant=None)
+def _slot(grant) -> str:
+    # One ceremony per grant: a challenge begun for one page cannot confirm another.
+    return f"host-grant:{grant.pk}"
+
+
+# The panel's own token, deliberately — not a browser session: on a site's page the
+# frame has none. What makes it the person is the passkey assertion over canopy's
+# origin, which the site holding the token cannot produce (module docstring).
+@embed_grant_router.post("/host-grant/confirm/begin", response=PasskeyOptionsOut,
+                         summary="Start confirming this page's act-as-you permission with my passkey")
+@gate("self", kind="ephemeral-credential")  # a ceremony's challenge, for the person's own grant
+def begin_confirm_host_grant(request: HttpRequest) -> PasskeyOptionsOut:
+    """Options for navigator.credentials.get(), to confirm the permission this
+    panel's page is waiting on with one of your passkeys."""
+    stepup.require_a_person(request, "confirming an act-as-you permission")
+    grant = _waiting_grant(request)
+    options = passkeys.begin_assertion(request, slot=_slot(grant))
+    if options is None:
+        raise ProblemError(
+            409, "No passkey registered", type_=TYPE_CONFLICT,
+            detail="Register a passkey (canopy Settings → Passkeys), then send again.",
+            members={"error": "no_passkey", "register_url": stepup.REGISTER_PATH},
+        )
+    return PasskeyOptionsOut(options=options)
+
+
+@embed_grant_router.post("/host-grant/confirm/finish", response=PanelGrantOut,
+                         summary="Confirm this page's act-as-you permission with my passkey")
+@gate("self", setting=True)
+def finish_confirm_host_grant(request: HttpRequest, payload: PasskeyAssertIn) -> PanelGrantOut:
+    """Verify the passkey assertion and confirm the permission: from now, for 30
+    minutes, the agent may act as you on this page."""
+    stepup.require_a_person(request, "confirming an act-as-you permission")
+    grant = _waiting_grant(request)
+    try:
+        passkeys.finish_assertion(request, payload.credential, slot=_slot(grant))
+    except passkeys.CeremonyError as exc:
+        raise ProblemError(400, "Passkey verification failed", type_=TYPE_VALIDATION,
+                           detail=str(exc)) from exc
+    if grant.confirmed_at is None:
+        host_grants.confirm(grant)
+        audit.note_change(scope="host_grant",
+                          before={"site": grant.app.name, "scope": grant.scope, "confirmed": False},
+                          after={"site": grant.app.name, "scope": grant.scope, "confirmed": True,
+                                 "until": grant.expires_at.isoformat()},
+                          summary=f"confirmed with a passkey: {grant.app.name} may be read as them "
+                                  f"({grant.scope or '-'})")
+        # MCP Apps: list the site's tools as the person now that they may be, so a
+        # result from the agent's own login (path D) finds its View.
+        from apps.mcp_apps_host import mcp_apps_views  # noqa: PLC0415 — as contact_api's: loads at the confirm only
+
+        mcp_apps_views.refresh_index_soon(grant.app, grant)
+    return PanelGrantOut(grant=_out(grant))

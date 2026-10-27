@@ -22,6 +22,7 @@ from ninja import Router, Schema
 from ninja.errors import HttpError
 from ninja.security import HttpBearer
 
+from apps.agents.interface import page_sites
 from apps.api.route_gates import gate
 from apps.canopy_sessions.conversation_keys import CannotHold
 from apps.canopy_sessions.models import Session
@@ -65,9 +66,11 @@ CONTACT_TOKEN_TTL_SECONDS = 30 * 60
 #: the widget re-mints — and the host issues a fresh ID-JAG — while the visitor is
 #: using it (host grant contract v1, "Freshness"). The panel's client refetches a
 #: token 5 minutes before it expires, so ten minutes means a fresh grant about every
-#: five. The panel asks for a grant only once the person has sent a message in it;
-#: a host access token lives at most 30 minutes and is never refreshed, so a
-#: visitor's host access ends within half an hour of their page last acting.
+#: five. The panel asks for a grant only once the person has sent a message in it,
+#: and the person confirms it with their passkey; each re-mint inherits that
+#: confirmation and its end (`host_grants._inherit`), so one touch lasts 30 minutes
+#: however often the token is renewed. Only a canopy user arriving as themselves
+#: gets one: a contact has no passkey.
 HOST_GRANT_REMINT_SECONDS = 10 * 60
 
 
@@ -341,10 +344,13 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
     the grant to name that same `sub`. Every refusal is an Event (and a log
     line with the code — never the token), because "the agent could not reach
     the site as me" otherwise has nowhere to be seen.
+    A contact is never redeemed one: an act-as-you permission is confirmed with a
+    passkey, which only a canopy user has. Nothing is recorded for that — a host
+    sending a grant with every arrival is not misconfigured.
     """
     from apps.host_grants import host_grants
 
-    if not (id_jag or "").strip():
+    if user is None or not (id_jag or "").strip():
         return None
     subject = str(claims.get("sub") or "").strip()
     if len(id_jag) > host_grants.MAX_ID_JAG_BYTES:
@@ -365,11 +371,13 @@ def _redeem_host_grant(request, app, id_jag: str, *, claims: dict, contact, user
                                    detail=type(exc).__name__)
         return None
     host_grants.record_outcome(app, ok=True, subject=subject, scope=grant.scope)
-    # MCP Apps: list the site's tools as this visitor in the background, so a
-    # result from the agent's own login (path D) finds its View.
-    from apps.mcp_apps_host import mcp_apps_views
+    if grant.confirmed_at is not None:
+        # MCP Apps: list the site's tools as this visitor in the background, so a
+        # result from the agent's own login (path D) finds its View. Only once the
+        # person confirmed the page (else at their passkey, `grants_api`).
+        from apps.mcp_apps_host import mcp_apps_views
 
-    mcp_apps_views.refresh_index_soon(app, grant)
+        mcp_apps_views.refresh_index_soon(app, grant)
     return grant
 
 
@@ -403,7 +411,7 @@ def contact_me(request: HttpRequest) -> ContactMeOut:
 
     contact = request.contact
     app = request.delegated_app
-    rows = list(_bound(request, (
+    rows = _for_contacts(app, _bound(request, (
         Agent.objects.filter(embedding_apps__app=app, workspace_id=contact.workspace_id)
         .order_by("slug")
         .distinct()
@@ -484,6 +492,15 @@ def _tenant_for(app, agent_slug: str):
     return app.workspace
 
 
+def _for_contacts(app, agents) -> list:
+    """The agents of `agents` a contact may talk to on `app`'s pages: never one that
+    serves the site on pages (`interface.page_sites`). On a page such an agent reaches
+    the site only as the person, under an act-as-you permission confirmed with a
+    passkey, and with its own login there withheld — a contact has no passkey, so it
+    could do nothing there. A site offering only such agents shows a contact no panel."""
+    return [a for a in agents if app.name not in page_sites(a)]
+
+
 def _bound(request: HttpRequest, rows, field: str = "agent_id"):
     """`rows` narrowed to the one agent this contact's token is bound to (a page
     that chose its agent — `ContactToken.bound_agent`), if it is. Every contact
@@ -553,7 +570,7 @@ def start_session(request: HttpRequest, payload: ContactSessionCreateIn) -> Cont
         ), "pk")
         .first()
     )
-    if agent is None:
+    if agent is None or not _for_contacts(app, [agent]):
         raise HttpError(404, f"{payload.agent_slug!r} is not offered here")
 
     from apps.canopy_sessions import services as session_services
