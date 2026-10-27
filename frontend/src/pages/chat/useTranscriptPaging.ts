@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { UseSessionSocketResult } from 'canopy-ui/chat'
 
-import { getSession, listMessages, requestBackfill, type ChatSessionDetail } from '@/api/chat'
+import { getSession, requestBackfill, type ChatSessionDetail } from '@/api/chat'
 import { backfillAction, restToKitMessage } from '../chatPageLogic'
 
 /**
@@ -18,17 +18,16 @@ import { backfillAction, restToKitMessage } from '../chatPageLogic'
 export const BACKFILL_POLL_MS = 600
 export const BACKFILL_TIMEOUT_MS = 30_000
 
-/** Scroll-back ("Load earlier") and the full backfill from the runner ("Load
- *  full session"). The cursor is seeded from the REST detail via `seed` — the
- *  WS `session.state` snapshot doesn't carry it, it's frozen to the tail page
- *  it was built from. */
+/** The whole server transcript ("Load all messages") and the full backfill
+ *  from the runner ("Load full session"). Whether the server holds more than
+ *  the tail is seeded from the REST detail via `seed` — the WS `session.state`
+ *  snapshot doesn't carry it, it's frozen to the tail page it was built from. */
 export function useTranscriptPaging(
   sessionId: string,
   prependMessages: UseSessionSocketResult['prependMessages'],
 ) {
   const [hasMoreBefore, setHasMoreBefore] = useState(false)
-  const [oldestTurn, setOldestTurn] = useState<number | null>(null)
-  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const [loadingAll, setLoadingAll] = useState(false)
   const [loadingFull, setLoadingFull] = useState(false)
   const [historyUnavailable, setHistoryUnavailable] = useState(false)
 
@@ -36,40 +35,37 @@ export function useTranscriptPaging(
     setHistoryUnavailable(false)
   }, [sessionId])
 
-  const seed = useCallback((m: Pick<ChatSessionDetail, 'has_more_before' | 'oldest_loaded_turn_index'>) => {
+  const seed = useCallback((m: Pick<ChatSessionDetail, 'has_more_before'>) => {
     setHasMoreBefore(m.has_more_before)
-    setOldestTurn(m.oldest_loaded_turn_index ?? null)
   }, [])
 
-  const loadEarlier = useCallback(async () => {
-    if (oldestTurn == null || loadingEarlier) return
+  // "Load all messages", not one page back: whoever reaches for this menu item
+  // wants the whole conversation, and paging back by hand meant tapping it over
+  // and over. One full read of what the server holds — the runner backfill is
+  // still "Load full session".
+  const loadAll = useCallback(async () => {
+    if (loadingAll) return
     // Capture the session this call was made for. Belt-and-suspenders on top
     // of the route-level `key={id}` remount (router.tsx): even if this
     // component instance somehow outlives the session it was fetching for,
     // a stale response can never splice into whatever session is current.
     const requestedId = sessionId
-    setLoadingEarlier(true)
+    setLoadingAll(true)
     try {
-      const page = await listMessages(requestedId, oldestTurn)
+      const full = await getSession(requestedId, { full: true })
       if (requestedId !== sessionId) return
-      if (page.messages.length > 0) {
-        prependMessages(page.messages.map(restToKitMessage))
-        setOldestTurn(page.messages[0].turn_index)
-      }
-      // A local (origin=runner) session with no server rows yet returns an
-      // empty page with has_more_before=false — history lives on the runner,
-      // so fall through to offering the full backfill instead.
-      setHasMoreBefore(page.messages.length > 0 ? page.has_more_before : false)
+      if (full.messages.length > 0) prependMessages(full.messages.map(restToKitMessage))
+      setHasMoreBefore(false)
     } catch {
-      /* keep what's shown; the button stays available to retry */
+      /* keep what's shown; the item stays available to retry */
     } finally {
-      if (requestedId === sessionId) setLoadingEarlier(false)
+      if (requestedId === sessionId) setLoadingAll(false)
     }
-  }, [sessionId, oldestTurn, loadingEarlier, prependMessages])
+  }, [sessionId, loadingAll, prependMessages])
 
   const loadFull = useCallback(async () => {
     if (loadingFull) return
-    // See loadEarlier: capture the session this call was made for so a
+    // See loadAll: capture the session this call was made for so a
     // stale response can never apply to a different session.
     const requestedId = sessionId
     setHistoryUnavailable(false)
@@ -108,7 +104,6 @@ export function useTranscriptPaging(
       if (requestedId !== sessionId) return
       prependMessages(full.messages.map(restToKitMessage))
       setHasMoreBefore(false)
-      setOldestTurn(full.oldest_loaded_turn_index ?? null)
     } catch {
       if (requestedId === sessionId) setHistoryUnavailable(true)
     } finally {
@@ -118,11 +113,11 @@ export function useTranscriptPaging(
 
   return {
     hasMoreBefore,
-    loadingEarlier,
+    loadingAll,
     loadingFull,
     historyUnavailable,
     seed,
-    loadEarlier,
+    loadAll,
     loadFull,
   }
 }

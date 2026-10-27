@@ -161,7 +161,7 @@ const ChatListPage = lazySection(() =>
 // chat/A -> chat/B reuses the same component instance (react-router only
 // re-renders on a param change) — its useState cells (scroll-back cursor,
 // oldestTurn, etc.) and the WS socket from useSessionSocket all carry over,
-// so an in-flight loadEarlier/loadFull response from session A can splice
+// so an in-flight loadAll/loadFull response from session A can splice
 // into session B's transcript. Keying on `id` makes React tear down and
 // rebuild the whole subtree (state + attach/detach + WS effects all
 // re-fire cleanly) on every session switch.
