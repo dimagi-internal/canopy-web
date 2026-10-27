@@ -325,7 +325,14 @@ if (-not $NoAutoUpdate) {
 
 # Start the runner now so a first install does not wait for the next logon. /End
 # first: the task is IgnoreNew, so on an UPDATE a bare /Run is a no-op and the old
-# daemon keeps running the old code -- the same /End, /Run self_update.install_windows does.
+# daemon keeps running the old code. And WAIT for /End to settle: a /Run that lands
+# while the old daemon is still Running is dropped too -- the same /End, wait, /Run
+# as platform_jobs.restart_windows_task.
 & schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
+for ($i = 0; $i -lt 30; $i++) {
+    $state = (& schtasks /Query /TN "$TASK_FOLDER\$RUNNER_TASK" /FO CSV /NH 2> $null) -join ''
+    if ($state -notmatch '"Running"') { break }
+    Start-Sleep -Milliseconds 500
+}
 & schtasks /Run /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
 Info "done -- logs at $runnerLog"

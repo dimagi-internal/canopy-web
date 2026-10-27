@@ -21,11 +21,10 @@ down that whole process tree — this command included — leaving the timer UNL
 install-runner.sh learned the hard way. So under the updater (launchd tells us with
 `XPC_SERVICE_NAME`; `self-update` also sets `CANOPY_RUNNER_UNDER_JOB=updater`), the
 updater's definition is written and left for the next load, and on Windows its task is
-re-registered only if its definition actually changed.
+re-registered only if its definition (the whole registration script) actually changed.
 """
 from __future__ import annotations
 
-import json
 import os
 import platform as _platform
 import plistlib
@@ -315,7 +314,7 @@ def _stamp_path(home: Path) -> Path:
 
 
 def setup_windows(root: Path, home: Path, config: Path, *, run=subprocess.run, out=print,
-                  env=None) -> int:
+                  env=None, sleep=None) -> int:
     app_dir = bundle.windows_app_dir(str(root / "python" / "python.exe"))
     if app_dir is None:
         raise SetupError(f"{root} is not inside a Canopy Runner install (no versions\\ or "
@@ -344,7 +343,11 @@ def setup_windows(root: Path, home: Path, config: Path, *, run=subprocess.run, o
     register("canopy-runner", updater=False)
     out("==> turning on automatic updates")
     stamp = _stamp_path(home)
-    want = json.dumps(list(cmds["canopy-runner-updater"]))
+    # The stamp is the WHOLE registration script, not just (exe, args): a change to the
+    # updater's trigger or settings must re-register it on the next update too, or
+    # self-update could never change the task it runs under.
+    want = register_script("canopy-runner-updater", *cmds["canopy-runner-updater"],
+                           updater=True)
     try:
         have = stamp.read_text(encoding="utf-8")
     except OSError:
@@ -357,9 +360,19 @@ def setup_windows(root: Path, home: Path, config: Path, *, run=subprocess.run, o
             stamp.write_text(want, encoding="utf-8")
         except SetupError as exc:
             out(f"    WARNING: {exc} — the runner works, but updates stay manual for now")
-    out("==> starting the runner")
-    run(["schtasks", "/Run", "/TN", platform_jobs.WINDOWS_RUNNER_TASK],
-        capture_output=True, text=True, timeout=30, **platform_jobs.no_window())
+    if under_updater(env):
+        # self-update restarts the runner itself (restart_windows_task) once this returns.
+        out("==> starting the runner")
+        run(["schtasks", "/Run", "/TN", platform_jobs.WINDOWS_RUNNER_TASK],
+            capture_output=True, text=True, timeout=30, **platform_jobs.no_window())
+        return 0
+    # A person re-running the installer: the task is IgnoreNew, so a bare /Run is
+    # dropped while the old daemon runs — end it, wait, run, so the new code starts.
+    out("==> (re)starting the runner")
+    if not platform_jobs.restart_windows_task(platform_jobs.WINDOWS_RUNNER_TASK, run=run,
+                                              sleep=sleep):
+        out(f"    WARNING: {platform_jobs.WINDOWS_RUNNER_TASK} is not running yet — it starts "
+            "within 5 minutes, or at your next sign-in")
     return 0
 
 
@@ -409,7 +422,7 @@ def run_setup(config_path: Path, *, no_pair: bool = False, base_url: str = "",
             rc = setup_macos(root, home, config_path, out=out,
                              launchd=Launchd(run=run, sleep=sleep, uid=uid, out=out, env=env))
         else:
-            rc = setup_windows(root, home, config_path, run=run, out=out, env=env)
+            rc = setup_windows(root, home, config_path, run=run, out=out, env=env, sleep=sleep)
     except SetupError as exc:
         out(f"Setup did not finish: {exc}")
         return 1

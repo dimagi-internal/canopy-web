@@ -114,3 +114,50 @@ def no_window() -> dict:
     console program they start (powershell, schtasks, python.exe) would otherwise flash
     a window of its own in front of whoever is using the computer. Empty elsewhere."""
     return {"creationflags": 0x08000000} if is_windows() else {}  # CREATE_NO_WINDOW
+
+
+#: How long `restart_windows_task` waits for /End to settle, and then for /Run to take.
+TASK_SETTLE_SECONDS = 15
+TASK_POLL_SECONDS = 0.5
+
+
+def windows_task_running(task: str, *, run=subprocess.run) -> bool:
+    """Is `task` Running right now? `schtasks /Query /FO CSV /NH` prints one line,
+    `"<task>","<next run>","<status>"`. Any failure to ask reads as not running."""
+    try:
+        p = run(["schtasks", "/Query", "/TN", task, "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=10, **no_window())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if p.returncode != 0:
+        return False
+    for line in (p.stdout or "").splitlines():
+        if line.rsplit(",", 1)[-1].strip().strip('"') == "Running":
+            return True
+    return False
+
+
+def restart_windows_task(task: str, *, run=subprocess.run, sleep=None,
+                         settle: float = TASK_SETTLE_SECONDS) -> bool:
+    """/End `task`, wait until it is no longer Running, /Run it, and confirm it runs.
+
+    The tasks are `-MultipleInstances IgnoreNew`: a /Run that lands while /End is
+    still settling is DROPPED, and the daemon stays down (until the 5-minute repeat
+    brings it back). So wait for /End to finish before /Run, then check /Run took.
+    True when the task is Running at the end."""
+    import time
+
+    sleep = time.sleep if sleep is None else sleep
+    tries = max(1, int(settle / TASK_POLL_SECONDS))
+    kw = dict(capture_output=True, text=True, timeout=30, **no_window())
+    run(["schtasks", "/End", "/TN", task], **kw)
+    for _ in range(tries):
+        if not windows_task_running(task, run=run):
+            break
+        sleep(TASK_POLL_SECONDS)
+    run(["schtasks", "/Run", "/TN", task], **kw)
+    for _ in range(tries):
+        if windows_task_running(task, run=run):
+            return True
+        sleep(TASK_POLL_SECONDS)
+    return False
