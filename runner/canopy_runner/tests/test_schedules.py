@@ -4,8 +4,6 @@ Tests the DECISION (is a slot due, is fire called with the right slot), not the 
 and not the cron math: DST/cron correctness is canopy_cron's suite, and duplicating it
 here would just re-test croniter through a second door.
 """
-import sys
-import pytest
 import datetime as dt
 
 from canopy_runner import schedules
@@ -54,7 +52,6 @@ class FakeClient:
         return {"id": f"turn-{schedule_id}"}
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: no tzdata on Windows: zoneinfo cannot resolve IANA zones there and canopy_cron/canopy_runner do not depend on tzdata, so every schedule fails")
 def test_nothing_due_fires_nothing():
     # Thursday: the Friday slot hasn't happened yet.
     client = FakeClient([_schedule()])
@@ -65,7 +62,6 @@ def test_nothing_due_fires_nothing():
     assert res == {"fired": [], "failed": []}
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: no tzdata on Windows: zoneinfo cannot resolve IANA zones there and canopy_cron/canopy_runner do not depend on tzdata, so every schedule fails")
 def test_due_slot_fires_once_with_the_slot():
     client = FakeClient([_schedule()])
     res = schedules.check_schedules(
@@ -89,7 +85,6 @@ def test_fire_after_is_the_anchor_not_last_slot():
     assert res["fired"] == []
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: no tzdata on Windows: zoneinfo cannot resolve IANA zones there and canopy_cron/canopy_runner do not depend on tzdata, so every schedule fails")
 def test_no_backfill_three_weeks_offline_owes_one_slot():
     """due_slot returns AT MOST one slot: a laptop offline for weeks owes the NEWEST
     occurrence only, not one turn per missed Friday."""
@@ -118,7 +113,6 @@ def test_paused_agent_does_not_fire():
     assert client.fired == []
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: no tzdata on Windows: zoneinfo cannot resolve IANA zones there and canopy_cron/canopy_runner do not depend on tzdata, so every schedule fails")
 def test_one_failing_schedule_does_not_stop_the_others():
     class HalfBroken(FakeClient):
         def fire_schedule(self, schedule_id, runner_id, slot):
@@ -134,7 +128,6 @@ def test_one_failing_schedule_does_not_stop_the_others():
     assert [f["schedule_id"] for f in res["fired"]] == [2]  # the healthy one still fired
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: no tzdata on Windows: zoneinfo cannot resolve IANA zones there and canopy_cron/canopy_runner do not depend on tzdata, so every schedule fails")
 def test_bad_cron_is_skipped_not_raised():
     client = FakeClient([_schedule(cron="not a cron"), _schedule(id=2)])
     res = schedules.check_schedules(

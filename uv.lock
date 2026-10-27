@@ -401,10 +401,14 @@ version = "0.1.0"
 source = { editable = "packages/canopy_cron" }
 dependencies = [
     { name = "croniter" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "croniter", specifier = ">=6.0,<7.0" }]
+requires-dist = [
+    { name = "croniter", specifier = ">=6.0,<7.0" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
 
 [[package]]
 name = "canopy-kb"

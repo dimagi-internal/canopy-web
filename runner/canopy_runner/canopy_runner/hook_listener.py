@@ -29,6 +29,8 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import os
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -42,6 +44,23 @@ from canopy_transcript import (
 )
 from canopy_transcript.signed_out import answered_at_transcript_end, signed_out_at_transcript_end
 from canopy_transcript.usage_limit import limit_at_transcript_end
+
+
+class _Server(ThreadingHTTPServer):
+    """ThreadingHTTPServer, but a held port is REFUSED on Windows too.
+
+    It sets SO_REUSEADDR, which on POSIX only skips TIME_WAIT but on Windows lets a
+    second socket bind a port another process is listening on — so a second runner
+    silently shared the hook port instead of falling back to a free one, and the two
+    ate each other's hooks (found by the Windows CI, canopy-web#2202). Windows' own
+    SO_EXCLUSIVEADDRUSE is the POSIX meaning."""
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET,
+                                   getattr(socket, "SO_EXCLUSIVEADDRUSE", -5), 1)
+        super().server_bind()
 
 # Mirrors `hooks.ANSWERED` — imported lazily there to keep this module free of
 # the runner's CDP/emdash imports, which is what lets it unit-test standalone.
@@ -448,11 +467,13 @@ class HookListener:
         # dead for every session that runner drove). Taking a free port instead
         # retires the whole collision class.
         try:
-            self._server = ThreadingHTTPServer(("127.0.0.1", self.port), _Handler)
+            self._server = _Server(("127.0.0.1", self.port), _Handler)
         except OSError as exc:
-            if exc.errno != errno.EADDRINUSE:
+            # Windows sockets report WSAEADDRINUSE (10048), not errno.EADDRINUSE, and
+            # an exclusively held port can answer WSAEACCES (10013).
+            if exc.errno not in (errno.EADDRINUSE, 10048, 10013):
                 raise
-            self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+            self._server = _Server(("127.0.0.1", 0), _Handler)
             taken, self.port = self.port, self._server.server_address[1]
             logger.warning(
                 "hook port %d is held by another process; listening on :%d instead "
