@@ -212,22 +212,17 @@ def test_unlinking_the_last_owner_and_admins_is_refused(world, client):
     assert res.status_code == 409 and res.json()["error"] == "vault_needs_an_admin"
 
 
-def test_an_agents_login_or_a_system_account_is_never_a_member(world):
-    """They hold no vault key, and an agent able to change its own vault's membership
+def test_an_agents_login_is_never_a_member(world):
+    """It holds no vault key, and an agent able to change its own vault's membership
     could hand its key to anyone. 2026-10-22: in production ACE's own login and Ada's were
-    listed as managers of ACE's vault, and an alarm sender as a user."""
-    from apps.workspaces.models import SystemAccount
-
+    listed as managers of ACE's vault."""
     login = _user("ace-login")
     _member(world.ws, login, WorkspaceMembership.EDITOR)
     world.agent.user = login
     world.agent.save(update_fields=["user"])
     AgentAdmin.objects.create(agent=world.agent, user=login, granted_by=world.owner)
-    alarms = _user("alarms")
-    _member(world.ws, alarms, WorkspaceMembership.EDITOR)
-    SystemAccount.objects.create(workspace=world.ws, user=alarms, name="alarms")
     ms = vault_members.members(world.vault)
-    assert login.pk not in ms and alarms.pk not in ms and world.owner.pk in ms
+    assert login.pk not in ms and world.owner.pk in ms
     with pytest.raises(vault_members.VaultMembershipError) as e:
         vault_members.add_member(world.vault, login, role="admin", by=world.owner)
     assert e.value.code == "vault_not_a_person"

@@ -36,6 +36,9 @@ from .schemas import (
     SchedulePreviewIn,
     SchedulePreviewOut,
     ScheduleWeekOut,
+    TriggerIn,
+    TriggerOut,
+    TriggerPatch,
 )
 
 router = Router(auth=session_auth, tags=["schedules"])
@@ -52,6 +55,8 @@ def _not_found(exc: ss.ScheduleNotFound) -> HttpError:
 def _forbidden(exc: ss.ScheduleForbidden) -> HttpError:
     """A member holding too low a role. 403, and it says which role is needed —
     a refusal a viewer cannot act on is a refusal they will report as a bug."""
+    if exc.required == "agent admin":
+        return HttpError(403, "this action requires the agent's owner or an admin")
     return HttpError(403, f"this action requires the {exc.required} or owner role")
 
 
@@ -59,6 +64,12 @@ def _invalid(exc: ss.InvalidSchedule) -> HttpError:
     """Timing that cannot fire (e.g. a one-off in the past) -> 422, like any
     other payload the schema rejects."""
     return HttpError(422, str(exc))
+
+
+def _stopped(exc: ss.TriggerStopped) -> ProblemError:
+    """Run now on a trigger whose creator lost the right to it -> 409, saying why."""
+    return ProblemError(409, "Trigger stopped", type_=TYPE_CONFLICT,
+                        detail=f"this trigger may not fire: {exc.reason}")
 
 
 def _duplicate_name(name: str) -> ProblemError:
@@ -205,4 +216,98 @@ def run_schedule_now(request: HttpRequest, slug: str, schedule_id: int) -> Statu
         raise _not_found(exc) from None
     except ss.ScheduleForbidden as exc:
         raise _forbidden(exc) from None
+    except ss.TriggerStopped as exc:
+        raise _stopped(exc) from None
     return Status(202, ScheduleOut(**ss.serialize_schedule(schedule)))
+
+
+# ---- triggers: every kind on one list (docs/superpowers/specs/2026-10-27-agent-
+# triggers-design.md). The /schedules/ routes above are the cron subset the runner,
+# the calendar and existing tools drive; these are the agent's whole list. Both call
+# the same services, so they cannot drift. Each write is gated in
+# `schedule_services._check_may_set_up` (`triggers.may_set_up`): `agent.work` for a
+# cron trigger, an agent admin for an inbound_mail or auto one.
+
+
+@router.get("/{slug}/triggers/", response=Page[TriggerOut],
+            summary="List an agent's triggers (schedules and inbound mail)")
+@gate("member")
+def list_triggers(request: HttpRequest, slug: str, limit: int = 100) -> Page[TriggerOut]:
+    """Every trigger of the agent: `cron` (a schedule) and `inbound_mail` (mail from
+    a bound sender). `stopped` says why one may not fire — its creator lost the
+    right to it — and an alert stays open on the agent until that is fixed."""
+    try:
+        rows = ss.list_schedules(request.user, slug, workspace_slug=_pin(request), kind=None)
+    except ss.ScheduleNotFound as exc:
+        raise _not_found(exc) from None
+    return paginate(rows, offset=0, limit=clamp_limit(limit),
+                    map=lambda t: TriggerOut(**ss.serialize_trigger(t)))
+
+
+@router.post("/{slug}/triggers/", response={201: TriggerOut}, summary="Create a trigger")
+@gate("agent.work", "agent-admin", setting=True)  # per kind, in schedule_services
+def create_trigger(request: HttpRequest, slug: str, payload: TriggerIn) -> Status:
+    """A cron trigger needs `agent.work` (editor); an inbound_mail trigger, or any
+    trigger with `turn_mode: auto`, needs an admin of the agent. You become its
+    creator: it fires with no more authority than yours on the agent."""
+    try:
+        trigger = ss.create_schedule(request.user, slug, payload.dict(), workspace_slug=_pin(request))
+    except ss.ScheduleNotFound as exc:
+        raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
+    except ss.DuplicateScheduleName as exc:
+        raise _duplicate_name(exc.name) from None
+    except ss.InvalidSchedule as exc:
+        raise _invalid(exc) from None
+    return Status(201, TriggerOut(**ss.serialize_trigger(trigger)))
+
+
+@router.patch("/{slug}/triggers/{trigger_id}", response=TriggerOut, summary="Update a trigger")
+@gate("agent.work", "agent-admin", setting=True)
+def update_trigger(request: HttpRequest, slug: str, trigger_id: int,
+                   payload: TriggerPatch) -> TriggerOut:
+    """Its kind and its creator are fixed; the rest may change, by anyone who may
+    set up the trigger both as it is and as it will be."""
+    fields = payload.dict(exclude_unset=True, exclude_none=True)
+    try:
+        trigger = ss.update_schedule(request.user, slug, trigger_id, fields,
+                                     workspace_slug=_pin(request), kind=None)
+    except ss.ScheduleNotFound as exc:
+        raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
+    except ss.DuplicateScheduleName as exc:
+        raise _duplicate_name(exc.name) from None
+    except ss.InvalidSchedule as exc:
+        raise _invalid(exc) from None
+    return TriggerOut(**ss.serialize_trigger(trigger))
+
+
+@router.delete("/{slug}/triggers/{trigger_id}", response={204: None}, summary="Delete a trigger")
+@gate("agent.work", "agent-admin", setting=True)
+def delete_trigger(request: HttpRequest, slug: str, trigger_id: int) -> Status:
+    try:
+        ss.delete_schedule(request.user, slug, trigger_id, workspace_slug=_pin(request), kind=None)
+    except ss.ScheduleNotFound as exc:
+        raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
+    return Status(204, None)
+
+
+@router.post("/{slug}/triggers/{trigger_id}/run-now", response={202: TriggerOut},
+             summary="Fire a cron trigger off-cycle, now")
+@gate("agent.work", "agent-admin", kind="action")
+def run_trigger_now(request: HttpRequest, slug: str, trigger_id: int) -> Status:
+    """Cron triggers only — mail is what fires an inbound_mail trigger (404 here).
+    409 when its creator lost the right to it."""
+    try:
+        trigger = ss.run_schedule_now(request.user, slug, trigger_id, workspace_slug=_pin(request))
+    except ss.ScheduleNotFound as exc:
+        raise _not_found(exc) from None
+    except ss.ScheduleForbidden as exc:
+        raise _forbidden(exc) from None
+    except ss.TriggerStopped as exc:
+        raise _stopped(exc) from None
+    return Status(202, TriggerOut(**ss.serialize_trigger(trigger)))

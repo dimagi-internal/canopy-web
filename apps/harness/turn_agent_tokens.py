@@ -86,14 +86,11 @@ def issue(turn: Turn, runner) -> dict:
     if why:
         raise Refused(why)
     agent = turn_agent(turn)
-    try:
-        with transaction.atomic():
-            raw, token = PersonalToken.create_for_user(
-                user=agent.user, ttl=TTL,
-                label=f"turn {str(turn.pk)[:8]} on {runner.name} (turn-scoped)"[:200])
-            TurnAgentToken.objects.create(turn=turn, runner=runner, token=token)
-    except ValueError as exc:  # a system account never holds a token
-        raise Refused(f"{agent.slug}'s login cannot hold a token: {exc}") from exc
+    with transaction.atomic():
+        raw, token = PersonalToken.create_for_user(
+            user=agent.user, ttl=TTL,
+            label=f"turn {str(turn.pk)[:8]} on {runner.name} (turn-scoped)"[:200])
+        TurnAgentToken.objects.create(turn=turn, runner=runner, token=token)
     _audit(turn, runner, agent)
     return {"token": raw, "expires_at": token.expires_at, "agent_slug": agent.slug,
             "turn_id": str(turn.pk)}

@@ -206,8 +206,8 @@ def _memory(person: Person) -> dict:
 
 
 def _the_person_themself(request: HttpRequest) -> Person:
-    """Only the person — never an agent's login, a session acting for them (a caller
-    token), or a system account."""
+    """Only the person — never an agent's login or a session acting for them (a
+    caller token)."""
     user = request.user
     if (people.agent_of_login(user) is not None
             or kinds.speaks_for_a_turn(request)
@@ -221,7 +221,7 @@ def _the_person_themself(request: HttpRequest) -> Person:
 
 @router.post("/me/addresses/", response={201: PersonAddressOut},
              summary="Add a way to reach you")
-@gate("self", kind="person-data")  # only the person: never an agent's login, a caller token or a system account
+@gate("self", kind="person-data")  # only the person: never an agent's login or a caller token
 def add_my_address(request: HttpRequest, payload: PersonAddressIn):
     """Add a labelled email or phone of yours (`kind` email | phone, `label`
     such as work or personal). Everyone who shares a workspace with you, and
@@ -249,7 +249,7 @@ def remove_my_address(request: HttpRequest, address_id: int):
 @router.put("/me/agent-memory/", response=AgentMemoryOut,
             summary="Choose what agent memory is available, and its defaults")
 # The person's agent-memory switch: their own Person only, and refused to an agent's
-# login, a caller token and a system account — nobody may flip it for them.
+# login and a caller token — nobody may flip it for them.
 @gate("self", setting=True)
 def set_my_agent_memory(request: HttpRequest, payload: AgentMemoryIn) -> dict:
     """Your agent memory at the canopy level. For each of `record` (agents may
@@ -286,7 +286,7 @@ def get_my_default_agent(request: HttpRequest) -> dict:
 
 @router.put("/me/default-agent/", response=DefaultAgentOut,
             summary="Choose the agent an embedded panel opens on for you")
-# Only the person: refused to an agent's login, a caller token and a system account.
+# Only the person: refused to an agent's login and a caller token.
 @gate("self", setting=True)
 def set_my_default_agent(request: HttpRequest, payload: DefaultAgentIn) -> dict:
     """Choose the agent every embedded panel opens on for you, by slug; `""`

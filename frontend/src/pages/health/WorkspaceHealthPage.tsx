@@ -238,7 +238,7 @@ function Health({ health, failed }: { health: WorkspaceHealthOut; failed: Readon
                       <CountLink n={a.waiting_tasks} to={scopedPath(a.workspace, `/agents/${a.slug}/tasks`)} label="tasks waiting on people" />
                     </td>
                     <td className="text-right tabular-nums"><CountLink n={a.skills} to={scopedPath(a.workspace, `/agents/${a.slug}/skills`)} label="skills" /></td>
-                    <td className="text-right tabular-nums"><CountLink n={a.schedules} to={scopedPath(a.workspace, `/agents/${a.slug}/schedules`)} label="schedules" /></td>
+                    <td className="text-right tabular-nums"><CountLink n={a.schedules} to={scopedPath(a.workspace, `/agents/${a.slug}/triggers`)} label="schedules" /></td>
                     <td className="whitespace-nowrap text-foreground-secondary"
                         title={a.full_access.length ? `Whole agent for: ${a.full_access.join(', ')}` : undefined}>
                       <CellLink to={scopedPath(a.workspace, `/agents/${a.slug}/settings#reach`)}>{whoCanUse(a)}</CellLink>

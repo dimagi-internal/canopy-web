@@ -78,7 +78,7 @@ def create_runner_session(request: HttpRequest, payload: RunnerSessionIn):
     if runner.status == Runner.RETIRED:
         raise _refuse(f"{runner.name} is retired")
     owner = runner.owner
-    if owner is None or not owner.is_active or hasattr(owner, "system_account"):
+    if owner is None or not owner.is_active:
         raise _refuse(f"{runner.name} has no active person as its owner")
     raw, token = RunnerAccessToken.mint(key)
     RunnerDeviceKey.objects.filter(pk=key.pk).update(last_used_at=timezone.now())

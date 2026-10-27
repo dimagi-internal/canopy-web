@@ -172,7 +172,12 @@ Every browser-facing address canopy-web serves. The SPA route table is
     me; `?batch=<key>` for one sitting.
   - **Turns** — packaged units of work + optional transcript, and the
     **Status reports** section (`#status-reports`).
-  - **Schedules**, **Huddles**.
+  - **Triggers** (`triggers`) — what starts the agent on its own: schedules (cron
+    or one instant) and inbound mail (aligned mail from a bound sender, e.g.
+    CloudWatch alarms), one table with who set each up (it fires with their
+    authority) and, when that person lost the right, that it stopped and why;
+    create, edit, pause, delete, run a schedule now (access.md § Triggers).
+  - **Huddles**.
   - **Mail** (`mail`) — read-only email threads for the agent
     (`GET /api/mail/threads/{workspace}?agent=`): thread table beside the open
     thread; HTML bodies render only in a `sandbox=""` iframe behind a no-network
@@ -249,7 +254,7 @@ Every browser-facing address canopy-web serves. The SPA route table is
     they may grant: a role in an empty cell adds someone already in the tree
     (`POST /api/workspaces/{slug}/members/`, no invite), a new role PATCHes, "—"
     removes after a confirm. Errors show on the cell. Filter by email, "only
-    show gaps", system accounts badged (editor or viewer only).
+    show gaps".
   - **access-requests** (+ `/:requestId`, the page the admins' notification
     links to) — requests to be invited; approve at a role or deny.
   - **slack** — the workspace's Slack connection (one Slack may serve several

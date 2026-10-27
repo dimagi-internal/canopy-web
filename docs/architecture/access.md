@@ -43,6 +43,9 @@ or as you only under an act-as-you permission you granted.** Three kinds, one me
   only in its own resolve's `delegated` field, proved by its device key. canopy gives it
   no expiry: the provider's own is shown as information. → `vault.md` § Whose account
   an entry is
+* **A trigger's turn** — a schedule or alarm mail the agent's own trigger fired runs
+  with no more authority than the person who set it up has on the agent, and stops
+  firing, loudly, when they lose it (see "Triggers").
 * **An act-as-you permission** — time-limited, granted by the person asking, in the
   moment (a page's host grant; an agent working in their own turn, below).
   Nothing else lets an agent act as a person. In particular:
@@ -285,57 +288,63 @@ Asked in this order; the first row that matches decides.
   (`runners.md` → "Project chats"), never on a teammate's box by default.
   It acts as the person who asked (see "Projects run as the person who asked").
 
-## System accounts
+## Triggers: what starts an agent on its own
 
-A **system account** is a non-human workspace member: an automated sender, such
-as AWS CloudWatch alarm mail or CI, that makes agents do work the way a person
-with the same role would, and **can never sign in** (`apps/workspaces/system_accounts.py`).
-This is the owner's explicit choice: an alarm sender is basically the same as a user with edit.
+A **trigger** is an agent's own: something that starts a turn on that agent, with the
+authority of the person who set it up — never more. It is not a member and holds no
+standing of its own. Kinds (`AgentSchedule.kind`, the model keeps its first kind's
+name; `apps/harness/triggers.py`;
+`docs/superpowers/specs/2026-10-27-agent-triggers-design.md`):
 
-It is a real `User` with a `SystemAccount` row and an ordinary membership, so it
-goes down the decision table above like anyone else. That is the point: routing
-rules, per-person routes, the roster, turn-content ACLs and turn mode all apply
-unchanged.
+* **`cron`** — a schedule: a cadence or one instant (`runners.md` § Scheduled turns).
+* **`inbound_mail`** — aligned mail from a bound sender, such as AWS CloudWatch alarm
+  mail or CI, to the agent's mailbox.
 
-* **Role:** `editor` by default, which is row 4, the editor tier: the whole agent,
-  always `manual`. `viewer` is allowed (rows 5–7: what the interface offers
-  members). **Never admin or owner**, here or through the member-role route
-  (`MemberError("system_role")`). A system administers nothing.
-* **Never authenticates:** unusable password; a synthetic `@system.canopy.invalid`
-  `User.email` that no identity provider can assert and
-  `user_for_verified_email` never resolves; allauth `pre_login` refuses it;
-  `PersonalToken.create_for_user` refuses it; `PersonalToken.lookup` (bearer and
-  MCP, including OAuth access tokens) and `DelegatedToken.lookup` never resolve
-  one. `tests/test_system_accounts.py` pins each door.
-* **How mail becomes it:** a `SystemSender` binds an address, with an optional
-  subject regex, to the account **in its own workspace only**. An email turn's
-  sender resolves to the account when all of these hold
-  (`harness.channels.email.member_behind_email`):
-  - THIS message is aligned (DMARC, or DKIM signed by the From: domain) on our
-    own receiver's verdict;
-  - no human account provably holds the address;
-  - exactly one enabled account in the agent's workspace has a binding for the
-    address whose pattern `re.search`es the subject (two is ambiguous, so neither);
-  - the account is still a member there.
+Rules:
 
-  Otherwise the sender is an ordinary contact. The binding is per workspace because
-  an automated address is shared: `no-reply@sns.amazonaws.com` sends every AWS
+* **Who may set one up** (`triggers.may_set_up`, also the gate on every change):
+  a `cron` trigger, `agent.work` (an editor); an `inbound_mail` trigger, or any trigger
+  with `turn_mode: auto`, an **admin of the agent** (`Agent.is_admin`) — it admits an
+  outside sender to make the agent work, the tier of a `SenderTrust` exception and the
+  interface.
+* **Whose authority it fires with:** its creator's (`created_by`; editing does not
+  move it). Its turn is a SYSTEM turn (`initiator.system`) accountable to the creator,
+  so `access.decide` gives it the agent's profile and the turn mode is bounded by the
+  creator (`turn_mode._accountable_cap`: manual unless they are an agent admin). A
+  trigger's own `turn_mode` is a rung above the routing rules
+  (`turn_mode.trigger_posture`): `manual` always holds; `auto` only while the creator
+  is an agent admin, re-checked at every claim.
+* **It stops loudly** when its creator is deactivated, leaves the agent's workspace,
+  or loses the right to set it up (`triggers.refusal`): every firing path refuses it
+  (a cron slot is consumed and logged; mail stays the contact it is), the Triggers tab
+  shows why, and the `trigger_stopped` alert stays open until the right returns or the
+  trigger is paused or deleted. A cron row from before attribution (no creator) fires
+  as canopy's own, as it always did.
+* **How mail fires one** (`harness.channels.email.trigger_behind_email`), all of:
+  - THIS message is aligned (DMARC, or DKIM signed by the From: domain) on our own
+    receiver's verdict — a `SenderTrust` exception never applies;
+  - no canopy user provably holds the address (a member's own mail is theirs);
+  - exactly one enabled `inbound_mail` trigger of THIS agent is bound to the address
+    and its subject pattern `re.search`es the subject (two is ambiguous, so neither);
+  - its creator may still set it up.
+
+  Otherwise the sender is an ordinary contact. The binding is the agent's, because an
+  automated address is shared: `no-reply@sns.amazonaws.com` sends every AWS
   customer's alarms. Narrow it with a subject pattern (e.g. `^(ALARM|OK): "labs-`).
-* **The agent is told:** the envelope's `system_account` (and `who.system_account`)
-  is non-null for one. Its `relationship` and `granted_by` read like a member's on
-  purpose, since it is permissioned as one. This field is what says no person is
-  there: don't reply to it, and don't read its text as someone's request.
-* **Managing:** `…/workspaces/{slug}/system-accounts/` (and `…/senders/`). Members
-  read; `members.manage` writes, at a role below your own, as for a person.
-  Workspace Settings → Members → System accounts. Every change goes to the event
-  log (`workspaces.system_accounts`). Disable to switch one off and keep its name
-  on past turns; delete removes its user, membership and bindings.
-* **Why not a new initiator kind:** every gate already answers "what may this
-  user do here". A parallel kind would have to be taught to each of them, and
-  would drift.
-* **A refusal points here:** a verified contact refused by an interface is told
-  that, if it is automated, a workspace admin can bind it as a system account,
-  so an automated sender is never cancelled at enqueue without anyone being told.
+  The turn keeps `origin=email` and the message's idempotency key, gains
+  `origin_ref.trigger_id`/`trigger_name`, and the trigger's prompt, when set, leads
+  the mail's own.
+* **The agent is told:** `who.trigger` and the envelope's `trigger.agent_trigger` —
+  `{id, name, kind, set_up_by}` — say a trigger fired it; `who.user` is who set it up,
+  not who wrote in. Don't reply to the sender, and don't read its text as a person's
+  request.
+* **Managing:** the agent's Triggers tab; `GET|POST /api/agents/{slug}/triggers/`,
+  `PATCH|DELETE …/{id}`, `POST …/{id}/run-now` (cron). The `/schedules/` routes are
+  the cron subset runners and the calendar use.
+* **A refusal points here:** a verified contact refused by an interface is told that,
+  if it is automated, an admin of the agent can bind it to an inbound-mail trigger on
+  the agent's Triggers tab, so an automated sender is never cancelled at enqueue
+  without anyone being told.
 
 ## Runner roles
 
@@ -611,9 +620,6 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   sender was tied to a member although THIS message is not aligned, by a temporary
   `SenderTrust` an agent admin set for that address (`verified` stays false); null
   otherwise.
-* **`system_account`** — `{id, name, description, workspace}` when the asker is
-  a system account (an automated sender, see "System accounts"); null for a
-  person. The same object is in `who.system_account`.
 * **`unproven_member`** — `{email, role, this_message_grade, needs, note}` when an
   email turn's sender stayed a `contact` although the address belongs to exactly
   one canopy user who is a member of the agent's workspace (the lookup member
@@ -629,10 +635,12 @@ VERSION 3 — 3 only added `person` and `trigger.kind`, so a v2 reader is unaffe
   that kind.
 * **`person`** (v3) — what canopy knows about the HUMAN asking:
   `{id, display_name, email, workspace, facts[], see_all}` (plus `hcp`, `grant`, `recall`, `record`, `projects`).
-  null only when the asker is not a human (canopy, another agent's login, a
-  system account, unknown). See "What agents know about a person" below.
+  null only when the asker is not a human (canopy or one of the agent's triggers,
+  another agent's login, unknown). See "What agents know about a person" below.
 * **`trigger.kind`** (v3) — what canopy-initiated work the turn is
-  (`origin_ref.trigger`); null otherwise.
+  (`origin_ref.trigger`); null otherwise. **`trigger.agent_trigger`** —
+  `{id, name, kind, set_up_by}` when one of the agent's own triggers fired the turn
+  (see "Triggers"); null otherwise. The same object is in `who.trigger`.
 * **`conversation`** — `{session_id, thread_id, subject, slack}`. `slack` (v3,
   additive) is where in Slack the conversation is, whenever its session holds a
   Slack thread (born there, or bound by a share): `{team_id, channel_id,
@@ -884,8 +892,8 @@ only honours the rows.
 
 A session is visible to the people who were in the conversation where it happened, plus
 whoever they add. A `SessionParticipant` row (EDITOR) is the grant, made at the channel's
-door; the ACL itself stays `apps/canopy_sessions/access.py`. Never a non-member, a contact,
-an agent's login or a system account, and never into a sensitive conversation.
+door; the ACL itself stays `apps/canopy_sessions/access.py`. Never a non-member, a contact
+or an agent's login, and never into a sensitive conversation.
 
 * **Email: everyone on the thread** (`harness.channels.email.admit_thread_people`) — the
   members among the From, To and Cc of each inbound message whose From is aligned (DMARC,

@@ -35,10 +35,8 @@ from apps.retention.schemas import (
 )
 from apps.workspaces import permissions as perms
 
-from . import access_requests, invites, login_gate, notifications, services, system_accounts
+from . import access_requests, invites, login_gate, notifications, services
 from .models import (
-    SystemAccount,
-    SystemSender,
     Workspace,
     WorkspaceAccessRequest,
     WorkspaceInvite,
@@ -65,11 +63,6 @@ from .schemas import (
     RunnerOrderIn,
     RunnerOrderRowOut,
     RunnerTopologyOut,
-    SystemAccountCreateIn,
-    SystemAccountOut,
-    SystemAccountUpdateIn,
-    SystemSenderIn,
-    SystemSenderOut,
     WorkspaceAnalyticsOut,
     WorkspaceCreateIn,
     WorkspaceHealthOut,
@@ -96,7 +89,6 @@ _MEMBER_ERROR_STATUS = {
     "not_found": 404,
     "last_owner": 400,
     "invalid_role": 422,
-    "system_role": 422,
 }
 
 # MemberError.code -> a human-readable message, PER ENDPOINT (the same code
@@ -112,14 +104,12 @@ _ADD_MEMBER_ERROR_MESSAGES = {
     "not_found": "no such person in this workspace tree",
     "already_member": "already a member here; change their role instead",
     "invalid_role": "unknown role",
-    "system_role": "a system account may only be an editor or a viewer",
 }
 _ADD_MEMBER_ERROR_STATUS = {**_MEMBER_ERROR_STATUS, "already_member": 409}
 _SET_MEMBER_ROLE_ERROR_MESSAGES = {
     "not_found": "member not found",
     "last_owner": "cannot demote the last owner",
     "invalid_role": "unknown role",
-    "system_role": "a system account may only be an editor or a viewer",
 }
 
 
@@ -183,11 +173,9 @@ def _target_role(slug: str, user_id: int) -> str | None:
     return services.member_role(target, slug) if target is not None else None
 
 
-def _member_out(m: WorkspaceMembership, system_ids: set[int] | None = None) -> MemberOut:
-    if system_ids is None:
-        system_ids = set(SystemAccount.objects.filter(user_id=m.user_id).values_list("user_id", flat=True))
+def _member_out(m: WorkspaceMembership) -> MemberOut:
     return MemberOut(user_id=m.user_id, email=m.user.email, role=m.role, joined_at=m.joined_at,
-                     inherited=getattr(m, "inherited", False), system=m.user_id in system_ids)
+                     inherited=getattr(m, "inherited", False))
 
 
 def _invite_out(inv: WorkspaceInvite, email_status: str | None = None, *,
@@ -532,10 +520,7 @@ def list_members(request: HttpRequest, slug: str) -> list[MemberOut]:
     """Everyone in the workspace. Owners of a parent workspace own this one
     too, and are listed with `inherited: true`; they are changed on the parent."""
     m = _membership_or_404(request.user, slug)
-    rows = services.effective_memberships(m.workspace)
-    system_ids = set(SystemAccount.objects.filter(user_id__in=[r.user_id for r in rows])
-                     .values_list("user_id", flat=True))
-    return [_member_out(row, system_ids) for row in rows]
+    return [_member_out(row) for row in services.effective_memberships(m.workspace)]
 
 
 @router.post("/{slug}/members/", response={201: MemberOut},
@@ -545,8 +530,7 @@ def add_member(request: HttpRequest, slug: str, payload: MemberAddIn) -> Status:
     """Adds a person who is already a member of another workspace in this tree
     (one you are in too) directly, at `role` — no invite, no email. 404 for
     anyone else, so this never adds an arbitrary user id; 409 if they already
-    hold a role here (change it with PATCH); 403 for a role you may not grant;
-    422 for a system account above editor."""
+    hold a role here (change it with PATCH); 403 for a role you may not grant."""
     m = _require(request.user, slug, perms.MEMBERS_MANAGE)
     _require_may_manage(m, None, payload.role)
     try:
@@ -593,12 +577,9 @@ def member_tree(request: HttpRequest, slug: str) -> MemberTreeOut:
                 role=row.role, inherited=inherited,
                 inherited_from=getattr(row, "inherited_from", None) if inherited else None,
             )
-    system_ids = set(SystemAccount.objects.filter(user_id__in=list(people)).values_list("user_id", flat=True))
-    for uid in system_ids:
-        people[uid].system = True
     return MemberTreeOut(
         root=m.workspace.slug, workspaces=workspaces,
-        people=sorted(people.values(), key=lambda p: (p.system, p.email.lower())),
+        people=sorted(people.values(), key=lambda p: p.email.lower()),
     )
 
 
@@ -627,150 +608,6 @@ def set_member_role(request: HttpRequest, slug: str, user_id: int, payload: Memb
     except services.MemberError as exc:
         raise HttpError(_MEMBER_ERROR_STATUS[exc.code], _SET_MEMBER_ROLE_ERROR_MESSAGES[exc.code])
     return _member_out(updated)
-
-
-# ---- system accounts (apps/workspaces/system_accounts.py) ----
-# Non-human members that cannot sign in, reached by inbound mail through a
-# sender binding. Listed to every member (like the member list); created,
-# changed and removed by whoever may manage editors (`members.manage`).
-
-_SYSTEM_ERROR_STATUS = {"invalid": 422, "conflict": 409, "not_found": 404}
-
-
-def _system_error(exc: system_accounts.SystemAccountError) -> HttpError:
-    return HttpError(_SYSTEM_ERROR_STATUS.get(exc.code, 400), exc.message)
-
-
-def _sender_out(s: SystemSender) -> SystemSenderOut:
-    return SystemSenderOut(id=s.pk, address=s.address, subject_pattern=s.subject_pattern,
-                           created_at=s.created_at)
-
-
-def _system_out(a: SystemAccount) -> SystemAccountOut:
-    return SystemAccountOut(
-        id=a.pk, user_id=a.user_id, name=a.name, description=a.description,
-        role=system_accounts.role_of(a), disabled=a.disabled_at is not None,
-        disabled_at=a.disabled_at, created_at=a.created_at,
-        created_by_email=a.created_by.email if a.created_by_id else None,
-        senders=[_sender_out(s) for s in a.senders.all()],
-    )
-
-
-def _system_or_404(workspace: Workspace, account_id: int) -> SystemAccount:
-    a = (SystemAccount.objects.select_related("created_by").prefetch_related("senders")
-         .filter(workspace=workspace, pk=account_id).first())
-    if a is None:
-        raise HttpError(404, "system account not found")
-    return a
-
-
-def _require_system_manage(request: HttpRequest, slug: str, role: str | None = None) -> WorkspaceMembership:
-    """`members.manage`, and a role strictly below your own — the same rule as
-    for a person, so an admin manages system editors and viewers."""
-    m = _require(request.user, slug, perms.MEMBERS_MANAGE)
-    _require_may_manage(m, role or system_accounts.DEFAULT_ROLE, role)
-    return m
-
-
-@router.get("/{slug}/system-accounts/", response=list[SystemAccountOut],
-            summary="List system accounts (member-only)")
-# System accounts (apps/workspaces/system_accounts.py): listed to members
-# like the member list; managed like an editor is (members.manage +
-# may_manage_member at the account's role).
-@gate("member")
-def list_system_accounts(request: HttpRequest, slug: str) -> list[SystemAccountOut]:
-    """Automated senders (e.g. CloudWatch alarm mail) that hold a member's
-    standing here and can never sign in, with the addresses bound to each."""
-    m = _membership_or_404(request.user, slug)
-    rows = (SystemAccount.objects.filter(workspace=m.workspace)
-            .select_related("created_by").prefetch_related("senders"))
-    return [_system_out(a) for a in rows]
-
-
-@router.post("/{slug}/system-accounts/", response={201: SystemAccountOut},
-             summary="Create a system account (admin or owner)")
-@gate("members.manage", setting=True)  # + may_manage_member
-def create_system_account(request: HttpRequest, slug: str, payload: SystemAccountCreateIn) -> Status:
-    """Creates a member that cannot sign in (editor by default, never above),
-    and binds any `senders` given: aligned mail from a bound address, in THIS
-    workspace, whose subject matches the pattern, then makes agent turns as
-    this account instead of as an outside contact."""
-    m = _require_system_manage(request, slug, payload.role)
-    try:
-        from django.db import transaction
-
-        with transaction.atomic():
-            a = system_accounts.create(m.workspace, name=payload.name,
-                                       description=payload.description, role=payload.role,
-                                       by=request.user)
-            for s in payload.senders:
-                system_accounts.add_sender(a, address=s.address,
-                                           subject_pattern=s.subject_pattern, by=request.user)
-    except system_accounts.SystemAccountError as exc:
-        raise _system_error(exc)
-    return Status(201, _system_out(_system_or_404(m.workspace, a.pk)))
-
-
-@router.get("/{slug}/system-accounts/{account_id}/", response=SystemAccountOut,
-            summary="Get a system account (member-only)")
-@gate("member")
-def get_system_account(request: HttpRequest, slug: str, account_id: int) -> SystemAccountOut:
-    m = _membership_or_404(request.user, slug)
-    return _system_out(_system_or_404(m.workspace, account_id))
-
-
-@router.patch("/{slug}/system-accounts/{account_id}/", response=SystemAccountOut,
-              summary="Rename, re-role, disable or re-enable a system account (admin or owner)")
-@gate("members.manage", setting=True)  # + may_manage_member
-def update_system_account(request: HttpRequest, slug: str, account_id: int,
-                          payload: SystemAccountUpdateIn) -> SystemAccountOut:
-    m = _require_system_manage(request, slug, payload.role)
-    a = _system_or_404(m.workspace, account_id)
-    try:
-        system_accounts.update(a, name=payload.name, description=payload.description,
-                               role=payload.role, disabled=payload.disabled, by=request.user)
-    except system_accounts.SystemAccountError as exc:
-        raise _system_error(exc)
-    return _system_out(_system_or_404(m.workspace, account_id))
-
-
-@router.delete("/{slug}/system-accounts/{account_id}/", response={204: None},
-               summary="Delete a system account (admin or owner)")
-@gate("members.manage", setting=True)  # + may_manage_member
-def delete_system_account(request: HttpRequest, slug: str, account_id: int):
-    """Deletes it, its membership and its bindings. Its past turns lose their
-    initiator; to keep the name on them, disable it instead."""
-    m = _require_system_manage(request, slug)
-    system_accounts.delete(_system_or_404(m.workspace, account_id), by=request.user)
-    return Status(204, None)
-
-
-@router.post("/{slug}/system-accounts/{account_id}/senders/", response={201: SystemSenderOut},
-             summary="Bind an inbound address to a system account (admin or owner)")
-@gate("members.manage", setting=True)  # + may_manage_member
-def add_system_sender(request: HttpRequest, slug: str, account_id: int,
-                      payload: SystemSenderIn) -> Status:
-    m = _require_system_manage(request, slug)
-    a = _system_or_404(m.workspace, account_id)
-    try:
-        sender = system_accounts.add_sender(a, address=payload.address,
-                                            subject_pattern=payload.subject_pattern, by=request.user)
-    except system_accounts.SystemAccountError as exc:
-        raise _system_error(exc)
-    return Status(201, _sender_out(sender))
-
-
-@router.delete("/{slug}/system-accounts/{account_id}/senders/{sender_id}/", response={204: None},
-               summary="Unbind an inbound address from a system account (admin or owner)")
-@gate("members.manage", setting=True)  # + may_manage_member
-def remove_system_sender(request: HttpRequest, slug: str, account_id: int, sender_id: int):
-    m = _require_system_manage(request, slug)
-    a = _system_or_404(m.workspace, account_id)
-    sender = a.senders.filter(pk=sender_id).first()
-    if sender is None:
-        raise HttpError(404, "sender not found")
-    system_accounts.remove_sender(sender, by=request.user)
-    return Status(204, None)
 
 
 # ---- invites ----

@@ -22,7 +22,6 @@ const MEMBERS = [
   { user_id: 4, email: 'smazumdar@dimagi.com', role: 'editor', joined_at: '' },
   { user_id: 5, email: 'stewari@dimagi.com', role: 'editor', joined_at: '' },
   { user_id: 6, email: 'aking@dimagi.com', role: 'viewer', joined_at: '' },
-  { user_id: 9, email: 'mailer@dimagi.com', role: 'editor', joined_at: '', system: true },
 ]
 
 vi.mock('@/api/harness', () => ({
@@ -100,7 +99,7 @@ describe('RunnerAdmins', () => {
     expect((await screen.findByTestId('runner-admins-error')).textContent).toContain('not a member of the workspace')
   })
 
-  it('offers only people in the workspace who are not already on the list, never a system account', async () => {
+  it('offers only people in the workspace who are not already on the list', async () => {
     list.mockResolvedValue([ROW])
     members.mockResolvedValue(MEMBERS)
     render(<RunnerAdmins runnerId="r1" workspace="dimagi" canManage ownerEmail="jjackson@dimagi.com" />)

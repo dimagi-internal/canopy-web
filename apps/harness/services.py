@@ -206,6 +206,13 @@ def enqueue_turn(
         if arrival.refusal is not None:
             return arrival.refusal
         agent, session, initiator = arrival.agent, arrival.session, arrival.initiator
+        if arrival.trigger is not None:
+            # The agent's inbound_mail trigger fired (apps/harness/triggers.py): the
+            # turn names it, and its own prompt, when it has one, leads the mail's.
+            t = arrival.trigger
+            origin_ref = {**(origin_ref or {}), "trigger_id": t.pk, "trigger_name": t.name}
+            if t.prompt.strip():
+                prompt = f"{t.prompt.strip()}\n\n{prompt}" if prompt else t.prompt.strip()
     if sum([bool(agent), bool(project), bool(session)]) != 1:
         raise ValueError("a turn targets exactly one of agent / project / session")
     if project and workspace is None:

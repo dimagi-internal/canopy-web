@@ -370,23 +370,19 @@ def test_the_agent_s_owner_may_add_people_to_a_conversation_they_are_in():
 
 def test_who_you_could_add_is_the_workspace_s_members_not_yet_in_it():
     """The People picker offers only people the add route would accept: members of
-    the chat's workspace who are not in it yet (not its creator, not you, no system
-    account), agents' logins marked with their slug. Nobody may list it who may not
-    add."""
+    the chat's workspace who are not in it yet (not its creator, not you), agents'
+    logins marked with their slug. Nobody may list it who may not add."""
     from apps.canopy_sessions.models import Session
-    from apps.workspaces.models import SystemAccount
 
     people, s, ws = _world()
     chat = Session.objects.create(workspace=ws, created_by=people["owner"], origin=Session.ORIGIN_WEB)
     SessionParticipant.objects.create(session=chat, user=people["viewer"], role=SessionParticipant.VIEWER)
-    SystemAccount.objects.create(user=people["box_admin"], workspace=ws)
 
     resp = _client(people["owner"]).get(f"/api/canopy-sessions/{chat.id}/participants/candidates")
     assert resp.status_code == 200
     by_email = {r["email"]: r for r in resp.json()}
     assert "owner@dimagi.com" not in by_email          # its creator, and you
     assert "viewer@dimagi.com" not in by_email         # already in it
-    assert "box_admin@dimagi.com" not in by_email      # a system account
     assert "outsider@dimagi.com" not in by_email       # not in the workspace
     assert "mate@dimagi.com" in by_email
     assert by_email["hal_login@dimagi.com"]["agent_slug"] == "hal"

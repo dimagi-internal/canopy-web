@@ -84,7 +84,7 @@ export function RunnerAdmins({
   }
   const taken = new Set([ownerEmail?.toLowerCase(), ...(admins ?? []).map((a) => a.email.toLowerCase())])
   const candidates = (members ?? [])
-    .filter((m) => !m.system && !taken.has(m.email.toLowerCase()))
+    .filter((m) => !taken.has(m.email.toLowerCase()))
     .sort((a, b) => a.email.localeCompare(b.email))
 
   const revoke = async (admin: RunnerAdmin) => {

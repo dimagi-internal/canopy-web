@@ -7,7 +7,7 @@ setting change or MCP call id), and a (kind, ref) already present is skipped —
 re-run, or a run after the live producers are deployed, never double-counts.
 Tokens are not here: each box reports them from its own transcripts
 (`events.usage`). Facts recorded as a person
-whose login turns out to be an agent's or a system account's are reclassified.
+whose login turns out to be an agent's are reclassified.
 """
 from __future__ import annotations
 

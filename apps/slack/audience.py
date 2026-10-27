@@ -41,7 +41,6 @@ from apps.canopy_sessions.models import Session, SessionParticipant
 from apps.canopy_sessions.participants import ensure_participant
 from apps.harness import sensitivity
 from apps.workspaces import services as wsvc
-from apps.workspaces.models import SystemAccount
 
 from . import client
 from .models import SlackAudienceMember, SlackInstallation, SlackUserLink
@@ -131,13 +130,12 @@ def _directory(installation: SlackInstallation) -> dict[str, dict]:
 
 def _people_of(workspace_id: str, user_ids: set[int]) -> set[int]:
     """The members of `workspace_id` among `user_ids` who are people (not an agent's
-    login, not a system account), read once for all of them."""
+    login), read once for all of them."""
     if not user_ids:
         return set()
     users = list(get_user_model().objects.filter(pk__in=user_ids, is_active=True))
     roles = wsvc.member_roles_of(users)
-    bots = set(Agent.objects.filter(user_id__in=user_ids).values_list("user_id", flat=True)) \
-        | set(SystemAccount.objects.filter(user_id__in=user_ids).values_list("user_id", flat=True))
+    bots = set(Agent.objects.filter(user_id__in=user_ids).values_list("user_id", flat=True))
     return {u.pk for u in users if workspace_id in roles.get(u.pk, {}) and u.pk not in bots}
 
 

@@ -154,8 +154,8 @@ def _refusal(agent, iface: dict, classes: set[str], requested: str | None) -> st
         # A verified sender nobody listed is, far more often than a stranger, an
         # automated one someone subscribed on purpose — CloudWatch alarms went
         # unanswered for nine days this way (canopy-web#1253). Say what fixes it.
-        hint = ("; if this is an automated sender (alarms, CI, a monitor), a workspace admin "
-                "can bind its address to a system account under Settings → System accounts")
+        hint = ("; if this is an automated sender (alarms, CI, a monitor), an admin of the "
+                "agent can bind its address to an inbound-mail trigger on the agent's Triggers tab")
     return (f"{agent.slug} offers {what} to you (see its declared interface); ask {owner} "
             f"to list you in it{hint}")
 

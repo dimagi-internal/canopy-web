@@ -40,6 +40,7 @@ from .schemas import (
     ScheduleOut,
     TurnOut,
 )
+from .triggers import TriggerRefused
 
 logger = logging.getLogger(__name__)
 
@@ -495,7 +496,8 @@ def _runner_schedule_qs(runner: Runner):
     was folded into the shared helper so there is one mechanism, not two that
     can drift.
     """
-    qs = AgentSchedule.objects.filter(enabled=True).select_related("agent")
+    # Cron triggers only: an inbound_mail trigger has no cron for a runner to evaluate.
+    qs = AgentSchedule.objects.filter(enabled=True, kind=AgentSchedule.CRON).select_related("agent")
     return qs.filter(routing.agent_tenant_q(routing.runner_tenant_slugs(runner)))
 
 
@@ -538,6 +540,9 @@ def fire_schedule_route(
         turn, _ = schedule_turns.fire_schedule(schedule, payload.slot)
     except schedule_turns.OneOffSlotMismatch as exc:
         raise HttpError(409, str(exc)) from None
+    except TriggerRefused as exc:
+        # Its creator lost the right to it; the slot is consumed and an alert is open.
+        raise HttpError(409, f"schedule {schedule_id} did not fire: {exc.reason}") from None
     if turn is None:
         # A project check-in's schedule makes a run instead: with a channel it is
         # announced there and the turn comes once the lead confirms; without one

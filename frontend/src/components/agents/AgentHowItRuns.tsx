@@ -288,7 +288,7 @@ export function AgentHowItRuns({
           {schedules === null
             ? 'Schedules: …'
             : `${enabledSchedules} schedule${enabledSchedules === 1 ? '' : 's'} on. They fire from canopy itself; a runner takes the turn.`}{' '}
-          <Link to="../schedules" relative="path" className="text-primary hover:underline">Schedules</Link>
+          <Link to="../triggers" relative="path" className="text-primary hover:underline">Triggers</Link>
           {' · '}
           <a href="#routing" className="text-primary hover:underline">Routing</a>
           {' · '}

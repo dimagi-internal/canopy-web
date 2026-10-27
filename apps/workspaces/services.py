@@ -865,8 +865,7 @@ class MemberError(Exception):
     reason a member mutation can't proceed.
 
     `.code` is a closed set (`not_found`, `last_owner`, `invalid_role`,
-    `system_role` — a system account above editor, `already_member` — an add for
-    someone with a row here already) an HTTP layer maps to a status — same shape
+    `already_member` — an add for someone with a row here already) an HTTP layer maps to a status — same shape
     as `InviteError` below.
     """
 
@@ -972,12 +971,6 @@ def set_member_role(*, workspace: Workspace, user_id, role: str, by=None) -> Wor
 
     def _mutate(m: WorkspaceMembership) -> WorkspaceMembership:
         if role != m.role:
-            from .system_accounts import ROLES as SYSTEM_ROLES
-            from .system_accounts import is_system_user
-
-            if role not in SYSTEM_ROLES and is_system_user(m.user):
-                # A system administers nothing (system_accounts.py).
-                raise MemberError("system_role")
             if is_last_owner(m):
                 raise MemberError("last_owner")
             carried_down = m.role in WorkspaceMembership.INHERITS_DOWN
@@ -1028,15 +1021,10 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
     Anyone else is `MemberError('not_found')` — this is never a way to add an
     arbitrary user id. `MemberError('already_member')` if they hold a direct
     row here already (a role change is `set_member_role`);
-    `MemberError('system_role')` for a system account above editor;
     `MemberError('invalid_role')` for a role `ROLE_RANK` does not know.
 
     The authority check (who may grant `role`) is the caller's, made before
     this is called; the row itself is created by `_grant`, the shared door."""
-    # Lazy as in `set_member_role`: system_accounts imports this module back.
-    from .system_accounts import ROLES as SYSTEM_ROLES  # noqa: PLC0415 — cycle
-    from .system_accounts import is_system_user  # noqa: PLC0415 — cycle
-
     if role not in WorkspaceMembership.ROLE_RANK:
         raise MemberError("invalid_role")
     user = get_user_model().objects.filter(pk=user_id).first()
@@ -1049,8 +1037,6 @@ def add_tree_member(*, workspace: Workspace, user_id, role: str, visible: set[st
     # authz-exempt: is the TARGET already here
     if WorkspaceMembership.objects.filter(workspace=workspace, user=user).exists():  # authz-exempt
         raise MemberError("already_member")
-    if role not in SYSTEM_ROLES and is_system_user(user):
-        raise MemberError("system_role")
     return _grant(workspace, user, role, invited_by=by)
 
 

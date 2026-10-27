@@ -17,6 +17,7 @@ Split out of `services.py`; import these names from here.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 
 from django.db import transaction
@@ -26,11 +27,14 @@ from django.utils import timezone
 from apps.agents.models import AgentTask
 from apps.huddles.models import ProjectCheckin
 
+from . import triggers
 from .models import (
     AgentSchedule,
     Turn,
 )
 from .routing import EXECUTING
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------------------
 # AgentSchedule — recurring turns. schedule_clock (and any runner) calls fire_schedule;
@@ -92,6 +96,37 @@ def fire_after_of(schedule) -> dt.datetime:
     return after
 
 
+def _refuse_if_stopped(schedule, *, slot: dt.datetime | None = None) -> None:
+    """Raise `triggers.TriggerRefused` when the trigger's creator no longer holds the
+    right to it (`triggers.refusal`). Loud, never silent: the refusal is written to
+    the workspace event log here, and `alerts_trigger` keeps an alert open on the
+    agent until it is fixed. A refused SLOT is consumed (`last_slot`), so the clock
+    and every runner stop re-reporting it each tick; the next slot is judged afresh."""
+    reason = triggers.refusal(schedule)
+    if reason is None:
+        return
+    if slot is not None and (schedule.last_slot is None or slot > schedule.last_slot):
+        schedule.last_slot = slot
+        schedule.save(update_fields=["last_slot", "updated_at"])
+        _record_refusal(schedule, reason, slot=slot)
+    raise triggers.TriggerRefused(schedule, reason)
+
+
+def _record_refusal(schedule, reason: str, *, slot=None) -> None:
+    """One line in the workspace event log (admins read it). Best-effort."""
+    try:
+        from apps.events.services import record  # noqa: PLC0415 — events reaches the harness
+
+        record([{
+            "source": "harness.triggers", "kind": "trigger.refused", "level": "warn",
+            "key": f"trigger:{schedule.pk}:refused",
+            "summary": f"{schedule.agent.slug}'s trigger {schedule.name!r} did not fire: {reason}"[:500],
+            "payload": {"trigger_id": schedule.pk, "slot": slot.isoformat() if slot else None},
+        }], workspace=schedule.agent.workspace)
+    except Exception:  # noqa: BLE001 — a log line must never fail the fire path
+        logger.exception("could not record refusal of trigger %s", schedule.pk)
+
+
 class OneOffSlotMismatch(Exception):
     """A runner reported a slot for a one-off schedule other than its one instant."""
 
@@ -115,6 +150,7 @@ def fire_schedule(schedule, slot: dt.datetime) -> tuple[Turn | None, bool]:
     """
     from .services import enqueue_turn  # services.py imports this module
 
+    _refuse_if_stopped(schedule, slot=slot)
     if schedule.run_once_at and slot != schedule.run_once_at:
         raise OneOffSlotMismatch(
             f"schedule {schedule.id} is a one-off for {schedule.run_once_at.isoformat()}, "
@@ -176,6 +212,7 @@ def run_schedule_now(schedule, clicked_by=None) -> Turn | None:
     """
     from .services import enqueue_turn  # services.py imports this module
 
+    _refuse_if_stopped(schedule)
     if checkin_of(schedule) is not None:
         from apps.huddles import checkins
 

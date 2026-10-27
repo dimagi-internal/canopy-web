@@ -107,8 +107,8 @@ const AgentTasksSection = lazySection(() =>
 const AgentTurnsSection = lazySection(() =>
   import('./pages/agents/AgentTurnsSection').then((m) => ({ default: m.AgentTurnsSection })),
 )
-const SchedulesSection = lazySection(() =>
-  import('./pages/agents/SchedulesSection').then((m) => ({ default: m.SchedulesSection })),
+const TriggersSection = lazySection(() =>
+  import('./pages/agents/TriggersSection').then((m) => ({ default: m.TriggersSection })),
 )
 const AgentSettingsSection = lazySection(() =>
   import('./pages/agents/AgentSettingsSection').then((m) => ({ default: m.AgentSettingsSection })),
@@ -465,7 +465,7 @@ export const routeTable: RouteObject[] = [
           { path: 'work-products', element: <Navigate to="../projects" replace /> },
           { path: 'syncs', element: <Navigate to="../turns#status-reports" replace /> },
           { path: 'turns', element: <LazySection><AgentTurnsSection /></LazySection> },
-          { path: 'schedules', element: <LazySection><SchedulesSection /></LazySection> },
+          { path: 'triggers', element: <LazySection><TriggersSection /></LazySection> },
           { path: 'huddles', element: <LazySection><AgentHuddlesSection /></LazySection> },
           { path: 'mail', element: <LazySection><AgentMailSection /></LazySection> },
           // Cloud capabilities it declares, and the workspace admin's grants.

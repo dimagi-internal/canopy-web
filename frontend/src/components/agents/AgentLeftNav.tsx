@@ -31,7 +31,7 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
     // Turns also carries Status reports (what a "sync" actually is: a
     // periodic self-review of the work).
     { to: 'turns', label: 'Turns' },
-    { to: 'schedules', label: 'Schedules' },
+    { to: 'triggers', label: 'Triggers' },
     // The huddles it led or joined — the tasks they produced are on Tasks.
     { to: 'huddles', label: 'Huddles' },
     // Read-only: the agent's email threads.
@@ -88,7 +88,7 @@ export function AgentLeftNav({ agent, waiting }: { agent: AgentDetailOut; waitin
           Desktop is unchanged from md up. */}
       {/* The strip scrolls, so it has to LOOK like it scrolls. Ten sections at
           375px means 588 of 899px sit off-screen (measured), and macOS hides
-          overlay scrollbars — so Credentials, Skills, Turns, Schedules, Syncs and
+          overlay scrollbars — so Credentials, Skills, Turns, Triggers, Syncs and
           Work products were not merely off-screen but undiscoverable: a strip
           with no visible edge reads as "that is all of them". The right-edge
           fade is the affordance, and it is masked out from `md` up where the

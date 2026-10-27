@@ -28,7 +28,7 @@ async function load(workspace: string): Promise<Directory> {
     listProjects('open', workspace).catch(() => [] as Project[]),
   ])
   return {
-    people: people.filter((m) => !m.system),
+    people,
     agents,
     labels,
     projects,

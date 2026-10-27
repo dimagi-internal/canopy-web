@@ -9,7 +9,6 @@ import { relativeAge } from '@/lib/relativeAge'
 const KIND_LABEL: Record<MemberProfileOut['kind'] & string, string> = {
   person: 'Person',
   agent: 'Agent',
-  system: 'System account',
 }
 
 /**

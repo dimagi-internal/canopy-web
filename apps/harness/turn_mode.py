@@ -170,6 +170,34 @@ def _accountable_cap(turn, agent) -> Resolved | None:
                             f"admin of {agent.slug}")
 
 
+def trigger_posture(turn, agent) -> Resolved | None:
+    """The mode a TRIGGER asks for its own turns (`AgentSchedule.turn_mode`), or None
+    when it asks none ("" — the rungs below decide, bounded by its creator).
+
+    Like a dispatch's request: `manual` is always honoured; `auto` only while the
+    person accountable for the trigger (`triggers.accountable`, its creator) is an
+    admin of the agent — re-checked at every claim, so a creator demoted while the
+    turn sat queued gets manual, and the basis says why. Read from the turn's
+    `origin_ref` (a mail trigger's turn is a session turn, which carries no
+    `requested_turn_mode`), and only for a turn canopy started (SYSTEM)."""
+    from . import initiator as who  # noqa: PLC0415 — initiator -> agents -> access -> turn_mode
+    from . import triggers  # noqa: PLC0415 — triggers -> initiator, as above
+
+    if getattr(turn, "initiator_kind", "") != who.SYSTEM:
+        return None
+    trigger = triggers.of_turn(turn)
+    if trigger is None or trigger.agent_id != agent.pk or trigger.turn_mode not in MODES:
+        return None
+    label = f"trigger “{trigger.name}”"
+    if trigger.turn_mode == MANUAL:
+        return Resolved(MANUAL, f"{label}: manual")
+    user = triggers.accountable(trigger)
+    if user is None or not agent.is_admin(user):
+        email = getattr(user, "email", None) or "nobody"
+        return Resolved(MANUAL, f"{label}: auto withheld, {email} is not an admin of {agent.slug}")
+    return Resolved(AUTO, f"{label}: auto, set up by {user.email}")
+
+
 def session_started_manual(turn) -> Resolved | None:
     """MANUAL when an earlier claimed turn of `turn`'s session was manual, else None.
 
@@ -244,6 +272,9 @@ def _own_posture(turn, agent, priorities: dict | None) -> Resolved:
     asked = requested(turn, agent)
     if asked is not None:
         return asked
+    triggered = trigger_posture(turn, agent)
+    if triggered is not None:
+        return triggered
     capped = editor_cap(turn, agent)
     if capped is not None:
         return capped

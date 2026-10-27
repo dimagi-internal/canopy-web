@@ -62,7 +62,7 @@ Every page, what it is for and how it behaves: **`docs/architecture/pages.md`**.
 **Tenant-scoped (`/w/:workspace/…`):**
 - (index) → `agents` — the workspace's agents (a table, `GET /api/agent-roster/`); `projects` — every project in the workspace
 - `agents/new` — create an agent: pushes the factory scaffold into an empty repo the person made, with their fine-grained token (which then becomes its GitHub identity), registers it, lands on its Settings setup checklist (persona + first skill are handed to Claude Code)
-- `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Schedules, Huddles, Mail, Skills (+ History), Capabilities, Settings
+- `agents/:slug` — agent workspace: Projects (landing), Project, Tasks, Turns, Triggers (schedules + inbound mail), Huddles, Mail, Skills (+ History), Capabilities, Settings
 - `tasks` (+ `/:key`), `triage` — the workspace's tasks as a table / board / calendar with saved views, one task's page (`?peek=KEY` beside a list), what waits for a decision; ⌘K is the command palette anywhere
 - `projects/:handle` is a project's ONE page, for teammates and editors alike; `agents/:slug/projects/:ref` and `projects/:agent/:ref` redirect there. An idea is a task with `kind: "idea"` (never inferred) carrying a person's words, its work as subtasks
 - `runners/:id/<tab>`, `vaults/:id/<tab>` — one page per runner and per workspace vault, each tab a route; everything else links there (one editor per object, `components/objectPage/` → `docs/architecture/pages.md`)

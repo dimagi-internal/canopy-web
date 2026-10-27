@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
-import type { MemberOut, InviteOut, SystemAccountOut } from '@/api/workspaces'
+import type { MemberOut, InviteOut } from '@/api/workspaces'
 
 // vi.mock is hoisted above these declarations, but the factories aren't invoked
 // until the dynamic `import('./WorkspaceMembersPage')` below actually pulls in
@@ -16,12 +16,6 @@ const listInvites = vi.fn<(slug: string) => Promise<InviteOut[]>>()
 const createInvite = vi.fn<(slug: string, email: string, role: string) => Promise<InviteOut>>()
 const revokeInvite = vi.fn<(slug: string, inviteId: number) => Promise<void>>()
 const reissueInvite = vi.fn<(slug: string, inviteId: number) => Promise<InviteOut>>()
-const listSystemAccounts = vi.fn<(slug: string) => Promise<SystemAccountOut[]>>(() => Promise.resolve([]))
-const createSystemAccount = vi.fn()
-const updateSystemAccount = vi.fn()
-const deleteSystemAccount = vi.fn()
-const addSystemSender = vi.fn()
-const removeSystemSender = vi.fn()
 
 class FakeWorkspaceApiError extends Error {
   status: number
@@ -39,12 +33,6 @@ vi.mock('@/api/workspaces', () => ({
   createInvite,
   revokeInvite,
   reissueInvite,
-  listSystemAccounts,
-  createSystemAccount,
-  updateSystemAccount,
-  deleteSystemAccount,
-  addSystemSender,
-  removeSystemSender,
   WorkspaceApiError: FakeWorkspaceApiError,
 }))
 
@@ -79,7 +67,6 @@ function member(overrides: Partial<MemberOut> = {}): MemberOut {
     role: 'owner',
     joined_at: '2026-01-01T00:00:00Z',
     inherited: false,
-    system: false,
     ...overrides,
   }
 }
@@ -111,84 +98,10 @@ function renderPage(initialEntry = '/w/acme/settings/members') {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-  listSystemAccounts.mockImplementation(() => Promise.resolve([]))
   mockRole = 'owner'
 })
 
-function systemAccount(overrides: Partial<SystemAccountOut> = {}): SystemAccountOut {
-  return {
-    id: 7,
-    user_id: 9,
-    name: 'AWS CloudWatch alarms',
-    description: 'labs alarms',
-    role: 'editor',
-    disabled: false,
-    disabled_at: null,
-    created_at: '2026-10-07T00:00:00Z',
-    created_by_email: 'alice@dimagi.com',
-    senders: [{ id: 1, address: 'no-reply@sns.amazonaws.com', subject_pattern: '^(ALARM|OK): "labs-', created_at: '2026-10-07T00:00:00Z' }],
-    ...overrides,
-  }
-}
-
 describe('WorkspaceMembersPage', () => {
-  it('lists a system account only in its own section, not among the members', async () => {
-    listMembers.mockResolvedValue([
-      member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
-      member({ user_id: 9, email: 'connect.aws-1a2b@system.canopy.invalid', role: 'editor', system: true }),
-    ])
-    listInvites.mockResolvedValue([])
-    listSystemAccounts.mockResolvedValue([systemAccount()])
-
-    renderPage()
-
-    expect(await screen.findByText('alice@dimagi.com')).toBeTruthy()
-    expect(screen.queryByText('System account — cannot sign in')).toBeNull()
-    expect(screen.queryByText('connect.aws-1a2b@system.canopy.invalid')).toBeNull()
-    // The System accounts section still names it, lists its bound senders and
-    // carries its one role control.
-    expect(screen.getAllByLabelText('Role for AWS CloudWatch alarms').length).toBe(1)
-    expect(screen.getAllByText('AWS CloudWatch alarms').length).toBe(1)
-    expect(screen.getByText('no-reply@sns.amazonaws.com')).toBeTruthy()
-    expect(screen.getByText('^(ALARM|OK): "labs-')).toBeTruthy()
-  })
-
-  it('a non-manager sees system accounts but no controls', async () => {
-    mockRole = 'viewer'
-    listMembers.mockResolvedValue([member({ user_id: 1, role: 'viewer' })])
-    listInvites.mockResolvedValue([])
-    listSystemAccounts.mockResolvedValue([systemAccount()])
-
-    renderPage()
-
-    expect(await screen.findByText('no-reply@sns.amazonaws.com')).toBeTruthy()
-    expect(screen.queryByTestId('create-system-account')).toBeNull()
-    expect(screen.queryByText('Unbind')).toBeNull()
-  })
-
-  it('an owner creates a system account with a bound sender', async () => {
-    listMembers.mockResolvedValue([member()])
-    listInvites.mockResolvedValue([])
-    createSystemAccount.mockResolvedValue(systemAccount())
-
-    renderPage()
-
-    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'AWS CloudWatch alarms' } })
-    fireEvent.change(screen.getByLabelText('Sender address'), { target: { value: 'no-reply@sns.amazonaws.com' } })
-    fireEvent.change(screen.getByLabelText('Subject pattern'), { target: { value: '^(ALARM|OK): "labs-' } })
-    fireEvent.click(screen.getByText('Create system account'))
-
-    await waitFor(() =>
-      expect(createSystemAccount).toHaveBeenCalledWith('acme', {
-        name: 'AWS CloudWatch alarms',
-        description: '',
-        role: 'editor',
-        senders: [{ address: 'no-reply@sns.amazonaws.com', subject_pattern: '^(ALARM|OK): "labs-' }],
-      }),
-    )
-    expect(await screen.findByTestId('system-account-7')).toBeTruthy()
-  })
-
   it('lists members with roles and pending invites', async () => {
     listMembers.mockResolvedValue([
       member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' }),
@@ -203,7 +116,7 @@ describe('WorkspaceMembersPage', () => {
     expect(screen.getByText('bob@example.com')).toBeTruthy()
   })
 
-  it('puts the invite form directly under the members list, above system accounts and pending invites', async () => {
+  it('puts the invite form directly under the members list, above pending invites', async () => {
     listMembers.mockResolvedValue([member({ user_id: 1, email: 'alice@dimagi.com', role: 'owner' })])
     listInvites.mockResolvedValue([])
 

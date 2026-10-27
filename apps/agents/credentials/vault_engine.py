@@ -69,7 +69,7 @@ def wrap_key(w) -> tuple:
 
 def _refuse_logins_that_are_not_people(member_targets, what: str) -> None:
     """No copy of any vault's key, and no value sealed to one, is ever written for an
-    agent's own login or a system account — an agent login holding a TEST vault key
+    agent's own login — an agent login holding a TEST vault key
     (`login_test_key`) included. `eligible_members` already leaves them out (they are
     never members); this refuses them by name, whatever eligibility says."""
     from .vault_members import not_a_person  # noqa: PLC0415 — vault_members imports zk
@@ -82,7 +82,7 @@ def _refuse_logins_that_are_not_people(member_targets, what: str) -> None:
             continue
     if ids and not_a_person(ids):
         raise _zk.ZkError(403, "not_a_person",
-                          f"{what}: an agent's login or a system account is not a person, and holds "
+                          f"{what}: an agent's login is not a person, and holds "
                           "nothing in any vault")
 
 
