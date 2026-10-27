@@ -136,6 +136,9 @@ Vocabulary (closed — add to it deliberately, never in passing):
 * ``host-grant`` — a person's own DPoP-bound host-grant token, the only credential
   an MCP Apps View's button call carries (``apps/mcp/delegation.py``). Used only by
   ``HAND_TOOL_GATES``.
+* ``sign-off-approver`` — may decide this site sign-off, per
+  ``apps/host_grants/sign_offs.may_approve``: the person it is for, or for an agent's
+  request its owner or an admin who is a person (never the agent's own login).
 
 ``HAND_TOOL_GATES`` (bottom of this file) is the same declaration for the MCP tools
 that are not routes (``apps/mcp/tools/``): every hand-written tool names its gate
@@ -156,7 +159,7 @@ VOCABULARY: frozenset[str] = frozenset({
     "runner", "runner-admin", "runner-holds-agent", "license",
     "contact", "signed-link", "host", "beta-reviewer", "superuser", "fleet-holder",
     "hcp-grant", "device-proof", "owner-token-and-key", "invited-role", "paired-key", "page-viewer",
-    "secret-request", "caller-token", "host-grant",
+    "secret-request", "caller-token", "host-grant", "sign-off-approver",
 })
 
 

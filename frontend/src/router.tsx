@@ -33,6 +33,7 @@ import { WorkspaceMemberTreePage } from './pages/WorkspaceMemberTreePage'
 import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
+import { SignOffPage } from './pages/SignOffPage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
 import { InboundPushPage } from '@/pages/InboundPushPage'
@@ -370,6 +371,9 @@ export const routeTable: RouteObject[] = [
       { path: '/w/:workspace/timeline', element: <TimelinePage /> },
       // The approve link up.sh prints for a new cloud box (one passkey touch).
       { path: '/w/:workspace/runner-invitations/:invitationId', element: <RunnerInvitationApprovePage /> },
+      // A connected site asking you to approve one action with your passkey: the
+      // `approve_url` it sends you to (apps/host_grants/sign_offs_api.py).
+      { path: '/w/:workspace/sign-offs/:signOffId', element: <SignOffPage /> },
       // Is everything in this workspace tree set up right, and how is it used.
       { path: '/w/:workspace/health', element: <WorkspaceHealthPage /> },
       { path: '/w/:workspace/analytics', element: <WorkspaceAnalyticsPage /> },

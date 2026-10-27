@@ -19,6 +19,7 @@ REGISTRY: list[tuple[str, str]] = [
     ("task", "apps.agents.attention"),
     ("session", "apps.canopy_sessions.attention"),
     ("access_request", "apps.workspaces.attention"),
+    ("sign_off", "apps.host_grants.attention"),
 ]
 
 

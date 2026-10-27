@@ -20,8 +20,8 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
-from apps.common.token_hash import hash_token
 
+from apps.common.token_hash import hash_token
 
 
 class PersonalToken(models.Model):
@@ -866,3 +866,58 @@ class HcpFrameProof(models.Model):
 
     class Meta:
         db_table = "hcp_frame_proofs"
+
+
+def _sign_off_id() -> str:
+    return "so_" + secrets.token_urlsafe(16)
+
+
+class SiteSignOff(models.Model):
+    """A connected site asking a person to approve ONE action with their passkey
+    (`apps/host_grants/sign_offs.py`; spec `2026-10-27-site-sign-offs-design`).
+
+    The site signs the request; who may approve is canopy's answer
+    (`sign_offs.approvers_for`), asked again when someone decides. An approval is a
+    JWS canopy signs from the row (`approval_jti`, `decided_at`), never stored: the
+    site may collect it by polling until it expires, ten minutes after the decision.
+    """
+
+    SUBJECT, AGENT_ADMINS = "subject", "agent_admins"
+    APPROVERS = [(SUBJECT, "The subject approves their own"), (AGENT_ADMINS, "The agent's owner or admins")]
+    OPEN, APPROVED, DECLINED = "open", "approved", "declined"
+    STATES = [(OPEN, "Open"), (APPROVED, "Approved"), (DECLINED, "Declined")]
+
+    #: Opaque and unguessable: it is in the approve link.
+    id = models.CharField(primary_key=True, max_length=40, default=_sign_off_id, editable=False)
+    app = models.ForeignKey(AppCredential, on_delete=models.CASCADE, related_name="sign_offs")
+    #: The account the site acts for, as the site knows it (lower-cased email).
+    subject = models.CharField(max_length=254)
+    action_key = models.CharField(max_length=100)
+    action_title = models.CharField(max_length=200)
+    action_detail = models.TextField(blank=True, default="")
+    site_ref = models.CharField(max_length=128)
+    return_url = models.URLField(max_length=2000)
+    approvers = models.CharField(max_length=16, choices=APPROVERS)
+    #: The agent asked for, when `approvers` is AGENT_ADMINS.
+    agent = models.ForeignKey("agents.Agent", null=True, blank=True, on_delete=models.CASCADE, related_name="+")
+    state = models.CharField(max_length=16, choices=STATES, default=OPEN)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    #: The approval's `jti`: every copy canopy hands out is the same approval.
+    approval_jti = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "site_sign_offs"
+        indexes = [models.Index(fields=["app", "subject", "-created_at"], name="site_sign_off_subject_idx")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"sign-off {self.id} {self.action_key} for {self.subject} [{self.state}]"
+
+    def state_now(self, now=None) -> str:
+        """`open`, `approved`, `declined`, or `expired` (open past `expires_at`)."""
+        if self.state == self.OPEN and self.expires_at <= (now or timezone.now()):
+            return "expired"
+        return self.state

@@ -26,10 +26,10 @@ with the sdist and wheel attached):
 
 ```
 # requirements.txt / pyproject — from the tag
-dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.23.0#subdirectory=sdk/python
+dimagi-canopy @ git+https://github.com/dimagi-internal/canopy-web@dimagi-canopy-v0.24.0#subdirectory=sdk/python
 
 # or from the Release's wheel
-dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.23.0/dimagi_canopy-0.23.0-py3-none-any.whl
+dimagi-canopy @ https://github.com/dimagi-internal/canopy-web/releases/download/dimagi-canopy-v0.24.0/dimagi_canopy-0.24.0-py3-none-any.whl
 ```
 
 Add the `django` extra (`dimagi-canopy[django] @ ...`) for `canopy_sdk.django`,
@@ -526,6 +526,37 @@ def site_needs():
 
 CANOPY_HOST = {..., "SITE_NEEDS": "myapp.canopy.site_needs"}
 ```
+
+## Site sign-offs: a person's passkey behind one action
+
+A site that wants a person to approve something (labs, before it mints a full-access
+MCP token) asks canopy instead of building passkeys of its own. canopy asks the person
+for their passkey on its own page and hands back an approval signed with its client key
+(the key the site agents list is signed with). The approval completes exactly one
+pending action the site created, named by its `site_ref`; it is not a credential.
+
+```python
+from canopy_sdk.django import sign_offs
+
+asked = sign_offs.request(subject=user.email, action_key="labs.mcp_token.full",
+                          title="Create a full-access labs MCP token", site_ref=pending.ref,
+                          return_url=request.build_absolute_uri(reverse("tokens_approved")))
+return redirect(asked.approve_url)          # SignOffError("no_approver") if canopy knows nobody
+
+# back at return_url?sign_off=<jws>&id=<id> (or ?declined=<id>)
+approval = sign_offs.verify(request.GET["sign_off"], action_key="labs.mcp_token.full",
+                            site_ref=pending.ref, subject=user.email)
+# spend approval.jti once, in the transaction that acts on it
+
+state = sign_offs.status(asked.id)          # when someone else approves: .state, .approval
+```
+
+Who may approve is canopy's answer, and it is the visitor bar the panel already uses: a
+person whose verified address resolves to them and who is a member of the site's
+workspace approves their own (15 minutes); for one of the workspace's agents, its owner
+or an admin approves (24 hours); anyone else is `no_approver`, and the site decides what
+that means. `return_url` must be https on an origin the site registered (its frame
+origins or its JWKS URL). The wire is `canopy_sdk.sign_offs`.
 
 ## Host-held results: return facts + a link
 

@@ -8499,6 +8499,127 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/sites/sign-offs/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * A connected site asks a person to approve one action, signed
+         * @description Ask for a person's passkey approval of ONE action on this site.
+         *
+         *     `Authorization: Bearer <JWT>` signed by the site's own key: `typ`
+         *     `canopy-sign-off-request+jwt`, `iss` = `sub` = its Connected-site name, `aud` = this
+         *     URL, at most 60 s, single-use `jti`, `canopy_workspace` / `canopy_agent` as for
+         *     `GET /api/sites/agents`, and `sign_off_request`: `subject` (the account's email),
+         *     `action` (`key`, `title`, `detail`), `site_ref` (the site's id for what waits on
+         *     this) and `return_url` (https, on an origin the site registered; else 422
+         *     `bad_return_url`). Build and send it with `canopy_sdk.sign_offs.request_sign_off`.
+         *     Answers 201 with the page to send the approver to; 422 `no_approver` when nobody in
+         *     canopy may approve for that subject. A person's own request lasts 15 minutes, an
+         *     agent's 24 hours.
+         */
+        readonly post: operations["create_site_sign_off"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sites/sign-offs/{sign_off_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A connected site reads one of its sign-off requests, signed
+         * @description The state of one request this site made: `{id, state, expires_at, approval}`,
+         *     `state` one of `open`, `approved`, `declined`, `expired`. `approval` is the signed
+         *     approval (verify it with `canopy_sdk.sign_offs.verify_approval`) for ten minutes
+         *     after it was given, else null. Signed like the ask, with `aud` = this URL and no
+         *     `sign_off_request`. Another site's request is 404.
+         */
+        readonly get: operations["get_site_sign_off"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sign-offs/{sign_off_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A sign-off request you may decide
+         * @description What a connected site asks you to approve: the site, the action in its own
+         *     words, the account it is for, and (for an agent's request) which agent. 404 unless
+         *     you may decide it.
+         */
+        readonly get: operations["get_sign_off"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sign-offs/{sign_off_id}/approve": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a site's sign-off request (browser, passkey)
+         * @description Approve, in your own browser after a passkey step-up: canopy signs the approval
+         *     and answers where to send the browser (the site's page, approval in its query). A
+         *     token is refused (403), so no agent or script can approve. 409 `closed` when it was
+         *     decided already or has expired.
+         */
+        readonly post: operations["approve_sign_off"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/sign-offs/{sign_off_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a site's sign-off request
+         * @description Decline; the site is told when it next reads the request, and the answer says
+         *     where to send the browser. 409 `closed` when it was decided already or has expired.
+         */
+        readonly post: operations["decline_sign_off"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/timeline/": {
         readonly parameters: {
             readonly query?: never;
@@ -31853,6 +31974,100 @@ export interface components {
             /** Notified */
             readonly notified: number;
         };
+        /** SignOffCreatedOut */
+        readonly SignOffCreatedOut: {
+            /** Id */
+            readonly id: string;
+            /** Approve Url */
+            readonly approve_url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Approvers */
+            readonly approvers: string;
+        };
+        /** SignOffOut */
+        readonly SignOffOut: {
+            /** Id */
+            readonly id: string;
+            /** Site */
+            readonly site: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Subject */
+            readonly subject: string;
+            /** Action Key */
+            readonly action_key: string;
+            /** Action Title */
+            readonly action_title: string;
+            /** Action Detail */
+            readonly action_detail: string;
+            /** Approvers */
+            readonly approvers: string;
+            /** Agent Slug */
+            readonly agent_slug?: string | null;
+            /** Agent Name */
+            readonly agent_name?: string | null;
+            /** State */
+            readonly state: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /** Decided By Email */
+            readonly decided_by_email?: string | null;
+        };
+        /** SignOffDecidedOut */
+        readonly SignOffDecidedOut: {
+            /** Id */
+            readonly id: string;
+            /** Site */
+            readonly site: string;
+            /** Workspace */
+            readonly workspace: string;
+            /** Subject */
+            readonly subject: string;
+            /** Action Key */
+            readonly action_key: string;
+            /** Action Title */
+            readonly action_title: string;
+            /** Action Detail */
+            readonly action_detail: string;
+            /** Approvers */
+            readonly approvers: string;
+            /** Agent Slug */
+            readonly agent_slug?: string | null;
+            /** Agent Name */
+            readonly agent_name?: string | null;
+            /** State */
+            readonly state: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+            /** Decided At */
+            readonly decided_at?: string | null;
+            /** Decided By Email */
+            readonly decided_by_email?: string | null;
+            /** Redirect Url */
+            readonly redirect_url: string;
+        };
         /** ActivityEventOut */
         readonly ActivityEventOut: {
             /** Subsystem */
@@ -52567,6 +52782,112 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ResourcesUpdatedOut"];
+                };
+            };
+        };
+    };
+    readonly create_site_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly get_site_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly get_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffOut"];
+                };
+            };
+        };
+    };
+    readonly approve_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffDecidedOut"];
+                };
+            };
+        };
+    };
+    readonly decline_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffDecidedOut"];
                 };
             };
         };

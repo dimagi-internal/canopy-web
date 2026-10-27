@@ -296,6 +296,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Approve the box with one passkey touch', 'See whether it has paired'],
   },
   {
+    path: '/w/:workspace/sign-offs/:signOffId',
+    home: '/w/:workspace/agents',
+    group: 'Approving a site sign-off',
+    title: 'Approve a site sign-off',
+    audience: 'The person a connected site asks, or an agent\'s owner and admins (the link the site sends, or Home)',
+    what: "One request from a connected site to approve one action, such as labs creating a full-access MCP token: which site asks, the action in the site's words, and the account it is for (for an agent, which agent). Approving, with a passkey, sends you back to the site with a signed approval it checks before it acts; declining sends you back without one. A person's own request lasts 15 minutes, an agent's a day. Only the person it is for, or the agent's owner or admins, can open it; a token cannot approve.",
+    needsFirst: 'A connected site asking, and a passkey on this device.',
+    actions: ['Approve with one passkey touch', 'Decline'],
+  },
+  {
     path: '/w/:workspace/settings/connected-apps',
     title: 'Connected sites',
     audience: 'Workspace owner embedding an agent in a website',
