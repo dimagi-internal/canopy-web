@@ -621,7 +621,8 @@ async def test_ws_heartbeat_records_health_and_acks_refresh():
     })
     ack = await comm.receive_json_from(timeout=2)
     assert ack == {"type": "heartbeat.ack", "refresh_pending": False,
-                   "cancel_turn_ids": [], "paused": False, "paused_note": ""}
+                   "cancel_turn_ids": [], "paused": False, "paused_note": "",
+                   "expected_canopy_version": ""}
     fresh = await database_sync_to_async(Runner.objects.get)(pk=runner.id)
     assert fresh.health["checks"][0]["name"] == "transcripts"
 

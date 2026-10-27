@@ -166,6 +166,25 @@ def _no_live_plugin_json(monkeypatch):
     monkeypatch.setattr(plugin_services, "_raw_get", lambda url: _NotFound())
 
 
+@pytest.fixture(autouse=True)
+def _no_live_canopy_release(monkeypatch):
+    """No test reaches GitHub for the canopy release (apps/harness/canopy_release.py):
+    every runner read and heartbeat reply asks for it. Here it is unknown (404), and
+    the cached answer is dropped so one test's release cannot leak into the next.
+    The release tests patch `_raw_get` themselves."""
+    try:
+        from apps.harness import canopy_release
+        from django.core.cache import cache
+    except Exception:
+        return
+
+    class _NotFound:
+        status_code = 404
+
+    monkeypatch.setattr(canopy_release, "_raw_get", lambda url: _NotFound())
+    cache.delete(canopy_release.CACHE_KEY)
+
+
 @pytest.fixture()
 def agent_memory_on():
     """Every Person created while this is active starts with BOTH agent-memory

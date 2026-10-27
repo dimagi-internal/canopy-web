@@ -15,7 +15,7 @@ from django.db import models
 from django.utils import timezone
 from apps.common.token_hash import hash_token
 
-from . import clis
+from . import canopy_release, clis
 
 # Owned here (not services.py) so Runner.live_status can use it without a
 # models -> services import cycle (services already imports models). services.py
@@ -428,14 +428,24 @@ class Runner(models.Model):
         return opt_in.covers(project)
 
     def refresh_pending(self) -> bool:
-        """Asked to refresh, and has not bootstrapped since."""
-        if self.refresh_requested_at is None:
-            return False
-        try:
-            booted = float((self.health or {}).get("bootstrapped_at") or 0)
-        except (TypeError, ValueError):
-            booted = 0.0
-        return booted < self.refresh_requested_at.timestamp()
+        """Asked to refresh, and has not bootstrapped since — by an operator, or by
+        canopy itself when the box's canopy CLI is behind the release
+        (`canopy_release.refresh_owed`): a stale canopy is fixed by a re-bootstrap,
+        not by the runner-code updater, so it rides this request, not the
+        `runner.update_available` doorbell."""
+        if self.refresh_requested_at is not None:
+            try:
+                booted = float((self.health or {}).get("bootstrapped_at") or 0)
+            except (TypeError, ValueError):
+                booted = 0.0
+            if booted < self.refresh_requested_at.timestamp():
+                return True
+        return canopy_release.refresh_owed(self.health)
+
+    def expected_canopy_version(self) -> str:
+        """The canopy release this box should run (`canopy_release.expected`).
+        Empty means UNKNOWN, never "stale"."""
+        return canopy_release.expected()
 
     def expected_code_sha(self) -> str:
         """The sha the DEPLOYED server expects this runner's kind to be running.

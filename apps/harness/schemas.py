@@ -181,6 +181,9 @@ class RunnerHealthIn(Schema):
     # finished — not when this check list was built.
     checked_at: float = 0
     bootstrapped_at: float = 0
+    # The box's canopy CLI version ("" = unknown), compared with the canopy
+    # release to ask a stale box for a refresh (`canopy_release.refresh_owed`).
+    canopy_version: str = Field(default="", max_length=32)
 
 
 class RunnerFlagsIn(Schema):
@@ -381,6 +384,10 @@ class RunnerOut(Schema):
     # was rendering that as "behind" (see Runner.code_committed_at).
     code_committed_at: int
     expected_code_committed_at: int
+    # The canopy release (plugin + CLI) the box should run — the second version
+    # it runs, beside its code (`canopy_release`). The box compares its CLI with
+    # it in its `canopy.cli` check. "" = unknown.
+    expected_canopy_version: str = ""
 
     workspace: str | None
     # The runner's OWNER — the human whose token it authenticates with. This — NOT `workspace` — is what governs
@@ -633,6 +640,10 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_expected_code_committed_at(obj) -> int:
         return obj.expected_code_committed_at()
+
+    @staticmethod
+    def resolve_expected_canopy_version(obj) -> str:
+        return obj.expected_canopy_version()
 
     @staticmethod
     def resolve_workspace(obj) -> str | None:
