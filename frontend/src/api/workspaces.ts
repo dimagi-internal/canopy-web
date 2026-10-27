@@ -443,3 +443,12 @@ export async function getWorkspaceAnalytics(
   ensureOk(res, 'Failed to load analytics')
   return res.data as unknown as WorkspaceAnalyticsOut
 }
+
+export type MyInviteOut = components['schemas']['MyInviteOut']
+
+/** Invites addressed to the signed-in person that they have not accepted yet. */
+export async function listMyInvites(): Promise<MyInviteOut[]> {
+  const res = await apiV2.GET('/api/workspaces/invites/mine')
+  ensureOk(res, 'Failed to load your invites')
+  return res.data as unknown as MyInviteOut[]
+}

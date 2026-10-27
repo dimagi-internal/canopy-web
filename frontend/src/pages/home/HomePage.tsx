@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { type ProjectOut } from '@/api/agents'
 import { hide, loadAttention, unhide, type Attention, type AttentionRow, type AttentionState } from '@/api/attention'
 import { apiV2 } from '@/api/client.v2'
+import { listMyInvites, type MyInviteOut } from '@/api/workspaces'
 import { actOn } from '@/api/work'
 import { AlertList } from '@/components/alerts/AlertList'
 import { NewChatMenu } from '@/components/chat/NewChatMenu'
@@ -36,6 +37,32 @@ import { displayAgent } from '@/components/work/meta'
 // (docs/architecture/alerts.md): system problems you can fix, with no quiet
 // fold and no personal hide — the × there is a shared dismiss, and dismissed
 // ones fold below with who and when, and Undo.
+
+/** Invites waiting for you. Signing in never joins a workspace — only
+ *  accepting does — so someone who signed in without opening their invite link
+ *  landed here with nothing to do and no way to find it. */
+function PendingInvites(): JSX.Element | null {
+  const [invites, setInvites] = useState<MyInviteOut[]>([])
+  useEffect(() => {
+    listMyInvites().then(setInvites, () => setInvites([]))
+  }, [])
+  if (!invites.length) return null
+  return (
+    <div className="mb-6 rounded border border-primary/30 bg-primary/5 px-3 py-2 text-[13px]">
+      {invites.map((inv) => (
+        <div key={inv.token} className="flex items-center justify-between gap-3 py-1">
+          <span className="text-foreground">
+            You're invited to <span className="font-medium">{inv.workspace_display_name}</span> as {inv.role}
+            {inv.invited_by_email ? <span className="text-muted-foreground"> by {inv.invited_by_email}</span> : null}.
+          </span>
+          <Link to={`/invite/${inv.token}`} className="shrink-0 font-medium text-primary hover:underline">
+            Accept →
+          </Link>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 /** How many sessions show before "Show more" — the list is meant to be read in
  *  one look, not worked through. Rows are one line each, like /ide's tree. */
@@ -162,6 +189,8 @@ export function HomePage(): JSX.Element {
           </p>
         </div>
 
+        <PendingInvites />
+
         {workspaces.length > 0 && <AlertList title="Alerts" hideEmpty showCounts showDismissed className="mb-6" />}
 
         {multi && (
@@ -199,7 +228,9 @@ export function HomePage(): JSX.Element {
 
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
         {newChatError && <p className="mb-3 text-sm text-destructive">{newChatError}</p>}
-        {(data == null && !error) || wsLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
+        {wsLoading || (data == null && !error && workspaces.length > 0) ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : null}
 
         <Section
           title="Sessions"

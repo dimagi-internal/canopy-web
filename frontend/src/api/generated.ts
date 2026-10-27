@@ -7650,6 +7650,27 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/invites/mine": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Invites waiting for me
+         * @description Invites addressed to you that you have not accepted yet, newest first.
+         *     Open `/invite/<token>` to accept one.
+         */
+        readonly get: operations["my_invites"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/workspaces/{slug}/": {
         readonly parameters: {
             readonly query?: never;
@@ -30328,6 +30349,28 @@ export interface components {
             readonly parent?: string | null;
         };
         /**
+         * MyInviteOut
+         * @description An invite addressed to the caller, not yet accepted. `token` opens
+         *     `/invite/<token>`, the link the invite email already sent them.
+         */
+        readonly MyInviteOut: {
+            /** Token */
+            readonly token: string;
+            /** Workspace Slug */
+            readonly workspace_slug: string;
+            /** Workspace Display Name */
+            readonly workspace_display_name: string;
+            /** Role */
+            readonly role: string;
+            /** Invited By Email */
+            readonly invited_by_email?: string | null;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+        };
+        /**
          * WorkspaceParentIn
          * @description Move a workspace in the tree. `None` makes it a root.
          */
@@ -51949,6 +51992,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["WorkspaceOut"];
+                };
+            };
+        };
+    };
+    readonly my_invites: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MyInviteOut"][];
                 };
             };
         };

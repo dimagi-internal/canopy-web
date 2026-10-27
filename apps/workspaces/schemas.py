@@ -276,6 +276,18 @@ class InvitePreviewOut(StrictModel):
     role: str | None = None
 
 
+class MyInviteOut(StrictModel):
+    """An invite addressed to the caller, not yet accepted. `token` opens
+    `/invite/<token>`, the link the invite email already sent them."""
+
+    token: str
+    workspace_slug: str
+    workspace_display_name: str
+    role: str
+    invited_by_email: str | None = None
+    expires_at: dt.datetime
+
+
 class TopologyRouteOut(StrictModel):
     """One `RunnerAssignment` row. `source` "" = the agent's default ordered list
     (`rank` orders it); non-empty = a source rule (optionally narrowed to one

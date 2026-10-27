@@ -27,6 +27,11 @@ vi.mock('@/api/client.v2', async (orig) => ({
   ...(await orig<typeof import('@/api/client.v2')>()),
   apiV2: { GET: async () => ({ data: [] }) },
 }))
+const listMyInvites = vi.fn<() => Promise<unknown[]>>(async () => [])
+vi.mock('@/api/workspaces', async (orig) => ({
+  ...(await orig<typeof import('@/api/workspaces')>()),
+  listMyInvites: () => listMyInvites(),
+}))
 vi.mock('@/workspace/WorkspaceProvider', () => ({
   useWorkspace: () => ({ workspaces: [{ slug: 'connect', display_name: 'Connect', parent: null }], loading: false }),
 }))
@@ -56,6 +61,19 @@ const chat = (over: Partial<AttentionRow>): AttentionRow =>
     actions: ['open'], target: { session: 's1' }, ...over })
 
 describe('HomePage', () => {
+  it('offers an invite the person has not accepted yet', async () => {
+    // Signing in joins nothing; without this, someone who signed in instead of
+    // opening their invite link had no way back to it.
+    loadAttention.mockResolvedValue({ now: [], quiet: [], hidden: [], running: [] })
+    listMyInvites.mockResolvedValue([{
+      token: 'tok123', workspace_slug: 'marshellis', workspace_display_name: 'Marshellis',
+      role: 'editor', invited_by_email: 'jj@dimagi.com', expires_at: new Date().toISOString(),
+    }])
+    show()
+    expect(await screen.findByText('Marshellis')).toBeTruthy()
+    expect(screen.getByText('Accept →').getAttribute('href')).toBe('/invite/tok123')
+  })
+
   it('shows a session held behind an away runner as parked, with the reason', async () => {
     loadAttention.mockResolvedValue({
       now: [chat({ state: 'parked', reason: 'Waiting — jj-mbp is paused' })], quiet: [], hidden: [], running: [],
