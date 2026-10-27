@@ -1,6 +1,7 @@
 """`canopy-runner self-update` — the bundled updater, with every download and command faked."""
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import json
@@ -279,30 +280,94 @@ def test_a_failed_install_reports_and_exits_nonzero(tmp_path):
 # --- Windows -----------------------------------------------------------------------
 
 
+class WinCmds:
+    """The Windows side, faked: the installer (a Popen), schtasks with a task that is
+    Running or not, `cmd /c rmdir|mklink /J` on the `current` link, and PowerShell's
+    Get-AuthenticodeSignature."""
+
+    def __init__(self, app, *, installer=None, installer_rc=0, comes_up=True,
+                 end_settles_after=0, signature=("Valid", 'CN="Dimagi, Inc.", O="Dimagi, Inc."')):
+        self.app, self.calls, self.popened = app, [], []
+        self.installer = installer if installer is not None else self.flip_to_new
+        self.installer_rc, self.comes_up = installer_rc, comes_up
+        self.end_settles_after = end_settles_after
+        self.signature = signature
+        self.running = True
+
+    def flip_to_new(self):
+        ver = add_windows_version(self.app, NEW)
+        (self.app / "current").unlink()
+        (self.app / "current").symlink_to(ver, target_is_directory=True)
+
+    def popen(self, argv, **kw):
+        argv = [str(a) for a in argv]
+        self.popened.append((argv, kw))
+        fake = self
+
+        class Proc:
+            pid = 4242
+
+            def wait(self, timeout=None):
+                result = fake.installer()
+                if isinstance(result, BaseException):
+                    raise result
+                return fake.installer_rc
+
+            def kill(self):
+                pass
+        return Proc()
+
+    def __call__(self, argv, **kw):
+        argv = [str(a) for a in argv]
+        self.calls.append((argv, kw))
+        out = ""
+        if argv[:2] == ["schtasks", "/End"]:
+            self.running = False
+            self.query_until_ended = self.end_settles_after
+        elif argv[:2] == ["schtasks", "/Run"]:
+            if not self.query_until_ended:
+                self.running = self.comes_up
+        elif argv[0] == "powershell.exe" and "Get-ScheduledTask" in argv[-1]:
+            if getattr(self, "query_until_ended", 0):
+                self.query_until_ended -= 1
+                out = "Running"
+            else:
+                out = "Running" if self.running else "Ready"
+        elif argv[:3] == ["cmd", "/c", "rmdir"]:
+            Path(argv[3]).unlink()
+        elif argv[:4] == ["cmd", "/c", "mklink", "/J"]:
+            Path(argv[4]).symlink_to(argv[5], target_is_directory=True)
+        elif argv[0] == "powershell.exe":
+            out = "\n".join(self.signature)
+        return subprocess.CompletedProcess(argv, 0, out, "")
+
+    def argvs(self, *prefix):
+        """Calls starting with `prefix`, leaving out the task-state polls."""
+        return [a for a, _ in self.calls if a[:len(prefix)] == list(prefix)
+                and "Get-ScheduledTask" not in a[-1]]
+
+
+def _install(tmp_path, app, cmds, **kw):
+    out = []
+    self_update.install_windows(tmp_path / "Setup.exe", NEW, app, tmp_path / "runner.json",
+                                run=cmds, popen=cmds.popen, sleep=lambda s: None,
+                                out=out.append, **kw)
+    return out
+
+
 def test_windows_runs_the_installer_then_setup_restart_and_prune(tmp_path):
     app = windows_install(tmp_path)
     ancient = add_windows_version(app, "0" * 40)
-    calls = []
-
-    def run(argv, **kw):
-        argv = [str(a) for a in argv]
-        calls.append((argv, kw.get("env")))
-        if argv[0].endswith("Setup.exe"):
-            ver = add_windows_version(app, NEW)
-            (app / "current").unlink()
-            (app / "current").symlink_to(ver, target_is_directory=True)
-        return subprocess.CompletedProcess(argv, 0, "", "")
-
-    self_update.install_windows(tmp_path / "Setup.exe", NEW, app, tmp_path / "runner.json",
-                                run=run, out=lambda *a: None)
-    argvs = [a for a, _ in calls]
-    assert argvs[0] == [str(tmp_path / "Setup.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES",
-                        "/NORESTART", "/UPDATE"]
-    assert argvs[1][0] == str(app / "current" / "python" / "python.exe")
-    assert argvs[1][1:] == ["-m", "canopy_runner.main", "setup", "--no-pair", "--config",
+    cmds = WinCmds(app)
+    _install(tmp_path, app, cmds)
+    assert cmds.popened[0][0] == [str(tmp_path / "Setup.exe"), "/VERYSILENT",
+                                  "/SUPPRESSMSGBOXES", "/NORESTART", "/UPDATE"]
+    argvs = [a for a, _ in cmds.calls if "Get-ScheduledTask" not in a[-1]]
+    assert argvs[0][0] == str(app / "current" / "python" / "python.exe")
+    assert argvs[0][1:] == ["-m", "canopy_runner.main", "setup", "--no-pair", "--config",
                             str(tmp_path / "runner.json")]
-    assert calls[1][1]["CANOPY_RUNNER_UNDER_JOB"] == "updater"
-    assert argvs[2:] == [["schtasks", "/End", "/TN", r"\Canopy\canopy-runner"],
+    assert cmds.calls[0][1]["env"]["CANOPY_RUNNER_UNDER_JOB"] == "updater"
+    assert argvs[1:] == [["schtasks", "/End", "/TN", r"\Canopy\canopy-runner"],
                          ["schtasks", "/Run", "/TN", r"\Canopy\canopy-runner"]]
     assert sorted(p.name for p in (app / "versions").iterdir()) == [OLD[:12], NEW[:12]]
     assert not ancient.exists()
@@ -310,10 +375,121 @@ def test_windows_runs_the_installer_then_setup_restart_and_prune(tmp_path):
 
 def test_windows_refuses_when_current_names_another_build(tmp_path):
     app = windows_install(tmp_path)
-    run = lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")  # noqa: E731
+    cmds = WinCmds(app, installer=lambda: None)
     with pytest.raises(self_update.UpdateError, match="does not name the expected"):
-        self_update.install_windows(tmp_path / "Setup.exe", NEW, app, tmp_path / "r.json",
-                                    run=run, out=lambda *a: None)
+        _install(tmp_path, app, cmds)
+
+
+def test_a_failed_junction_flip_puts_current_back(tmp_path):
+    """The installer dropped `current` and failed to re-create it: both tasks run
+    through `current`, so it must point at the previous version again."""
+    app = windows_install(tmp_path)
+
+    def drop_current():
+        add_windows_version(app, NEW)
+        (app / "current").unlink()
+
+    cmds = WinCmds(app, installer=drop_current, installer_rc=1)
+    with pytest.raises(self_update.UpdateError, match="installer failed"):
+        _install(tmp_path, app, cmds)
+    assert (app / "current").resolve() == (app / "versions" / OLD[:12]).resolve()
+
+
+def test_a_wrong_build_in_current_is_rolled_back_too(tmp_path):
+    app = windows_install(tmp_path)
+
+    def flip_to_other():
+        ver = add_windows_version(app, "c" * 40)
+        (app / "current").unlink()
+        (app / "current").symlink_to(ver, target_is_directory=True)
+
+    with pytest.raises(self_update.UpdateError, match="does not name the expected"):
+        _install(tmp_path, app, WinCmds(app, installer=flip_to_other))
+    assert (app / "current").resolve() == (app / "versions" / OLD[:12]).resolve()
+
+
+def test_restart_waits_for_end_to_settle_before_run(tmp_path):
+    """IgnoreNew drops a /Run that lands while /End is still settling."""
+    app = windows_install(tmp_path)
+    cmds = WinCmds(app, end_settles_after=3)
+    _install(tmp_path, app, cmds)
+    def step(argv):
+        return "/State" if "Get-ScheduledTask" in argv[-1] else argv[1]
+    seq = [step(a) for a, _ in cmds.calls
+           if a[0] == "schtasks" or "Get-ScheduledTask" in a[-1]]
+    end, run = seq.index("/End"), seq.index("/Run")
+    assert seq[end + 1:run] == ["/State"] * 4, "polls until no longer Running, then /Run"
+    assert seq[run + 1] == "/State", "and confirms /Run took"
+    for argv, kw in cmds.calls:
+        if "Get-ScheduledTask" in argv[-1]:
+            assert "-TaskPath '\\Canopy\\' -TaskName 'canopy-runner'" in argv[-1]
+            assert kw["timeout"] <= 20
+
+
+def test_a_runner_that_never_comes_back_is_a_failed_update(tmp_path, monkeypatch):
+    app = windows_install(tmp_path / "Programs")
+    cmds = WinCmds(app, comes_up=False)
+    rel = dict(_rel(file="Canopy-Runner-Setup-windows-x86_64.exe"), signed=False)
+
+    def downloader(rel, dest):
+        dest.mkdir(parents=True)
+        return dest / rel["file"]
+
+    monkeypatch.setattr(self_update, "install_windows", functools.partial(
+        self_update.install_windows, popen=cmds.popen, sleep=lambda s: None))
+    rc = self_update.run_self_update(
+        _config(tmp_path), if_stale=True,
+        executable=str(app / "current" / "python" / "pythonw.exe"), home=tmp_path / "home",
+        client_factory=lambda c: FakeClient(rel), installed=OLD, downloader=downloader,
+        run=cmds, system="Windows", out=lambda *_: None)
+    assert rc == 1
+    check = update.health_check(_state_cfg(tmp_path))
+    assert check["status"] == "fail" and "not Running after a restart" in check["detail"]
+
+
+def test_installer_timeout_kills_the_whole_tree(tmp_path, monkeypatch):
+    app = windows_install(tmp_path)
+    monkeypatch.setattr(self_update.platform_jobs, "is_windows", lambda: True)
+    cmds = WinCmds(app, installer=lambda: subprocess.TimeoutExpired("Setup.exe", 900))
+    with pytest.raises(self_update.UpdateError, match="did not finish"):
+        _install(tmp_path, app, cmds)
+    kills = [(a, kw) for a, kw in cmds.calls if a[0] == "taskkill"]
+    assert [a for a, _ in kills] == [["taskkill", "/T", "/F", "/PID", "4242"]]
+    assert kills[0][1]["creationflags"] == 0x08000000, "no console window"
+    assert (app / "current").resolve() == (app / "versions" / OLD[:12]).resolve()
+
+
+def test_an_unsigned_release_skips_authenticode_and_says_so(tmp_path):
+    app = windows_install(tmp_path)
+    cmds = WinCmds(app)
+    out = _install(tmp_path, app, cmds, signed=False)
+    assert not cmds.argvs("powershell.exe")
+    assert any("unsigned" in line for line in out)
+
+
+@pytest.mark.parametrize("signature,match", [
+    (("NotSigned", ""), "NotSigned"),
+    (("HashMismatch", 'CN="Dimagi, Inc."'), "HashMismatch"),
+    (("Valid", "CN=Someone Else, O=Someone Else"), "not Dimagi"),
+    (("Valid", "CN=Dimagix Ltd, O=Dimagix Ltd"), "not Dimagi"),
+])
+def test_a_signed_release_must_be_valid_and_ours(tmp_path, signature, match):
+    app = windows_install(tmp_path)
+    cmds = WinCmds(app, signature=signature)
+    with pytest.raises(self_update.UpdateError, match=match):
+        _install(tmp_path, app, cmds, signed=True)
+    assert not cmds.popened, "never runs an installer that fails the check"
+    assert (app / "current").resolve() == (app / "versions" / OLD[:12]).resolve()
+
+
+def test_a_signed_release_signed_by_us_installs(tmp_path):
+    app = windows_install(tmp_path)
+    cmds = WinCmds(app)
+    _install(tmp_path, app, cmds, signed=True)
+    (ps,) = cmds.argvs("powershell.exe")
+    assert "Get-AuthenticodeSignature -LiteralPath" in ps[-1]
+    assert str(tmp_path / "Setup.exe") in ps[-1]
+    assert (app / "current").resolve() == (app / "versions" / NEW[:12]).resolve()
 
 
 def test_hold_updates_keeps_a_stale_box_where_it_is(tmp_path):

@@ -93,6 +93,16 @@ def test_other_sessions_words_are_denied_to_the_path_tools():
     assert "Read(~/.canopy/caller/**)" not in _perms(caller_path=own)["deny"]
 
 
+def test_windows_browser_profiles_are_denied_to_the_path_tools():
+    """Cookies and saved logins on a Windows runner live under AppData, which none
+    of the macOS/Linux profile paths cover."""
+    deny = _perms()["deny"]
+    for rule in ("Read(~/AppData/Local/Google/Chrome/**)", "Read(~/AppData/Local/Microsoft/Edge/**)",
+                 "Read(~/AppData/Local/BraveSoftware/**)", "Read(~/AppData/Roaming/Mozilla/**)",
+                 "Edit(~/AppData/Local/Google/Chrome/**)"):
+        assert rule in deny, rule
+
+
 def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
     """Granted whole it reached every other session's transcript on the box."""
     wt = tmp_path / "cx-a-1234-xyz12"

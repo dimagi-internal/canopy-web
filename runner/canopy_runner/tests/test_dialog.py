@@ -16,6 +16,7 @@ def _fake_run(stdout):
         captured["cmd"] = cmd
         captured["script"] = input
         captured["env"] = kw.get("env")
+        captured["creationflags"] = kw.get("creationflags", 0)
         return SimpleNamespace(stdout=stdout, stderr="", returncode=0)
 
     return run, captured
@@ -82,6 +83,8 @@ def test_windows_renders_through_powershell(monkeypatch):
     assert "-NoProfile" in captured["cmd"] and "-NonInteractive" in captured["cmd"]
     # The timeout reaches Popup via the environment, never interpolated into the script.
     assert captured["env"]["CANOPY_DIALOG_TIMEOUT"] == "25"
+    # No console window flashing up behind the popup (CREATE_NO_WINDOW).
+    assert captured["creationflags"] == 0x08000000
 
 
 def test_windows_passes_the_message_on_stdin_not_in_the_script(monkeypatch):

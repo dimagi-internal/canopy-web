@@ -725,13 +725,72 @@ def test_windows_ensure_app_leaves_the_start_to_the_protocol_handler(monkeypatch
     assert calls == []
 
 
-def test_windows_stop_kills_no_shells_and_does_not_crash(monkeypatch):
-    """No SIGKILL on Windows: reaching for it raised mid-stop."""
+def test_windows_stop_kills_the_turns_shells_with_taskkill(monkeypatch):
+    """No SIGKILL on Windows (reaching for it raised mid-stop), so a stop used to
+    leave the turn's shells running: taskkill ends each one's tree instead."""
     from canopy_runner import platform_jobs
 
+    calls = _record_runs(monkeypatch, [])
     monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
-    monkeypatch.setattr(desktop, "turn_shells", lambda *a: pytest.fail("ps on Windows"))
-    assert desktop.kill_turn_shells("sid-9", 0) == 0
+    monkeypatch.setattr(desktop, "turn_shells", lambda *a: [20, 21])
+    monkeypatch.setattr(desktop.os, "kill", lambda *a: pytest.fail("signals on Windows"))
+    assert desktop.kill_turn_shells("sid-9", 0) == 2
+    assert calls == [["taskkill", "/T", "/F", "/PID", "20"], ["taskkill", "/T", "/F", "/PID", "21"]]
+
+
+def test_windows_reads_the_process_table_from_cim(monkeypatch):
+    """No `ps` on Windows: a CIM query, its Windows paths read with slashes so the
+    shell-snapshot mark matches, and one bad row skipped rather than fatal."""
+    from canopy_runner import platform_jobs
+
+    now = time.time()
+    rows = [
+        {"p": 11, "pp": 10, "t": now - 300, "c": "C:\\Users\\x\\claude.exe --resume=sid-1"},
+        {"p": 20, "pp": 11, "t": now - 5,
+         "c": "bash.exe -c source C:\\Users\\x\\.claude\\shell-snapshots\\snapshot-bash-1.sh && sleep 99"},
+        {"p": 4, "pp": 0, "t": 0, "c": None},
+        {"p": "x"},
+    ]
+    calls = _record_runs(monkeypatch, [subprocess.CompletedProcess([], 0, json.dumps(rows), "")])
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    procs = desktop._processes()
+    assert calls[0][0] == "powershell"
+    assert [p[0] for p in procs] == [11, 20, 4]
+    assert desktop.turn_shells("sid-1", now - 30, procs=procs) == [20]
+
+
+def test_windows_with_no_process_table_kills_nothing(monkeypatch):
+    from canopy_runner import platform_jobs
+
+    _record_runs(monkeypatch, [OSError("no powershell")])
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    assert desktop._processes() == []
+
+
+def test_windows_worktrees_are_added_with_long_paths_on(cfg, tmp_path, monkeypatch):
+    """Git for Windows defaults core.longpaths to false; a worktree under
+    ~\\.canopy\\desktop\\worktrees\\<repo>\\<slug> runs past MAX_PATH, and the
+    turn failed reading only "exit status 128"."""
+    from canopy_runner import platform_jobs
+
+    def run(argv, **kw):
+        if "worktree" in argv:
+            return subprocess.CompletedProcess(argv, 128, "", "error: unable to create file x: Filename too long\n")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+    seen = []
+    monkeypatch.setattr(desktop.subprocess, "run", lambda argv, **kw: seen.append(argv) or run(argv, **kw))
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    with pytest.raises(subprocess.CalledProcessError, match="Filename too long"):
+        desktop.make_worktree(cfg, tmp_path / "repo", "HEAD", "c-deep-ab12")
+    add = next(a for a in seen if "worktree" in a)
+    assert add[add.index("-c") + 1] == "core.longpaths=true"
+    assert add.index("-c") < add.index("worktree")
+
+
+def test_a_failed_worktree_add_says_what_git_said(cfg, tmp_path):
+    repo = _repo(tmp_path)
+    with pytest.raises(subprocess.CalledProcessError, match="invalid reference"):
+        desktop.make_worktree(cfg, repo, "no-such-ref", "c-bad-base-ab12")
 
 
 def test_windows_finds_the_cli_the_app_bundles(monkeypatch, tmp_path):

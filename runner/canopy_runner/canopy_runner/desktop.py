@@ -413,9 +413,23 @@ def needs_emdash() -> bool:
     return _current != CLAUDE_CLI
 
 
+class GitError(subprocess.CalledProcessError):
+    """A failed git call that says what git said. A bare CalledProcessError reads
+    only "exit status 128", which is how a Windows worktree past MAX_PATH looked."""
+
+    def __str__(self) -> str:
+        err = (self.stderr or "").strip()
+        return super().__str__() + (f": {err[-500:]}" if err else "")
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> str:
-    return subprocess.run(["git", "-C", str(repo), *args], check=check,
-                          capture_output=True, text=True, timeout=120).stdout.strip()
+    from .platform_jobs import no_window
+
+    argv = ["git", "-C", str(repo), *args]
+    out = subprocess.run(argv, capture_output=True, text=True, timeout=120, **no_window())
+    if check and out.returncode:
+        raise GitError(out.returncode, argv, out.stdout, out.stderr)
+    return out.stdout.strip()
 
 
 def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
@@ -431,7 +445,13 @@ def make_worktree(cfg, repo: Path, base_ref: str, name: str) -> Path:
     if "/" in base_ref:  # origin/main: bring it current, best-effort
         remote, _, branch = base_ref.partition("/")
         _git(repo, "fetch", "-q", remote, branch, check=False)
-    _git(repo, "worktree", "add", "-q", "-b", f"canopy-desktop/{slug}", str(wt), base_ref)
+    from .platform_jobs import is_windows
+
+    # Git for Windows defaults core.longpaths to false, and a worktree under
+    # ~\.canopy\desktop\worktrees\<repo>\<80-char slug> runs past MAX_PATH on any
+    # deep repo: checkout fails with exit 128.
+    longpaths = ("-c", "core.longpaths=true") if is_windows() else ()
+    _git(repo, *longpaths, "worktree", "add", "-q", "-b", f"canopy-desktop/{slug}", str(wt), base_ref)
     # Keep the runtime's own files out of the repo's status and diffs.
     common = Path(_git(wt, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     exclude = common / "info" / "exclude"
@@ -936,14 +956,43 @@ def _etime_seconds(etime: str) -> int:
     return (int(days) if days else 0) * 86400 + h * 3600 + m * 60 + s
 
 
+#: Every process's (pid, ppid, start in epoch seconds, command line) as JSON. Another
+#: account's command line reads as null without elevation, so it never matches a session.
+_WIN_PROCESSES = (
+    "Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ "
+    "p = $_.ProcessId; pp = $_.ParentProcessId; "
+    "t = $(if ($_.CreationDate) { ([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds() / 1000 } else { 0 }); "
+    "c = $_.CommandLine } } | ConvertTo-Json -Compress")
+
+
+def _windows_processes() -> list[tuple[int, int, float, str]]:
+    """`_processes` on Windows, from a CIM query (no `ps` there). Backslashes become
+    slashes so the shell-snapshot mark matches a Windows path. Empty on any failure:
+    a stop that finds nothing kills nothing."""
+    from .platform_jobs import no_window
+
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _WIN_PROCESSES],
+                             capture_output=True, text=True, timeout=30, **no_window()).stdout
+        data = json.loads(out or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    rows = []
+    for d in data if isinstance(data, list) else [data]:
+        try:
+            rows.append((int(d["p"]), int(d["pp"]), float(d.get("t") or 0),
+                         (d.get("c") or "").replace("\\", "/")))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return rows
+
+
 def _processes() -> list[tuple[int, int, float, str]]:
-    """(pid, ppid, started_at, command) for this user's processes. Empty on
-    Windows: only a Claude desktop session's stop reads them, a runtime written
-    for macOS (`claude-cli` stops over ACP instead)."""
+    """(pid, ppid, started_at, command) for this user's processes."""
     from .platform_jobs import is_windows
 
     if is_windows():
-        return []
+        return _windows_processes()
     out = subprocess.run(["ps", "-U", str(os.getuid()), "-o", "pid=,ppid=,etime=,command="],
                          capture_output=True, text=True).stdout
     now, rows = time.time(), []
@@ -987,11 +1036,22 @@ def kill_turn_shells(sid: str, since: float) -> int:
 
     from .platform_jobs import is_windows
 
-    if is_windows():
-        # No process table is read on Windows (`_processes`), and there is no
-        # SIGKILL: the mod's abort still stops the turn, its shells run on.
-        return 0
     victims = turn_shells(sid, since)
+    if is_windows():
+        # No signals on Windows: taskkill /T /F ends each shell and its whole tree.
+        # Already-gone PIDs (a child of one killed first) just fail quietly.
+        from .platform_jobs import no_window
+
+        for pid in victims:
+            try:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True,
+                               text=True, timeout=15, **no_window())
+            except (OSError, subprocess.SubprocessError):
+                pass
+        if victims:
+            logger.info("desktop session %s: killed %d process(es) left running by the stopped turn",
+                        sid, len(victims))
+        return len(victims)
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for pid in victims:
             try:

@@ -175,7 +175,7 @@ def create_runner_pairing(request: HttpRequest, payload: RunnerPairingIn):
                     ecdh_public_jwk=ecdh,
                     ecdh_store=payload.ecdh_store if ecdh and payload.ecdh_store in ECDH_STORES else "",
                     hostname=payload.hostname.strip(), account=payload.account.strip(),
-                    platform=payload.platform, has_emdash=payload.has_emdash,
+                    platform=payload.platform, has_emdash=drives_emdash(payload),
                     redirect_port=payload.redirect_port, created_at=now,
                     reconnect_runner=_live_runner(payload.reconnect_runner),
                 )
@@ -237,7 +237,11 @@ def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: R
                     engine=Runner.ENGINE_EMDASH if locked.has_emdash else Runner.ENGINE_CLAUDE_CLI,
                     capabilities=declared_capabilities({"sessions": True}),
                     host=locked.hostname, owner=owner, workspace_id=locked.workspace_id,
+                    platform=locked.platform,
                 )
+            elif locked.platform and runner.platform != locked.platform:
+                runner.platform = locked.platform
+                runner.save(update_fields=["platform"])
             ecdh_jkt = device_keys.thumbprint(locked.ecdh_public_jwk) if locked.ecdh_public_jwk else ""
             key = RunnerDeviceKey.objects.create(
                 runner=runner, kind=locked.kind, public_jwk=locked.public_jwk, jkt=locked.jkt,
@@ -259,6 +263,19 @@ def claim_runner_pairing(request: HttpRequest, pairing_id: uuid.UUID, payload: R
 
 
 # ---- the person: see, approve or decline (browser session) ---------------------------
+
+def drives_emdash(payload) -> bool:
+    """Whether the runner this pairing makes should drive emdash (else Claude CLI).
+
+    emdash is driven over its DevTools port, and the one thing that reopens it with
+    that port — the "Emdash CDP" launcher — is a macOS AppleScript app. So on Windows
+    an installed emdash counts only when it is ALREADY serving DevTools
+    (`emdash_cdp_live`, read from its DevToolsActivePort); otherwise the runner would
+    report "CDP unreachable" and never claim a turn. Elsewhere, unchanged."""
+    if not payload.has_emdash:
+        return False
+    return payload.platform != "windows" or bool(payload.emdash_cdp_live)
+
 
 def _live_runner(runner_id):
     if runner_id is None:

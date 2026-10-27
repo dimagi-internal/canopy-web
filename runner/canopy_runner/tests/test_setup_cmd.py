@@ -40,12 +40,22 @@ class Cmds:
                 rc, err = 5, "Bootstrap failed: 5: Input/output error"
             else:
                 self.loaded.add(os.path.basename(argv[3])[:-len(".plist")])
+        elif argv[0] == "powershell.exe" and "Get-ScheduledTask" in argv[-1]:
+            state = "Running" if getattr(self, "task_running", True) else "Ready"
+            return subprocess.CompletedProcess(argv, 0, state, "")
         elif argv[0] == "powershell.exe":
             rc, err = self.ps_rc, self.ps_err
+        elif argv[:2] == ["schtasks", "/End"]:
+            self.task_running = False
+        elif argv[:2] == ["schtasks", "/Run"]:
+            self.task_running = True
         return subprocess.CompletedProcess(argv, rc, "", err)
 
     def named(self, *prefix):
-        return [c for c in self.calls if c[:len(prefix)] == list(prefix)]
+        """Calls starting with `prefix`; a task-state query reads as "schtasks /State"."""
+        calls = [["schtasks", "/State"] if "Get-ScheduledTask" in c[-1] else c
+                 for c in self.calls]
+        return [c for c in calls if c[:len(prefix)] == list(prefix)]
 
 
 @pytest.fixture
@@ -209,7 +219,8 @@ def _win_setup(home, app, cfg, cmds, env=None):
     out = []
     rc = setup_cmd.run_setup(cfg, home=home, executable=str(app / "current" / "python" /
                                                              "pythonw.exe"),
-                             system="Windows", run=cmds, out=out.append, env=env or {})
+                             system="Windows", run=cmds, out=out.append, env=env or {},
+                             sleep=lambda s: None)
     return rc, out
 
 
@@ -239,7 +250,9 @@ def test_windows_registers_both_tasks_through_current(win):
     # UTF-8 mode and an isolated interpreter for both tasks (cp1252 is the default).
     for script in (runner, updater):
         assert "-I -X utf8 -m canopy_runner.main" in script
-    assert cmds.named("schtasks") == [["schtasks", "/Run", "/TN", r"\Canopy\canopy-runner"]]
+    task = r"\Canopy\canopy-runner"
+    assert [c for c in cmds.named("schtasks") if c[1] != "/State"] == [
+        ["schtasks", "/End", "/TN", task], ["schtasks", "/Run", "/TN", task]]
     for c in cmds.named("powershell.exe"):
         assert c[1:5] == ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
 
@@ -251,6 +264,45 @@ def test_windows_does_not_re_register_the_updater_it_runs_under(win):
     rc, out = _win_setup(home, app, cfg, cmds, env={"CANOPY_RUNNER_UNDER_JOB": "updater"})
     assert rc == 0
     assert len(cmds.named("powershell.exe")) == 1, "only the runner task"
+
+
+def test_re_running_the_installer_restarts_the_daemon(win):
+    """A person re-running Setup: IgnoreNew drops a bare /Run while the old daemon
+    runs, so it is /End, wait until not Running, /Run — and the new code starts."""
+    home, app, cfg = win
+    cmds = Cmds()
+    rc, out = _win_setup(home, app, cfg, cmds)
+    assert rc == 0
+    seq = [c[1] for c in cmds.named("schtasks")]
+    end, run = seq.index("/End"), seq.index("/Run")
+    assert end < run and "/State" in seq[end:run], "waits for /End before /Run"
+    assert seq[run + 1:] == ["/State"], "and confirms it is Running"
+
+
+def test_under_the_updater_setup_leaves_the_restart_to_self_update(win):
+    home, app, cfg = win
+    cmds = Cmds()
+    _win_setup(home, app, cfg, cmds, env={"CANOPY_RUNNER_UNDER_JOB": "updater"})
+    assert cmds.named("schtasks") == [["schtasks", "/Run", "/TN", r"\Canopy\canopy-runner"]]
+
+
+def test_a_changed_updater_definition_is_re_registered_under_the_updater(win, monkeypatch):
+    """The stamp is the whole registration script: an update that changes the
+    updater's trigger or settings (not just its command) re-registers it."""
+    home, app, cfg = win
+    _win_setup(home, app, cfg, Cmds())
+    real = setup_cmd.register_script
+
+    def changed(name, exe, args, *, updater):
+        text = real(name, exe, args, updater=updater)
+        return text.replace("-Minutes 30", "-Minutes 20") if updater else text
+
+    monkeypatch.setattr(setup_cmd, "register_script", changed)
+    cmds = Cmds()
+    rc, out = _win_setup(home, app, cfg, cmds, env={"CANOPY_RUNNER_UNDER_JOB": "updater"})
+    assert rc == 0
+    scripts = [c[-1] for c in cmds.named("powershell.exe")]
+    assert len(scripts) == 2 and "-Minutes 20" in scripts[1]
 
 
 def test_windows_access_denied_says_what_to_do(win):

@@ -24,10 +24,13 @@ the old app aside, rename the new one in, and only then run the NEW bundle's `se
 leaves the old app exactly where it was; the swap itself is two renames with a rollback
 between them, so there is never a moment with no app.
 
-Windows runs the downloaded Setup with `/VERYSILENT … /UPDATE`, which writes
-`versions\\<sha12>` and flips the `current` junction; then the new bundle's `setup
---no-pair`, a restart of the runner task, and a prune of all but the current and the
-previous version.
+Windows checks the downloaded Setup's Authenticode signature (Valid, signed by
+WINDOWS_PUBLISHER) when the release says it is signed, then runs it with `/VERYSILENT …
+/UPDATE`, which writes `versions\\<sha12>` and flips the `current` junction — and any
+failure puts `current` back on the previous version. Then the new bundle's `setup
+--no-pair`, a restart of the runner task that waits for /End to settle and confirms /Run
+took (a runner that never comes back is a FAILED update), and a prune of all but the
+current and the previous version.
 
 `~/.canopy/hold-updates` holds the box on what it runs (a build being tested): a stale
 answer is then `held` and nothing is installed — the same file `install-runner.sh
@@ -41,6 +44,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -247,18 +251,123 @@ def install_macos(archive: Path, expected: str, app: Path, config: Path, *,
 # --- Windows -----------------------------------------------------------------------
 
 
-def install_windows(setup_exe: Path, expected: str, app_dir: Path, config: Path, *,
-                    run=subprocess.run, out=print, env=None) -> None:
-    current = app_dir / "current"
-    previous = Path(os.path.realpath(current))
-    p = run([str(setup_exe), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/UPDATE"],
-            capture_output=True, text=True, timeout=WINDOWS_INSTALL_TIMEOUT,
+#: Who signs the Windows installer (Azure Trusted Signing, runner-release.yml). A
+#: signature that Windows calls Valid but names someone else is a different publisher,
+#: whatever the sha256 says — the Windows twin of the macOS Team ID check.
+WINDOWS_PUBLISHER = "Dimagi"
+
+
+def _subject_names(subject: str) -> list[str]:
+    """The CN= and O= values of an X.500 subject (quoted values may hold commas)."""
+    return [q or b for _, q, b in
+            re.findall(r'(?:^|,)\s*(CN|O)=(?:"([^"]*)"|([^,]*))', subject or "")]
+
+
+def authenticode(path: Path, *, run=subprocess.run) -> tuple[str, str]:
+    """(status, signer subject) of `path` per Windows' own Get-AuthenticodeSignature."""
+    script = (f"$s = Get-AuthenticodeSignature -LiteralPath {_ps_quote(str(path))}; "
+              "Write-Output ([string]$s.Status); Write-Output ([string]$s.SignerCertificate.Subject)")
+    p = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+             "-Command", script], capture_output=True, text=True, timeout=120,
             **platform_jobs.no_window())
+    lines = [ln.strip() for ln in (p.stdout or "").splitlines()]
+    if p.returncode != 0 or not lines:
+        raise UpdateError("could not read the installer's signature "
+                          f"({(p.stderr or '').strip()[:200]})")
+    return lines[0], (lines[1] if len(lines) > 1 else "")
+
+
+def verify_windows_signature(setup_exe: Path, *, signed: bool, run=subprocess.run,
+                             out=print) -> None:
+    """When the release says its build is signed (manifest `signed`, set by CI only for
+    a signature Windows calls Valid), the download must be Valid AND signed by
+    WINDOWS_PUBLISHER. An unsigned release is accepted on its sha256 alone, loudly."""
+    if not signed:
+        logger.warning("self-update: the release is not Authenticode signed — accepting the "
+                       "installer on its sha256 alone")
+        out("==> the release is unsigned: accepting the installer on its sha256 alone")
+        return
+    status, subject = authenticode(setup_exe, run=run)
+    if status != "Valid":
+        raise UpdateError(f"the installer's Authenticode signature is {status or 'missing'}, "
+                          "not Valid, though the release says it is signed — refusing it")
+    names = _subject_names(subject)
+    if not any(re.match(rf"{re.escape(WINDOWS_PUBLISHER)}(?![\w-])", n.strip(), re.I)
+               for n in names):
+        raise UpdateError(f"the installer is signed by {subject or '(nobody)'}, not "
+                          f"{WINDOWS_PUBLISHER} — refusing it")
+
+
+def _ps_quote(text: str) -> str:
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def _relink(current: Path, target: Path, *, run=subprocess.run) -> None:
+    """Point the `current` junction at `target` (rmdir on a junction drops the link,
+    never what it points at)."""
+    kw = dict(capture_output=True, text=True, timeout=30, **platform_jobs.no_window())
+    if os.path.lexists(current):
+        run(["cmd", "/c", "rmdir", str(current)], **kw)
+    p = run(["cmd", "/c", "mklink", "/J", str(current), str(target)], **kw)
     if p.returncode != 0:
-        raise UpdateError(f"the installer failed (exit {p.returncode})")
-    if _release_sha(current) != expected:
-        raise UpdateError("after the installer ran, current\\release.json does not name the "
-                          "expected build")
+        raise OSError(f"mklink /J failed ({(p.stderr or p.stdout or '').strip()[:200]})")
+
+
+def _restore_current(current: Path, previous: Path | None, *, run=subprocess.run,
+                     out=print) -> None:
+    """After a failed install: put `current` back on the version it named before, so
+    both tasks (which run through `current`) still have something to run."""
+    if previous is None or not previous.is_dir():
+        return
+    try:
+        if os.path.lexists(current) and Path(os.path.realpath(current)) == previous:
+            return
+        _relink(current, previous, run=run)
+        out(f"==> restored {current} -> {previous.name}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        out(f"WARNING: could not point {current} back at {previous.name} ({exc}) — "
+            "reinstall Canopy Runner")
+
+
+def _run_installer(setup_exe: Path, *, popen=subprocess.Popen, run=subprocess.run,
+                   timeout: float = WINDOWS_INSTALL_TIMEOUT) -> int:
+    """Run the Inno Setup installer silently. On a timeout, kill the whole tree: the
+    exe we start is only Inno's launcher, which runs the real setup as a child — a
+    plain kill would leave that child writing the install."""
+    proc = popen([str(setup_exe), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/UPDATE"],
+                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL, **platform_jobs.no_window())
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, text=True,
+            timeout=30, **platform_jobs.no_window())
+        try:
+            proc.kill()
+            proc.wait(timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        raise UpdateError(f"the installer did not finish in {int(timeout)}s — stopped it")
+
+
+def install_windows(setup_exe: Path, expected: str, app_dir: Path, config: Path, *,
+                    run=subprocess.run, popen=subprocess.Popen, sleep=None,
+                    signed: bool = False, out=print, env=None) -> None:
+    verify_windows_signature(setup_exe, signed=signed, run=run, out=out)
+    current = app_dir / "current"
+    previous = Path(os.path.realpath(current)) if os.path.lexists(current) else None
+    try:
+        rc = _run_installer(setup_exe, popen=popen, run=run)
+        if rc != 0:
+            raise UpdateError(f"the installer failed (exit {rc})")
+        if _release_sha(current) != expected:
+            raise UpdateError("after the installer ran, current\\release.json does not name "
+                              "the expected build")
+    except BaseException:
+        # Whatever the installer left (a removed junction, one pointing at a half
+        # install), put `current` back where it was: both tasks run through it.
+        _restore_current(current, previous, run=run, out=out)
+        raise
     out(f"==> installed {expected[:12]} at {current}")
     py = current / "python" / "python.exe"
     child_env = {**(os.environ if env is None else env), "CANOPY_RUNNER_UNDER_JOB": "updater"}
@@ -268,11 +377,17 @@ def install_windows(setup_exe: Path, expected: str, app_dir: Path, config: Path,
     out((p.stdout or "").rstrip())
     if p.returncode != 0:
         out(f"WARNING: the new install's setup failed ({(p.stderr or '').strip()[-300:]})")
-    run(["schtasks", "/End", "/TN", platform_jobs.WINDOWS_RUNNER_TASK],
-        capture_output=True, text=True, timeout=30, **platform_jobs.no_window())
-    run(["schtasks", "/Run", "/TN", platform_jobs.WINDOWS_RUNNER_TASK],
-        capture_output=True, text=True, timeout=30, **platform_jobs.no_window())
-    prune_versions(app_dir, keep={Path(os.path.realpath(current)), previous})
+    up = platform_jobs.restart_windows_task(platform_jobs.WINDOWS_RUNNER_TASK, run=run,
+                                            sleep=sleep)
+    # The .iss prunes too (PruneVersions, keeping the new version and the one `current`
+    # named before); this pass is the updater's own, with the same keep set.
+    prune_versions(app_dir, keep={Path(os.path.realpath(current)),
+                                  *([previous] if previous else [])})
+    if not up:
+        raise UpdateError(f"installed {expected[:12]}, but {platform_jobs.WINDOWS_RUNNER_TASK} "
+                          f"is not Running after a restart (waited "
+                          f"{platform_jobs.TASK_SETTLE_SECONDS}s) — its 5-minute repeat "
+                          "will try again")
 
 
 def prune_versions(app_dir: Path, keep: set) -> list[str]:
@@ -361,7 +476,8 @@ def run_self_update(config_path: Path, *, if_stale: bool = False, platform: str 
             app_dir = bundle.windows_app_dir(executable)
             if app_dir is None:
                 raise UpdateError(f"{root} is not inside a Canopy Runner install")
-            install_windows(artifact, sha, app_dir, Path(config_path), run=run, out=out)
+            install_windows(artifact, sha, app_dir, Path(config_path), run=run, out=out,
+                            signed=bool(rel.get("signed")))
         else:
             raise UpdateError(f"no installer for {system}")
     except (UpdateError, OSError, subprocess.SubprocessError) as exc:

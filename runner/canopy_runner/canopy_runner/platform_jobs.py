@@ -114,3 +114,55 @@ def no_window() -> dict:
     console program they start (powershell, schtasks, python.exe) would otherwise flash
     a window of its own in front of whoever is using the computer. Empty elsewhere."""
     return {"creationflags": 0x08000000} if is_windows() else {}  # CREATE_NO_WINDOW
+
+
+#: How long `restart_windows_task` waits for /End to settle, and then for /Run to take.
+TASK_SETTLE_SECONDS = 15
+TASK_POLL_SECONDS = 0.5
+
+
+def task_state_script(task: str) -> str:
+    """PowerShell printing `task`'s state. Get-ScheduledTask's State is an enum whose
+    NAME (Running, Ready, Disabled) is the same in every Windows language; the status
+    column `schtasks /Query` prints is translated, so on a German or French box
+    "Running" never matched and every good update read as failed."""
+    folder, _, name = task.rpartition("\\")
+    return (f"(Get-ScheduledTask -TaskPath '{folder}\\' -TaskName '{name}' "
+            "-ErrorAction Stop).State")
+
+
+def windows_task_running(task: str, *, run=subprocess.run) -> bool:
+    """Is `task` Running right now? Any failure to ask reads as not running."""
+    try:
+        p = run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                 task_state_script(task)],
+                capture_output=True, text=True, timeout=20, **no_window())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return p.returncode == 0 and (p.stdout or "").strip() == "Running"
+
+
+def restart_windows_task(task: str, *, run=subprocess.run, sleep=None,
+                         settle: float = TASK_SETTLE_SECONDS) -> bool:
+    """/End `task`, wait until it is no longer Running, /Run it, and confirm it runs.
+
+    The tasks are `-MultipleInstances IgnoreNew`: a /Run that lands while /End is
+    still settling is DROPPED, and the daemon stays down (until the 5-minute repeat
+    brings it back). So wait for /End to finish before /Run, then check /Run took.
+    True when the task is Running at the end."""
+    import time
+
+    sleep = time.sleep if sleep is None else sleep
+    tries = max(1, int(settle / TASK_POLL_SECONDS))
+    kw = dict(capture_output=True, text=True, timeout=30, **no_window())
+    run(["schtasks", "/End", "/TN", task], **kw)
+    for _ in range(tries):
+        if not windows_task_running(task, run=run):
+            break
+        sleep(TASK_POLL_SECONDS)
+    run(["schtasks", "/Run", "/TN", task], **kw)
+    for _ in range(tries):
+        if windows_task_running(task, run=run):
+            return True
+        sleep(TASK_POLL_SECONDS)
+    return False
