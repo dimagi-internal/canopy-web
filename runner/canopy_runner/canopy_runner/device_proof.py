@@ -22,12 +22,17 @@ copied rather than reinvented:
   ``tpm-ecdh.json``;
 * **software** — 0600 PEMs ``sw.pem`` / ``ecdh.pem``. These need ``cryptography``, which
   the runner does not otherwise depend on: it is the ``keys`` extra, which the bundle
-  installs, imported only when a software key is actually made or used.
+  installs, imported only when a software key is actually made or used. On Windows,
+  where a file mode protects nothing, the PEM is sealed at rest with DPAPI
+  (``CryptProtectData``, CurrentUser scope — only this Windows account can open it); a
+  plain PEM left by an older runner is still read, and re-sealed in place.
 
 A Mac without the helper REFUSES rather than quietly making a software key (as canopy
 does): a software key made there would sit beside the enclave key the installer meant to
 make, and the first one to register would win. ``allow_software=True`` overrides that.
-Windows with no TPM gets a software key.
+Windows with no TPM gets a software key — and so does a TPM that opens but will not make
+the key (a TPM 1.2 without P-256, a TPM in lockout): only a key that does not exist yet
+falls back, so a box already paired with a TPM key keeps it.
 
 The cloud-only kinds (aws-iam, a KMS or broker ECDH key) are not here: a laptop never has
 them, and a marker for one means this box belongs to canopy's cloud tooling — the runner
@@ -38,8 +43,10 @@ Nothing here ever logs or prints a private key or a signature.
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import json
+import logging
 import os
 import platform
 import shutil
@@ -66,6 +73,8 @@ DIR_ENV = "CANOPY_DEVICE_KEY_DIR"
 PROOF_STATUSES = ("active", "pending")
 
 Runner = Callable[..., subprocess.CompletedProcess]
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceKeyError(Exception):
@@ -171,6 +180,91 @@ def _write_private(path: Path, data: bytes) -> None:
         except OSError:
             pass
         raise
+
+
+# --- the software key at rest on Windows (DPAPI) --------------------------------
+
+CRYPTPROTECT_UI_FORBIDDEN = 0x1
+_DPAPI_DESCRIPTION = "canopy device key"
+_PEM_MARK = b"-----BEGIN"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+
+class Dpapi:
+    """``CryptProtectData`` / ``CryptUnprotectData`` in CurrentUser scope (no
+    ``CRYPTPROTECT_LOCAL_MACHINE``), never prompting. ``crypt32`` / ``local_free`` are the
+    seams the unit tests drive with a fake; real ones come from :func:`_dpapi`."""
+
+    def __init__(self, crypt32, local_free):
+        self.crypt32, self.local_free = crypt32, local_free
+
+    def _call(self, fn, what: str, data: bytes, *extra) -> bytes:
+        buf = ctypes.create_string_buffer(data, len(data))
+        blob_in = _DataBlob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+        blob_out = _DataBlob()
+        if not fn(ctypes.byref(blob_in), *extra, None, None, None, CRYPTPROTECT_UI_FORBIDDEN,
+                  ctypes.byref(blob_out)):
+            raise OSError(f"{what} failed")
+        try:
+            return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+        finally:
+            self.local_free(blob_out.pbData)
+
+    def protect(self, data: bytes) -> bytes:
+        return self._call(self.crypt32.CryptProtectData, "CryptProtectData", data,
+                          _DPAPI_DESCRIPTION)
+
+    def unprotect(self, blob: bytes) -> bytes:
+        return self._call(self.crypt32.CryptUnprotectData, "CryptUnprotectData", blob, None)
+
+
+def _dpapi() -> Dpapi | None:
+    """DPAPI on Windows; None everywhere else (the file mode is the protection there)."""
+    if os.name != "nt":
+        return None
+    crypt32 = ctypes.WinDLL("crypt32.dll")  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32.dll")  # type: ignore[attr-defined]
+    pblob, vp = ctypes.POINTER(_DataBlob), ctypes.c_void_p
+    crypt32.CryptProtectData.argtypes = [pblob, ctypes.c_wchar_p, pblob, vp, vp,
+                                         ctypes.c_uint32, pblob]
+    crypt32.CryptProtectData.restype = ctypes.c_int
+    crypt32.CryptUnprotectData.argtypes = [pblob, ctypes.c_void_p, pblob, vp, vp,
+                                           ctypes.c_uint32, pblob]
+    crypt32.CryptUnprotectData.restype = ctypes.c_int
+    kernel32.LocalFree.argtypes = [vp]
+    kernel32.LocalFree.restype = vp
+    return Dpapi(crypt32, kernel32.LocalFree)
+
+
+def _write_private_pem(path: Path, pem: bytes) -> None:
+    """A software key's PEM, sealed with DPAPI where there is DPAPI."""
+    d = _dpapi()
+    _write_private(path, d.protect(pem) if d is not None else pem)
+
+
+def _read_private_pem(path: Path) -> bytes:
+    """The PEM back: a plain one as is (re-sealed in place on Windows, best-effort — it
+    is the same key either way), a DPAPI-sealed one opened as this Windows account."""
+    raw = path.read_bytes()
+    d = _dpapi()
+    if raw.lstrip().startswith(_PEM_MARK):
+        if d is not None:
+            try:
+                _write_private(path, d.protect(raw))
+            except Exception as e:  # noqa: BLE001 — still a usable key, just not sealed
+                logger.warning("could not seal %s with DPAPI (%s); left as is", path, e)
+        return raw
+    if d is None:
+        raise DeviceKeyError(f"{path} is sealed with Windows DPAPI — only the Windows account "
+                             "that made it can open it")
+    try:
+        return d.unprotect(raw)
+    except OSError as e:
+        raise DeviceKeyError(f"{path} could not be opened with DPAPI ({e}) — it was sealed by "
+                             "another Windows account or machine") from None
 
 
 # --- encoding ------------------------------------------------------------------
@@ -295,7 +389,7 @@ def _new_p256_pem() -> bytes:
 
 def _create_software() -> DeviceKey:
     pem = _new_p256_pem()
-    _write_private(sw_path(), pem)
+    _write_private_pem(sw_path(), pem)
     return _sw_key(pem)
 
 
@@ -316,9 +410,10 @@ def _tpm_key(marker: dict, lib=None) -> DeviceKey:
 def _create_tpm(lib=None) -> DeviceKey:
     from . import device_proof_tpm as tpm
     key = tpm.create_key(tpm.KEY_NAME, lib)
+    jwk = key.public_jwk()   # before the marker: a marker for a key that will not export
     _write_private(tpm_path(), json.dumps({"provider": tpm.PROVIDER, "name": tpm.KEY_NAME},
                                           indent=1).encode("utf-8"))
-    return DeviceKey(KIND_TPM, key.public_jwk(), key.sign)
+    return DeviceKey(KIND_TPM, jwk, key.sign)
 
 
 def _tpm_available(lib=None) -> bool:
@@ -355,7 +450,7 @@ def load(*, runner: Runner = subprocess.run,
                 "— re-run the Canopy Runner installer")
         return _se_key(helper, runner)
     if sw_path().is_file():
-        return _sw_key(sw_path().read_bytes())
+        return _sw_key(_read_private_pem(sw_path()))
     return None
 
 
@@ -377,7 +472,18 @@ def ensure(*, allow_software: Optional[bool] = None, runner: Runner = subprocess
         return _create_software(), True
     if os_name == "Windows":
         if tpm_available():
-            return _create_tpm(tpm_lib), True
+            from .device_proof_tpm import TpmError
+            try:
+                return _create_tpm(tpm_lib), True
+            except (TpmError, OSError) as e:
+                # The provider opened but the TPM will not make the key (no P-256 on a
+                # TPM 1.2, lockout, …). There is no key yet — `load` found none — so
+                # nothing is paired to it, and a software key is the honest fallback.
+                if allow_software is False:
+                    raise DeviceKeyError(f"the TPM would not make a device key ({e}) and "
+                                         "software keys were not allowed") from None
+                logger.warning("the TPM would not make a device key (%s) — using a "
+                               "software key instead", e)
     elif os_name == "Darwin":
         helper = helper_path(which)
         if helper:
@@ -478,7 +584,7 @@ def load_ecdh(*, runner: Runner = subprocess.run,
                                  "canopy-device-key is not installed")
         return _se_ecdh_key(helper, runner)
     if ecdh_pem_path().is_file():
-        return _sw_ecdh_key(ecdh_pem_path().read_bytes())
+        return _sw_ecdh_key(_read_private_pem(ecdh_pem_path()))
     return None
 
 
@@ -513,7 +619,7 @@ def ensure_ecdh(signing_kind: str, *, runner: Runner = subprocess.run,
                                                    indent=1).encode("utf-8"))
         return EcdhKey(KIND_TPM, jwk, key.derive), True
     pem = _new_p256_pem()
-    _write_private(ecdh_pem_path(), pem)
+    _write_private_pem(ecdh_pem_path(), pem)
     return _sw_ecdh_key(pem), True
 
 

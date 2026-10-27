@@ -295,3 +295,138 @@ def test_tpm_key_made_marked_and_proving():
 def test_tpm_is_unavailable_off_windows():
     if os.name != "nt":
         assert device_proof_tpm.available() is False
+
+
+# --- a TPM that opens but will not make the key ----------------------------------
+
+NTE_NOT_SUPPORTED = 0x80090029
+
+
+class RefusingNcrypt(FakeNcrypt):
+    """A TPM whose provider opens (so `available` says yes) but that will not make a
+    P-256 key — a TPM 1.2, or one in lockout."""
+
+    def NCryptCreatePersistedKey(self, *a):  # noqa: N802
+        return NTE_NOT_SUPPORTED
+
+
+class UnfinalizingNcrypt(FakeNcrypt):
+    def NCryptFinalizeKey(self, key, flags):  # noqa: N802
+        return 0x80280000 | 0x921  # a TPM_E_* lockout code
+
+
+@pytest.mark.parametrize("lib_cls", [RefusingNcrypt, UnfinalizingNcrypt])
+def test_a_tpm_that_will_not_make_the_key_falls_back_to_software(lib_cls):
+    key, created = device_proof.ensure(system=lambda: "Windows", tpm_available=lambda: True,
+                                       tpm_lib=lib_cls())
+    assert created and key.kind == "software"
+    assert not device_proof.tpm_path().exists() and device_proof.sw_path().is_file()
+
+
+def test_a_tpm_failure_with_software_forbidden_is_a_device_key_error():
+    with pytest.raises(device_proof.DeviceKeyError, match="TPM would not make"):
+        device_proof.ensure(system=lambda: "Windows", tpm_available=lambda: True,
+                            tpm_lib=RefusingNcrypt(), allow_software=False)
+    assert not device_proof.sw_path().exists()
+
+
+def test_a_box_paired_with_a_tpm_key_keeps_it_when_creating_would_now_fail():
+    lib = FakeNcrypt()
+    made, _ = device_proof.ensure(system=lambda: "Windows", tpm_available=lambda: True,
+                                  tpm_lib=lib)
+    refusing = RefusingNcrypt()
+    refusing.keys = lib.keys          # the same TPM, now refusing new keys
+    key, created = device_proof.ensure(system=lambda: "Windows", tpm_available=lambda: True,
+                                       tpm_lib=refusing)
+    assert not created and key.kind == "tpm" and key.jkt == made.jkt
+    assert not device_proof.sw_path().exists()
+
+
+# --- the software key sealed with DPAPI on Windows --------------------------------
+
+
+class FakeCrypt32:
+    """CryptProtectData / CryptUnprotectData over DATA_BLOBs, with a reversible stand-in
+    for the encryption; buffers it hands out must come back through local_free."""
+
+    TAG = b"DPAPI:"
+
+    def __init__(self):
+        self.live: dict[int, ctypes.Array] = {}
+        self.calls: list[tuple[str, object, int]] = []
+
+    def _out(self, pout, data: bytes) -> int:
+        buf = ctypes.create_string_buffer(data, len(data))
+        self.live[ctypes.addressof(buf)] = buf
+        pout._obj.cbData = len(data)
+        pout._obj.pbData = ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))
+        return 1
+
+    @staticmethod
+    def _in(pin) -> bytes:
+        return ctypes.string_at(pin._obj.pbData, pin._obj.cbData)
+
+    def CryptProtectData(self, pin, desc, entropy, reserved, prompt, flags, pout):  # noqa: N802
+        self.calls.append(("protect", desc, flags))
+        return self._out(pout, self.TAG + bytes(reversed(self._in(pin))))
+
+    def CryptUnprotectData(self, pin, desc, entropy, reserved, prompt, flags, pout):  # noqa: N802
+        self.calls.append(("unprotect", desc, flags))
+        data = self._in(pin)
+        if not data.startswith(self.TAG):
+            return 0
+        return self._out(pout, bytes(reversed(data[len(self.TAG):])))
+
+    def local_free(self, ptr):
+        self.live.pop(ctypes.cast(ptr, ctypes.c_void_p).value)
+
+
+@pytest.fixture
+def dpapi(monkeypatch):
+    fake = FakeCrypt32()
+    monkeypatch.setattr(device_proof, "_dpapi", lambda: device_proof.Dpapi(fake, fake.local_free))
+    return fake
+
+
+def test_dpapi_wrapper_round_trips_and_frees_what_it_is_handed(dpapi):
+    d = device_proof.Dpapi(dpapi, dpapi.local_free)
+    sealed = d.protect(b"secret pem")
+    assert sealed != b"secret pem" and d.unprotect(sealed) == b"secret pem"
+    assert not dpapi.live
+    assert all(flags == device_proof.CRYPTPROTECT_UI_FORBIDDEN for _, _, flags in dpapi.calls)
+    with pytest.raises(OSError):
+        d.unprotect(b"not sealed")
+
+
+def test_windows_software_keys_are_sealed_at_rest(dpapi):
+    key, _ = device_proof.ensure(system=lambda: "Windows", tpm_available=lambda: False)
+    ecdh, _ = device_proof.ensure_ecdh(key.kind)
+    for path in (device_proof.sw_path(), device_proof.ecdh_pem_path()):
+        raw = path.read_bytes()
+        assert raw.startswith(FakeCrypt32.TAG) and b"PRIVATE KEY" not in raw
+    again = device_proof.load()
+    assert again.kind == "software" and again.jkt == key.jkt
+    assert device_proof.load_ecdh().jkt == ecdh.jkt
+
+
+def test_a_plain_pem_from_an_older_runner_still_works_and_is_resealed(monkeypatch):
+    key, _ = device_proof.ensure(allow_software=True)       # plain, as before (no DPAPI)
+    assert device_proof.sw_path().read_bytes().startswith(b"-----BEGIN")
+    fake = FakeCrypt32()
+    monkeypatch.setattr(device_proof, "_dpapi", lambda: device_proof.Dpapi(fake, fake.local_free))
+    again = device_proof.load()
+    assert again.jkt == key.jkt
+    assert device_proof.sw_path().read_bytes().startswith(FakeCrypt32.TAG)
+    assert device_proof.load().jkt == key.jkt
+
+
+def test_a_sealed_key_off_windows_is_a_clear_error(dpapi, monkeypatch):
+    device_proof.ensure(allow_software=True)
+    monkeypatch.setattr(device_proof, "_dpapi", lambda: None)
+    with pytest.raises(device_proof.DeviceKeyError, match="DPAPI"):
+        device_proof.load()
+
+
+def test_no_dpapi_off_windows():
+    if os.name != "nt":
+        assert device_proof._dpapi() is None

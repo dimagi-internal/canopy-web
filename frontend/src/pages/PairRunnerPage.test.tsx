@@ -76,6 +76,16 @@ describe('PairRunnerPage', () => {
     expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('jj-jons-macbook-pro')
   })
 
+  it('says a Windows software key is encrypted to that account, and elsewhere a plain file', async () => {
+    getRunnerPairing.mockResolvedValue(pairing({ platform: 'windows', kind: 'software' }))
+    renderPage()
+    expect(await screen.findByText('Software key (a file encrypted to this Windows account)')).toBeTruthy()
+    cleanup()
+    getRunnerPairing.mockResolvedValue(pairing({ platform: 'linux', kind: 'software' }))
+    renderPage()
+    expect(await screen.findByText('Software key (a file on the computer)')).toBeTruthy()
+  })
+
   it('approves with the chosen workspace and name, then goes to the computer', async () => {
     const assign = vi.fn()
     vi.stubGlobal('location', { ...window.location, assign })
