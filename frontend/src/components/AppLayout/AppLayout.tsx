@@ -144,15 +144,17 @@ function HelpMenu() {
   )
 }
 
-// Workspace switcher and create affordance. The switcher appears only when
-// there are multiple workspaces to choose from; create is always present.
+// Workspace switcher and create affordance. Anyone in a workspace gets the
+// picker, even with only one in it: it is what says which workspace you are in
+// (a bare "+ Workspace" read as "you are in none"), and create is its last
+// option. With no workspace at all, create is the only control.
 function WorkspaceSwitcher() {
   const { workspaces, active } = useWorkspace()
   const navigate = useNavigate()
   const { pathname } = useLocation()
   // TWO independent decisions, which is the entire point of this component.
-  // Whether to show a SWITCHER depends on having something to switch between.
-  // Whether to show CREATE does not depend on anything. Conflating them is what
+  // Whether to show the PICKER depends on being in a workspace at all.
+  // Whether to offer CREATE does not depend on anything. Conflating them is what
   // left a one-workspace user with no path to a second and a zero-workspace user
   // with no path at all — and the first fix of it left a five-workspace user
   // with no path to a sixth.
@@ -160,7 +162,7 @@ function WorkspaceSwitcher() {
   // With a switcher, CREATE is its last option rather than a second control
   // beside it: the top bar on a phone had no room for both, and "+ Workspace"
   // broke onto two lines between the picker and the avatar.
-  if (workspaces.length > 1) {
+  if (workspaces.length > 0) {
     return (
       <select
         aria-label="Workspace"
@@ -181,24 +183,6 @@ function WorkspaceSwitcher() {
         ))}
         <option value={NEW_WORKSPACE}>+ New workspace…</option>
       </select>
-    )
-  }
-  // One workspace: nothing to switch to, but still say which one this is. With
-  // only "+ Workspace" in the bar, a member of exactly one workspace read as
-  // belonging to none.
-  if (workspaces.length === 1) {
-    const [w] = workspaces
-    return (
-      <span className="flex items-center gap-3">
-        <Link
-          to={`/w/${w.slug}`}
-          className="max-w-40 truncate text-[13px] text-foreground hover:underline"
-          aria-label={`Workspace: ${w.display_name}`}
-        >
-          {w.display_name}
-        </Link>
-        <NewWorkspaceLink />
-      </span>
     )
   }
   return <NewWorkspaceLink />
