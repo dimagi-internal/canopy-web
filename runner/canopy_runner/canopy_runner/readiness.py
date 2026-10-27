@@ -47,7 +47,9 @@ def mark_failed(cfg, note: str) -> None:
     try:
         p = _marker(cfg)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text((note or "recent turn failed")[:200])
+        # UTF-8, never the locale's: a note holding a character cp1252 lacks raised
+        # UnicodeEncodeError (not an OSError) inside execute's failure path.
+        p.write_text((note or "recent turn failed")[:200], encoding="utf-8")
     except OSError:
         pass  # best-effort; a missing marker just means "presumed ready"
 
@@ -63,7 +65,7 @@ def mark_signed_out(cfg) -> bool:
     try:
         p = _marker(cfg)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(SIGNED_OUT_NOTE + " — sign in with `claude /login` there")
+        p.write_text(SIGNED_OUT_NOTE + " — sign in with `claude /login` there", encoding="utf-8")
     except OSError:
         return False
     return not already
@@ -73,7 +75,7 @@ def is_signed_out(cfg) -> bool:
     from canopy_transcript import SIGNED_OUT_NOTE
 
     try:
-        return _marker(cfg).read_text().startswith(SIGNED_OUT_NOTE)
+        return _marker(cfg).read_text(encoding="utf-8", errors="replace").startswith(SIGNED_OUT_NOTE)
     except OSError:
         return False
 
@@ -121,7 +123,7 @@ def compute(cfg) -> tuple[bool, str]:
                            "claude-cli` installs the adapter")
     marker = _marker(cfg)
     try:
-        note = marker.read_text().strip()
+        note = marker.read_text(encoding="utf-8", errors="replace").strip()
     except OSError:
         return True, ""
     if not note:

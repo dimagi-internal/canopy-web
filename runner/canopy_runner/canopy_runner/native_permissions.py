@@ -127,7 +127,7 @@ SENSITIVE_PATHS = (
     "~/.canopy/agent-token/**", "~/.canopy/delegated/**", "~/.canopy/device-key/**",
     "/proc/**",
     # Browser profiles (cookies, saved logins, sessions): gstack's headless browser,
-    # and Chrome, Chromium and the other common browsers, on macOS and Linux.
+    # and Chrome, Chromium and the other common browsers, on macOS, Linux and Windows.
     "~/.gstack/**",
     "~/Library/Application Support/Google/**", "~/Library/Application Support/Chromium/**",
     "~/Library/Application Support/BraveSoftware/**",
@@ -138,6 +138,11 @@ SENSITIVE_PATHS = (
     "~/.config/BraveSoftware/**", "~/.config/microsoft-edge/**", "~/.mozilla/**",
     "~/snap/chromium/**", "~/.var/app/com.google.Chrome/**",
     "~/.var/app/org.chromium.Chromium/**",
+    # ... and on Windows, where Chromium-family profiles live under Local and
+    # Firefox's (and Opera's) under Roaming.
+    "~/AppData/Local/Google/Chrome/**", "~/AppData/Local/Chromium/**",
+    "~/AppData/Local/Microsoft/Edge/**", "~/AppData/Local/BraveSoftware/**",
+    "~/AppData/Roaming/Mozilla/**", "~/AppData/Roaming/Opera Software/**",
 )
 
 #: Where Claude Code keeps every session's transcript and sidecar (`<sid>/tool-results/`),
