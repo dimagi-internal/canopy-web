@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
+const { getAgentCredentialStatus, getAgentVault, setAgentVault, setZkValue,
         deleteAgentCredential, startGoogleMint, revealZkValue, AgentApiError } = vi.hoisted(() => {
   class AgentApiError extends Error {
     status: number
@@ -21,7 +21,7 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
     getAgentCredentialStatus: vi.fn(),
     getAgentVault: vi.fn(),
     setAgentVault: vi.fn(),
-    setAgentCredentials: vi.fn(),
+    setZkValue: vi.fn(),
     deleteAgentCredential: vi.fn(),
     startGoogleMint: vi.fn(),
     revealZkValue: vi.fn(),
@@ -30,7 +30,7 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
 })
 
 vi.mock('@/api/agents', () => ({
-  getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
+  getAgentCredentialStatus, getAgentVault, setAgentVault,
   deleteAgentCredential, startGoogleMint, AgentApiError,
   // The GitHub section has its own tests; here it only has to not throw.
   getAgentGitHub: () => new Promise(() => {}),
@@ -53,13 +53,13 @@ vi.mock('@/api/deviceKeys', () => ({
   revokeRunnerDeviceKey: vi.fn(),
   getCredentialAlerts, getPatRotation, setPatRotation, rotatePatNow,
 }))
-// Reveal opens the value in the browser with the person's vault key (`revealZkValue`,
+// Reveal and Save open and encrypt in the browser with the vault keys (`revealZkValue`, `setZkValue`,
 // tested in src/vault); here it only has to be called.
 vi.mock('@/vault/operations', async (orig) => ({
   ...(await orig<typeof import('@/vault/operations')>()),
-  revealZkValue,
+  revealZkValue, setZkValue,
 }))
-// No vault key on the agent yet: Save goes through the passkey-gated route.
+// The agent's key state is not needed here: `setZkValue` (mocked) reads it itself.
 vi.mock('@/api/vault', async (orig) => ({
   ...(await orig<typeof import('@/api/vault')>()),
   getZkState: () => Promise.reject(new Error('off')),
@@ -93,25 +93,23 @@ afterEach(() => {
 })
 
 describe('Security — its secrets', () => {
-  it('changes a key in its row, through the passkey-gated route', async () => {
+  it('changes a key in its row, encrypted in the browser — never sent in plaintext', async () => {
     getAgentCredentialStatus.mockResolvedValue([
       { name: 'NOVA_API_KEY', declared: true, set: true, source: 'canopy-web', updated_at: null },
     ])
-    setAgentCredentials.mockResolvedValue([
-      { name: 'NOVA_API_KEY', declared: true, set: true, source: 'canopy-web', updated_at: '2026-10-22T00:00:00Z' },
-    ])
+    setZkValue.mockResolvedValue({ kv: 0, names: ['NOVA_API_KEY'] })
     inRouter(<AgentSecretsPanel agent={AGENT} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Change NOVA_API_KEY' }))
     fireEvent.change(screen.getByLabelText('New value for NOVA_API_KEY'), { target: { value: 'new-key' } })
     fireEvent.click(screen.getByTestId('vault-save-NOVA_API_KEY'))
-    await waitFor(() => expect(setAgentCredentials).toHaveBeenCalledWith('echo', { NOVA_API_KEY: 'new-key' }))
+    await waitFor(() => expect(setZkValue).toHaveBeenCalledWith('echo', 'NOVA_API_KEY', 'new-key', expect.any(Function)))
   })
 
   it('stores a file from disk as a value on Save, without a trailing newline', async () => {
     getAgentCredentialStatus.mockResolvedValue([
       { name: 'GOOGLE_PROVISIONER_KEY', declared: true, set: false, source: 'unset', updated_at: null },
     ])
-    setAgentCredentials.mockResolvedValue([])
+    setZkValue.mockResolvedValue({ kv: 0, names: [] })
     inRouter(<AgentSecretsPanel agent={AGENT} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Set GOOGLE_PROVISIONER_KEY' }))
     const key = '{\n  "type": "service_account"\n}\n'
@@ -119,8 +117,8 @@ describe('Security — its secrets', () => {
     await waitFor(() => expect((screen.getByLabelText('New value for GOOGLE_PROVISIONER_KEY') as HTMLTextAreaElement).value)
       .toBe('{\n  "type": "service_account"\n}'))
     fireEvent.click(screen.getByTestId('vault-save-GOOGLE_PROVISIONER_KEY'))
-    await waitFor(() => expect(setAgentCredentials).toHaveBeenCalledWith(
-      'echo', { GOOGLE_PROVISIONER_KEY: '{\n  "type": "service_account"\n}' }))
+    await waitFor(() => expect(setZkValue).toHaveBeenCalledWith(
+      'echo', 'GOOGLE_PROVISIONER_KEY', '{\n  "type": "service_account"\n}', expect.any(Function)))
   })
 
   it('shows the 1Password form only to an agent still on 1Password', async () => {

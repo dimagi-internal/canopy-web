@@ -64,6 +64,7 @@ from .schemas import (
     AgentCredentialStatusOut,
     AgentGitHubIn,
     AgentGitHubOut,
+    AgentGitHubRecipientsOut,
     AgentVaultIn,
     AgentVaultOut,
     DeviceProofRequiredOut,
@@ -99,31 +100,23 @@ router = Router(auth=session_auth, tags=["agents"])
 # ---- Agent credentials (spec 2026-09-05-agent-credentials-design) -----------
 
 @router.put("/{slug}/credentials", response=list[AgentCredentialStatusOut],
-            summary="Set named secrets for an agent (write-only)")
-@gate("agent-admin", setting=True, step_up=True)
+            summary="Retired: refuses every value (422 sealed_only) — seal it yourself")
+# Refuses every body, so it changes nothing and there is nothing to step up for. Kept so an
+# older `canopy` CLI that still sends plaintext hears why, instead of a bare 405.
+@gate("agent-admin", setting=True, step_up="refuses every write; it never accepts a value")
 def set_agent_credentials(request: HttpRequest, slug: str, payload: AgentCredentialsIn):
-    """Upsert. Non-clobbering: a ref absent from the body is untouched.
-
-    The response is the MASKED status. From a browser session this needs a
-    fresh passkey step-up (403 `step_up_required` otherwise); a token write —
-    `canopy vault import` — does not, and is recorded like every settings change."""
+    """canopy-web takes no agent secret it can read. Encrypt the value where you are
+    and store the ciphertext with `PUT /api/agents/{slug}/vault/zk/values`: under the
+    vault key (`zk1`), or, before the agent has one, sealed (`zks1`) to everyone who may
+    read it — the `pending` targets of `GET …/vault/zk`. The browser's Secrets panel
+    and `canopy vault zk set` / `canopy vault import` do this. Always 422 `sealed_only`."""
     agent = agent_for_admin(request, slug)
-    # Step-up only for a person at a browser (canopy-web#1538): a stolen session
-    # cookie is the threat it closes. A PAT write has no browser to ask and is
-    # audited as a SettingChange like any other; requiring a passkey there would
-    # simply break `canopy vault import`.
-    if stepup.is_browser(request):
-        stepup.require_recent_step_up(request)
-
-    try:
-        services.set_agent_credentials(agent, payload.values, user=request.user)
-    except ZkError as exc:  # zero-knowledge, but nobody to seal to yet
-        raise zk_problem(exc) from exc
-    except ValueError as exc:
-        raise HttpError(422, str(exc)) from exc
-    # Storing a value is declaring it: the caller is the agent's owner or admin.
-    services.declare_credential_names(agent, payload.values)
-    return services.agent_credential_status(agent)
+    raise ProblemError(
+        422, "Plaintext is not accepted", type_=TYPE_VALIDATION,
+        detail=(f"canopy-web no longer takes {agent.slug}'s secrets in plaintext. Seal each value where "
+                "you are and send only the ciphertext to PUT /api/agents/{slug}/vault/zk/values — update "
+                "the canopy CLI (`canopy update`) or use the agent's Secrets panel."),
+        members={"error": "sealed_only", "names": sorted(payload.values)})
 
 
 @router.get("/{slug}/credentials/status", response=list[AgentCredentialStatusOut],
@@ -770,27 +763,45 @@ def _github_out(request: HttpRequest, agent) -> AgentGitHubOut:
                           can_lend=agent.is_admin(request.user))
 
 
+@router.get("/{slug}/github/recipients", response=AgentGitHubRecipientsOut,
+            summary="Who a GitHub token you delegate to this agent is sealed to (public keys only)")
+@gate("agent-admin")  # public keys of the machines that run the agent, and the caller's own
+def get_agent_github_recipients(request: HttpRequest, slug: str) -> AgentGitHubRecipientsOut:
+    """What the caller's browser seals a GitHub token to before `PUT …/github`: the
+    machines that run the agent and may hold a credential of theirs (its cloud boxes, and
+    runners of their own), and their own vault key. Each device's `target` is its ECDH
+    key's RFC 7638 thumbprint — recompute it from `public_jwk`. `refusal` is a sentence
+    when nothing can be sealed yet. The agent's owner or an admin."""
+    agent = agent_for_read(request, slug)
+    if not agent.is_admin(request.user):
+        raise HttpError(403, f"only {agent.slug}'s owner or an admin can delegate their GitHub identity to it")
+    return AgentGitHubRecipientsOut(**delegations.github_recipients(agent, request.user))
+
+
 @router.put("/{slug}/github", response=AgentGitHubOut,
-            summary="Delegate your GitHub identity to this agent (owner or admin, write-only)")
-@gate("agent-owner", setting=True, step_up=True)  # strictly the agent's own owner (delegations.set_github)
+            summary="Delegate your GitHub identity to this agent (sealed in your browser)")
+@gate("agent-owner", setting=True, step_up=True)  # strictly the agent's own owner (delegations.give_github)
 def set_agent_github(request: HttpRequest, slug: str, payload: AgentGitHubIn) -> AgentGitHubOut:
     """Give this agent the caller's fine-grained GitHub token, as a credential delegated
-    by them. It replaces the one delegated now.
+    by them. It replaces the one delegated now. canopy-web never receives the token.
 
-    Checked first: GitHub must accept it, and it must be able to push to and open a pull
-    request on the agent's own repo; a token that fails is refused with the reason. Then
-    it is sealed to the machines that run the agent and nothing else: no person can read
-    it through canopy, the caller included, and canopy-web keeps no copy it can open.
-    409 `no_machine_can_open` when no machine that runs the agent has an approved device
-    key yet. A browser needs a fresh passkey step-up (403 `step_up_required`); a token may
-    call it."""
+    The caller probes the token against GitHub itself (`GET /user`; whether it can push to
+    and open a pull request on the agent's repo) and seals it (`zks1`) to exactly the
+    recipients `GET …/github/recipients` lists, then sends the ciphertext and what it
+    found. A failed check is refused with its reason (422). Sealed to anyone else: 422
+    `zk_invalid_target`; leaving out a recipient listed now: 409 `stale_recipients` (read
+    them again); no machine can open it: 409 `no_machine_can_open`. The machines that open
+    it probe it again and report, and GitHub's expiry date comes from them. A browser
+    needs a fresh passkey step-up (403 `step_up_required`); a token may call it."""
     agent = agent_for_read(request, slug)
-    if not agent.is_admin(request.user):   # before the step-up, as delegations.set_github says it
+    if not agent.is_admin(request.user):   # before the step-up, as delegations.give_github says it
         raise HttpError(422, f"only {agent.slug}'s owner or an admin can delegate their GitHub identity to it")
     if stepup.is_browser(request):
         stepup.require_recent_step_up(request)
     try:
-        delegations.set_github(agent, request.user, payload.token)
+        delegations.give_github(agent, request.user, value_zk=payload.value_zk, login=payload.login,
+                                user_id=payload.user_id, name=payload.name,
+                                checks=[c.model_dump() for c in payload.checks])
     except delegations.DelegationError as exc:
         raise HttpError(422, str(exc)) from exc
     except ZkError as exc:

@@ -35,7 +35,7 @@ from apps.workspaces import services as wsvc
 
 from ..definition import definition_key
 from ..models import Agent, AgentCredential, AgentDelegation, RepoIdentity
-from . import accounts, zk
+from . import accounts, zk, zk_seal
 
 GITHUB_API = "https://api.github.com"
 HTTP_TIMEOUT = 15
@@ -90,7 +90,7 @@ def create_url(agent: Agent) -> str:
     selection, so the owner still picks the repos — the UI says which. And the
     resource owner it pre-selects has been reported to fall back to the
     person's own account on submit (community discussion #188111), which is why
-    `set_github` refuses a token that cannot reach the agent's repo rather than
+    `give_github` refuses a token that cannot reach the agent's repo rather than
     trusting the form.
     """
     return token_form_url(agent.slug, agent_repo(agent))
@@ -276,49 +276,74 @@ def _legacy_row(agent: Agent) -> AgentDelegation | None:
     return row if row is not None and row.secret_enc else None
 
 
-def set_github(agent: Agent, user, token: str):
-    """Seal `user`'s GitHub token into `agent`'s vault as a credential delegated by them,
-    after proving it works. Replaces the one delegated now, whoever gave it.
+def github_recipients(agent: Agent, user) -> dict:
+    """Who a GitHub token `user` delegates to `agent` is sealed to, for their browser to
+    seal it itself: the machines that run the agent (`accounts.delegated_devices`) and
+    their own vault key. `refusal` says why nothing can be sealed yet."""
+    rows = accounts.recipient_rows(agent, user)
+    refusal = None
+    if not any(r["kind"] == "device" for r in rows):
+        refusal = (f"No machine that runs {agent.slug} can open a credential of yours yet: a cloud "
+                   f"runner that serves {agent.slug}, or a runner of your own, needs an approved "
+                   "device key.")
+    return {"agent": agent.slug, "agent_id": str(agent.pk), "kv": agent.zk_kv,
+            "name": accounts.GITHUB_ENTRY, "repo": agent_repo(agent), "recipients": rows,
+            "refusal": refusal}
 
-    The agent's owner or one of its admins may delegate (`Agent.is_admin`). Refused rather
-    than stored when the token cannot push to and open a pull request on the agent's own
-    repo — the commonest mistake and the cheapest moment to say so — and (409
-    `no_machine_can_open`) when no machine that runs the agent can open it yet.
 
-    canopy-web sees the token for this request only: it checks it, seals it to the
-    machines that run the agent (and to the person's own vault key), and keeps no copy it
-    can read. Their older `AgentDelegation` rows for the agent are deleted."""
-    token = (token or "").strip()
-    if not token:
-        raise DelegationError("paste the token")
+def give_github(agent: Agent, user, *, value_zk: str, login: str, user_id: int, name: str = "",
+                checks: list[dict]):
+    """Store `user`'s GitHub token, sealed in THEIR browser, in `agent`'s vault as a
+    credential delegated by them. Replaces the one delegated now, whoever gave it.
+
+    canopy-web never sees the token. The browser probed it against GitHub itself and
+    sealed it (`zks1`) to exactly the recipients `github_recipients` names now: the
+    machines that run the agent and the person's own vault key. Refused when it is
+    sealed to anyone else (422 `zk_invalid_target`), leaves out someone it must reach
+    (409 `stale_recipients`: read the recipients again), or when no machine can open it
+    (409 `no_machine_can_open`). What the browser found (the login, and whether the token
+    can push to and open a pull request on the agent's repo) is its claim; the machines
+    that open the token probe it again and report (`record_checks`), and the provider's
+    own expiry date comes from them (a browser cannot read that header).
+
+    The agent's owner or one of its admins may delegate (`Agent.is_admin`). Their older
+    `AgentDelegation` rows for the agent are deleted."""
     if not agent.is_admin(user):
         raise DelegationError(
             f"only {agent.slug}'s owner or an admin can delegate their GitHub identity to it")
-    meta = _meta_for(token, agent)
-    failed = [c for c in meta["checks"] if not c["ok"]]
+    if not (login or "").strip() or not user_id:
+        raise DelegationError("say which GitHub account the token acts as (login and user id)")
+    rows = [{"repo": str(c.get("repo") or "")[:200], "ok": bool(c.get("ok")),
+             "detail": str(c.get("detail") or "")[:300]} for c in (checks or [])[:20]]
+    failed = [c for c in rows if not c["ok"]]
     if failed:
         raise DelegationError(f"{failed[0]['repo']}: {failed[0]['detail']}")
-    name = accounts.GITHUB_ENTRY
+    repo = agent_repo(agent)
+    if repo and not any(c["repo"] == repo for c in rows):
+        raise DelegationError(f"check the token against {repo} first: it must be able to push to it "
+                              "and open a pull request on it")
+    entry_name = accounts.GITHUB_ENTRY
+    value_zk = zk_seal.check_sealed_value(value_zk, entry_name)
     with transaction.atomic():
         agent = zk._locked(agent)
-        own = AgentCredential.objects.filter(agent=agent, name=name, account="agent").first()
+        own = AgentCredential.objects.filter(agent=agent, name=entry_name, account="agent").first()
         if own is not None:
             raise DelegationError(
-                f"{agent.slug} already holds a credential of its own named {name}: rename or remove "
-                "it first")
-        value_zk, _ = accounts.seal(agent, name, token, user)
+                f"{agent.slug} already holds a credential of its own named {entry_name}: rename or "
+                "remove it first")
+        accounts.check_delegated_seal(agent, user, value_zk)
         entry, _ = AgentCredential.objects.update_or_create(
-            agent=agent, name=name,
+            agent=agent, name=entry_name,
             defaults={
                 "value_zk": value_zk, "kv": agent.zk_kv, "updated_by": user,
                 "account": "delegated", "delegated_by": user, "delegated_by_agent": None,
                 "provider": "github",
-                "identity": {k: meta.get(k) for k in ("login", "user_id", "name")},
-                "purpose": f"{agent.slug} pushes and opens pull requests"
-                           + (f" on {agent_repo(agent)}" if agent_repo(agent) else ""),
-                "scopes": [c["repo"] for c in meta["checks"]],
-                "provider_expires_at": _expires(meta),
-                "checks": meta["checks"], "checked_at": timezone.now(), "checked_by": "server",
+                "identity": {"login": login.strip(), "user_id": int(user_id),
+                             "name": (name or "").strip() or login.strip()},
+                "purpose": f"{agent.slug} pushes and opens pull requests" + (f" on {repo}" if repo else ""),
+                "scopes": [c["repo"] for c in rows],
+                "provider_expires_at": None,
+                "checks": rows, "checked_at": timezone.now(), "checked_by": "browser",
             })
         AgentDelegation.objects.filter(agent=agent, service=AgentDelegation.GITHUB).delete()
     return entry

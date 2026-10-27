@@ -16,6 +16,7 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
+from apps.agents.testing import put_sealed
 from apps.agents.models import Agent, AgentCredentialRead
 from apps.harness.models import Runner, RunnerAdmin, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.testing import give_vault_key, grant_step_up
@@ -66,8 +67,7 @@ def fleet(client):
     # (apps/passkeys); tests/test_canopy_vault_device_binding.py's own step-up
     # cases below expire or omit it on purpose.
     grant_step_up(client)
-    client.put("/api/agents/eva/credentials", data={"values": {"canopy-pat": "pat-value"}},
-               content_type="application/json")
+    put_sealed(client, "eva", {"canopy-pat": "pat-value"})
     key = ec.generate_private_key(ec.SECP256R1())
     return {"client": client, "agent": agent, "runner": runner, "user": jj, "ws": ws,
             "pat": _pat(jj), "key": key}

@@ -269,8 +269,13 @@ def enable(agent, *, kv: int, wraps: list, values: list, user) -> None:
 def set_values(agent, *, kv: int, values: list, user) -> list[str]:
     """Upsert ciphertext values at the current kv (non-clobbering). A `zks1` value is
     legal here: a browser sealing to recipients before the vault key exists (kv 0),
-    or one not yet settled."""
-    return engine.set_values(_store(agent), kv=kv, values=values, user=user)
+    or one not yet settled. A legacy agent that has never held a value here starts
+    zero-knowledge at kv 0 with its first sealed value, as a new agent is born."""
+    with transaction.atomic():
+        if kv == 0 and not agent.zk_enabled:
+            agent = _locked(agent)
+            services.start_zero_knowledge(agent)
+        return engine.set_values(_store(agent), kv=kv, values=values, user=user)
 
 
 def add_wraps(agent, *, kv: int, wraps: list, user, only_new: bool = False) -> int:

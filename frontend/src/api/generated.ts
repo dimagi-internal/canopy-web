@@ -4680,12 +4680,12 @@ export interface paths {
         };
         readonly get?: never;
         /**
-         * Set named secrets for an agent (write-only)
-         * @description Upsert. Non-clobbering: a ref absent from the body is untouched.
-         *
-         *     The response is the MASKED status. From a browser session this needs a
-         *     fresh passkey step-up (403 `step_up_required` otherwise); a token write —
-         *     `canopy vault import` — does not, and is recorded like every settings change.
+         * Retired: refuses every value (422 sealed_only) — seal it yourself
+         * @description canopy-web takes no agent secret it can read. Encrypt the value where you are
+         *     and store the ciphertext with `PUT /api/agents/{slug}/vault/zk/values`: under the
+         *     vault key (`zk1`), or, before the agent has one, sealed (`zks1`) to everyone who may
+         *     read it — the `pending` targets of `GET …/vault/zk`. The browser's Secrets panel
+         *     and `canopy vault zk set` / `canopy vault import` do this. Always 422 `sealed_only`.
          */
         readonly put: operations["set_agent_credentials"];
         readonly post?: never;
@@ -5258,17 +5258,18 @@ export interface paths {
          */
         readonly get: operations["get_agent_github"];
         /**
-         * Delegate your GitHub identity to this agent (owner or admin, write-only)
+         * Delegate your GitHub identity to this agent (sealed in your browser)
          * @description Give this agent the caller's fine-grained GitHub token, as a credential delegated
-         *     by them. It replaces the one delegated now.
+         *     by them. It replaces the one delegated now. canopy-web never receives the token.
          *
-         *     Checked first: GitHub must accept it, and it must be able to push to and open a pull
-         *     request on the agent's own repo; a token that fails is refused with the reason. Then
-         *     it is sealed to the machines that run the agent and nothing else: no person can read
-         *     it through canopy, the caller included, and canopy-web keeps no copy it can open.
-         *     409 `no_machine_can_open` when no machine that runs the agent has an approved device
-         *     key yet. A browser needs a fresh passkey step-up (403 `step_up_required`); a token may
-         *     call it.
+         *     The caller probes the token against GitHub itself (`GET /user`; whether it can push to
+         *     and open a pull request on the agent's repo) and seals it (`zks1`) to exactly the
+         *     recipients `GET …/github/recipients` lists, then sends the ciphertext and what it
+         *     found. A failed check is refused with its reason (422). Sealed to anyone else: 422
+         *     `zk_invalid_target`; leaving out a recipient listed now: 409 `stale_recipients` (read
+         *     them again); no machine can open it: 409 `no_machine_can_open`. The machines that open
+         *     it probe it again and report, and GitHub's expiry date comes from them. A browser
+         *     needs a fresh passkey step-up (403 `step_up_required`); a token may call it.
          */
         readonly put: operations["set_agent_github"];
         readonly post?: never;
@@ -5279,6 +5280,30 @@ export interface paths {
          *     GitHub (github.com/settings/personal-access-tokens) is the only true recall.
          */
         readonly delete: operations["delete_agent_github"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/github/recipients": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Who a GitHub token you delegate to this agent is sealed to (public keys only)
+         * @description What the caller's browser seals a GitHub token to before `PUT …/github`: the
+         *     machines that run the agent and may hold a credential of theirs (its cloud boxes, and
+         *     runners of their own), and their own vault key. Each device's `target` is its ECDH
+         *     key's RFC 7638 thumbprint — recompute it from `public_jwk`. `refusal` is a sentence
+         *     when nothing can be sealed yet. The agent's owner or an admin.
+         */
+        readonly get: operations["get_agent_github_recipients"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
         readonly patch?: never;
@@ -25843,10 +25868,72 @@ export interface components {
              */
             readonly no_longer_works: boolean;
         };
-        /** AgentGitHubIn */
+        /**
+         * AgentGitHubIn
+         * @description A GitHub token the caller's browser already sealed (`zks1`) to the recipients
+         *     `GET …/github/recipients` named, with what the browser found probing it. canopy-web
+         *     never receives the token.
+         */
         readonly AgentGitHubIn: {
-            /** Token */
-            readonly token: string;
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Login */
+            readonly login: string;
+            /** User Id */
+            readonly user_id: number;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /** Checks */
+            readonly checks?: readonly components["schemas"]["AgentGitHubCheckOut"][];
+        };
+        /**
+         * AgentGitHubRecipientOut
+         * @description A machine (or the caller's own vault key) a delegated token is sealed to.
+         *     `target` is what the seal binds: a device's ECDH thumbprint, or the user id.
+         */
+        readonly AgentGitHubRecipientOut: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            readonly kind: "device" | "member";
+            /** Target */
+            readonly target: string;
+            /**
+             * Label
+             * @default
+             */
+            readonly label: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+        };
+        /**
+         * AgentGitHubRecipientsOut
+         * @description Everything a browser needs to seal a GitHub token for this agent itself.
+         */
+        readonly AgentGitHubRecipientsOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Agent Id */
+            readonly agent_id: string;
+            /** Kv */
+            readonly kv: number;
+            /** Name */
+            readonly name: string;
+            /**
+             * Repo
+             * @default
+             */
+            readonly repo: string;
+            /** Recipients */
+            readonly recipients?: readonly components["schemas"]["AgentGitHubRecipientOut"][];
+            /** Refusal */
+            readonly refusal?: string | null;
         };
         /**
          * AgentCredentialReadOut
@@ -47560,6 +47647,28 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentGitHubOut"];
+                };
+            };
+        };
+    };
+    readonly get_agent_github_recipients: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentGitHubRecipientsOut"];
                 };
             };
         };

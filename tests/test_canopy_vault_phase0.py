@@ -23,7 +23,8 @@ from django.utils import timezone
 from apps.agents import services
 from apps.agents.models import Agent, AgentCredentialRead
 from apps.common.encryption import encrypt_secret
-from apps.passkeys.testing import give_vault_key, grant_step_up
+from apps.agents.testing import put_sealed
+from apps.passkeys.testing import give_vault_key
 from apps.harness.models import Runner, RunnerAssignment
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -57,9 +58,7 @@ def fleet(db, client):
 
 
 def _put(c, values):
-    grant_step_up(c)  # a browser write needs a passkey step-up (tests/test_agent_credential_stepup.py)
-    return c.put("/api/agents/eva/credentials", data={"values": values},
-                 content_type="application/json")
+    return put_sealed(c, "eva", values)  # sealed as a browser seals it
 
 
 def _resolve(fleet, qs="", **headers):

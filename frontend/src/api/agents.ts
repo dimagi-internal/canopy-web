@@ -6,6 +6,7 @@ import { apiV2, WORKSPACE_HEADER } from './client.v2'
 import type { components } from './generated'
 import { ApiError, ensureOk, unwrap } from './problem'
 import type { Cli } from '@/lib/clis'
+import { prepareGitHubToken, type GitHubRecipients } from '@/vault/githubDelegation'
 
 type Schemas = components['schemas']
 
@@ -587,19 +588,8 @@ export async function getAgentCredentialStatus(slug: string): Promise<AgentCrede
   return Array.from(unwrap(res, 'getAgentCredentialStatus'))
 }
 
-/** Upsert named secrets. NON-CLOBBERING — omitted refs are untouched, so a
- *  single-field edit cannot wipe the rest. Returns the masked status; there is
- *  deliberately no route that reads a value back into a browser. */
-export async function setAgentCredentials(
-  slug: string,
-  values: Record<string, string>,
-): Promise<AgentCredentialStatusOut[]> {
-  const res = await apiV2.PUT('/api/agents/{slug}/credentials', {
-    params: { path: { slug } },
-    body: { values },
-  })
-  return Array.from(unwrap(res, 'setAgentCredentials'))
-}
+// Setting a value is `setZkValue` (@/vault/operations): encrypted in this browser,
+// ciphertext only. canopy-web takes no agent secret in plaintext.
 
 export async function deleteAgentCredential(
   slug: string,
@@ -666,10 +656,21 @@ export async function getAgentGitHub(slug: string): Promise<AgentGitHub> {
   return githubResult(res as unknown as GitHubRes, 'Loading GitHub status')
 }
 
+/** Who a token you delegate to this agent is sealed to (public keys only). */
+export async function getAgentGitHubRecipients(slug: string): Promise<GitHubRecipients> {
+  const res = await apiV2.GET('/api/agents/{slug}/github/recipients', { params: { path: { slug } } })
+  const out = unwrap(res, 'Reading which machines can open it')
+  return { ...out, recipients: Array.from(out.recipients ?? [], (r) => ({ ...r, public_jwk: r.public_jwk as { x?: string; y?: string } })) }
+}
+
+/** Delegate your GitHub identity: THIS browser probes the token against GitHub and
+ *  seals it to the machines that run the agent; canopy-web receives only ciphertext and
+ *  what the probe found (`@/vault/githubDelegation`). */
 export async function setAgentGitHub(slug: string, token: string): Promise<AgentGitHub> {
+  const body = await prepareGitHubToken(token, await getAgentGitHubRecipients(slug))
   const res = await apiV2.PUT('/api/agents/{slug}/github', {
     params: { path: { slug } },
-    body: { token },
+    body,
   })
   return githubResult(res as unknown as GitHubRes, 'Saving the token')
 }

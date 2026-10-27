@@ -1,7 +1,8 @@
 """Passkey step-up on agent credentials (canopy-web#1538).
 
-- SETTING a value from a browser session needs a fresh step-up; a token (PAT /
-  MCP) write does not — `canopy vault import` has no browser to ask.
+- SETTING a value (ciphertext, `PUT …/vault/zk/values`) from a browser session needs a
+  fresh step-up; a token (PAT / MCP) write does not — `canopy vault import` has no
+  browser to ask.
 - There is no reveal: the value is ciphertext canopy-web cannot open.
 """
 from __future__ import annotations
@@ -10,6 +11,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 
+from apps.agents.credentials import zk_seal
 from apps.agents.models import Agent
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -40,8 +42,12 @@ def _pat(user) -> str:
 
 
 def _put(client, values, **extra):
-    return client.put("/api/agents/eva/credentials", data={"values": values},
-                      content_type="application/json", **extra)
+    """Sealed here, as a browser or the CLI seals it: the route sees ciphertext only."""
+    agent = Agent.objects.get(slug="eva")
+    body = {"kv": 0, "values": [{"name": n, "value_zk": zk_seal.seal_to(
+        v, agent_id=str(agent.pk), name=n, kv=0, recipients=zk_seal.recipients_for(agent))}
+        for n, v in values.items()]}
+    return client.put("/api/agents/eva/vault/zk/values", data=body, content_type="application/json", **extra)
 
 
 # --- setting a value -------------------------------------------------------------

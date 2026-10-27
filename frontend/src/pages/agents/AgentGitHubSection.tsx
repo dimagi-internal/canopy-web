@@ -14,9 +14,9 @@ import type { CredStatus } from '@/pages/agents/agentCredentials'
 // GitHub is a PERSON's identity, delegated to this one agent — its owner's, or one of
 // its admins' — not an account of the agent's own. The person makes a fine-grained token
 // on GitHub whose repository selection IS what this agent may touch and pastes it here;
-// canopy checks it, then seals it so that only the machines that run the agent can open
-// it (apps/agents/credentials/accounts.py). Nobody can read it in canopy afterwards, the
-// person included: they replace or withdraw it. The server says who may delegate
+// THIS browser checks it against GitHub and seals it so that only the machines that run
+// the agent can open it (@/vault/githubDelegation); canopy-web never receives the token.
+// Nobody can read it in canopy afterwards, the person included: they replace or withdraw it. The server says who may delegate
 // (`can_lend`), whose token is in force (`lent_by_email`) and which machines can open it.
 //
 // canopy cannot mint the token: GitHub has no API that creates a fine-grained
@@ -90,7 +90,8 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
   const tone = !gh.set || gh.expired || broken ? 'destructive' : gh.expiring_soon ? 'warning' : 'success'
   const machines = gh.machines ?? []
   const eligible = gh.eligible_machines ?? []
-  const checkedBy = gh.checked_by && gh.checked_by !== 'server' ? gh.checked_by : ''
+  // "browser" / "server": checked when it was given, not by a machine that opened it.
+  const checkedBy = gh.checked_by && !['server', 'browser'].includes(gh.checked_by) ? gh.checked_by : ''
 
   return (
     <section id="cred-github" className="mb-5 scroll-mt-6" data-testid="agent-github">
@@ -216,9 +217,10 @@ export function AgentGitHubSection({ slug, onStatus }: { slug: string; onStatus?
             <p className="mt-1 max-w-2xl text-[11px] text-muted-foreground" data-testid="github-who-can-open">
               {eligible.length ? (
                 <>
-                  Checked against GitHub, then sealed so only the machines that run {slug} can open it:{' '}
-                  {eligible.join(', ')}. Their owners, who are {slug}&rsquo;s admins, could extract it from
-                  those machines. Nobody can read it in canopy, including you.
+                  Checked against GitHub by this browser, then sealed here so only the machines that run{' '}
+                  {slug} can open it: {eligible.join(', ')}. canopy never receives the token. Their owners, who
+                  are {slug}&rsquo;s admins, could extract it from those machines. Nobody can read it in canopy,
+                  including you.
                 </>
               ) : (
                 <>

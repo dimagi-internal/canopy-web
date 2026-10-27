@@ -58,7 +58,7 @@ def delegated_names(agent) -> set[str]:
 
 
 def refuse_delegated_names(agent, names) -> None:
-    """A generic value write (a member's browser, the CLI's settle, `PUT /credentials`)
+    """A generic value write (a member's browser, the CLI's settle, a value canopy-web minted)
     never touches a delegated entry: it would put a person's credential where the
     vault's members could read it. Only its person replaces it (`delegations.give_github`),
     and only a machine that opened it re-seals it to a new machine (`reseal`)."""
@@ -116,17 +116,63 @@ def recipients(agent, person) -> list[tuple[str, str, dict]]:
     return out
 
 
+def recipient_rows(agent, person) -> list[dict]:
+    """`recipients` as a person's browser seals to them: each with its public key and a
+    label. A device's `target` is its ECDH key's thumbprint, which the browser recomputes
+    from the key before sealing."""
+
+    out = [{"kind": "device", "target": k.ecdh_jkt, "public_jwk": k.ecdh_public_jwk,
+            "label": f"{k.runner.name} · {k.label or k.kind}"} for k in delegated_devices(agent, person)]
+    ks = UserVaultKeyset.objects.filter(user=person).first() if person is not None else None
+    if ks is not None:
+        out.append({"kind": "member", "target": str(ks.user_id), "public_jwk": ks.public_jwk,
+                    "label": "your own vault key"})
+    return out
+
+
+def _no_machine(agent) -> ZkError:
+    return ZkError(409, "no_machine_can_open",
+                   f"no machine that runs {agent.slug} can open a credential of yours yet: a cloud "
+                   f"runner that serves {agent.slug}, or a runner of your own, needs an approved "
+                   "device key")
+
+
+def check_delegated_seal(agent, person, value_zk: str) -> None:
+    """A delegated value a person's browser sealed must reach exactly `recipients(agent,
+    person)` now, at the agent's kv: no one else (422 `zk_invalid_target`), and nobody
+    left out (409 `stale_recipients` — a machine came or went since they read the list).
+    Refused (409 `no_machine_can_open`) when no machine that runs `agent` can open one: a
+    credential nobody can use is a credential nobody notices is missing. Call under the
+    agent's row lock."""
+
+    allowed = {(kind, target) for kind, target, _ in recipients(agent, person)}
+    if not any(kind == "device" for kind, _ in allowed):
+        raise _no_machine(agent)
+    if zk_seal.sealed_kv(value_zk) != agent.zk_kv:
+        raise ZkError(409, "zk_kv_mismatch",
+                      f"sealed at another vault-key version than {agent.slug}'s ({agent.zk_kv}): read the "
+                      "recipients again")
+    given = zk_seal.sealed_targets(value_zk)
+    stray = sorted(t for _, t in given - allowed)
+    if stray:
+        raise ZkError(422, "zk_invalid_target",
+                      f"a credential delegated to {agent.slug} may be sealed only to the machines that run "
+                      f"it and to your own vault key: {', '.join(stray)}")
+    if allowed - given:
+        raise ZkError(409, "stale_recipients",
+                      f"the machines that run {agent.slug} changed since you read them: read the recipients "
+                      "again and seal it to each")
+
+
 def seal(agent, name: str, plaintext: str, person) -> tuple[str, list[str]]:
-    """`(zks1 value, names of the machines that can open it)`. Refused (409) when no
-    machine that runs `agent` can open one yet: a credential nobody can use is a
-    credential nobody notices is missing."""
+    """`(zks1 value, names of the machines that can open it)`, sealed HERE. Only for
+    moving a delegation still held the old way (`manage.py move_delegations_to_vault`),
+    which canopy-web already holds readable: a person delegating a token seals it in
+    their own browser (`check_delegated_seal`), and canopy-web never sees it."""
     to = recipients(agent, person)
     machines = sorted({k.runner.name for k in delegated_devices(agent, person)})
     if not machines:
-        raise ZkError(409, "no_machine_can_open",
-                      f"no machine that runs {agent.slug} can open a credential of yours yet: a cloud "
-                      f"runner that serves {agent.slug}, or a runner of your own, needs an approved "
-                      "device key")
+        raise _no_machine(agent)
     return zk_seal.seal_to(plaintext, agent_id=str(agent.pk), name=name, kv=agent.zk_kv,
                            recipients=to), machines
 

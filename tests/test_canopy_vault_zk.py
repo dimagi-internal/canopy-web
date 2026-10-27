@@ -34,6 +34,7 @@ from apps.agents.models import (
     VaultSecret,
 )
 from apps.agents.schemas import ZkWrapIn
+from apps.agents.testing import put_sealed
 from apps.events.models import SettingChange
 from apps.harness.models import Runner, RunnerAssignment, RunnerDeviceKey
 from apps.passkeys.models import Passkey, UserVaultKeyset
@@ -113,11 +114,9 @@ def fleet(client):
     f.member_priv, f.keyset = _make_keyset(f.user, f.passkey.credential_id)
     f.vk = os.urandom(32)
     f.recovery = os.urandom(32)
-    # Stored as `canopy vault import` stores them: sealed to the agent's readers (the
-    # approved device, the owner's keyset), the agent zero-knowledge at kv 0.
-    res = client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value",
-                                                                     "kindora": "kin-value"}},
-                     content_type="application/json")
+    # Stored as `canopy vault import` stores them: sealed where they are to the agent's
+    # readers (the approved device, the owner's keyset), the agent zero-knowledge at kv 0.
+    res = put_sealed(client, "eva", {"CANOPY_WEB_PAT": "pat-value", "kindora": "kin-value"})
     assert res.status_code == 200, res.content
     f.agent.refresh_from_db()
     return f
@@ -454,17 +453,20 @@ def test_only_an_admin_reaches_the_zk_routes(fleet):
     assert _enable(fleet, client=c).status_code == 403
 
 
-# ---- after enable: a plaintext write is sealed ------------------------------------------------
+# ---- after enable: a plaintext write is refused -----------------------------------------------
 
-def test_a_plaintext_write_is_sealed_on_a_zk_agent(fleet):
+def test_a_plaintext_write_is_refused_on_a_zk_agent(fleet):
     assert _enable(fleet).status_code == 200
+    before = _stored("CANOPY_WEB_PAT")
     # There is no reveal: canopy-web cannot open a value.
     assert fleet.client.post("/api/agents/eva/credentials/CANOPY_WEB_PAT/reveal").status_code in (404, 405)
-    # Zero-knowledge is the only mode: `canopy vault import` writes in plaintext
-    # and canopy-web seals the value to the agent's readers, keeping no copy.
+    # Nor does it take one it could read: the writer encrypts it where they are.
     res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "x"}},
                            content_type="application/json")
-    assert res.status_code == 200, res.content
+    assert res.status_code == 422 and res.json()["error"] == "sealed_only"
+    assert _stored("CANOPY_WEB_PAT") == before
+    # Sealed to the agent's readers (no vault key needed) it lands, at the current kv.
+    assert put_sealed(fleet.client, "eva", {"CANOPY_WEB_PAT": "x"}).status_code == 200
     row = AgentCredential.objects.get(name="CANOPY_WEB_PAT")
     assert row.value_zk.startswith("zks1:") and row.kv == 1
     assert ref.open_sealed_value(row.value_zk, _aid(fleet), "CANOPY_WEB_PAT", "member", str(fleet.user.pk),
@@ -869,9 +871,8 @@ def test_every_new_agent_is_born_zk_with_or_without_a_vault_key(fleet):
 def test_kv0_seals_every_write_then_enable_creates_the_vault_key(fleet):
     Agent.objects.filter(pk=fleet.agent.pk).update(zk_enabled=True, zk_kv=0)
     AgentCredential.objects.all().delete()
-    # A plain write (the canopy CLI's custodial import) is sealed, not refused.
-    res = fleet.client.put("/api/agents/eva/credentials", data={"values": {"kindora": "kin"}},
-                           content_type="application/json")
+    # Sealed by the writer (a browser, or the canopy CLI's import) to the agent's readers.
+    res = put_sealed(fleet.client, "eva", {"kindora": "kin"})
     assert res.status_code == 200, res.content
     stored = _stored("kindora")
     assert stored.startswith("zks1:") and AgentCredential.objects.get(name="kindora").kv == 0

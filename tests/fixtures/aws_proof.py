@@ -19,6 +19,7 @@ from django.core.cache import cache
 from django.test import Client
 from django.utils import timezone
 
+from apps.agents.testing import put_sealed
 from apps.agents.models import (
     Agent,
 )
@@ -130,8 +131,7 @@ def fleet(client):
     give_vault_key(jj)  # someone to seal the stored PAT to (the agent vault is zero-knowledge)
     client.force_login(jj)
     grant_step_up(client)
-    client.put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "pat-value"}},
-               content_type="application/json")
+    put_sealed(client, "eva", {"CANOPY_WEB_PAT": "pat-value"})
     mail.outbox.clear()
     return {"client": client, "agent": agent, "runner": runner, "user": jj, "ws": ws,
             "pat": _pat(jj)}

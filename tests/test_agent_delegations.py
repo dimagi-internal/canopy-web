@@ -28,6 +28,7 @@ from unittest import mock
 
 import pytest
 from canopy_sdk.jose import make_dpop_proof
+from cryptography.hazmat.primitives.asymmetric import ec
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.test import Client
@@ -114,8 +115,33 @@ def _client(user):
     return c
 
 
+def _browser(agent, person, token="github_pat_olive") -> dict:
+    """What a person's browser sends to `PUT …/github`: it asks GitHub who the token is
+    and whether it can push to and open a pull request on the agent's repo (here: the
+    fake, through the same probes the legacy re-check uses), then seals the token to the
+    recipients canopy-web lists. canopy-web never sees `token`."""
+    who = delegations.inspect_github(token)
+    repo = delegations.agent_repo(agent)
+    checks = [delegations.check_repo(token, repo)] if repo else []
+    to = delegations.github_recipients(agent, person)
+    value_zk = accounts.zk_seal.seal_to(
+        token, agent_id=to["agent_id"], name=to["name"], kv=to["kv"],
+        recipients=[(r["kind"], r["target"], r["public_jwk"]) for r in to["recipients"]]
+        or [("member", str(person.pk), _throwaway_jwk())])
+    return {"value_zk": value_zk, "login": who["login"], "user_id": who["user_id"], "name": who["name"],
+            "checks": checks}
+
+
+def _throwaway_jwk() -> dict:
+    """A public key nobody holds: something to seal to when canopy-web names no one, so
+    the refusal under test is the server's, not the sealing's."""
+    n = ec.generate_private_key(ec.SECP256R1()).public_key().public_numbers()
+    return {"kty": "EC", "crv": "P-256", "x": accounts.zk_seal._b64u(n.x.to_bytes(32, "big")),
+            "y": accounts.zk_seal._b64u(n.y.to_bytes(32, "big"))}
+
+
 def _lend(agent, owner, github, token="github_pat_olive"):
-    return delegations.set_github(agent, owner, token)
+    return delegations.give_github(agent, owner, **_browser(agent, owner, token))
 
 
 
@@ -170,16 +196,80 @@ def test_the_owner_delegates_a_working_token_sealed_to_the_machines_that_run_the
     assert entry.identity == {"login": "olive", "user_id": 4242, "name": "Olive Owner"}
     assert entry.checks == [{"repo": "dimagi-internal/echo", "ok": True,
                              "detail": "can push and open pull requests"}]
-    assert entry.provider_expires_at == dt.datetime(2026, 12, 1, 10, 0, tzinfo=dt.UTC)
+    assert entry.checked_by == "browser"
+    # A browser cannot read GitHub's expiry header: the machine that opens it reports it.
+    assert entry.provider_expires_at is None
+    assert accounts.label(entry, agent) == "GitHub · delegated by Olive"
+    delegations.record_checks(agent, entry.name, checks=entry.checks, by="cloud-ec2-1",
+                              provider_expires_at=dt.datetime(2026, 12, 1, 10, 0, tzinfo=dt.UTC))
+    entry.refresh_from_db()
     assert accounts.label(entry, agent) == (
         "GitHub · delegated by Olive · GitHub says it expires 1 Dec 2026")
     assert not AgentDelegation.objects.exists()
 
 
+def test_the_browser_is_told_who_to_seal_to(agent, owner, github, machine):
+    key = machine[0]
+    r = _client(owner).get("/api/agents/echo/github/recipients")
+    assert r.status_code == 200, r.content
+    body = r.json()
+    assert (body["agent_id"], body["kv"], body["name"], body["repo"]) == (
+        str(agent.pk), agent.zk_kv, "github-token", "dimagi-internal/echo")
+    assert [(x["kind"], x["target"]) for x in body["recipients"]] == [("device", key.ecdh_jkt)]
+    assert body["refusal"] is None
+    # Someone who may not delegate is not told.
+    editor = User.objects.create_user("eve", "eve@dimagi.com", "pw")
+    wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
+    assert _client(editor).get("/api/agents/echo/github/recipients").status_code == 403
+
+
 def test_a_token_is_refused_when_no_machine_that_runs_the_agent_can_open_it(agent, owner, github):
+    r = _client(owner).get("/api/agents/echo/github/recipients")
+    assert r.json()["recipients"] == [] and "No machine that runs echo" in r.json()["refusal"]
+    r = _client(owner).put("/api/agents/echo/github", _browser(agent, owner), content_type="application/json")
+    assert r.status_code == 409 and r.json()["error"] == "no_machine_can_open"
+    assert not AgentCredential.objects.exists()
+
+
+def test_the_token_itself_is_refused(agent, owner, github, machine):
+    """canopy-web never takes the token: the old `{token}` body is not accepted."""
     r = _client(owner).put("/api/agents/echo/github", {"token": "github_pat_olive"},
                            content_type="application/json")
-    assert r.status_code == 409 and r.json()["error"] == "no_machine_can_open"
+    assert r.status_code == 422
+    assert not AgentCredential.objects.exists()
+
+
+def test_a_seal_to_anyone_else_or_missing_a_machine_is_refused(agent, owner, github, machine, runner):
+    c = _client(owner)
+    stray = _browser(agent, owner)
+    stray["value_zk"] = accounts.zk_seal.seal_to(
+        "github_pat_olive", agent_id=str(agent.pk), name="github-token", kv=agent.zk_kv,
+        recipients=[("device", machine[0].ecdh_jkt, machine[0].ecdh_public_jwk),
+                    ("member", "999", _throwaway_jwk())])
+    r = c.put("/api/agents/echo/github", stray, content_type="application/json")
+    assert r.status_code == 422 and r.json()["error"] == "zk_invalid_target"
+    # A second machine came after the browser read the list: read it again.
+    body = _browser(agent, owner)
+    a_machine(runner, runner.owner)
+    r = c.put("/api/agents/echo/github", body, content_type="application/json")
+    assert r.status_code == 409 and r.json()["error"] == "stale_recipients"
+    # Sealed at another vault-key version.
+    old = _browser(agent, owner)
+    Agent.objects.filter(pk=agent.pk).update(zk_kv=agent.zk_kv + 1)
+    r = c.put("/api/agents/echo/github", old, content_type="application/json")
+    assert r.status_code == 409 and r.json()["error"] == "zk_kv_mismatch"
+    assert not AgentCredential.objects.exists()
+
+
+def test_a_check_the_browser_says_failed_or_never_ran_is_refused(agent, owner, github, machine):
+    body = _browser(agent, owner)
+    c = _client(owner)
+    r = c.put("/api/agents/echo/github", {**body, "checks": []}, content_type="application/json")
+    assert r.status_code == 422 and "dimagi-internal/echo first" in r.json()["detail"]
+    r = c.put("/api/agents/echo/github",
+              {**body, "checks": [{"repo": "dimagi-internal/echo", "ok": False, "detail": "cannot push"}]},
+              content_type="application/json")
+    assert r.status_code == 422 and "cannot push" in r.json()["detail"]
     assert not AgentCredential.objects.exists()
 
 
@@ -271,19 +361,17 @@ def test_a_token_github_rejects_is_refused(agent, owner, github, machine):
 
 def test_a_paste_with_more_than_the_token_is_refused_with_a_sentence(agent, owner, github, machine):
     # A curly quote in the paste used to crash the GitHub request (latin-1 header) as a 500.
+    # (The legacy re-check and the create page still ask GitHub from here.)
     with pytest.raises(delegations.DelegationError, match="not just a GitHub token"):
-        delegations.set_github(agent, owner, "github_pat_olive\nGitHub’s token page text")
-    r = _client(owner).put("/api/agents/echo/github", {"token": "github_pat_x and some ’ text"},
-                           content_type="application/json")
-    assert r.status_code == 422 and "starts with github_pat_" in r.json()["detail"]
+        delegations.inspect_github("github_pat_olive\nGitHub’s token page text")
     assert not AgentCredential.objects.exists()
 
 
-def test_only_the_owner_or_an_admin_can_delegate(agent, github, machine):
+def test_only_the_owner_or_an_admin_can_delegate(agent, owner, github, machine):
     editor = User.objects.create_user("adam", "adam@dimagi.com", "pw")
     wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
     with pytest.raises(delegations.DelegationError, match="owner or an admin"):
-        delegations.set_github(agent, editor, "github_pat_adam")
+        delegations.give_github(agent, editor, **_browser(agent, owner, "github_pat_adam"))
     assert not AgentCredential.objects.exists()
 
 
@@ -296,7 +384,7 @@ def _admin(agent, username="ada"):
 
 def test_an_admin_delegates_and_a_later_delegation_replaces_it(agent, owner, github, machine):
     ada = _admin(agent)
-    delegations.set_github(agent, ada, "github_pat_ada")
+    _lend(agent, ada, github, "github_pat_ada")
     st = delegations.status(agent, machines=True)
     assert st["set"] and st["lent_by_email"] == "ada@dimagi-ai.com" and st["in_vault"]
     assert st["machines"] == ["cloud-ec2-1"]
@@ -307,7 +395,7 @@ def test_an_admin_delegates_and_a_later_delegation_replaces_it(agent, owner, git
 
 def test_an_admin_who_loses_the_grant_stops_delegating(agent, github, machine, runner):
     ada = _admin(agent)
-    delegations.set_github(agent, ada, "github_pat_ada")
+    _lend(agent, ada, github, "github_pat_ada")
     AgentAdmin.objects.filter(agent=agent, user=ada).delete()
     assert delegations.status(agent)["set"] is False
     assert "no longer an admin" in delegations.readiness(agent)[1]
@@ -321,7 +409,7 @@ def test_the_route_says_whether_the_caller_may_delegate(agent, owner, github, ma
     wsvc.ensure_member(agent.workspace, editor, WorkspaceMembership.EDITOR)
     assert _client(ada).get("/api/agents/echo/github").json()["can_lend"] is True
     assert _client(editor).get("/api/agents/echo/github").json()["can_lend"] is False
-    r = _client(ada).put("/api/agents/echo/github", {"token": "github_pat_ada"},
+    r = _client(ada).put("/api/agents/echo/github", _browser(agent, ada, "github_pat_ada"),
                          content_type="application/json")
     assert r.status_code == 200, r.content
     assert r.json()["lent_by_email"] == "ada@dimagi-ai.com"
@@ -333,7 +421,7 @@ def test_a_browser_delegates_a_token_only_after_a_passkey_step_up(agent, owner, 
     steps up first, after the check that it may delegate at all. A token may delegate."""
     c = Client()
     c.force_login(owner)
-    r = c.put("/api/agents/echo/github", {"token": "github_pat_olive"}, content_type="application/json")
+    r = c.put("/api/agents/echo/github", _browser(agent, owner), content_type="application/json")
     assert r.status_code == 403 and r.json()["error"] == "step_up_required"
     assert not AgentCredential.objects.exists()
 
@@ -341,11 +429,12 @@ def test_a_browser_delegates_a_token_only_after_a_passkey_step_up(agent, owner, 
     wsvc.ensure_member(agent.workspace, stranger, WorkspaceMembership.EDITOR)
     c = Client()
     c.force_login(stranger)
-    r = c.put("/api/agents/echo/github", {"token": "github_pat_eve"}, content_type="application/json")
+    r = c.put("/api/agents/echo/github", _browser(agent, owner, "github_pat_eve"),
+              content_type="application/json")
     assert r.status_code == 422 and "owner or an admin" in r.content.decode()   # not a passkey prompt
 
     raw, _ = PersonalToken.create_for_user(user=owner, label="cli")
-    r = Client().put("/api/agents/echo/github", {"token": "github_pat_olive"},
+    r = Client().put("/api/agents/echo/github", _browser(agent, owner),
                      content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {raw}")
     assert r.status_code == 200, r.content
 
@@ -353,12 +442,14 @@ def test_a_browser_delegates_a_token_only_after_a_passkey_step_up(agent, owner, 
 def test_the_route_refuses_with_githubs_reason_and_never_echoes_the_token(agent, owner, github, machine):
     github.pr["dimagi-internal/echo"] = 404
     c = _client(owner)
-    r = c.put("/api/agents/echo/github", {"token": "github_pat_secret"}, content_type="application/json")
+    r = c.put("/api/agents/echo/github", _browser(agent, owner, "github_pat_secret"),
+              content_type="application/json")
     assert r.status_code == 422
     assert "cannot see this repo" in r.content.decode()
 
     github.pr["dimagi-internal/echo"] = 422
-    r = c.put("/api/agents/echo/github", {"token": "github_pat_secret"}, content_type="application/json")
+    r = c.put("/api/agents/echo/github", _browser(agent, owner, "github_pat_secret"),
+              content_type="application/json")
     assert r.status_code == 200, r.content
     body = r.json()
     assert body["set"] and body["login"] == "olive" and body["repo"] == "dimagi-internal/echo"
@@ -388,7 +479,7 @@ def test_no_vault_write_but_its_persons_replaces_it(agent, owner, github, machin
     c = _client(owner)
     r = c.put("/api/agents/echo/credentials", {"values": {"github-token": "mine-now"}},
               content_type="application/json")
-    assert r.status_code == 409 and r.json()["error"] == "delegated_entry"
+    assert r.status_code == 422 and r.json()["error"] == "sealed_only"
     r = c.put("/api/agents/echo/vault/zk/values",
               {"kv": agent.zk_kv, "values": [{"name": "github-token", "value_zk": "zk1:" + "A" * 40}]},
               content_type="application/json")

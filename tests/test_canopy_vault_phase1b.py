@@ -26,6 +26,7 @@ from django.core import mail
 from django.test import Client
 from django.utils import timezone
 
+from apps.agents.testing import put_sealed
 from apps.agents.credentials import pat_rotation
 from apps.agents.models import (
     Agent,
@@ -489,8 +490,7 @@ def agent_login(fleet):
                                        role=WorkspaceMembership.EDITOR)
     Agent.objects.filter(pk=fleet["agent"].pk).update(user=login)
     raw, token = PersonalToken.create_for_user(user=login, label="eva agent", ttl_days=0)
-    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": raw}},
-                        content_type="application/json")
+    put_sealed(fleet["client"], "eva", {"CANOPY_WEB_PAT": raw})
     fleet["agent"].refresh_from_db()
     return {"login": login, "raw": raw, "token": token}
 
@@ -579,8 +579,7 @@ def test_a_due_rotation_mints_writes_overlaps_then_revokes(fleet, agent_login):
 
 def test_rotation_never_revokes_a_token_that_is_not_the_agents(fleet, agent_login):
     """The stored canopy-pat is a PERSON's token: replace it, leave theirs alone."""
-    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": fleet["pat"]}},
-                        content_type="application/json")
+    put_sealed(fleet["client"], "eva", {"CANOPY_WEB_PAT": fleet["pat"]})
     row = pat_rotation.rotate(fleet["agent"], trigger="manual", actor=fleet["user"])
     assert row.old_token_id is None and row.revoke_after is None
     assert PersonalToken.lookup(fleet["pat"]) is not None
@@ -679,8 +678,7 @@ def test_self_rotation_retires_the_token_it_was_called_with_when_none_is_known(f
     """Production, 2026-10-24: Hal's vault is zero-knowledge and had never rotated, so
     nothing named its current token — the self-rotation minted a new one and left the
     LEAKED one live. The token the agent called with is the leaked one: retire it."""
-    fleet["client"].put("/api/agents/eva/credentials", data={"values": {"CANOPY_WEB_PAT": "unreadable-sealed-value"}},
-                        content_type="application/json")
+    put_sealed(fleet["client"], "eva", {"CANOPY_WEB_PAT": "unreadable-sealed-value"})
     res = _rotate_own(agent_login["raw"])
     assert res.status_code == 200, res.content
     assert res.json()["old_token_revoked_after"] is not None

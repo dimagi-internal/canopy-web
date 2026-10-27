@@ -5,7 +5,6 @@ import {
   AgentApiError,
   deleteAgentCredential,
   getAgentCredentialStatus,
-  setAgentCredentials,
   type AgentCredentialStatusOut,
 } from '@/api/agents'
 import { getCredentialAlerts, type AgentCredentialAlertOut } from '@/api/deviceKeys'
@@ -28,9 +27,9 @@ import { useUnlockPrompt } from '@/vault/UnlockPrompt'
 // The status route returns booleans and timestamps and never plaintext. The
 // agent vault is zero-knowledge (canopy-web#1550): Reveal opens a value HERE
 // with the person's own vault key, and canopy-web never holds one it can read.
-// Save seals in the browser once the agent has a vault key; before that it
-// hands the value to the server, which seals it to the agent's readers and
-// keeps no copy.
+// Save encrypts in the browser, always (`setZkValue`): under the vault key once
+// the agent has one, before that sealed (`zks1`) to everyone who may read it.
+// canopy-web takes no value in plaintext (`PUT …/credentials` is 422).
 //
 // 1Password is the legacy home: its vault form shows only for an agent still
 // set to read from it.
@@ -129,12 +128,8 @@ export function AgentSecretsPanel({
   const byName = new Map(rows.map((r) => [r.name, r]))
 
   const save = async (name: string, value: string) => {
-    if (zk?.enabled) {
-      await setZkValue(agent.slug, name, value, unlock)
-      setRows(await getAgentCredentialStatus(agent.slug))
-    } else {
-      setRows(await setAgentCredentials(agent.slug, { [name]: value }))
-    }
+    await setZkValue(agent.slug, name, value, unlock)
+    setRows(await getAgentCredentialStatus(agent.slug))
   }
   const reveal = (name: string) => revealZkValue(agent.slug, name, unlock)
   const remove = async (name: string) => setRows(await deleteAgentCredential(agent.slug, name))

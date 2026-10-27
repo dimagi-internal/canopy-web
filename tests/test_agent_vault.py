@@ -23,6 +23,7 @@ from django.test import Client
 
 from apps.agents.credentials import vault_import as vi
 from apps.agents.models import Agent
+from apps.agents.testing import put_sealed
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
 
@@ -228,11 +229,7 @@ def _set_vault(client, **body):
 
 
 def _put(client, values):
-    grant_step_up(client)  # a browser write needs a passkey step-up (tests/test_agent_credential_stepup.py)
-    return client.put(
-        "/api/agents/ace/credentials",
-        data={"values": values}, content_type="application/json",
-    )
+    return put_sealed(client, "ace", values)  # sealed as a browser seals it
 
 
 def _pat_for(user) -> str:

@@ -2732,14 +2732,51 @@ class SkillHistoryOut(StrictModel):
 
 
 # ---- GitHub: the owner's identity, lent to one agent (AgentDelegation) ----
-class AgentGitHubIn(StrictModel):
-    token: str
-
-
 class AgentGitHubCheckOut(StrictModel):
     repo: str
     ok: bool
     detail: str = ""
+
+
+class AgentGitHubIn(StrictModel):
+    """A GitHub token the caller's browser already sealed (`zks1`) to the recipients
+    `GET …/github/recipients` named, with what the browser found probing it. canopy-web
+    never receives the token."""
+
+    #: `zks1:` sealed to exactly the recipients listed now, at the agent's kv, under the
+    #: entry name the recipients answer gave (`github-token`).
+    value_zk: str = Field(max_length=65536)
+    #: The account the token acts as (`GET https://api.github.com/user`).
+    login: str = Field(min_length=1, max_length=100)
+    user_id: int = Field(ge=1)
+    name: str = Field(default="", max_length=200)
+    #: Can it push to and open a pull request on the agent's repo — one row per repo.
+    checks: list[AgentGitHubCheckOut] = Field(default_factory=list, max_length=20)
+
+
+class AgentGitHubRecipientOut(StrictModel):
+    """A machine (or the caller's own vault key) a delegated token is sealed to.
+    `target` is what the seal binds: a device's ECDH thumbprint, or the user id."""
+
+    kind: Literal["device", "member"]
+    target: str
+    label: str = ""
+    public_jwk: dict[str, Any]
+
+
+class AgentGitHubRecipientsOut(StrictModel):
+    """Everything a browser needs to seal a GitHub token for this agent itself."""
+
+    agent: str
+    agent_id: str
+    kv: int
+    #: The vault entry the token is stored as; the seal binds it.
+    name: str
+    #: `owner/repo` the token must be able to push to and open pull requests on.
+    repo: str = ""
+    recipients: list[AgentGitHubRecipientOut] = Field(default_factory=list)
+    #: Why nothing can be sealed yet, as a sentence; null when it can.
+    refusal: str | None = None
 
 
 class AgentGitHubOut(StrictModel):
@@ -2783,7 +2820,7 @@ class AgentGitHubOut(StrictModel):
     #: The machines a token YOU gave now would be sealed to: the cloud boxes that run the
     #: agent, and runners of your own that do.
     eligible_machines: list[str] = Field(default_factory=list)
-    #: Who ran the last check: "server" (when it was given) or a machine's name.
+    #: Who ran the last check: "browser" (the person's, when they gave it) or a machine's name.
     checked_by: str = ""
     #: A machine's probe failed: the token no longer works, and its person replaces it.
     no_longer_works: bool = False

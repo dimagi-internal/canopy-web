@@ -22,6 +22,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.agents.testing import put_sealed
 from apps.harness.models import Runner, RunnerAssignment
 from apps.passkeys.testing import give_vault_key, grant_step_up
 from apps.workspaces.models import Workspace, WorkspaceMembership
@@ -59,14 +60,33 @@ def fleet(client):
 
 
 def _put(client, values):
-    grant_step_up(client)  # a browser write needs a passkey step-up (tests/test_agent_credential_stepup.py)
-    return client.put(
-        "/api/agents/ace/credentials",
-        data={"values": values}, content_type="application/json",
-    )
+    # Sealed as the browser seals it; the route sees ciphertext only.
+    return put_sealed(client, "ace", values)
 
 
 # --- write-only ----------------------------------------------------------------
+
+def test_plaintext_is_refused_from_every_door_and_nothing_is_stored(fleet):
+    """canopy-web takes no agent secret it can read: the old plaintext write answers 422
+    `sealed_only`, for a browser and for a token (the CLI) alike, and stores nothing."""
+    from apps.agents.models import AgentCredential
+
+    grant_step_up(fleet["client"])
+    res = fleet["client"].put("/api/agents/ace/credentials", data={"values": {"nova-api-key": SECRET}},
+                              content_type="application/json")
+    assert res.status_code == 422 and res.json()["error"] == "sealed_only"
+    assert SECRET not in res.content.decode()
+    res = Client().put("/api/agents/ace/credentials", data={"values": {"nova-api-key": SECRET}},
+                       content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {_pat_for(fleet['user'])}")
+    assert res.status_code == 422 and res.json()["error"] == "sealed_only"
+    # Nor does the ciphertext route take a plaintext value dressed as one.
+    grant_step_up(fleet["client"])
+    res = fleet["client"].put("/api/agents/ace/vault/zk/values",
+                              data={"kv": 0, "values": [{"name": "nova-api-key", "value_zk": SECRET}]},
+                              content_type="application/json")
+    assert res.status_code == 422
+    assert not AgentCredential.objects.filter(agent=fleet["agent"]).exists()
+
 
 def test_a_value_round_trips_only_through_the_runner_route(fleet):
     assert _put(fleet["client"], {"nova-api-key": SECRET}).status_code == 200
@@ -89,13 +109,18 @@ def test_the_stored_column_is_ciphertext_not_plaintext(fleet):
     assert fleet["agent"].zk_enabled and fleet["agent"].zk_kv == 0
 
 
-def test_a_write_with_nobody_to_seal_to_stores_nothing(fleet):
+def test_a_minted_value_with_nobody_to_seal_to_stores_nothing(fleet):
+    """A value canopy-web made itself (its canopy-pat) is the only one it seals, and only
+    when someone could open it."""
+    from apps.agents import services
+    from apps.agents.credentials.zk import ZkError
     from apps.agents.models import AgentCredential
     from apps.passkeys.models import UserVaultKeyset
 
     UserVaultKeyset.objects.all().delete()
-    res = _put(fleet["client"], {"nova-api-key": SECRET})
-    assert res.status_code == 409 and res.json()["error"] == "zk_no_recipients"
+    with pytest.raises(ZkError) as err:
+        services.set_agent_credentials(fleet["agent"], {"canopy-pat": SECRET}, minted=True)
+    assert err.value.code == "zk_no_recipients"
     assert not AgentCredential.objects.filter(agent=fleet["agent"]).exists()
     fleet["agent"].refresh_from_db()
     assert not fleet["agent"].zk_enabled
@@ -201,10 +226,14 @@ def test_an_omitted_ref_is_untouched(fleet):
     assert rows["nova-api-key"]["set"] is True
 
 
-def test_a_blank_value_is_rejected_rather_than_stored(fleet):
-    """"" is how a UI says "I didn't type anything". Storing it would make a
-    declared ref read as SET while resolving to nothing."""
-    assert _put(fleet["client"], {"canopy-pat": "   "}).status_code == 422
+def test_a_blank_minted_value_is_rejected_rather_than_stored(fleet):
+    """"" is how a caller says "I have nothing". Storing it would make a declared ref
+    read as SET while resolving to nothing. (A person's value is ciphertext, so the
+    browser and the CLI refuse a blank one before sealing.)"""
+    from apps.agents import services
+
+    with pytest.raises(ValueError):
+        services.set_agent_credentials(fleet["agent"], {"canopy-pat": "   "}, minted=True)
 
 
 def test_delete_removes_the_slot(fleet):

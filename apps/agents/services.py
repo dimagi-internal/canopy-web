@@ -1632,11 +1632,14 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
     type anything", and storing it makes a declared ref read as SET while
     resolving to nothing — the worst of both.
 
-    Zero-knowledge is the agent vault's only mode: every value written in
-    plaintext (`canopy vault import`, or one canopy-web made itself: `minted`,
-    Connect Google mailbox, canopy-pat rotation) is sealed to every reader of the
-    agent (`zks1`, `zk_seal.py`) and the plaintext forgotten. Raises ZkError
-    `zk_no_recipients` when nobody could read it yet; nothing is written then.
+    ONLY for a value canopy-web made itself (`minted`: the agent's canopy-pat, its
+    rotation, Connect Google mailbox). A person's value never comes through here: no
+    route takes one in plaintext (`PUT …/credentials` refuses, 422 `sealed_only`); they
+    seal it where they are and send ciphertext to `PUT …/vault/zk/values`.
+
+    Each value is sealed to every reader of the agent (`zks1`, `zk_seal.py`) and the
+    plaintext forgotten. Raises ZkError `zk_no_recipients` when nobody could read it
+    yet; nothing is written then.
     """
 
     del minted  # every write is sealed; kept for callers' clarity
