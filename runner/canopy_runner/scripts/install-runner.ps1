@@ -322,6 +322,9 @@ if (-not $NoAutoUpdate) {
         -CommandLine "`"$ps`" -NoProfile -ExecutionPolicy Bypass -File `"$stage2`" -IfStale -Repo `"$Repo`" >> `"$updaterLog`" 2>&1"
 }
 
-# Start the runner now so a first install does not wait for the next logon.
+# Start the runner now so a first install does not wait for the next logon. /End
+# first: the task is IgnoreNew, so on an UPDATE a bare /Run is a no-op and the old
+# daemon keeps running the old code -- the same /End, /Run self_update.install_windows does.
+& schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
 & schtasks /Run /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
 Info "done -- logs at $runnerLog"

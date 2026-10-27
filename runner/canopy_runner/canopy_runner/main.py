@@ -66,6 +66,22 @@ def _reset_cdp_health_state() -> None:
     _cdp_down_signalled = False
 
 
+def _laptop_health(cfg: Config) -> dict | None:
+    """The heartbeat's `health`: refresh's report (refresh.py) plus the updater's last
+    answer (update.health_check). None while neither has anything to say, so the
+    server keeps what it last had. `bootstrapped_at` is refresh's alone — 0 until
+    one finishes, and the server never lets it go backwards."""
+    from . import update as update_mod
+
+    report = refresh.health()
+    check = update_mod.health_check(cfg)
+    if check is None:
+        return report
+    base = report or {"checks": [], "bootstrapped_at": 0}
+    return {**base, "checked_at": time.time(),
+            "checks": [c for c in base.get("checks") or [] if c.get("name") != "update"] + [check]}
+
+
 def _pause_paths(cfg: Config) -> tuple[Path, Path]:
     """(sentinel, mirror). The sentinel is the human-facing control surface the
     menu-bar app toggles; the mirror is what we last knew it to be, so a CHANGE can
@@ -630,7 +646,7 @@ def run_once(cfg: Config, client: Client) -> str:
                               ready=_ready, ready_note=_rnote,
                               projects=sessions.reported_projects(cfg),
                               mailboxes_readable=mailbox_probe.readable(),
-                              health=refresh.health())
+                              health=_laptop_health(cfg))
     else:
         _cdp_down_ticks += 1
         # Degraded heartbeat EVERY unhealthy tick — the machine-readable surface signal the
@@ -869,6 +885,7 @@ def update_check(cfg_path: Path) -> int:
     cfg = Config.load(cfg_path)
     client = Client(cfg.base_url, RunnerCredential.for_config(cfg))
     status, expected = update_mod.update_status(cfg, client)
+    update_mod.record(cfg, status, expected, installed=provenance.code_sha())
     print(f"{status} {expected or '-'}")
     return 0
 

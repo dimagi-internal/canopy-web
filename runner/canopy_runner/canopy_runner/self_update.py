@@ -332,10 +332,20 @@ def run_self_update(config_path: Path, *, if_stale: bool = False, platform: str 
     inst = provenance.code_sha() if installed is None else installed
     status, rel = decide(cfg, client, installed=inst, platform=plat, now=now)
     sha = str((rel or {}).get("sha") or "-")
+    expected = str((rel or {}).get("sha") or "")
+
+    def record(status: str, detail: str = "") -> None:
+        update.record(cfg, status, expected, installed=inst, detail=detail, now=now)
+
     if status == update.STALE and hold_path(home).exists():
         out(f"updates are held ({hold_path(home)}) — delete it to resume")
         status = HELD
     if status != update.STALE or not if_stale:
+        # A dry look (no --if-stale) is a person's, not the updater's: what it
+        # found must not stand in for the timer's last run.
+        if if_stale:
+            record(status, f"canopy-web named no {plat} build for the deployed runner"
+                   if rel is None else "")
         out(f"{status} {sha}")
         return 0
 
@@ -355,10 +365,14 @@ def run_self_update(config_path: Path, *, if_stale: bool = False, platform: str 
         else:
             raise UpdateError(f"no installer for {system}")
     except (UpdateError, OSError, subprocess.SubprocessError) as exc:
+        record(update.FAILED, str(exc))
         out(f"update failed: {exc}")
         out(f"{status} {sha}")
         return 1
     finally:
         shutil.rmtree(home / ".canopy" / "updates" / sha, ignore_errors=True)
+    # Installed: the new runner's own first check reports `current`; until then the
+    # daemon says what was put in place.
+    update.record(cfg, update.CURRENT, expected, installed=expected, now=now)
     out(f"{status} {sha}")
     return 0
