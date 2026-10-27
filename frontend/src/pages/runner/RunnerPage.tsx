@@ -3,6 +3,7 @@ import { Link, Navigate, Outlet, useNavigate, useOutletContext, useParams } from
 import { listMyAgents, type AgentOut } from '@/api/agents'
 import { getRunner, type RunnerOut } from '@/api/harness'
 import { ObjectPage } from '@/components/objectPage/ObjectPage'
+import { RunnerRefreshButton } from '@/components/supervisor/RunnerRefresh'
 import type { ObjectTab } from '@/components/objectPage/ObjectTabs'
 import { scopedPath } from '@/lib/scopedLinks'
 import { RunnerOverview, runnerBadge } from './RunnerOverview'
@@ -70,6 +71,14 @@ export function RunnerPage(): JSX.Element {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Could not load this runner'))
   }, [runnerId])
   useEffect(() => load(), [load])
+  // While a Refresh is pending, keep reading the box so its finish shows up here
+  // without a reload. A failed read keeps the last answer.
+  const pending = runner?.refresh?.state === 'pending'
+  useEffect(() => {
+    if (!pending) return
+    const id = setInterval(() => { getRunner(runnerId).then(setRunner).catch(() => undefined) }, 15_000)
+    return () => clearInterval(id)
+  }, [pending, runnerId])
 
   if (error) {
     return (
@@ -103,6 +112,7 @@ export function RunnerPage(): JSX.Element {
       status={<span className={`rounded px-1.5 py-0.5 text-[11px] ${badge.cls}`} data-testid="runner-page-status">{badge.text}</span>}
       subtitle={`A runner on ${runner.machine ? `the machine ${runner.machine}` : runner.kind === 'cloud' ? 'a cloud machine' : 'a computer'}, owned by ${runner.owner_email ?? 'no one'}, in ${runner.workspace ?? 'no workspace'}.`}
       actions={<>
+        <RunnerRefreshButton runner={runner} onChanged={setRunner} />
         <Link to={`/supervisor?tab=runners`} className="text-primary hover:underline">Live status →</Link>
         <Link to={scopedPath(workspace, `/settings/topology?runner=${runner.id}`)} className="text-primary hover:underline">
           On the fleet map →

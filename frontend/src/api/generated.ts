@@ -33499,6 +33499,21 @@ export interface components {
             /** Oldest Activity At */
             readonly oldest_activity_at?: string | null;
         };
+        /** RefreshChangeOut */
+        readonly RefreshChangeOut: {
+            /** Name */
+            readonly name: string;
+            /**
+             * Before
+             * @default
+             */
+            readonly before: string;
+            /**
+             * After
+             * @default
+             */
+            readonly after: string;
+        };
         /**
          * RunnerCliOut
          * @description One agent CLI on a box, as the server reads its report (`clis.reported`).
@@ -33722,6 +33737,7 @@ export interface components {
             readonly refresh_requested_at?: string | null;
             /** Refresh Pending */
             readonly refresh_pending?: boolean | null;
+            readonly refresh?: components["schemas"]["RunnerRefreshOut"] | null;
             /** Cancel Turn Ids */
             readonly cancel_turn_ids?: readonly string[] | null;
             /** Add Projects */
@@ -33748,6 +33764,52 @@ export interface components {
              * Format: date-time
              */
             readonly requested_at: string;
+        };
+        /**
+         * RunnerRefreshOut
+         * @description Where this runner's Refresh is (`runner_refresh.status`): `none`, `pending`
+         *     with what it waits on (`offline`, `busy`, `floor`; empty = its next
+         *     heartbeat), or `done` with what changed since it was asked.
+         */
+        readonly RunnerRefreshOut: {
+            /**
+             * State
+             * @enum {string}
+             */
+            readonly state: "none" | "pending" | "done";
+            /** Requested At */
+            readonly requested_at?: string | null;
+            /**
+             * Requested By
+             * @default
+             */
+            readonly requested_by: string;
+            /**
+             * Waiting On
+             * @default []
+             */
+            readonly waiting_on: readonly ("offline" | "busy" | "floor")[];
+            /**
+             * In Flight
+             * @default 0
+             */
+            readonly in_flight: number;
+            /** Eligible At */
+            readonly eligible_at?: string | null;
+            /** Finished At */
+            readonly finished_at?: string | null;
+            /** Took Seconds */
+            readonly took_seconds?: number | null;
+            /**
+             * Changes
+             * @default []
+             */
+            readonly changes: readonly components["schemas"]["RefreshChangeOut"][];
+            /**
+             * Problems
+             * @default []
+             */
+            readonly problems: readonly string[];
         };
         /** RunnerIn */
         readonly RunnerIn: {
@@ -34800,6 +34862,11 @@ export interface components {
              * @default
              */
             readonly canopy_version: string;
+            /**
+             * Refresh Floor Until
+             * @default 0
+             */
+            readonly refresh_floor_until: number;
         };
         /** UsageScopeOut */
         readonly UsageScopeOut: {

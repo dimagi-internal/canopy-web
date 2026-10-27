@@ -205,6 +205,15 @@ def test_the_floor_between_restarts_survives_a_restart(refresh):
     assert len(calls) == 2
 
 
+def test_health_reports_when_the_floor_lets_it_restart_again(refresh):
+    # So the runner page can say why a requested refresh waits on an idle box.
+    cr, _ = refresh
+    assert cr._refresh_floor_until() == 0.0
+    assert cr.maybe_self_refresh(True, now=2000.0) is True
+    assert cr._refresh_floor_until() == 2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS
+    assert cr.health_report()["refresh_floor_until"] == 2000.0 + cr.REFRESH_MIN_INTERVAL_SECONDS
+
+
 def test_a_failed_bootstrap_says_why_in_the_check(cloud_runner, monkeypatch, tmp_path, capsys):
     # "exited 1" alone sent someone to journald on 2026-09-22; the reason was the
     # script's last line (`line 1024: ace: unbound variable`).

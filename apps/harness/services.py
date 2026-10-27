@@ -25,7 +25,7 @@ from django.utils import timezone
 from apps.api.errors import TYPE_CONFLICT, ProblemError
 
 from . import clis as cli_vocab
-from . import sensitivity
+from . import runner_refresh, sensitivity
 from .channels import email as email_channel
 from .claim import DEFAULT_LEASE_SECONDS
 from .ledger import append_events
@@ -501,6 +501,7 @@ def heartbeat(
     `routing.cannot_serve`).
     """
     now = timezone.now()
+    discharged = False
     runner.last_heartbeat_at = now
     runner.status = Runner.DEGRADED if degraded else Runner.ONLINE
     runner.status_note = note
@@ -541,8 +542,11 @@ def heartbeat(
                          float((runner.health or {}).get("bootstrapped_at") or 0))
         except (TypeError, ValueError):
             booted = float(health.get("bootstrapped_at") or 0)
+        was_pending = runner.refresh_requested()
         runner.health = {**health, "bootstrapped_at": booted, "received_at": now.isoformat()}
         fields.append("health")
+        if was_pending and not runner.refresh_requested():
+            discharged = True
     if mailboxes_readable is not None:
         # Lowercased and de-duplicated here, not trusted from the wire: the
         # doorbell compares against `InboundMailbox.address` case-insensitively.
@@ -606,6 +610,8 @@ def heartbeat(
             if "capabilities" not in fields:
                 fields.append("capabilities")
     runner.save(update_fields=fields)
+    if discharged:
+        runner_refresh.finished(runner, now)
     # The update nudge: this is the one moment both shas are in hand — the
     # deploy moved the expectation, the beat just reported what's installed.
     # Ring the box's control channel so its updater checks NOW instead of

@@ -5,7 +5,7 @@
 // inbox and ACP were all off — so a failed check must be impossible to miss, and
 // "not reported" must never look like "healthy".
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 
 import type { RunnerOut } from '@/api/harness'
 
@@ -79,36 +79,9 @@ describe('RunnerHealth', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('offers refresh on a laptop too, and says what it does there', () => {
-    render(<RunnerHealth runner={runner({ kind: 'emdash', refresh_pending: true })} />)
-    expect(screen.getByTestId('runner-refresh')).toBeTruthy()
-    expect(screen.getByTestId('runner-refresh-pending').textContent).toContain('updates its plugins and the canopy CLI')
-    expect(screen.getByTestId('runner-refresh-pending').textContent).not.toContain('restarts')
-  })
-
-  it('refresh asks the server and shows the request as pending', async () => {
-    const onChanged = vi.fn()
-    refreshRunner.mockResolvedValue(runner({ ...BROKEN, refresh_pending: true }))
-    render(<RunnerHealth runner={runner(BROKEN)} onChanged={onChanged} />)
-    fireEvent.click(screen.getByTestId('runner-refresh'))
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(refreshRunner).toHaveBeenCalledWith('r1')
-    cleanup()
-    render(<RunnerHealth runner={runner({ ...BROKEN, refresh_pending: true })} />)
-    expect((screen.getByTestId('runner-refresh') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByTestId('runner-refresh-pending')).toBeTruthy()
-  })
-
-  it('hides refresh from someone who may not administer the box', () => {
-    render(<RunnerHealth runner={runner({ ...BROKEN, can_administer: false })} />)
-    expect(screen.queryByTestId('runner-refresh')).toBeNull()
-  })
-
-  it('says so when the request fails', async () => {
-    refreshRunner.mockRejectedValue(new Error('refreshRunner failed: 404'))
+  it('carries no Refresh of its own: that is the runner page header', () => {
     render(<RunnerHealth runner={runner(BROKEN)} />)
-    fireEvent.click(screen.getByTestId('runner-refresh'))
-    await waitFor(() => expect(screen.getByTestId('runner-refresh-error').textContent).toContain('404'))
+    expect(screen.queryByTestId('runner-refresh')).toBeNull()
   })
 })
 

@@ -447,16 +447,29 @@ def report_runner_logins(runner, reports: list[dict], *, adopt_default: bool = F
 
 
 # ---- Runner administrators (administer a box without speaking for it) -----
-def request_refresh(runner: Runner) -> Runner:
+def request_refresh(runner: Runner, by=None) -> Runner:
     """Ask a box to refresh itself — re-run its bootstrap (plugins, the canopy
     CLI, Claude Code, each agent's provisioning) at its next idle moment.
 
     Only recorded here; the box acts on it. It reads `refresh_pending` off its
     heartbeat reply, so a dropped socket costs one beat rather than the request,
     and the request is discharged by the box reporting a newer bootstrap — never
-    by this side guessing that it happened."""
+    by this side guessing that it happened.
+
+    `by`: the person asking, told when it finishes (`runner_refresh.finished`).
+    A request already pending is left as it is — its time, its asker and its
+    before-snapshot — so asking twice neither restarts the clock nor loses the
+    "before" the page compares against."""
+    from . import runner_refresh  # noqa: PLC0415 — import cycle through alerts_runner_credential
+
+    if runner.refresh_requested():
+        return runner
     runner.refresh_requested_at = timezone.now()
-    runner.save(update_fields=["refresh_requested_at"])
+    runner.refresh_requested_by = by if getattr(by, "is_authenticated", False) else None
+    runner.refresh_before = runner_refresh.snapshot(runner)
+    runner.refresh_finished_at = None
+    runner.save(update_fields=["refresh_requested_at", "refresh_requested_by", "refresh_before",
+                               "refresh_finished_at"])
     return runner
 
 
