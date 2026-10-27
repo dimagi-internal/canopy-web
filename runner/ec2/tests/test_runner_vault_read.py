@@ -83,6 +83,21 @@ def test_the_five_minute_reread_is_not_a_vault_read(cr, monkeypatch):
     assert len(calls) == 3, "and so does an hour passing"
 
 
+def test_a_grant_is_picked_up_within_a_minute(cr, monkeypatch):
+    # The grant changes nothing in the bundle, so only the clock can send the box back.
+    calls = _cli(cr, monkeypatch, {}, shut=("box vault",))
+    cr._with_vault_values("rid", _bundle(VAULTED))
+    cr._with_vault_values("rid", _bundle(VAULTED))
+    assert len(calls) == 1
+    calls = _cli(cr, monkeypatch, {"claude-token:t1": "granted"})
+    cr._VAULT_VALUES["at"] -= cr.VAULT_SHUT_REREAD_SECONDS + 1
+    out = cr._with_vault_values("rid", _bundle(VAULTED))
+    assert len(calls) == 1 and out["cascade"][0]["value"] == "granted"
+    cr._VAULT_VALUES["at"] -= cr.VAULT_SHUT_REREAD_SECONDS + 1
+    cr._with_vault_values("rid", _bundle(VAULTED))
+    assert len(calls) == 1, "an opened vault goes back to the hour"
+
+
 def test_a_failed_reread_keeps_the_last_good_values(cr, monkeypatch):
     _cli(cr, monkeypatch, {"claude-token:t1": "good"})
     cr._with_vault_values("rid", _bundle(VAULTED))
