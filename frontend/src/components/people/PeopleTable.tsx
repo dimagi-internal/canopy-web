@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent, type JSX, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Button, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
 
 import { RoleControl, RoleSelect, ROLE_TEXT_CLASS } from './RoleSelect'
@@ -16,6 +17,8 @@ export interface PersonRow {
   key: string | number
   /** Primary line — a name, or the email when there is no name. */
   name: string
+  /** Present ⇒ the name links to this person's page. */
+  href?: string
   /** Shown muted beside the name when it differs from it. */
   email?: string | null
   /** A small muted line under the person (e.g. "workspace editor"). */
@@ -96,7 +99,7 @@ export function PeopleTable({
           return (
             <TableRow key={r.key} data-testid={r.testId}>
               <TableCell className="whitespace-normal align-top text-foreground">
-                {r.name}
+                {r.href ? <Link to={r.href} className="hover:text-primary hover:underline">{r.name}</Link> : r.name}
                 {r.email && r.email !== r.name && <span className="text-muted-foreground"> ({r.email})</span>}
                 {r.detail && <div className="text-[11px] text-muted-foreground">{r.detail}</div>}
               </TableCell>

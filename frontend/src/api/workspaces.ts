@@ -11,6 +11,7 @@ export type AccessRequestOut = components['schemas']['AccessRequestOut']
 export type ApprovableRole = components['schemas']['AccessRequestApproveIn']['role']
 export type AutoApproveRole = components['schemas']['AccessSettingsIn']['auto_approve_role']
 export type MemberOut = components['schemas']['MemberOut']
+export type MemberProfileOut = components['schemas']['MemberProfileOut']
 export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
 export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
@@ -49,6 +50,15 @@ export async function listMembers(slug: string): Promise<MemberOut[]> {
   })
   ensureOk(res, 'Failed to load members')
   return res.data as unknown as MemberOut[]
+}
+
+/** One member as the caller may see them; `admin` is null below members.manage. */
+export async function getMember(slug: string, userId: number): Promise<MemberProfileOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/members/{user_id}/profile/', {
+    params: { path: { slug, user_id: userId } },
+  })
+  ensureOk(res, 'Failed to load member')
+  return res.data as unknown as MemberProfileOut
 }
 
 export async function listWorkspaces(): Promise<WorkspaceOut[]> {

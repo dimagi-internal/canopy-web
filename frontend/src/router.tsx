@@ -45,6 +45,8 @@ import { WorkspaceHealthPage } from './pages/health/WorkspaceHealthPage'
 import { SystemPage } from './pages/SystemPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
+import { MeLayout, MeProfileTab } from './pages/MePage'
+import { MemberPage } from './pages/MemberPage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
 import { KnowledgeBasePage } from './pages/projects/KnowledgeBasePage'
@@ -279,7 +281,15 @@ export const routeTable: RouteObject[] = [
       // workspace's commands; an anonymous one sees just the wordmark.
       { path: '/get-started', element: <GetStartedPage /> },
       { path: '/sessions', element: <SessionsPage /> },
-      { path: '/people/me', element: <PeopleMePage /> },
+      // Your own page: Profile, Memory and Settings as tabs of one frame. Memory
+      // and Settings keep their old addresses so every link handed out still lands.
+      {
+        element: <MeLayout />,
+        children: [
+          { path: '/me', element: <MeProfileTab /> },
+          { path: '/people/me', element: <PeopleMePage /> },
+            ],
+      },
       { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
       // What is waiting on you, across every workspace — the app's front door.
@@ -344,6 +354,8 @@ export const routeTable: RouteObject[] = [
       // The four pages these sections used to be. Live links were handed to
       // people, so they redirect rather than 404.
       { path: '/w/:workspace/members', element: <SettingsRedirect to="members" /> },
+      // One member's page, as the viewer's role lets them see it.
+      { path: '/w/:workspace/members/:userId', element: <MemberPage /> },
       { path: '/w/:workspace/connected-apps', element: <SettingsRedirect to="connected-apps" /> },
       { path: '/w/:workspace/inbound', element: <SettingsRedirect to="inbound" /> },
       { path: '/w/:workspace/slack', element: <SettingsRedirect to="slack" /> },

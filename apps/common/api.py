@@ -58,6 +58,7 @@ def me(request: HttpRequest) -> MeOut:
     memory_paused = (not memory_enabled
                      and hcp.has_memory(Person.objects.filter(user=user).first()))
     return MeOut(
+        user_id=user.id,
         email=user.email,
         name=(user.get_full_name() or user.username or user.email),
         avatar_url=avatar_url,

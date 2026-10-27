@@ -38,6 +38,9 @@ class UserRefOut(StrictModel):
 class MeOut(StrictModel):
     """Response for /api/me/."""
 
+    # Your own user id: what your member page in each workspace is addressed by
+    # (/w/<ws>/members/<user_id>).
+    user_id: int | None = None
     email: EmailStr
     name: str
     avatar_url: str

@@ -24,6 +24,7 @@ import {
 import { SystemAccountsSection } from '@/components/people/SystemAccountsSection'
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
+import { scopedPath } from '@/lib/scopedLinks'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
 
@@ -231,6 +232,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
               return {
                 key: m.user_id,
                 name: m.email,
+                href: scopedPath(slug, `/members/${m.user_id}`),
                 role: m.role,
                 options: roleOptions(grantable),
                 editable: manageable,
