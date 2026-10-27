@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -58,7 +58,10 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
     """
     turn_id = getattr(data, "turn_id", None)
     if turn_id:
-        named = agent.turns.filter(pk=turn_id).first()
+        # A turn delivered into a live chat session is a CHAT turn (target is the
+        # session, `agent` is null), so look through the session to its agent too.
+        named = (Turn.objects.filter(pk=turn_id)
+                 .filter(Q(agent=agent) | Q(chat_session__agent=agent)).first())
         if named is not None:
             return named
     if data.cli_session_id:
