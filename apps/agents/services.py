@@ -1634,7 +1634,7 @@ def set_agent_credentials(agent, values: dict[str, str], *, user=None, minted: b
 
     Zero-knowledge is the agent vault's only mode: every value written in
     plaintext (`canopy vault import`, or one canopy-web made itself: `minted`,
-    Connect Google mailbox, canopy-pat rotation) is sealed to every reader of the
+    canopy-pat rotation) is sealed to every reader of the
     agent (`zks1`, `zk_seal.py`) and the plaintext forgotten. Raises ZkError
     `zk_no_recipients` when nobody could read it yet; nothing is written then.
     """

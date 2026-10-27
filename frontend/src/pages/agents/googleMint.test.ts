@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { declaresMailbox, mintOutcome } from './googleMint'
+import { declaresMailbox, followMint, mintOutcome } from './googleMint'
 
 describe('declaresMailbox', () => {
   it('offers the button only to an agent that declares a mailbox', () => {
@@ -52,5 +52,23 @@ describe('mintOutcome', () => {
     expect(m?.tone).toBe('error')
     expect(m?.text).toMatch(/vault has no keys yet.* set up its vault \(passkey\) first, then connect Google/)
     expect(m?.link).toEqual({ href: '/settings#vault-key', label: 'Set up your vault key' })
+  })
+})
+
+describe('the runner finishing the sign-in', () => {
+  it('names each way the runner can fail, never as success', () => {
+    for (const s of ['expired', 'interrupted', 'no-client', 'no-runner', 'store-failed', 'superseded']) {
+      expect(mintOutcome(s)?.tone).toBe('error')
+    }
+    expect(mintOutcome('no-client')?.text).toMatch(/gog-oauth-client-web/)
+    expect(mintOutcome('ok')?.text).toMatch(/canopy never saw it/)
+  })
+
+  it('follows a sign-in until it ends, and gives up after the timeout', async () => {
+    const reads = ['requested', 'awaiting', 'done'][Symbol.iterator]()
+    const end = await followMint(async () => reads.next().value as string, (s) => s === 'done', { intervalMs: 1, timeoutMs: 1000 })
+    expect(end).toBe('done')
+    const never = await followMint(async () => 'requested', (s) => s === 'done', { intervalMs: 5, timeoutMs: 12 })
+    expect(never).toBeNull()
   })
 })

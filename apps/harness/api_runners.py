@@ -19,6 +19,7 @@ from django.utils import timezone
 from ninja import Status
 from ninja.errors import HttpError
 
+from apps.agents.credentials import google_mint as agent_google_mint
 from apps.agents.credentials import workspace_vaults
 from apps.agents.credentials.zk import ZkError
 from apps.agents.models import Agent
@@ -91,6 +92,8 @@ from .schemas import (
     RunnerIn,
     RunnerLoginOrderIn,
     RunnerLoginReportIn,
+    GoogleMintChallengeIn,
+    GoogleMintResultIn,
     RunnerMintClaimOut,
     RunnerMintCodeIn,
     RunnerMintEntryIn,
@@ -651,10 +654,13 @@ def claim_runner_mint(request: HttpRequest, runner_id: uuid.UUID):
     credential nobody is accounting for.
     """
     runner = runner_or_404(request, runner_id)
+    google, google_code = agent_google_mint.claim(runner)
+    out = {"mint": None, "code": "",
+           "google": agent_google_mint.work(google, google_code) if google is not None else None}
     mint = harness_runners.claim_runner_mint(runner)
     if mint is None:
-        return {"mint": None, "code": ""}
-    return {"mint": mint, "code": harness_runners.take_mint_code(mint)}
+        return out
+    return {**out, "mint": mint, "code": harness_runners.take_mint_code(mint)}
 
 
 @router.post("/runners/{runner_id}/mint/url", response=RunnerMintOut,
@@ -721,6 +727,52 @@ def post_runner_mint_result(request: HttpRequest, runner_id: uuid.UUID,
                                                   vault_key=payload.vault_key)
     except harness_runners.CredentialRefused as exc:
         raise HttpError(422, str(exc)) from exc
+
+
+def _google_mint_problem(exc) -> ProblemError:
+    return ProblemError(exc.status, "Google sign-in", detail=exc.detail, members={"error": exc.code})
+
+
+@router.post("/runners/{runner_id}/google-mint/{mint_id}/challenge", response={204: None},
+             summary="The runner posts the PKCE challenge for an agent's Google sign-in")
+@gate("runner", kind="runner-protocol")
+def post_google_mint_challenge(request: HttpRequest, runner_id: uuid.UUID, mint_id: uuid.UUID,
+                               payload: GoogleMintChallengeIn):
+    """The box made a verifier and keeps it; canopy-web builds the consent link from
+    the challenge, so the code Google later sends here cannot be redeemed without the box."""
+    runner = runner_or_404(request, runner_id)
+    try:
+        agent_google_mint.record_challenge(runner, mint_id, payload.code_challenge)
+    except agent_google_mint.MintRefused as exc:
+        raise _google_mint_problem(exc) from exc
+    return Status(204, None)
+
+
+@router.post("/runners/{runner_id}/google-mint/{mint_id}/result", response={204: None},
+             summary="The runner reports an agent's Google sign-in: ciphertext only")
+@gate("runner", setting=True, step_up="runner protocol: the box's own token, and ciphertext only")
+def post_google_mint_result(request: HttpRequest, runner_id: uuid.UUID, mint_id: uuid.UUID,
+                            payload: GoogleMintResultIn):
+    """`{value_zk, kv, account}` — the agent's `gog-token`, encrypted on the box for the
+    agent's readers — or `{error, detail}`. A value that is not `zk1`/`zks1` ciphertext,
+    or is sealed to someone who may not read the agent, is refused; a token for another
+    Google account than the agent's is not stored."""
+    runner = runner_or_404(request, runner_id)
+    try:
+        if payload.error or not payload.value_zk:
+            agent_google_mint.runner_failed(runner, mint_id, outcome=payload.error or "exchange-failed",
+                                            detail=payload.detail, account=payload.account)
+            return Status(204, None)
+        mint = agent_google_mint.finish(runner, mint_id, kv=payload.kv, value_zk=payload.value_zk,
+                                        account=payload.account)
+    except agent_google_mint.MintRefused as exc:
+        raise _google_mint_problem(exc) from exc
+    if mint.status == mint.DONE:
+        events_audit.note_change(scope=f"agent:{mint.agent.slug}:credential:gog-token", before=None,
+                                 after={"google_account": mint.account}, workspace=mint.agent.workspace,
+                                 summary=f"connected {mint.agent.slug}'s Google account ({mint.account}) "
+                                         f"via {runner.name}")
+    return Status(204, None)
 
 
 @router.post("/runners/{runner_id}/sign-in-request", response=SignInRequestOut,

@@ -31,7 +31,7 @@ const { getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredenti
 
 vi.mock('@/api/agents', () => ({
   getAgentCredentialStatus, getAgentVault, setAgentVault, setAgentCredentials,
-  deleteAgentCredential, startGoogleMint, AgentApiError,
+  deleteAgentCredential, startGoogleMint, AgentApiError, getGoogleMint: vi.fn(),
   // The GitHub section has its own tests; here it only has to not throw.
   getAgentGitHub: () => new Promise(() => {}),
 }))

@@ -5754,7 +5754,31 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/agents/{slug}/google/authorize": {
+    readonly "/api/agents/{slug}/google/mint": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start connecting this agent's Google account (finished on its runner)
+         * @description For the agent's owner or an admin (the mint replaces its `gog-token`). Hands
+         *     the sign-in to one of the agent's online runners; 409 `no_mint_runner` when none
+         *     is online — there is no fallback, because canopy never holds the token. Poll
+         *     `get_google_mint` until `authorize_url` is set (a few seconds), then open it with
+         *     a top-level navigation: a redirect followed inside a fetch shows nothing.
+         */
+        readonly post: operations["start_google_mint"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/agents/{slug}/google/mint/{mint_id}": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -5762,15 +5786,10 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Start the Google mint for this agent's mailbox
-         * @description Returns the URL rather than redirecting, so the caller opens it itself.
-         *
-         *     A 302 out of an XHR is invisible — the browser follows it, the fetch resolves
-         *     on Google's HTML, and nothing happens on screen. Handing back the URL lets the
-         *     page do a top-level navigation, which is the only thing that can show a
-         *     consent screen.
+         * How a Google sign-in for this agent is going
+         * @description `status` and, once it ends, `outcome` — never a code or a token.
          */
-        readonly get: operations["start_google_mint"];
+        readonly get: operations["get_google_mint"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -5786,7 +5805,7 @@ export interface paths {
             readonly path?: never;
             readonly cookie?: never;
         };
-        /** Google returns here; the token is stored */
+        /** Google returns here; a runner finishes the sign-in */
         readonly get: operations["google_callback"];
         readonly put?: never;
         readonly post?: never;
@@ -10273,6 +10292,50 @@ export interface paths {
          *     the sign-in, unstored. The only secret a human handles is the single-use code.
          */
         readonly post: operations["post_runner_mint_result"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/google-mint/{mint_id}/challenge": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The runner posts the PKCE challenge for an agent's Google sign-in
+         * @description The box made a verifier and keeps it; canopy-web builds the consent link from
+         *     the challenge, so the code Google later sends here cannot be redeemed without the box.
+         */
+        readonly post: operations["post_google_mint_challenge"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/google-mint/{mint_id}/result": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * The runner reports an agent's Google sign-in: ciphertext only
+         * @description `{value_zk, kv, account}` — the agent's `gog-token`, encrypted on the box for the
+         *     agent's readers — or `{error, detail}`. A value that is not `zk1`/`zks1` ciphertext,
+         *     or is sealed to someone who may not read the agent, is refused; a token for another
+         *     Google account than the agent's is not stored.
+         */
+        readonly post: operations["post_google_mint_result"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -27012,14 +27075,74 @@ export interface components {
             readonly holder: string;
         };
         /**
-         * GoogleMintStartOut
-         * @description Where to send the browser to consent. Declared rather than left implicit:
-         *     an undeclared response reaches the typed client as `undefined`, and the only
-         *     way to consume it is a cast — which silently survives the route changing.
+         * GoogleMintOut
+         * @description One "Connect Google mailbox" sign-in, as the person waiting on it sees it.
+         *
+         *     `status`: `requested` (the runner is preparing the link), `awaiting` (open
+         *     `authorize_url` with a top-level navigation), `completing` (Google answered; the
+         *     runner is finishing), `done` or `failed`. `outcome` is how it ended (ok, denied,
+         *     wrong-account, …). Never a code or a token: the token is exchanged and encrypted
+         *     on the runner, and canopy never holds it.
          */
-        readonly GoogleMintStartOut: {
-            /** Url */
-            readonly url: string;
+        readonly GoogleMintOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "requested" | "awaiting" | "completing" | "done" | "failed";
+            /**
+             * Outcome
+             * @default
+             */
+            readonly outcome: string;
+            /**
+             * Authorize Url
+             * @default
+             */
+            readonly authorize_url: string;
+            /**
+             * Runner
+             * @default
+             */
+            readonly runner: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Expected Account
+             * @default
+             */
+            readonly expected_account: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            readonly created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            readonly updated_at: string;
+        };
+        /** GoogleMintStartIn */
+        readonly GoogleMintStartIn: {
+            /**
+             * Login Hint
+             * @default
+             */
+            readonly login_hint: string;
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -33665,11 +33788,74 @@ export interface components {
             readonly login_key: string;
         };
         /**
+         * GoogleMintWorkOut
+         * @description A Google sign-in for an agent this runner holds, at the step the runner owes
+         *     (`apps/agents/credentials/google_mint.py`). `requested`: make a PKCE verifier, keep
+         *     it, post its challenge. `completing`: exchange `code` (consumed by this read) with
+         *     the verifier and the OAuth client from the agent's vault, encrypt the token for the
+         *     agent (under its vault key at `kv`, else sealed to `recipients`) and post only
+         *     ciphertext. canopy-web never receives the token.
+         */
+        readonly GoogleMintWorkOut: {
+            /** Id */
+            readonly id: string;
+            /** Agent */
+            readonly agent: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            readonly status: "requested" | "completing";
+            /**
+             * Code
+             * @default
+             */
+            readonly code: string;
+            /**
+             * Redirect Uri
+             * @default
+             */
+            readonly redirect_uri: string;
+            /**
+             * Client Id
+             * @default
+             */
+            readonly client_id: string;
+            /**
+             * Client
+             * @default
+             */
+            readonly client: string;
+            /**
+             * Expected Account
+             * @default
+             */
+            readonly expected_account: string;
+            /**
+             * Agent Id
+             * @default
+             */
+            readonly agent_id: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /**
+             * Recipients
+             * @default []
+             */
+            readonly recipients: readonly {
+                readonly [key: string]: unknown;
+            }[];
+        };
+        /**
          * RunnerMintClaimOut
          * @description What the RUNNER polls for: the work it owes, and the code when there is one.
          *
          *     Null `mint` is the ordinary answer — no sign-in is in progress — so this is
-         *     cheap to poll on the tick the runner already runs.
+         *     cheap to poll on the tick the runner already runs. `google` is an agent's Google
+         *     sign-in this runner owes a step on (a runner that declares `google_mint`).
          */
         readonly RunnerMintClaimOut: {
             readonly mint?: components["schemas"]["RunnerMintOut"] | null;
@@ -33678,6 +33864,7 @@ export interface components {
              * @default
              */
             readonly code: string;
+            readonly google?: components["schemas"]["GoogleMintWorkOut"] | null;
         };
         /** RunnerMintUrlIn */
         readonly RunnerMintUrlIn: {
@@ -33721,6 +33908,44 @@ export interface components {
              * @default
              */
             readonly vault_key: string;
+        };
+        /** GoogleMintChallengeIn */
+        readonly GoogleMintChallengeIn: {
+            /** Code Challenge */
+            readonly code_challenge: string;
+        };
+        /**
+         * GoogleMintResultIn
+         * @description How the runner's half ended: the token encrypted for the agent (`value_zk`, `zk1`
+         *     or `zks1`, at `kv`) and the account that consented — or `error` (an outcome the
+         *     settings page explains) with `detail`. Never a token in the clear.
+         */
+        readonly GoogleMintResultIn: {
+            /**
+             * Value Zk
+             * @default
+             */
+            readonly value_zk: string;
+            /**
+             * Kv
+             * @default 0
+             */
+            readonly kv: number;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * Error
+             * @default
+             */
+            readonly error: string;
+            /**
+             * Detail
+             * @default
+             */
+            readonly detail: string;
         };
         /** SignInRequestOut */
         readonly SignInRequestOut: {
@@ -48184,12 +48409,37 @@ export interface operations {
     };
     readonly start_google_mint: {
         readonly parameters: {
-            readonly query?: {
-                readonly login_hint?: string;
-            };
+            readonly query?: never;
             readonly header?: never;
             readonly path: {
                 readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GoogleMintStartIn"] | null;
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["GoogleMintOut"];
+                };
+            };
+        };
+    };
+    readonly get_google_mint: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly mint_id: string;
             };
             readonly cookie?: never;
         };
@@ -48201,7 +48451,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["GoogleMintStartOut"];
+                    readonly "application/json": components["schemas"]["GoogleMintOut"];
                 };
             };
         };
@@ -54008,6 +54258,56 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["RunnerMintOut"];
                 };
+            };
+        };
+    };
+    readonly post_google_mint_challenge: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly mint_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GoogleMintChallengeIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readonly post_google_mint_result: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly mint_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["GoogleMintResultIn"];
+            };
+        };
+        readonly responses: {
+            /** @description No Content */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

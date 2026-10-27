@@ -611,16 +611,26 @@ export async function deleteAgentCredential(
   return Array.from(unwrap(res, 'deleteAgentCredential'))
 }
 
-/** Start the browser mint for this agent's Google mailbox.
- *
- *  Returns the URL instead of navigating, because the caller must do a TOP-LEVEL
- *  navigation: a 302 followed inside fetch() resolves on Google's HTML and shows
- *  the user nothing at all. */
-export async function startGoogleMint(slug: string): Promise<string> {
-  const res = await apiV2.GET('/api/agents/{slug}/google/authorize', {
+export type GoogleMintOut = Schemas['GoogleMintOut']
+
+/** Start connecting this agent's Google account. The sign-in is finished on one of
+ *  the agent's runners (canopy never holds the token), so this returns the sign-in,
+ *  not a link: poll `getGoogleMint` until `authorize_url` is set, then navigate to it
+ *  (a TOP-LEVEL navigation — a redirect followed inside fetch() shows nothing).
+ *  A 409 `no_mint_runner` says no runner that may hold the agent is online. */
+export async function startGoogleMint(slug: string, loginHint = ''): Promise<GoogleMintOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/google/mint', {
     params: { path: { slug } },
+    body: { login_hint: loginHint },
   })
-  return unwrap(res, 'startGoogleMint').url
+  return unwrap(res, 'startGoogleMint')
+}
+
+export async function getGoogleMint(slug: string, id: string): Promise<GoogleMintOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/google/mint/{mint_id}', {
+    params: { path: { slug, mint_id: id } },
+  })
+  return unwrap(res, 'getGoogleMint')
 }
 
 export async function getAgentVault(slug: string) {

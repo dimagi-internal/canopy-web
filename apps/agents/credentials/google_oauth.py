@@ -1,42 +1,26 @@
-"""Mint a gog-importable Google token from a browser.
+"""The consent half of "Connect Google mailbox": which scopes, which account, the
+consent link and its signed state. The token half — exchanging Google's code for a
+refresh token — runs on one of the agent's runners (`google_mint.py`), never here.
 
 The goal this serves, stated by Jonathan on 2026-09-05: *someone could plausibly
 create a completely new agent without direct access to the cloud box or 1Password.*
-A mailbox was the last thing that could not be provisioned that way — minting a
-gog token meant a terminal, `gog auth login`, a loopback listener, and then a
-hand-written 1Password item. This turns it into a button.
 
-WHY THIS CANNOT USE THE `canopy` CLIENT — the constraint that shapes everything
-below, and the one that cost a wrong deploy on 2026-09-05. **A refresh token is
-minted FOR an OAuth client and works only with that client.** So the client that
-runs the browser flow is the client the resulting token is bound to, forever.
+WHY THE `canopy-web` CLIENT, NOT THE `canopy` ONE — the constraint that shapes
+everything below. **A refresh token is minted FOR an OAuth client and works only
+with that client.** The fleet's `canopy` client is a Desktop client: Google accepts
+any loopback redirect for it and refuses an https one, so it cannot run a browser
+flow that returns to canopy-web. canopy-web's own Web client accepts exactly one
+https redirect (`callback_url`), so the consent runs on it, and the token declares
+`client: canopy-web`. A box refreshes it with that client's id and secret from the
+workspace's shared vault (`gog-oauth-client-web`) — the same item the runner
+exchanges the code with.
 
-And the fleet's `canopy` client CANNOT run a browser flow. Measured against
-Google's authorize endpoint on 2026-09-06:
-
-    canopy  (…l3iom9j3…)  http://localhost:59999/  -> accepted (login page)
-    canopy  (…l3iom9j3…)  https://…/callback       -> redirect_uri_mismatch
-    canopy-web (…osh2en…) http://localhost:59999/  -> redirect_uri_mismatch
-    canopy-web (…osh2en…) https://…/callback/      -> accepted (login page)
-
-Accepting an arbitrary unregistered loopback port is the signature of a **Desktop**
-client; refusing loopback while accepting one exact https URI is the signature of
-a **Web application** client. Google does not permit an https redirect on a Desktop
-client at all, so no amount of console configuration makes `canopy` mint from a
-browser. The web flow therefore runs on canopy-web's own Web client — already in
-the same GCP project, already carrying these scopes on the shared consent screen,
-and already present in this process's settings because it is what signs people in.
-
-The token consequently declares `client: canopy-web`, and the box must have that
-client registered to refresh it. `bootstrap_agents.sh` reads the client name from
-the token itself, so it picks this up with no per-agent configuration.
+The consent link carries a PKCE challenge whose verifier only the runner holds, so
+the code Google sends back to canopy-web's callback cannot be redeemed here.
 """
 from __future__ import annotations
 
-import json
 import urllib.parse
-import urllib.request
-from datetime import datetime, timezone
 
 from django.conf import settings
 from django.core import signing
@@ -64,7 +48,7 @@ from .. import mailbox
 #
 # Over-requesting is close to free and under-requesting is not: an unused grant
 # costs a line on the consent screen, while a missing one is a live agent failing
-# mid-run, and re-minting means re-consenting. `services_for` derives the truth
+# mid-run, and re-minting means re-consenting. The runner derives the token's services
 # from what Google actually GRANTED, so the token never overstates itself.
 _BASE_SCOPES: tuple[str, ...] = (
     "openid",
@@ -136,63 +120,13 @@ def expected_account(agent) -> str:
     return agent.email.strip().lower() if mailbox_kind(agent) == "google" else ""
 
 
-# gog's short service names, keyed by the scope-path prefix that implies them.
-# Ordered longest-prefix-first is unnecessary here because no key is a prefix of
-# another, but the map is checked by test rather than trusted.
-_SERVICE_BY_SCOPE_PREFIX: tuple[tuple[str, str], ...] = (
-    ("https://www.googleapis.com/auth/gmail", "gmail"),
-    ("https://www.googleapis.com/auth/documents", "docs"),
-    ("https://www.googleapis.com/auth/drive", "drive"),
-    ("https://www.googleapis.com/auth/forms", "forms"),
-    ("https://www.googleapis.com/auth/spreadsheets", "sheets"),
-    ("https://www.googleapis.com/auth/presentations", "slides"),
-    ("https://www.googleapis.com/auth/calendar", "calendar"),
-)
-
 # The name the token declares, and the name the box must have registered for it.
 MINTING_CLIENT = "canopy-web"
 
 AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
-TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
 STATE_SALT = "agents.google_oauth.state"
 STATE_MAX_AGE = 900  # 15 minutes: long enough to sign in, short enough to matter.
-
-
-def services_for(scopes) -> list[str]:
-    """gog's `services` list, derived from the scopes Google actually GRANTED.
-
-    Derived, never declared: a user can uncheck a scope on the consent screen, and
-    a token that claims a service it was not granted fails at call time instead of
-    at mint time — which is how a mailbox stays broken for four months.
-    """
-    out = set()
-    for scope in scopes:
-        for prefix, service in _SERVICE_BY_SCOPE_PREFIX:
-            if scope == prefix or scope.startswith(prefix + "."):
-                out.add(service)
-    return sorted(out)
-
-
-def build_gog_token(
-    *, email: str, refresh_token: str, granted_scopes, client: str = MINTING_CLIENT, now=None
-) -> dict:
-    """The exact on-disk shape `gog auth tokens import` accepts.
-
-    Five keys, no more: matched field-for-field against the live tokens in
-    op://Agent-Echo, op://Agent-Eva and op://Agent-Ace rather than reconstructed
-    from gog's source, because the importer is what has to accept it.
-    """
-    scopes = sorted(set(granted_scopes))
-    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    return {
-        "email": email,
-        "client": client,
-        "services": services_for(scopes),
-        "scopes": scopes,
-        "created_at": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "refresh_token": refresh_token,
-    }
 
 
 def callback_url() -> str:
@@ -205,16 +139,20 @@ def callback_url() -> str:
     return f"{settings.CANOPY_PUBLIC_BASE_URL.rstrip('/')}/api/oauth/google/callback"
 
 
-def sign_state(*, agent_slug: str, user_pk) -> str:
-    return signing.dumps({"agent": agent_slug, "user": str(user_pk)}, salt=STATE_SALT)
+def sign_state(*, agent_slug: str, user_pk, mint: str = "") -> str:
+    """The agent, the person who started the sign-in, and the sign-in (`AgentGoogleMint`)
+    the code belongs to."""
+    return signing.dumps({"agent": agent_slug, "user": str(user_pk), "mint": mint}, salt=STATE_SALT)
 
 
 def unsign_state(state: str) -> dict:
     return signing.loads(state, salt=STATE_SALT, max_age=STATE_MAX_AGE)
 
 
-def authorize_url(*, client_id: str, state: str, login_hint: str = "",
+def authorize_url(*, client_id: str, state: str, code_challenge: str, login_hint: str = "",
                   scopes: tuple[str, ...] = FLEET_SCOPES) -> str:
+    """The consent link. `code_challenge` is the runner's (S256): the verifier never
+    leaves the box, so the code that comes back here is useless to canopy-web."""
     params = {
         "client_id": client_id,
         "redirect_uri": callback_url(),
@@ -229,53 +167,18 @@ def authorize_url(*, client_id: str, state: str, login_hint: str = "",
         "prompt": "consent",
         "include_granted_scopes": "true",
         "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
     }
     if login_hint:
         params["login_hint"] = login_hint
     return f"{AUTHORIZE_ENDPOINT}?{urllib.parse.urlencode(params)}"
 
 
-def _post_form(url: str, data: dict, *, timeout: int = 20) -> dict:
-    body = urllib.parse.urlencode(data).encode()
-    req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=timeout) as res:  # noqa: S310 - fixed https endpoint
-        return json.loads(res.read().decode())
-
-
-def email_from_id_token(id_token: str) -> str:
-    """Read the mailbox out of the id_token's payload.
-
-    No signature check on purpose, and it is safe here for a specific reason: this
-    JWT did not come from the browser, it came back over TLS from Google's token
-    endpoint in a request we originated. There is no untrusted party in the path
-    to forge it. (Reading an id_token that ARRIVED from a client would need full
-    verification — that is a different situation, and this is not it.)
-    """
-    payload = id_token.split(".")[1]
-    payload += "=" * (-len(payload) % 4)
-    import base64
-
-    return json.loads(base64.urlsafe_b64decode(payload)).get("email", "")
-
-
-def exchange_code(*, code: str, client_id: str, client_secret: str) -> dict:
-    """Trade the one-time code for a refresh token. Returns Google's raw response."""
-    return _post_form(
-        TOKEN_ENDPOINT,
-        {
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": callback_url(),
-            "grant_type": "authorization_code",
-        },
-    )
-
-
-def google_client_credentials() -> tuple[str, str]:
+def google_client_id() -> str:
     """canopy-web's own Web client — already configured, because it is what signs
-    people in. Nothing new to stage anywhere: that was the point."""
+    people in. Only its id is used here, for the consent link: the code is exchanged on a
+    runner with the client's secret from the agent's vault, never here."""
     google = settings.SOCIALACCOUNT_PROVIDERS.get("google", {})
     app = google.get("APP", google)
-    return app.get("client_id", ""), app.get("secret", "")
+    return app.get("client_id", "")

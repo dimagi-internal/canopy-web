@@ -22,6 +22,23 @@ export function declaresMailbox(rows: readonly { name: string }[], email?: strin
   return Boolean(email?.trim()) || rows.some((r) => r.name === GOG_TOKEN_REF)
 }
 
+/** Poll a sign-in until `done(it)` or `timeoutMs` passes; the last read, or null when
+ *  it never got there. The runner reads its work on a 15-second tick, so each step of a
+ *  sign-in takes up to that long. */
+export async function followMint<T>(
+  read: () => Promise<T>,
+  done: (m: T) => boolean,
+  { intervalMs = 2000, timeoutMs = 90_000 }: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<T | null> {
+  const until = Date.now() + timeoutMs
+  for (;;) {
+    const m = await read()
+    if (done(m)) return m
+    if (Date.now() + intervalMs > until) return null
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
 /** What the return trip carried besides its status, for the outcomes that name names. */
 export interface MintContext {
   /** `?account=`: the Google account that consented (sent with `wrong-account`). */
@@ -42,7 +59,22 @@ export interface MintOutcome {
 export function mintOutcome(status: string | null, ctx: MintContext = {}): MintOutcome | null {
   switch (status) {
     case 'ok':
-      return { tone: 'ok', text: 'Mailbox connected. The token is stored and a runner will pick it up on its next bootstrap.' }
+      return { tone: 'ok', text: 'Mailbox connected. The token was encrypted on the agent’s runner (canopy never saw it); its runners pick it up on their next bootstrap.' }
+    case 'pending':
+      return { tone: 'ok', text: 'Google answered — the agent’s runner is finishing the sign-in…' }
+    case 'expired':
+      return { tone: 'error', text: 'This sign-in expired before it finished. Nothing was stored — start again.' }
+    case 'superseded':
+      return { tone: 'error', text: 'A newer sign-in replaced this one.' }
+    case 'interrupted':
+      return { tone: 'error', text: 'The runner restarted during the sign-in, so it could not finish. Nothing was stored — start again.' }
+    case 'no-runner':
+      return { tone: 'error', text: 'The runner finishing the sign-in may no longer hold this agent. Nothing was stored — start again.' }
+    case 'no-client':
+      return { tone: 'error', text: 'The runner could not read the Google OAuth client from the agent’s vault (the workspace’s shared gog-oauth-client-web), so nothing was stored. Give the runner a key to that vault, then try again.' }
+    case 'store-failed':
+    case 'bad-request':
+      return { tone: 'error', text: 'The runner finished the sign-in but the token could not be stored. Nothing changed — try again.' }
     case 'denied':
       return { tone: 'error', text: 'Sign-in was cancelled, so nothing changed.' }
     case 'no-refresh-token':
@@ -54,7 +86,7 @@ export function mintOutcome(status: string | null, ctx: MintContext = {}): MintO
     case 'no-email':
       return { tone: 'error', text: 'Google did not return which mailbox consented, so nothing was stored.' }
     case 'exchange-failed':
-      return { tone: 'error', text: 'The token exchange with Google failed. Nothing was stored — try again.' }
+      return { tone: 'error', text: 'The runner’s token exchange with Google failed. Nothing was stored — try again.' }
     case 'wrong-account': {
       // The runner reads a Gmail agent's mail as agent.email, so a token for any other
       // account would never serve it; the server stored nothing.

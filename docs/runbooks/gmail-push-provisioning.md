@@ -52,7 +52,8 @@ clients in the retired `openclaw-assistant-20260224`, a project nobody here can
 reach, so there was no topic to create for them.
 
 Re-granting a mailbox today is simplest in the browser: the agent's Settings →
-Credentials → **Connect Google mailbox** (stores the token in canopy-web; boxes import
+Credentials → **Connect Google mailbox** (one of the agent's online runners mints the
+token and stores it encrypted in the agent's vault — canopy-web never sees it; boxes import
 the newer of it and the vault copy on their next bootstrap, and the runner discovers
 which client holds it — no `runner.json` edit). The terminal path below is what `echo`
 and `ace` went through on 2026-07-31 and still works:

@@ -173,12 +173,12 @@ def test_creating_tasks_is_the_editor_tier_even_without_on_approve(esc):
 # --- C4: the Google mint is the credential tier --------------------------------
 
 def test_a_viewer_cannot_start_the_mailbox_mint(esc):
-    res = _client(esc["viewer"]).get("/api/agents/escbot/google/authorize")
+    res = _client(esc["viewer"]).post("/api/agents/escbot/google/mint", {}, content_type="application/json")
     assert res.status_code == 403, res.content
 
 
 def test_an_editor_cannot_start_the_mailbox_mint(esc):
-    res = _client(esc["editor"]).get("/api/agents/escbot/google/authorize")
+    res = _client(esc["editor"]).post("/api/agents/escbot/google/mint", {}, content_type="application/json")
     assert res.status_code == 403, res.content
 
 
