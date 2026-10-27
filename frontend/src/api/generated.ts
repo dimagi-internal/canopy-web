@@ -12038,6 +12038,30 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/turns/{turn_id}/abort": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Abort Turn
+         * @description End a turn FAILED because it cannot do its work — a tool failed on
+         *     credentials, say. Canopy then raises it as a failure (investigation, alert,
+         *     debugger turn) and tells a box still running it to stop. Idempotent on a
+         *     turn already failed; a turn that ended some other way is a 409.
+         *     `canopy turn abort` and the canopy plugin's credential guard call this.
+         */
+        readonly post: operations["abort_turn"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/turns/{turn_id}/cancel": {
         readonly parameters: {
             readonly query?: never;
@@ -36276,6 +36300,19 @@ export interface components {
             readonly emdash_task_id: string;
         };
         /**
+         * TurnAbortIn
+         * @description End a turn FAILED because it cannot do its work (`turn_abort.abort`).
+         */
+        readonly TurnAbortIn: {
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Tool
+             * @default
+             */
+            readonly tool: string;
+        };
+        /**
          * ScheduleAnnouncedOut
          * @description A project check-in's schedule fired (apps/huddles): canopy made a run. With
          *     a channel it announced it there and queued no turn — the lead confirms there
@@ -56735,6 +56772,32 @@ export interface operations {
         readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["TurnFinishIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["TurnOut"];
+                };
+            };
+        };
+    };
+    readonly abort_turn: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly turn_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["TurnAbortIn"];
             };
         };
         readonly responses: {

@@ -1366,6 +1366,12 @@ class TurnStartIn(Schema):
     session_id: str = ""
 
 
+class TurnAbortIn(Schema):
+    """End a turn FAILED because it cannot do its work (`turn_abort.abort`)."""
+    reason: str  # what failed, in a sentence: the tool's own error is the best evidence
+    tool: str = ""  # the tool that failed, e.g. mcp__plugin_ace_ace-gdrive__resolve_opp_path
+
+
 class TurnFinishIn(Schema):
     status: str  # done|failed|cancelled — a runner's own cancel_turn interrupt
     # finishes the turn cancelled (see the CDP-interrupt cancel flow); done and
