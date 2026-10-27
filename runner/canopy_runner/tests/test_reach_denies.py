@@ -76,7 +76,6 @@ def _reach(tmp_path, *, sessions=None, caller_path=None):
     return rules, tmp_path / "projects" / np.project_dir_name(str(wt))
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: native_permissions._path_rule (native_permissions.py:444) treats only '/'-rooted paths as absolute, so a C:\\ path becomes a relative rule that never matches")
 def test_another_directorys_sessions_are_denied_and_the_sessions_own_are_not(tmp_path):
     rules, own = _reach(tmp_path)
     assert not _denied(rules, own / SID / "tool-results" / "out.txt")
@@ -84,7 +83,6 @@ def test_another_directorys_sessions_are_denied_and_the_sessions_own_are_not(tmp
         assert _denied(rules, tmp_path / "projects" / other / SID / "tool-results" / "x")
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: native_permissions._path_rule (native_permissions.py:444) treats only '/'-rooted paths as absolute, so a C:\\ path becomes a relative rule that never matches")
 def test_with_its_sessions_known_only_those_are_its_own(tmp_path):
     """A fork's source conversation shares its directory: its tool output is not
     the fork's to read."""
@@ -94,7 +92,6 @@ def test_with_its_sessions_known_only_those_are_its_own(tmp_path):
     assert _denied(rules, own / "memory" / "MEMORY.md")
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: native_permissions._path_rule (native_permissions.py:444) treats only '/'-rooted paths as absolute, so a C:\\ path becomes a relative rule that never matches")
 def test_only_its_own_caller_envelope(tmp_path):
     mine = tmp_path / "caller" / f"{TID}.json"
     rules, _own = _reach(tmp_path, caller_path=str(mine))

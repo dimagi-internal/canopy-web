@@ -61,7 +61,6 @@ def test_a_capability_with_no_mcp_denies_every_server_including_unknown_ones():
     assert "mcp__*" in _perms({**ASK, "tools": ["Read"]})["deny"]
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: native_permissions._path_rule (native_permissions.py:444) treats only '/'-rooted paths as absolute, so a C:\\ path becomes a relative rule that never matches")
 def test_bash_and_paths_are_allowed_exactly_with_placeholders_filled(tmp_path):
     wt = tmp_path / "cx-a-1234-xyz12"
     wt.mkdir()
@@ -69,7 +68,7 @@ def test_bash_and_paths_are_allowed_exactly_with_placeholders_filled(tmp_path):
     real = str(wt.resolve())
     assert "Bash(canopy email read --repo . 18c9abc)" in p["allow"]
     assert f"Bash(bin/ace-email --reply-all --thread-id 18c9abc --subject * --body-file {real}/*)" in p["allow"]
-    assert f"Read(/{real}/**)" in p["allow"]
+    assert f"Read(/{np.posix_path(real)}/**)" in p["allow"]
     assert any(a.startswith("Read(//") and a.endswith("t.json)") for a in p["allow"])
     assert "Read" not in p["allow"]                 # scoped, never bare
     assert p["defaultMode"] == "dontAsk"
@@ -105,7 +104,6 @@ def test_windows_browser_profiles_are_denied_to_the_path_tools():
         assert rule in deny, rule
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: native_permissions._path_rule (native_permissions.py:444) treats only '/'-rooted paths as absolute, so a C:\\ path becomes a relative rule that never matches")
 def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
     """Granted whole it reached every other session's transcript on the box."""
     wt = tmp_path / "cx-a-1234-xyz12"
@@ -114,8 +112,8 @@ def test_a_read_tool_with_no_read_paths_reaches_only_its_worktree(tmp_path):
     perms = _perms({**ASK, "read_paths": [], "tools": ["Read", "Grep", "Glob"]}, wt=str(wt),
                    caller_path=str(envelope))
     assert not {"Read", "Grep", "Glob"} & set(perms["allow"])
-    assert f"Read(/{os.path.realpath(wt)}/**)" in perms["allow"]
-    assert f"Read(/{os.path.realpath(envelope)})" in perms["allow"]
+    assert f"Read(/{np.posix_path(os.path.realpath(wt))}/**)" in perms["allow"]
+    assert f"Read(/{np.posix_path(os.path.realpath(envelope))})" in perms["allow"]
     assert "Read(~/.claude/projects/**/*.jsonl)" in perms["deny"]
 
 
@@ -146,15 +144,14 @@ def test_credential_stores_are_denied_to_every_file_writing_tool_as_edit_rules()
         assert np._path_rule("Edit", p) in deny and np._path_rule("Read", p) in deny
 
 
-@pytest.mark.xfail(sys.platform == "win32", strict=True, reason="real Windows bug: native_permissions._path_rule (native_permissions.py:444) treats only '/'-rooted paths as absolute, so a C:\\ path becomes a relative rule that never matches")
 def test_writes_land_only_in_write_paths_not_everywhere_reads_reach(tmp_path):
     wt = tmp_path / "cx-a-1234-xyz12"
     wt.mkdir()
     p = _perms(ACE_ASK, wt=str(wt))
     real = str(wt.resolve())
-    assert f"Edit(/{real}/.ace-ask/*)" in p["allow"]
-    assert f"Read(/{real}/**)" in p["allow"]
-    assert f"Edit(/{real}/**)" not in p["allow"]       # bin/ace-email stays unwritable
+    assert f"Edit(/{np.posix_path(real)}/.ace-ask/*)" in p["allow"]
+    assert f"Read(/{np.posix_path(real)}/**)" in p["allow"]
+    assert f"Edit(/{np.posix_path(real)}/**)" not in p["allow"]       # bin/ace-email stays unwritable
     assert "Write" not in p["allow"] and "Write" not in p["deny"]   # scoped, never bare
     assert "Edit" in p["deny"]                         # the Edit TOOL is not granted
 
@@ -334,3 +331,23 @@ def test_the_worktree_is_named_on_emdash_1_1_too(tmp_path):
     con.commit()
     con.close()
     assert emdash.task_worktree(str(db), "ace", "cx-payments-9abc") == "/wt/emdash-cx-payments-9abc-k2j4l"
+
+
+@pytest.mark.parametrize("given,rule", [
+    (r"C:\Users\Shayoni Mazumdar\.canopy\caller\t.json",
+     "Read(//c/Users/Shayoni Mazumdar/.canopy/caller/t.json)"),
+    ("D:/work/wt/**", "Read(//d/work/wt/**)"),
+    ("\\\\?\\C:\\long\\path", "Read(//c/long/path)"),
+    ("/Users/j/wt/**", "Read(//Users/j/wt/**)"),
+    ("~/.ssh/**", "Read(~/.ssh/**)"),
+])
+def test_windows_drive_paths_become_the_posix_form_claude_code_matches(given, rule):
+    """Claude Code on Windows normalizes C:\\x to /c/x before matching; a rule written
+    with the drive path matched nothing, so allow and deny rules were both inert."""
+    assert np._path_rule("Read", given) == rule
+
+
+def test_a_windows_deny_rule_denies_the_windows_path():
+    rules = [np._path_rule("Read", r"C:\Users\s\.claude\projects\**")]
+    assert np.denied_by(rules, r"C:\Users\s\.claude\projects\other\x.jsonl", home=r"C:\Users\s")
+    assert not np.denied_by(rules, r"C:\Users\s\work\x.txt", home=r"C:\Users\s")

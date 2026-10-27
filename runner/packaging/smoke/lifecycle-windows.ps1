@@ -174,27 +174,15 @@ try {
   Pass "wrote $Config"
 
   # --- 1. first install: the installer runs setup itself -----------------------------
-  # KNOWN BUG (strict, like pytest's xfail(strict=True)): Inno Setup processes [Run]
-  # BEFORE CurStepChanged(ssPostInstall), which is where the .iss creates `current` -
-  # so a first install's `{app}\current\bin\canopy-runner.cmd setup` finds no such path,
-  # and `|| pause` waits on a console nobody can see. When the .iss is fixed this check
-  # FAILS on purpose: delete the known-bug branch and keep the plain assertion.
+  # Inno processes [Run] before CurStepChanged(ssPostInstall); the setup entry's
+  # BeforeInstall: PointCurrent makes `current` first (this used to fail: setup found
+  # no current\ and `|| pause` hung on a console nobody could see).
   Step "install A ($($A.Sha12)) - a first install, no /UPDATE: the installer runs setup"
   $rc = Run-Installer $A.Exe @() (Join-Path $Logs 'install-A.log') 120
-  $firstOk = ($rc -eq 0) -and (Task $RunnerTask) -and (Test-Path $Current)
-  if ($firstOk) {
-    Fail "first install ran setup and registered the tasks: the known [Run]-before-junction bug is FIXED - remove its known-bug branch in lifecycle-windows.ps1"
-  } elseif ($null -eq $rc -and -not (Test-Path $Current)) {
-    Write-Host "XFAIL first install: [Run] ran setup through current\ before the .iss created it (known bug; installer killed after 120s)"
-    Write-Output "::warning::known Windows bug: a first install's setup runs before the current junction exists (canopy-runner.iss [Run] vs ssPostInstall)"
-  } else {
-    Fail "first install failed some other way (exit $rc, current exists: $(Test-Path $Current))"
+  Check "first install exited 0 (setup ran; not killed waiting on a pause)" {
+    Assert ($rc -eq 0) $(if ($null -eq $rc) { 'killed after 120s - setup most likely hit `|| pause`' } else { "exit $rc" })
   }
-  if (-not (Test-Path $Current)) {
-    Step "finish install A with /UPDATE (no [Run]), as the known bug leaves it half-done"
-    $rc = Run-Installer $A.Exe @('/UPDATE') (Join-Path $Logs 'install-A-update.log')
-    Check "installer A /UPDATE exited 0" { Assert ($rc -eq 0) $(if ($null -eq $rc) { 'killed after 600s' } else { "exit $rc" }) }
-  }
+  Check "the first install's setup registered \Canopy\$RunnerTask" { Assert (Task $RunnerTask) 'not registered' }
   Check "current is a junction to versions\$($A.Sha12)" {
     $t = Junction-Target; Assert ($t -like "*\versions\$($A.Sha12)") "points at $t"; $t
   }

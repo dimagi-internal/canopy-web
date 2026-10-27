@@ -267,7 +267,8 @@ def denied_by(rules, path: str, *, tool: str = "Read", home: str | None = None) 
     characters and ranges, ASCII letters match either case, and a rule that matches a
     directory matches everything under it. A model for tests and for asking "what
     would this deny?"; Claude Code itself decides."""
-    home = home or str(_home())
+    home = posix_path(home or str(_home()))
+    path = posix_path(path)
     # As JavaScript sees it: a character outside the BMP is two UTF-16 surrogates.
     path = "".join(c if ord(c) <= 0xFFFF else
                    chr(0xD800 + ((ord(c) - 0x10000) >> 10)) + chr(0xDC00 + ((ord(c) - 0x10000) & 0x3FF))
@@ -439,8 +440,23 @@ def _program(pattern: str) -> str:
     return os.path.basename(toks[0]) if toks else ""
 
 
+def posix_path(path: str) -> str:
+    """`path` as Claude Code matches it. On Windows it normalizes a path to POSIX form
+    before matching a rule — `C:\\Users\\a` is `/c/Users/a` — so a rule written with
+    the drive path never matched, and a confined session's allow AND deny rules were
+    both inert there (found by the Windows CI, canopy-web#2202). Anything that is not
+    a Windows drive path is returned as is."""
+    if path.startswith("\\\\?\\"):  # the long-path prefix realpath can return
+        path = path[4:]
+    m = re.match(r"([A-Za-z]):[\\/]", path)
+    if not m:
+        return path
+    return f"/{m.group(1).lower()}/{path[3:].replace(chr(92), "/")}"  # chr(92) = backslash
+
+
 def _path_rule(tool: str, path: str) -> str:
     # `//abs` is absolute; `~/…` is home. A bare `/x` would anchor at the settings file.
+    path = posix_path(path)
     if path.startswith("/"):
         return f"{tool}(/{path})"
     return f"{tool}({path})"

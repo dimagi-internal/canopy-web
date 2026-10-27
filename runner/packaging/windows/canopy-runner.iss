@@ -88,7 +88,10 @@ Name: "{autoprograms}\Canopy Runner\Canopy Runner – Stop"; Filename: "{app}\st
 ; `|| pause` keeps the window up when it fails so the error can be read.
 Filename: "{cmd}"; Parameters: "/c """"{app}\current\bin\canopy-runner.cmd"" setup || pause"""; \
   WorkingDir: "{app}"; StatusMsg: "Setting up Canopy Runner — approve this PC in your browser..."; \
-  Flags: waituntilterminated; Check: NotUpdate
+  Flags: waituntilterminated; Check: NotUpdate; BeforeInstall: PointCurrent
+; BeforeInstall: Inno processes [Run] BEFORE CurStepChanged(ssPostInstall), so on a first
+; install `current` did not exist yet and setup failed with "path not found" behind a
+; `pause` nobody saw (found by the Windows CI, canopy-web#2202). Point it first.
 
 [UninstallRun]
 Filename: "{sys}\schtasks.exe"; Parameters: "/End /TN ""\Canopy\canopy-runner"""; Flags: runhidden; RunOnceId: "EndRunner"
@@ -107,6 +110,7 @@ Type: dirifempty; Name: "{app}"
 [Code]
 var
   PreviousSha: String;
+  CurrentPointed: Boolean;
 
 { /UPDATE: the runner's self-update is driving this install and runs setup itself. }
 function IsUpdate: Boolean;
@@ -156,17 +160,14 @@ begin
   end;
 end;
 
-procedure CurStepChanged(CurStep: TSetupStep);
+{ Point `current` at this version. Called by the setup [Run] entry (a first install,
+  which needs it before setup runs) and at ssPostInstall (every install); once is enough. }
+procedure PointCurrent;
 var
-  Marker: AnsiString;
   Cur, Target, Prev: String;
 begin
-  if CurStep = ssInstall then
-  begin
-    if LoadStringFromFile(ExpandConstant('{app}\current-version.txt'), Marker) then
-      PreviousSha := Trim(String(Marker));
-  end
-  else if CurStep = ssPostInstall then
+  if CurrentPointed then
+    exit;
   begin
     Cur := ExpandConstant('{app}\current');
     Target := ExpandConstant('{app}\versions\{#Sha12}');
@@ -186,6 +187,22 @@ begin
       RaiseException('Could not point ' + Cur + ' at ' + Target);
     end;
     SaveStringToFile(ExpandConstant('{app}\current-version.txt'), '{#Sha12}', False);
+    CurrentPointed := True;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Marker: AnsiString;
+begin
+  if CurStep = ssInstall then
+  begin
+    if LoadStringFromFile(ExpandConstant('{app}\current-version.txt'), Marker) then
+      PreviousSha := Trim(String(Marker));
+  end
+  else if CurStep = ssPostInstall then
+  begin
+    PointCurrent;
     PruneVersions;
   end;
 end;
