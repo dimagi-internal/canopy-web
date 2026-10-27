@@ -60,7 +60,7 @@ export const USER_ROLES: UserRole[] = [
     title: 'User — you interact with an agent',
     who: 'Someone with work to hand to an agent, or a question waiting on them.',
     enforcement: 'Workspace member. Any role, including viewer.',
-    startHere: 'Open Chats in a workspace and start a chat with an agent.',
+    startHere: 'Open Sessions in a workspace and start a chat with an agent.',
     surfaces: [
       '/w/:workspace/chat',
       '/w/:workspace/chat/:id',

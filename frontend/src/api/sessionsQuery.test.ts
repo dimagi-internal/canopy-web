@@ -19,4 +19,9 @@ describe("sessionsPath", () => {
   it("passes a limit through", () => {
     expect(sessionsPath("all", { limit: 500 })).toBe("/api/me/sessions/?state=all&limit=500");
   });
+
+  it("lists one workspace's sessions on the tenant route", () => {
+    expect(sessionsPath("active", { workspace: "marshellis" })).toBe("/api/w/marshellis/canopy-sessions/");
+    expect(sessionsPath("all", { workspace: "marshellis" })).toBe("/api/w/marshellis/canopy-sessions/?state=all");
+  });
 });

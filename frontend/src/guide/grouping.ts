@@ -50,7 +50,7 @@ export function guideGroups(surfaces: SurfaceDescriptor[] = SURFACES): GuideGrou
   const ownGroups = labels.map((label) => ({ label, surfaces: take((s) => s.group === label) }))
 
   // The header's entries, then the `?` menu, then the account menu. A plain
-  // link (Home, Chats) is a group of one, named for itself.
+  // link (Home, Sessions) is a group of one, named for itself.
   const headerGroups = [
     ...NAV.map((e) => (e.kind === 'link' ? { label: e.item.label, items: [e.item] } : e)),
     { label: 'Help', items: HELP_ITEMS },

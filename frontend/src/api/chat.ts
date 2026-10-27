@@ -139,22 +139,27 @@ export type SessionState = "active" | "archived" | "all";
  */
 export function sessionsPath(
   state: SessionState = "active",
-  opts: { reply?: boolean; limit?: number } = {},
+  opts: { reply?: boolean; limit?: number; workspace?: string } = {},
 ): string {
   const params = new URLSearchParams();
   if (state !== "active") params.set("state", state);
   if (opts.reply) params.set("reply", "true");
   if (opts.limit) params.set("limit", String(opts.limit));
   const q = params.toString();
-  // A user-level view: every page that lists sessions (Supervisor, the IDE,
-  // the chat home) spans your workspaces, and this one read covers them all —
-  // the server reads each organisation on its own.
-  return q ? `/api/me/sessions/?${q}` : "/api/me/sessions/";
+  // A page under /w/:workspace (the chat home) lists that workspace's sessions
+  // (and those of the workspaces below it): the tenant route, pinned.
+  // Otherwise a user-level view: Supervisor and the IDE span your workspaces,
+  // and this one read covers them all — the server reads each organisation on
+  // its own.
+  const base = opts.workspace
+    ? `/api/w/${encodeURIComponent(opts.workspace)}/canopy-sessions/`
+    : "/api/me/sessions/";
+  return q ? `${base}?${q}` : base;
 }
 
 export function listSessions(
   state: SessionState = "active",
-  opts: { reply?: boolean; limit?: number } = {},
+  opts: { reply?: boolean; limit?: number; workspace?: string } = {},
 ): Promise<ChatSession[]> {
   return request<ChatSession[]>(sessionsPath(state, opts));
 }
