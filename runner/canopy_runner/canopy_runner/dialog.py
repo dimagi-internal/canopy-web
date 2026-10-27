@@ -123,6 +123,9 @@ def collision_choice(task: str, line: str, *, timeout: int = 30) -> str:
             # renderer that hangs instead (no desktop, a wedged COM host).
             timeout=timeout + 10,
             **({"env": {**_os.environ, **env}} if env else {}),
+            # The popup is a WinForms window; powershell's own console must not
+            # flash up behind it.
+            **platform_jobs.no_window(),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return NEW
