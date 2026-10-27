@@ -655,3 +655,22 @@ def test_the_prompt_carries_the_delivery_evidence_but_not_the_words(ada, ws, run
     assert "reused_session" not in prompt
     # The runner's own verdict, so the debugger never needs the transcript.
     assert "landed: no" in prompt and auto_debug.landed(turn) == "no"
+
+
+def test_the_prompt_carries_a_failed_reuse_sends_cdp_error(ada, ws, runner):
+    """Investigation 15 (turn c3717cce, 2026-10-27): "reuse failed on existing session
+    … not spawning a duplicate" names no error; the runner records which one only on
+    its `kind="error"` reuse_send_failed event, which the prompt used to leave out."""
+    ace = _agent(ws, "ace")
+    turn = Turn.objects.create(agent=ace, origin="email", idempotency_key="reuse-err",
+                               status=Turn.RUNNING, claimed_by=runner, session_key="s-10")
+    TurnEvent.objects.create(turn=turn, seq=1, kind="error", payload={
+        "status": "reuse_send_failed", "task": "s-10", "task_state": "live",
+        "detail": "COMPOSER_NOT_VISIBLE: no input line in the rendered frame"})
+    TurnEvent.objects.create(turn=turn, seq=2, kind="error", payload={
+        "status": "runner_crashed", "detail": "unrelated"})
+    prompt = auto_debug.render_prompt(
+        FailureInvestigation(pk=8, occurrences=1, first_seen=timezone.now(),
+                             last_seen=timezone.now()), turn)
+    assert "status=reuse_send_failed detail=COMPOSER_NOT_VISIBLE" in prompt
+    assert "runner_crashed" not in prompt
