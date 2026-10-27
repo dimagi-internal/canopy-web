@@ -99,6 +99,10 @@ dependencies = [
     # apps/mail/sns.py verifies SNS message signatures (RSA over the cert SNS publishes).
     "cryptography>=42",
     "webauthn>=3.0.1,<4.0",
+    # Agent tasks (apps/agent_tasks): checking a caller's output_schema IS a JSON Schema,
+    # and an agent's result against it. Present transitively before this; named
+    # directly for the same reason as pyjwt above.
+    "jsonschema>=4.26,<5.0",
 ]
 
 [project.optional-dependencies]

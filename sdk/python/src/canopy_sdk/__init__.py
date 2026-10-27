@@ -12,11 +12,14 @@ Modules:
 * ``canopy_sdk.consumer`` — canopy's side (verifying, redeeming, signing proofs).
 * ``canopy_sdk.django`` — optional Django wiring for the host half.
 * ``canopy_sdk.conformance`` — checks against a live host, plus pytest fixtures.
+* ``canopy_sdk.agent_tasks`` — call a canopy agent inline and get a
+  schema-validated result back (``AgentTasks``).
 * ``canopy_sdk.ondemand`` — optional (``ondemand`` extra): run a dedicated
   capability on a stopped-when-idle EC2 instance.
 """
+from .agent_tasks import AgentTasks
 from .contract import CONTRACT_VERSION
 
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 
-__all__ = ["CONTRACT_VERSION", "__version__"]
+__all__ = ["CONTRACT_VERSION", "AgentTasks", "__version__"]

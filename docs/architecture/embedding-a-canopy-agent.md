@@ -10,6 +10,10 @@ canopy agent that can read the page state you choose to hand it. The user is
 your already-signed-in user, and the agent can only ever see what that user can
 see.
 
+(Need an agent's answer as data — your backend sends it a task and gets JSON that
+validates against your schema, with no panel? That is an agent task:
+[agent-tasks.md](agent-tasks.md).)
+
 **Three things to know before you start, because they change what you build:**
 
 1. **Agent actions work, and they are MCP tools.** What you declare with

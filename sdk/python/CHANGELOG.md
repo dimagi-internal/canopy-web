@@ -2,6 +2,20 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.25.0 — 2026-10-27
+
+**Agent tasks: call a canopy agent inline and get a schema-validated result back.**
+
+- `canopy_sdk.agent_tasks.AgentTasks(base_url, token)`: `create(agent, name, input,
+  output_schema, ...)`, `get(id, wait_s=0)` (the server's 0–20 s long-poll), `wait(id,
+  timeout_s)`, `cancel(id)`, and `run(...)`, which returns the result or raises
+  `AgentTaskFailed` (failed or cancelled) / `AgentTaskTimeout`. Refusals are
+  `AgentTaskError` with the HTTP `status`, its `detail` and, for a refused result, its
+  `errors`. A plain script with a canopy PAT is enough; `workspace=` routes through
+  `/api/w/<slug>/`, `transport=` replaces the https client.
+- Exported as `canopy_sdk.AgentTasks`.
+- Needs a canopy with `POST /api/agent-tasks/`; an older one answers 404.
+
 ## 0.24.0 — 2026-10-27
 
 **Site sign-offs: a site asks canopy for a person's passkey approval of one action.**

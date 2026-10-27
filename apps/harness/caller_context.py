@@ -27,6 +27,7 @@ DMARC is still forged.
 from __future__ import annotations
 
 import re
+import uuid
 
 from apps.agents.models import UNREAD, SenderTrust
 from apps.canopy_sessions.models import SessionParticipant
@@ -416,7 +417,26 @@ def build(turn, *, reader_user=None) -> dict:
         # recorded by the host, never reported by the View. null when no View
         # has said or done anything here.
         "apps": _apps(cs),
+        # THE AGENT TASK THIS TURN HOLDS (`apps/agent_tasks`), when it holds one:
+        # {id, name, status}. Someone called the agent inline and waits for a
+        # structured result: the task is done only once the agent submits one
+        # (`submit_agent_task_result`), so canopy's plugin Stop hook reads this to
+        # keep the agent from ending the turn while `status` is not done. null otherwise.
+        "agent_task": _agent_task(ref),
     }
+
+
+def _agent_task(ref: dict) -> dict | None:
+    try:
+        task_id = uuid.UUID(str(ref.get("agent_task") or ""))
+    except ValueError:
+        return None
+    from apps.agent_tasks.models import AgentTask  # noqa: PLC0415 — harness ↛ agent_tasks at import
+
+    task = AgentTask.objects.filter(pk=task_id).only("pk", "name", "status").first()
+    if task is None:
+        return None
+    return {"id": str(task.pk), "name": task.name, "status": task.status}
 
 
 def _slack_location(cs) -> dict | None:

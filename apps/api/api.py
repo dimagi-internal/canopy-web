@@ -248,6 +248,7 @@ from apps.canopy_sessions.api import router as canopy_sessions_router  # noqa: E
 from apps.canopy_sessions.app_views_api import router as app_views_router  # noqa: E402
 from apps.canopy_sessions.secrets_api import router as session_secrets_router  # noqa: E402
 from apps.canopy_sessions.sharing_api import router as session_sharing_router  # noqa: E402
+from apps.agent_tasks.api import router as agent_tasks_router  # noqa: E402
 from apps.capabilities.api import agents_router as agent_capabilities_router  # noqa: E402
 from apps.capabilities.api import router as capabilities_router  # noqa: E402
 from apps.capabilities.api import runner_router as capability_keeper_router  # noqa: E402
@@ -376,6 +377,7 @@ api.add_router("/agents", schedules_router)  # recurring turns, under the agents
 api.add_router("/agents", contributors_router)  # ideas + contributor pages on a project (hal T69)
 api.add_router("/agents", agent_capabilities_router)  # what an agent declares it can lease
 api.add_router("/capabilities", capabilities_router)  # grants + leases (cloud capabilities)
+api.add_router("/agent-tasks", agent_tasks_router)  # call an agent inline, get a structured result
 api.add_router("/passkeys", passkeys_router)  # a person's passkeys + the step-up (canopy-web#1538)
 api.add_router("/vault", vault_keyset_router)  # a person's zero-knowledge vault key (canopy-web#1550)
 # Fleet-wide task and project lists (/api/tasks/, /api/projects/) — the

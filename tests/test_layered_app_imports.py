@@ -49,7 +49,7 @@ LAYERS: list[tuple[str, set[str]]] = [
     ("kit", {"common", "events", "workspaces", "api"}),
     # L1 core — the agent/turn/session substrate and who may reach it.
     ("core", {"agents", "harness", "canopy_sessions", "tokens", "contacts", "admission", "retention",
-              "realtime", "push", "passkeys", "embedding", "mcp_apps_host", "attention"}),
+              "realtime", "push", "passkeys", "embedding", "mcp_apps_host", "attention", "agent_tasks"}),
     # L2 features — framework surfaces built on the core; nothing below names them.
     ("features", {"agent_runs", "capabilities", "feedback", "github_connect", "host_grants", "huddles",
                   "inbound", "issues", "mcp", "oauth_server", "plugins", "session_sharing", "slack",

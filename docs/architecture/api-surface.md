@@ -487,6 +487,13 @@ Framework tier. Bodies, lease states, long-poll, exec, slot data and every refus
 - `POST /api/capabilities/leases/{id}/exec` · `GET …/exec/{exec_id}` — run an allow-listed command / read it back.
 - `POST /api/capabilities/leases/{id}/uploads` · `GET …/artifacts?prefix=` — presigned PUTs into `in/` / GETs from `out/`.
 
+### Agent tasks (`apps/agent_tasks`, mounted at `/api/agent-tasks`) — call an agent inline, get a structured result
+Framework tier. The contract, the completion rule and its two rails: [`agent-tasks.md`](agent-tasks.md). Anyone not listed gets a 404.
+- `POST /api/agent-tasks/` `{agent, name, instructions?, input, output_schema, routing?, timeout_s?, parent?}` — create a task and queue ONE turn for the agent (`origin_ref.agent_task`). The gates of `POST /api/harness/turns/` (`agent.work`). 422 for an `output_schema` that is not a JSON Schema, 413 for `input` over 1 MiB. 201.
+- `GET /api/agent-tasks/{id}?wait_s=0..20` — read (long-poll until the status changes): its creator, the agent's admins, the agent's own login. `input` only for the agent; the agent's read makes a queued task `running`. A task past its deadline fails here.
+- `POST /api/agent-tasks/{id}/result` `{result}` — the agent's own login only, while queued/running; the ONLY way a task completes. 422 with `errors: [{path, message}]` (the task stays open), 409 once ended, 413 over 1 MiB.
+- `POST /api/agent-tasks/{id}/cancel` — its creator or the agent's admins; cancels a still-queued turn too. Idempotent.
+
 ### Inbound push (`apps/inbound`) — the doorbell
 Framework tier. Gmail push turns new mail into a turn in seconds instead of on the runner's 300s poll.
 - `POST /api/inbound/gmail/{workspace}/` — Gmail Pub/Sub push. `auth=None`, allowlisted in `apps/common/middleware.py`, self-enforcing on a Google-signed OIDC JWT checked against **that workspace's** `InboundPushConfig` (the tenant is in the path, so it is known before the body is decoded and one tenant's signer can never satisfy another's). Unverified → **404** (no enumeration); verified but not actionable → **200** (a 4xx makes Pub/Sub redeliver forever).
