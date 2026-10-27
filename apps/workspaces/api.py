@@ -25,7 +25,9 @@ from apps.admission.schemas import (
     AdmissionSettingsIn,
     AdmissionSettingsOut,
 )
+from apps.agents.models import Agent
 from apps.api.auth import session_auth
+from apps.canopy_sessions.models import Session as ChatSession
 from apps.api.route_gates import gate
 from apps.retention.schemas import (
     RetentionOut,
@@ -538,9 +540,6 @@ def get_member(request: HttpRequest, slug: str, user_id: int) -> MemberProfileOu
     caller who manages members also gets `admin` (who invited them, last
     sign-in, how many chats they started here). 404 for a non-member caller
     and for a user who is not in this workspace alike."""
-    from apps.agents.models import Agent
-    from apps.canopy_sessions.models import Session as ChatSession
-
     m = _membership_or_404(request.user, slug)
     ws = m.workspace
     row = next((r for r in services.effective_memberships(ws) if r.user_id == user_id), None)
