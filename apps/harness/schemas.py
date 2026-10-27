@@ -684,6 +684,10 @@ class HeartbeatIn(Schema):
     degraded: bool = False
     note: str = ""
     host: str = ""  # refresh the owning macOS host (in case a runner row is reused)
+    # "macos" | "windows" | "linux" (browser_pair.platform_name). Keeps
+    # Runner.platform true after pairing — the Windows remedy text reads it. Absent
+    # (older code) or anything else leaves the stored value alone.
+    platform: str = ""
     ready: bool = True   # can the runner fire a turn (cdp healthy ∧ not recently failed)
     ready_note: str = ""
     code_branch: str = ""  # the runner checkout's git branch — supervisor alerts on non-main
