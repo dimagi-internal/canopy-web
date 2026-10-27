@@ -64,7 +64,7 @@ def _abort(client, turn, reason=DRIVE_ERROR, tool=TOOL):
 
 def test_the_agent_aborts_its_own_running_turn_and_it_is_raised_as_a_failure(ada, ace, runner):
     turn = _running(ace, runner)
-    with mock.patch("apps.realtime.groups.publish") as publish:
+    with mock.patch("apps.harness.turn_abort.groups.publish") as publish:
         resp = _abort(_as(ace.user), turn)
 
     assert resp.status_code == 200, resp.content
@@ -98,7 +98,7 @@ def test_a_laptop_turn_already_done_can_be_aborted(ada, ace, runner):
     """emdash finishes a laptop turn the moment its session exists; the work — and
     the failure — come after."""
     turn = _running(ace, runner, status=Turn.DONE)
-    with mock.patch("apps.realtime.groups.publish") as publish:
+    with mock.patch("apps.harness.turn_abort.groups.publish") as publish:
         assert _abort(_as(ace.user), turn).status_code == 200
     turn.refresh_from_db()
     assert turn.status == Turn.FAILED

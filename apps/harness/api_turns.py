@@ -17,10 +17,22 @@ from apps.agents.gates import agent_for_read
 from apps.agents.models import Agent
 from apps.api.errors import ProblemError
 from apps.api.route_gates import gate
+from apps.embedding import delegation
 from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 
-from . import claim, clis, ledger, sensitivity, services, session_sync, turn_access, turn_asker, turn_gates
+from . import (
+    claim,
+    clis,
+    ledger,
+    sensitivity,
+    services,
+    session_sync,
+    turn_abort,
+    turn_access,
+    turn_asker,
+    turn_gates,
+)
 
 # The one harness router and the helpers every harness route shares; api.py
 # imports this module after defining them.
@@ -44,10 +56,10 @@ from .schemas import (
     EmdashSessionOut,
     TranscriptAppendIn,
     TranscriptAppendOut,
+    TurnAbortIn,
     TurnEventCountOut,
     TurnEventsIn,
     TurnEventsOut,
-    TurnAbortIn,
     TurnFinishIn,
     TurnIn,
     TurnMessagesOut,
@@ -55,6 +67,7 @@ from .schemas import (
     TurnStartIn,
     UnclaimableTurnOut,
 )
+from .turn_agent_tokens import turn_agent
 
 logger = logging.getLogger(__name__)
 
@@ -427,10 +440,6 @@ def _abortable_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
     """A turn the caller may abort: its own agent's login (the agent stopping
     itself), an editor of that agent, or whoever may report on it (the box that
     claimed it). Uniform 404 otherwise. Never a connected site acting for a visitor."""
-    from apps.embedding import delegation
-
-    from .turn_agent_tokens import turn_agent
-
     if delegation.offered_for(request) is None:
         turn = (Turn.objects.select_related("agent", "chat_session__agent", "claimed_by")
                 .filter(pk=turn_id).first())
@@ -450,8 +459,6 @@ def abort_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnAbortIn):
     debugger turn) and tells a box still running it to stop. Idempotent on a
     turn already failed; a turn that ended some other way is a 409.
     `canopy turn abort` and the canopy plugin's credential guard call this."""
-    from . import turn_abort
-
     turn = _abortable_turn_or_404(request, turn_id)
     by = getattr(request.user, "email", "") or ""
     try:

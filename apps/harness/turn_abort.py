@@ -29,6 +29,8 @@ is the one declaration of its secrets, and the dependency that failed on
 """
 from __future__ import annotations
 
+from apps.realtime import groups
+
 from .closing import close_turn
 from .ledger import append_events
 from .models import Turn
@@ -64,8 +66,6 @@ def abort(turn: Turn, *, reason: str, tool: str = "", by: str = "") -> Turn:
         raise NotAbortable(f"status={turn.status}")
     append_events(turn, [{"kind": "error", "payload": {"detail": note}}])
     if was_executing and turn.claimed_by_id:
-        from apps.realtime import groups
-
         groups.publish(groups.runner_group(turn.claimed_by_id),
                        {"type": "runner.cancel", "turn_id": str(turn.id)})
     return turn
