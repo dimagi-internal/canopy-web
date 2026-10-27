@@ -349,7 +349,7 @@ def test_every_evaluate_string_is_valid_javascript():
     for i, body in enumerate(bodies, start=1):
         check = subprocess.run(
             [node, "-e", "new Function('return ' + require('fs').readFileSync(0, 'utf8'))"],
-            input=body, capture_output=True, text=True, timeout=30)
+            input=body, capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert check.returncode == 0, f"evaluate #{i} is invalid JS: {check.stderr[:300]}"
 
 
