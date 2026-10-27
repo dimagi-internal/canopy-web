@@ -37,7 +37,8 @@ export function RunnerFacts({ runner }: { runner: RunnerOut }): JSX.Element {
     ['kind', runner.kind ?? ''],
     ['agent CLIs', runnerClisText(runner), 'runner-clis'],
   ]
-  if (runner.kind !== 'cloud') rows.push(['runtime', runner.engine === 'claude-desktop' ? 'Claude desktop' : 'emdash'])
+  if (runner.kind !== 'cloud')
+    rows.push(['runtime', runner.engine === 'claude-desktop' ? 'Claude desktop' : runner.engine === 'claude-cli' ? 'Claude CLI' : 'emdash'])
   rows.push(['owner', runner.owner_email ?? '—'])
   // Host only matters for emdash (per-macOS-account session reuse); cloud boxes report none.
   if (runner.host) rows.push(['host', runner.host])

@@ -9,6 +9,12 @@ describe('repoSetup', () => {
       'git clone https://github.com/dimagi-internal/jarvis ~/emdash-projects/jarvis',
     )
   })
+  it('writes a PowerShell clone with $HOME, which PowerShell expands for git', () => {
+    expect(repoFolder('jarvis', 'powershell')).toBe('$HOME\\emdash-projects\\jarvis')
+    expect(cloneCommand('jarvis', 'https://github.com/dimagi-internal/jarvis', 'powershell')).toBe(
+      'git clone https://github.com/dimagi-internal/jarvis $HOME\\emdash-projects\\jarvis',
+    )
+  })
   it('has nothing to offer for an agent with no repo', () => {
     expect(cloneCommand('muse', '  ')).toBeNull()
   })
