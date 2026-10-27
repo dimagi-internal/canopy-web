@@ -5,7 +5,7 @@
  * the MCP Apps View routes are not in the schema; the session's secrets are) — the
  * live transcript's steady-state arrives over the WebSocket
  * (apps/canopy_sessions consumer), not REST. REST covers session
- * meta/create/list, scroll-back paging (`listMessages`), the viewer liveness
+ * meta/create/list and its full read, the viewer liveness
  * pair (`attachSession`/`detachSession`), and the runner backfill request
  * (`requestBackfill`). CSRF is attached for mutating calls; response shapes
  * reuse the generated OpenAPI schema so the two can't drift.
@@ -20,7 +20,6 @@ import type { AppHost, AppResourceUpdates, AppViewResource, CallToolResult } fro
 
 export type ChatSession = components["schemas"]["SessionOut"];
 export type ChatSessionDetail = components["schemas"]["SessionDetailOut"];
-export type MessagePage = components["schemas"]["MessagePageOut"];
 export type StreamState = components["schemas"]["StreamStateOut"];
 export type BackfillState = components["schemas"]["BackfillStateOut"];
 export type SendResult = components["schemas"]["SendOut"];
@@ -157,18 +156,6 @@ export function listSessions(
   opts: { reply?: boolean; limit?: number } = {},
 ): Promise<ChatSession[]> {
   return request<ChatSession[]>(sessionsPath(state, opts));
-}
-
-/** One backward page of transcript, for "Load earlier" scroll-back. */
-export function listMessages(
-  id: string,
-  before: number,
-  limit?: number,
-): Promise<MessagePage> {
-  const q = limit != null ? `&limit=${limit}` : "";
-  return request<MessagePage>(
-    `/api/canopy-sessions/${encodeURIComponent(id)}/messages?before=${before}${q}`,
-  );
 }
 
 /** Register this viewer as attached (starts live streaming for a bound runner). */

@@ -66,26 +66,26 @@ describe('ChatSessionMenu — Others see while you type', () => {
   })
 })
 
-describe('ChatSessionMenu — Load earlier / Load full session', () => {
+describe('ChatSessionMenu — Load all / Load full session', () => {
   it('hides both when there is nothing to offer', async () => {
     render(<ChatSessionMenu {...baseProps()} />)
     await openMenu()
-    expect(screen.queryByTestId('menu-load-earlier')).toBeNull()
+    expect(screen.queryByTestId('menu-load-all')).toBeNull()
     expect(screen.queryByTestId('menu-load-full')).toBeNull()
   })
 
-  it('shows Load earlier and calls through on click', async () => {
-    const onLoadEarlier = vi.fn()
-    render(<ChatSessionMenu {...baseProps({ showLoadEarlier: true, onLoadEarlier })} />)
+  it('shows Load all and calls through on click', async () => {
+    const onLoadAll = vi.fn()
+    render(<ChatSessionMenu {...baseProps({ showLoadAll: true, onLoadAll })} />)
     await openMenu()
-    fireEvent.click(screen.getByTestId('menu-load-earlier'))
-    expect(onLoadEarlier).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('menu-load-all'))
+    expect(onLoadAll).toHaveBeenCalledTimes(1)
   })
 
-  it('disables Load earlier and relabels it while loading', async () => {
-    render(<ChatSessionMenu {...baseProps({ showLoadEarlier: true, loadingEarlier: true })} />)
+  it('disables Load all and relabels it while loading', async () => {
+    render(<ChatSessionMenu {...baseProps({ showLoadAll: true, loadingAll: true })} />)
     await openMenu()
-    const item = screen.getByTestId('menu-load-earlier')
+    const item = screen.getByTestId('menu-load-all')
     expect(item.textContent).toBe('Loading…')
     expect(item.getAttribute('data-disabled')).not.toBeNull()
   })
@@ -100,10 +100,10 @@ describe('ChatSessionMenu — Load earlier / Load full session', () => {
 
   it('can show both at once, above Close', async () => {
     render(
-      <ChatSessionMenu {...baseProps({ showLoadEarlier: true, showLoadFull: true })} />,
+      <ChatSessionMenu {...baseProps({ showLoadAll: true, showLoadFull: true })} />,
     )
     await openMenu()
-    expect(screen.getByTestId('menu-load-earlier')).toBeTruthy()
+    expect(screen.getByTestId('menu-load-all')).toBeTruthy()
     expect(screen.getByTestId('menu-load-full')).toBeTruthy()
   })
 })

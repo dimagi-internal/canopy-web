@@ -33,7 +33,7 @@ import { SessionInfoPanel } from "./SessionInfoPanel";
  * something you do while reading a conversation, so they live here. The header
  * keeps what you read: the title and whether the agent is working.
  *
- * "Load earlier"/"Load full session" joined them for the same reason (Jonathan,
+ * "Load all messages"/"Load full session" joined them for the same reason (Jonathan,
  * 2026-10-05): they used to be a strip PINNED above the transcript whenever the
  * server held more history than was loaded, which is most of the time on an
  * old session — a bar for a control that, once a session is a few days old,
@@ -62,9 +62,9 @@ export function ChatSessionMenu({
   onToggleNotify,
   shareDisabledReason,
   onShare,
-  showLoadEarlier,
-  onLoadEarlier,
-  loadingEarlier,
+  showLoadAll,
+  onLoadAll,
+  loadingAll,
   showLoadFull,
   onLoadFull,
   loadingFull,
@@ -94,9 +94,9 @@ export function ChatSessionMenu({
   shareDisabledReason?: string;
   onShare: (command: string) => Promise<void>;
   /** The server holds more than is loaded — see `hasMoreBefore` in ChatPage. */
-  showLoadEarlier?: boolean;
-  onLoadEarlier?: () => void;
-  loadingEarlier?: boolean;
+  showLoadAll?: boolean;
+  onLoadAll?: () => void;
+  loadingAll?: boolean;
   /** See `shouldShowLoadFull` in chatPageLogic.ts. */
   showLoadFull?: boolean;
   onLoadFull?: () => void;
@@ -247,10 +247,10 @@ export function ChatSessionMenu({
           <DropdownMenuItem inset disabled={resetting} onClick={onReset}>
             {resetting ? "Resetting…" : "Reset from transcript"}
           </DropdownMenuItem>
-          {(showLoadEarlier || showLoadFull) && <DropdownMenuSeparator />}
-          {showLoadEarlier && (
-            <DropdownMenuItem inset disabled={loadingEarlier} onClick={onLoadEarlier} data-testid="menu-load-earlier">
-              {loadingEarlier ? "Loading…" : "Load earlier messages"}
+          {(showLoadAll || showLoadFull) && <DropdownMenuSeparator />}
+          {showLoadAll && (
+            <DropdownMenuItem inset disabled={loadingAll} onClick={onLoadAll} data-testid="menu-load-all">
+              {loadingAll ? "Loading…" : "Load all messages"}
             </DropdownMenuItem>
           )}
           {showLoadFull && (

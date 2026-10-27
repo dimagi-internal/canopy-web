@@ -48,7 +48,7 @@ export function backfillAction(status: string): BackfillAction {
  * discovered session is the case that most needs it. Gate only on:
  *  - `runnerName` — no runner means no transcript to recover from;
  *  - `hasMoreBefore` — the server holds more than the loaded window, so
- *    "Load earlier" is the right control instead;
+ *    "Load all messages" is the right control instead;
  *  - `historyUnavailable` — we already asked and the runner wasn't reachable.
  * Clicking when the server is already complete is a harmless no-op (the backend
  * answers `ready` and we reload the same rows).
