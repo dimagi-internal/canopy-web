@@ -302,6 +302,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
             # And whether it is paused, and why: a cloud box that paused itself
             # (no working Claude credential) lifts only a pause whose note is
             # its own, so it has to be told which kind it is under.
+            # And the canopy release, for the box's `canopy.cli` check (RunnerOut
+            # .expected_canopy_version on the REST path).
             await self.send_json({"type": "heartbeat.ack", "refresh_pending": bool(refresh),
                                   "cancel_turn_ids": cancel_ids, **pause})
         elif action == "start":
@@ -373,7 +375,8 @@ class RunnerConsumer(AsyncJsonWebsocketConsumer):
         runner_protocol.heartbeat(runner, runner_protocol.parse_heartbeat_frame(frame or {}),
                                   device_key=getattr(self, "scope", {}).get("auth_method") == principal.RUNNER_KEY)
         return (runner.refresh_pending(), list(getattr(runner, "cancel_turn_ids", None) or []),
-                {"paused": bool(runner.paused), "paused_note": runner.paused_note or ""})
+                {"paused": bool(runner.paused), "paused_note": runner.paused_note or "",
+                 "expected_canopy_version": runner.expected_canopy_version()})
 
     def _turn_owned_sync(self, turn_id):
         """A turn THIS runner claimed — the only ones it may start/append/finish.

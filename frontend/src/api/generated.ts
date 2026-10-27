@@ -33464,6 +33464,11 @@ export interface components {
             readonly code_committed_at: number;
             /** Expected Code Committed At */
             readonly expected_code_committed_at: number;
+            /**
+             * Expected Canopy Version
+             * @default
+             */
+            readonly expected_canopy_version: string;
             /** Workspace */
             readonly workspace: string | null;
             /** Owner Email */
@@ -34664,6 +34669,11 @@ export interface components {
              * @default 0
              */
             readonly bootstrapped_at: number;
+            /**
+             * Canopy Version
+             * @default
+             */
+            readonly canopy_version: string;
         };
         /** UsageScopeOut */
         readonly UsageScopeOut: {

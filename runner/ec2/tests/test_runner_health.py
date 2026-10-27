@@ -112,6 +112,42 @@ def test_cli_behind_the_plugin_is_a_warning(cloud_runner, monkeypatch):
     assert cloud_runner._HEALTH["claude.version"]["status"] == "ok"
 
 
+def _versions(cloud_runner, monkeypatch, *, cli, clone):
+    versions = {"claude": "2.1.266", "canopy": cli}
+    monkeypatch.setattr(cloud_runner, "_version_of", lambda cmd: versions.get(pathlib_name(cmd[0]), ""))
+    monkeypatch.setattr(cloud_runner, "_marketplace_canopy_version", lambda: clone)
+
+
+def test_a_box_whose_clone_is_as_stale_as_its_cli_is_behind_the_release(cloud_runner, monkeypatch):
+    # cloud-ec2-2, 2026-10-27: CLI and clone both 0.2.804 read "ok" while canopy
+    # had released 0.2.805. The server's release is what it is judged by.
+    _versions(cloud_runner, monkeypatch, cli="0.2.804", clone="0.2.804")
+    cloud_runner._observe_beat({"paused": False, "expected_canopy_version": "0.2.805"})
+    monkeypatch.setattr(cloud_runner, "_HEALTH_SLOW_AT", 0.0)
+    report = cloud_runner.health_report()
+    check = {c["name"]: c for c in report["checks"]}["canopy.cli"]
+    assert check["status"] == "warn" and "0.2.805" in check["detail"]
+    assert report["canopy_version"] == "0.2.804"
+
+
+@pytest.mark.parametrize("release", ["0.2.804", "0.2.700", ""])
+def test_a_cli_at_or_ahead_of_the_release_or_an_unknown_one_is_ok(cloud_runner, monkeypatch, release):
+    _versions(cloud_runner, monkeypatch, cli="0.2.804", clone="0.2.804")
+    cloud_runner._observe_beat({"paused": False, "expected_canopy_version": release})
+    cloud_runner._slow_checks()
+    assert cloud_runner._HEALTH["canopy.cli"]["status"] == "ok"
+
+
+def test_the_release_is_rejudged_every_beat_not_only_on_the_slow_cadence(cloud_runner, monkeypatch):
+    _versions(cloud_runner, monkeypatch, cli="0.2.804", clone="0.2.804")
+    cloud_runner._slow_checks()
+    assert cloud_runner._HEALTH["canopy.cli"]["status"] == "ok"
+    monkeypatch.setattr(cloud_runner, "_HEALTH_SLOW_AT", 10 ** 12)  # no slow pass this beat
+    cloud_runner._observe_beat({"expected_canopy_version": "0.2.805"})
+    cloud_runner.health_report()
+    assert cloud_runner._HEALTH["canopy.cli"]["status"] == "warn"
+
+
 def pathlib_name(cmd0: str) -> str:
     return cmd0.rsplit("/", 1)[-1]
 

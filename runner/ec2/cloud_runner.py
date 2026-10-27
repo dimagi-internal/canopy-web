@@ -1065,18 +1065,44 @@ def _marketplace_canopy_version() -> str:
     return ""
 
 
-def _slow_checks() -> None:
-    claude = _version_of([CLAUDE_BIN, "--version"])
-    _set_check("claude.version", *(("ok", f"Claude Code {claude}") if claude
-                                   else ("fail", f"`{CLAUDE_BIN} --version` did not run")))
-    cli = _version_of(["canopy", "--version"])
+#: The canopy CLI version the last slow check read ("" = it did not run), and the
+#: canopy RELEASE canopy-web says this box should run (`expected_canopy_version`
+#: on the heartbeat reply; "" = unknown). The clone on the box is not enough to
+#: judge by: a box whose clone is as stale as its CLI reads self-consistent.
+_CANOPY_CLI: dict = {"v": None}
+_CANOPY_RELEASE: dict = {"v": ""}
+
+
+def _version_tuple(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.split(".")) if v else ()
+    except ValueError:
+        return ()
+
+
+def _canopy_cli_check() -> None:
+    cli = _CANOPY_CLI["v"]
+    if cli is None:
+        return
     want = _marketplace_canopy_version()
+    release = _CANOPY_RELEASE["v"]
     if not cli:
         _set_check("canopy.cli", "fail", "the canopy CLI did not run")
+    elif release and () < _version_tuple(cli) < _version_tuple(release):
+        _set_check("canopy.cli", "warn", f"canopy CLI {cli}, but canopy's release is {release}: "
+                   "this runner refreshes when idle")
     elif want and cli != want:
         _set_check("canopy.cli", "warn", f"canopy CLI {cli}, but the plugin is {want}: refresh this runner")
     else:
         _set_check("canopy.cli", "ok", f"canopy {cli}")
+
+
+def _slow_checks() -> None:
+    claude = _version_of([CLAUDE_BIN, "--version"])
+    _set_check("claude.version", *(("ok", f"Claude Code {claude}") if claude
+                                   else ("fail", f"`{CLAUDE_BIN} --version` did not run")))
+    _CANOPY_CLI["v"] = _version_of(["canopy", "--version"])
+    _canopy_cli_check()
 
 
 def health_report() -> dict:
@@ -1097,11 +1123,17 @@ def health_report() -> dict:
         if now - _HEALTH_SLOW_AT >= HEALTH_SLOW_SECONDS:
             _HEALTH_SLOW_AT = now
             _slow_checks()
+        # Every beat, not only on the slow cadence: the release can move between
+        # two version reads, and comparing is free.
+        _canopy_cli_check()
     except Exception as exc:  # noqa: BLE001
         _log(f"health: a check raised ({exc}); reporting what completed")
     with _HEALTH_LOCK:
         checks = list(_HEALTH.values())
-    return {"checks": checks, "checked_at": time.time(), "bootstrapped_at": _BOOTSTRAPPED_AT}
+    # `canopy_version`: what canopy-web compares with the release to ask this box
+    # for a refresh (canopy_release.refresh_owed). "" = unknown.
+    return {"checks": checks, "checked_at": time.time(), "bootstrapped_at": _BOOTSTRAPPED_AT,
+            "canopy_version": _CANOPY_CLI["v"] or ""}
 
 
 # ── self-refresh ─────────────────────────────────────────────────────────────
@@ -1127,7 +1159,9 @@ def _refresh_marker() -> pathlib.Path:
 
 def _refresh_reason(pending: bool, now: float) -> str:
     if pending:
-        return "an operator asked for a refresh"
+        # An operator's Refresh, or canopy-web seeing this box's canopy CLI behind
+        # the release (`canopy.cli` says which).
+        return "canopy-web asked for a refresh"
     if _BOOTSTRAPPED_AT and now - _BOOTSTRAPPED_AT >= REFRESH_MAX_AGE_SECONDS:
         return f"last bootstrap was {int((now - _BOOTSTRAPPED_AT) // 3600)}h ago"
     return ""
@@ -8261,6 +8295,8 @@ def _observe_beat(reply) -> None:
     """Take in one heartbeat reply. A reply without pause state (none, an error,
     an older server) leaves `_LAST_BEAT` empty, so the pause is left alone."""
     _LAST_BEAT.clear()
+    if isinstance(reply, dict) and "expected_canopy_version" in reply:
+        _CANOPY_RELEASE["v"] = str(reply.get("expected_canopy_version") or "")
     if not isinstance(reply, dict) or "paused" not in reply:
         return
     _LAST_BEAT.update(reply)

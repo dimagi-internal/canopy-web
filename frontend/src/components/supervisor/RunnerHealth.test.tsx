@@ -21,7 +21,7 @@ function runner(overrides: Partial<RunnerOut> = {}): RunnerOut {
     ready: true, ready_note: '', remedy: '', key_waiting: '', paused: false, paused_note: '', paused_at: null,
     last_heartbeat_at: '2026-09-22T12:00:00Z', capabilities: {}, agent_clis: {}, host: '', machine: '',
     code_branch: '', code_version: '', code_sha: '', expected_code_sha: '',
-    code_committed_at: 0, expected_code_committed_at: 0, workspace: 'dimagi',
+    code_committed_at: 0, expected_code_committed_at: 0, expected_canopy_version: '', workspace: 'dimagi',
     owner_email: 'jj@dimagi.com', can_manage: true, can_administer: true, open_sessions: 0,
     flags: [],
     known_flags: ['sensitive_data'],
