@@ -4,8 +4,6 @@ The properties under test are the safety ones: a hook must never fail, the
 forwarding switch must actually gate, and installing must not disturb hooks
 canopy did not put there (emdash owns its own).
 """
-import sys
-import pytest
 import json
 
 from canopy_runner import hooks

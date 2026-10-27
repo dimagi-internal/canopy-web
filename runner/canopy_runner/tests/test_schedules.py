@@ -4,8 +4,6 @@ Tests the DECISION (is a slot due, is fire called with the right slot), not the 
 and not the cron math: DST/cron correctness is canopy_cron's suite, and duplicating it
 here would just re-test croniter through a second door.
 """
-import sys
-import pytest
 import datetime as dt
 
 from canopy_runner import schedules

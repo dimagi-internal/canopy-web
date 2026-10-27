@@ -6,7 +6,6 @@ The deny rules are patterns — every name but the session's own — so a sessio
 caller envelope made after they were written is covered as well. `denied_by` is
 Claude Code's matching as measured; `test_live_claude_honours_the_rules` checks the
 real CLI when one is installed and `CANOPY_LIVE_CLAUDE=1`."""
-import sys
 import json
 import os
 import pathlib

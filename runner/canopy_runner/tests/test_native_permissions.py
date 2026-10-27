@@ -1,6 +1,5 @@
 """The second layer: a caller's capability, restated as Claude Code permission rules
 in the session worktree's `.claude/settings.json`."""
-import sys
 import json
 import os
 
