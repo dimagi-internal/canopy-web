@@ -7689,6 +7689,40 @@ export interface paths {
          */
         readonly get: operations["list_members"];
         readonly put?: never;
+        /**
+         * Add someone already in this workspace tree (admin or owner)
+         * @description Adds a person who is already a member of another workspace in this tree
+         *     (one you are in too) directly, at `role` — no invite, no email. 404 for
+         *     anyone else, so this never adds an arbitrary user id; 409 if they already
+         *     hold a role here (change it with PATCH); 403 for a role you may not grant;
+         *     422 for a system account above editor.
+         */
+        readonly post: operations["add_member"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/workspaces/{slug}/member-tree": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Everyone across this workspace and the ones below it (member-only)
+         * @description This workspace and every workspace below it that you are in, in tree
+         *     order, and one row per person who is in any of them with their role in
+         *     each (`cells`; a missing slug = not a member there). Owners and admins of
+         *     an ancestor are in every workspace below it by inheritance
+         *     (`inherited: true`, `inherited_from` the ancestor); editors and viewers are
+         *     not, which is the gap this view makes visible. `can_manage` says where you
+         *     may add, re-role or remove people.
+         */
+        readonly get: operations["member_tree"];
+        readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -8393,6 +8427,29 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/workspaces/{slug}/members/{user_id}/profile/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * One member's profile (member-only; detail by role)
+         * @description One member as the caller may see them. Any member sees the basics; a
+         *     caller who manages members also gets `admin` (who invited them, last
+         *     sign-in, how many chats they started here). 404 for a non-member caller
+         *     and for a user who is not in this workspace alike.
+         */
+        readonly get: operations["get_member"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/sites/agents": {
         readonly parameters: {
             readonly query?: never;
@@ -8829,12 +8886,12 @@ export interface paths {
          *     instance; nothing is made). An invitation not yet approved: 202 `waiting`.
          *     Anything else: one uniform 401. Then sign in at `POST /api/runner-sessions/`.
          *
-         *     A box of isolation units sends `units` (each unit's name, the public half of
-         *     its own signing key and its ECDH key) with ONE proof: one runner per unit with
-         *     an active software device key, `units` mapping each name to its runner id. A
-         *     replaced instance (the same role and unit names) re-attaches every unit, its
+         *     A machine running several runners sends `units` (each runner's name, the public
+         *     half of its own signing key and its ECDH key) with ONE proof: one runner per entry
+         *     with an active software device key, `units` mapping each name to its runner id. A
+         *     replaced instance (the same role and runner names) re-attaches every runner, its
          *     new key replacing the old in place, keeping each runner id; that needs no
-         *     invitation. A unit not yet paired needs the approved invitation that lists it.
+         *     invitation. A runner not yet paired needs the approved invitation that lists it.
          */
         readonly post: operations["pair_runner_by_role"];
         readonly delete?: never;
@@ -10721,7 +10778,7 @@ export interface paths {
         readonly get?: never;
         /**
          * Lock this runner's egress to an allowlist of hosts
-         * @description Set the runner's egress lock: `locked` (its units reach the network only
+         * @description Set the runner's egress lock: `locked` (its runners reach the network only
          *     through the box's proxy, to canopy-web, the model and GitHub) and `allow`, the
          *     hosts it admits beyond those (`.example.com` for every subdomain). Root on the box
          *     applies it within a minute, on top of the box's own setting, which it never
@@ -15715,6 +15772,8 @@ export interface components {
          * @description Response for /api/me/.
          */
         readonly MeOut: {
+            /** User Id */
+            readonly user_id?: number | null;
             /**
              * Email
              * Format: email
@@ -23481,6 +23540,8 @@ export interface components {
              * @default
              */
             readonly session_key: string;
+            /** Turn Id */
+            readonly turn_id?: string | null;
             /**
              * Emdash Task Id
              * @deprecated
@@ -29835,6 +29896,68 @@ export interface components {
              */
             readonly system: boolean;
         };
+        /** MemberAddIn */
+        readonly MemberAddIn: {
+            /** User Id */
+            readonly user_id: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            readonly role: "owner" | "admin" | "editor" | "viewer";
+        };
+        /** MemberTreeCellOut */
+        readonly MemberTreeCellOut: {
+            /** Role */
+            readonly role: string;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
+            /** Inherited From */
+            readonly inherited_from?: string | null;
+        };
+        /** MemberTreeOut */
+        readonly MemberTreeOut: {
+            /** Root */
+            readonly root: string;
+            /** Workspaces */
+            readonly workspaces: readonly components["schemas"]["MemberTreeWorkspaceOut"][];
+            /** People */
+            readonly people: readonly components["schemas"]["MemberTreePersonOut"][];
+        };
+        /** MemberTreePersonOut */
+        readonly MemberTreePersonOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /**
+             * System
+             * @default false
+             */
+            readonly system: boolean;
+            /** Cells */
+            readonly cells: {
+                readonly [key: string]: components["schemas"]["MemberTreeCellOut"];
+            };
+        };
+        /** MemberTreeWorkspaceOut */
+        readonly MemberTreeWorkspaceOut: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Parent */
+            readonly parent?: string | null;
+            /** Depth */
+            readonly depth: number;
+            /** My Role */
+            readonly my_role: string;
+            /** Can Manage */
+            readonly can_manage: boolean;
+        };
         /** MemberRoleUpdateIn */
         readonly MemberRoleUpdateIn: {
             /**
@@ -31536,6 +31659,89 @@ export interface components {
             /** Mcp Resource */
             readonly mcp_resource: string;
         };
+        /**
+         * MemberAdminDetail
+         * @description What only someone who manages members sees about one (`members.manage`).
+         */
+        readonly MemberAdminDetail: {
+            /** Invited By Email */
+            readonly invited_by_email?: string | null;
+            /** Last Login */
+            readonly last_login?: string | null;
+            /**
+             * Chats Started
+             * @default 0
+             */
+            readonly chats_started: number;
+        };
+        /** MemberAgentRef */
+        readonly MemberAgentRef: {
+            /** Slug */
+            readonly slug: string;
+            /** Name */
+            readonly name: string;
+        };
+        /**
+         * MemberProfileOut
+         * @description One member's page in a workspace, as the CALLER may see it. Every member
+         *     sees who they are, their role and the agents they operate here; the rest is
+         *     filled in only for a caller whose role allows it (`admin` is null below).
+         */
+        readonly MemberProfileOut: {
+            /** User Id */
+            readonly user_id: number;
+            /** Email */
+            readonly email: string;
+            /**
+             * Name
+             * @default
+             */
+            readonly name: string;
+            /** Role */
+            readonly role: string;
+            /**
+             * Joined At
+             * Format: date-time
+             */
+            readonly joined_at: string;
+            /**
+             * Inherited
+             * @default false
+             */
+            readonly inherited: boolean;
+            /**
+             * Kind
+             * @default person
+             * @enum {string}
+             */
+            readonly kind: "person" | "agent" | "system";
+            /**
+             * Is You
+             * @default false
+             */
+            readonly is_you: boolean;
+            readonly agent?: components["schemas"]["MemberAgentRef"] | null;
+            /**
+             * Operates
+             * @default []
+             */
+            readonly operates: readonly components["schemas"]["MemberAgentRef"][];
+            /**
+             * Shared Workspaces
+             * @default []
+             */
+            readonly shared_workspaces: readonly components["schemas"]["MemberWorkspaceRef"][];
+            readonly admin?: components["schemas"]["MemberAdminDetail"] | null;
+        };
+        /** MemberWorkspaceRef */
+        readonly MemberWorkspaceRef: {
+            /** Slug */
+            readonly slug: string;
+            /** Display Name */
+            readonly display_name: string;
+            /** Role */
+            readonly role: string;
+        };
         /** ResourcesUpdatedOut */
         readonly ResourcesUpdatedOut: {
             /** Notified */
@@ -31878,7 +32084,7 @@ export interface components {
         };
         /**
          * RunnerInvitationUnitOut
-         * @description One unit an invitation pairs, and its runner once the box has paired.
+         * @description One runner an invitation pairs, and its id once the machine has paired.
          */
         readonly RunnerInvitationUnitOut: {
             /** Name */
@@ -31908,7 +32114,7 @@ export interface components {
          * @description Invite one new cloud box, by the name it will pair as and its EC2 instance
          *     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
          *     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
-         *     `units`: a box that runs several isolation units lists them, and the one
+         *     `units`: a machine that runs several runners lists them, and the one
          *     approval pairs every one.
          */
         readonly RunnerInvitationIn: {
@@ -31932,9 +32138,9 @@ export interface components {
         };
         /**
          * RunnerUnitIn
-         * @description One isolation unit on the invited box: a runner of its own, named `name`,
-         *     serving `workspace`'s tree (`kind` tree) or only agent `slug` (`kind` agent,
-         *     an agent of `workspace`). `ecdh_public_jwk` is that unit's zero-knowledge ECDH
+         * @description One runner on the invited machine, named `name`, serving `workspace`'s tree
+         *     (`kind` tree) or only agent `slug` (`kind` agent, an agent of `workspace`).
+         *     `ecdh_public_jwk` is that runner's zero-knowledge ECDH
          *     key (its KMS key in the `<stack>-ecdh` stack) when known.
          */
         readonly RunnerUnitIn: {
@@ -32282,8 +32488,8 @@ export interface components {
          * RunnerPairByRoleOut
          * @description `paired` (a new runner), `reattached` (this role's existing runner — a
          *     replaced instance), or `waiting` (the invitation is not approved yet; ask
-         *     again on the next poll). A box of units gets `units`, each unit's runner id by
-         *     its name (`paired` when any was made).
+         *     again on the next poll). A machine of several runners gets `units`, each
+         *     runner's id by its name (`paired` when any was made).
          */
         readonly RunnerPairByRoleOut: {
             /**
@@ -32352,9 +32558,9 @@ export interface components {
         };
         /**
          * RunnerPairUnitIn
-         * @description One unit of a box pairing all its units at once: its runner `name`, the
-         *     PUBLIC half of the unit's own signing key (`public_jwk`, a software P-256 key
-         *     in the unit's home), its zero-knowledge ECDH key, and what it declares.
+         * @description One runner of a machine pairing all its runners at once: its `name`, the
+         *     PUBLIC half of the runner's own signing key (`public_jwk`, a software P-256 key
+         *     in the runner's home), its zero-knowledge ECDH key, and what it declares.
          */
         readonly RunnerPairUnitIn: {
             /** Name */
@@ -32503,6 +32709,11 @@ export interface components {
              * @default false
              */
             readonly has_emdash: boolean;
+            /**
+             * Emdash Cdp Live
+             * @default false
+             */
+            readonly emdash_cdp_live: boolean;
             /** Redirect Port */
             readonly redirect_port: number;
             /** Reconnect Runner */
@@ -33229,6 +33440,11 @@ export interface components {
              * @default emdash
              */
             readonly engine: string;
+            /**
+             * Platform
+             * @default
+             */
+            readonly platform: string;
             /** Status */
             readonly status: string;
             /** Status Note */
@@ -33361,6 +33577,11 @@ export interface components {
             readonly power: string;
             /** Power Changed At */
             readonly power_changed_at?: string | null;
+            /**
+             * Machine
+             * @default
+             */
+            readonly machine: string;
             /**
              * Roots
              * @default []
@@ -34376,6 +34597,11 @@ export interface components {
              * @default
              */
             readonly host: string;
+            /**
+             * Platform
+             * @default
+             */
+            readonly platform: string;
             /**
              * Ready
              * @default true
@@ -51151,6 +51377,54 @@ export interface operations {
             };
         };
     };
+    readonly add_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["MemberAddIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberOut"];
+                };
+            };
+        };
+    };
+    readonly member_tree: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberTreeOut"];
+                };
+            };
+        };
+    };
     readonly remove_member: {
         readonly parameters: {
             readonly query?: never;
@@ -52096,6 +52370,29 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SiteDiscoveryOut"];
+                };
+            };
+        };
+    };
+    readonly get_member: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly slug: string;
+                readonly user_id: number;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["MemberProfileOut"];
                 };
             };
         };

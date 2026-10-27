@@ -2,7 +2,7 @@
 // DevTools Protocol (emdash is Electron; launch it with --remote-debugging-port).
 // This is the sanctioned path (no DB injection, no app patching): tasks created
 // here flow through emdash's own UI, so they appear live in the sidebar and run
-// interactive `claude` on the subscription. Commands (arg = JSON on argv[3]):
+// interactive `claude` on the subscription. Commands (arg = JSON on stdin, or argv[3]):
 //   list                              -> {ok, tasks:[names], projects:[names]}
 //   create {project, prompt}          -> {ok, action:"created"}    (new session)
 //   open-send {task, text}            -> {ok, action:"sent", task} (REUSE existing)
@@ -35,6 +35,7 @@
 import { chromium } from 'playwright-core';
 import { isSidebarLabel, pickInSection } from './sidebar_section.mjs';
 import { asTyped } from './typed_text.mjs';
+import { readArgs } from './sidecar_args.mjs';
 import { draftWithoutOurs, hasForeignLead, squash } from './composer_check.mjs';
 
 
@@ -153,7 +154,7 @@ function brightRows(rows) {
 `;
 
 const command = process.argv[2];
-const args = JSON.parse(process.argv[3] || '{}');
+const args = await readArgs();  // stdin: no command-line length cap (sidecar_args.mjs)
 const port = args.port || 9222;
 
 function out(o) { process.stdout.write(JSON.stringify(o)); }

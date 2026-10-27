@@ -22,7 +22,7 @@ SIDECAR = Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp" / "emdas
 
 
 def _function(name: str) -> str:
-    src = SIDECAR.read_text()
+    src = SIDECAR.read_text(encoding="utf-8")
     start = src.index(f"const {name} = ")
     end = src.index("\n};\n", start)
     return src[start:end]

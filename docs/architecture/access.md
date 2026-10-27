@@ -101,8 +101,8 @@ outside `apps/workspaces/` names a role. Full detail: `docs/architecture/roles.m
 
 Nothing is automatic: there is no self-join and no domain auto-join. People at a
 listed domain may only **request an invitation**. A person becomes a member in
-exactly three ways — and an agent's own login in a fourth — and the only code that may
-create a `WorkspaceMembership` is `services._grant` (the first two),
+exactly four ways — and an agent's own login in a fifth — and the only code that may
+create a `WorkspaceMembership` is `services._grant` (the first two, and a tree add),
 `services.ensure_member` (the default-workspace bootstrap, and the agent-login door
 below) and workspace creation — `apps/workspaces/tests/test_access_requests.py`
 fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
@@ -127,6 +127,14 @@ fails on a fourth door, and `tests/test_no_implicit_enrolment.py` pins
   the invite mechanism (labs SES) plus Web Push and are best-effort: a failure
   never fails the request — it is stored on the request (`notify_result`) and
   written to the event log (`source=workspaces.access`, `warn`).
+* **A tree add.** An **admin** or **owner** adds someone who is ALREADY a member of
+  another workspace in the same tree — one the adder is in too — directly, at a role
+  they may grant, with no invite (`POST /api/workspaces/{slug}/members/`,
+  `services.add_tree_member`, from the "Members across workspaces" page
+  `/w/:workspace/settings/member-tree`). It closes the gap inheritance leaves: only
+  owners and admins are in the workspaces below theirs, so an org editor is a stranger
+  in its divisions until added. Anyone outside the tree is the same 404 as a missing
+  user; an existing member is 409 (change their role instead).
 * **Creating a workspace** makes you its **owner** — subject to
   `login_gate.can_create_workspace`: an *invite-admitted* user holding no membership may
   not, or invite-admission would become transitively delegable (create a workspace, mint

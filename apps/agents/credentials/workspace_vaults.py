@@ -20,7 +20,7 @@ A vault attached to a cloud runner holds that box's own Claude credentials (spec
 2026-10-23-runner-claude-credentials-in-the-vault-design.md): the box opens it with its
 own device key, through `GET /api/harness/runners/{id}/credential/resolve`. Several
 runners may share one vault only inside one **isolation boundary** (`isolation_boundary`):
-the same owner, the same isolation unit, the same sensitive-data standing.
+the same owner, serving the same tree or agent, the same sensitive-data standing.
 """
 from __future__ import annotations
 
@@ -100,7 +100,7 @@ def _check_runner(vault: Vault, runner: Runner, allowed: set) -> None:
         if other.pk != runner.pk and isolation_boundary(other) != mine:
             raise ZkError(422, "vault_crosses_isolation",
                           f"{runner.name} and {other.name} are not in one isolation boundary (same "
-                          "owner, same unit, same sensitive-data standing), so they cannot share a vault")
+                          "owner, same tree or agent served, same sensitive-data standing), so they cannot share a vault")
 
 
 def detach(vault: Vault, attachment_id: int) -> bool:
@@ -116,9 +116,10 @@ def attached_agents(vault: Vault) -> list[Agent]:
 # ---- serving a runner -------------------------------------------------------------------
 
 def isolation_boundary(runner: Runner) -> tuple:
-    """What a runner may share a vault only inside: its owner, its isolation unit (an
-    agent unit's agent, a tree unit's root, or — a box that declares no unit — the trees
-    it is enrolled in, kept apart from declared units), and whether it is a sensitive-data
+    """What a runner may share a vault only inside: its owner, what it serves (the
+    agent of a runner that runs one agent, the root of a runner that serves a tree, or —
+    a runner that declares neither — the trees it is enrolled in, kept apart from
+    declared ones), and whether it is a sensitive-data
     box. A box holds every value in every vault it opens, so two boxes share one only
     when either could already have held the other's work."""
     unit = runner.unit()
@@ -140,7 +141,7 @@ def attached_runners(vault: Vault) -> list[Runner]:
 
 def serving_runners(vault: Vault) -> list[Runner]:
     """The attached runners the vault actually serves: those still inside the boundary
-    of its FIRST attached runner. A box whose unit, owner or standing changed after it
+    of its FIRST attached runner. A runner whose tree or agent, owner or standing changed after it
     was attached falls out until it is
     detached or put back: its copy of the key is then handed out to nobody."""
     runners = attached_runners(vault)

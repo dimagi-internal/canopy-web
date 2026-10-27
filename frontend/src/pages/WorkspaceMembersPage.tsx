@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { copyText } from 'canopy-ui/lib'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from 'canopy-ui/ui'
 import { WorkbenchSubHeader } from 'canopy-ui'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
@@ -24,6 +24,7 @@ import {
 import { SystemAccountsSection } from '@/components/people/SystemAccountsSection'
 import { AddPersonForm, PeopleTable, type PersonRow } from '@/components/people/PeopleTable'
 import { roleOptions } from '@/components/people/roles'
+import { scopedPath } from '@/lib/scopedLinks'
 import { grantableRoles, mayManageMember, roleAllows } from '@/lib/workspaceRoles'
 import { emailOutcomeText, inviteExpiryLabel, isInviteOutstanding, isInvitePending, type EmailStatus } from './workspaceInvites'
 
@@ -217,7 +218,18 @@ export function WorkspaceMembersPage(): JSX.Element | null {
       {rowError && <div className="mb-4 text-sm text-destructive">{rowError}</div>}
 
       <div className="mb-8">
-        <WorkbenchSubHeader title="Members" count={people?.length} />
+        <WorkbenchSubHeader
+          title="Members"
+          count={people?.length}
+          action={
+            <Link
+              to={scopedPath(slug, '/settings/member-tree')}
+              className="text-[13px] text-primary hover:underline"
+            >
+              Members across workspaces
+            </Link>
+          }
+        />
         {people === null ? (
           <div className="h-24 animate-pulse rounded-lg bg-muted" />
         ) : (
@@ -231,6 +243,7 @@ export function WorkspaceMembersPage(): JSX.Element | null {
               return {
                 key: m.user_id,
                 name: m.email,
+                href: scopedPath(slug, `/members/${m.user_id}`),
                 role: m.role,
                 options: roleOptions(grantable),
                 editable: manageable,

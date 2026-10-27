@@ -101,7 +101,7 @@ export function RunnerPage(): JSX.Element {
       title={<span className="font-mono">{runner.name}</span>}
       context="Runner"
       status={<span className={`rounded px-1.5 py-0.5 text-[11px] ${badge.cls}`} data-testid="runner-page-status">{badge.text}</span>}
-      subtitle={`${runner.kind === 'cloud' ? 'A cloud box' : 'A computer'} owned by ${runner.owner_email ?? 'no one'}, in ${runner.workspace ?? 'no workspace'}.`}
+      subtitle={`A runner on ${runner.machine ? `the machine ${runner.machine}` : runner.kind === 'cloud' ? 'a cloud machine' : 'a computer'}, owned by ${runner.owner_email ?? 'no one'}, in ${runner.workspace ?? 'no workspace'}.`}
       actions={<>
         <Link to={`/supervisor?tab=runners`} className="text-primary hover:underline">Live status →</Link>
         <Link to={scopedPath(workspace, `/settings/topology?runner=${runner.id}`)} className="text-primary hover:underline">

@@ -1,4 +1,4 @@
-"""The egress lock (`RUNNER_EGRESS=locked`): a unit reaches the network only through
+"""The egress lock (`RUNNER_EGRESS=locked`): a runner reaches the network only through
 the local CONNECT proxy, to an allowlist of hosts; root's CANOPY-EGRESS chain rejects
 the rest, DNS included. A runner setting of its own — any box may lock — which
 sensitive-data mode requires.
@@ -83,7 +83,7 @@ def test_locked_each_unit_may_send_only_on_loopback_and_not_dns(cloud_runner, mo
     own = ["-m", "owner", "--uid-owner", "1001"]
     assert rules[:5] == [[*own, "-o", "lo", "-p", "udp", "--dport", "53", "-j", "REJECT"],
                          [*own, "-o", "lo", "-p", "tcp", "--dport", "53", "-j", "REJECT"],
-                         # not the other unit's proxy: that is the other unit's allowlist
+                         # not the other runner's proxy: that is the other runner's allowlist
                          [*own, "-o", "lo", "-p", "tcp", "--dport", "21002", "-j", "REJECT"],
                          [*own, "-o", "lo", "-j", "RETURN"],
                          [*own, "-j", "REJECT"]]
@@ -339,7 +339,7 @@ def test_the_allowlist_is_read_per_connection(cloud_runner, tmp_path):
     assert first.startswith(b"HTTP/1.1 403") and second.startswith(b"HTTP/1.1 403")
 
 
-# ---- the unit's own check, and sensitive-data mode -------------------------------------------
+# ---- the runner's own check, and sensitive-data mode -----------------------------------------
 
 @pytest.fixture()
 def locked(load_cloud_runner, monkeypatch):

@@ -309,10 +309,21 @@ jobs:
       - name: Smoke test (install /UPDATE, exercise, uninstall)
         run: ./runner/packaging/smoke/smoke-windows.ps1 -Dist "$env:RUNNER_TEMP\dist"
 
+  # ONE publish job for both platforms, each gated on its own smoke test: a macOS
+  # failure must not hold back the Windows build, nor the reverse. Not two jobs: a
+  # release is one manifest.json per sha, written once (If-None-Match), so two
+  # publishers would race for it and the loser's platform would never be listed.
+  # A platform that failed is left out of that sha's manifest (manifest.py
+  # --allow-partial) and canopy-web serves no download for it at that sha; the next
+  # runner commit publishes both again. Re-running only the failed platform's jobs
+  # cannot add it to an already-published sha (the first existing object stops the
+  # upload) — dispatch with force=true for that.
   publish:
     name: Publish to S3
     needs: [resolve, build-macos, build-windows, smoke-macos, smoke-windows]
-    if: needs.resolve.outputs.publish == 'true'
+    if: >-
+      ${{ !cancelled() && needs.resolve.outputs.publish == 'true'
+      && (needs.smoke-macos.result == 'success' || needs.smoke-windows.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -326,19 +337,35 @@ jobs:
     env:
       SHA: ${{ needs.resolve.outputs.sha }}
       FORCE: ${{ inputs.force == true && 'true' || 'false' }}
+      MACOS_OK: ${{ needs.smoke-macos.result == 'success' }}
+      WINDOWS_OK: ${{ needs.smoke-windows.result == 'success' }}
     steps:
       - uses: actions/checkout@v7
+      # Only what passed its smoke test is downloaded, so only that is uploaded.
       - uses: actions/download-artifact@v8
+        if: env.MACOS_OK == 'true'
         with:
-          pattern: runner-*
+          pattern: runner-macos-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        if: env.WINDOWS_OK == 'true'
+        with:
+          pattern: runner-windows-*
           path: dist
           merge-multiple: true
       - name: Assemble manifest.json
         run: |
+          partial=()
+          if [ "$MACOS_OK" != true ] || [ "$WINDOWS_OK" != true ]; then
+            partial=(--allow-partial)
+            [ "$MACOS_OK" = true ] || echo "::warning::macOS failed its build or smoke test — publishing $SHA WITHOUT macOS."
+            [ "$WINDOWS_OK" = true ] || echo "::warning::Windows failed its build or smoke test — publishing $SHA WITHOUT Windows."
+          fi
           python3 runner/packaging/manifest.py assemble --sha "$SHA" \
             --committed-at "${{ needs.resolve.outputs.committed_at }}" \
             --built-at "${{ needs.resolve.outputs.built_at }}" \
-            --records dist --out manifest.json
+            --records dist --out manifest.json "${partial[@]}"
           ls -l dist
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -347,6 +374,7 @@ jobs:
       - name: Upload artifacts, then manifest.json
         run: |
           set -uo pipefail
+          shopt -s nullglob  # a platform left out has no files to match
           prefix="$RELEASES_PREFIX/$SHA"
           # The deploy role may only PutObject under runner-releases/ — no read, no
           # list (deploy/aws/deploy_roles.py) — so "already published?" is asked with

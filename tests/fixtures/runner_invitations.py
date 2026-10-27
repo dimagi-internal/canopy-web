@@ -1,6 +1,6 @@
 """Cloud-runner pairing invitations: an org (`make_org`), an approved invitation, and a box
 pairing by its instance role with a signed proof. Plain helpers, shared by the
-invitation and isolation-unit suites.
+invitation and several-runners-on-one-machine suites.
 """
 from __future__ import annotations
 

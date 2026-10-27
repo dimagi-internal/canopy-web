@@ -401,3 +401,135 @@ def test_a_reader_that_fails_says_so():
     with pytest.raises(Exception) as err:
         pending.result(timeout=5)
     assert "the reader failed: UnicodeDecodeError" in str(err.value)
+
+
+def _windows_locale(monkeypatch):
+    """Make every text open() that names no encoding use cp1252, as on Windows."""
+    import builtins
+    import pathlib
+
+    real_open, real_read, real_write = builtins.open, pathlib.Path.read_text, pathlib.Path.write_text
+
+    def open_(file, mode="r", *a, **kw):
+        if "b" not in mode and kw.get("encoding") is None and len(a) < 3:
+            kw["encoding"] = "cp1252"
+        return real_open(file, mode, *a, **kw)
+
+    monkeypatch.setattr(builtins, "open", open_)
+    monkeypatch.setattr(pathlib.Path, "read_text",
+                        lambda self, encoding=None, errors=None, **kw:
+                        real_read(self, encoding=encoding or "cp1252", errors=errors, **kw))
+    monkeypatch.setattr(pathlib.Path, "write_text",
+                        lambda self, data, encoding=None, errors=None, newline=None, **kw:
+                        real_write(self, data, encoding=encoding or "cp1252", errors=errors,
+                                   newline=newline, **kw))
+
+
+def test_the_agents_own_file_reads_and_writes_are_utf8_on_windows(tmp_path, monkeypatch):
+    """The adapter sends the agent's Read/Write through these handlers. Under the
+    Windows default (cp1252) a curly quote garbled on read and an arrow or emoji
+    refused to write; writes also turned \\n into \\r\\n."""
+    import io
+
+    from canopy_acp.client import AcpConnection
+
+    _windows_locale(monkeypatch)
+    agent = AcpConnection(write_to=io.StringIO(), read_from=io.StringIO(), fs_root=tmp_path)
+    text = "a “quoted” note → done ✓ 🎉\nsecond line\n"
+    agent._write_file({"path": str(tmp_path / "notes.md"), "content": text})
+    assert (tmp_path / "notes.md").read_bytes() == text.encode("utf-8")
+    assert agent._read_file({"path": str(tmp_path / "notes.md")}) == text
+
+
+def test_the_session_root_is_a_path_not_a_string_prefix(tmp_path):
+    import io
+
+    from canopy_acp.client import AcpConnection
+
+    root = tmp_path / "wt"
+    root.mkdir()
+    (tmp_path / "wt2").mkdir()
+    agent = AcpConnection(write_to=io.StringIO(), read_from=io.StringIO(), fs_root=root)
+    with pytest.raises(PermissionError):
+        agent._resolve_path({"path": str(tmp_path / "wt2" / "x.txt")})
+    assert agent._resolve_path({"path": str(root / "x.txt")}) == (root / "x.txt").resolve()
+
+
+class _FakeProc:
+    """An adapter process as close() sees it: `exits_after` waits before it is gone
+    (None: never on its own)."""
+
+    def __init__(self, exits_after=None, code=0):
+        self.pid, self.code, self.waits, self.exits_after = 4242, code, 0, exits_after
+        self.terminated = self.killed = False
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        import subprocess
+        self.waits += 1
+        if self.exits_after is not None and self.waits >= self.exits_after:
+            return self.code
+        raise subprocess.TimeoutExpired("adapter", timeout)
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+def _windows_agent(monkeypatch, tmp_path, proc):
+    from types import SimpleNamespace
+
+    from canopy_acp import client
+
+    agent = client.AcpAgent(cwd=tmp_path, argv=["adapter"])
+    agent.proc = proc
+    monkeypatch.setattr(client, "os", SimpleNamespace(name="nt"))
+    killed = []
+    monkeypatch.setattr(client, "_kill_tree", killed.append)
+    return agent, killed
+
+
+def test_windows_close_kills_the_adapters_whole_tree(monkeypatch, tmp_path):
+    """terminate() on Windows ends node alone (cmd.exe alone, for a .cmd shim): the
+    claude.exe it started lived on, wait_released timed out, and the next turn
+    resumed the session beside a live process, forking its transcript."""
+    proc = _FakeProc(exits_after=2)  # gone once its tree is killed
+    agent, killed = _windows_agent(monkeypatch, tmp_path, proc)
+    agent.close(grace=0.01)
+    assert killed == [4242]
+    assert not proc.terminated and not proc.killed
+
+
+def test_windows_close_lets_a_healthy_adapter_exit_on_its_own(monkeypatch, tmp_path):
+    proc = _FakeProc(exits_after=1)
+    agent, killed = _windows_agent(monkeypatch, tmp_path, proc)
+    agent.close(grace=0.01)
+    assert killed == [] and not proc.terminated
+
+
+def test_kill_tree_is_taskkill_with_no_window(monkeypatch):
+    from canopy_acp import client
+
+    seen = []
+    monkeypatch.setattr(client.subprocess, "run", lambda argv, **kw: seen.append((argv, kw)))
+    client._kill_tree(4242)
+    (argv, kw), = seen
+    assert argv == ["taskkill", "/T", "/F", "/PID", "4242"]
+    assert kw["creationflags"] == 0x08000000
+
+
+@pytest.mark.parametrize("code,words", [(3221225786, "console was closed"),
+                                        (3221225477, "ACCESS_VIOLATION")])
+def test_a_windows_crash_code_is_said_in_words(tmp_path, code, words):
+    """Windows exit codes are unsigned NTSTATUS values: "exit code 3221225786" says
+    nothing to whoever reads the note."""
+    from canopy_acp.client import AcpAgent
+
+    agent = AcpAgent(cwd=tmp_path, argv=["adapter"])
+    agent.proc = _FakeProc(exits_after=1, code=code)
+    report = agent.exit_report()
+    assert f"exit code {code}" in report and words in report

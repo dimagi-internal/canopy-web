@@ -1,0 +1,156 @@
+name: Runner on Windows
+
+# The canopy runner on a real Windows VM: its unit suites, and the installer's whole
+# life (install, setup, run, update over the running copy, uninstall). Every other
+# runner check runs on Linux, where `platform_jobs.is_windows()` is False and none of
+# the Windows code paths execute.
+#
+# WHEN IT RUNS — only when Windows-relevant code changes, plus nightly (owner's call):
+# not on every PR, not in the merge queue, and NOT a required check. It informs; it
+# does not block a merge. A red nightly is a finding to fix, not a gate.
+#
+# KEEPING THE PATHS LIST HONEST: it names the code that has a Windows branch.
+# When you add one (is_windows(), os.name == "nt", sys.platform == "win32",
+# platform.system() == "Windows", winreg, schtasks, ncrypt, CREATE_NO_WINDOW /
+# platform_jobs.no_window(), a .ps1 or the .iss), add that file here. To re-derive:
+#   git grep -lE 'is_windows\(|platform_jobs\.|_platform\.system|os\.name == .nt.|sys\.platform == .win32.|winreg|schtasks|ncrypt|"Windows"' \
+#     -- runner/canopy_runner/canopy_runner runner/canopy_acp packages
+# main.py is deliberately left out (its Windows bits are console/log plumbing, and it
+# changes with nearly every runner PR); the nightly covers it.
+# The nightly run catches whatever the list misses.
+
+on:
+  schedule:
+    # 06:17 UTC: night in the Americas, early morning in Europe/Africa; off the hour
+    # (GitHub drops scheduled runs at :00 under load).
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths: &windows_paths
+      - '.github/workflows/runner-windows.yml'
+      - 'runner/packaging/windows/**'
+      - 'runner/packaging/smoke/*windows*'
+      - 'runner/packaging/build_payload.py'
+      - 'runner/packaging/versions.json'
+      - 'runner/canopy_runner/scripts/*.ps1'
+      - 'runner/canopy_runner/canopy_runner/platform_jobs.py'
+      - 'runner/canopy_runner/canopy_runner/setup_cmd.py'
+      - 'runner/canopy_runner/canopy_runner/self_update.py'
+      - 'runner/canopy_runner/canopy_runner/update.py'
+      - 'runner/canopy_runner/canopy_runner/bundle.py'
+      - 'runner/canopy_runner/canopy_runner/device_proof*.py'
+      - 'runner/canopy_runner/canopy_runner/desktop.py'
+      - 'runner/canopy_runner/canopy_runner/dialog.py'
+      - 'runner/canopy_runner/canopy_runner/browser_pair.py'
+      - 'runner/canopy_runner/canopy_runner/pair.py'
+      - 'runner/canopy_runner/canopy_runner/cli_extras.py'
+      - 'runner/canopy_runner/canopy_runner/upgrade_check.py'
+      - 'runner/canopy_runner/canopy_runner/native_permissions.py'
+      - 'runner/canopy_runner/canopy_runner/cdp_control.py'
+      - 'runner/canopy_acp/canopy_acp/**'
+  push:
+    branches: [main]
+    paths: *windows_paths
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: Runner unit tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      # Both steps run even when the first fails: each suite is its own finding.
+      - name: canopy_runner tests
+        if: ${{ !cancelled() }}
+        working-directory: runner/canopy_runner
+        run: uv run --with pytest --with pytest-timeout --with pytest-reportlog pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15 --report-log "$env:RUNNER_TEMP\reportlog-$(Split-Path -Leaf $PWD).jsonl"
+      - name: canopy_acp tests
+        if: ${{ !cancelled() }}
+        working-directory: runner/canopy_acp
+        run: uv run --with pytest --with pytest-timeout --with pytest-reportlog pytest -v -rfEsx --timeout 120 --timeout-method thread --durations 15 --report-log "$env:RUNNER_TEMP\reportlog-$(Split-Path -Leaf $PWD).jsonl"
+
+      # Written test by test, so a suite killed by a hang still says what failed and why.
+      - name: Keep the per-test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: runner-windows-unit-reportlog
+          path: ${{ runner.temp }}/reportlog-*.jsonl
+          if-no-files-found: warn
+          retention-days: 14
+
+  lifecycle:
+    name: Installer lifecycle (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # build_payload.py names the release by `git log -1 -- <runner paths>`.
+          fetch-depth: 0
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # Built exactly as runner-release.yml's build-windows builds it (same two
+      # scripts), unsigned.
+      - name: Build the runtime payload
+        run: |
+          uv run --no-project --python 3.12 python runner/packaging/build_payload.py `
+            --platform windows-x86_64 --out "$env:RUNNER_TEMP\payload" --cache "$env:RUNNER_TEMP\cache"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Three versions of one payload: A is the real sha; B and C are re-stamped
+      # (release.json's sha is what the installer's versions\<sha12>, current-version.txt
+      # and self_update.install_windows key on).
+      - name: Build installers A, B and C
+        run: |
+          $payload = "$env:RUNNER_TEMP\payload"
+          $rel = Join-Path $payload 'release.json'
+          $real = (Get-Content $rel -Raw | ConvertFrom-Json).sha
+          $shas = [ordered]@{ A = $real; B = ('b' * 40); C = ('c' * 40) }
+          foreach ($k in $shas.Keys) {
+            $j = Get-Content $rel -Raw | ConvertFrom-Json
+            $j.sha = $shas[$k]
+            [IO.File]::WriteAllText($rel, ($j | ConvertTo-Json) + "`n")
+            $out = "$env:RUNNER_TEMP\dist-$k"
+            ./runner/packaging/windows/build_installer.ps1 -Payload $payload -OutDir $out
+            $exe = Join-Path $out 'Canopy-Runner-Setup-windows-x86_64.exe'
+            uv run --no-project --python 3.12 python runner/packaging/manifest.py record `
+              --platform windows-x86_64 --sha $shas[$k] --installer $exe --update $exe `
+              --out (Join-Path $out 'windows-x86_64.json')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Lifecycle (install, setup, run, update x2, uninstall)
+        run: |
+          ./runner/packaging/smoke/lifecycle-windows.ps1 `
+            -DistA "$env:RUNNER_TEMP\dist-A" -DistB "$env:RUNNER_TEMP\dist-B" -DistC "$env:RUNNER_TEMP\dist-C"
+
+      - name: Keep the logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: runner-windows-lifecycle-logs
+          path: |
+            ${{ runner.temp }}/lifecycle-logs/
+          if-no-files-found: warn
+          retention-days: 14

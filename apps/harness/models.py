@@ -86,6 +86,11 @@ class Runner(models.Model):
         help_text="The agent engine this runner drives (not assumed to be emdash).",
     )
     capabilities = models.JSONField(default=dict, help_text='e.g. {"agents": ["echo"]}')
+    # The operating system the box said it runs when it paired from the browser
+    # (`RunnerPairing.PLATFORMS`), refreshed by every pairing that reconnects it; ""
+    # when it never said (a PAT pairing, a cloud box). Self-reported and trusted for
+    # nothing but wording: a remedy names the fix that exists on that OS.
+    platform = models.CharField(max_length=10, blank=True, default="", db_default="")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=DISCONNECTED)
     status_note = models.CharField(max_length=255, blank=True, default="")
     # Can this runner actually FIRE a turn right now — distinct from being online.
@@ -311,8 +316,7 @@ class Runner(models.Model):
     meta = models.JSONField(default=dict, blank=True)
     # The MACHINE this runner is on: the canonical IAM role ARN its box proved
     # (`services.set_runner_machine`, from an approved aws-iam device key and from
-    # pairing by role). Several runners — one per isolation unit — share a box,
-    # and so share this. "" = not known (a laptop, or a box that never proved a
+    # pairing by role). Several runners can share a machine, and so share this. "" = not known (a laptop, or a box that never proved a
     # role). Read by `routing.unit_refusal` and the topology's grouping; never a
     # grant on its own.
     machine_id = models.CharField(max_length=300, blank=True, default="", db_index=True)
@@ -326,7 +330,7 @@ class Runner(models.Model):
     #: they reach it (an assignment, an inherited order, a pin). Empty = no
     #: restriction. Set by a person on the runner page, never reported by the box,
     #: and it only ever narrows what the box takes — the person-set counterpart of a
-    #: box's own agent unit (`unit()`); both apply when both are set
+    #: box declaring it runs one agent (`unit()`); both apply when both are set
     #: (`routing.dedicated_agent_slugs`).
     only_agents = models.ManyToManyField("agents.Agent", blank=True, related_name="dedicated_runners")
     #: Directed only: the box takes only what is PUT on it (`directed_only`). A
@@ -377,8 +381,15 @@ class Runner(models.Model):
             setattr(self, self.ONLY_AGENTS_CACHE, cached)
         return cached
 
+    def machine_name(self) -> str:
+        """The machine this runner is on, as a person reads it: the instance role's
+        name without its account or the generated `-RunnerRole-…` suffix — the
+        stack's name (canopy-cloud-runner-2). "" when not known (a laptop)."""
+        role = self.machine_id.rsplit("/", 1)[-1] if self.machine_id else ""
+        return role.split("-RunnerRole", 1)[0]
+
     def unit(self) -> dict:
-        """The isolation unit this runner says it is (`capabilities.unit`):
+        """What this runner says it serves (`capabilities.unit`):
         `{"kind": "tree", "root": <slug>}` or `{"kind": "agent", "slug": <slug>}`;
         {} for a runner that declares none. Box-declared, and only ever a
         restriction on what the box takes (`routing.unit_refusal`)."""
@@ -539,6 +550,13 @@ class Runner(models.Model):
             return ("Claude Code on that machine has no sign-in. Run `claude` there and "
                     "`/login`; the runner takes turns again once Claude answers.")
         if "CDP unreachable" in note:
+            if self.platform == "windows":
+                # No "Emdash CDP" launcher exists on Windows (it is an AppleScript app).
+                return ("Emdash is running without its debug port, and Windows has no "
+                        '"Emdash CDP" launcher to reopen it with one. Switch this runner '
+                        "to Claude CLI (its page → Settings → Session runtime → Claude CLI), "
+                        "or quit Emdash and start it with --remote-debugging-port=<the "
+                        "cdp_port in its runner.json>.")
             return ('Emdash is running without its debug port. On that machine, open '
                     '"Emdash CDP" (Spotlight), which reopens Emdash with it.')
         return ""
@@ -2245,8 +2263,8 @@ class RunnerInvitation(models.Model):
     #: The box's zero-knowledge ECDH public key (the `<stack>-ecdh` KMS key), when
     #: `up.sh` could read it: one approval covers both. {} when none.
     ecdh_public_jwk = models.JSONField(default=dict, blank=True)
-    #: The isolation units the box will pair as, one runner each
-    #: (`docs/architecture/runners.md § Isolation units`): `[{name, workspace, kind, slug,
+    #: The runners the machine will pair as
+    #: (`docs/architecture/runners.md § Several runners on one machine`): `[{name, workspace, kind, slug,
     #: ecdh_public_jwk, runner_id}]`. `kind` is "tree" or "agent" (`slug` names the
     #: agent). Empty for a single-runner invitation, which pairs as `name` in
     #: `workspace` by its instance role (`units_of`). `runner_id` is filled in when
@@ -2423,6 +2441,8 @@ class RunnerPairing(models.Model):
     hostname = models.CharField(max_length=100, blank=True, default="")
     account = models.CharField(max_length=100, blank=True, default="")
     platform = models.CharField(max_length=10)
+    #: The runner it makes drives emdash (else Claude CLI): an emdash the box can
+    #: actually drive, as `api_runner_pairings.drives_emdash` decides it.
     has_emdash = models.BooleanField(default=False)
     redirect_port = models.PositiveIntegerField()
     created_at = models.DateTimeField(default=timezone.now)

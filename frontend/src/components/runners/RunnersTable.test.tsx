@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// A cloud box runs one runner per isolation unit; the table says which unit each
+// A machine can run several runners; the table says what each serves
 // row is and, when a machine runs several, which machine they share.
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
@@ -22,8 +22,8 @@ function row(name: string, over: Partial<TopologyRunnerOut> = {}): TopologyRunne
 
 afterEach(cleanup)
 
-describe('RunnersTable units', () => {
-  it('names the unit, and the machine only when it runs several', () => {
+describe('RunnersTable runners on one machine', () => {
+  it('says what each serves, and the machine only when it runs several', () => {
     render(
       <MemoryRouter>
         <RunnersTable workspace="dimagi" runners={[
@@ -35,7 +35,7 @@ describe('RunnersTable units', () => {
       </MemoryRouter>,
     )
     const cell = (name: string) => within(document.querySelector(`[data-runner="${name}"]`) as HTMLElement)
-    expect(cell('cloud-ec2-2-agent-eva').getByTestId('runner-unit').textContent).toBe('· unit agent:eva')
+    expect(cell('cloud-ec2-2-agent-eva').getByTestId('runner-unit').textContent).toBe('· only agent eva')
     expect(cell('cloud-ec2-2-dimagi').getByTestId('runner-machine').textContent).toBe('· on ec2-2-role')
     expect(cell('cloud-ec2-9').queryByTestId('runner-machine')).toBeNull()
     expect(cell('jj-mbp').queryByTestId('runner-unit')).toBeNull()

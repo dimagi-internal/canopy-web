@@ -126,9 +126,9 @@ def _runners_for_routing(request: HttpRequest, agent, ids, already) -> dict:
 
 
 def _refuse_other_units(agent, runners) -> None:
-    """422 naming every runner whose isolation unit keeps it from this agent
-    (`routing.unit_refusal`): an agent unit runs only its own agent, and an agent
-    with a unit of its own runs on no other runner of that machine. The claim
+    """422 naming every runner kept from this agent by what it serves
+    (`routing.unit_refusal`): an agent's runner runs only its own agent, and an agent
+    with a runner of its own runs on no other runner of that machine. The claim
     refuses them anyway; refusing the write says so while someone is looking."""
 
     said = sorted({why for why in (unit_refusal(r, agent.slug) for r in runners) if why})

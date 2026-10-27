@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.agents.models import Agent
@@ -33,6 +33,10 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
     """The dispatch row this close-out belongs to, or None to create a fresh one.
 
     Match order, most specific first:
+      0. turn_id — the agent names the turn it is closing. A runner that reuses one
+         live Claude session for a second turn on the same thread hands both turns
+         the same cli_session_id, so (1) alone pinned every later close onto the
+         first turn's row. An id that is not this agent's turn falls through.
       1. cli_session_id — a turn already reported from this Claude session (re-run
          of the close-out). Also what the unique constraint keys on.
       2. session_key — the runner stamped the emdash session it created; the
@@ -52,6 +56,14 @@ def _claim_dispatch_row(agent: Agent, data) -> Turn | None:
     merge exists to end. The `reported_at__isnull=True` filter is what keeps an
     older turn from being claimed twice.
     """
+    turn_id = getattr(data, "turn_id", None)
+    if turn_id:
+        # A turn delivered into a live chat session is a CHAT turn (target is the
+        # session, `agent` is null), so look through the session to its agent too.
+        named = (Turn.objects.filter(pk=turn_id)
+                 .filter(Q(agent=agent) | Q(chat_session__agent=agent)).first())
+        if named is not None:
+            return named
     if data.cli_session_id:
         existing = agent.turns.filter(cli_session_id=data.cli_session_id).first()
         if existing is not None:
@@ -90,6 +102,10 @@ def upsert_turn(agent: Agent, data, initiator=None) -> Turn:
     extra_ref = dict(getattr(data, "origin_ref", None) or {})
     turn = _claim_dispatch_row(agent, data)
     if turn is not None:
+        # cli_session_id is unique per agent: a second turn closed from the same
+        # reused session keeps its own (usually blank) id rather than colliding.
+        if agent.turns.filter(cli_session_id=data.cli_session_id).exclude(pk=turn.pk).exists():
+            fields.pop("cli_session_id")
         if sensitivity.is_sensitive(turn):
             # A report is the agent's words about what it read: a sensitive turn
             # keeps that there was one, never what it says.

@@ -22,7 +22,7 @@ wire.
 ## Files
 - `runner.cfn.yaml` — the whole stack (instance + SG + IAM role + key pair + cloud-init).
 - `cloud_runner.py` — the self-contained (stdlib-only) runner. `up.sh` publishes it to Secrets Manager as the first-boot seed (`seed.py`: a manifest + parts); after that the box updates itself from git (see "Updating the runner code" below).
-- `kms_broker.py` — the root-owned broker that derives with each isolation unit's own KMS ECDH key, for that unit's uid only (stdlib-only; see "Isolation units").
+- `kms_broker.py` — the root-owned broker that derives with each runner's own KMS ECDH key, for that runner's uid only (stdlib-only; see "Several runners on one machine").
 - `_lib.sh` — what the three lifecycle scripts must agree on: the runner-name → stack mapping and the seed's secret names.
 - `seed.py` — builds the first-boot seed (manifest + ≤60 KB parts, sha256-checked on the box).
 - `prune_caches.py` — bootstrap step 4b: drops plugin-cache versions nothing has installed, and npm/uv download caches.
@@ -510,7 +510,7 @@ The imported file is never left on disk (`shred -u`, falling back to `rm -f`).
 ## Secrets (in Secrets Manager, under `canopy/cloud-runner/`)
 - `canopy/cloud-runner/canopy-pat` — **no longer needed by a new box.** A new stack sets `CanopyTokenSecret=''`, so the box holds no PAT and pairs by invitation (below); `up.sh` neither checks nor reads it. A stack made before that keeps its `CanopyTokenSecret` on update, and its box (already paired, keyless) does not need the PAT either; the boot script tolerates a named secret that is gone. So the secret can be deleted once no stack reads it — a **human AWS step after the deploy** (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/canopy-pat`), not done by any script.
 - ~~`canopy/cloud-runner/claude-oauth-token`~~ — **gone.** A box's Claude credentials live only in its vault; nothing reads this secret, and it can be deleted (`aws --profile labs secretsmanager delete-secret --secret-id canopy/cloud-runner/claude-oauth-token`).
-- `canopy/cloud-runner/gog-keyring-password` — read only by a box built before isolation units. A box of units derives each agent's keyring password from its unit's own secret; `up.sh` no longer requires this one. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh).
+- `canopy/cloud-runner/gog-keyring-password` — read only by a box built before it ran several runners. A box of several runners derives each agent's keyring password from its runner's own secret; `up.sh` no longer requires this one. **Do not copy ace-web's live OAuth blob** — its refresh tokens rotate on every use, so a second consumer gets invalidated (verified: it 401s / can't refresh).
 - ~~`canopy/cloud-runner/op-service-account-token`~~ — **gone.** `wire.sh` no longer reads it, the credential bundle no longer carries it, and `RunnerCredential` no longer stores it. A box-wide 1Password key lived in the runner's environment, which every turn inherits: one credential that reads EVERY agent's vault, handed to each of them. Agent secrets are read with the per-agent and per-tenant keys canopy-web issues (see "Where secrets live"). The Secrets Manager entry can be deleted; nothing reads it.
 
 `up.sh` publishes the first-boot seed itself (`seed.py`), not staged by hand:
@@ -566,8 +566,8 @@ Anything else: `EXTRA_PARAMS='Key=Val Key=Val' ./up.sh`:
 `InstanceType` (t3.medium), `CanopyBaseUrl`, `RunnerProjects`, `RunnerAgents`,
 `AgentSlugs` (`ace,ada,echo,eva,hal` — which agents `bootstrap_agents.sh`
 provisions; distinct from `RunnerAgents`, which is which agents this runner may
-CLAIM turns for), `RunnerName`, `VolumeSize`, `RunnerUnits` (`--units`; '' = one unit,
-see "Isolation units"). The template reads no PAT, Claude token or gog password secret:
+CLAIM turns for), `RunnerName`, `VolumeSize`, `RunnerUnits` (`--units`; '' = one runner,
+see "Several runners on one machine"). The template reads no PAT, Claude token or gog password secret:
 a box holds none (`CanopyTokenSecret`, `ClaudeTokenSecret` and `GogKeyringSecret` are
 gone). `SshCidr` is
 set to your IP automatically. Parameters not passed fall back to their defaults on
@@ -603,20 +603,20 @@ installed — 33 canopy, 24 ace, ~9 GB — plus npm/uv caches). Now:
   worktree judged by its HEAD) — which it keeps and names in the **`scratch`** check.
   cloud-ec2-2 reached 100% on 2026-10-19 on exactly this scratch (~3.4 GB of week-old
   agent clones in `/tmp`, 2.1 GB of session worktrees). `DISK_SWEEP=0` turns it off.
-- a unit's sweep reaches only its own files, so the **update timer** (`update_runner.sh`,
-  root on a box of units, every tick) handles what no unit owns:
+- a runner's sweep reaches only its own files, so the **update timer** (`update_runner.sh`,
+  root on a box of several runners, every tick) handles what no runner owns:
   - it installs `/etc/tmpfiles.d/tmp.conf` (`D /tmp 1777 root root 3d`), so
     `systemd-tmpfiles-clean.timer` ages out anything in `/tmp` untouched for 3 days,
     whoever owns it;
-  - on a box of units, it deletes the caches of the user the box ran as before units
-    (`LEGACY_USER`, default `ubuntu`), when that user is not a unit and runs nothing.
+  - on a box of several runners, it deletes the caches of the user the box ran as before
+    (`LEGACY_USER`, default `ubuntu`), when that user is not a runner's and runs nothing.
     The caches are `.claude/plugins/cache`, `.cache/uv`, `.cache/ms-playwright` and
     `.npm/_cacache`; never work, keys or config;
   - at ≥ 80% it measures `/home/*` and `/tmp` into `/opt/canopy-runner/disk-usage.json`,
     and the `disk` check's detail then names the largest.
 
-  cloud-ec2-2 warned at 89% on 2026-10-26 while each unit's sweep freed 0 MB: 35 GB
-  sat in `/home/ubuntu` and 12 GB in `/tmp`, owned by users the units cannot touch.
+  cloud-ec2-2 warned at 89% on 2026-10-26 while each runner's sweep freed 0 MB: 35 GB
+  sat in `/home/ubuntu` and 12 GB in `/tmp`, owned by users the runners cannot touch.
 
 ## Migrating the live stack (`canopy-cloud-runner`, created 2026-09-05)
 The live box keeps working untouched: its baked-in `canopy-fetch-env` reads the
@@ -697,7 +697,7 @@ A box in sensitive-data mode is the only kind canopy routes a sensitive conversa
   counts only. canopy-web refuses the rest too: a session it has no record of is
   not kept, and backfill and reset are refused (409).
 - **The claim log** names who and where a turn came from, never its prompt.
-- **Egress locked** (below): sensitive-data mode locks every unit. A unit whose lock is not
+- **Egress locked** (below): sensitive-data mode locks every runner. A runner whose lock is not
   holding reports `ready: false`.
 - **It says so.** Every heartbeat carries `data_mode` and a config hash (which covers
   the egress setting); canopy counts a person's `sensitive_data` declaration only while
@@ -715,109 +715,109 @@ declares `sensitive_data` on the runner page (passkey).
 
 ## Egress lock: a box that reaches only what it must
 
-A locked isolation unit's processes (its runner, Claude, every tool) get
+A locked runner's processes (the runner itself, Claude, every tool) get
 `HTTPS_PROXY=http://127.0.0.1:<its port>` (`20000 + uid % 10000`) and reach the network
 only through `canopy-egress.service`, a CONNECT-only proxy (`cloud_runner.py
---egress-proxy`, its own system user, one loopback listener per unit) that admits port
+--egress-proxy`, its own system user, one loopback listener per runner) that admits port
 443 to:
 
 - `api.anthropic.com`, canopy-web's host (from `CANOPY_BASE_URL`), and GitHub
   (`github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`,
   `release-assets.githubusercontent.com`) for the runner's code, the plugin and clones;
-- that unit's extra hosts (`host.example.com`, or `.example.com` for every subdomain).
+- that runner's extra hosts (`host.example.com`, or `.example.com` for every subdomain).
 
-Root's iptables chain `CANOPY-EGRESS` rejects everything else a locked unit's uid sends —
-DNS on loopback (a lookup is itself a way out) and the other units' proxy ports
+Root's iptables chain `CANOPY-EGRESS` rejects everything else a locked runner's uid sends —
+DNS on loopback (a lookup is itself a way out) and the other runners' proxy ports
 included — so a tool that ignores the proxy fails instead of getting out. Root and the
-proxy's user are outside the chain; units cannot become either. A refused host is
+proxy's user are outside the chain; runners cannot become either. A refused host is
 logged by name (`journalctl -u canopy-egress`), never content. The proxy narrows hosts,
 not paths.
 
-**Who locks a unit — it only ratchets up:**
+**Who locks a runner — it only ratchets up:**
 
 - **canopy-web** (the usual way): the runner's page, **Egress lock**, or MCP
   `set_runner_egress` / `PUT /api/harness/runners/{id}/egress`, per runner: locked, plus
   extra hosts. Root reads it every minute by the box's instance role
   (`canopy-egress-sync.timer` → `--egress-sync` → `POST /api/harness/runners/box-egress`)
-  — never relayed by a unit, which could otherwise loosen its own lock. If canopy-web
+  — never relayed by a runner, which could otherwise loosen its own lock. If canopy-web
   cannot be read, root keeps the last answer it had.
 - **Sensitive-data mode** (`RunnerDataMode=sensitive_data`, or any non-empty value):
-  every unit is locked, whatever canopy-web says, and canopy-web refuses to unlock a
+  every runner is locked, whatever canopy-web says, and canopy-web refuses to unlock a
   sensitive-data box.
 - **The box's floor**, `RunnerEgress=locked` / `RunnerEgressAllow` in box.env: every
-  unit locked, with those hosts. Only a NEW box gets it from the stack: cloud-init
+  runner locked, with those hosts. Only a NEW box gets it from the stack: cloud-init
   writes box.env's script on an instance's first boot only, so a parameter change does
   not reach a live box — use canopy-web for that.
 
-A lock turning on or off rewrites the unit's env and restarts its runner, so it waits
-until the unit carries no turn; host changes apply at once. `--setup-units` applies it
+A lock turning on or off rewrites the runner's env and restarts it, so it waits
+until the runner carries no turn; host changes apply at once. `--setup-units` applies it
 all at boot, and the auto-updater re-runs it after an update. The runner page's `egress`
-check says whether a locked unit's lock holds: its proxy answers, and a direct
+check says whether a locked runner's lock holds: its proxy answers, and a direct
 connection out is refused.
 
-## Isolation units: one box, many tenants (`RunnerUnits`)
+## Several runners on one machine (`RunnerUnits`)
 
 Spec: `docs/superpowers/specs/2026-10-19-runner-isolation-units-design.md`; the
-canopy-web half is `docs/architecture/runners.md` § "Units on the box".
+canopy-web half is `docs/architecture/runners.md` § "Several runners on one machine".
 
-A box built from this template runs one **isolation unit** per entry of `RunnerUnits`
-(`./up.sh --units tree:dimagi,tree:marshellis,agent:eva`; empty = one unit
-`tree:<RunnerWorkspace>`). Each unit is:
+A box built from this template runs one **runner** per entry of `RunnerUnits`
+(`./up.sh --units tree:dimagi,tree:marshellis,agent:eva`; empty = one runner
+`tree:<RunnerWorkspace>`), each serving one workspace tree or one agent. Each runner has:
 
 | | where |
 |---|---|
-| a Unix user and home (0700) | `cu-<unit>`, `/home/cu-<unit>` (`cu-dimagi`, `cu-agent-eva`) |
-| a runner process and `Runner` row | `canopy-runner@<unit>.service`; named `<box>` for the box's own workspace, else `<box>-<unit>` |
-| its env (no PAT, no Claude token, no gog password) | `/etc/canopy-runner/<unit>.env` (0600, the unit's) |
-| its gog secret (each agent's keyring password is derived from it) | `/etc/canopy-runner/<unit>.gog-secret` (32 bytes, 0400) |
+| a Unix user and home (0700) | `cu-<id>`, `/home/cu-<id>` (`cu-dimagi`, `cu-agent-eva`) |
+| a runner process and `Runner` row | `canopy-runner@<id>.service`; named `<box>` for the box's own workspace, else `<box>-<id>` |
+| its env (no PAT, no Claude token, no gog password) | `/etc/canopy-runner/<id>.env` (0600, the runner user's) |
+| its gog secret (each agent's keyring password is derived from it) | `/etc/canopy-runner/<id>.gog-secret` (32 bytes, 0400) |
 | its per-turn secrets (tmpfs, gone when the turn ends) | `/run/canopy/<uid>/<turn>/env` |
 | its signing key (software, made by the canopy CLI) | `~/.canopy/device-key/` in its home |
-| its zero-knowledge ECDH key | KMS, `<stack>-ecdh` — the box's original key for the box-named unit, `alias/canopy-runner-ecdh/<role>/<unit>` for the others (four slots) |
+| its zero-knowledge ECDH key | KMS, `<stack>-ecdh` — the box's original key for the box-named runner, `alias/canopy-runner-ecdh/<role>/<id>` for the others (four slots) |
 
 Root's parts, all written by `cloud_runner.py --install-units`: `canopy-units.service`
 (every boot: users, env files, secrets, and the iptables rule that rejects IMDS for
-every uid but root's), `canopy-kms-broker.service` (the only thing that uses a unit's
-KMS key, for that unit's uid only), `canopy-pair.service` (pairs every unit in ONE
+every uid but root's), `canopy-kms-broker.service` (the only thing that uses a runner's
+KMS key, for that runner's uid only), `canopy-pair.service` (pairs every runner in ONE
 `pair-by-role` call), and the auto-updater (root: one install, every
-`canopy-runner@*` restarted, deferred while any unit has a turn in flight).
+`canopy-runner@*` restarted, deferred while any runner has a turn in flight).
 `/etc/canopy-runner/box.env` holds the stack's parameters and no secret.
 
 **Pairing takes one passkey touch for the whole box.** `up.sh --units …` makes one
-invitation that lists every unit (the approve page shows them all); `canopy-pair`
-pairs them all once you approve. A replaced instance (same role, same unit names)
-re-attaches every unit with no approval, keeping each runner id and every vault wrap;
+invitation that lists every runner (the approve page shows them all); `canopy-pair`
+pairs them all once you approve. A replaced instance (same role, same runner names)
+re-attaches every runner with no approval, keeping each runner id and every vault wrap;
 each re-key is recorded (`runner.rekeyed`) and mailed to the runner's approvers.
-Adopting a box paired before units always takes an approved invitation. Each unit
-keeps its `-ecdh` key slot across re-runs; `./up.sh … --remove-unit <id>` is the only
-way to drop one, and the key is retained in KMS either way. A NEW unit's zero-knowledge agents need their vault key granted to it once (the
+Adopting a box paired before it ran several runners always takes an approved invitation.
+Each runner keeps its `-ecdh` key slot across re-runs; `./up.sh … --remove-unit <id>` is the only
+way to drop one, and the key is retained in KMS either way. A NEW runner's zero-knowledge agents need their vault key granted to it once (the
 existing "Grant pending" flow on the agent's page).
 
-**Wiring.** The box's own unit: `./wire.sh --name <box>`. Each other unit:
-`./wire.sh --name <box> --unit <unit> [--standby --agents …]`. Each unit gets its
-own vault (`--vault <id>` shares one, only inside the unit's isolation boundary);
-sign it in on that unit's Credentials tab. Nothing is copied between units.
+**Wiring.** The box's own runner: `./wire.sh --name <box>`. Each other runner:
+`./wire.sh --name <box> --unit <id> [--standby --agents …]`. Each runner gets its
+own vault (`--vault <id>` shares one, only inside the runner's isolation boundary);
+sign it in on that runner's Credentials tab. Nothing is copied between runners.
 
-**What a unit does not protect against:** root on the box (trusted), and agents
-inside ONE unit (they share its user; the read rails are defence in depth, the unit
+**What separate runners do not protect against:** root on the box (trusted), and agents
+inside ONE runner (they share its user; the read rails are defence in depth, the runner
 is the boundary).
 
-## Moving a box to units (operator steps — NOT automatic)
+## Moving a machine to several runners (operator steps — NOT automatic)
 
-A box built before units keeps running as it is: one `canopy-runner.service` as
+A box built before it ran several runners keeps running as it is: one `canopy-runner.service` as
 `ubuntu`, its runner id, bindings, wraps and its agents' `~/.<slug>/.env` files. New
 runner code does NOT move its secrets off disk on its own: that is on by default only
-for an isolation unit. To opt a box without units in (canopy CLI >= 0.2.736), add a
+for a runner set up by `--install-units`. To opt an older box in (canopy CLI >= 0.2.736), add a
 systemd drop-in — `systemctl edit canopy-runner` → `Environment=RUNNER_SECRET_FILES=0`
 (runner.env is rewritten on every start, so not there) — and restart; the `secrets`
 health check says which path it is on. Each agent's legacy files are removed only after
 one of its off-disk turns has succeeded. A box paired by invitation never falls back to
 a PAT.
 
-Moving it to units is a deliberate step, **only with Jonathan's approval**, and it
-keeps the runner: the unit of the box's own workspace is named as the box, so
+Moving it to several runners is a deliberate step, **only with Jonathan's approval**, and it
+keeps the runner: the runner of the box's own workspace is named as the box, so
 canopy-web re-attaches the SAME runner (by machine and name) and — only under the
 approved invitation `up.sh --in-place` makes, never on a role proof alone — replaces
-its aws-iam key row in place with the unit's software key — the runner id, its bindings
+its aws-iam key row in place with the runner's software key — the runner id, its bindings
 and every zero-knowledge wrap survive, because its KMS ECDH key is the same key, now
 served by the broker (tests: `tests/test_runner_units_pairing.py::test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps`,
 `runner/ec2/tests/test_isolation_units.py::test_the_live_box_adopts_as_its_default_unit`).
@@ -827,29 +827,29 @@ In place, no instance change (recommended for the live box):
 ```bash
 # 0. the deploy carrying this code is live, and the box has auto-updated to it
 #    (runner page: code current). Wait for an idle moment: in-flight turns are stopped.
-# 1. the unit keys and ONE invitation listing every unit (the runner stack is not touched):
+# 1. the runners' keys and ONE invitation listing every runner (the runner stack is not touched):
 ./up.sh --name cloud-ec2-2 --units tree:dimagi,tree:marshellis,agent:eva --in-place
 #    → approve the printed link with your passkey
 # 2. on the box (SSM, as root) — the command up.sh printed:
 sudo RUNNER_UNITS=tree:dimagi,tree:marshellis,agent:eva python3 /opt/canopy-runner/cloud_runner.py --install-units
 #    stops canopy-runner.service, writes box.env from runner.env's NON-secret keys,
 #    replaces the old canopy-fetch-env (it re-wrote the PAT/Claude token/gog password),
-#    and starts canopy-units, the broker, canopy-pair and one canopy-runner@<unit> each.
+#    and starts canopy-units, the broker, canopy-pair and one canopy-runner@<id> each.
 # 3. watch: journalctl -u canopy-pair -u 'canopy-runner@*' -f
-#    the box-named unit re-attaches (same runner id); the new units pair. As units,
-#    every unit is off disk by default (no RUNNER_SECRET_FILES=0 needed); a drop-in
+#    the box-named runner re-attaches (same runner id); the new runners pair. Set up
+#    this way, every runner is off disk by default (no RUNNER_SECRET_FILES=0 needed); a drop-in
 #    with RUNNER_SECRET_FILES=0 on the old canopy-runner.service no longer applies.
-# 4. ./wire.sh --name cloud-ec2-2 --unit marshellis --standby --agents <…>   (each new unit)
-# 5. grant each zero-knowledge agent's vault key to the unit that now runs it.
+# 4. ./wire.sh --name cloud-ec2-2 --unit marshellis --standby --agents <…>   (each new runner)
+# 5. grant each zero-knowledge agent's vault key to the runner that now runs it.
 ```
 
-What does not carry over to the unit's new home: the `ubuntu` user's local Claude
+What does not carry over to the runner's new home: the `ubuntu` user's local Claude
 transcripts (canopy-web keeps every recorded turn; an old CLI session is not resumed
 locally), its full Claude login (tokens come from the runner page), and its agent
-clones (the unit re-clones). Later, `./up.sh --name cloud-ec2-2 --units … --allow-instance-change`
+clones (the runner re-clones). Later, `./up.sh --name cloud-ec2-2 --units … --allow-instance-change`
 syncs the stack's `RunnerUnits` (a stop/start; cloud-init does not re-run).
 
-A new box takes units from its first boot: `./up.sh --name <box> --workspace <ws> --units …`.
+A new box runs several runners from its first boot: `./up.sh --name <box> --workspace <ws> --units …`.
 
 ## Updating the runner code — it updates itself
 
@@ -979,7 +979,7 @@ aws sso login --profile labs
   - `ScalerPolicy`, which lets canopy-web's task role set this group's desired capacity and protection, nothing else.
 
   The KMS ECDH key is a separate stack, `canopy-fleet-<name>-ecdh` (`ecdh-kms.cfn.yaml`). `up` also publishes the first-boot seed, as `up.sh` does.
-- **Warm pool or from scratch.** A warm-pool instance has already bootstrapped and stopped. It comes into service in a minute or two, and a member that is scaled in goes back there with its clones and caches. `--warm 0` builds every member from scratch, which takes as long as its first bootstrap (up to ~40 min). Either way, the lifecycle hook holds the instance until `cloud_runner.py --fleet-ready` (root, every minute) sees that every unit has bootstrapped this boot. So nothing is stopped half-installed or put in service early.
+- **Warm pool or from scratch.** A warm-pool instance has already bootstrapped and stopped. It comes into service in a minute or two, and a member that is scaled in goes back there with its clones and caches. `--warm 0` builds every member from scratch, which takes as long as its first bootstrap (up to ~40 min). Either way, the lifecycle hook holds the instance until `cloud_runner.py --fleet-ready` (root, every minute) sees that every runner has bootstrapped this boot. So nothing is stopped half-installed or put in service early.
 - **Turns per member** come from the instance type's RAM (one per 1.5 GiB) and are given to canopy-web, so the scaler knows what one more member absorbs.
 - **Knobs** (canopy-web settings): `RUNNER_WAKE_AFTER_S` (60), `RUNNER_IDLE_STOP_S` (1800), `RUNNER_FAILOVER_AFTER_S` (180), `RUNNER_SCALER_TICK_S` (30; 0 = off).
 - A member is reached through SSM (`aws ssm start-session --target <instance>`). Its security group has no ingress.

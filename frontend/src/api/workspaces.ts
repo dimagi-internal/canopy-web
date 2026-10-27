@@ -11,9 +11,14 @@ export type AccessRequestOut = components['schemas']['AccessRequestOut']
 export type ApprovableRole = components['schemas']['AccessRequestApproveIn']['role']
 export type AutoApproveRole = components['schemas']['AccessSettingsIn']['auto_approve_role']
 export type MemberOut = components['schemas']['MemberOut']
+export type MemberProfileOut = components['schemas']['MemberProfileOut']
 export type InviteOut = components['schemas']['InviteOut']
 export type InviteRole = components['schemas']['InviteCreateIn']['role']
 export type MemberRole = components['schemas']['MemberRoleUpdateIn']['role']
+export type MemberTreeOut = components['schemas']['MemberTreeOut']
+export type MemberTreeWorkspaceOut = components['schemas']['MemberTreeWorkspaceOut']
+export type MemberTreePersonOut = components['schemas']['MemberTreePersonOut']
+export type MemberTreeCellOut = components['schemas']['MemberTreeCellOut']
 export type InvitePreviewOut = components['schemas']['InvitePreviewOut']
 export type RetentionOut = components['schemas']['RetentionOut']
 export type RetentionRuleOut = components['schemas']['RetentionRuleOut']
@@ -49,6 +54,35 @@ export async function listMembers(slug: string): Promise<MemberOut[]> {
   })
   ensureOk(res, 'Failed to load members')
   return res.data as unknown as MemberOut[]
+}
+
+/** One member as the caller may see them; `admin` is null below members.manage. */
+export async function getMember(slug: string, userId: number): Promise<MemberProfileOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/members/{user_id}/profile/', {
+    params: { path: { slug, user_id: userId } },
+  })
+  ensureOk(res, 'Failed to load member')
+  return res.data as unknown as MemberProfileOut
+}
+
+/** This workspace and the ones below it the caller is in, with everyone's role in each. */
+export async function getMemberTree(slug: string): Promise<MemberTreeOut> {
+  const res = await apiV2.GET('/api/workspaces/{slug}/member-tree', {
+    params: { path: { slug } },
+  })
+  ensureOk(res, 'Failed to load members across workspaces')
+  return res.data as unknown as MemberTreeOut
+}
+
+/** Add someone already in this workspace's tree directly, at `role` — no invite.
+ *  404 = not in the tree (as you see it); 409 = already a member (use setMemberRole). */
+export async function addTreeMember(slug: string, userId: number, role: MemberRole): Promise<MemberOut> {
+  const res = await apiV2.POST('/api/workspaces/{slug}/members/', {
+    params: { path: { slug } },
+    body: { user_id: userId, role },
+  })
+  ensureOk(res, 'Failed to add member')
+  return res.data as unknown as MemberOut
 }
 
 export async function listWorkspaces(): Promise<WorkspaceOut[]> {

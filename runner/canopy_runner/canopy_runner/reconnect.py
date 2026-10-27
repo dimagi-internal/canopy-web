@@ -10,12 +10,15 @@ names itself (`browser_pair.run_browser_pair(reconnect=True)`). It opens the app
 page on this machine; when the runner's owner approves it (passkey), the runner gets
 this machine's key back — same runner, same settings — runner.json drops the dead
 token, and the runner restarts itself signed in with the key (canopy-web#1705).
-`~/.canopy/pairing.json` carries the code for the menu-bar app meanwhile.
+`~/.canopy/pairing.json` carries the code for the menu-bar app meanwhile. Windows has
+no menu bar showing it, so there a small notice names the code before the browser
+opens — once per code (`notify_code`).
 """
 from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -28,6 +31,39 @@ logger = logging.getLogger(__name__)
 DEAD_AFTER = 3
 #: At most one reconnect attempt this often (a pairing lives 15 minutes).
 RETRY_SECONDS = 30 * 60
+#: The Windows notice closes itself with the pairing it names.
+NOTICE_SECONDS = 15 * 60
+
+# The Windows notice: WScript.Shell.Popup (dialog.py's renderer), OK-only with an info
+# icon (0 + 64), timing out with the pairing. The text arrives on stdin, never
+# interpolated, so nothing in it can break into PowerShell.
+_NOTICE_PS = r"""
+$msg = [Console]::In.ReadToEnd()
+try {
+  $w = New-Object -ComObject WScript.Shell
+  $null = $w.Popup($msg, $env:CANOPY_NOTICE_TIMEOUT -as [int], "Canopy Runner - reconnect", 64)
+} catch {}
+"""
+
+
+def notify_code(code: str, url: str, *, popen=subprocess.Popen) -> bool:
+    """Show a Windows notice naming the reconnect code, without waiting for it: the
+    popup lives in its own windowless PowerShell. False if it could not start."""
+    msg = (f"Canopy stopped accepting this runner's sign-in.\n\n"
+           f"Approve this computer in your browser - check the code is {code}.\n\n{url}")
+    from .platform_jobs import no_window
+
+    try:
+        proc = popen(["powershell", "-NoProfile", "-NonInteractive", "-Command", _NOTICE_PS],
+                     stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     text=True, env={**os.environ, "CANOPY_NOTICE_TIMEOUT": str(NOTICE_SECONDS)},
+                     **no_window())
+        proc.stdin.write(msg)
+        proc.stdin.close()
+    except (OSError, ValueError) as exc:
+        logger.info("reconnect: could not show the code notice: %s", exc)
+        return False
+    return True
 
 
 def is_auth_refusal(exc: BaseException) -> bool:
@@ -53,7 +89,9 @@ class AuthWatch:
                  pair_fn: Optional[Callable[..., int]] = None,
                  restart: Optional[Callable[[], None]] = None,
                  clock: Callable[[], float] = time.time,
-                 spawn: Optional[Callable[[Callable[[], None]], None]] = None):
+                 spawn: Optional[Callable[[Callable[[], None]], None]] = None,
+                 notice: Callable[[str, str], object] | None = None,
+                 browser: Callable[[str], bool] | None = None):
         self.config_path, self.base_url, self.runner_id = Path(config_path), base_url, runner_id
         self.streak = 0
         self.last_attempt: Optional[float] = None
@@ -63,6 +101,9 @@ class AuthWatch:
         self._clock = clock
         self._spawn = spawn or (lambda fn: threading.Thread(target=fn, daemon=True,
                                                            name="runner-reconnect").start())
+        self._notice = notice or notify_code
+        self._browser = browser
+        self._noticed: set[str] = set()
 
     def note(self, exc: BaseException) -> None:
         self.streak = self.streak + 1 if is_auth_refusal(exc) else 0
@@ -91,6 +132,7 @@ class AuthWatch:
             else:
                 pair_fn = self._pair
             rc = pair_fn(self.config_path, base_url=self.base_url, reconnect=True,
+                         open_browser=self._open_browser,
                          out=lambda line: logger.info("reconnect: %s", line))
             if rc == 0:
                 logger.info("reconnected — restarting signed in with this machine's device key")
@@ -99,6 +141,20 @@ class AuthWatch:
             logger.warning("reconnect did not finish: %s", exc)
         finally:
             self.running = False
+
+    def _open_browser(self, url: str) -> bool:
+        """On Windows, name the code first (no menu bar shows it there); once per code."""
+        from .platform_jobs import is_windows
+
+        code = url.rstrip("/").rsplit("/", 1)[-1]
+        if is_windows() and code and code not in self._noticed:
+            self._noticed.add(code)
+            self._notice(code, url)
+        if self._browser is not None:
+            return self._browser(url)
+        from .browser_pair import _open_browser
+
+        return _open_browser(url)
 
 
 def _reexec() -> None:

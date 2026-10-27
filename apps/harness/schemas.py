@@ -216,7 +216,7 @@ class RunnerOnlyAgentsOut(Schema):
     # Every agent it could be dedicated to: in the workspaces it serves and visible to you.
     choices: list[RunnerAgentChoiceOut]
 class RunnerEgressIn(Schema):
-    # Locked: the box's units reach the network only through its proxy, to the base
+    # Locked: the machine's runners reach the network only through its proxy, to the base
     # set (canopy-web, the model, GitHub) plus `allow`. A sensitive-data box cannot be unlocked.
     locked: bool
     # Extra hostnames; `.example.com` admits every subdomain. Replaces the list.
@@ -342,6 +342,8 @@ class RunnerOut(Schema):
     # claude-desktop or claude-cli. The runner reads it off its own heartbeat response, so this
     # field is also how a flip reaches the box (canopy-web#1188).
     engine: str = "emdash"
+    # The OS the box said it runs when it paired (macos, windows, linux); "" unknown.
+    platform: str = ""
     status: str
     status_note: str
     ready: bool
@@ -457,6 +459,10 @@ class RunnerOut(Schema):
     power: str = "on"
     power_changed_at: dt.datetime | None = None
 
+    # The machine this runner is on (`Runner.machine_name`): several runners can
+    # share one. "" when not known — a laptop names itself in `host`.
+    machine: str = ""
+
     # The roots of the workspace trees the box is enrolled in, as far as the
     # caller may know them: all of them for the box's owner, else only the trees
     # the caller is a member somewhere in. Stamped per (caller, runner) by
@@ -530,6 +536,10 @@ class RunnerOut(Schema):
     @staticmethod
     def resolve_roots(obj) -> list[str]:
         return list(getattr(obj, "visible_roots", None) or [])
+
+    @staticmethod
+    def resolve_machine(obj) -> str:
+        return obj.machine_name() if hasattr(obj, "machine_id") else ""
 
     @staticmethod
     def resolve_spans_trees(obj) -> bool:
@@ -682,6 +692,10 @@ class HeartbeatIn(Schema):
     degraded: bool = False
     note: str = ""
     host: str = ""  # refresh the owning macOS host (in case a runner row is reused)
+    # "macos" | "windows" | "linux" (browser_pair.platform_name). Keeps
+    # Runner.platform true after pairing — the Windows remedy text reads it. Absent
+    # (older code) or anything else leaves the stored value alone.
+    platform: str = ""
     ready: bool = True   # can the runner fire a turn (cdp healthy ∧ not recently failed)
     ready_note: str = ""
     code_branch: str = ""  # the runner checkout's git branch — supervisor alerts on non-main
@@ -2522,9 +2536,9 @@ RunnerInvitationStatus = Literal["pending", "approved", "consumed", "expired"]
 
 
 class RunnerUnitIn(Schema):
-    """One isolation unit on the invited box: a runner of its own, named `name`,
-    serving `workspace`'s tree (`kind` tree) or only agent `slug` (`kind` agent,
-    an agent of `workspace`). `ecdh_public_jwk` is that unit's zero-knowledge ECDH
+    """One runner on the invited machine, named `name`, serving `workspace`'s tree
+    (`kind` tree) or only agent `slug` (`kind` agent, an agent of `workspace`).
+    `ecdh_public_jwk` is that runner's zero-knowledge ECDH
     key (its KMS key in the `<stack>-ecdh` stack) when known."""
 
     name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
@@ -2538,7 +2552,7 @@ class RunnerInvitationIn(Schema):
     """Invite one new cloud box, by the name it will pair as and its EC2 instance
     role, into a workspace. `ecdh_public_jwk` is the box's zero-knowledge ECDH
     public key (its `<stack>-ecdh` KMS key) when known, so one approval covers it.
-    `units`: a box that runs several isolation units lists them, and the one
+    `units`: a machine that runs several runners lists them, and the one
     approval pairs every one."""
 
     name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
@@ -2551,7 +2565,7 @@ class RunnerInvitationIn(Schema):
 
 
 class RunnerInvitationUnitOut(Schema):
-    """One unit an invitation pairs, and its runner once the box has paired."""
+    """One runner an invitation pairs, and its id once the machine has paired."""
 
     name: str
     workspace: str
@@ -2714,7 +2728,7 @@ class RunnerInvitationOut(Schema):
     #: Whether the box's ECDH key is part of what approving covers.
     has_ecdh_key: bool = False
     runner_id: uuid.UUID | None = None
-    #: The units the box pairs as, one runner each; empty for a one-runner box.
+    #: The runners the machine pairs as; empty for a machine with one runner.
     units: list[RunnerInvitationUnitOut] = []
     #: A FLEET's invitation: what approving it lets join (`fleets.py`). Approving
     #: uses the invitation up; the fleet's instances then join on their own.
@@ -2722,9 +2736,9 @@ class RunnerInvitationOut(Schema):
 
 
 class RunnerPairUnitIn(Schema):
-    """One unit of a box pairing all its units at once: its runner `name`, the
-    PUBLIC half of the unit's own signing key (`public_jwk`, a software P-256 key
-    in the unit's home), its zero-knowledge ECDH key, and what it declares."""
+    """One runner of a machine pairing all its runners at once: its `name`, the
+    PUBLIC half of the runner's own signing key (`public_jwk`, a software P-256 key
+    in the runner's home), its zero-knowledge ECDH key, and what it declares."""
 
     name: str = Field(pattern=RUNNER_NAME_PATTERN, max_length=63)
     public_jwk: dict[str, Any]
@@ -2747,21 +2761,21 @@ class RunnerPairByRoleIn(Schema):
     proof: str = Field(min_length=1, max_length=20000)
     ecdh_public_jwk: dict[str, Any] | None = None
     ecdh_store: str = Field(default="", max_length=16)
-    #: A box of isolation units pairs them all in this one call (`name` is then
-    #: the BOX's name, the one its invitation was made for).
+    #: A machine running several runners pairs them all in this one call (`name`
+    #: is then the MACHINE's name, the one its invitation was made for).
     units: list[RunnerPairUnitIn] | None = Field(default=None, max_length=8)
 
 
 class RunnerPairByRoleOut(Schema):
     """`paired` (a new runner), `reattached` (this role's existing runner — a
     replaced instance), or `waiting` (the invitation is not approved yet; ask
-    again on the next poll). A box of units gets `units`, each unit's runner id by
-    its name (`paired` when any was made)."""
+    again on the next poll). A machine of several runners gets `units`, each
+    runner's id by its name (`paired` when any was made)."""
 
     status: Literal["paired", "reattached", "waiting"]
     runner_id: uuid.UUID | None = None
     units: dict[str, uuid.UUID] = {}
-    #: Each unit's device key id, by unit name — what the box records so its
+    #: Each runner's device key id, by runner name — what the box records so its
     #: proofs are sent (`canopy vault device --registered`).
     device_keys: dict[str, uuid.UUID] = {}
 
@@ -2784,6 +2798,9 @@ class RunnerPairingIn(Schema):
     account: str = Field(default="", max_length=100)
     platform: Literal["macos", "windows", "linux"]
     has_emdash: bool = False
+    # Its emdash is serving DevTools right now. On Windows only that makes the new
+    # runner drive emdash (`api_runner_pairings.drives_emdash`).
+    emdash_cdp_live: bool = False
     redirect_port: int = Field(ge=1024, le=65535)
     # The runner this box already is (its runner.json) when its token stopped working.
     reconnect_runner: uuid.UUID | None = None

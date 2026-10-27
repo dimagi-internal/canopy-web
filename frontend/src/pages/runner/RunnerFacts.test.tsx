@@ -37,3 +37,16 @@ describe('RunnerFacts agent CLIs', () => {
     expect(screen.getByTestId('runner-clis').textContent).toBe('gemini (not signed in, not known to this server)')
   })
 })
+
+describe('RunnerFacts machine', () => {
+  it('names the machine a cloud runner is on, not its own name as a host', () => {
+    render(<RunnerFacts runner={{ ...base, capabilities: {}, host: 'box', machine: 'canopy-cloud-runner-2' } as never} />)
+    expect(screen.getByTestId('runner-machine').textContent).toBe('canopy-cloud-runner-2')
+    expect(screen.queryByText('host')).toBeNull()
+  })
+
+  it('keeps a laptop’s host', () => {
+    render(<RunnerFacts runner={{ ...base, kind: 'emdash', capabilities: {}, host: 'jj@mbp', machine: '' } as never} />)
+    expect(screen.getByText('jj@mbp')).toBeTruthy()
+  })
+})

@@ -1,4 +1,4 @@
-"""A cloud box invited and paired as one isolation unit per workspace tree or agent
+"""A cloud machine invited and paired as one runner per workspace tree or agent
 (`_invite`, `_approve`, `_pair_units`). Plain helpers, shared by the pairing and
 isolation suites.
 """
@@ -30,7 +30,7 @@ def _approve(org, inv_id):
 
 
 def _pair_units(units: dict[str, dict], *, name=BOX):
-    """What canopy-pair sends: the box's name, ONE role proof, every unit's keys."""
+    """What canopy-pair sends: the box's name, ONE role proof, every runner's keys."""
     body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), "units": [
         {"name": n, "public_jwk": k["public_jwk"], "ecdh_public_jwk": k.get("ecdh_public_jwk"),
          "ecdh_store": "kms-broker", "host": "ip-10-0-0-9", "capabilities": {"sessions": True}}

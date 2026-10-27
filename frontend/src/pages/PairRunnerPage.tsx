@@ -23,6 +23,13 @@ const KEY_KIND: Record<string, string> = {
   tpm: 'TPM (held by the hardware)',
   software: 'Software key (a file on the computer)',
 }
+/** On Windows the runner seals its software key with DPAPI, so the file opens only for that account. */
+const WINDOWS_SOFTWARE_KEY = 'Software key (a file encrypted to this Windows account)'
+
+function keyKindText(kind: string, platform: string): string {
+  if (kind === 'software' && platform === 'windows') return WINDOWS_SOFTWARE_KEY
+  return KEY_KIND[kind] ?? kind
+}
 
 /**
  * /pair/:code — approve a computer that is asking to become your runner.
@@ -126,7 +133,7 @@ export function PairRunnerPage(): JSX.Element | null {
           <dt className="font-medium text-foreground">System</dt>
           <dd className="m-0">{PLATFORM[pairing.platform] ?? pairing.platform}</dd>
           <dt className="font-medium text-foreground">Key</dt>
-          <dd className="m-0">{KEY_KIND[pairing.kind] ?? pairing.kind}</dd>
+          <dd className="m-0">{keyKindText(pairing.kind, pairing.platform)}</dd>
           <dt className="font-medium text-foreground">Expires</dt>
           <dd className="m-0">{new Date(pairing.expires_at).toLocaleString()}</dd>
           <dt className="font-medium text-foreground">Status</dt>

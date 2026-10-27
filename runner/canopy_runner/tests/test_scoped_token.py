@@ -1,6 +1,7 @@
 """A colleague's full-profile turn reads canopy as them: the laptop runner leaves their
 caller token under the session's emdash task — and clears it for the next turn that has none."""
 from __future__ import annotations
+import sys
 
 import stat
 
@@ -9,6 +10,7 @@ import pytest
 from canopy_runner import execute, scoped_token
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes: Windows has no 0o600; privacy there comes from the profile ACL")
 def test_the_token_is_written_privately_under_the_task(tmp_path):
     p = scoped_token.write({"id": "t1", "mcp_token": "cct_abc"}, task="ace-x1", root=tmp_path)
     assert p == tmp_path / "task" / "ace-x1.token"

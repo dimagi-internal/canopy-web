@@ -87,7 +87,7 @@ def test_nothing_is_deleted_unless_our_text_ends_the_line(typed):
 # ── the wiring (needs a live emdash to exercise, so static guards) ──────────────
 
 def _open_send_branch() -> str:
-    src = SIDECAR.read_text()
+    src = SIDECAR.read_text(encoding="utf-8")
     start = src.index("command === 'open-send'")
     end = src.index("command === 'interrupt'", start)
     return "\n".join(ln for ln in src[start:end].splitlines() if not ln.lstrip().startswith("//"))

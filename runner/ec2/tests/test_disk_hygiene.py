@@ -171,7 +171,7 @@ def _at(cloud_runner, monkeypatch, pct: int, record: dict | None, tmp_path) -> d
 
 
 def test_a_full_disk_says_where_the_space_is(cloud_runner, monkeypatch, tmp_path):
-    """A unit cannot read the other homes; root's update tick measured them."""
+    """A runner cannot read the other homes; root's update tick measured them."""
     import time
     record = {"at": time.time(), "pct": 89,
               "largest": [["/home/ubuntu", 35 * 2**30], ["/tmp", 12 * 2**30], ["/home/cu-dimagi", 8 * 2**30]]}

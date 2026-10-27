@@ -16,7 +16,9 @@ CANOPY_SHA256 = "69a23cb125fd4b7b882248e40d2ce5d4a0477a72dc8facdb4f94897ff90b8b9
 
 
 def test_vendored_table_is_byte_identical_to_canopys():
-    digest = hashlib.sha256(Path(inbox_rules.__file__).read_bytes()).hexdigest()
+    digest = hashlib.sha256(
+        # LF: a Windows checkout (core.autocrlf) hands the same commit over as CRLF.
+        Path(inbox_rules.__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     assert digest == CANOPY_SHA256, (
         "canopy_runner/inbox_rules.py no longer matches the pinned canopy copy. Edit the "
         "table in canopy (src/orchestrator/inbox_rules.py), copy it here verbatim, and "

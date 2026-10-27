@@ -504,3 +504,34 @@ def test_is_current_sees_a_changed_port(tmp_path):
     assert hook_install.is_current(settings, port=8788, nonce="n")
     assert not hook_install.is_current(settings, port=49366, nonce="n")
     assert not hook_install.is_current(settings, port=8788, nonce="rotated")
+
+
+def test_a_settings_file_it_cannot_parse_is_never_overwritten(tmp_path):
+    """Rewriting a file it could not read replaced the person's permissions, plugins
+    and env with canopy's hooks alone (on Windows a curly quote read as cp1252 was
+    enough to make it "unreadable")."""
+    p = tmp_path / "settings.json"
+    original = b'{"permissions": {"allow": ["Bash(git:*)"]}, "model": "opus",'  # truncated
+    p.write_bytes(original)
+    assert hook_install.install(p, port=8787, nonce="a") is False
+    assert hook_install.is_current(p, port=8787, nonce="a") is False
+    assert hook_install.remove(p) is False
+    assert p.read_bytes() == original
+
+
+def test_settings_are_read_and_written_as_utf8(tmp_path, monkeypatch):
+    import pathlib
+
+    real_read, real_write = pathlib.Path.read_text, pathlib.Path.write_text
+    monkeypatch.setattr(pathlib.Path, "read_text",
+                        lambda self, encoding=None, errors=None, **kw:
+                        real_read(self, encoding=encoding or "cp1252", errors=errors, **kw))
+    monkeypatch.setattr(pathlib.Path, "write_text",
+                        lambda self, data, encoding=None, errors=None, newline=None, **kw:
+                        real_write(self, data, encoding=encoding or "cp1252", errors=errors,
+                                   newline=newline, **kw))
+    p = tmp_path / "settings.json"
+    p.write_bytes(json.dumps({"env": {"NOTE": "Shayoni’s “box” → ✓"}}, ensure_ascii=False)
+                  .encode("utf-8"))
+    assert hook_install.install(p, port=8787, nonce="a") is True
+    assert json.loads(p.read_bytes().decode("utf-8"))["env"]["NOTE"] == "Shayoni’s “box” → ✓"

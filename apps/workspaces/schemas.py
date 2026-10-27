@@ -147,8 +147,92 @@ class MemberOut(StrictModel):
     system: bool = False
 
 
+class MemberAgentRef(StrictModel):
+    slug: str
+    name: str
+
+
+class MemberWorkspaceRef(StrictModel):
+    slug: str
+    display_name: str
+    role: str
+
+
+class MemberAdminDetail(StrictModel):
+    """What only someone who manages members sees about one (`members.manage`)."""
+
+    invited_by_email: str | None = None
+    last_login: dt.datetime | None = None
+    # Chat sessions this member started in this workspace — a count, never the
+    # sessions themselves: a chat's own sharing decides who may read it.
+    chats_started: int = 0
+
+
+class MemberProfileOut(StrictModel):
+    """One member's page in a workspace, as the CALLER may see it. Every member
+    sees who they are, their role and the agents they operate here; the rest is
+    filled in only for a caller whose role allows it (`admin` is null below)."""
+
+    user_id: int
+    email: str
+    name: str = ""
+    role: str
+    joined_at: dt.datetime
+    inherited: bool = False
+    # person | agent (an agent's own canopy login) | system (a system account)
+    kind: Literal["person", "agent", "system"] = "person"
+    is_you: bool = False
+    # When `kind` is agent: the agent this login belongs to, in this workspace.
+    agent: MemberAgentRef | None = None
+    # Agents in this workspace this member operates (`Agent.owner`).
+    operates: list[MemberAgentRef] = []
+    # Other workspaces BOTH the caller and this member belong to, with this
+    # member's role there — never a workspace the caller cannot already see.
+    shared_workspaces: list[MemberWorkspaceRef] = []
+    admin: MemberAdminDetail | None = None
+
+
 class MemberRoleUpdateIn(StrictModel):
     role: Role
+
+
+class MemberAddIn(StrictModel):
+    # Someone already in this workspace's tree, added here directly — no invite.
+    user_id: int
+    role: Role
+
+
+class MemberTreeWorkspaceOut(StrictModel):
+    slug: str
+    display_name: str
+    parent: str | None = None
+    # Below the tree's root (0 = the workspace the tree was asked for).
+    depth: int
+    # The caller's role here, and whether they may add, re-role or remove people.
+    my_role: str
+    can_manage: bool
+
+
+class MemberTreeCellOut(StrictModel):
+    role: str
+    # Held by inheritance (an owner or admin of an ancestor): nothing here to
+    # change — the grant lives on `inherited_from`.
+    inherited: bool = False
+    inherited_from: str | None = None
+
+
+class MemberTreePersonOut(StrictModel):
+    user_id: int
+    email: str
+    system: bool = False
+    # {workspace slug: their role there}; a slug that is absent = not a member.
+    cells: dict[str, MemberTreeCellOut]
+
+
+class MemberTreeOut(StrictModel):
+    root: str
+    workspaces: list[MemberTreeWorkspaceOut]
+    people: list[MemberTreePersonOut]
 
 
 class InviteCreateIn(StrictModel):
@@ -307,9 +391,9 @@ class TopologyRunnerOut(StrictModel):
     # The viewer administers it.
     can_administer: bool = False
     # The machine it is on (its instance role's name; "" = not known). Runners on
-    # one machine are that box's isolation units, listed together.
+    # one machine are listed together.
     machine: str = ""
-    # The unit it declares: `tree:<root>`, `agent:<slug>`, or "" for none.
+    # What it declares it serves: `tree:<root>`, `agent:<slug>`, or "" for none.
     unit: str = ""
 
 

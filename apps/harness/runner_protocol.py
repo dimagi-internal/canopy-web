@@ -82,6 +82,9 @@ def heartbeat(runner: Runner, payload: HeartbeatIn, *, device_key: bool = False)
     if payload.host and payload.host != runner.host:
         runner.host = payload.host
         runner.save(update_fields=["host"])
+    if payload.platform in ("macos", "windows", "linux") and payload.platform != runner.platform:
+        runner.platform = payload.platform
+        runner.save(update_fields=["platform"])
     return services.heartbeat(
         runner,
         active_turn_ids=payload.active_turn_ids,

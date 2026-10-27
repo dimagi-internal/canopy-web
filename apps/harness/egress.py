@@ -1,7 +1,7 @@
 """A runner's egress lock, as a person sets it in canopy-web (spec
 2026-10-22-sensitive-data-agents §1, "Egress locked").
 
-The box enforces it (`runner/ec2/cloud_runner.py`: a loopback proxy per unit plus
+The box enforces it (`runner/ec2/cloud_runner.py`: a loopback proxy per runner plus
 root's `CANOPY-EGRESS` chain). canopy-web holds what a person decided, per runner:
 locked or not, and the hosts it admits beyond the box's base set. Root on the box
 reads it by its instance role (`POST /api/harness/runners/box-egress`) and applies

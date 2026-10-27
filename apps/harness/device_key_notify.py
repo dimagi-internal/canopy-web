@@ -172,7 +172,7 @@ def notify_pending_on_commit(key, *, reapproval: bool = False) -> None:
 
 def notify_rekeyed(key, *, adopted: bool = False) -> dict:
     """Tell the runner's approvers its key was just replaced by its box re-pairing.
-    Approval-free for a unit re-attaching on its own machine, so it must never be
+    Approval-free for a runner re-attaching on its own machine, so it must never be
     silent: if nobody expected it, revoking the key is one click. Never raises."""
     from .api_device_keys import approve_url
 
@@ -180,8 +180,8 @@ def notify_rekeyed(key, *, adopted: bool = False) -> dict:
     try:
         runner = key.runner
         subject = f"Canopy · {runner.name} has a new key"
-        how = ("moved into an isolation unit" if adopted
-               else "re-paired its isolation unit (a replaced or rebuilt instance)")
+        how = ("moved to its own Unix user on its machine" if adopted
+               else "re-paired on its machine (a replaced or rebuilt instance)")
         detail = (f"{runner.name} {how}: its sign-in key was replaced. It keeps its runner, its routing "
                   f"and its access. If you did not replace or rebuild this box, revoke the key now.")
         foot = "You are getting this because you administer this runner."

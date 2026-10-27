@@ -10,6 +10,10 @@ requires-python = ">=3.11"
 # the slot math lives; consumers inherit the bound rather than restating it.
 dependencies = [
     "croniter>=6.0,<7.0",
+    # zoneinfo reads the OS's zone database, and Windows has none: without tzdata
+    # `ZoneInfo("America/New_York")` raises there and every schedule on a Windows
+    # runner failed (found by the Windows CI, canopy-web#2202).
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [build-system]

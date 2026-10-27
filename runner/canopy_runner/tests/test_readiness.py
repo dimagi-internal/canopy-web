@@ -82,3 +82,25 @@ def test_expiry_never_overrides_a_dead_cdp(tmp_path, monkeypatch):
     monkeypatch.setattr(cdp_control, "cdp_healthy", lambda **kw: False)
     cfg = type("Cfg", (), {"state_path": str(tmp_path / "state.json"), "cdp_port": 9222})()
     assert readiness.compute(cfg) == (False, "emdash CDP unreachable")
+
+
+def test_a_note_the_locale_cannot_encode_is_still_recorded(tmp_path, monkeypatch):
+    """Windows' locale codec is cp1252: a note holding a character it lacks raised
+    UnicodeEncodeError, which `except OSError` does not catch, from inside execute's
+    failure path. Here the locale default is forced to cp1252, as on that box."""
+    import pathlib
+
+    real_write, real_read = pathlib.Path.write_text, pathlib.Path.read_text
+
+    def cp1252_write(self, data, encoding=None, *a, **kw):
+        return real_write(self, data, encoding or "cp1252", *a, **kw)
+
+    def cp1252_read(self, encoding=None, *a, **kw):
+        return real_read(self, encoding or "cp1252", *a, **kw)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", cp1252_write)
+    monkeypatch.setattr(pathlib.Path, "read_text", cp1252_read)
+    monkeypatch.setattr(readiness.cdp_control, "cdp_healthy", lambda **kw: True)
+    cfg = _cfg(tmp_path)
+    readiness.mark_failed(cfg, "turn failed: ✗ 发送失败 🙃")
+    assert readiness.compute(cfg) == (False, "turn failed: ✗ 发送失败 🙃")

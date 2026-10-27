@@ -60,3 +60,75 @@ def test_a_failed_attempt_waits_before_the_next(monkeypatch):
     assert not w.maybe_reconnect()
     now[0] += reconnect.RETRY_SECONDS + 1
     assert w.maybe_reconnect() and len(calls) == 2
+
+
+def _browser_watch(monkeypatch, *, windows):
+    from canopy_runner import platform_jobs
+
+    monkeypatch.setattr(reconnect, "_key_signs_in", lambda rid: False)
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: windows)
+    notices, opened = [], []
+
+    def pair(path, **kw):
+        # What run_browser_pair does with each new pairing: open its approve page.
+        return 0 if kw["open_browser"]("https://canopy/pair/ABCD-EFGH") else 1
+
+    w = reconnect.AuthWatch(Path("/x/runner.json"), "https://canopy", "r-1", pair_fn=pair,
+                            restart=lambda: None, spawn=lambda fn: fn(),
+                            notice=lambda code, url: notices.append(code),
+                            browser=lambda url: opened.append(url) or True)
+    return w, notices, opened
+
+
+def test_windows_names_the_code_before_the_browser_opens_once_per_code(monkeypatch):
+    w, notices, opened = _browser_watch(monkeypatch, windows=True)
+    w._open_browser("https://canopy/pair/ABCD-EFGH")
+    w._open_browser("https://canopy/pair/ABCD-EFGH")
+    w._open_browser("https://canopy/pair/WXYZ-2345")
+    assert notices == ["ABCD-EFGH", "WXYZ-2345"]
+    assert len(opened) == 3
+
+
+def test_a_reconnect_hands_the_noticing_opener_to_the_pairing(monkeypatch):
+    w, notices, opened = _browser_watch(monkeypatch, windows=True)
+    for _ in range(3):
+        w.note(DEAD)
+    assert w.maybe_reconnect()
+    assert notices == ["ABCD-EFGH"] and opened == ["https://canopy/pair/ABCD-EFGH"]
+
+
+def test_macos_shows_no_notice(monkeypatch):
+    w, notices, opened = _browser_watch(monkeypatch, windows=False)
+    w._open_browser("https://canopy/pair/ABCD-EFGH")
+    assert notices == [] and opened == ["https://canopy/pair/ABCD-EFGH"]
+
+
+def test_the_notice_does_not_wait_and_opens_no_console(monkeypatch):
+    from canopy_runner import platform_jobs
+
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    seen = {}
+
+    class Stdin:
+        @staticmethod
+        def write(text):
+            seen["text"] = text
+
+        @staticmethod
+        def close():
+            seen["closed"] = True
+
+    class Proc:
+        stdin = Stdin
+
+        def wait(self):  # pragma: no cover — must never be called
+            raise AssertionError("the notice must not block the runner")
+
+    def popen(cmd, **kw):
+        seen["cmd"], seen["kw"] = cmd, kw
+        return Proc()
+
+    assert reconnect.notify_code("ABCD-EFGH", "https://canopy/pair/ABCD-EFGH", popen=popen)
+    assert seen["cmd"][0] == "powershell" and seen["kw"]["creationflags"] == 0x08000000
+    assert "ABCD-EFGH" in seen["text"] and seen["closed"]
+    assert "ABCD-EFGH" not in " ".join(seen["cmd"]), "the text goes on stdin, not the command line"

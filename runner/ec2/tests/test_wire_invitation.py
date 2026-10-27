@@ -85,7 +85,7 @@ UNIT_RID = "55555555-5555-5555-5555-555555555555"
 
 
 def test_unit_wires_that_units_runner_from_the_boxs_one_invitation(tmp_path):
-    """up.sh --units makes ONE invitation for the box; each unit's runner id is in
+    """up.sh --units makes ONE invitation for the box; each runner's id is in
     its `units`. `--unit agent-eva` wires `cloud-ec2-test-agent-eva`."""
     state = _with_invitation(tmp_path, status="consumed")
     curl = (tmp_path / "bin" / "curl").read_text()

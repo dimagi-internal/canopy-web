@@ -1,5 +1,6 @@
 """Wrapper-level tests for the emdash CDP control (the sidecar itself needs a live
 emdash on the debug port — validated separately)."""
+import sys
 import json
 import urllib.error
 from pathlib import Path
@@ -314,7 +315,7 @@ def _evaluate_bodies():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     # DISCOVERED, not listed. A hardcoded roster silently exempts the next helper
     # someone adds: its `${NEW_FN}` survives into the body, `new Function` chokes on
     # the literal `${`, and the failure reads as "your JS is broken" rather than
@@ -348,7 +349,7 @@ def test_every_evaluate_string_is_valid_javascript():
     for i, body in enumerate(bodies, start=1):
         check = subprocess.run(
             [node, "-e", "new Function('return ' + require('fs').readFileSync(0, 'utf8'))"],
-            input=body, capture_output=True, text=True, timeout=30)
+            input=body, capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert check.returncode == 0, f"evaluate #{i} is invalid JS: {check.stderr[:300]}"
 
 
@@ -357,7 +358,7 @@ def test_the_evaluate_sites_use_string_raw():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     assert "page.evaluate(`" not in src, "use String.raw` for evaluate source"
     assert len(re.findall(r"page\.evaluate\(String\.raw`", src)) >= 4
 
@@ -374,7 +375,7 @@ def _composer_fn_source():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     m = re.search(r"const COMPOSER_FN = String\.raw`([\s\S]*?)`;", src)
     assert m, "COMPOSER_FN not found in emdash_control.mjs"
     return m.group(1)
@@ -500,7 +501,7 @@ def _bright_fn_source():
     import re
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "canopy_runner" / "cdp"
-           / "emdash_control.mjs").read_text()
+           / "emdash_control.mjs").read_text(encoding="utf-8")
     m = re.search(r"const BRIGHT_FN = String\.raw`([\s\S]*?)`;", src)
     assert m, "BRIGHT_FN not found in emdash_control.mjs"
     return m.group(1)
@@ -622,6 +623,7 @@ def test_all_dim_structure_falls_back_to_a_collision_not_a_send():
     assert r["typed"] == "something already here"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="pwd/os.getuid are POSIX-only")
 def test_host_id_account_comes_from_the_uid_not_logname(monkeypatch, tmp_path):
     """A session launched with LOGNAME=root must not pin `root@…` (2026-09-28)."""
     monkeypatch.setattr(cdp_control, "HOST_ID_PATH", tmp_path / "host-id")
@@ -630,3 +632,77 @@ def test_host_id_account_comes_from_the_uid_not_logname(monkeypatch, tmp_path):
     monkeypatch.setenv("USER", "root")
     import os, pwd
     assert cdp_control.host_id() == f"{pwd.getpwuid(os.getuid()).pw_name}@H"
+
+
+# -- arguments travel on stdin, not the command line ---------------------------
+
+def test_a_long_prompt_goes_on_stdin_not_the_command_line(monkeypatch):
+    """Windows caps a command line at 32,767 characters: a long prompt in argv failed
+    to start node at all (WinError 206), escaping as an uncaught OSError."""
+    seen = {}
+
+    def run(cmd, **kwargs):
+        seen["cmd"], seen["input"] = cmd, kwargs.get("input")
+        return SimpleNamespace(stdout=json.dumps({"ok": True, "task": "t"}), stderr="", returncode=0)
+
+    monkeypatch.setattr(cdp_control.subprocess, "run", run)
+    prompt = "x" * 40_000
+    cdp_control.create_task("echo", prompt)
+    assert sum(len(a) for a in seen["cmd"]) < 1_000
+    assert json.loads(seen["input"])["prompt"] == prompt
+
+
+def test_a_node_that_cannot_start_fails_the_call_not_the_runner(monkeypatch):
+    def run(*a, **k):
+        raise OSError(206, "The filename or extension is too long")
+
+    monkeypatch.setattr(cdp_control.subprocess, "run", run)
+    with pytest.raises(cdp_control.CDPError, match="too long"):
+        cdp_control.list_tasks()
+
+
+def test_sidecar_calls_open_no_console_window_on_windows(monkeypatch):
+    from canopy_runner import platform_jobs
+
+    seen = {}
+
+    def run(cmd, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(stdout=json.dumps({"ok": True}), stderr="", returncode=0)
+
+    monkeypatch.setattr(platform_jobs, "is_windows", lambda: True)
+    monkeypatch.setattr(cdp_control.subprocess, "run", run)
+    cdp_control.list_tasks()
+    assert seen["creationflags"] == 0x08000000
+
+
+def _read_args(argv_extra, stdin_text):
+    import shutil
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node not installed")
+    module = cdp_control.SIDECAR.parent / "sidecar_args.mjs"
+    script = (f"const m = await import({json.dumps(module.as_uri())});"
+              "process.stdout.write(JSON.stringify(await m.readArgs()));")
+    # Under -e, argv[1] is the first extra word: pad to the sidecar's own shape,
+    # [node, emdash_control.mjs, command, args].
+    out = subprocess.run(["node", "--input-type=module", "-e", script, "sidecar", "cmd", *argv_extra],
+                         input=stdin_text, capture_output=True, text=True, encoding="utf-8",
+                         timeout=30, check=True)
+    return json.loads(out.stdout)
+
+
+def test_the_sidecar_reads_its_arguments_from_stdin():
+    prompt = "é “quoted” " + "y" * 50_000
+    assert _read_args([], json.dumps({"port": 9, "prompt": prompt})) == {"port": 9, "prompt": prompt}
+
+
+def test_the_sidecar_still_reads_arguments_given_on_the_command_line():
+    """By hand: `node emdash_control.mjs list '{"port":9}'`."""
+    assert _read_args([json.dumps({"port": 9})], "") == {"port": 9}
+
+
+def test_the_sidecar_reads_its_arguments_through_the_shared_reader():
+    src = cdp_control.SIDECAR.read_text(encoding="utf-8")
+    assert "import { readArgs } from './sidecar_args.mjs';" in src
+    assert "process.argv[3]" not in src

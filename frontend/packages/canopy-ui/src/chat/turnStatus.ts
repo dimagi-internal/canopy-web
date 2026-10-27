@@ -28,6 +28,11 @@ import type { TurnStatus } from "./protocol";
  * one working. Neither does a stuck or settled turn — a spinner over an ask
  * nothing is going to pick up is the exact lie this whole projection exists to
  * stop.
+ *
+ * Except that a settled status describes the LAST TURN, not the session: work
+ * typed straight into the session (or a follow-up that rode the old turn)
+ * makes no Turn, so the status stays the finished one while the hook says the
+ * agent is working on the new prompt. The hook wins there.
  */
 export function agentHasFloor({
   status,
@@ -40,7 +45,8 @@ export function agentHasFloor({
 }): boolean {
   if (activity === "blocked") return false;
   if (status) {
-    if (status.settled || status.stuck) return false;
+    if (status.settled) return activity === "working";
+    if (status.stuck) return false;
     // `picking_up`, `queued_behind` and `working` are the live states, and
     // each means a reply is genuinely coming.
     return true;

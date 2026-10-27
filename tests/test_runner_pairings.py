@@ -148,7 +148,28 @@ def test_an_emdash_box_gets_the_emdash_engine(org):
     body = _open(key, has_emdash=True).json()
     _, secret = _secret(_approve(org["browser"], body["user_code"]))
     out = _claim(key, body["id"], secret).json()
-    assert Runner.objects.get(pk=out["runner_id"]).engine == Runner.ENGINE_EMDASH
+    runner = Runner.objects.get(pk=out["runner_id"])
+    assert runner.engine == Runner.ENGINE_EMDASH and runner.platform == "macos"
+
+
+@pytest.mark.parametrize("cdp_live, engine", [(False, Runner.ENGINE_CLAUDE_CLI), (True, Runner.ENGINE_EMDASH)])
+def test_a_windows_emdash_box_drives_emdash_only_when_its_debug_port_is_live(org, cdp_live, engine):
+    # No "Emdash CDP" launcher exists on Windows, so an emdash without a live DevTools
+    # port could never be driven: the runner would sit "CDP unreachable" forever.
+    key = _key()
+    body = _open(key, platform="windows", has_emdash=True, emdash_cdp_live=cdp_live).json()
+    _, secret = _secret(_approve(org["browser"], body["user_code"]))
+    out = _claim(key, body["id"], secret).json()
+    runner = Runner.objects.get(pk=out["runner_id"])
+    assert runner.engine == engine and runner.platform == "windows"
+
+
+def test_a_windows_cdp_down_remedy_names_the_runtime_switch_not_spotlight():
+    mac = Runner(kind=Runner.EMDASH, platform="macos", ready=False, ready_note="CDP unreachable on 9222")
+    win = Runner(kind=Runner.EMDASH, platform="windows", ready=False, ready_note="CDP unreachable on 9222")
+    assert "Spotlight" in mac.remedy
+    assert "Spotlight" not in win.remedy
+    assert "Session runtime" in win.remedy and "--remote-debugging-port" in win.remedy
 
 
 # ---- the anonymous doors refuse uniformly ---------------------------------------------
@@ -372,6 +393,8 @@ def test_its_owner_reconnects_a_runner_whose_token_died(org):
     assert claimed.status_code == 201, claimed.content
     assert claimed.json()["runner_id"] == str(box.pk)
     assert Runner.objects.filter(owner=org["user"]).count() == 1
+    box.refresh_from_db()
+    assert box.platform == "macos", "a reconnect records the OS the box paired from"
     dk = RunnerDeviceKey.objects.get(runner=box)
     assert dk.status == RunnerDeviceKey.ACTIVE and dk.jkt == device_keys.thumbprint(public_jwk(key))
 
@@ -398,3 +421,29 @@ def test_a_retired_runner_is_not_reconnected(org):
     key = _key()
     code = _open(key, reconnect_runner=str(box.pk)).json()["user_code"]
     assert org["browser"].get(f"{PAIRINGS}{code}").json()["reconnect_name"] == ""
+
+
+def test_the_platform_backfill_takes_each_runners_latest_consumed_pairing(org):
+    # harness 0123's backfill, run on today's models (it only reads and writes columns
+    # that still exist). Delete once a deploy includes 0123 (CLAUDE.md § Migrations).
+    import importlib
+
+    from django.apps import apps as django_apps
+
+    backfill = importlib.import_module("apps.harness.migrations.0123_runner_platform").backfill
+    now = timezone.now()
+    box = Runner.objects.create(name="box", kind=Runner.EMDASH, owner=org["user"], workspace=org["ws"])
+    never = Runner.objects.create(name="never", kind=Runner.EMDASH, owner=org["user"], workspace=org["ws"])
+
+    def pairing(platform, consumed_at, code):
+        return RunnerPairing.objects.create(
+            user_code=code, public_jwk={}, jkt=code, kind="tpm", platform=platform, redirect_port=50000,
+            runner=box, consumed_at=consumed_at)
+
+    pairing("macos", now - timedelta(days=2), "AAAA-AAAA")
+    pairing("windows", now - timedelta(days=1), "BBBB-BBBB")
+    pairing("linux", None, "CCCC-CCCC")  # never claimed: says nothing about the box
+    backfill(django_apps, None)
+    box.refresh_from_db()
+    never.refresh_from_db()
+    assert box.platform == "windows" and never.platform == ""

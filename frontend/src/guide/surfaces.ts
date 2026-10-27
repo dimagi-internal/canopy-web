@@ -73,6 +73,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/people/me',
+    home: '/me',
     flat: 'personal/global: what agents know about you, the subject',
     title: 'Your memory',
     audience: 'Anyone who talks to an agent',
@@ -156,7 +157,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     actions: ['Filter by agent, trigger or status', 'Expand a turn to see its raw event ledger'],
   },
   {
+    path: '/me',
+    flat: 'personal/global: your own profile, the same in every workspace',
+    title: 'Your profile',
+    audience: 'Everyone',
+    what: 'Your own page: who you are and every workspace you are in (with the page other members there see for you), with your memory and your account settings as its other tabs.',
+    actions: ['See how members of each workspace see you', 'Open your memory', 'Open your account settings'],
+  },
+  {
     path: '/settings',
+    home: '/me',
     flat: 'personal/global: your own account',
     title: 'Your settings',
     audience: 'Everyone',
@@ -244,6 +254,22 @@ export const SURFACES: SurfaceDescriptor[] = [
     audience: 'Any workspace member (owner-only actions)',
     what: 'Admin surface for who is in the workspace: the member list with roles, and pending invites — each invite is emailed and is also a copy-linkable `/invite/:token` URL. An invite grants the role chosen when it was sent (viewer unless you pick otherwise).',
     actions: ['Invite someone by email', 'Change a member\'s role', 'Remove a member', 'Revoke a pending invite'],
+  },
+  {
+    path: '/w/:workspace/settings/member-tree',
+    home: '/w/:workspace/settings/members',
+    title: 'Members across workspaces',
+    audience: 'Any workspace member (changes by admins and owners)',
+    what: "Everyone in this workspace and the workspaces below it that you are in, as one table: a row per person, a column per workspace, their role in each. Owners and admins of a workspace are in every workspace below it (marked inherited, with where from); editors and viewers are not, so a gap in a row means that person is an outsider there. Where you manage members, picking a role in an empty cell adds someone already in the tree directly (no invite), changing it re-roles them, and picking \u201c\u2014\u201d removes them. Filter by email, or show only the people missing from somewhere.",
+    actions: ['Add someone from the tree to another workspace', "Change a member's role in any workspace", 'Remove a member', 'Show only the gaps'],
+  },
+  {
+    path: '/w/:workspace/members/:userId',
+    home: '/w/:workspace/settings/members',
+    title: 'A member',
+    audience: 'Any workspace member (more detail for admins and owners)',
+    what: 'One member of the workspace: their role, when they joined, whether they are a person, an agent or a system account, the agents they operate here and the other workspaces you share with them. Admins and owners also see who invited them, when they last signed in and how many chats they started here.',
+    actions: ['Open an agent they operate', 'Jump to the same person in a shared workspace'],
   },
   {
     path: '/w/:workspace/settings/access-requests',

@@ -61,7 +61,7 @@ def attach_member(cset: RunnerCredentialSet, runner: Runner, *, by):
     where a pasted value went first (`runners.open_runner_vault`).
 
     Raises `ZkError` when the vault may not serve it (another isolation boundary in
-    the same tree: an agent unit beside a tree unit, a sensitive-data box beside one
+    the same tree: an agent's runner beside a tree's runner, a sensitive-data box beside one
     that is not); nothing is attached then."""
     from apps.agents.credentials import workspace_vaults  # noqa: PLC0415 — it imports harness.runners
     from apps.agents.models import VaultAttachment  # noqa: PLC0415 — with it

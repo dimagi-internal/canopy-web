@@ -40,6 +40,29 @@ INTERNAL_ERROR = -32603
 HUMAN_METHODS = frozenset({"session/request_permission", "elicitation/create"})
 #: How many adapter stderr lines AcpAgent keeps for `exit_report`.
 STDERR_TAIL_LINES = 50
+#: How long a closing adapter gets to exit on its own, on Windows, before its
+#: process tree is killed (`AcpAgent.close`).
+CLOSE_GRACE_SECONDS = 5
+
+#: Windows exit codes are NTSTATUS values read unsigned, so a crash or a closed
+#: console reads as a ten-digit number. The ones a dying adapter shows, in words.
+NTSTATUS_WORDS = {
+    0xC000013A: "STATUS_CONTROL_C_EXIT: its console was closed or got Ctrl-C",
+    0xC0000005: "STATUS_ACCESS_VIOLATION: it crashed",
+    0xC00000FD: "STATUS_STACK_OVERFLOW: it crashed",
+    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN: it aborted",
+}
+
+
+def _kill_tree(pid: int) -> None:
+    """Kill a Windows process and every process under it. Best-effort: the caller
+    still waits on, and if need be kills, the process itself. CREATE_NO_WINDOW
+    inline, as for the adapter: canopy_acp does not import the runner."""
+    try:
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True,
+                       timeout=15, creationflags=0x08000000)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 class PermissionDecision:
@@ -314,18 +337,30 @@ class AcpConnection:
         path = pathlib.Path(str(params.get("path") or "")).expanduser()
         if self.fs_root is not None:
             resolved = path.resolve()
-            if not str(resolved).startswith(str(self.fs_root)):
+            # is_relative_to, not a string prefix: `…\wt2` must not pass for a root
+            # of `…\wt`, and Windows compares paths case-insensitively.
+            root = self.fs_root
+            if os.name == "nt":
+                resolved_cmp = pathlib.Path(os.path.normcase(resolved))
+                root = pathlib.Path(os.path.normcase(root))
+            else:
+                resolved_cmp = resolved
+            if not resolved_cmp.is_relative_to(root):
                 raise PermissionError(f"path outside the session root: {resolved}")
             return resolved
         return path
 
+    # UTF-8 named and no newline translation: the locale default on Windows is cp1252,
+    # which garbled or refused the agent's own reads and writes of any file holding a
+    # curly quote, an arrow or an emoji (the same class as failure investigation 11).
     def _read_file(self, params: dict) -> str:
-        return self._resolve_path(params).read_text()
+        return self._resolve_path(params).read_text(encoding="utf-8", errors="replace")
 
     def _write_file(self, params: dict) -> None:
         target = self._resolve_path(params)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(str(params.get("content") or ""))
+        with open(target, "w", encoding="utf-8", newline="") as fh:
+            fh.write(str(params.get("content") or ""))
 
 
 # -- the adapter process ---------------------------------------------------
@@ -448,6 +483,10 @@ class AcpAgent:
             self._argv, cwd=str(self.cwd), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            # No console window for node under the runner's pythonw: closing one
+            # killed the adapter mid-turn (CREATE_NO_WINDOW; inline, canopy_acp does
+            # not import the runner).
+            creationflags=0x08000000 if os.name == "nt" else 0,
         )
         threading.Thread(target=self._drain_stderr, daemon=True, name="acp-stderr").start()
         self.conn = AcpConnection(
@@ -492,6 +531,8 @@ class AcpAgent:
         except subprocess.TimeoutExpired:
             return ""
         how = f"killed by signal {-code}" if code < 0 else f"exit code {code}"
+        if code in NTSTATUS_WORDS:
+            how += f" ({NTSTATUS_WORDS[code]})"
         tail = " | ".join(list(self._stderr_tail)[-5:])
         return f"adapter {how}" + (f"; last stderr: {tail}" if tail else "; no stderr")
 
@@ -530,12 +571,30 @@ class AcpAgent:
         return self.conn.request("session/set_mode",
                                  {"sessionId": self.session_id, "modeId": mode_id})
 
-    def close(self, timeout: float = 10) -> None:
+    def close(self, timeout: float = 10, grace: float = CLOSE_GRACE_SECONDS) -> None:
+        """End the adapter and the claude it started.
+
+        Closing the connection ends the adapter's stdin. On POSIX the adapter is
+        then sent SIGTERM, which it handles by ending its claude. On Windows
+        terminate() is TerminateProcess on node alone (or on cmd.exe alone, for a
+        .cmd shim): the claude.exe under it lived on, `wait_released` timed out,
+        and the next turn resumed the session beside a live process, forking its
+        transcript. So there the adapter first gets `grace` seconds to exit on its
+        own (a healthy one does on EOF, taking claude with it), and then the whole
+        tree goes, with taskkill /T."""
         if self.conn is not None:
             self.conn.close()
-        if self.proc is not None and self.proc.poll() is None:
-            self.proc.terminate()
+        if self.proc is None or self.proc.poll() is not None:
+            return
+        if os.name == "nt":
             try:
-                self.proc.wait(timeout=timeout)
+                self.proc.wait(timeout=grace)
+                return
             except subprocess.TimeoutExpired:
-                self.proc.kill()
+                _kill_tree(self.proc.pid)
+        else:
+            self.proc.terminate()
+        try:
+            self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()

@@ -1,12 +1,15 @@
 """The laptop runner leaves a chat's key under the names the chat's own session can
 work out — its emdash task and its Claude session id — and nowhere else."""
 from __future__ import annotations
+import sys
+import pytest
 
 import stat
 
 from canopy_runner import chat_key
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes: Windows has no 0o600; privacy there comes from the profile ACL")
 def test_the_key_is_written_privately_under_the_task_and_the_session(tmp_path):
     turn = {"id": "t1", "chat_key": "chk_abc"}
     paths = chat_key.write(turn, task="hal-canopy-web-chat-x1", transcript_id="eb742bd8-aaaa",

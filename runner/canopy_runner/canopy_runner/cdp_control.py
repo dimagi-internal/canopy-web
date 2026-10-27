@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .platform_jobs import process_account
+from .platform_jobs import no_window, process_account
 
 SIDECAR = Path(__file__).parent / "cdp" / "emdash_control.mjs"
 # The one dependency emdash_control.mjs imports. Its presence is the cheap,
@@ -63,6 +63,7 @@ def ensure_sidecar_deps(*, timeout: int = 300) -> None:
         proc = subprocess.run(
             [npm, "install", "--omit=dev", "--no-audit", "--no-fund"],
             cwd=str(SIDECAR.parent), capture_output=True, text=True, timeout=timeout,
+            **no_window(),
         )
     except FileNotFoundError as exc:
         raise CDPError(
@@ -152,20 +153,26 @@ def cdp_healthy(*, port: int = 9222, timeout: float = 1.0) -> bool:
 def _run(command: str, args: dict, *, node: str = "node", timeout: int = 90) -> dict:
     try:
         proc = subprocess.run(
-            [node, str(SIDECAR), command, json.dumps(args)],
+            # The arguments go on stdin, never the command line: Windows caps a
+            # command line at 32,767 characters, so a long prompt there failed to
+            # start node at all (WinError 206) and escaped as an uncaught OSError.
+            [node, str(SIDECAR), command], input=json.dumps(args),
             # Node writes UTF-8 whatever the OS. Decoding with the locale's code page
             # (cp1252 on Windows) garbled every em dash in a sidecar error into "â€”"
             # (2026-10-15, the first real Windows runner) and would raise outright on
             # bytes cp1252 leaves unmapped (0x81/0x8D/0x8F/0x90/0x9D — inside many
             # emoji) in a read-term screen.
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout,
+            timeout=timeout, **no_window(),
         )
     except FileNotFoundError as exc:
         raise CDPError("node not found — install Node.js, then run "
                        "`canopy-runner install-sidecar`") from exc
     except subprocess.TimeoutExpired as exc:
         raise CDPError(f"emdash CDP '{command}' timed out after {timeout}s") from exc
+    except OSError as exc:
+        # Anything else that stops node starting fails this call, not the runner.
+        raise CDPError(f"emdash CDP '{command}' could not start node: {exc}") from exc
     raw = (proc.stdout or "").strip()
     try:
         data = json.loads(raw) if raw else {}

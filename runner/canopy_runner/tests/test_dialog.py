@@ -16,12 +16,14 @@ def _fake_run(stdout):
         captured["cmd"] = cmd
         captured["script"] = input
         captured["env"] = kw.get("env")
+        captured["creationflags"] = kw.get("creationflags", 0)
         return SimpleNamespace(stdout=stdout, stderr="", returncode=0)
 
     return run, captured
 
 
 def test_passes_message_and_timeout_as_argv(monkeypatch):
+    monkeypatch.setattr(dialog.platform_jobs, "is_windows", lambda: False)  # the macOS branch
     run, captured = _fake_run("Clear & send\n")
     monkeypatch.setattr(dialog.subprocess, "run", run)
     choice = dialog.collision_choice("busy-session", "some leaked words", timeout=25)
@@ -60,6 +62,7 @@ def test_timeout_falls_back_to_new(monkeypatch):
 
 
 def test_long_preview_is_truncated(monkeypatch):
+    monkeypatch.setattr(dialog.platform_jobs, "is_windows", lambda: False)  # the macOS branch
     run, captured = _fake_run(dialog.NEW + "\n")
     monkeypatch.setattr(dialog.subprocess, "run", run)
     dialog.collision_choice("t", "x" * 500)
@@ -82,6 +85,8 @@ def test_windows_renders_through_powershell(monkeypatch):
     assert "-NoProfile" in captured["cmd"] and "-NonInteractive" in captured["cmd"]
     # The timeout reaches Popup via the environment, never interpolated into the script.
     assert captured["env"]["CANOPY_DIALOG_TIMEOUT"] == "25"
+    # No console window flashing up behind the popup (CREATE_NO_WINDOW).
+    assert captured["creationflags"] == 0x08000000
 
 
 def test_windows_passes_the_message_on_stdin_not_in_the_script(monkeypatch):

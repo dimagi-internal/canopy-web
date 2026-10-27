@@ -1,12 +1,12 @@
-"""A cloud box runs one runner per isolation unit (spec 2026-10-19 §3).
+"""A cloud machine can run several runners (spec 2026-10-19 §3).
 
-A unit is a workspace tree or a single agent, each its own Unix user with its own
-keys. Two refusals keep routing inside that, both declared by the box about
+Each runner serves a workspace tree or a single agent, each its own Unix user with
+its own keys. Two refusals keep routing inside that, both declared by the box about
 itself (`routing.unit_refusal`, part of `routing.cannot_serve`):
 
-  - an AGENT unit (`capabilities.unit = {"kind": "agent", "slug": S}`) runs only S;
-  - when an agent has a unit of its own on a machine (`Runner.machine_id`), no
-    other runner on that machine runs it, so its secrets stay in its unit.
+  - one AGENT's runner (`capabilities.unit = {"kind": "agent", "slug": S}`) runs only S;
+  - when an agent has a runner of its own on a machine (`Runner.machine_id`), no
+    other runner on that machine runs it, so its secrets stay with that runner.
 
 The claim, the unclaimable report, the vault's "does this box run the agent"
 (`runner_routes_agent`) and the routing writes all ask the same function.
@@ -42,7 +42,7 @@ def _runner(owner, name, ws, *, unit=None, machine="", kind=Runner.CLOUD, **caps
 
 @pytest.fixture
 def box():
-    """One machine (cloud-ec2-2) with two units: the dimagi tree, and eva on her own."""
+    """One machine (cloud-ec2-2) with two runners: the dimagi tree, and eva on her own."""
     jj = get_user_model().objects.create_user(username="jj", email="jj@dimagi.com")
     dimagi = Workspace.objects.create(slug="dimagi", display_name="Dimagi", created_by=jj)
     WorkspaceMembership.objects.create(workspace=dimagi, user=jj, role=WorkspaceMembership.OWNER)
@@ -74,7 +74,7 @@ def test_cannot_serve_is_unchanged_for_runners_with_no_unit_and_no_machine(box):
     assert routing.unit_refusal(plain, "eva") == ""
     assert routing.cannot_serve(plain, "eva") == ""
     assert routing.cannot_serve(plain, "ace") == ""
-    # A tree unit on a machine with no agent unit refuses nothing either.
+    # A tree's runner on a machine with no agent's runner refuses nothing either.
     other = _runner(box["jj"], "cloud-ec2-9", box["dimagi"],
                     unit={"kind": "tree", "root": "dimagi"}, machine=ROLE.replace("2", "9"))
     assert routing.cannot_serve(other, "eva") == ""
@@ -83,10 +83,10 @@ def test_cannot_serve_is_unchanged_for_runners_with_no_unit_and_no_machine(box):
 def test_the_two_refusals_and_their_reasons(box):
     tree, eva_unit = box["tree"], box["eva_unit"]
     assert routing.cannot_serve(eva_unit, "eva") == ""
-    assert routing.cannot_serve(eva_unit, "ace") == "cloud-ec2-2-agent-eva is the agent unit for eva"
+    assert routing.cannot_serve(eva_unit, "ace") == "cloud-ec2-2-agent-eva is the runner for agent eva"
     assert routing.cannot_serve(tree, "ace") == ""
     assert routing.cannot_serve(tree, "eva") == (
-        "eva has its own unit on this machine (cloud-ec2-2-agent-eva)")
+        "eva has its own runner on this machine (cloud-ec2-2-agent-eva)")
 
 
 def test_a_retired_agent_unit_releases_its_agent(box):
@@ -110,7 +110,7 @@ def test_an_agent_unit_claims_only_its_agent(box):
 
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     assert rows[str(t_ace.pk)]["kind"] == "config"
-    assert "agent unit for eva" in rows[str(t_ace.pk)]["reason"]
+    assert "runner for agent eva" in rows[str(t_ace.pk)]["reason"]
 
 
 def test_an_agent_with_its_own_unit_is_claimed_by_no_other_unit_on_the_machine(box):
@@ -119,7 +119,7 @@ def test_an_agent_with_its_own_unit_is_claimed_by_no_other_unit_on_the_machine(b
     t = _turn(eva, "eva")
     assert claim.claim_next_turn(tree) is None
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
-    assert "eva has its own unit on this machine" in rows[str(t.pk)]["reason"]
+    assert "eva has its own runner on this machine" in rows[str(t.pk)]["reason"]
 
     RunnerAssignment.objects.create(agent=eva, runner=eva_unit, rank=1)
     assert claim.claim_next_turn(eva_unit).pk == t.pk
@@ -130,7 +130,7 @@ def test_a_workspace_order_naming_both_units_routes_each_agent_to_its_own(box):
     WorkspaceRunnerOrder.objects.create(workspace=box["dimagi"], runner=eva_unit, rank=0)
     WorkspaceRunnerOrder.objects.create(workspace=box["dimagi"], runner=tree, rank=1)
     t_ace, t_eva = _turn(box["ace"], "ace", age=0), _turn(box["eva"], "eva", age=0)
-    # The eva unit is not a better-ranked blocker for ace: it is not in ace's list.
+    # The eva runner is not a better-ranked blocker for ace: it is not in ace's list.
     assert claim.claim_next_turn(tree).pk == t_ace.pk
     assert claim.claim_next_turn(tree) is None
     assert claim.claim_next_turn(eva_unit).pk == t_eva.pk
@@ -143,8 +143,8 @@ def test_a_pin_does_not_get_past_the_unit(box):
     assert claim.claim_next_turn(eva_unit) is None
     assert claim.claim_next_turn(tree) is None
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
-    assert "agent unit for eva" in rows[str(t_ace.pk)]["reason"]
-    assert "eva has its own unit on this machine" in rows[str(t_eva.pk)]["reason"]
+    assert "runner for agent eva" in rows[str(t_ace.pk)]["reason"]
+    assert "eva has its own runner on this machine" in rows[str(t_eva.pk)]["reason"]
 
 
 def test_the_vault_reads_the_same_rule(box):
@@ -168,11 +168,11 @@ def test_routing_writes_that_cross_a_unit_are_refused(box):
     resp = c.put("/api/agents/ace/runners", {"runner_ids": [str(box["eva_unit"].pk)]},
                  content_type="application/json")
     assert resp.status_code == 422, resp.content
-    assert "agent unit for eva" in resp.json()["detail"]
+    assert "runner for agent eva" in resp.json()["detail"]
     resp = c.put("/api/agents/eva/runners", {"runner_ids": [str(box["tree"].pk)]},
                  content_type="application/json")
     assert resp.status_code == 422
-    assert "eva has its own unit on this machine" in resp.json()["detail"]
+    assert "eva has its own runner on this machine" in resp.json()["detail"]
     assert not RunnerAssignment.objects.exists()
 
     resp = c.put("/api/agents/eva/runners", {"runner_ids": [str(box["eva_unit"].pk)]},
@@ -183,14 +183,14 @@ def test_routing_writes_that_cross_a_unit_are_refused(box):
     assert resp.status_code == 200, resp.content
 
 
-# ---- the topology groups a box's units -------------------------------------------------
+# ---- the topology groups a machine's runners ---------------------------------------------
 def test_the_topology_lists_a_boxs_units_together(box):
     _runner(box["jj"], "a-laptop", box["dimagi"], kind=Runner.EMDASH)
     _runner(box["jj"], "zz-other-box", box["dimagi"], machine="arn:aws:iam::111122223333:role/zz")
     rows = _client(box["jj"]).get("/api/workspaces/dimagi/runner-topology").json()["runners"]
     by_name = {r["name"]: r for r in rows}
-    assert by_name["cloud-ec2-2-dimagi"]["machine"] == "cloud-ec2-2-RunnerRole"
-    assert by_name["cloud-ec2-2-agent-eva"]["machine"] == "cloud-ec2-2-RunnerRole"
+    assert by_name["cloud-ec2-2-dimagi"]["machine"] == "cloud-ec2-2"
+    assert by_name["cloud-ec2-2-agent-eva"]["machine"] == "cloud-ec2-2"
     assert by_name["cloud-ec2-2-dimagi"]["unit"] == "tree:dimagi"
     assert by_name["cloud-ec2-2-agent-eva"]["unit"] == "agent:eva"
     assert by_name["a-laptop"]["machine"] == "" and by_name["a-laptop"]["unit"] == ""
@@ -236,7 +236,7 @@ def test_approving_an_aws_iam_key_records_the_machine(box):
     assert Runner.objects.get(pk=r.pk).machine_id == ROLE
 
 
-# ---- an agent unit takes nothing that does not act as its agent ------------------------
+# ---- an agent's runner takes nothing that does not act as its agent ----------------------
 def _chat(box, agent=None, bound_to=None, key="c"):
     from apps.canopy_sessions.models import RunnerBinding, Session
 
@@ -272,7 +272,7 @@ def test_an_agent_unit_takes_no_repo_turn_and_no_agentless_chat(box):
     assert claim.claim_next_turn(eva_unit) is None
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
     for t in (repo, chat, pinned):
-        assert "agent unit for eva" in rows[str(t.pk)]["reason"], rows[str(t.pk)]
+        assert "runner for agent eva" in rows[str(t.pk)]["reason"], rows[str(t.pk)]
     # Its own agent's chat it takes.
     own = _chat(box, agent=box["eva"], key="eva-chat")
     RunnerAssignment.objects.create(agent=box["eva"], runner=eva_unit, rank=0)
@@ -288,7 +288,7 @@ def test_a_tree_unit_still_takes_agentless_chats(box):
 
 def test_a_bound_chat_the_unit_refuses_reads_the_same_everywhere(box):
     """The binding short-circuit must not report a chat as live that the claim
-    refuses: an ace chat bound to the eva unit, an eva chat bound to the tree."""
+    refuses: an ace chat bound to the eva runner, an eva chat bound to the tree."""
     from apps.harness.claim import turn_reach
 
     tree, eva_unit = box["tree"], box["eva_unit"]
@@ -300,8 +300,8 @@ def test_a_bound_chat_the_unit_refuses_reads_the_same_everywhere(box):
     assert turn_reach(Turn.objects.get(pk=ace_chat.pk)).kind != "live"
     assert turn_reach(Turn.objects.get(pk=eva_chat.pk)).kind != "live"
     rows = {r["turn_id"]: r for r in claim.unclaimable_queued_turns(box["jj"])}
-    assert "agent unit for eva" in rows[str(ace_chat.pk)]["reason"]
-    assert "eva has its own unit on this machine" in rows[str(eva_chat.pk)]["reason"]
+    assert "runner for agent eva" in rows[str(ace_chat.pk)]["reason"]
+    assert "eva has its own runner on this machine" in rows[str(eva_chat.pk)]["reason"]
 
 
 # ---- what a caller learns of a runner's trees -------------------------------------------
@@ -385,3 +385,9 @@ def test_the_fleet_list_reads_roots_in_constant_queries(box, monkeypatch):
     rows = {r["name"]: r for r in c.get("/api/harness/runners/").json()}
     assert rows["laptop-0"]["roots"] == ["dimagi", "marshellis"]
     assert rows["laptop-0"]["spans_trees"] is True
+
+
+def test_a_runner_names_its_machine_without_the_role_suffix():
+    r = Runner(machine_id="arn:aws:iam::111122223333:role/canopy-cloud-runner-2-RunnerRole-rcnZI7uy9JOR")
+    assert r.machine_name() == "canopy-cloud-runner-2"
+    assert Runner(machine_id="").machine_name() == ""

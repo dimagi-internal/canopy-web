@@ -232,6 +232,9 @@ class Client:
         # the chat can size a session's context window. Every beat, absent = "".
         from . import claude_model
         body["claude_model"] = claude_model.configured()
+        # Which OS this is, so the server's fix-it text fits the box (Runner.platform).
+        from .browser_pair import platform_name
+        body["platform"] = platform_name()
         # Every heartbeat path ends here, so this is where the menu bar learns
         # whether canopy still accepts this box (server_status.py).
         from . import server_status

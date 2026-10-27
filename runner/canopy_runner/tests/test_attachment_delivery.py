@@ -5,6 +5,7 @@ The feature is worthless if the file reaches disk and the agent never opens it,
 so both halves are pinned here.
 """
 from __future__ import annotations
+import sys
 
 import pathlib
 
@@ -79,6 +80,7 @@ def test_one_unfetchable_attachment_does_not_sink_the_turn():
     assert missing == ["1-x.png"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX path literals ('/tmp/a/shot.png'); Windows renders the same Path with backslashes")
 def test_the_prompt_tells_the_agent_to_READ_the_file():
     """An agent merely told a file exists keeps talking; one told to read it
     reaches for the tool. Looking at the screenshot is the entire feature."""
@@ -137,6 +139,7 @@ def test_two_pasted_screenshots_named_alike_both_arrive(tmp_path, monkeypatch):
     assert missing == [] and [p.name for p in paths] == ["1-image.png", "2-image.png"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX path literals; Windows renders the same Path with backslashes")
 def test_a_placeholder_in_the_message_labels_its_file():
     """The composer types "[Image #N]" where a file was pasted. The message stays
     as typed; the note says which file each placeholder is."""

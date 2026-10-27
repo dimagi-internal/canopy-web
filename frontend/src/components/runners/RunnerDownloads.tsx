@@ -120,8 +120,9 @@ export function RunnerDownloads({ authed, developerCommand }: { authed: boolean;
         <p className="mt-1">
           Both installs run the same runner and pairing: opening the app on a developer account takes it over, and
           re-running <code className="font-mono">install-runner.sh</code> switches back.{' '}
-          <code className="font-mono">touch ~/.canopy/hold-updates</code> keeps a box on the build you installed.
-          To try the app without touching your runner, use a second macOS account.
+          <code className="font-mono">touch ~/.canopy/hold-updates</code> (on Windows, in PowerShell:{' '}
+          <code className="font-mono">New-Item -ItemType File $HOME\.canopy\hold-updates</code>) keeps a box on the
+          build you installed. To try the app without touching your runner, use a second account on the computer.
         </p>
       </details>
     </div>

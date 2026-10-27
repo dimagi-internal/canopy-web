@@ -288,7 +288,7 @@ def power_of(lifecycle: str) -> str:
 class Joined:
     status: str            # "joined" | "reattached" | "waiting"
     runner: Runner | None = None
-    #: A member that came up as a unit: the unit's own signing key, which it signs in with.
+    #: A member whose runner has its own Unix user: that runner's own signing key, which it signs in with.
     unit_key: RunnerDeviceKey | None = None
 
 
@@ -298,9 +298,9 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
     verified STS ARN (`aws_iam_proof.verify_caller`). `refuse(why)` builds the
     uniform 401 every refusal is; the reason goes to the log only.
 
-    A member built as a box of isolation units (`runner.cfn.yaml`'s cloud-init, one
-    workspace-tree unit) sends `unit_jwk`: the unit's own signing key. The instance
-    role belongs to root, so the unit signs in with that key instead; it is made
+    A member built like a machine of several runners (`runner.cfn.yaml`'s cloud-init,
+    one runner for a workspace tree) sends `unit_jwk`: that runner's own signing key. The instance
+    role belongs to root, so the runner signs in with that key instead; it is made
     active under the fleet's approval, and it carries the fleet's ECDH key, so it is
     the key the fleet's vault copies are given to. The role + instance key is still
     the member's identity, for a rejoin."""
@@ -346,7 +346,7 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
         try:
             unit = device_keys.normalize_public_jwk(unit_jwk)
         except device_keys.KeyError_ as exc:
-            raise refuse(f"unit key: {exc}") from exc
+            raise refuse(f"runner key: {exc}") from exc
 
     existing = RunnerDeviceKey.objects.select_related("runner").filter(jkt=jkt).first()
     if existing is not None:
@@ -360,12 +360,12 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
     store = ecdh_store if ecdh_store in ECDH_STORES else ("aws-kms" if fleet.ecdh_public_jwk else "")
     caps = declared_capabilities(capabilities)
     if unit is not None:
-        # canopy-web says what unit it is, as for any unit: the fleet's tree.
+        # canopy-web says what it serves, as for any such runner: the fleet's tree.
         from apps.workspaces import services as wsvc  # noqa: PLC0415 — as above
 
         caps["unit"] = {"kind": "tree", "root": wsvc.tree_roots({fleet.workspace_id}).get(
             fleet.workspace_id, fleet.workspace_id)}
-        # The unit's key carries the ECDH key; the role + instance key is identity only.
+        # The runner's key carries the ECDH key; the role + instance key is identity only.
         ecdh, ecdh_jkt, store = {}, "", ""
     unit_key = None
     try:
@@ -388,7 +388,7 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
             if unit is not None:
                 unit_key = _unit_key(fleet, runner, unit, name, ecdh_public_jwk)
     except IntegrityError:
-        raise refuse(f"{instance}: a concurrent join won, or its unit key is another runner's") from None
+        raise refuse(f"{instance}: a concurrent join won, or its runner key is another runner's") from None
     _attach_vault(fleet, runner)
     _give_wraps(fleet, unit_key or key)
     _put_routes(runner, _current_routing(fleet, exclude=runner))
@@ -399,16 +399,16 @@ def join(*, fleet: RunnerFleet, caller_arn: str, name: str, host: str, capabilit
 
 def _unit_key(fleet: RunnerFleet, runner: Runner, jwk: dict, name: str,
               ecdh_public_jwk: dict | None) -> RunnerDeviceKey:
-    """The member's unit signing key: active under the fleet's approval, with the
+    """The member runner's own signing key: active under the fleet's approval, with the
     fleet's ECDH key (its broker serves the fleet's KMS key). A rejoin with a new
-    unit key (the instance's disk was replaced) replaces the old one in place, so the
+    runner key (the instance's disk was replaced) replaces the old one in place, so the
     vault copies on it are kept; the same key again changes nothing."""
     jkt = device_keys.thumbprint(jwk)
     ecdh = dict(fleet.ecdh_public_jwk or {})
     if ecdh_public_jwk and ecdh and device_keys.thumbprint(
             device_keys.normalize_public_jwk(ecdh_public_jwk)) != device_keys.thumbprint(ecdh):
         ecdh = {}  # not the fleet's key: it gets no copy, and waits for a person like any new ECDH key
-    fields = dict(kind=RunnerDeviceKey.SOFTWARE, public_jwk=jwk, jkt=jkt, label=f"{name} (fleet unit key)",
+    fields = dict(kind=RunnerDeviceKey.SOFTWARE, public_jwk=jwk, jkt=jkt, label=f"{name} (fleet runner key)",
                   status=RunnerDeviceKey.ACTIVE, created_by=fleet.owner, approved_by=fleet.approved_by,
                   approved_at=fleet.approved_at, ecdh_public_jwk=ecdh,
                   ecdh_jkt=device_keys.thumbprint(ecdh) if ecdh else "", ecdh_store="kms-broker" if ecdh else "",

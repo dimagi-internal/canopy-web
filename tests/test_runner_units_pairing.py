@@ -1,10 +1,10 @@
-"""One approval pairs every isolation unit on a box (spec
+"""One approval pairs every runner on a machine (spec
 2026-10-19-runner-isolation-units §2, plan Task 6.1 and 6.5).
 
-A box of units makes ONE `pair-by-role` call with its instance-role proof and
-every unit's public keys. canopy-web makes one runner per unit, each with an
-ACTIVE software device key; a replaced instance re-attaches keeping every runner
-id; and a box paired before units (one runner, an aws-iam key, a KMS ECDH key)
+A machine running several runners makes ONE `pair-by-role` call with its
+instance-role proof and every runner's public keys. canopy-web makes each runner,
+each with an ACTIVE software device key; a replaced instance re-attaches keeping
+every runner id; and a box paired before it ran several runners (one runner, an aws-iam key, a KMS ECDH key)
 is ADOPTED: its runner id, its bindings and its zero-knowledge wraps survive.
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ def _keys(names) -> dict[str, dict]:
     return {n: {"public_jwk": _jwk(), "ecdh_public_jwk": _jwk()} for n in names}
 
 
-# ---- the invitation lists the units ------------------------------------------------------
+# ---- the invitation lists the runners ----------------------------------------------------
 
 def test_an_invitation_lists_its_units(two_trees):
     res = _invite(two_trees)
@@ -79,7 +79,7 @@ def test_an_agent_unit_must_name_an_agent_of_its_workspace(two_trees):
     assert _invite(two_trees, units=twice).status_code == 422
 
 
-# ---- one approval pairs every unit --------------------------------------------------------
+# ---- one approval pairs every runner -----------------------------------------------------
 
 def test_three_units_paired_by_one_approval(two_trees):
     from apps.harness.models import RunnerEnrollment
@@ -105,13 +105,13 @@ def test_three_units_paired_by_one_approval(two_trees):
         assert key.approved_by == two_trees["user"]
         # The ECDH key up.sh did not name waits for a person.
         assert key.ecdh_store == "kms-broker" and key.ecdh_waiting
-    # The unit is canopy-web's, from the approved invitation — not the box's word.
+    # What it serves is canopy-web's, from the approved invitation — not the box's word.
     assert Runner.objects.get(name=f"{BOX}-agent-eva").unit() == {"kind": "agent", "slug": "eva"}
     assert Runner.objects.get(name=f"{BOX}-marsh").unit() == {"kind": "tree", "root": "marsh"}
     got = _pat_client(two_trees["pat"]).get(f"{INVITES}{inv['id']}").json()
     assert got["status"] == "consumed"
     assert {u["name"]: u["runner_id"] for u in got["units"]} == body["units"]
-    # No role key: the instance role is root's and is never a unit's device key.
+    # No role key: the instance role is root's and is never a runner's device key.
     assert not RunnerDeviceKey.objects.filter(kind=RunnerDeviceKey.AWS_IAM).exists()
 
 
@@ -213,7 +213,7 @@ def test_a_revoked_unit_key_is_not_laundered_by_reattaching(two_trees):
     assert RunnerDeviceKey.objects.get(runner_id=first[f"{BOX}-marsh"]).status == RunnerDeviceKey.REVOKED
 
 
-# ---- adopting a box paired before units (Review Focus 1, plan Task 6.5) --------------------
+# ---- adopting a box paired before several runners (Review Focus 1, plan Task 6.5) --------
 
 @pytest.fixture
 def live_box(org):
@@ -248,10 +248,10 @@ LIVE_UNIT = [{"name": "cloud-ec2-2", "workspace": "connect", "kind": "tree"}]
 
 def test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps(
         live_box, django_capture_on_commit_callbacks):
-    """Moving cloud-ec2-2 to units: its default unit is `tree:connect`, named as the
-    box, with its existing KMS key (now served by the broker). Adopting turns its
-    instance-role key into a unit key, so it takes the approved invitation that
-    `up.sh --in-place` makes, listing that unit."""
+    """Moving cloud-ec2-2 to several runners: its default runner serves `tree:connect`,
+    named as the box, with its existing KMS key (now served by the broker). Adopting
+    turns its instance-role key into a runner key, so it takes the approved invitation
+    that `up.sh --in-place` makes, listing that runner."""
     from django.core import mail
 
     from apps.agents.models import AgentVaultWrap
@@ -284,7 +284,7 @@ def test_the_live_single_unit_box_is_adopted_keeping_its_id_bindings_and_wraps(
     assert AgentVaultWrap.objects.filter(pk=live_box["wrap"].pk, device_key=key).exists()
     assert RunnerBinding.objects.filter(pk=live_box["binding"].pk, runner=live_box["runner"]).exists()
     assert Runner.objects.get(pk=live_box["runner"].pk).machine_id == MACHINE
-    # It now signs in with the unit key, not the role.
+    # It now signs in with the runner key, not the role.
     assert aws_iam_proof.known_key(ROLE) is None
 
 
@@ -331,7 +331,7 @@ def test_a_single_runner_pairing_is_unchanged_by_units(org):
 
 
 def test_pat_is_never_needed(two_trees):
-    """Pairing a box of units sends no Authorization header at all."""
+    """Pairing a machine of several runners sends no Authorization header at all."""
     PersonalToken.objects.all().delete()
     inv = RunnerInvitation.objects.create(
         name=BOX, workspace=two_trees["ws"], created_by=two_trees["user"], role_arn=ROLE,
@@ -343,7 +343,7 @@ def test_pat_is_never_needed(two_trees):
 
 
 def test_a_capabilities_write_that_omits_the_unit_keeps_it(two_trees):
-    """The box re-declares its capabilities on every start; the unit canopy-web
+    """The box re-declares its capabilities on every start; what it serves, as canopy-web
     recorded from the invitation is not lost when it omits it."""
     from apps.harness.models import RunnerAccessToken
 
@@ -434,8 +434,8 @@ def test_a_box_cannot_replace_or_clear_its_server_owned_unit(two_trees):
 
 
 def test_adopting_as_an_agent_unit_restricts_the_runner_at_once(live_box):
-    """The unit an adopted runner becomes is the invitation's, set by canopy-web in
-    the same call: adopted as the agent unit for eva, it runs nothing else."""
+    """What an adopted runner serves is the invitation's, set by canopy-web in
+    the same call: adopted as the runner for agent eva, it runs nothing else."""
     from apps.harness import routing
 
     unit = [{"name": "cloud-ec2-2", "workspace": "connect", "kind": "agent", "slug": "eva"}]

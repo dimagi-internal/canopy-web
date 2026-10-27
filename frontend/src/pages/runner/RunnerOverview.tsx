@@ -37,10 +37,14 @@ export function RunnerFacts({ runner }: { runner: RunnerOut }): JSX.Element {
     ['kind', runner.kind ?? ''],
     ['agent CLIs', runnerClisText(runner), 'runner-clis'],
   ]
-  if (runner.kind !== 'cloud') rows.push(['runtime', runner.engine === 'claude-desktop' ? 'Claude desktop' : 'emdash'])
+  if (runner.kind !== 'cloud')
+    rows.push(['runtime', runner.engine === 'claude-desktop' ? 'Claude desktop' : runner.engine === 'claude-cli' ? 'Claude CLI' : 'emdash'])
   rows.push(['owner', runner.owner_email ?? '—'])
-  // Host only matters for emdash (per-macOS-account session reuse); cloud boxes report none.
-  if (runner.host) rows.push(['host', runner.host])
+  // The machine it is on: several runners can share one, each its own user there.
+  if (runner.machine) rows.push(['machine', runner.machine, 'runner-machine'])
+  // Host only matters for emdash (per-macOS-account session reuse); a cloud
+  // runner reports its own name there, which says nothing about the machine.
+  else if (runner.host && runner.kind !== 'cloud') rows.push(['host', runner.host])
   // What code it is on. The cloud runner is a different program and reports neither.
   if (runner.code_version) {
     rows.push(['runner code', `${runner.code_version}${runner.code_sha ? ` (${runner.code_sha.slice(0, 12)})` : ''}`])

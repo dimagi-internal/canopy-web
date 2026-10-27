@@ -304,7 +304,8 @@ $updaterLog = Join-Path $CanopyDir "updater.log"
 
 Register-CanopyTask -Name $RUNNER_TASK -RestartOnFailure `
     -CommandLine "`"$Bin`" run --config `"$Config`" >> `"$runnerLog`" 2>&1" `
-    -Triggers @(New-ScheduledTaskTrigger -AtLogOn -User $TASK_USER)
+    -Triggers @((New-ScheduledTaskTrigger -AtLogOn -User $TASK_USER),
+                (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)))
 
 if (-not $NoAutoUpdate) {
     # A COPY of this installer, frozen at the last install -- so a stray
@@ -322,6 +323,17 @@ if (-not $NoAutoUpdate) {
         -CommandLine "`"$ps`" -NoProfile -ExecutionPolicy Bypass -File `"$stage2`" -IfStale -Repo `"$Repo`" >> `"$updaterLog`" 2>&1"
 }
 
-# Start the runner now so a first install does not wait for the next logon.
+# Start the runner now so a first install does not wait for the next logon. /End
+# first: the task is IgnoreNew, so on an UPDATE a bare /Run is a no-op and the old
+# daemon keeps running the old code. And WAIT for /End to settle: a /Run that lands
+# while the old daemon is still Running is dropped too -- the same /End, wait, /Run
+# as platform_jobs.restart_windows_task.
+& schtasks /End /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
+for ($i = 0; $i -lt 30; $i++) {
+    # The State enum, not schtasks' status column: that one is translated.
+    $state = (Get-ScheduledTask -TaskPath "$TASK_FOLDER\" -TaskName $RUNNER_TASK -ErrorAction SilentlyContinue).State
+    if ("$state" -ne 'Running') { break }
+    Start-Sleep -Milliseconds 500
+}
 & schtasks /Run /TN "$TASK_FOLDER\$RUNNER_TASK" *> $null
 Info "done -- logs at $runnerLog"
