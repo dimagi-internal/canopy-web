@@ -8,7 +8,7 @@ import { unwrap } from './problem'
 type Schemas = components['schemas']
 
 export type SignOffOut = Schemas['SignOffOut']
-export type SignOffDecisionOut = Schemas['SignOffDecisionOut']
+export type SignOffDecidedOut = Schemas['SignOffDecidedOut']
 
 export async function getSignOff(id: string): Promise<SignOffOut> {
   const res = await apiV2.GET('/api/sign-offs/{sign_off_id}', { params: { path: { sign_off_id: id } } })
@@ -16,7 +16,7 @@ export async function getSignOff(id: string): Promise<SignOffOut> {
 }
 
 /** Approve (browser + passkey step-up, answered by the API client) or decline. */
-export async function decideSignOff(id: string, approve: boolean): Promise<SignOffDecisionOut> {
+export async function decideSignOff(id: string, approve: boolean): Promise<SignOffDecidedOut> {
   const params = { params: { path: { sign_off_id: id } } }
   const res = approve
     ? await apiV2.POST('/api/sign-offs/{sign_off_id}/approve', params)

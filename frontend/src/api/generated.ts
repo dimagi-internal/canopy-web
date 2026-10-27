@@ -32027,8 +32027,8 @@ export interface components {
             /** Decided By Email */
             readonly decided_by_email?: string | null;
         };
-        /** SignOffDecisionOut */
-        readonly SignOffDecisionOut: {
+        /** SignOffDecidedOut */
+        readonly SignOffDecidedOut: {
             /** Id */
             readonly id: string;
             /** Site */
@@ -52865,7 +52865,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SignOffDecisionOut"];
+                    readonly "application/json": components["schemas"]["SignOffDecidedOut"];
                 };
             };
         };
@@ -52887,7 +52887,7 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["SignOffDecisionOut"];
+                    readonly "application/json": components["schemas"]["SignOffDecidedOut"];
                 };
             };
         };

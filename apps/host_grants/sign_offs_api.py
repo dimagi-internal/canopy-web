@@ -129,7 +129,7 @@ class SignOffOut(Schema):
     decided_by_email: str | None = None
 
 
-class SignOffDecisionOut(SignOffOut):
+class SignOffDecidedOut(SignOffOut):
     #: Where to send the browser now: the site's page, with the approval (or the
     #: decline) in its query.
     redirect_url: str
@@ -165,10 +165,10 @@ def get_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffOut:
     return SignOffOut(**_out(_mine(request, sign_off_id)))
 
 
-@router.post("/{sign_off_id}/approve", response=SignOffDecisionOut,
+@router.post("/{sign_off_id}/approve", response=SignOffDecidedOut,
              summary="Approve a site's sign-off request (browser, passkey)")
 @gate("sign-off-approver", setting=True, step_up=True)
-def approve_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecisionOut:
+def approve_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecidedOut:
     """Approve, in your own browser after a passkey step-up: canopy signs the approval
     and answers where to send the browser (the site's page, approval in its query). A
     token is refused (403), so no agent or script can approve. 409 `closed` when it was
@@ -182,12 +182,12 @@ def approve_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecisionO
         raise HttpError(409, f"closed: this request is {exc}")
     except client_identity.ClientIdentityError:
         raise HttpError(503, "not_configured: this canopy has no client key to sign with")
-    return SignOffDecisionOut(**_out(row), redirect_url=service.redirect_url(row, approval))
+    return SignOffDecidedOut(**_out(row), redirect_url=service.redirect_url(row, approval))
 
 
-@router.post("/{sign_off_id}/decline", response=SignOffDecisionOut, summary="Decline a site's sign-off request")
+@router.post("/{sign_off_id}/decline", response=SignOffDecidedOut, summary="Decline a site's sign-off request")
 @gate("sign-off-approver", setting=True)
-def decline_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecisionOut:
+def decline_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecidedOut:
     """Decline; the site is told when it next reads the request, and the answer says
     where to send the browser. 409 `closed` when it was decided already or has expired."""
     row = _mine(request, sign_off_id)
@@ -195,4 +195,4 @@ def decline_sign_off(request: HttpRequest, sign_off_id: str) -> SignOffDecisionO
         row = service.decline(row, request.user)
     except service.SignOffClosedError as exc:
         raise HttpError(409, f"closed: this request is {exc}")
-    return SignOffDecisionOut(**_out(row), redirect_url=service.redirect_url(row, None))
+    return SignOffDecidedOut(**_out(row), redirect_url=service.redirect_url(row, None))

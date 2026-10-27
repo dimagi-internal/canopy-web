@@ -297,7 +297,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/sign-offs/:signOffId',
-    home: '/home',
+    home: '/w/:workspace/agents',
     group: 'Approving a site sign-off',
     title: 'Approve a site sign-off',
     audience: 'The person a connected site asks, or an agent\'s owner and admins (the link the site sends, or Home)',
