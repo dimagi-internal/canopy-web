@@ -77,6 +77,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       already_live: ${{ steps.live.outputs.already_live }}
+      sha: ${{ steps.tip.outputs.sha }}
     steps:
       - name: Check ref is refs/heads/main
         run: |
@@ -90,16 +91,27 @@ jobs:
       # breath can build the PRE-merge commit, deploy green, and ship code that
       # simply isn't there. (Seen in the wild: a management command was missing
       # from a successful deploy.) It is also how a queued deploy can roll prod
-      # BACKWARDS past anything merged while it waited. Deploy what main is now,
-      # or fail loudly and let a human re-dispatch.
-      - name: Refuse to deploy a stale commit
+      # BACKWARDS past anything merged while it waited. So deploy what main is
+      # NOW: every later job builds and rolls this step's sha, not github.sha.
+      #
+      # This used to fail the run instead ("re-dispatch"). With ~20 deploys a
+      # day behind one concurrency group, the run waiting behind a rollout
+      # nearly always found main had moved: 15 of the 28 failed deploys of
+      # 2026-10-12..27 were this refusal, each one a re-dispatch and another
+      # ~8 min before anyone's merge went live. Every dispatch means "make main
+      # live", so the waiting run doing exactly that is the intent, not a risk.
+      - name: Resolve main's tip (deploy that, not the dispatch-time sha)
+        id: tip
         run: |
           TIP=$(git ls-remote https://github.com/${{ github.repository }} refs/heads/main | cut -f1)
-          if [ "$TIP" != "${{ github.sha }}" ]; then
-            echo "::error::Stale deploy: this run builds ${{ github.sha }} but main is now $TIP."
-            echo "::error::Re-dispatch the deploy so it picks up main's current tip."
+          if [ -z "$TIP" ]; then
+            echo "::error::Could not read main's tip from the remote."
             exit 1
           fi
+          if [ "$TIP" != "${{ github.sha }}" ]; then
+            echo "::notice::Dispatched at ${{ github.sha }}; main has moved on, deploying its tip $TIP."
+          fi
+          echo "sha=$TIP" >> "$GITHUB_OUTPUT"
           echo "Deploying main tip $TIP."
 
       # A deploy of the commit that is ALREADY serving is a no-op that still costs
@@ -131,17 +143,17 @@ jobs:
               --output text 2>/dev/null) || true
             LIVE="${IMAGE##*:}"
           fi
-          if [ "$LIVE" = "${{ github.sha }}" ]; then
+          if [ "$LIVE" = "${{ steps.tip.outputs.sha }}" ]; then
             echo "already_live=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::${{ github.sha }} is already live — skipping build and deploy. Dispatch with force=true to roll it again."
+            echo "::notice::${{ steps.tip.outputs.sha }} is already live — skipping build and deploy. Dispatch with force=true to roll it again."
             {
               echo "### Skipped: already live"
-              echo "\`${{ github.sha }}\` is already serving on \`${{ env.ECS_SERVICE }}\`. Nothing was built or rolled."
+              echo "\`${{ steps.tip.outputs.sha }}\` is already serving on \`${{ env.ECS_SERVICE }}\`. Nothing was built or rolled."
               echo "Re-run with \`force: true\` to deploy it again."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "already_live=false" >> "$GITHUB_OUTPUT"
-            echo "Live is '${LIVE:-<unknown>}'; deploying ${{ github.sha }}."
+            echo "Live is '${LIVE:-<unknown>}'; deploying ${{ steps.tip.outputs.sha }}."
           fi
 
   build:
@@ -153,6 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.guard.outputs.sha }}
           # `git log -1 -- <path>` needs real history: at the default depth of 1
           # it answers with HEAD or with nothing, so the runner-staleness alert
           # would compare against a sha that has nothing to do with the runner.
@@ -257,7 +270,7 @@ jobs:
             RUNNER_CLOUD_CODE_COMMITTED_AT=${{ steps.cloud_sha.outputs.committed_at }}
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ needs.guard.outputs.sha }}
           # Build cache lives in GitHub's cache, not ECR: a registry cache on a
           # GitHub-hosted runner is pulled OUT of AWS on every build, billed as
           # ECR internet egress (~8 GB/day, Oct 2026), and every cache push
@@ -267,11 +280,13 @@ jobs:
 
   deploy:
     name: Deploy to Fargate
-    needs: build
+    needs: [guard, build]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
@@ -307,7 +322,7 @@ jobs:
               d.pop(f, None)
           for c in d["containerDefinitions"]:
               if c["name"] == "${{ env.CONTAINER_NAME }}":
-                  c["image"] = "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ github.sha }}"
+                  c["image"] = "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ needs.guard.outputs.sha }}"
           print(json.dumps(d))
           PY
 
@@ -416,7 +431,7 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
             --no-execute-changeset \
-            --parameter-overrides ImageTag="${{ github.sha }}"
+            --parameter-overrides ImageTag="${{ needs.guard.outputs.sha }}"
 
           AFTER=$(newest_change_set) || exit 1
           if [ "$AFTER" = "$BEFORE" ] || [ "$AFTER" = "None" ]; then
@@ -569,8 +584,8 @@ jobs:
             echo ""
             echo "| Field | Value |"
             echo "|---|---|"
-            echo "| Ref | \`${{ github.ref_name }}\` @ \`${{ github.sha }}\` |"
-            echo "| Image | \`${{ env.ECR_REPO }}:${{ github.sha }}\` |"
+            echo "| Ref | \`${{ github.ref_name }}\` @ \`${{ needs.guard.outputs.sha }}\` (dispatched at \`${{ github.sha }}\`) |"
+            echo "| Image | \`${{ env.ECR_REPO }}:${{ needs.guard.outputs.sha }}\` |"
             echo "| Task definition | \`${{ steps.register-task.outputs.task-def-arn }}\` |"
             echo "| Migrations | \`${{ inputs.skip_migrations == true && 'SKIPPED (emergency)' || 'ran automatically' }}\` |"
             echo "| Service | \`${{ env.ECS_SERVICE }}\` |"

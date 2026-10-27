@@ -34,7 +34,7 @@ gh workflow run "Deploy to Labs (AWS)" --ref main                          # mig
 gh workflow run "Deploy to Labs (AWS)" --ref main -f skip_migrations=true  # EMERGENCY ONLY
 ```
 
-The workflow hard-fails on any ref other than `main`, and refuses a stale commit (the dispatched sha must still be main's tip when the run starts — otherwise re-dispatch). Dispatching the commit already serving ends green with build and deploy skipped; `-f force=true` rolls it again (e.g. to pick up a changed secret).
+The workflow hard-fails on any ref other than `main`, and deploys main's tip as of when the run starts, not the dispatch-time sha — so a dispatch that waited behind another rollout ships everything merged meanwhile, and a queued deploy can never roll prod backwards. Dispatching the commit already serving ends green with build and deploy skipped; `-f force=true` rolls it again (e.g. to pick up a changed secret).
 
 Pipeline: build → push to ECR (`labs-jj-canopy-web`) → **migrate** on a throwaway task def → create a CloudFormation change set (`aws cloudformation deploy --no-execute-changeset --parameter-overrides ImageTag=<sha>`) → **preflight** → `aws cloudformation execute-change-set`, which registers the real task definition and rolls the ECS service.
 
