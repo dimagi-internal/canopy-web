@@ -309,3 +309,11 @@ def test_run_now_on_a_stopped_trigger_says_why(w):
     assert r.status_code == 409 and "deactivated" in r.json()["detail"]
     listed = _c(w["op"]).get("/api/agents/hal/triggers/").json()["items"][0]
     assert "deactivated" in listed["stopped"]
+
+
+def test_the_turn_listing_names_the_trigger_and_who_set_it_up(w, alarms):
+    t = _alarm(w, "listed")
+    rows = _c(w["op"]).get("/api/harness/turns/?agent=hal").json()
+    row = next(r for r in rows if r["id"] == str(t.pk))
+    assert row["initiator"]["trigger"] == {"id": alarms.pk, "name": "AWS CloudWatch alarms",
+                                           "kind": "inbound_mail", "set_up_by": "op@dimagi.com"}

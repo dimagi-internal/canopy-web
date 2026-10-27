@@ -1062,6 +1062,10 @@ class InitiatorOut(Schema):
     # agent receiving the work), via_agent, turn} — or null when it acted on its own.
     # canopy-web works it out from the agent's turn login; no agent declares it.
     on_behalf_of: InitiatorOnBehalfOut | None = None
+    # When one of the agent's own TRIGGERS fired the turn (a schedule, or alarm mail
+    # from a bound sender): {id, name, kind, set_up_by}. `user` is then who set it
+    # up and is accountable for it, not who wrote in (apps/harness/triggers.py).
+    trigger: dict | None = None
     # WHICH credential the request that created the turn used — {type, id, label}
     # (`pat`, `oauth`, `session`, `delegated`, `contact`, `caller_token`) — and
     # the program that sent it (X-Canopy-Client). Null when canopy started it.
