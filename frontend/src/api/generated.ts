@@ -9564,6 +9564,53 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/slot-secrets": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Pool-slot secrets this runner holds that a reader of the agent waits for
+         * @description For each pool slot's secret sealed to one of this box's machines (one of the
+         *     agent's readers) that a reader is still waiting for — a machine approved since it
+         *     was written, or a vault member: the stored value, everyone it may be sealed to, who
+         *     waits, and the endorsements to check them against. The box decides whom to trust
+         *     and re-seals; canopy-web only lists.
+         */
+        readonly get: operations["get_slot_secret_keeper_work"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/harness/runners/{runner_id}/vault-keeper/{slug}/slot-secrets/{capability}/{slot}/{key}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * A keeper re-seals a pool slot's secret for the agent's readers
+         * @description `{value_zk, expect}`: the slot secret re-sealed to the agent's readers. Refused
+         *     unless this box held it and still is a reader (403 `zk_not_a_holder`), for any
+         *     recipient that is not a reader now (422), for one that drops a reader that held it
+         *     (422), and when it changed since the box read it (409 `zk_value_changed`).
+         */
+        readonly put: operations["put_slot_secret_reseal"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/harness/runners/{runner_id}/projects": {
         readonly parameters: {
             readonly query?: never;
@@ -27914,11 +27961,6 @@ export interface components {
             };
             /** Secret Keys */
             readonly secret_keys: readonly string[];
-            /**
-             * Secret Awaiting Seal
-             * @default false
-             */
-            readonly secret_awaiting_seal: boolean;
             /** Updated At */
             readonly updated_at: string | null;
             /** Updated By */
@@ -32818,6 +32860,68 @@ export interface components {
              * @default
              */
             readonly detail: string;
+        };
+        /** SlotSecretKeeperOut */
+        readonly SlotSecretKeeperOut: {
+            /** Slot Secrets */
+            readonly slot_secrets: readonly components["schemas"]["SlotSecretKeeperWorkOut"][];
+        };
+        /** SlotSecretKeeperRecipientOut */
+        readonly SlotSecretKeeperRecipientOut: {
+            /** Kind */
+            readonly kind: string;
+            /** Target */
+            readonly target: string;
+            /** Public Jwk */
+            readonly public_jwk: {
+                readonly [key: string]: unknown;
+            };
+            /**
+             * Runner Name
+             * @default
+             */
+            readonly runner_name: string;
+        };
+        /**
+         * SlotSecretKeeperWorkOut
+         * @description A pool slot's secret, sealed to this box, that a reader of the agent (a machine
+         *     approved since, or a vault member) is still waiting for. The box opens it, checks
+         *     each waiting machine's endorsement, and re-seals it to `recipients` (all of them
+         *     that it keeps). The shape of a delegated credential's keeper work.
+         */
+        readonly SlotSecretKeeperWorkOut: {
+            /** Agent */
+            readonly agent: string;
+            /** Agent Id */
+            readonly agent_id: string;
+            /** Name */
+            readonly name: string;
+            /** Device Jkt */
+            readonly device_jkt: string;
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Expect */
+            readonly expect: string;
+            /** Recipients */
+            readonly recipients: readonly components["schemas"]["SlotSecretKeeperRecipientOut"][];
+            /** Waiting */
+            readonly waiting: readonly string[];
+            /** Endorsements */
+            readonly endorsements: readonly components["schemas"]["ZkEndorsementOut"][];
+            /** Reseal Path */
+            readonly reseal_path: string;
+        };
+        /** SlotSecretResealOut */
+        readonly SlotSecretResealOut: {
+            /** Machines */
+            readonly machines: readonly string[];
+        };
+        /** SlotSecretResealIn */
+        readonly SlotSecretResealIn: {
+            /** Value Zk */
+            readonly value_zk: string;
+            /** Expect */
+            readonly expect: string;
         };
         /**
          * RunnerProjectRequestOut
@@ -53089,6 +53193,58 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["RunnerDelegatedCheckOut"];
+                };
+            };
+        };
+    };
+    readonly get_slot_secret_keeper_work: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlotSecretKeeperOut"];
+                };
+            };
+        };
+    };
+    readonly put_slot_secret_reseal: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly runner_id: string;
+                readonly slug: string;
+                readonly capability: string;
+                readonly slot: string;
+                readonly key: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["SlotSecretResealIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SlotSecretResealOut"];
                 };
             };
         };

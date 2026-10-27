@@ -1159,7 +1159,7 @@ class AgentDelegation(models.Model):
 
     GITHUB = "github"
     #: Retired: an agent once borrowed another agent's Salesforce credential through a
-    #: row of this service (naming the `lender`). Nothing reads or writes such rows now
+    #: row of this service. Nothing reads or writes such rows now
     #: — Salesforce for agents lives in a workspace vault holding `salesforce`,
     #: attached to each agent that uses it. The choice stays so old rows still load.
     SALESFORCE = "salesforce"
@@ -1171,12 +1171,6 @@ class AgentDelegation(models.Model):
     agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="delegations")
     service = models.CharField(max_length=32, choices=SERVICE_CHOICES)
     secret_enc = models.TextField(blank=True, default="")
-    #: Retired with Salesforce lending (see `SALESFORCE`): the agent whose own
-    #: credential was lent. Always null for GitHub; nothing reads it now.
-    lender = models.ForeignKey(
-        "agents.Agent", on_delete=models.CASCADE, null=True, blank=True,
-        related_name="lent_delegations",
-    )
     meta = models.JSONField(default=dict, blank=True)
     #: From the service when it says (GitHub's token-expiration header); null
     #: for a token that never expires. A column, not just `meta`, so "what
