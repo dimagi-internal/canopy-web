@@ -161,17 +161,18 @@ describe('useSessionMeta', () => {
 })
 
 describe('useTranscriptPaging', () => {
-  it('loads an earlier page from the seeded cursor', async () => {
-    chat.listMessages.mockResolvedValue({
-      messages: [{ turn_index: 5, role: 'user', content: {} }],
-      has_more_before: false,
-    })
+  it('loads every message the server holds in one read', async () => {
+    chat.getSession.mockResolvedValue(meta({
+      messages: [{ turn_index: 0, role: 'user', content: {} }],
+      oldest_loaded_turn_index: 0,
+    } as unknown as Partial<ChatSessionDetail>))
     const prepend = vi.fn()
     const { result } = renderHook(() => useTranscriptPaging('s1', prepend))
     act(() => result.current.seed(meta()))
     expect(result.current.hasMoreBefore).toBe(true)
-    await act(async () => { await result.current.loadEarlier() })
-    expect(chat.listMessages).toHaveBeenCalledWith('s1', 10)
+    await act(async () => { await result.current.loadAll() })
+    expect(chat.getSession).toHaveBeenCalledWith('s1', { full: true })
+    expect(chat.listMessages).not.toHaveBeenCalled()
     expect(prepend).toHaveBeenCalledTimes(1)
     expect(result.current.hasMoreBefore).toBe(false)
   })
