@@ -47,6 +47,7 @@ from .schemas import (
     TurnEventCountOut,
     TurnEventsIn,
     TurnEventsOut,
+    TurnAbortIn,
     TurnFinishIn,
     TurnIn,
     TurnMessagesOut,
@@ -420,6 +421,43 @@ def finish_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnFinishIn)
         if exc.status == 422:
             raise HttpError(422, exc.detail) from exc
         raise ProblemError(exc.status, exc.title, detail=exc.detail) from exc
+
+
+def _abortable_turn_or_404(request: HttpRequest, turn_id: uuid.UUID) -> Turn:
+    """A turn the caller may abort: its own agent's login (the agent stopping
+    itself), an editor of that agent, or whoever may report on it (the box that
+    claimed it). Uniform 404 otherwise. Never a connected site acting for a visitor."""
+    from apps.embedding import delegation
+
+    from .turn_agent_tokens import turn_agent
+
+    if delegation.offered_for(request) is None:
+        turn = (Turn.objects.select_related("agent", "chat_session__agent", "claimed_by")
+                .filter(pk=turn_id).first())
+        agent = turn_agent(turn) if turn is not None else None
+        if agent is not None and (agent.is_own_login(request.user)
+                                  or perms.can(request.user, agent.workspace_id, perms.AGENT_WORK)):
+            return turn
+    return reporting_turn_or_404(request, turn_id)
+
+
+@router.post("/turns/{turn_id}/abort", response=TurnOut)
+# its own agent's login, an editor of its agent, or the box that claimed it
+@gate("agent-login", "agent.work", "runner", kind="turn")
+def abort_turn(request: HttpRequest, turn_id: uuid.UUID, payload: TurnAbortIn):
+    """End a turn FAILED because it cannot do its work — a tool failed on
+    credentials, say. Canopy then raises it as a failure (investigation, alert,
+    debugger turn) and tells a box still running it to stop. Idempotent on a
+    turn already failed; a turn that ended some other way is a 409.
+    `canopy turn abort` and the canopy plugin's credential guard call this."""
+    from . import turn_abort
+
+    turn = _abortable_turn_or_404(request, turn_id)
+    by = getattr(request.user, "email", "") or ""
+    try:
+        return turn_abort.abort(turn, reason=payload.reason, tool=payload.tool, by=by)
+    except turn_abort.NotAbortable as exc:
+        raise ProblemError(409, "Turn not abortable", detail=str(exc)) from exc
 
 
 def _cancel_refusal(user, turn: Turn) -> str:

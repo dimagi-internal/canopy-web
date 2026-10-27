@@ -107,6 +107,11 @@ Per-source notes:
   debugger's, quiet) while a fix commit is not yet on every runner it hit, the
   handed-to person's after `hand_off` or a recurrence where the fix runs.
   Details in `apps/harness/auto_debug.py` and [`api-surface.md`](api-surface.md).
+- **A turn that cannot do its work is aborted, not finished.** `POST
+  /api/harness/turns/{id}/abort` (`apps/harness/turn_abort.py`) ends it FAILED
+  with the reason, which enters this same lifecycle, and stops the box still
+  running it. The canopy plugin's credential guard calls it when a tool fails on
+  credentials; agents call it with `canopy turn abort`.
 - **`unclaimable_turns` cost.** Its diagnosis is fleet-wide, and `actions()`
   runs per viewer per read, so it is memoised per process for 30 s (the
   reconcile refreshes it; `perform` re-checks on a fresh read). Agent editors
