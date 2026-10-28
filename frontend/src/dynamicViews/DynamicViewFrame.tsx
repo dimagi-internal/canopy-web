@@ -7,18 +7,45 @@
  * frame has an opaque origin, and its messages arrive with `origin === "null"`;
  * we accept one only when `event.source` is this frame's own window. Every read
  * it asks for goes through `resolveRead` (bridge.ts) and is made here, as the
- * viewer, under the view's workspace. Design: docs/architecture/dynamic-views.md.
+ * viewer, under the view's workspace. The one thing it may make happen is an agent
+ * task the view declares (`agentTasks.ts`): started here as the viewer, cancelled if
+ * this frame goes away while it runs. Design: docs/architecture/dynamic-views.md.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { cancelAgentTask, createAgentTask, getAgentTask, type AgentTask } from '@/api/agentTasks'
 import { apiUrl } from '@/api/base'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
+import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
-import { CHANNEL, isMessage, type FrameMessage, type HostMessage, type ReadRequest, type ViewScope } from './protocol'
+import {
+  CHANNEL,
+  isMessage,
+  type AgentTaskStatus,
+  type FrameMessage,
+  type HostMessage,
+  type ReadRequest,
+  type ViewScope,
+} from './protocol'
 
 export interface FrameView {
   code: string
   sources: DynamicViewSource[]
+  /** The agent tasks the code may start (the view's `agent_tasks`); none when absent. */
+  agent_tasks?: readonly DeclaredTask[]
+}
+
+/** What the frame is told about a task: its progress, not the request it was sent. */
+function statusOf(t: AgentTask): AgentTaskStatus {
+  return {
+    id: t.id, agent: t.agent, name: t.name, status: t.status, error: t.error ?? '',
+    ...(t.status === 'done' ? { result: t.result ?? null } : {}),
+    turn_id: t.turn_id ?? null, deadline_at: t.deadline_at, created_at: t.created_at, finished_at: t.finished_at ?? null,
+  }
+}
+
+function message(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
 }
 
 interface Props {
@@ -71,6 +98,24 @@ export function DynamicViewFrame({ view, scope, onError }: Props) {
   const navigate = useNavigate()
   const ctx: ReadContext = { workspace: scope.workspace.slug, project: scope.project?.handle ?? null }
   const ctxKey = `${ctx.workspace}/${ctx.project ?? ''}`
+  // Read through a ref so a draft's declaration (the editor's preview) applies to
+  // the next call; the workspace is the view's and does not change under a frame.
+  const declared = useRef<readonly DeclaredTask[]>(view.agent_tasks ?? [])
+  declared.current = view.agent_tasks ?? []
+  const tasks = useRef<ViewAgentTasks | null>(null)
+  if (tasks.current === null) {
+    const ws = ctx.workspace
+    tasks.current = new ViewAgentTasks(
+      {
+        create: (body) => createAgentTask(ws, body),
+        get: (id, waitS, signal) => getAgentTask(ws, id, waitS, signal),
+        cancel: (id) => cancelAgentTask(ws, id),
+      },
+      () => declared.current,
+    )
+  }
+  // Leaving the page (or the frame) cancels whatever the view is still waiting on.
+  useEffect(() => () => tasks.current?.cancelAll(), [])
 
   const post = useCallback((msg: HostMessage) => {
     // An opaque-origin frame can only be addressed as "*"; the window we post to
@@ -113,6 +158,20 @@ export function DynamicViewFrame({ view, scope, onError }: Props) {
           } catch (e) {
             post({ channel: CHANNEL, type: 'read-result', id: msg.id, ok: false, error: e instanceof Error ? e.message : String(e) })
           }
+          return
+        }
+        case 'agent-task': {
+          const id = msg.id
+          tasks.current!.run(msg.request, (t) => post({ channel: CHANNEL, type: 'agent-task-status', id, task: statusOf(t) }))
+            .then((data) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e) }))
+          return
+        }
+        case 'agent-task-read': {
+          const id = msg.id
+          tasks.current!.read(msg.taskId)
+            .then((t) => post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: statusOf(t) }))
+            .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e) }))
           return
         }
         case 'navigate': {
@@ -162,7 +221,10 @@ export function DynamicViewFrame({ view, scope, onError }: Props) {
         loads.current += 1
         // The first load is the frame; any later one means the view's code
         // replaced the document. Stop answering it.
-        if (loads.current > 1) setGone(true)
+        if (loads.current > 1) {
+          tasks.current?.cancelAll()
+          setGone(true)
+        }
       }}
     />
   )

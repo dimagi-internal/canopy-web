@@ -3008,8 +3008,10 @@ export interface paths {
         readonly put?: never;
         /**
          * Create a dynamic view
-         * @description Validates the code (it must define `View`) and every source against the
-         *     catalog; a refusal names what is wrong. Returns the view with its `url`.
+         * @description Validates the code (it must define `View`), every source against the
+         *     catalog, and every declared agent task (`agent_tasks`: the agent must be in the
+         *     view's workspace and one you may give tasks to yourself); a refusal names what
+         *     is wrong. Returns the view with its `url`.
          */
         readonly post: operations["create_dynamic_view"];
         readonly delete?: never;
@@ -3037,6 +3039,8 @@ export interface paths {
          * Change a dynamic view (a new version)
          * @description Only the fields given change. Each change that alters something is a new
          *     version; `GET /{id}/revisions/` lists them and `POST /{id}/rollback` restores one.
+         *     Changing `agent_tasks`, or the code of a view that declares any, needs you to be
+         *     able to give each declared agent a task yourself.
          */
         readonly patch: operations["update_dynamic_view"];
         readonly trace?: never;
@@ -20825,6 +20829,19 @@ export interface components {
              */
             readonly updated_at: string;
         };
+        /** DynamicViewAgentTask */
+        readonly DynamicViewAgentTask: {
+            /**
+             * Agent
+             * @description An agent's slug, in the view's workspace.
+             */
+            readonly agent: string;
+            /**
+             * Name
+             * @description The task name the code passes, e.g. `gmail-triage.review`.
+             */
+            readonly name: string;
+        };
         /** DynamicViewOut */
         readonly DynamicViewOut: {
             /** Id */
@@ -20864,6 +20881,11 @@ export interface components {
             readonly sources: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /**
+             * Agent Tasks
+             * @description The agent tasks the view's code may start, as its viewer.
+             */
+            readonly agent_tasks?: readonly components["schemas"]["DynamicViewAgentTask"][];
             /** Created By Email */
             readonly created_by_email?: string | null;
             /**
@@ -20911,6 +20933,13 @@ export interface components {
                 readonly [key: string]: unknown;
             }[];
             /**
+             * Agent Tasks
+             * @description The agent tasks the code may start with canopy.runAgentTask: [{agent, name}]. Each agent must be in the view's workspace and one you may give tasks to yourself.
+             */
+            readonly agent_tasks?: readonly {
+                readonly [key: string]: unknown;
+            }[];
+            /**
              * Note
              * @default
              */
@@ -20928,6 +20957,10 @@ export interface components {
             readonly code?: string | null;
             /** Sources */
             readonly sources?: readonly {
+                readonly [key: string]: unknown;
+            }[] | null;
+            /** Agent Tasks */
+            readonly agent_tasks?: readonly {
                 readonly [key: string]: unknown;
             }[] | null;
             /**
@@ -20962,6 +20995,8 @@ export interface components {
             readonly sources: readonly {
                 readonly [key: string]: unknown;
             }[];
+            /** Agent Tasks */
+            readonly agent_tasks?: readonly components["schemas"]["DynamicViewAgentTask"][];
         };
         /** DynamicViewRollbackIn */
         readonly DynamicViewRollbackIn: {

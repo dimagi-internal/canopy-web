@@ -40,16 +40,23 @@ export async function createDynamicView(body: {
   description?: string;
   code: string;
   sources: DynamicViewSource[];
+  agent_tasks?: { agent: string; name: string }[];
 }): Promise<DynamicView> {
   const res = await apiV2.POST("/api/dynamic-views/", {
-    body: { ...body, project: body.project || null, description: body.description ?? "", slug: "", note: "" },
+    body: {
+      ...body, project: body.project || null, description: body.description ?? "", agent_tasks: body.agent_tasks ?? [],
+      slug: "", note: "",
+    },
   });
   return unwrap(res, "Failed to create the view") as unknown as DynamicView;
 }
 
 export async function updateDynamicView(
   id: number,
-  patch: { title?: string; description?: string; code?: string; sources?: DynamicViewSource[]; note?: string },
+  patch: {
+    title?: string; description?: string; code?: string; sources?: DynamicViewSource[];
+    agent_tasks?: { agent: string; name: string }[]; note?: string;
+  },
 ): Promise<DynamicView> {
   const res = await apiV2.PATCH("/api/dynamic-views/{view_id}", {
     params: { path: { view_id: id } },

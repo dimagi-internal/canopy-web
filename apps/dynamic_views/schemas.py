@@ -8,6 +8,11 @@ from pydantic import Field
 from apps.common.schemas import StrictModel
 
 
+class DynamicViewAgentTask(StrictModel):
+    agent: str = Field(description="An agent's slug, in the view's workspace.")
+    name: str = Field(description="The task name the code passes, e.g. `gmail-triage.review`.")
+
+
 class DynamicViewSummaryOut(StrictModel):
     id: int
     workspace: str
@@ -25,6 +30,8 @@ class DynamicViewSummaryOut(StrictModel):
 class DynamicViewOut(DynamicViewSummaryOut):
     code: str
     sources: list[dict[str, Any]]
+    agent_tasks: list[DynamicViewAgentTask] = Field(
+        default_factory=list, description="The agent tasks the view's code may start, as its viewer.")
     created_by_email: str | None = None
     created_at: dt.datetime
 
@@ -38,6 +45,10 @@ class DynamicViewIn(StrictModel):
     code: str = Field(description="JSX defining `function View(props)`. See GET /api/dynamic-views/guide/.")
     sources: list[dict[str, Any]] = Field(default_factory=list,
                                           description="Catalog reads made for the view: [{alias, model, params?, path?}].")
+    agent_tasks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="The agent tasks the code may start with canopy.runAgentTask: [{agent, name}]. Each agent "
+                    "must be in the view's workspace and one you may give tasks to yourself.")
     note: str = ""
 
 
@@ -47,6 +58,7 @@ class DynamicViewPatch(StrictModel):
     description: str | None = None
     code: str | None = None
     sources: list[dict[str, Any]] | None = None
+    agent_tasks: list[dict[str, Any]] | None = None
     project: str | None = Field(None, description="A project handle; an empty string moves it to the workspace.")
     note: str = ""
 
@@ -59,6 +71,7 @@ class DynamicViewRevisionOut(StrictModel):
     changed_at: dt.datetime
     code: str
     sources: list[dict[str, Any]]
+    agent_tasks: list[DynamicViewAgentTask] = Field(default_factory=list)
 
 
 class DynamicViewRollbackIn(StrictModel):

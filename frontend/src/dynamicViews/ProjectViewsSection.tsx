@@ -11,6 +11,7 @@ import { Section } from '@/components/objectPage/settingsLayout'
 import { scopedPath } from '@/lib/scopedLinks'
 import { useCanEditViews } from '@/pages/DynamicViewsPage'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
+import { DeclaredTasks } from './DeclaredTasks'
 import { DynamicViewFrame } from './DynamicViewFrame'
 import type { DynamicViewSource } from '@/api/dynamicViews'
 
@@ -63,8 +64,9 @@ export function ProjectViewsSection({ workspace, handle, projectName }: { worksp
                 </Link>
                 <span className="text-[11.5px] text-muted-foreground">v{v.version}</span>
               </div>
+              <DeclaredTasks tasks={v.agent_tasks} className="mb-1" />
               <DynamicViewFrame
-                view={{ code: v.code, sources: v.sources as DynamicViewSource[] }}
+                view={{ code: v.code, sources: v.sources as DynamicViewSource[], agent_tasks: v.agent_tasks }}
                 scope={{
                   workspace: { slug: workspace, name: workspaceName },
                   project: { handle, name: projectName },

@@ -24,18 +24,37 @@ export interface ReadRequest {
   path?: Record<string, unknown>
 }
 
+/** A task's progress as a view sees it (`onStatus`, `canopy.agentTask`). */
+export interface AgentTaskStatus {
+  id: string
+  agent: string
+  name: string
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled'
+  error: string
+  result?: unknown
+  turn_id?: string | null
+  deadline_at: string
+  created_at: string
+  finished_at?: string | null
+}
+
 /** Page → frame. */
 export type HostMessage =
   | { channel: typeof CHANNEL; type: 'render'; code: string; data: Record<string, unknown>; scope: ViewScope; theme: 'light' | 'dark' }
   | { channel: typeof CHANNEL; type: 'data'; data: Record<string, unknown> }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: true; data: unknown }
   | { channel: typeof CHANNEL; type: 'read-result'; id: number; ok: false; error: string }
+  | { channel: typeof CHANNEL; type: 'agent-task-status'; id: number; task: AgentTaskStatus }
 
 /** Frame → page. */
 export type FrameMessage =
   | { channel: typeof CHANNEL; type: 'ready' }
   | { channel: typeof CHANNEL; type: 'read'; id: number; request: ReadRequest }
   | { channel: typeof CHANNEL; type: 'refresh' }
+  // `id` is the frame's request id; its answer is a `read-result` with the same id
+  // (the task's result, or why it failed), after any number of `agent-task-status`.
+  | { channel: typeof CHANNEL; type: 'agent-task'; id: number; request: unknown }
+  | { channel: typeof CHANNEL; type: 'agent-task-read'; id: number; taskId: string }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'resize'; height: number }
   | { channel: typeof CHANNEL; type: 'error'; message: string }
