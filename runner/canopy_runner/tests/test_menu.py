@@ -793,3 +793,21 @@ def test_a_numbered_list_above_the_dialog_does_not_become_its_options():
     assert m.selected == 1
     assert m.tabs == ["Runner", "Photo/GPS", "Submit"]
     assert m.question.startswith("Refresh the cloud-ec2-2 runner now")
+
+
+def test_a_question_read_only_by_its_tail_still_matches():
+    """chrome-sales, 2026-10-28: the second question of a 3-question ask wrapped
+    ten columns short of the frame (the next word was "(read-only"), past
+    `_WRAP_SLACK`, so the screen read only its last line. A prefix-only match
+    found nothing and the driver refused after answering the first tab."""
+    from canopy_runner.menu import Menu, question_index
+
+    questions = [
+        {"index": 0, "question": "Which home for the pages?"},
+        {"index": 1, "question": "Person summary reads each person's own Gmail. Should "
+                                 "the rebuild add a per-person Google connection in canopy "
+                                 "(read-only Gmail + Calendar, server-held OAuth like Salesforce)?"},
+    ]
+    shown = Menu(question="(read-only Gmail + Calendar, server-held OAuth like Salesforce)?",
+                 options=[])
+    assert question_index(shown, questions) == 1

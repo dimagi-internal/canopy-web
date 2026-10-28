@@ -66,6 +66,7 @@ class _Server(ThreadingHTTPServer):
 # the runner's CDP/emdash imports, which is what lets it unit-test standalone.
 ANSWERED = "answered"
 NO_DIALOG = "no_dialog"
+UNMODELLED = "unmodelled"
 
 logger = logging.getLogger("canopy_runner.hooks")
 
@@ -382,7 +383,17 @@ class HookListener:
                 self._pending_menus.pop(key, None)
             elif screen is not None:
                 # The screen showed a DIFFERENT dialog. Show that one.
-                self._pending_menus[key] = {**screen, "answer_note": note}
+                replaced = {**screen, "answer_note": note}
+                held = self._pending_menus.get(key) or {}
+                if outcome == UNMODELLED and "questions" not in screen \
+                        and isinstance(held.get("questions"), list):
+                    # A tabbed ask we could not drive: the screen draws one tab
+                    # and so carries no `questions`, but it is the SAME ask. Drop
+                    # the declared list and every retry is refused "none are
+                    # held" — one bad match made a dialog unanswerable from the
+                    # web for good (chrome-sales, 2026-10-28).
+                    replaced["questions"] = held["questions"]
+                self._pending_menus[key] = replaced
             else:
                 menu = self._pending_menus.get(key)
                 if menu is not None:
