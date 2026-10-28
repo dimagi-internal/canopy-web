@@ -3,16 +3,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-import type { Alert } from '@/api/alerts'
+import type { Alert, AlertEvent } from '@/api/alerts'
 
 const loadAlerts = vi.fn<(scope?: string, status?: 'open' | 'dismissed') => Promise<Alert[]>>()
 const actOnAlert = vi.fn<(id: number, action: string) => Promise<Alert>>()
 const undismissAlert = vi.fn<(id: number) => Promise<Alert>>()
+const loadAlertHistory = vi.fn<(id: number) => Promise<AlertEvent[]>>()
 vi.mock('@/api/alerts', async (orig) => ({
   ...(await orig<typeof import('@/api/alerts')>()),
   loadAlerts: (...a: [string?, ('open' | 'dismissed')?]) => loadAlerts(...a),
   actOnAlert: (id: number, action: string) => actOnAlert(id, action),
   undismissAlert: (id: number) => undismissAlert(id),
+  loadAlertHistory: (id: number) => loadAlertHistory(id),
 }))
 
 const { AlertList } = await import('./AlertList')
@@ -200,5 +202,33 @@ describe('AlertList', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('AlertList row details', () => {
+  it('says when it started and how often, and opens the whole alert with its history on click', async () => {
+    const hourAgo = new Date(Date.now() - 2 * 3600_000).toISOString()
+    loadAlerts.mockResolvedValue([alert({
+      kind: 'turn_failure', severity: 'action', occurrences: 3, first_seen_at: hourAgo,
+      title: 'Needs you — turns keep failing on shayoni-win-cdp: headless turn failed: ACP connection closed',
+      body: 'shayoni-win-cdp is stuck on an old runner: get the laptop updated.\n\nheadless turn failed: ACP connection closed before a reply arrived',
+      last_notify: 'Notified Jonathan Jackson at 09:33',
+    })])
+    loadAlertHistory.mockResolvedValue([
+      { at: hourAgo, kind: 'raised', actor_email: '', action_id: '', payload: {} },
+      { at: hourAgo, kind: 'notified', actor_email: '', action_id: '', payload: {} },
+    ])
+    show(<AlertList />)
+    expect((await screen.findByTestId('alert-age')).textContent).toMatch(/2h.* · 3×/)
+    expect(screen.queryByTestId('alert-detail')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /turns keep failing on shayoni-win-cdp/ }))
+    const detail = screen.getByTestId('alert-detail')
+    expect(detail.textContent).toContain('get the laptop updated.')
+    expect(detail.textContent).toContain('ACP connection closed before a reply arrived')
+    expect(detail.textContent).toContain('3 times')
+    expect(detail.textContent).toContain('Notified Jonathan Jackson at 09:33')
+    await waitFor(() => expect(within(detail).getByTestId('alert-history').textContent).toMatch(/Raised.*Notified/))
+    expect(loadAlertHistory).toHaveBeenCalledWith(1)
   })
 })

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 
-import { actOnAlert, loadAlerts, undismissAlert, type Alert, type AlertAction, type AlertSeverity } from '@/api/alerts'
+import {
+  actOnAlert, loadAlertHistory, loadAlerts, undismissAlert,
+  type Alert, type AlertAction, type AlertEvent, type AlertSeverity,
+} from '@/api/alerts'
 import { ApiError } from '@/api/problem'
 import { usePolled } from '@/hooks/usePolled'
 import { relativeAge } from '@/lib/relativeAge'
@@ -13,7 +16,8 @@ import { relativeAge } from '@/lib/relativeAge'
 // in the server's order (blocking, action, setup; most recently raised first).
 //
 // Compact on purpose: one line per alert — severity dot · source chip · title ·
-// its actions inline · ×. The × is the source's shared dismiss ("Dismiss for
+// how long ago it started (and how often) · its actions inline · ×. Clicking the
+// title opens the whole alert in place: its timing, full text and history. The × is the source's shared dismiss ("Dismiss for
 // everyone"): it clears the alert for everybody and is logged, so it is not a
 // personal hide, and there is no "quiet" fold — an open alert stays until the
 // thing underneath is fixed or someone dismisses it. → docs/architecture/alerts.md
@@ -215,64 +219,158 @@ export function AlertList({
 }
 
 function AlertRow({ alert, busy, onAct }: { alert: Alert; busy: boolean; onAct: (a: AlertAction) => void }): JSX.Element {
+  // The row is a summary; clicking it opens the whole story in place — when it
+  // started, how often, who was told, the full diagnosis and its history.
+  const [open, setOpen] = useState(false)
   const dismiss = alert.actions.find((a) => a.id === 'dismiss')
   const actions = alert.actions.filter((a) => a.id !== 'dismiss')
-  const tip = [alert.title, alert.body, alert.occurrences > 1 ? `${alert.occurrences} times` : '']
-    .filter(Boolean)
-    .join('\n\n')
+  const now = new Date()
   return (
-    <div
-      className="group flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border px-2.5 py-1 text-[13px] first:border-t-0 hover:bg-muted/50"
-      data-testid="alert-row"
-    >
-      <Dot severity={alert.severity} />
-      <SourceChip kind={alert.kind} />
-      <span className="min-w-40 flex-1 truncate" title={tip}>
-        {alert.url ? (
-          <Link to={alert.url} className="text-foreground hover:text-primary">{alert.title}</Link>
-        ) : (
-          <span className="text-foreground">{alert.title}</span>
-        )}
-        {alert.last_notify && <span className="ml-2 text-[11px] text-muted-foreground">{alert.last_notify}</span>}
-      </span>
-      <span className="flex shrink-0 items-center gap-1">
-        {actions.map((a) => {
-          const inner = (
-            <>
-              {a.label}
-              <span className={clsx('text-[10px]', a.closes ? 'text-success' : 'text-muted-foreground')}>
-                {a.closes ? 'closes' : 'stays open'}
-              </span>
-            </>
-          )
-          const cls =
-            'inline-flex min-h-6 items-center gap-1 rounded border border-border px-1.5 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50'
-          if (a.href) {
-            // Following a link is logged (fire-and-forget); navigation never waits on it.
-            const follow = () => void actOnAlert(alert.id, a.id).catch(() => {})
-            return /^https?:\/\//.test(a.href) ? (
-              <a key={a.id} href={a.href} target="_blank" rel="noreferrer" onClick={follow} className={cls}>{inner}</a>
-            ) : (
-              <Link key={a.id} to={a.href} onClick={follow} className={cls}>{inner}</Link>
-            )
-          }
-          return (
-            <button key={a.id} type="button" disabled={busy} onClick={() => onAct(a)} className={cls}>{inner}</button>
-          )
-        })}
-        {dismiss && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onAct(dismiss)}
-            aria-label="Dismiss for everyone"
-            title="Dismiss for everyone. It is logged, and comes back only if something new happens."
-            className="inline-flex min-h-6 min-w-6 items-center justify-center rounded text-[14px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+    <div className="border-t border-border first:border-t-0" data-testid="alert-row">
+      <div className="group flex flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1 text-[13px] hover:bg-muted/50">
+        <Dot severity={alert.severity} />
+        <SourceChip kind={alert.kind} />
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          title={open ? undefined : 'Show details'}
+          className="flex min-w-40 flex-1 items-center gap-1.5 text-left"
+        >
+          <span aria-hidden className="w-2 shrink-0 text-[10px] text-muted-foreground">{open ? '▾' : '▸'}</span>
+          <span className="min-w-0 flex-1 truncate text-foreground">{alert.title}</span>
+          <span
+            className="shrink-0 text-[11px] tabular-nums text-muted-foreground"
+            title={`Last seen ${new Date(alert.last_seen_at).toLocaleString()}`}
+            data-testid="alert-age"
           >
-            ×
-          </button>
+            {relativeAge(alert.first_seen_at, now, { seconds: false })}
+            {alert.occurrences > 1 ? ` · ${alert.occurrences}×` : ''}
+          </span>
+        </button>
+        <span className="flex shrink-0 items-center gap-1">
+          {actions.map((a) => {
+            const inner = (
+              <>
+                {a.label}
+                <span className={clsx('text-[10px]', a.closes ? 'text-success' : 'text-muted-foreground')}>
+                  {a.closes ? 'closes' : 'stays open'}
+                </span>
+              </>
+            )
+            const cls =
+              'inline-flex min-h-6 items-center gap-1 rounded border border-border px-1.5 text-[12px] text-foreground-secondary hover:bg-muted disabled:opacity-50'
+            if (a.href) {
+              // Following a link is logged (fire-and-forget); navigation never waits on it.
+              const follow = () => void actOnAlert(alert.id, a.id).catch(() => {})
+              return /^https?:\/\//.test(a.href) ? (
+                <a key={a.id} href={a.href} target="_blank" rel="noreferrer" onClick={follow} className={cls}>{inner}</a>
+              ) : (
+                <Link key={a.id} to={a.href} onClick={follow} className={cls}>{inner}</Link>
+              )
+            }
+            return (
+              <button key={a.id} type="button" disabled={busy} onClick={() => onAct(a)} className={cls}>{inner}</button>
+            )
+          })}
+          {dismiss && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onAct(dismiss)}
+              aria-label="Dismiss for everyone"
+              title="Dismiss for everyone. It is logged, and comes back only if something new happens."
+              className="inline-flex min-h-6 min-w-6 items-center justify-center rounded text-[14px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              ×
+            </button>
+          )}
+        </span>
+      </div>
+      {open && <AlertDetail alert={alert} now={now} />}
+    </div>
+  )
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  raised: 'Raised', changed: 'Changed', acted: 'Acted on', notified: 'Notified', dismissed: 'Dismissed',
+  undismissed: 'Put back', resolved: 'Resolved', reopened: 'Came back', assigned: 'Handed to',
+}
+
+/** The expanded alert: facts, the whole text (the diagnosis first, the raw error
+ *  below it, folded when long), and its history, read when first opened. */
+function AlertDetail({ alert, now }: { alert: Alert; now: Date }): JSX.Element {
+  const [history, setHistory] = useState<AlertEvent[] | null>(null)
+  const [historyError, setHistoryError] = useState('')
+  const [fullText, setFullText] = useState(false)
+  useEffect(() => {
+    let live = true
+    loadAlertHistory(alert.id)
+      .then((h) => { if (live) setHistory(h) })
+      .catch((e: unknown) => { if (live) setHistoryError(e instanceof Error ? e.message : 'Could not load its history') })
+    return () => { live = false }
+  }, [alert.id])
+
+  const [lead, ...rest] = alert.body.split(/\n\s*\n/)
+  const detail = rest.join('\n\n').trim()
+  const long = detail.length > 600
+  const when = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const facts = [
+    `First seen ${when(alert.first_seen_at)} (${relativeAge(alert.first_seen_at, now, { seconds: false })})`,
+    `last seen ${relativeAge(alert.last_seen_at, now, { seconds: false })}`,
+    alert.occurrences > 1 ? `${alert.occurrences} times` : '',
+    alert.last_notify,
+    alert.handler_agent ? `handled by ${alert.handler_agent}` : '',
+  ].filter(Boolean)
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border/60 bg-muted/30 px-7 py-2 text-[12px]" data-testid="alert-detail">
+      <p className="m-0 text-[11px] text-muted-foreground">
+        {facts.join(' · ')}
+        {alert.url && (
+          <> · <Link to={alert.url} className="text-primary hover:underline">Open</Link></>
         )}
-      </span>
+      </p>
+      {lead && <p className="m-0 whitespace-pre-wrap text-[13px] text-foreground">{lead.trim()}</p>}
+      {detail && (
+        <div>
+          <pre
+            className={clsx(
+              'm-0 whitespace-pre-wrap break-words rounded border border-border bg-background p-2 font-mono text-[11px] text-foreground-secondary',
+              long && !fullText && 'max-h-28 overflow-hidden',
+            )}
+          >
+            {detail}
+          </pre>
+          {long && (
+            <button type="button" onClick={() => setFullText((v) => !v)}
+              className="mt-0.5 text-[11px] text-muted-foreground hover:text-foreground">
+              {fullText ? 'Show less' : 'Show all'}
+            </button>
+          )}
+        </div>
+      )}
+      <div>
+        <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">History</div>
+        {historyError ? (
+          <p className="m-0 text-destructive">{historyError}</p>
+        ) : history === null ? (
+          <p className="m-0 text-muted-foreground">Loading…</p>
+        ) : (
+          <ol className="m-0 flex list-none flex-col gap-0.5 p-0" data-testid="alert-history">
+            {history.map((e, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="w-28 shrink-0 tabular-nums text-muted-foreground">{when(e.at)}</span>
+                <span className="text-foreground-secondary">
+                  {EVENT_LABEL[e.kind] ?? e.kind}
+                  {e.action_id ? ` · ${e.action_id}` : ''}
+                  {e.actor_email ? ` · ${e.actor_email}` : ''}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
     </div>
   )
 }

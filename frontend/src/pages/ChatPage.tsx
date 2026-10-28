@@ -442,6 +442,10 @@ function ChatPageInner({
           <span className="shrink-0 text-[12px] text-muted-foreground">
             idle · {meta.runner_name}
           </span>
+        ) : meta?.requested_runner_name ? (
+          <span className="shrink-0 text-[12px] text-muted-foreground" data-testid="chat-requested-runner">
+            starts on {meta.requested_runner_name} with your first message
+          </span>
         ) : null}
         {metaError && <span className="text-xs text-muted-foreground">· {metaError}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">

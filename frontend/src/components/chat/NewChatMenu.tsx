@@ -157,8 +157,18 @@ export function NewChatMenu({
       })
   }, [])
 
+  // The boxes offered for a project chat, read ONCE when the repo is picked.
+  // The fleet list is re-polled under an open menu (/ide every 15s and on window
+  // focus, which opening a native <select> popup can itself trigger) and arrives
+  // in heartbeat order, so a live list reshuffled while the popup was up — and
+  // the popup answers by position, so a click on one box selected another.
+  const fleetRunnersRef = useRef(fleetRunners)
+  fleetRunnersRef.current = fleetRunners
+  const [projectRunnerOptions, setProjectRunnerOptions] = useState<RunnerOut[]>([])
+
   const pickProject = useCallback((project: RepoChoice) => {
     setSelectedRunnerId('')
+    setProjectRunnerOptions(projectRunners(fleetRunnersRef.current ?? [], project.slug))
     setPending({ kind: 'project', project })
   }, [])
 
@@ -176,18 +186,6 @@ export function NewChatMenu({
       start({ project: pending.project.slug, workspace: pending.project.workspace ?? undefined, runnerId })
     }
   }, [pending, selectedRunnerId, selectedCli, start])
-
-  // Project chats route through the fleet-wide runner list, filtered to
-  // online + sessions-capable (only those can execute a chat turn at all), to
-  // the runners that hold the picked repo (no other box could claim it), and to
-  // the ones you administer (choosing a box for a project chat needs that; the
-  // server refuses any other).
-  const pickedRepo = pending?.kind === 'project' ? pending.project.slug : null
-  const projectRunnerOptions = useMemo(
-    () => onlineSessionCapableRunners(fleetRunners ?? [])
-      .filter((r) => pickedRepo !== null && reportedRepos(r).includes(pickedRepo) && r.can_administer),
-    [fleetRunners, pickedRepo],
-  )
 
   return (
     <DropdownMenu
@@ -332,4 +330,15 @@ function AgentRunnerOptions({ agent, runners }: { agent: string; runners: readon
       <optgroup label="Other runners you can use">{others.map(option)}</optgroup>
     </>
   )
+}
+
+
+/** The boxes a project chat on `repo` may be started on, by name: online +
+ *  sessions-capable (only those can execute a chat turn at all), holding the
+ *  repo (no other box could claim it), and administered by you (choosing a box
+ *  for a project chat needs that; the server refuses any other). */
+export function projectRunners(fleet: readonly RunnerOut[], repo: string): RunnerOut[] {
+  return onlineSessionCapableRunners(fleet)
+    .filter((r) => reportedRepos(r).includes(repo) && r.can_administer)
+    .sort((a, b) => a.name.localeCompare(b.name))
 }

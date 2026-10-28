@@ -118,7 +118,7 @@ def test_title_is_capped_and_url_falls_back(fleet):
     (r,) = src.reconcile(timezone.now())
     assert len(r.title.split(": ", 1)[1]) <= 120
     assert r.title.startswith("Turns keep failing on ")
-    assert r.url == "/w/dimagi/activity"
+    assert r.url == "/w/dimagi/activity?status=failed"
 
 
 def test_mark_resolved_resolves_investigation_and_alert(fleet):

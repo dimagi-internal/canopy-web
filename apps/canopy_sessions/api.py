@@ -160,6 +160,22 @@ def _runner_status(runner) -> str | None:
     return None if runner is None else runner.live_status
 
 
+def _requested_runner_name(session: Session) -> str | None:
+    """The name of the runner a not-yet-bound chat was started on (the stash
+    `create_session` leaves for its first send), so a list can say where it will
+    run before it has. Only unbound chats with a choice pay the lookup."""
+    from apps.harness.models import Runner
+
+    rid = (session.metadata or {}).get("requested_runner_id")
+    if not rid:
+        return None
+    try:
+        uuid.UUID(str(rid))
+    except ValueError:
+        return None
+    return Runner.objects.filter(pk=rid).values_list("name", flat=True).first()
+
+
 def _mark_people_in(rows, viewer) -> list:
     """`rows`, each sensitive one told whether `viewer` is in it — one query for the
     page (`sensitivity.people_in`), not one per row in `_out`."""
@@ -239,6 +255,7 @@ def _out(session: Session, *, reply: bool = False, viewer=None) -> dict:
         # two runners told apart by this, so it names WHICH login on a shared box.
         "runner_host": binding.host if binding else "",
         "runner_location": runner.location if runner else None,
+        "requested_runner_name": None if runner else _requested_runner_name(session),
         # The emdash project its worktree lives under: the binding's reported one,
         # else the session's own (repo for a project chat, agent slug for an agent
         # chat). What /ide groups by — `project` is blank on every agent chat.

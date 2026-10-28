@@ -38116,6 +38116,8 @@ export interface components {
             readonly runner_host: string;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /** Requested Runner Name */
+            readonly requested_runner_name?: string | null;
             /**
              * Emdash Project
              * @default
@@ -38961,6 +38963,8 @@ export interface components {
             readonly runner_host: string;
             /** Runner Location */
             readonly runner_location?: string | null;
+            /** Requested Runner Name */
+            readonly requested_runner_name?: string | null;
             /**
              * Emdash Project
              * @default

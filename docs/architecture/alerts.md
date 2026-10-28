@@ -155,9 +155,13 @@ organisation), `POST /api/me/alerts/{id}/act` `{action}` (409
 Every screen renders alerts with one component,
 `frontend/src/components/alerts/AlertList.tsx` (API: `frontend/src/api/alerts.ts`),
 and never decides what to show beyond naming a scope. One line per alert:
-severity dot (blocking red, action orange, setup grey) · source chip · title
-(and the last notify, when there is one) · its actions inline, each tagged
-"closes" or "stays open" · × ("Dismiss for everyone"). It polls every 30 s.
+severity dot (blocking red, action orange, setup grey) · source chip · title ·
+how long ago it was first seen (and `N×` when it recurred) · its actions inline,
+each tagged "closes" or "stays open" · × ("Dismiss for everyone"). Clicking the
+title expands the alert in place: first/last seen, count, last notify, handler,
+the body (its first paragraph is the diagnosis; the rest shows as the raw error,
+folded when long) and its history (`/history`, read on first open). It polls
+every 30 s.
 
 - **Home** (`/home`): its own section at the top, above sessions — severity
   count chips that filter it, no "quiet" fold, no personal hide, and a collapsed

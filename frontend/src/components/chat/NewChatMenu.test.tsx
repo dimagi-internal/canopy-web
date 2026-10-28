@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import type { AgentOut } from '@/api/agents'
 import type { ChatSession } from '@/api/chat'
+import type { RunnerOut } from '@/api/harness'
 
 const createSession = vi.fn<(args: unknown) => Promise<ChatSession>>()
 const getAgentPinnableRunners = vi.fn(() => Promise.resolve([]))
@@ -119,5 +120,37 @@ describe('NewChatMenu says what Auto does', () => {
     await waitFor(() => expect(select.options.length).toBe(2))
     fireEvent.change(select, { target: { value: 'r1' } })
     expect(screen.queryByTestId('run-on-auto')).toBeNull()
+  })
+})
+
+describe('NewChatMenu keeps the "Run on" list still while it is open', () => {
+  const box = (id: string, name: string) => ({
+    id, name, status: 'online', can_administer: true,
+    capabilities: { sessions: true, projects: ['canopy-web'] },
+  }) as unknown as RunnerOut
+
+  it('a re-polled fleet in another order neither reorders the options nor moves the pick', async () => {
+    createSession.mockResolvedValue({ id: 'new', workspace: 'dimagi' } as ChatSession)
+    const target = { kind: 'project' as const, project: { slug: 'canopy-web', workspace: 'dimagi' } }
+    const menu = (runners: RunnerOut[]) => (
+      <MemoryRouter>
+        <NewChatMenu agents={[]} runners={runners} target={target} label="" title="New session"
+                     onError={vi.fn()} onCreated={vi.fn()} />
+      </MemoryRouter>
+    )
+    // /api/runners/ comes back in heartbeat order, which changes poll to poll.
+    const { rerender } = render(menu([box('z', 'cloud-zdr-1'), box('j', 'jj-mbp-cdp'), box('e', 'cloud-ec2-live')]))
+    fireEvent.click(screen.getByLabelText('New session'))
+    const select = (await screen.findByTestId('run-on-select')) as HTMLSelectElement
+    const labels = () => Array.from(select.options).map((o) => o.textContent)
+    expect(labels()).toEqual(['Auto', '● cloud-ec2-live', '● cloud-zdr-1', '● jj-mbp-cdp'])
+    fireEvent.change(select, { target: { value: 'j' } })
+
+    rerender(menu([box('j', 'jj-mbp-cdp'), box('e', 'cloud-ec2-live'), box('z', 'cloud-zdr-1')]))
+    expect(labels()).toEqual(['Auto', '● cloud-ec2-live', '● cloud-zdr-1', '● jj-mbp-cdp'])
+    expect(select.options[select.selectedIndex].textContent).toBe('● jj-mbp-cdp')
+    fireEvent.click(screen.getByText('Start chat'))
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith(
+      { project: 'canopy-web', workspace: 'dimagi', runnerId: 'j' }))
   })
 })
