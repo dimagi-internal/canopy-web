@@ -45,17 +45,24 @@ vi.mock('@/components/settings/DelegatedCredentialsPanel', () => ({ DelegatedCre
 // ContactDetailsPanel likewise (ContactDetailsPanel.test.tsx covers it).
 vi.mock('@/components/settings/ContactDetailsPanel', () => ({ ContactDetailsPanel: () => null }))
 
+// Profile (the section bare /settings opens) reads you and your workspaces.
+vi.mock('@/workspace/WorkspaceProvider', () => ({ useWorkspace: () => ({ workspaces: [] }) }))
+vi.mock('@/auth/AuthProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/auth/AuthProvider')>()),
+  useAuth: () => ({ status: 'anonymous' }),
+}))
+
 const { SettingsPage } = await import('./SettingsPage')
 const { PRESENCE_PREFERENCE_CHANGED_EVENT } = await import('@/presence/events')
 const { usePresenceReconnectNonce } = await import('@/presence/usePresenceReconnectNonce')
 
-// Settings is tabs (`/settings/:tab`); Presence is on Account.
+// Settings is sections (`/settings/:section`); Presence is in Account.
 function AtSettings({ path }: { path: string }) {
   return (
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/settings/:tab" element={<><SettingsPage /><Where /></>} />
+        <Route path="/settings/:section" element={<><SettingsPage /><Where /></>} />
       </Routes>
     </MemoryRouter>
   )
@@ -142,15 +149,15 @@ describe('SettingsPage presence toggle', () => {
   })
 })
 
-describe('SettingsPage tabs', () => {
+describe('SettingsPage sections', () => {
   it.each([
-    ['/settings', '/settings/account'],
+    ['/settings', '/settings/profile'],
     ['/settings#vault-key', '/settings/security#vault-key'],
     ['/settings?device_key=7#your-runners', '/settings/security?device_key=7#your-runners'],
     ['/settings?github=connected', '/settings/connections?github=connected'],
     ['/settings#canopy-projects', '/settings/runners#canopy-projects'],
     ['/settings/account#passkeys', '/settings/security#passkeys'],
-    ['/settings/nope', '/settings/account'],
+    ['/settings/nope', '/settings/profile'],
   ])('an old address %s opens %s', async (from, to) => {
     getPresencePreference.mockResolvedValue({ show_presence: true })
     render(<AtSettings path={from} />)

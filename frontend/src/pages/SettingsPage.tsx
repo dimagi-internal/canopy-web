@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { WorkbenchSubHeader } from 'canopy-ui'
-import { ObjectTabs } from '@/components/objectPage/ObjectTabs'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { listRunnerDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
@@ -20,34 +19,37 @@ import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
 import { SessionReviewersPanel } from '@/components/settings/SessionReviewersPanel'
 import { AgentLoginRequestsPanel } from '@/components/settings/AgentLoginRequestsPanel'
 import { runnerHref } from '@/lib/scopedLinks'
+import { ProfileSection } from '@/pages/SettingsLayout'
 import {
-  ACCOUNT_SETTINGS_TABS,
-  isAccountSettingsTab,
-  tabForAddress,
-  type AccountSettingsTab,
-} from '@/pages/accountSettingsTabs'
+  SETTINGS_SECTIONS,
+  isSettingsSection,
+  sectionForAddress,
+  type SettingsSection,
+} from '@/pages/settingsSections'
 
-// YOUR ACCOUNT'S SETTINGS, behind tabs (`/settings/<tab>`), inside your own
-// page's frame (MeLayout: Profile, Memory, Settings down the rail).
+// ONE SECTION OF SETTINGS (`/settings/<section>`), beside the rail that lists
+// them all (SettingsLayout).
 //
 // It was one long two-column page of fourteen cards; finding one meant reading
-// all of them. Each tab has its own address; old `/settings#anchor` and
-// `/settings?device_key=…` / `?github=…` links forward to the tab holding them
-// (accountSettingsTabs.ts), and the page scrolls to the anchor there.
+// all of them. Each section has its own address; bare `/settings` opens
+// Profile, and old `/settings#anchor` and `/settings?device_key=…` / `?github=…`
+// links forward to the section holding them (settingsSections.ts), and the page
+// scrolls to the anchor there.
 //
+//   Profile               — your workspaces, and how members of each see you
 //   Account               — contact details, presence, where sessions are filed, who reviews them
 //   Security              — passkeys, recovery, runners that may open secrets, your agents
 //   Agents acting for you — credentials you delegated, act-as-you permissions
 //   Runners               — runners you administer, the repos you use canopy in, the runner app
 //   Connections           — GitHub, MCP clients, personal access tokens
 export function SettingsPage() {
-  const { tab } = useParams()
+  const { section } = useParams()
   const { hash, search, key } = useLocation()
-  const current: AccountSettingsTab | null = isAccountSettingsTab(tab) ? tab : null
-  const wanted = hash || search ? tabForAddress(hash, search) : null
+  const current: SettingsSection | null = isSettingsSection(section) ? section : null
+  const wanted = hash || search ? sectionForAddress(hash, search) : null
 
-  // An anchor that lives on another tab (an in-page link, a held address) moves
-  // to that tab, keeping the anchor and the query.
+  // An anchor that lives in another section (an in-page link, a held address)
+  // moves to that section, keeping the anchor and the query.
   const navigate = useNavigate()
   useEffect(() => {
     if (current && wanted && wanted !== current) navigate(`/settings/${wanted}${search}${hash}`, { replace: true })
@@ -71,27 +73,23 @@ export function SettingsPage() {
     return () => window.clearInterval(timer)
   }, [hash, key])
 
-  // Bare `/settings`, or a tab this page does not have: open the tab the old
-  // address belongs to, else Account.
-  if (!current) return <Navigate to={`/settings/${wanted ?? 'account'}${search}${hash}`} replace />
+  // Bare `/settings`, or a section this page does not have: open the section the
+  // old address belongs to, else Profile.
+  if (!current) return <Navigate to={`/settings/${wanted ?? 'profile'}${search}${hash}`} replace />
+  const title = SETTINGS_SECTIONS.find((s) => s.section === current)?.label ?? 'Settings'
 
   return (
     <div className="max-w-4xl px-6 py-8">
-      <WorkbenchSubHeader title="Settings" />
+      <WorkbenchSubHeader title={title} />
 
-      <ObjectTabs
-        label="Your settings"
-        className="-mt-2 mb-6"
-        tabs={ACCOUNT_SETTINGS_TABS.map((t) => ({ to: `/settings/${t.tab}`, label: t.label }))}
-      />
-
-      {/* An agent asking to sign in as you waits on you whichever tab is open;
-          it renders nothing when none is. */}
+      {/* An agent asking to sign in as you waits on you whichever section is
+          open; it renders nothing when none is. */}
       <div className="mb-5 empty:hidden">
         <AgentLoginRequestsPanel />
       </div>
 
       <div className="space-y-5">
+        {current === 'profile' && <ProfileSection />}
         {current === 'account' && (
           <>
             <ContactDetailsPanel />

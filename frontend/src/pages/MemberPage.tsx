@@ -93,7 +93,7 @@ export function MemberPage(): JSX.Element {
       {member.is_you && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-[13px] text-foreground">
           This is you, as members of {wsName} see you.{' '}
-          <Link to="/me" className="text-primary hover:underline">Your profile →</Link>
+          <Link to="/settings/profile" className="text-primary hover:underline">Your profile →</Link>
         </div>
       )}
 

@@ -47,7 +47,7 @@ import { WorkspaceHealthPage } from './pages/health/WorkspaceHealthPage'
 import { SystemPage } from './pages/SystemPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { PeopleMePage, PersonPageView } from './pages/PeopleMePage'
-import { MeLayout, MeProfileTab } from './pages/MePage'
+import { SettingsLayout } from './pages/SettingsLayout'
 import { MemberPage } from './pages/MemberPage'
 import { HcpClientsPage } from './pages/HcpClientsPage'
 import { AgentsPage } from './pages/AgentsPage'
@@ -299,19 +299,19 @@ export const routeTable: RouteObject[] = [
       // workspace's commands; an anonymous one sees just the wordmark.
       { path: '/get-started', element: <GetStartedPage /> },
       { path: '/sessions', element: <SessionsPage /> },
-      // Your own page: Profile, Memory and Settings down one rail. Memory and
-      // Settings keep their old addresses so every link handed out still lands;
-      // Settings is tabs (`/settings/account`, …) and bare `/settings` opens the
-      // tab an old `#anchor` or `?device_key=` belongs to (accountSettingsTabs.ts).
+      // Settings: Profile, the account's sections and Memory down one rail
+      // (settingsSections.ts). Bare `/settings` opens Profile, or the section an
+      // old `#anchor` / `?device_key=` belongs to; /me forwards to Profile and
+      // Memory keeps /people/me, so every link handed out still lands.
       {
-        element: <MeLayout />,
+        element: <SettingsLayout />,
         children: [
-          { path: '/me', element: <MeProfileTab /> },
           { path: '/people/me', element: <PeopleMePage /> },
           { path: '/settings', element: <SettingsPage /> },
-          { path: '/settings/:tab', element: <SettingsPage /> },
+          { path: '/settings/:section', element: <SettingsPage /> },
         ],
       },
+      { path: '/me', element: <Navigate to="/settings/profile" replace /> },
       { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
       // What is waiting on you, across every workspace — the app's front door.
