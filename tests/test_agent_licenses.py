@@ -214,6 +214,22 @@ def test_a_license_read_withholds_what_is_not_the_agents_tools(world, monkeypatc
     assert "github_token" not in admin
 
 
+def test_a_license_read_withholds_the_login_under_its_stored_name(world):
+    """The agent's login is stored as `CANOPY_PAT_REF` ("CANOPY_WEB_PAT") by minting and
+    rotation; a license read must withhold it under that name, not just the kebab ones."""
+    from apps.agents.credentials.pat_rotation import CANOPY_PAT_REF
+
+    agent = world["agent"]
+    agent.runtime_secrets = ["nova-api-key", CANOPY_PAT_REF]
+    agent.save(update_fields=["runtime_secrets"])
+    AgentCredential.objects.create(agent=agent, name=CANOPY_PAT_REF, value_zk="zks1:agent-own-pat", kv=0)
+
+    turn_id = _open(world["aath"]).json()["turn_id"]
+    assert _resolve(world["aath"], turn_id).json()["values"] == {"nova-api-key": SECRET}
+    assert not AgentCredentialRead.objects.filter(name=CANOPY_PAT_REF, user=world["aath"]).exists()
+    assert _resolve(world["owner"]).json()["values"][CANOPY_PAT_REF] == "zks1:agent-own-pat"
+
+
 def test_a_license_read_never_gets_the_agents_1password_key(world, monkeypatch):
     """The service-account key reads the whole vault, the agent's canopy-pat included,
     so handing it to a license holder would undo withholding that login."""
