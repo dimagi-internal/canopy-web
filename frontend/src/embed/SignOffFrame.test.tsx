@@ -62,6 +62,8 @@ describe('SignOffFrame', () => {
     render(<SignOffFrame link={host} app="connect-labs" signOffId={ID} />)
     expect((await screen.findByTestId('sign-off-title')).textContent).toContain('Create a full-access labs MCP token')
     expect(screen.getByTestId('sign-off-for').textContent).toContain('mo@dimagi.com')
+    // Two choices only; Escape or the backdrop closes the dialog undecided.
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Approve with passkey', 'Decline'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve with passkey' }))
     await waitFor(() => expect(host.reportSignOff).toHaveBeenCalledWith(ID, 'approved'))

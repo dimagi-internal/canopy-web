@@ -149,9 +149,6 @@ export function SignOffFrame({ link, app, signOffId }: { link: HostLink; app: st
               <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => void decline()}>
                 {busy === 'decline' ? 'Declining…' : 'Decline'}
               </Button>
-              <Button type="button" size="sm" variant="ghost" disabled={busy !== null} onClick={() => link.requestClose()}>
-                Not now
-              </Button>
             </div>
           ) : (
             <p className="mt-3 text-[13px] text-foreground-secondary" data-testid="sign-off-state">
