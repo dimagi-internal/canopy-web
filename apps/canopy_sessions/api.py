@@ -164,7 +164,7 @@ def _requested_runner_name(session: Session) -> str | None:
     """The name of the runner a not-yet-bound chat was started on (the stash
     `create_session` leaves for its first send), so a list can say where it will
     run before it has. Only unbound chats with a choice pay the lookup."""
-    from apps.harness.models import Runner
+    from apps.harness.models import Runner  # noqa: PLC0415 — lazy: framework->framework import cycle
 
     rid = (session.metadata or {}).get("requested_runner_id")
     if not rid:
