@@ -757,6 +757,10 @@ r="$(tr -d "[:space:]" < "$HOME/.canopy-runner/turn-env-root" 2>/dev/null)"
 [ -n "$r" ] && export CANOPY_TURN_ENV_ROOT="$r"
 exec bash "$0" --credentials-only'
 if [ "$RUNNERS_MODE" = "1" ]; then
+  # A box that already runs code reading the new names but was never moved to them (the
+  # install that brought that code ran the updater from before the rename) moves here,
+  # on its next check: no restart needed, its runners read either name.
+  migrate_old_names
   # Each runner refreshes as ITSELF — its user, its env file, its own runner token —
   # from its own runner clone. Root never runs an agent's prepare.
   if [ "$V" = "busy" ]; then
