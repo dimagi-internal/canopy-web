@@ -674,7 +674,10 @@ function keepUnechoedSends(
   const waiting = queued ? new Set(queued.map((q) => q.client_id).filter(Boolean)) : null;
   const mine = previous.filter(
     (m) => m.role === "user" && typeof m.content?.client_id === "string" &&
-      isUnconfirmed(m) && !snapshot.some((s) => s.id === m.id) &&
+      isUnconfirmed(m) &&
+      // By id, or by the send's own nonce: a private conversation's copy is
+      // sealed (no words to compare below) and sits at the transcript's ordinal.
+      !snapshot.some((s) => s.id === m.id || s.content?.client_id === m.content.client_id) &&
       (waiting === null || m.status === "pending" || m.status === "error" ||
         waiting.has(m.content.client_id as string)),
   );

@@ -160,6 +160,22 @@ def test_unmarked_row_is_attributed_to_its_claimed_turn():
     assert msg.source_turn_id == turn.pk
 
 
+def test_the_transcript_row_keeps_its_sends_client_id():
+    """The sender's browser knows its own line by the send's nonce; in a private
+    conversation, whose words are sealed, nothing else ties the two together."""
+    session = _session()
+    alice, turn = _sent(session, username="alice9", text="ship it")
+    sent = turn.origin_ref["client_id"]
+    marked = legacy_marker("ship it", name="Alice", user_id=alice.id, turn_id=turn.pk)
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 10, "role": "user", "text": marked}])
+    assert Message.objects.get(session=session).content["client_id"] == sent
+    # Matched by its text rather than a marker: the same.
+    bob, turn = _sent(session, username="bob9", text="and this")
+    _claim(turn)
+    session_transcript_ingest.persist_transcript_rows(session, [{"index": 20, "role": "user", "text": "and this"}])
+    assert Message.objects.get(session=session, turn_index=20).content["client_id"] == turn.origin_ref["client_id"]
+
+
 def test_unclaimed_turn_is_not_a_match_candidate():
     session = _session()
     _alice, _turn = _sent(session, username="alice3", text="ship it")
