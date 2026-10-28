@@ -2,7 +2,15 @@
 import { render } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "./dropdown-menu"
 
 /** The z-index belongs on the POSITIONER. Base UI's positioner is the placed
  *  element and forms its own stacking context, so a z-index on the popup alone
@@ -22,5 +30,26 @@ describe("DropdownMenuContent", () => {
     const popup = document.querySelector('[data-slot="dropdown-menu-content"]')!
     expect(popup).toBeTruthy()
     expect(popup.parentElement!.className).toContain("z-50")
+  })
+})
+
+/** A submenu's root must be Menu.SubmenuRoot: under a plain Menu.Root the
+ *  sub-trigger has no parent menu and throws, taking the page down with it. */
+describe("DropdownMenuSub", () => {
+  it("renders a sub-trigger inside an open menu", () => {
+    render(
+      <DropdownMenu open>
+        <DropdownMenuTrigger>open</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>Agents</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem>ace</DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    )
+    expect(document.querySelector('[data-slot="dropdown-menu-sub-trigger"]')).toBeTruthy()
   })
 })

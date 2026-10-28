@@ -170,9 +170,10 @@ function DropdownMenuShortcut({
   )
 }
 
-// Sub-menu support
-function DropdownMenuSub(props: React.ComponentProps<typeof Menu.Root>) {
-  return <Menu.Root {...props} />
+// Sub-menu support: a nested menu's root is Menu.SubmenuRoot — a plain
+// Menu.Root leaves Menu.SubmenuTrigger without its context and it throws.
+function DropdownMenuSub(props: React.ComponentProps<typeof Menu.SubmenuRoot>) {
+  return <Menu.SubmenuRoot {...props} />
 }
 
 function DropdownMenuSubTrigger({
