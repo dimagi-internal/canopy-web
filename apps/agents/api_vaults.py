@@ -104,7 +104,7 @@ def _out(v: Vault, user) -> WorkspaceVaultOut:
         members=[{"user_id": m.user.pk, "email": m.user.email or "", "role": m.role, "sources": m.sources,
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
         you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
-        holders={"has_key": bool(v.kv), "people": sorted(ms[u].user.email or "" for u in held),
+        holders={"has_key": bool(v.kv), "people": vault_members.granters(ms, held),
                  "keepers": keepers})
 
 

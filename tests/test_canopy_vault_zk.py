@@ -1492,7 +1492,76 @@ def test_a_person_with_a_new_key_is_emailed_at_once_as_a_new_key(fleet, mailoutb
     t0 = timezone.now()
     assert zk_notify.sweep(t0) >= 1           # no grace: no keeper grants a changed key
     [msg] = [m for m in mailoutbox if "ed7@dimagi.com" in m.subject]
-    assert "new vault key" in msg.subject and "Check with them that it was them" in msg.body
+    assert "new vault key" in msg.subject and "confirm it's them" in msg.subject
+    assert "Check with ed7@dimagi.com directly" in msg.body
+    assert "You're getting this as an admin of eva's vault" in msg.body
+
+
+def test_someone_joining_for_the_first_time_is_named_as_that_to_the_admins(fleet, mailoutbox):
+    from apps.agents.credentials import zk_notify
+
+    assert _enable(fleet).status_code == 200
+    _editor_with_a_key(fleet, name="ed8")
+    t0 = timezone.now()
+    assert zk_notify.sweep(t0) == 0            # a keeper usually grants a newcomer first
+    assert zk_notify.sweep(t0 + zk_notify.GRACE) >= 1
+    [msg] = [m for m in mailoutbox if "ed8@dimagi.com" in m.subject]
+    assert "joining eva's vault for the first time" in msg.subject
+    assert "If you expected ed8@dimagi.com to join" in msg.body
+    assert "You're getting this as an admin of eva's vault" in msg.body
+
+
+def test_a_member_who_holds_a_copy_but_cannot_grant_is_never_asked(fleet, mailoutbox):
+    from apps.agents.credentials import zk_notify
+
+    assert _enable(fleet, wraps=[member_wrap(fleet), recovery_wrap(fleet)]).status_code == 200
+    ed, priv = _editor_with_a_key(fleet, name="ed9")
+    assert fleet.client.post(f"{ZK}/wraps", data={"kv": 1, "wraps": [
+        member_wrap(fleet, user=ed, pub=priv.public_key())]}, content_type="application/json").status_code == 200
+    fleet.agent.refresh_from_db()
+    assert zk_notify.holders(fleet.agent) == [fleet.user]
+    body = fleet.client.get("/api/agents/eva/vault/members").json()
+    assert body["holders"]["people"] == ["jj@dimagi.com"]   # ed9 holds a copy but can't let anyone in
+    t0 = timezone.now()
+    zk_notify.sweep(t0)
+    assert zk_notify.sweep(t0 + zk_notify.GRACE) == 1        # the device, to jj only
+    assert [m.to for m in mailoutbox] == [["jj@dimagi.com"]]
+    assert "jj@dimagi.com's machine box" in mailoutbox[0].subject
+    assert "You don't need to recognise the machine" in mailoutbox[0].body
+
+
+def test_a_machine_whose_person_is_waiting_too_is_asked_about_as_the_person_only(fleet, mailoutbox):
+    from apps.agents.credentials import zk_notify
+    from apps.agents.models import ZkGrantNotice
+
+    assert _enable(fleet).status_code == 200
+    ed, _ = _editor_with_a_key(fleet, name="ed10")
+    # Their own computer (no runner app), which reads eva's secrets because they administer it.
+    AgentAdmin.objects.create(agent=fleet.agent, user=ed, granted_by=fleet.user)
+    laptop = Runner.objects.create(name="DIM-SI-W021", kind=Runner.COMPUTER, owner=ed, status=Runner.ONLINE,
+                                   workspace=fleet.ws, last_heartbeat_at=timezone.now(), capabilities={})
+    # ed10 registers and approves their own laptop, as `canopy agent use` has them do.
+    res = Client().post("/api/runner-device-keys/", content_type="application/json",
+                        HTTP_AUTHORIZATION=f"Bearer {_pat(ed)}",
+                        data={"runner": str(laptop.pk), "public_jwk": _jwk(ec.generate_private_key(ec.SECP256R1())),
+                              "kind": "tpm", "label": "DIM-SI-W021 (Windows)",
+                              "ecdh_public_jwk": ref.jwk(ec.generate_private_key(ec.SECP256R1()).public_key())})
+    assert res.status_code in (200, 201), res.content
+    key = RunnerDeviceKey.objects.get(pk=res.json()["id"])
+    theirs = Client()
+    theirs.force_login(ed)
+    grant_step_up(theirs)
+    assert theirs.post(f"/api/runner-device-keys/{key.pk}/approve").status_code == 200
+    fleet.agent.refresh_from_db()
+    pending = {(t["kind"], t["target"]) for t in zk.pending_targets(fleet.agent)}
+    assert ("device", str(key.pk)) in pending and ("member", str(ed.pk)) in pending
+    t0 = timezone.now()
+    zk_notify.sweep(t0)
+    zk_notify.sweep(t0 + zk_notify.GRACE)
+    assert [m.subject for m in mailoutbox if "ed10@dimagi.com" in m.subject and "first time" in m.subject]
+    assert not [m for m in mailoutbox if "DIM-SI-W021" in m.subject]
+    notice = ZkGrantNotice.objects.get(agent=fleet.agent, kind="device", target=str(key.pk))
+    assert notice.notified == {"folded_into_person": "ed10@dimagi.com"}
 
 
 def test_replacing_your_key_records_when(fleet):

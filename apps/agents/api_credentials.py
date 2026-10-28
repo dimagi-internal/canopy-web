@@ -448,7 +448,7 @@ def _vault_out(vault, user) -> VaultMembersOut:
                   "has_vault_key": m.user.pk in keyed, "has_copy": m.user.pk in held} for m in rows],
         you=(ms[user.pk].role if user.is_authenticated and user.pk in ms else None),
         holders={"has_key": bool(vault.agent.zk_enabled and vault.agent.zk_kv),
-                 "people": sorted(ms[u].user.email or "" for u in held), "keepers": keepers})
+                 "people": vault_members.granters(ms, held), "keepers": keepers})
 
 
 def _agent_vault(request: HttpRequest, slug: str, *, manage: bool):
