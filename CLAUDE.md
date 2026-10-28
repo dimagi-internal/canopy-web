@@ -32,7 +32,7 @@ gh workflow run "Deploy to Labs (AWS)" --ref main                          # dep
 gh workflow run "Deploy to Labs (AWS)" --ref main -f skip_migrations=true  # EMERGENCY ONLY
 ```
 
-**Migrations:** write them the obvious way. Drops, renames and type changes need no expand/contract split; a brief window of errors during a deploy is accepted.
+**Migrations:** write them the obvious way. Drops, renames and type changes need no expand/contract split; a brief window of errors during a deploy is accepted. One exception, because it fails the deploy rather than erroring briefly: a `RunPython` that **deletes or updates rows other tables reference** goes in its own migration, ahead of any schema change to those tables. PostgreSQL queues deferred FK trigger events for those rows and then refuses the ALTER in the same transaction ("pending trigger events"); SQLite and CI's empty Postgres test DB never see it, because there are no rows to touch (#2221 → #2224).
 
 **A data migration's test lives until its migration deploys.** One that walks the graph back (`MigrationExecutor.migrate(BEFORE)`, marked `needs_migrations`) costs more with every later migration, and once the migration has run in production it guards nothing; delete it in a later PR once a deploy includes it. `tests/test_migrations_apply.py` stays: it proves the whole graph applies to an empty DB.
 
