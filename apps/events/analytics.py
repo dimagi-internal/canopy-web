@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import datetime as dt
 
+from allauth.account.models import EmailAddress
 from django.db.models import Case, Count, F, Max, Q, Sum, When
-from django.db.models.functions import TruncDate
+from django.db.models.functions import Lower, TruncDate
 from django.utils import timezone
 
 from . import activity
@@ -184,28 +185,45 @@ def build(workspace_slugs: list[str], *, days: int = 30, now=None) -> dict:
 MAX_THREADS = 3000
 
 
-def _contacts_that_are_agents(contact_ids: set[str]) -> dict[str, str]:
-    """contact id -> agent slug, for contacts whose address is an agent's: its own
-    `email`, its login's, or one of its inbound mailboxes."""
+def _contacts_who_are_known(contact_ids: set[str]) -> dict[str, str]:
+    """contact id -> the node it is drawn as, for contacts that are someone canopy
+    knows: `agent:<slug>` when the address is an agent's (its own `email`, its
+    login's, or one of its inbound mailboxes), else `person:<pk>` when the contact
+    is linked to an account or its address is one account's verified email (the
+    rule of `contacts.services.user_for_verified_email`)."""
     from apps.agents.models import Agent
     from apps.contacts.models import Contact
     from apps.inbound.models import InboundMailbox
 
-    emails = {str(pk): (email or "").lower() for pk, email in Contact.objects.filter(
-        pk__in=[int(i) for i in contact_ids if i.isdigit()]).exclude(email="").values_list("pk", "email")}
-    if not emails:
-        return {}
+    rows = list(Contact.objects.filter(pk__in=[int(i) for i in contact_ids if i.isdigit()])
+                .values_list("pk", "email", "user_id"))
+    emails = {str(pk): (email or "").lower() for pk, email, _ in rows if email}
     wanted = set(emails.values())
     slug_of: dict[str, str] = {}
-    for slug, own, login in Agent.objects.values_list("slug", "email", "user__email"):
-        for address in (own, login):
+    if wanted:
+        for slug, own, login in Agent.objects.values_list("slug", "email", "user__email"):
+            for address in (own, login):
+                if address and address.lower() in wanted:
+                    slug_of.setdefault(address.lower(), slug)
+        for address, slug in (InboundMailbox.objects.filter(agent__isnull=False)
+                              .values_list("address", "agent__slug")):
             if address and address.lower() in wanted:
                 slug_of.setdefault(address.lower(), slug)
-    for address, slug in (InboundMailbox.objects.filter(agent__isnull=False)
-                          .values_list("address", "agent__slug")):
-        if address and address.lower() in wanted:
-            slug_of.setdefault(address.lower(), slug)
-    return {pk: slug_of[e] for pk, e in emails.items() if e in slug_of}
+    holders: dict[str, set[int]] = {}
+    for address, user_id in (EmailAddress.objects.annotate(address=Lower("email"))
+                             .filter(address__in=wanted, verified=True, user__is_active=True)
+                             .values_list("address", "user_id")):
+        holders.setdefault(address, set()).add(user_id)
+    out = {}
+    for pk, _, user_id in rows:
+        email = emails.get(str(pk), "")
+        if email in slug_of:
+            out[str(pk)] = f"agent:{slug_of[email]}"
+        elif user_id:
+            out[str(pk)] = f"person:{user_id}"
+        elif len(holders.get(email, ())) == 1:
+            out[str(pk)] = f"person:{next(iter(holders[email]))}"
+    return out
 
 
 def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> dict:
@@ -245,15 +263,16 @@ def network(workspace_slugs: list[str], *, viewer, days: int = 30, now=None) -> 
         if writer:
             t["writers"][writer] = t["writers"].get(writer, 0) + 1
 
-    # An agent mailing another agent outside its workspace is recorded as a contact
-    # (only a member of the receiving workspace is linked as a person), which is right
-    # for access but wrong here: draw that sender as the agent it is.
-    as_agent = _contacts_that_are_agents({w.partition(":")[2] for t in threads.values()
-                                          for w in t["writers"] if w.startswith("contact:")})
+    # Someone writing to an agent outside a workspace they belong to (a member of
+    # dimagi asking connect's agent, a person who joined later, an agent mailing
+    # another) is recorded as that workspace's contact, which is right for access
+    # but wrong here: draw them as the person or agent they are.
+    known = _contacts_who_are_known({w.partition(":")[2] for t in threads.values()
+                                     for w in t["writers"] if w.startswith("contact:")})
     for t in threads.values():
         merged: dict[str, int] = {}
         for w, n in t["writers"].items():
-            w = f"agent:{as_agent[w[8:]]}" if w.startswith("contact:") and w[8:] in as_agent else w
+            w = known.get(w[8:], w) if w.startswith("contact:") else w
             merged[w] = merged.get(w, 0) + n
         t["writers"] = merged
 
