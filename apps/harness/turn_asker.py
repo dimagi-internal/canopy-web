@@ -72,6 +72,8 @@ class OnBehalf:
     agent: Agent
     #: What their access decided on this request, for the record (`note`).
     decided: list[str] = field(default_factory=list)
+    #: The turn login (`TurnAgentToken`) the request came with — session-scoped on a laptop.
+    login: TurnAgentToken | None = None
 
     def record(self) -> dict:
         return {"user_id": self.user.pk, "email": self.user.email, "turn": str(self.turn.pk),
@@ -116,6 +118,39 @@ def attach(user, credential: dict | None) -> OnBehalf | None:
     return ob
 
 
+def check(user, credential: dict | None, *, session_login_live: bool = False) -> OnBehalf:
+    """The person `user`'s turn login works for, checked as `attach` checks it, or Refused
+    saying why there is none (`harness.act_as` asks it before an agent may ask to act as
+    them). `session_login_live`: a SESSION-scoped login (a laptop, where the turn finishes
+    as soon as its session exists) also counts while that session is held — active and
+    still bound to the runner the login was issued to (`session_held`) — and its person is
+    then the session's newest turn's asker, exactly as for an executing one."""
+    return _check(user, credential, None, session_login_live=session_login_live)
+
+
+def session_held(login: TurnAgentToken) -> bool:
+    """A session-scoped login's session is active and still bound to its login's runner —
+    what keeps the login itself alive (`turn_agent_tokens.revoke_stale`)."""
+    from apps.canopy_sessions.models import RunnerBinding, Session  # noqa: PLC0415 — only a session login pays
+
+    return bool(login.session_id) and RunnerBinding.objects.filter(
+        session_id=login.session_id, runner_id=login.runner_id,
+        session__status=Session.ACTIVE).exists()
+
+
+def session_person(session_id):
+    """The person a session's newest turn works for, or None (`_principal`)."""
+    current = (Turn.objects.select_related("initiator_user")
+               .filter(Q(chat_session_id=session_id) | Q(origin_ref__chat_session_id=str(session_id)))
+               .order_by("-created_at").first())
+    if current is None or current.capability:
+        return None
+    try:
+        return _principal(current)
+    except Refused:
+        return None
+
+
 def resolve(user, credential: dict | None, email: str) -> OnBehalf:
     """`declare` without attaching: the person, checked against `email`. Raises Refused."""
     email = (email or "").strip().lower()
@@ -124,7 +159,8 @@ def resolve(user, credential: dict | None, email: str) -> OnBehalf:
     return _check(user, credential, email)
 
 
-def _check(user, credential: dict | None, email: str | None) -> OnBehalf:
+def _check(user, credential: dict | None, email: str | None, *,
+           session_login_live: bool = False) -> OnBehalf:
     cred = credential or {}
     kind = kinds.kind_of(cred)
     if kind is None or not kind.may_act_on_behalf or not cred.get("id"):
@@ -141,7 +177,9 @@ def _check(user, credential: dict | None, email: str | None) -> OnBehalf:
     if agent is None or not agent.is_own_login(user):
         raise Refused("this login does not act as the agent its turn runs for")
     current = _current_turn(grant)
-    if current is None or current.status not in EXECUTING:
+    live = current is not None and (
+        current.status in EXECUTING or (session_login_live and session_held(grant)))
+    if not live:
         raise Refused("the turn this login serves is no longer running, so it acts for no one")
     if current.capability:
         raise Refused("a turn confined to a caller capability acts for no one but itself")
@@ -154,7 +192,7 @@ def _check(user, credential: dict | None, email: str | None) -> OnBehalf:
     if email is not None and person.email.lower() != email:
         raise Refused(f"the turn this login serves was started by {person.email}, not {email}")
     acting_cap(current)  # their own turn's acts_as applies to them here too
-    return OnBehalf(user=person, turn=current, agent=agent)
+    return OnBehalf(user=person, turn=current, agent=agent, login=grant)
 
 
 def _principal(turn: Turn):

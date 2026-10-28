@@ -21,6 +21,7 @@ import {
 import { FleetHoldCard } from '@/components/supervisor/FleetHoldCard'
 import { SessionFeed } from '@/components/supervisor/SessionFeed'
 import { SignInRequests } from '@/components/supervisor/SignInRequests'
+import { ActAsRequests } from '@/components/supervisor/ActAsRequests'
 import { useLiveSupervisor } from '@/hooks/useLiveSupervisor'
 import { usePolled } from '@/hooks/usePolled'
 import { RunnerStatus } from '@/components/supervisor/RunnerStatus'
@@ -257,6 +258,8 @@ export default function SupervisorPage(): JSX.Element {
         <>
           {/* A box waiting on you to approve a sign-in — the push's twin. */}
           <SignInRequests />
+          {/* An agent asking to act as you on canopy — the push's twin too. */}
+          <ActAsRequests />
           {alertCount > 0 && (
             <button
               type="button"

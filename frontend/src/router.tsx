@@ -33,6 +33,7 @@ import { WorkspaceMemberTreePage } from './pages/WorkspaceMemberTreePage'
 import { WorkspaceAccessRequestsPage } from './pages/WorkspaceAccessRequestsPage'
 import { AccessRequestPage } from './pages/AccessRequestPage'
 import { RunnerInvitationApprovePage } from './pages/RunnerInvitationApprovePage'
+import { ActAsApprovalPage } from './pages/ActAsApprovalPage'
 import { SignOffPage } from './pages/SignOffPage'
 import { BetaRequestPage, BetaRequestsPage } from './pages/BetaRequestsPage'
 import { WorkspaceSettingsPage } from './pages/WorkspaceSettingsPage'
@@ -341,6 +342,9 @@ export const routeTable: RouteObject[] = [
       // Canopy Runner opens after install). Root: a pairing has no workspace
       // until the person picks one here. Signed-in only (the server's default).
       { path: '/pair/:code', element: <PairRunnerPage /> },
+      // /act-as/:requestId — approve an agent acting as you on canopy (the push's link).
+      // Root: it is about you, not a workspace. Signed-in only; approving takes a passkey.
+      { path: '/act-as/:requestId', element: <ActAsApprovalPage /> },
 
       // --- Tenant-scoped surfaces under /w/:workspace ---
       { path: '/w/:workspace', element: <WorkspaceIndex /> },

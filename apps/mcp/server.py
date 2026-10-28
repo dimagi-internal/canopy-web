@@ -52,6 +52,12 @@ from .turn_scope import TurnScopeMiddleware  # noqa: E402
 
 mcp.add_middleware(TurnScopeMiddleware())
 
+# An act-as-you token (an agent acting as its turn's person, approved with their
+# passkey) sees only what its permission covers. See `apps/mcp/act_as_scope.py`.
+from .act_as_scope import ActAsScopeMiddleware  # noqa: E402
+
+mcp.add_middleware(ActAsScopeMiddleware())
+
 # A host-grant token (canopy-web as a host of its own MCP) sees only its scopes'
 # tools. See `apps/mcp/delegation.py`.
 from .delegation import DelegatedScopeMiddleware  # noqa: E402

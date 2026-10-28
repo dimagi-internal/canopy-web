@@ -22,3 +22,8 @@ class HarnessConfig(AppConfig):
         sweeps.register()
         fleets.register()
         ticks.register("harness.schedule_clock", schedule_clock.run, schedule_clock.interval_s, dedupe=False)
+        # Act-as-you requests and permissions that ran out are written `expired` (and
+        # recorded) within a minute, whether or not anyone reads them again.
+        from . import act_as  # noqa: PLC0415 — AppConfig.ready() wiring, after the app registry is loaded
+
+        ticks.register("harness.act_as_expire", act_as.expire_due, 60)

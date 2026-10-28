@@ -542,6 +542,13 @@ Every browser-facing address canopy-web serves. The SPA route table is
   `http://127.0.0.1:<port>/paired?…` with the one-time secret; Decline refuses
   it. Signed-in only; root because a pairing has no workspace until you pick
   one (`apps/harness/api_runner_pairings.py`).
+- **`/act-as/:requestId`** — an agent, in a turn you started, asking to act as you
+  on canopy (the push and the supervisor feed card link here): the agent, its reason
+  verbatim, the conversation, what it asked for. "Allow read-only (30 min)" (first),
+  "Allow read + write (30 min)" (as asked) and Decline; approving runs a passkey
+  assertion made for this request. Approved, it shows until when, with Stop. Only the
+  person it is for can open it; root because it is about you, not a workspace
+  (`apps/harness/api_act_as.py`).
 - **`/home`** — what is waiting on you across every workspace you are in.
   At the top, in their own section, **Alerts** (`GET /api/me/alerts/`): system
   problems you have an action on, one line each (severity dot, source chip,
@@ -571,7 +578,8 @@ Every browser-facing address canopy-web serves. The SPA route table is
   with its open alerts, `runner:<id>`, above the raw health list). Root because the fleet
   spans workspaces. Loaded by the phone PWA, desktop browsers and the menubar's
   WKWebView (unless you chose another page for it in `/settings` → Runner app); installable as a PWA; pushes only about the Feed
-  (`apps/canopy_sessions/feed.py`).
+  (`apps/canopy_sessions/feed.py`). The Feed's top carries what waits on you to approve:
+  a box's AWS sign-in, and an agent asking to act as you on canopy (each → its page).
 - **`/ide`** (+ `/:id`) — the desktop session IDE: one `WorkbenchRail` tree of
   emdash projects (repos and agents, by the row's `emdash_project`) with every
   session you can see, each row showing reported state (running / input /
@@ -629,8 +637,11 @@ Every browser-facing address canopy-web serves. The SPA route table is
     one offers the vault-key grant for zero-knowledge agents waiting on it), and
     where each of your agents stands.
   - **Agents acting for you** — credentials you delegated, act-as-you
-    permissions (each connected site whose panel you sent from and confirmed
-    with your passkey, until a time — Stop ends it, `/api/me/host-grants/`).
+    permissions in both forms: on canopy (an agent in a turn you started that you
+    let act as you, read or read + write, waiting or until a time —
+    `/api/me/act-as-requests/`) and on connected sites (each site whose panel you
+    sent from and confirmed with your passkey — `/api/me/host-grants/`). Stop ends
+    either.
   - **Runners** — runners you administer (each linking to its page, where a
     box's Claude login and admins live), opted-in repos (`#canopy-projects`,
     `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens

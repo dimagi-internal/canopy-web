@@ -239,6 +239,16 @@ export const SURFACES: SurfaceDescriptor[] = [
     needsFirst: 'Canopy Runner installed and showing a code, and a workspace where you can run work',
     actions: ['Approve as your runner', 'Decline'],
   },
+  {
+    path: '/act-as/:requestId',
+    group: 'Letting an agent act as you',
+    flat: 'personal/global: a request to act as YOU, from an agent in any of your workspaces',
+    title: 'Let an agent act as you on canopy',
+    audience: 'The person who started an agent\'s turn (the push and the supervisor feed link here)',
+    what: "One agent asking, from a turn you started, to use canopy as you: which agent, its reason in its own words, the conversation it is working in, and whether it asked to read or to read and write. Approving takes a passkey touch made for this request and lasts 30 minutes from it, only while that turn runs; it never reaches your tokens, passkeys, vaults, memory settings or these permissions. Only you can open it; a token cannot approve.",
+    needsFirst: 'An agent asking, and a passkey on this device.',
+    actions: ['Allow read-only for 30 minutes', 'Allow read + write for 30 minutes', 'Decline', 'Stop it early'],
+  },
 
   // --- Tenant-scoped surfaces under /w/:workspace ---
   {

@@ -13559,6 +13559,142 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/act-as-requests/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Agents asking to act as me on canopy-web, and those that may
+         * @description Your requests still waiting for you, and the permissions still live: which agent,
+         *     why, in which turn, what it may do, and until when.
+         */
+        readonly get: operations["list_my_act_as_requests"];
+        readonly put?: never;
+        /**
+         * Ask to act as the person who started this turn, on canopy-web
+         * @description Call with the login canopy-web issued for your turn. canopy-web works out who
+         *     started the turn (never from the request) and asks them — a push, their supervisor
+         *     feed and Settings — to let you act as them for 30 minutes, read-only or read + write,
+         *     with their passkey. 403 says why when there is no one to ask (a confined turn, one
+         *     canopy or an agent started, an unverified asker, a stored token). Poll
+         *     `GET /api/me/act-as-requests/{id}`; the request lapses after 10 minutes.
+         */
+        readonly post: operations["create_act_as_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/act-as-requests/{request_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * An act-as-you request's status (and, once, its token)
+         * @description For the agent (the same turn login that asked): the status, and — in the first read
+         *     after the person approves — the token, which signs in as them until `expires_at` or
+         *     until the turn ends. For the person: the request, to decide on.
+         */
+        readonly get: operations["get_act_as_request"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/act-as-requests/{request_id}/stop": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * End an act-as-you request or permission now
+         * @description The agent (the turn login that asked) or the person ends it at once: a waiting
+         *     request is withdrawn, a live token stops signing in from its next request.
+         */
+        readonly post: operations["stop_act_as_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/act-as-requests/{request_id}/approve/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start approving an agent acting as me, with my passkey
+         * @description Options for navigator.credentials.get(), to approve THIS request with one of your
+         *     passkeys. A browser session only; no token can.
+         */
+        readonly post: operations["begin_approve_act_as_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/act-as-requests/{request_id}/approve/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve an agent acting as me, with my passkey
+         * @description Verify the passkey assertion begun for this request, then let the agent act as you
+         *     — `read` (it may read, never change) or `write` — for 30 minutes from now, while its
+         *     turn runs. A browser session only; no token can.
+         */
+        readonly post: operations["finish_approve_act_as_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/me/act-as-requests/{request_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline an agent acting as me
+         * @description Say no. A browser session only; no token can.
+         */
+        readonly post: operations["decline_act_as_request"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/me/alerts/": {
         readonly parameters: {
             readonly query?: never;
@@ -17589,6 +17725,16 @@ export interface components {
             readonly ok: boolean;
             /** Error */
             readonly error: string;
+            /**
+             * Acting Agent
+             * @default
+             */
+            readonly acting_agent: string;
+            /**
+             * Act As Grant
+             * @default
+             */
+            readonly act_as_grant: string;
         };
         /** SettingChangeListOut */
         readonly SettingChangeListOut: {
@@ -38784,6 +38930,156 @@ export interface components {
             readonly keys: readonly string[];
             /** Days */
             readonly days?: number | null;
+        };
+        /** ActAsCreatedOut */
+        readonly ActAsCreatedOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /** Approve Url */
+            readonly approve_url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            readonly expires_at: string;
+        };
+        /** ActAsRequestIn */
+        readonly ActAsRequestIn: {
+            /** Reason */
+            readonly reason: string;
+            /**
+             * Scope
+             * @default either
+             */
+            readonly scope: string;
+        };
+        /** ActAsRequestOut */
+        readonly ActAsRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
+            /**
+             * Requested Scope
+             * @default
+             */
+            readonly requested_scope: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Agent Name
+             * @default
+             */
+            readonly agent_name: string;
+            /**
+             * Person
+             * @default
+             */
+            readonly person: string;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Session Url
+             * @default
+             */
+            readonly session_url: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Approved At */
+            readonly approved_at?: string | null;
+        };
+        /** ActAsStatusOut */
+        readonly ActAsStatusOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            readonly id: string;
+            /** Status */
+            readonly status: string;
+            /**
+             * Scope
+             * @default
+             */
+            readonly scope: string;
+            /**
+             * Requested Scope
+             * @default
+             */
+            readonly requested_scope: string;
+            /** Expires At */
+            readonly expires_at?: string | null;
+            /**
+             * Agent
+             * @default
+             */
+            readonly agent: string;
+            /**
+             * Agent Name
+             * @default
+             */
+            readonly agent_name: string;
+            /**
+             * Person
+             * @default
+             */
+            readonly person: string;
+            /**
+             * Reason
+             * @default
+             */
+            readonly reason: string;
+            /**
+             * Turn Id
+             * @default
+             */
+            readonly turn_id: string;
+            /**
+             * Session Url
+             * @default
+             */
+            readonly session_url: string;
+            /** Created At */
+            readonly created_at?: string | null;
+            /** Approved At */
+            readonly approved_at?: string | null;
+            /** Token */
+            readonly token?: string | null;
+        };
+        /** ActAsApproveIn */
+        readonly ActAsApproveIn: {
+            /** Credential */
+            readonly credential: {
+                readonly [key: string]: unknown;
+            };
+            /** Scope */
+            readonly scope: string;
         };
         /** AlertActionOut */
         readonly AlertActionOut: {
@@ -60593,6 +60889,164 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AgentLoginRequestOut"];
+                };
+            };
+        };
+    };
+    readonly list_my_act_as_requests: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["ActAsRequestOut"][];
+                };
+            };
+        };
+    };
+    readonly create_act_as_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ActAsRequestIn"];
+            };
+        };
+        readonly responses: {
+            /** @description Created */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActAsCreatedOut"];
+                };
+            };
+        };
+    };
+    readonly get_act_as_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActAsStatusOut"];
+                };
+            };
+        };
+    };
+    readonly stop_act_as_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActAsRequestOut"];
+                };
+            };
+        };
+    };
+    readonly begin_approve_act_as_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_approve_act_as_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ActAsApproveIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActAsRequestOut"];
+                };
+            };
+        };
+    };
+    readonly decline_act_as_request: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly request_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ActAsRequestOut"];
                 };
             };
         };

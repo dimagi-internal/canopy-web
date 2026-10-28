@@ -222,6 +222,26 @@ def _tool_routes() -> tuple[tuple[str, re.Pattern], ...]:
     return tuple(routes)
 
 
+@functools.cache
+def _tool_operations() -> tuple[tuple[str, re.Pattern, str], ...]:
+    """(METHOD, path pattern, operationId) for every operation `tool_spec` keeps."""
+    out = []
+    for path, item in tool_spec(api_schema())["paths"].items():
+        pattern = re.compile(
+            "^" + "[^/]+".join(re.escape(part) for part in _PATH_PARAM.split(path)) + "$")
+        out.extend((method.upper(), pattern, op.get("operationId", "")) for method, op in item.items())
+    return tuple(out)
+
+
+def tool_operation(method: str, path: str) -> str | None:
+    """The operationId (the tool's name) `method path` reaches, or None when it is not
+    a tool route — for the call-log row of a REST request an act-as token made."""
+    tenant = _TENANT_PATH.match(path)
+    flat = "/api" + tenant.group("rest") if tenant else path
+    method = method.upper()
+    return next((op for m, pattern, op in _tool_operations() if m == method and pattern.match(flat)), None)
+
+
 def is_tool_route(method: str, path: str) -> bool:
     """Whether `method path` is a REST operation this server serves as a tool.
 
@@ -414,7 +434,21 @@ def _principal() -> dict:
     }
     if claims.get("turn_id"):
         credential["turn_id"] = str(claims["turn_id"])
+    if claims.get("act_as_grant"):
+        # An act-as-you token: the person, and the agent acting as them under this grant
+        # — re-checked by the in-process request (`_act_as_mcp_refusal`) and logged.
+        credential["act_as_grant"] = str(claims["act_as_grant"])
+        credential["acting_agent"] = str(claims.get("acting_agent") or "")
     return {"user_id": int(user_id), "auth_method": method, "credential": credential}
+
+
+def acting(principal: dict) -> dict:
+    """The audit row's "<agent> as <person>" fields for a call (empty for anything but
+    an act-as-you token)."""
+    cred = principal.get("credential") or {}
+    if not cred.get("act_as_grant"):
+        return {}
+    return {"acting_agent": cred.get("acting_agent") or "", "act_as_grant": cred["act_as_grant"]}
 
 
 def _forwarded_headers() -> dict[str, str]:
@@ -459,7 +493,7 @@ class CanopyAPITool(OpenAPITool):
                 await sync_to_async(check_write_limit, thread_sensitive=True)(principal["user_id"])
             except RateLimitError as exc:
                 await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
-                                  args_summary=summary, ok=False, error=str(exc))
+                                  args_summary=summary, ok=False, error=str(exc), **acting(principal))
                 raise ToolError(str(exc)) from exc
         token = _current_call.set({
             "principal": principal, "workspace": workspace,
@@ -470,12 +504,12 @@ class CanopyAPITool(OpenAPITool):
             result = await super().run(args)
         except Exception as exc:
             await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
-                              args_summary=summary, ok=False, error=str(exc))
+                              args_summary=summary, ok=False, error=str(exc), **acting(principal))
             raise ToolError(str(exc)) from exc
         finally:
             _current_call.reset(token)
         await write_audit(user_id=principal["user_id"], tool=self.name, workspace=workspace,
-                          args_summary=summary, ok=True)
+                          args_summary=summary, ok=True, **acting(principal))
         return result
 
 

@@ -58,12 +58,22 @@ class BearerTokenAuthMiddleware:
                 return problem_response(403, detail=(
                     "X-Canopy-On-Behalf-Of refused: acting on someone's behalf needs the "
                     "login canopy-web issued for their turn"))
-        return self.get_response(request)
+        response = self.get_response(request)
+        grant = getattr(request, "act_as_grant", None)
+        if grant is not None and not getattr(request, "via_mcp", False) and act_as_call_log is not None:
+            # Every REST request an act-as token makes is a row in the call log, as every
+            # MCP call already is ("<agent> as <person>"). An MCP call is logged by the tool.
+            try:
+                act_as_call_log(request, grant, getattr(response, "status_code", 0))
+            except Exception:  # noqa: BLE001 — the log must not undo the request
+                logger.exception("act-as: could not log a REST call")
+        return response
 
     @staticmethod
     def _authenticate(request: HttpRequest) -> HttpResponse | None:
-        if _authenticate_mcp_call(request):
-            return None
+        mcp = _authenticate_mcp_call(request)
+        if mcp is not None:
+            return mcp if isinstance(mcp, HttpResponse) else None
         header = request.META.get("HTTP_AUTHORIZATION", "")
         raw = header[len("Bearer "):].strip() if header.startswith("Bearer ") else ""
         if not raw:
@@ -72,8 +82,12 @@ class BearerTokenAuthMiddleware:
         user = getattr(request, "user", None)
         already_signed_in = user is not None and getattr(user, "is_authenticated", False)
 
-        from apps.harness import caller_tokens  # noqa: PLC0415 — the bearer door's per-kind imports stay inside it, like the file's others
+        from apps.harness import act_as, caller_tokens  # noqa: PLC0415 — the bearer door's per-kind imports stay inside it, like the file's others
 
+        if raw.startswith(act_as.PREFIX):
+            # An act-as-you token: the person, under the permission they approved with
+            # their passkey. A browser session already signed in keeps its identity.
+            return None if already_signed_in else _authenticate_act_as_token(request, raw)
         if raw.startswith(caller_tokens.PREFIX):
             # A session that already signed this request in keeps its identity.
             return None if already_signed_in else _authenticate_caller_token(request, raw)
@@ -246,7 +260,7 @@ class BearerTokenAuthMiddleware:
         request._dont_enforce_csrf_checks = True
 
 
-def _authenticate_mcp_call(request: HttpRequest) -> bool:
+def _authenticate_mcp_call(request: HttpRequest) -> bool | HttpResponse | None:
     """An MCP tool call dispatched in-process (`apps/mcp/api_tools.py`).
 
     The MCP server already authenticated the caller; it hands the result over
@@ -255,11 +269,15 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
     own token would against REST: their user, their `auth_method`, no CSRF (it
     is stateless), and it counts as a machine (`is_machine`), so the gates that
     refuse tokens refuse it too.
+
+    None when the request is not one; True when it is; a refusal (an HttpResponse)
+    when an act-as-you token's call reaches a route REST would refuse it — the same
+    check as `_authenticate_act_as_token`, asked again of the route actually reached.
     """
     scope = getattr(request, "scope", None)
     principal = scope.get("canopy.mcp_principal") if isinstance(scope, dict) else None
     if not principal:
-        return False
+        return None
     from django.contrib.auth import get_user_model
 
     user = get_user_model().objects.filter(pk=principal.get("user_id"), is_active=True).first()
@@ -272,6 +290,10 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
     request.via_mcp = True
     request.mcp_tool = principal.get("mcp_tool") or ""
     request._dont_enforce_csrf_checks = True
+    if kinds.kind_of(cred) is kinds.KINDS[kinds.ACT_AS]:
+        refused = _act_as_mcp_refusal(request, cred)
+        if refused is not None:
+            return refused
     # The same acting cap as the caller's REST call: the client's own
     # `X-Canopy-Acts-As` / `X-Canopy-Turn-Id` (forwarded by the MCP server), and a
     # caller token's own turn — so a capped turn cannot shed its cap through MCP.
@@ -284,6 +306,64 @@ def _authenticate_mcp_call(request: HttpRequest) -> bool:
         except Exception:  # noqa: BLE001 — a cap only narrows; never deny on a hiccup
             logger.exception("acting cap lookup failed")
     return True
+
+
+def _act_as_mcp_refusal(request: HttpRequest, cred: dict) -> HttpResponse | None:
+    """An act-as-you token's MCP call, at the route it actually reached: the permission
+    is re-read (stopped, expired, its turn ended) and the route re-checked
+    (`act_as.route_refusal`), so MCP can reach nothing REST would refuse."""
+    from apps.api.errors import problem_response  # noqa: PLC0415 — only an act-as request pays for it
+    from apps.harness import act_as  # noqa: PLC0415 — only an act-as request pays for it
+
+    grant, why = act_as.live_by_id(cred.get("act_as_grant"))
+    if grant is None:
+        return problem_response(401, detail=f"this act-as-you permission no longer signs in: {why}")
+    routes = caller_token_routes
+    is_tool = routes is not None and routes(request.method, request.path_info)
+    refused = act_as.route_refusal(request.method, request.path_info, grant.scope, is_tool=is_tool)
+    if refused is not None:
+        return problem_response(403, detail=refused)
+    request.act_as_grant = grant
+    return None
+
+
+def _authenticate_act_as_token(request: HttpRequest, raw: str) -> HttpResponse | None:
+    """An act-as-you token (`apps/harness/act_as.py`) on REST: signs in as the PERSON who
+    approved it, re-checked on every request — not stopped, inside its 30 minutes, and
+    its turn still executing — and only on a route MCP serves as a tool that
+    `act_as.route_refusal` allows for its scope. It never steps up (it is a machine
+    caller), never mints (`kinds`), and never speaks for the person where only they may
+    (`kinds.speaks_for_a_turn`)."""
+    from apps.api.errors import problem_response  # noqa: PLC0415 — only an act-as request pays for it
+    from apps.harness import act_as  # noqa: PLC0415 — only an act-as request pays for it
+
+    grant, why = act_as.resolve(raw)
+    if grant is None:
+        return problem_response(401, detail=f"this act-as-you token does not sign in: {why}")
+    routes = caller_token_routes
+    is_tool = routes is not None and routes(request.method, request.path_info)
+    refused = act_as.route_refusal(request.method, request.path_info, grant.scope, is_tool=is_tool)
+    if refused is not None:
+        return problem_response(403, detail=refused)
+    request.user = grant.person
+    request.auth_method = kinds.ACT_AS
+    request.auth_credential = act_as.credential(grant)
+    request.act_as_grant = grant
+    request._dont_enforce_csrf_checks = True
+    _apply_acting_cap(request)
+    try:
+        from apps.workspaces import role_cap  # noqa: PLC0415 — only an act-as request pays for it
+
+        role_cap.apply(request.user, role_cap.turn_cap(str(grant.turn_id), request.user))
+    except Exception:  # noqa: BLE001 — a cap only narrows; never deny on a hiccup
+        logger.exception("acting cap lookup failed")
+    act_as.touch(grant)
+    return None
+
+
+#: Writes the call-log row for a REST request an act-as token made. The MCP app
+#: registers it (`apps.mcp.apps.McpConfig.ready`), since the log is its table.
+act_as_call_log: Callable[[HttpRequest, object, int], None] | None = None
 
 
 #: Whether `METHOD path` is a route a caller token may reach over REST. The MCP app

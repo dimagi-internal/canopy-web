@@ -56,6 +56,10 @@ class McpCallOut(StrictModel):
     args_summary: str
     ok: bool
     error: str
+    #: A call made with an act-as-you token: the agent that acted as `user_email`, and
+    #: the permission it held. "" otherwise.
+    acting_agent: str = ""
+    act_as_grant: str = ""
 
 
 class McpCallListOut(StrictModel):

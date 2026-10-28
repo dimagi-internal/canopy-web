@@ -18,8 +18,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SESSION, PAT, OAUTH, CALLER_TOKEN, DELEGATED, CONTACT, RUNNER_KEY, HCP_OAUTH = (
-    "session", "pat", "oauth", "caller_token", "delegated", "contact", "runner-key", "hcp-oauth")
+SESSION, PAT, OAUTH, CALLER_TOKEN, DELEGATED, CONTACT, RUNNER_KEY, HCP_OAUTH, ACT_AS = (
+    "session", "pat", "oauth", "caller_token", "delegated", "contact", "runner-key", "hcp-oauth",
+    "act_as")
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,11 @@ KINDS: dict[str, Kind] = {k.name: k for k in (
     Kind(CALLER_TOKEN, "a conversation's caller token (`cct_`): lives as long as its asker",
          "MCP; over REST only the routes MCP serves as tools, and only the full-profile kind "
          "(`tokens.middleware._authenticate_caller_token`)",
+         signs_in_a_user=True, speaks_for_a_turn=True),
+    Kind(ACT_AS, "an act-as-you token (`cact_`): an agent acting as the person who started its "
+         "turn, after they approved it with their passkey; 30 minutes at most, dies with the turn",
+         "the routes MCP serves as tools, less `harness.act_as.EXCLUDED_*`; GET only under a "
+         "read grant (`tokens.middleware._authenticate_act_as_token`, `mcp.act_as_scope`)",
          signs_in_a_user=True, speaks_for_a_turn=True),
     Kind(DELEGATED, "a site's delegated token for its visitor, or a person's MCP host grant",
          "`site ∩ user` (`apps/embedding/delegation.reaches`; `apps/mcp/delegation.py`)",

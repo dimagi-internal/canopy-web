@@ -2625,3 +2625,69 @@ class TurnAgentToken(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover
         return f"turn-agent-token:{self.turn_id}"
+
+
+class ActAsGrant(models.Model):
+    """An agent, in a turn a person started, acting AS that person on canopy-web — once
+    they approved it with their passkey (`apps/harness/act_as.py`).
+
+    The agent asks (`POST /api/me/act-as-requests/`, with its turn's own login); canopy-web
+    works out who the person is from that login (`turn_asker`), never from anything the
+    agent sends. The person approves at `/act-as/<id>` with a fresh WebAuthn assertion,
+    choosing read-only or read + write; from that touch the agent's token signs in as
+    them for `act_as.LIFETIME` and never longer, and only while `turn` is still executing.
+    The token is returned to the agent once and only its hash is kept.
+    """
+
+    READ, WRITE, EITHER = "read", "write", "either"
+    REQUESTABLE = (READ, WRITE, EITHER)
+    GRANTABLE = (READ, WRITE)
+    PENDING, APPROVED, DECLINED, EXPIRED, STOPPED = "pending", "approved", "declined", "expired", "stopped"
+    STATUSES = (PENDING, APPROVED, DECLINED, EXPIRED, STOPPED)
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: The person the agent acts as: the turn's verified human asker (`turn_asker`).
+    person = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                               related_name="act_as_grants")
+    agent = models.ForeignKey("agents.Agent", on_delete=models.CASCADE, related_name="act_as_grants")
+    #: The turn it was asked from. The token dies with it.
+    turn = models.ForeignKey(Turn, on_delete=models.CASCADE, related_name="act_as_grants")
+    #: The turn login (`TurnAgentToken.token`) that asked: only it reads the status and
+    #: collects the token.
+    login_token_id = models.BigIntegerField()
+    #: For a SESSION-scoped turn login (a laptop, where the turn finishes as soon as its
+    #: session exists): the session and runner it was issued for. The permission then lives
+    #: while that session is held on that runner and its newest turn is still the
+    #: person's — not only while `turn` executes.
+    login_session = models.ForeignKey("canopy_sessions.Session", on_delete=models.CASCADE,
+                                      null=True, blank=True, related_name="+")
+    login_runner = models.ForeignKey(Runner, on_delete=models.CASCADE, null=True, blank=True,
+                                     related_name="+")
+    #: The agent's words, verbatim — the person's to read; never put in an admin event.
+    reason = models.CharField(max_length=500)
+    requested_scope = models.CharField(max_length=8)
+    #: What the person granted (`read` | `write`); blank until approved.
+    scope = models.CharField(max_length=8, blank=True, default="")
+    status = models.CharField(max_length=10, default=PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    #: A request nobody acted on lapses at this time.
+    request_expires_at = models.DateTimeField()
+    #: The passkey touch that approved it; the 30 minutes run from here.
+    approved_at = models.DateTimeField(null=True, blank=True)
+    #: approved_at + LIFETIME, set once at approval and never moved.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    stopped_at = models.DateTimeField(null=True, blank=True)
+    #: Who stopped it: "agent" | "person".
+    stopped_by = models.CharField(max_length=8, blank=True, default="")
+    #: The token's hash. Set when the agent collects it — once.
+    token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    token_issued_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["person", "status"]), models.Index(fields=["status", "expires_at"])]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"act-as:{self.pk}"

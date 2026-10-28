@@ -47,8 +47,12 @@ or as you only under an act-as-you permission you granted.** Three kinds, one me
   with no more authority than the person who set it up has on the agent, and stops
   firing, loudly, when they lose it (see "Triggers").
 * **An act-as-you permission** — time-limited, granted by the person asking, in the
-  moment (a page's host grant; an agent working in their own turn, below).
-  Nothing else lets an agent act as a person. In particular:
+  moment, with their passkey. It has two forms: **a connected site's page** (a host
+  grant: the agent acts as you at that site, "Acting as the person on a connected
+  site" below) and **canopy-web itself, in your own turn** (an agent you started asks,
+  you approve read-only or read + write, and it acts as you on canopy for 30 minutes —
+  "Acting as the person on canopy-web" below). Nothing else lets an agent act as a
+  person. In particular:
   - **An agent's caller token only reads.** A full-profile AGENT turn asked by someone
     who is not the agent's owner, an admin or canopy — an editor, a `full:` rule, a
     writer in someone else's chat — reaches canopy as its asker so that it sees what
@@ -59,7 +63,8 @@ or as you only under an act-as-you permission you granted.** Three kinds, one me
     navigate and read — anything that commits waits for their click). A write is
     refused, on MCP (`mcp.turn_scope.READ_ONLY_REFUSAL`) and on REST
     (`tokens.middleware._authenticate_caller_token`), saying the asker has granted no
-    act-as-you permission: the agent writes as its own login. Confined caller tokens
+    act-as-you permission: the agent writes as its own login, or asks them for one
+    (below). Confined caller tokens
     keep their capability's own tool list. A **repo chat** (no agent: a person's own
     Claude Code session on a repo they chose) is that person's own tool, and its token
     keeps every tool, as them.
@@ -793,6 +798,52 @@ the agent made the call, for that person. The receiving agent's envelope says so
 `who.on_behalf_of` (`{user, relationship, via_agent, turn}`, the relationship being the
 person's to the receiving agent), which every turn an agent's login started carries:
 `null` means the agent acted on its own.
+
+## Acting as the person on canopy-web (act-as-you, in your own turn)
+
+An agent working in a turn you started can ask to act **as you** on canopy-web itself,
+for 30 minutes, and does so only once you approve with your passkey
+(`apps/harness/act_as.py`, `harness.models.ActAsGrant`; rules pinned by
+`tests/test_act_as_you_on_canopy.py`):
+
+- **Asked by the turn, for the turn's own person.** The agent calls
+  `POST /api/me/act-as-requests/` with the login canopy-web issued for its turn; canopy-web
+  works out who you are from that login exactly as "Acting on behalf of the person who
+  asked" does (`turn_asker.check`): an executing, unconfined turn for this agent, started
+  by a verified, active human who is not an agent (or a chain on their behalf). Nothing it
+  sends names the person, so it can never ask to act as anyone else. A stored token, a
+  confined turn, a contact's, canopy's own or an unverified asker's turn asks no one (403
+  saying why); so does a person with no passkey. On a laptop, where emdash finishes the
+  turn as soon as its session exists, the agent asks with its **session-scoped** turn
+  login, and the permission lives while that session is active and bound to the login's
+  runner and its newest turn is still yours (`act_as.held`).
+- **Approved with a fresh passkey touch, for that request, in your browser.** A push, a
+  card on your supervisor feed and a row in Settings → Act-as-you permissions lead to
+  `/act-as/<id>`: the agent, its reason verbatim, the conversation, what it asked for.
+  "Allow read-only" / "Allow read + write" each run a WebAuthn assertion begun for this
+  request (`…/approve/begin` + `/finish`); a session cookie, a step-up window or any token
+  is not enough, and approve/decline refuse every token.
+- **Read or write, 30 minutes, dies with the turn.** `read` reaches GET routes and
+  read-only tools only; `write` reaches every route canopy's MCP server serves as a tool
+  except one list, `act_as.EXCLUDED_PREFIXES` / `EXCLUDED_PATTERNS` / `EXCLUDED_TOOLS`:
+  tokens and PATs, the person's memory switches and grants, passkeys, vaults, keys and
+  secrets, connected sites' signing keys, act-as and host-grant approvals, agent-login
+  acceptance, workspace invites and the runner protocol. 30 minutes from the touch, never extended; a new approval needs a
+  new request. Every request re-checks it: stopped, run out, or its turn (or laptop
+  session) over, and the token signs in as no one.
+- **The token is returned once.** The agent's first status read after the approval
+  carries it (`cact_…`); only its hash is kept. It signs in as you on REST
+  (`tokens.middleware._authenticate_act_as_token`) and MCP (`mcp.act_as_scope`, and
+  again inside the in-process request), never mints, never steps up, and is refused where
+  only you may act (`kinds.speaks_for_a_turn`). A turn it starts is not a verified asker's,
+  so it never chains into another permission.
+- **Attributed "<agent> as <person>".** Every request is a row in the MCP call log with
+  your email, the acting agent and the grant (`MCPAuditLog.acting_agent`,
+  `act_as_grant`); its credential label names the agent in the settings audit and turn
+  provenance; `act_as.requested|approved|declined|stopped|expired` events (agent, person,
+  turn, scope — never the reason) are in the workspace's event log for its admins.
+- **You see and stop it**: Settings → Act-as-you permissions, beside host grants, and the
+  approval page; the agent may stop it too (`POST …/{id}/stop`).
 
 ## Acting as the person on a connected site (act-as-you permissions)
 
