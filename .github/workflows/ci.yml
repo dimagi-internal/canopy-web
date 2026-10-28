@@ -357,13 +357,48 @@ jobs:
           done
           psql -h localhost -U postgres -c "SELECT pg_reload_conf()"
 
-      # Two runs, one test DB: the first builds it by replaying the whole graph on
-      # the production engine (which IS the proof that every migration applies —
-      # tests/test_migrations_apply.py) and runs the tests that walk migrations
-      # (marked needs_migrations; each is deleted once its migration deploys). The
-      # second reuses that DB for the PostgreSQL-only suites. One process each,
-      # not xdist: every worker would replay the graph again (measured slower).
-      - name: Run the migration tests (builds the test DB)
+      # The migrated test DB is a pure function of the migrations, the settings and
+      # the pinned dependencies, so it is built once per distinct set of them: a
+      # push to main that changes any of them replays the whole graph on the
+      # production engine (the proof every migration applies —
+      # tests/test_migrations_apply.py) and saves a dump; a queue run on the same
+      # inputs restores it in seconds (a merge_group ref reads main's caches). A
+      # PR that adds a migration misses the key and replays for real.
+      - name: Restore the migrated test DB
+        id: testdb
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/testdb.dump
+          key: pg-testdb-v1-${{ hashFiles('apps/**/migrations/*.py', 'sdk/python/src/**/migrations/*.py', 'config/settings/*.py', 'uv.lock', 'pyproject.toml') }}
+
+      - name: Build the test DB (every migration) — or load the cached build
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/test_canopy_web
+          DJANGO_SETTINGS_MODULE: config.settings.pgtest
+          HIT: ${{ steps.testdb.outputs.cache-hit }}
+        run: |
+          psql -h localhost -U postgres -c "CREATE DATABASE test_canopy_web"
+          if [ "$HIT" = "true" ]; then
+            pg_restore -h localhost -U postgres -d test_canopy_web --no-owner --exit-on-error /tmp/testdb.dump
+            echo "::notice::Restored the migrated test DB (migrations unchanged since main built it)."
+          else
+            uv run python manage.py migrate --noinput
+            pg_dump -h localhost -U postgres -Fc -f /tmp/testdb.dump test_canopy_web
+          fi
+
+      - name: Save the migrated test DB
+        if: true && steps.testdb.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/testdb.dump
+          key: ${{ steps.testdb.outputs.cache-primary-key }}
+
+      # Both runs reuse that DB (pytest-django's test_<NAME>): first the tests that
+      # walk migrations (marked needs_migrations; each is deleted once its migration
+      # deploys), then the PostgreSQL-only suites. One process each, not xdist:
+      # every worker would build its own DB again (measured slower).
+      - name: Run the migration tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/canopy_web
         run: uv run pytest --ds=config.settings.pgtest --reuse-db -m needs_migrations -q
