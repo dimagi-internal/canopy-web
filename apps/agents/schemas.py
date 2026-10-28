@@ -1910,6 +1910,8 @@ class GoogleMintOut(StrictModel):
     expected_account: str = ""
     #: A person connecting their OWN account (a delegated credential), not the agent's.
     delegated: bool = False
+    #: Lent for a session of this many minutes (0 = standing).
+    session_minutes: int = 0
     detail: str = ""
     created_at: datetime
     updated_at: datetime
@@ -1922,6 +1924,9 @@ class GoogleDelegateIn(StrictModel):
     account: str = Field(min_length=3, max_length=200)
     #: gog's service names to grant: gmail (default), calendar, drive, docs, sheets.
     services: list[str] = Field(default_factory=lambda: ["gmail"], max_length=8)
+    #: Lend it for this many minutes only (1-60): no refresh token is issued, and it is
+    #: gone at the end. 0 = a standing delegation, until you withdraw it.
+    session_minutes: int = Field(default=0, ge=0, le=60)
 
 
 class SenderTrustIn(StrictModel):
@@ -2166,12 +2171,16 @@ class MyConnectedAccountOut(StrictModel):
     """Which of your own accounts an agent can use — the account and nothing about the
     credential (no machines, checks or value). What a page shows as "Connected"."""
 
+    #: Its id, to end it (`DELETE /api/me/delegated-credentials/{id}`).
+    id: int
     agent: str
     provider: str = ""
     #: The external account: an email for Google, a login for GitHub.
     account: str = ""
     #: You are still one of the agent's admins, so turns use it.
     in_force: bool = True
+    #: Lent for a SESSION: when it ends (it is gone after). None = standing, until withdrawn.
+    session_until: dt.datetime | None = None
 
 
 class DelegatedWaitingOut(StrictModel):

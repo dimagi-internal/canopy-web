@@ -2047,6 +2047,10 @@ class GoogleMintWorkOut(Schema):
     delegated: bool = False
     #: The vault entry the token is sealed under ("" = the agent's `gog-token`).
     name: str = ""
+    #: A SESSION (a person lending their account from a page for up to an hour): seal the
+    #: access token and its end, never a refresh token (Google issued none).
+    session: bool = False
+    session_minutes: int = 0
 
 
 class RunnerMintClaimOut(Schema):

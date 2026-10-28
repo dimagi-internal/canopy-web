@@ -261,8 +261,9 @@ def test_it_lists_and_withdraws_like_a_github_token(home):
     assert row["identity"] == {"email": GINA} and row["machines"] == ["cloud-ec2-2"] and row["in_force"]
     assert "value_zk" not in row
     # The page-safe read: which account, nothing about the credential.
-    assert home["client"].get("/api/me/connected-accounts/").json() == [
-        {"agent": "bailey", "provider": "google", "account": GINA, "in_force": True}]
+    [acct] = home["client"].get("/api/me/connected-accounts/").json()
+    assert (acct["agent"], acct["provider"], acct["account"], acct["in_force"]) == ("bailey", "google", GINA, True)
+    assert acct["session_until"] is None and acct["id"] == row["id"]
     r = home["client"].delete(f"/api/me/delegated-credentials/{row['id']}")
     assert r.status_code == 204
     assert not AgentCredential.objects.filter(name=ENTRY).exists()
@@ -270,3 +271,53 @@ def test_it_lists_and_withdraws_like_a_github_token(home):
 
 def test_the_entry_name_is_the_account_lowercased():
     assert google_mint.delegated_entry_name(" Gina@Gmail.com ") == ENTRY
+
+
+# --- a session: lent from a page for up to an hour ----------------------------------
+
+def _session_to_code(home, minutes=60):
+    r = _start(home, session_minutes=minutes)
+    assert r.status_code == 200, r.content
+    mint_id = r.json()["id"]
+    assert r.json()["session_minutes"] == minutes
+    _claim(home)
+    assert _runner_post(home, mint_id, "challenge", {"code_challenge": CHALLENGE}).status_code == 204
+    url = home["client"].get(f"/api/agents/bailey/google/delegate/{mint_id}").json()["authorize_url"]
+    q = parse_qs(urlparse(url).query)
+    assert q["access_type"] == ["online"], "a session asks Google for no refresh token"
+    assert q["include_granted_scopes"] == ["false"]
+    res = home["client"].get(CALLBACK, {"state": q["state"][0], "code": "4/code"})
+    assert res.status_code == 200 and b"close this window" in res.content
+    return mint_id, _claim(home)
+
+
+@pytest.mark.django_db
+def test_a_session_lasts_its_minutes_then_is_served_no_longer_and_gone(home):
+    import datetime as dt
+
+    from django.utils import timezone
+
+    from apps.agents.credentials import accounts
+
+    _admin(home)
+    mint_id, work = _session_to_code(home, minutes=60)
+    assert work["session"] is True and work["session_minutes"] == 60
+    _runner_post(home, mint_id, "result", {"value_zk": _seal_for(work), "kv": work["kv"],
+                                            "account": GINA, "name": ENTRY})
+    [row] = home["client"].get("/api/me/connected-accounts/").json()
+    assert row["account"] == GINA and row["in_force"] and row["session_until"]
+    entry = AgentCredential.objects.get(name=ENTRY)
+    assert accounts.serves(entry, home["agent"])
+    later = timezone.now() + dt.timedelta(minutes=61)
+    assert accounts.session_ended(entry, now=later)
+    entry.identity = {**entry.identity, "session_until": (timezone.now() - dt.timedelta(seconds=1)).isoformat()}
+    entry.save(update_fields=["identity"])
+    assert not accounts.serves(entry, home["agent"])
+    assert home["client"].get("/api/me/connected-accounts/").json() == []
+    assert not AgentCredential.objects.filter(name=ENTRY).exists(), "an ended session leaves nothing behind"
+
+
+@pytest.mark.django_db
+def test_a_session_longer_than_an_hour_is_refused(home):
+    _admin(home)
+    assert _start(home, session_minutes=61).status_code == 422

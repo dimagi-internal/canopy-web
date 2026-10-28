@@ -1082,6 +1082,10 @@ class AgentGoogleMint(models.Model):
     expected_account = models.CharField(max_length=254, blank=True, default="")
     #: gog's service names a delegated sign-in asks for (`google_oauth.delegated_scopes`).
     services = models.JSONField(default=list, blank=True)
+    #: A SESSION: the person lends their account for this many minutes (at most 60), from a
+    #: page. Google is asked for no refresh token, so the token dies on its own; 0 = a
+    #: standing delegation (connect once, withdraw in Settings).
+    session_minutes = models.PositiveSmallIntegerField(default=0)
     #: How it ended, in the words the settings page reads (`?google=`): ok, denied,
     #: exchange-failed, no-refresh-token, no-email, wrong-account, no-client,
     #: zk-no-recipients, expired, interrupted.

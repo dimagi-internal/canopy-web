@@ -26,6 +26,14 @@ PROPS
                                          and resolve with its result; rejects with the reason when
                                          it fails, is cancelled, times out or the viewer may not
     canopy.agentTask(id) -> Promise<task>  re-read a task this view started (status, error, ...)
+    canopy.googleAccess.start({agent, account?, services?: ["gmail"], minutes?: 60, purpose?})
+                                         -> Promise<{ok, account, until}>  the VIEWER lends an agent
+                                         the view declares tasks for their own Google account for
+                                         1-60 minutes, without leaving the page: canopy explains it
+                                         in its own dialog and opens Google in a small window. No
+                                         refresh token: it ends by itself (read `my_connected_accounts`
+                                         for `session_until`). Rejects when they cancel.
+    canopy.googleAccess.end({agent, account?})  end it now
 - Plain <a href="/tasks/CON-12"> links work too: the frame routes them through navigate.
 
 SOURCES (declared on the view, read for it as the viewer before it draws; `example_sources` beside
