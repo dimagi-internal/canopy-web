@@ -19,8 +19,10 @@ can rotate without anyone typing anything. An owner or admin opts an agent in
 
 canopy-web cannot read the stored value (the agent's vault is zero-knowledge),
 so the old token is the one this job minted last — a live PersonalToken of the
-agent's own login. Only that one is ever shortened or revoked; a token a person
-stored since is replaced and left alone.
+agent's own login, revoked after the overlap. Every other long-lived token of that
+login (the hand-minted first one above all) is shortened to the overlap too
+(`_expire_strays`); a token of anyone else's, a person's stored by mistake, is
+replaced and left alone.
 
 The impersonation guard of `services.mint_agent_canopy_token` is re-checked at
 every rotation against the person who opted in: once the agent's login has
@@ -40,7 +42,7 @@ import logging
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
 from apps.events import services as events
@@ -140,6 +142,23 @@ def _current_token(agent):
                                         revoked_at__isnull=True).first()
 
 
+def _expire_strays(agent, *, keep, now) -> int:
+    """Every OTHER live, long-lived token of the agent's own login ends with the overlap.
+
+    canopy-web cannot read the stored value, so before its first rotation it does not
+    know which token that is — and the one an agent was first given (minted by hand,
+    copied to a box, leaked to a licensee: canopy-web#2265) would otherwise live out its
+    full lifetime. After a rotation the vault holds the one login token the agent should
+    use; any other copy is stale. Left alone: turn- and session-scoped tokens (short,
+    their own lifetime — apps/harness/turn_agent_tokens.py) and OAuth grants' tokens."""
+    end = now + OVERLAP
+    qs = (PersonalToken.objects.filter(user_id=agent.user_id, revoked_at__isnull=True,
+                                       oauth_grant__isnull=True, turn_grant__isnull=True)
+          .exclude(pk=keep.pk)
+          .filter(models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=end)))
+    return qs.update(expires_at=end)
+
+
 def rotate(agent, *, trigger: str = "scheduler", actor=None, presented_token_id=None):
     """Rotate now. Returns the AgentPatRotation row (status `rotated`), or raises
     RotationRefused after recording a `failed` row."""
@@ -186,8 +205,11 @@ def _rotate_locked(agent, *, now, trigger: str, actor, presented_token_id=None):
         # time even if no tick ever comes round to revoke it.
         if old.expires_at is None or old.expires_at > revoke_after:
             PersonalToken.objects.filter(pk=old.pk).update(expires_at=revoke_after)
+    strays = _expire_strays(agent, keep=new, now=now)
     detail = ("old token stays valid for 24 h, then is revoked" if old is not None else
               "the stored value was not a live token of this agent's login; nothing revoked")
+    if strays:
+        detail += f"; {strays} other long-lived token(s) of its login expire in 24 h"
     row = AgentPatRotation.objects.create(
         agent=agent, status=AgentPatRotation.ROTATED, trigger=trigger, detail=detail,
         old_token=old, new_token=new, revoke_after=revoke_after, actor=actor)
