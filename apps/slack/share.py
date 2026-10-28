@@ -482,8 +482,9 @@ class DetachResult:
 def binding_of(session: Session) -> dict | None:
     """The Slack thread this session is connected to, for showing it — or None.
 
-    `url` opens the thread in Slack's web client (which hands off to the app);
-    it needs no API call, so it is cheap enough for every session row.
+    `app_url` opens the thread in the Slack desktop app (`slack://`); `url` opens
+    it in Slack's web client, for a machine without the app. Neither needs an API
+    call, so both are cheap enough for every session row.
     """
     meta = session.metadata or {}
     key = meta.get(services.SLACK_THREAD_KEY)
@@ -492,12 +493,10 @@ def binding_of(session: Session) -> dict | None:
     team = str(meta.get("slack_team") or "")
     channel = str(meta.get("slack_channel") or "")
     thread_ts = str(meta.get("slack_thread_ts") or "")
-    url = ""
-    if team and channel:
-        url = f"https://app.slack.com/client/{team}/{channel}"
-        if thread_ts and thread_ts != services.DM_ANCHOR:
-            url += f"/thread/{channel}-{thread_ts}"
-    return {"channel": channel, "thread_ts": thread_ts, "url": url,
+    in_thread = thread_ts if thread_ts != services.DM_ANCHOR else ""
+    return {"channel": channel, "thread_ts": thread_ts,
+            "url": location.web_url(team, channel, in_thread),
+            "app_url": location.app_url(team, channel, in_thread),
             "shared": bool(meta.get("slack_shared_by"))}
 
 

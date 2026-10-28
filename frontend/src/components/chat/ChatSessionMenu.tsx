@@ -17,6 +17,7 @@ import {
 import type { TypingVisibility } from "canopy-ui/chat";
 import { copyText } from "canopy-ui/lib";
 import { scopedPath } from "@/lib/scopedLinks";
+import { openInSlackApp } from "@/lib/slackLinks";
 import { ChatPeoplePanel } from "./ChatPeople";
 import { ShareToSlackForm } from "./ShareToSlack";
 import { ShareSecretForm } from "./ShareSecret";
@@ -109,7 +110,7 @@ export function ChatSessionMenu({
   typingVisibility?: TypingVisibility;
   onTypingVisibilityChange?: (visibility: TypingVisibility) => void;
   /** The Slack thread this session is connected to, or null/undefined when none. */
-  slackThread?: { channel: string; url?: string } | null;
+  slackThread?: { channel: string; url?: string; app_url?: string } | null;
   /** Disconnect from that thread. Omitted for someone who can't act in the session. */
   onDetachSlack?: () => void;
   detachingSlack?: boolean;
@@ -211,13 +212,22 @@ export function ChatSessionMenu({
           </DropdownMenuItem>
           {slackThread && (
             <>
+              {slackThread.app_url && (
+                <DropdownMenuItem
+                  inset
+                  data-testid="slack-thread-app-link"
+                  onClick={() => openInSlackApp(slackThread.app_url!)}
+                >
+                  Open Slack thread
+                </DropdownMenuItem>
+              )}
               {slackThread.url && (
                 <DropdownMenuItem
                   inset
                   data-testid="slack-thread-link"
                   onClick={() => window.open(slackThread.url, "_blank", "noopener,noreferrer")}
                 >
-                  Open Slack thread
+                  {slackThread.app_url ? "Open Slack thread in the browser" : "Open Slack thread"}
                 </DropdownMenuItem>
               )}
               {onDetachSlack && (

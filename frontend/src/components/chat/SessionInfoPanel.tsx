@@ -135,7 +135,7 @@ export function SessionInfoPanel({ sessionId }: { sessionId: string }) {
             ) : (
               <p className="text-muted-foreground">No runner has backed this session yet.</p>
             )}
-            {s.slack && <Row label="Slack" value={s.slack.channel} href={s.slack.url ?? undefined} />}
+            {s.slack && <Row label="Slack" value={s.slack.channel} href={s.slack.app_url || s.slack.url || undefined} />}
           </Section>
 
           {Object.keys(activity).length > 0 && (
