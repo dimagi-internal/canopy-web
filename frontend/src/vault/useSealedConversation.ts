@@ -35,6 +35,13 @@ type Row = { sealed?: string | null; plaintext: string; content: Record<string, 
              turn_index?: number; role?: string }
 
 const placeOf = (m: Row) => `${m.turn_index ?? ''}|${m.role ?? ''}`
+/** A send's own nonce (`content.client_id`): the server's row keeps it when sealed,
+ *  and it is the only tie between that row and this tab's optimistic one, whose
+ *  index is a guess the durable row does not share. */
+const sendOf = (m: Row) => {
+  const id = m.role === 'user' ? m.content?.client_id : undefined
+  return typeof id === 'string' && id ? `send|${id}` : null
+}
 const openedKey = (m: Row & { sealed: string }) => `${placeOf(m)}|${m.sealed}`
 const isProse = (m: Row) => m.role === 'user' || m.role === 'assistant'
 const isMetadataOnly = (m: Row) => (m.content as { redacted?: unknown } | undefined)?.redacted === "sensitive"
@@ -93,11 +100,18 @@ export function useSealedConversation<M extends Row>(
   }
 
   // Remember what arrived live, before a snapshot replaces it with its sealed copy.
+  const heardOf = (m: Row) => {
+    const send = sendOf(m)
+    return heard.current.get(placeOf(m)) ?? (send ? heard.current.get(send) : undefined)
+  }
   if (sealedKey) {
     for (const m of messages) {
       if (isSealed(m.sealed) || m.turn_index === undefined || isMetadataOnly(m)) continue
       if (m.plaintext || (m.content && Object.keys(m.content).length)) {
-        heard.current.set(placeOf(m), { plaintext: m.plaintext, content: m.content })
+        const words = { plaintext: m.plaintext, content: m.content }
+        heard.current.set(placeOf(m), words)
+        const send = sendOf(m)
+        if (send) heard.current.set(send, words)
       }
     }
   }
@@ -160,7 +174,7 @@ export function useSealedConversation<M extends Row>(
       }
       const k = openedKey(m as M & { sealed: string })
       if (!opened.current.has(k)) {
-        const live = heard.current.get(placeOf(m))
+        const live = heardOf(m)
         return live ? withWords(m, live) : { ...m, plaintext: m.plaintext || LOCKED_TEXT }
       }
       const words = opened.current.get(k)
@@ -175,7 +189,7 @@ export function useSealedConversation<M extends Row>(
       : opening ? 'opening'
         : whyNot(sealedKey) ?? (error ? 'error' : 'locked')
   // Something sealed this browser cannot show yet: neither opened nor heard live here.
-  const hasSealed = messages.some((m) => isSealed(m.sealed) && !heard.current.has(placeOf(m)))
+  const hasSealed = messages.some((m) => isSealed(m.sealed) && !heardOf(m))
   const dismissWarning = useCallback(() => {
     dismissSelfMismatch()
     setWarning(null)

@@ -43,6 +43,20 @@ describe('useSealedConversation across a reconnect', () => {
     expect(unlock).not.toHaveBeenCalled()
   })
 
+  it("reads this tab's own send once its sealed copy lands at a different place", async () => {
+    const key = await sealedKey()
+    // The optimistic row: the index is the browser's guess.
+    const sent: R[] = [{ plaintext: 'How is Amina?', content: { text: 'How is Amina?', client_id: 'c1' },
+                         turn_index: 1, role: 'user' }]
+    const unlock = vi.fn()
+    const { result, rerender } = renderHook(({ m }) => useSealedConversation(key, m, unlock), { initialProps: { m: sent } })
+    // The server's copy: sealed, at the transcript's ordinal, keeping the send's nonce.
+    rerender({ m: [{ plaintext: '', content: { ...META, client_id: 'c1' }, sealed: 'cc1:a', turn_index: 0, role: 'user' }] })
+    expect(result.current.messages.map((m) => m.plaintext)).toEqual(['How is Amina?'])
+    expect(result.current.hasSealed).toBe(false)
+    expect(unlock).not.toHaveBeenCalled()
+  })
+
   it('a row with only its metadata reads as being sealed, not as a blank bubble', async () => {
     const key = await sealedKey()
     const rows: R[] = [{ plaintext: '', content: META, turn_index: 0, role: 'assistant' },

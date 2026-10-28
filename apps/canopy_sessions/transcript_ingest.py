@@ -509,13 +509,15 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
             if not isinstance(content, dict):
                 content = {}
             author = turn_hex = None
+            client_id = ""
             if role == Message.USER:
                 # The marker canopy prepended at claim (authorship.py). Stripped
                 # here, the single funnel for live stream, backfill and reset, so
                 # every path gets the same text and the same author.
                 author, bare, turn_hex = authorship.parse(text)
-                if author is not None and vouched.get(turn_hex) == _marker_identity(author):
+                if author is not None and vouched.get(turn_hex, ())[:2] == _marker_identity(author):
                     text = bare
+                    client_id = vouched[turn_hex][2]
                     if isinstance(content.get("text"), str):
                         content = {**content, "text": authorship.parse(content["text"])[1]}
                 else:
@@ -533,6 +535,7 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                             matched_author = authorship.author_of(matched)
                             if matched_author is not None:
                                 author, turn_hex = matched_author, matched.pk.hex
+                                client_id = _sent_client_id(matched.origin_ref)
             # Postgres rejects NUL in text/jsonb, and the batch is ONE
             # transaction — an unscrubbed byte from a binary tool result 500s
             # every other row with it. See transcript_noise.scrub_nul.
@@ -547,6 +550,13 @@ def persist_transcript_rows(session, rows, *, attribute: bool = True) -> int:
                     calls=calls)
             text = scrub_nul(text)
             content = storage_content(scrub_nul(content), text)
+            # The send's nonce, as the row the send wrote carried it: the sender's
+            # browser knows its own line by it. In a private conversation it is the
+            # only way — the words are sealed and the transcript's ordinal is not
+            # the one the browser guessed — so without it a person's own first
+            # message came back as "locked" (`useSealedConversation`).
+            if client_id:
+                content = {**content, "client_id": client_id}
             prepared.append((index, role, text, content, author, turn_hex, sealed))
         # `held` was computed above, before matching — reused here, not
         # re-queried.
@@ -579,9 +589,9 @@ def _marker_identity(author: dict) -> tuple[int | None, int | None]:
     return author.get("user_id"), author.get("contact_id")
 
 
-def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
-    """turn hex -> (initiator_user_id, initiator_contact_id), for every turn a
-    user row's marker names that really is one of THIS session's turns. One
+def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None, str]]:
+    """turn hex -> (initiator_user_id, initiator_contact_id, client_id), for every
+    turn a user row's marker names that really is one of THIS session's turns. One
     query for the whole batch, whatever its size.
 
     The live frame (`stream_map`) is deliberately not checked the same way — it
@@ -598,8 +608,14 @@ def _vouched_markers(session, rows) -> dict[str, tuple[int | None, int | None]]:
         return {}
     found = Turn.objects.filter(
         chat_session=session, pk__in=[uuid.UUID(h) for h in hexes],
-    ).values_list("pk", "initiator_user_id", "initiator_contact_id")
-    return {pk.hex: (uid, cid) for pk, uid, cid in found}
+    ).values_list("pk", "initiator_user_id", "initiator_contact_id", "origin_ref")
+    return {pk.hex: (uid, cid, _sent_client_id(ref)) for pk, uid, cid, ref in found}
+
+
+def _sent_client_id(origin_ref) -> str:
+    """The send's client nonce, as its turn keeps it (`send._enqueue_chat_turn`)."""
+    value = origin_ref.get("client_id") if isinstance(origin_ref, dict) else None
+    return value if isinstance(value, str) else ""
 
 
 def _squash(text: str) -> str:

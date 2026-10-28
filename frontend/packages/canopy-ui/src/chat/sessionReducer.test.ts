@@ -954,4 +954,20 @@ describe("sessionReducer — two people saying the same thing (final review I5)"
     expect(next.messages).toHaveLength(2)
     expect(next.messages[0].id).toBe("local:c1")
   })
+
+  it("a snapshot's sealed copy of my send replaces it, matched by the send's nonce", () => {
+    // A private conversation's row has no words to compare and sits at the
+    // transcript's ordinal; only `client_id` says it is this send.
+    const seeded = makeState({
+      current_user_id: 1,
+      messages: [yes({ id: "local:c1", turn_index: 1, status: "pending", content: { client_id: "c1" } })],
+    })
+    const sealed = makeMessage({ id: "901", role: "user", turn_index: 0, plaintext: "",
+                                 content: { redacted: "sensitive", client_id: "c1" } })
+    const next = sessionReducer(seeded, {
+      event: "session.state",
+      data: makeState({ current_user_id: 1, messages: [sealed] }),
+    } as WsEvent)
+    expect(next.messages.map((m) => m.id)).toEqual(["901"])
+  })
 })
