@@ -16,7 +16,7 @@ import uuid
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.http import HttpRequest, HttpResponseRedirect
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from ninja import Router
 from ninja.errors import HttpError
 
@@ -39,6 +39,7 @@ def mint_out(mint) -> GoogleMintOut:
         id=mint.id, status=mint.status, outcome=mint.outcome, authorize_url=mint.authorize_url,
         runner=mint.runner.name if mint.runner_id else "", account=mint.account,
         expected_account=google_mint.expected_for(mint), delegated=bool(mint.delegated_by_id),
+        session_minutes=mint.session_minutes,
         detail=mint.detail,
         created_at=mint.created_at, updated_at=mint.updated_at)
 
@@ -95,7 +96,7 @@ def start_google_delegation(request: HttpRequest, slug: str, payload: GoogleDele
     agent = agent_for_admin(request, slug)
     try:
         mint = google_mint.start_delegated(agent, user=request.user, account=payload.account,
-                                           services=payload.services)
+                                           services=payload.services, session_minutes=payload.session_minutes)
     except google_mint.MintRefused as exc:
         raise mint_problem(exc) from exc
     return mint_out(mint)
@@ -130,6 +131,16 @@ def google_callback(request: HttpRequest, code: str = "", state: str = "", error
         query = urlencode({"google": status, **({"mint": str(mint.id)} if mint else {})})
         if agent is None:
             return HttpResponseRedirect(f"{root}/?{query}")
+        if mint is not None and mint.delegated_by_id and mint.session_minutes:
+            # A session is started from a page, in a window of its own that the page closes
+            # once the runner finishes: say so plainly in case it is left open.
+            done = status in ("pending", "ok")
+            text = ("Signed in. You can close this window and go back to the page."
+                    if done else "The sign-in did not finish. Close this window and try again from the page.")
+            return HttpResponse(
+                f"<!doctype html><meta charset=utf-8><title>Google sign-in</title>"
+                f"<body style='font:16px system-ui;padding:2rem'><p>{text}</p></body>",
+                content_type="text/html; charset=utf-8")
         if mint is not None and mint.delegated_by_id:
             # A person's own account: back to the page they connected it from.
             return HttpResponseRedirect(

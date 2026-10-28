@@ -642,10 +642,11 @@ export async function startGoogleDelegation(
   slug: string,
   account: string,
   services: string[] = ['gmail'],
+  sessionMinutes = 0,
 ): Promise<GoogleMintOut> {
   const res = await apiV2.POST('/api/agents/{slug}/google/delegate', {
     params: { path: { slug } },
-    body: { account, services },
+    body: { account, services, session_minutes: sessionMinutes },
   })
   return unwrap(res, 'startGoogleDelegation')
 }

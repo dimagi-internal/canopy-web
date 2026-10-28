@@ -43,7 +43,8 @@ def list_my_delegated_credentials(request: HttpRequest) -> list[MyDelegatedCrede
     you included), what the provider last said, and whether it is in force (you are
     still one of the agent's admins). Never the value."""
     return [MyDelegatedCredentialOut(id=c.pk, agent=c.agent.slug, agent_name=c.agent.name,
-                                     **accounts.describe(c, c.agent)) for c in _mine(request.user)]
+                                     **accounts.describe(c, c.agent))
+            for c in accounts.drop_ended_sessions(list(_mine(request.user)))]
 
 
 @me_router.get("/me/connected-accounts/", response=list[MyConnectedAccountOut],
@@ -54,12 +55,12 @@ def list_my_connected_accounts(request: HttpRequest) -> list[MyConnectedAccountO
     nothing else about the credential. Safe to show on a page (a dynamic view reads it
     to say "Connected"); the full record is GET /me/delegated-credentials/."""
     out = []
-    for c in _mine(request.user):
+    for c in accounts.drop_ended_sessions(list(_mine(request.user))):
         identity = c.identity or {}
         out.append(MyConnectedAccountOut(
-            agent=c.agent.slug, provider=c.provider,
+            id=c.pk, agent=c.agent.slug, provider=c.provider,
             account=str(identity.get("email") or identity.get("login") or ""),
-            in_force=accounts.serves(c, c.agent)))
+            in_force=accounts.serves(c, c.agent), session_until=accounts.session_until(c)))
     return out
 
 

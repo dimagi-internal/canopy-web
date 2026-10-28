@@ -28,6 +28,7 @@ of the agent's admins: `accounts.serves` hands a delegated entry out only while 
 """
 from __future__ import annotations
 
+import datetime as dt
 import re
 from types import SimpleNamespace
 
@@ -143,7 +144,12 @@ def start(agent, *, user, login_hint: str = "") -> AgentGoogleMint:
                                               login_hint=login_hint[:254])
 
 
-def start_delegated(agent, *, user, account: str, services=None) -> AgentGoogleMint:
+#: The longest a session may last: Google's access tokens live an hour, and there is no
+#: refresh token to extend one.
+MAX_SESSION_MINUTES = 60
+
+
+def start_delegated(agent, *, user, account: str, services=None, session_minutes: int = 0) -> AgentGoogleMint:
     """A new sign-in for `user`'s OWN Google `account`, to delegate to `agent`; supersedes
     their unfinished one for it. Refused unless they are one of the agent's admins — a
     delegated entry is in force only while its person is (`accounts.serves`) — and unless
@@ -155,6 +161,8 @@ def start_delegated(agent, *, user, account: str, services=None) -> AgentGoogleM
         services = google_oauth.delegated_services(services)
     except ValueError as exc:
         raise MintRefused(422, "bad_services", str(exc)) from exc
+    if not 0 <= int(session_minutes or 0) <= MAX_SESSION_MINUTES:
+        raise MintRefused(422, "bad_session", f"a session lasts 1 to {MAX_SESSION_MINUTES} minutes")
     if not agent.is_admin(user):
         raise MintRefused(403, "not_an_admin", (
             f"only {agent.slug}'s owner or one of its admins can delegate an account of their own to it: "
@@ -180,7 +188,8 @@ def start_delegated(agent, *, user, account: str, services=None) -> AgentGoogleM
             _fail(old, "superseded", "superseded by a newer sign-in")
         return AgentGoogleMint.objects.create(agent=agent, runner=runners[0], requested_by=user,
                                               delegated_by=user, expected_account=account,
-                                              services=services, login_hint=account)
+                                              services=services, login_hint=account,
+                                              session_minutes=int(session_minutes or 0))
 
 
 def get(agent, mint_id, *, delegated_by=None) -> AgentGoogleMint | None:
@@ -239,6 +248,9 @@ def work(mint: AgentGoogleMint, code: str) -> dict:
             out.update(delegated=True, name=delegated_entry_name(mint.expected_account), kv=agent.zk_kv,
                        recipients=[{"kind": kind, "target": target, "public_jwk": jwk}
                                    for kind, target, jwk in _accounts().recipients(agent, mint.delegated_by)])
+            if mint.session_minutes:
+                # An access token only, sealed with its end: no refresh token is kept.
+                out.update(session=True, session_minutes=mint.session_minutes)
     return out
 
 
@@ -262,7 +274,8 @@ def record_challenge(runner, mint_id, challenge: str) -> AgentGoogleMint:
               else google_oauth.scopes_for(agent))
     mint.code_challenge = challenge
     mint.authorize_url = google_oauth.authorize_url(client_id=client_id, state=state, login_hint=hint,
-                                                    scopes=scopes, code_challenge=challenge)
+                                                    scopes=scopes, code_challenge=challenge,
+                                                    session=bool(mint.delegated_by_id and mint.session_minutes))
     mint.status = AgentGoogleMint.AWAITING
     mint.save(update_fields=["code_challenge", "authorize_url", "status", "updated_at"])
     return mint
@@ -366,6 +379,14 @@ def _finish_delegated(runner, mint: AgentGoogleMint, *, value_zk: str, account: 
     if not any(kind == "device" for kind, _ in targets):
         return _fail(mint, "zk-no-recipients", f"no machine that runs {agent.slug} could open it", account=account)
     services_ = list(mint.services or google_oauth.DEFAULT_DELEGATED_SERVICES)
+    identity = {"email": mint.expected_account}
+    purpose = f"{agent.slug} uses {mint.expected_account}'s {', '.join(services_)}"
+    if mint.session_minutes:
+        # Lent for a session: it ends here (served no longer, then deleted) and at Google
+        # (an access token with no refresh token), whichever the person does not end first.
+        until = timezone.now() + dt.timedelta(minutes=mint.session_minutes)
+        identity["session_until"] = until.isoformat()
+        purpose += f" until {until:%H:%M} UTC (a session)"
     with transaction.atomic():
         agent = zk._locked(agent)
         clash = AgentCredential.objects.filter(agent=agent, name=entry_name).first()
@@ -377,8 +398,8 @@ def _finish_delegated(runner, mint: AgentGoogleMint, *, value_zk: str, account: 
             defaults={
                 "value_zk": value_zk, "kv": agent.zk_kv, "updated_by": person,
                 "account": "delegated", "delegated_by": person, "delegated_by_agent": None,
-                "provider": "google", "identity": {"email": mint.expected_account},
-                "purpose": f"{agent.slug} uses {mint.expected_account}'s {', '.join(services_)}"[:200],
+                "provider": "google", "identity": identity,
+                "purpose": purpose[:200],
                 "scopes": list(google_oauth.delegated_scopes(services_)),
                 "provider_expires_at": None, "checks": [], "checked_at": None, "checked_by": "",
             })

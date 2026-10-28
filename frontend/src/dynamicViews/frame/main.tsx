@@ -80,6 +80,17 @@ const canopy = {
       return { channel: CHANNEL, type: 'agent-task', id, request: rest }
     }).finally(() => statusListeners.delete(asked))
   },
+  /** The viewer lends an agent their own Google account for up to an hour, from this page:
+   * canopy asks them in its own dialog. Resolves {ok, account, until} or rejects. */
+  googleAccess: {
+    start(request: { agent: string; account?: string; services?: string[]; minutes?: number; purpose?: string }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'google-access', id, request: { ...request, action: 'start' } }))
+    },
+    /** End it now (and any standing connection of that account to that agent). */
+    end(request: { agent: string; account?: string }) {
+      return ask((id) => ({ channel: CHANNEL, type: 'google-access', id, request: { ...request, action: 'end' } }))
+    },
+  },
   /** Re-read a task this view started: its status, error and, once done, result. */
   agentTask(id: string): Promise<AgentTaskStatus> {
     return ask((n) => ({ channel: CHANNEL, type: 'agent-task-read', id: n, taskId: id })) as Promise<AgentTaskStatus>

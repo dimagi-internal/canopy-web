@@ -17,6 +17,7 @@ import { cancelAgentTask, createAgentTask, getAgentTask, type AgentTask } from '
 import { apiUrl } from '@/api/base'
 import { getDynamicViewGuide, type DynamicViewSource } from '@/api/dynamicViews'
 import { ViewAgentTasks, type DeclaredTask } from './agentTasks'
+import { checkAsk, endGoogleAccess, GoogleAccessDialog, type GoogleAccessAsk, type GoogleAccessRequest } from './googleAccess'
 import { resolveNavigation, resolveRead, type CatalogModel, type ReadContext } from './bridge'
 import {
   CHANNEL,
@@ -111,6 +112,8 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
   const loads = useRef(0)
   const [height, setHeight] = useState(240)
   const [gone, setGone] = useState(false)
+  // A view asking to lend an agent the viewer's Google account: canopy's own dialog.
+  const [accessAsk, setAccessAsk] = useState<{ id: number; ask: GoogleAccessAsk } | null>(null)
   const navigate = useNavigate()
   const ctx: ReadContext = { workspace: scope.workspace.slug, project: scope.project?.handle ?? null }
   const ctxKey = `${ctx.workspace}/${ctx.project ?? ''}`
@@ -214,6 +217,27 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
             .catch((e) => post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: message(e) }))
           return
         }
+        case 'google-access': {
+          const id = msg.id
+          const req = (msg.request ?? {}) as GoogleAccessRequest
+          const agents = [...new Set(declared.current.map((t) => t.agent))]
+          const reply = (ok: boolean, data: unknown, error = '') =>
+            post(ok ? { channel: CHANNEL, type: 'read-result', id, ok: true, data } : { channel: CHANNEL, type: 'read-result', id, ok: false, error })
+          if (req.action === 'end') {
+            if (!agents.includes(String(req.agent))) return reply(false, null, `this view declares no task for ${req.agent}`)
+            endGoogleAccess(String(req.agent), String(req.account || ''))
+              .then(async (r) => {
+                post({ channel: CHANNEL, type: 'data', data: await load() })
+                reply(true, r)
+              })
+              .catch((e) => reply(false, null, message(e)))
+            return
+          }
+          const ask = checkAsk(req, agents)
+          if (typeof ask === 'string') return reply(false, null, ask)
+          setAccessAsk({ id, ask })
+          return
+        }
         case 'navigate': {
           const to = resolveNavigation(ctx.workspace, msg.path)
           if (to.kind === 'app') navigate(to.to)
@@ -251,6 +275,24 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
     )
   }
   return (
+    <>
+    {accessAsk && (
+      <GoogleAccessDialog
+        ask={accessAsk.ask}
+        onDone={(r) => {
+          const id = accessAsk.id
+          setAccessAsk(null)
+          if (!r.ok) {
+            post({ channel: CHANNEL, type: 'read-result', id, ok: false, error: r.error || 'not connected' })
+            return
+          }
+          void load().then((data) => {
+            post({ channel: CHANNEL, type: 'data', data })
+            post({ channel: CHANNEL, type: 'read-result', id, ok: true, data: { ok: true, account: r.account, until: r.until } })
+          })
+        }}
+      />
+    )}
     <iframe
       ref={frame}
       title="Dynamic view"
@@ -269,5 +311,6 @@ export function DynamicViewFrame({ view, scope, onError, app }: Props) {
         }
       }}
     />
+    </>
   )
 }

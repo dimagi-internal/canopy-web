@@ -19818,6 +19818,8 @@ export interface components {
          *     credential (no machines, checks or value). What a page shows as "Connected".
          */
         readonly MyConnectedAccountOut: {
+            /** Id */
+            readonly id: number;
             /** Agent */
             readonly agent: string;
             /**
@@ -19835,6 +19837,8 @@ export interface components {
              * @default true
              */
             readonly in_force: boolean;
+            /** Session Until */
+            readonly session_until?: string | null;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -28817,6 +28821,11 @@ export interface components {
              */
             readonly delegated: boolean;
             /**
+             * Session Minutes
+             * @default 0
+             */
+            readonly session_minutes: number;
+            /**
              * Detail
              * @default
              */
@@ -28849,6 +28858,11 @@ export interface components {
             readonly account: string;
             /** Services */
             readonly services?: readonly string[];
+            /**
+             * Session Minutes
+             * @default 0
+             */
+            readonly session_minutes: number;
         };
         /** ScheduleOut */
         readonly ScheduleOut: {
@@ -36122,6 +36136,16 @@ export interface components {
              * @default
              */
             readonly name: string;
+            /**
+             * Session
+             * @default false
+             */
+            readonly session: boolean;
+            /**
+             * Session Minutes
+             * @default 0
+             */
+            readonly session_minutes: number;
         };
         /**
          * RunnerMintClaimOut

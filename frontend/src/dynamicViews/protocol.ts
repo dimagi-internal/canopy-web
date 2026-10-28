@@ -90,6 +90,9 @@ export type FrameMessage =
   // (the task's result, or why it failed), after any number of `agent-task-status`.
   | { channel: typeof CHANNEL; type: 'agent-task'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'agent-task-read'; id: number; taskId: string }
+  // Lend an agent the viewer's own Google account for a session (or end it): canopy asks
+  // the viewer in its own dialog; the answer is a `read-result` with the same id.
+  | { channel: typeof CHANNEL; type: 'google-access'; id: number; request: unknown }
   | { channel: typeof CHANNEL; type: 'navigate'; path: string }
   | { channel: typeof CHANNEL; type: 'app'; id: number; request: AppOp }
   | { channel: typeof CHANNEL; type: 'go'; page: string; params: Record<string, string> }

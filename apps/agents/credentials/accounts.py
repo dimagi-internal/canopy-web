@@ -25,6 +25,8 @@ Spec: docs/superpowers/specs/2026-10-26-delegated-credentials-in-the-vault-desig
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -133,13 +135,42 @@ def seal(agent, name: str, plaintext: str, person) -> tuple[str, list[str]]:
 
 # ---- reading ---------------------------------------------------------------------
 
+def session_until(entry):
+    """When a delegated entry lent for a SESSION ends (an aware datetime), else None."""
+    raw = (entry.identity or {}).get("session_until") if entry.account == "delegated" else None
+    if not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(str(raw))
+    except ValueError:
+        return dt.datetime.min.replace(tzinfo=dt.timezone.utc)  # unreadable: treat as ended
+
+
+def session_ended(entry, now=None) -> bool:
+    until = session_until(entry)
+    return until is not None and until <= (now or timezone.now())
+
+
+def drop_ended_sessions(entries) -> list:
+    """`entries` without the sessions that have ended, which are deleted: a session
+    leaves nothing behind once it is over."""
+    keep, ended = [], []
+    for e in entries:
+        (ended if session_ended(e) else keep).append(e)
+    if ended:
+        type(ended[0]).objects.filter(pk__in=[e.pk for e in ended]).delete()
+    return keep
+
+
 def serves(entry, agent) -> bool:
-    """May a resolve hand `entry` out now. Never on a date: the provider's own expiry is
-    the only one. A delegated entry stops the moment its person is no longer an admin of
+    """May a resolve hand `entry` out now. Never on a date — except a SESSION, which
+    ends when its person said (and at Google, which issued no refresh token). A delegated entry stops the moment its person is no longer an admin of
     the agent (the owner counts; `is_admin` fails closed on someone who left the
     workspace). One delegated by another agent stops when that agent's owner changes."""
     if not is_delegated(entry, agent):
         return True
+    if session_ended(entry):
+        return False
     person = entry.delegated_by
     if person is None or not agent.is_admin(person):
         return False

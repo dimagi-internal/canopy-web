@@ -185,9 +185,11 @@ def unsign_state(state: str) -> dict:
 
 
 def authorize_url(*, client_id: str, state: str, code_challenge: str, login_hint: str = "",
-                  scopes: tuple[str, ...] = FLEET_SCOPES) -> str:
+                  scopes: tuple[str, ...] = FLEET_SCOPES, session: bool = False) -> str:
     """The consent link. `code_challenge` is the runner's (S256): the verifier never
-    leaves the box, so the code that comes back here is useless to canopy-web."""
+    leaves the box, so the code that comes back here is useless to canopy-web. A
+    `session` asks for an access token only (`access_type=online`: no refresh token, so it
+    dies within the hour) and for only `scopes`, not every scope ever granted."""
     params = {
         "client_id": client_id,
         "redirect_uri": callback_url(),
@@ -205,6 +207,8 @@ def authorize_url(*, client_id: str, state: str, code_challenge: str, login_hint
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
+    if session:
+        params.update(access_type="online", include_granted_scopes="false")
     if login_hint:
         params["login_hint"] = login_hint
     return f"{AUTHORIZE_ENDPOINT}?{urllib.parse.urlencode(params)}"
