@@ -166,3 +166,15 @@ def test_the_store_shows_an_app_in_full_before_it_is_installed(world):
     assert outsider.get(f"/api/workspace-app-store/dimagi/screenshot?template=hiring&file={card['cover']}"
                         ).status_code in (403, 404)
     assert viewer.get("/api/workspace-app-store/dimagi/detail?template=nope").status_code == 404
+
+
+def test_sample_records_seed_in_any_collection_order(world, hiring):
+    """Postgres stores the manifest as jsonb, which reorders its keys: an offer's
+    fixture can come before the opening it names."""
+    m = services.manifest_for(hiring, "live")
+    m = {**m, "fixtures": dict(reversed(list(m["fixtures"].items())))}
+    saved = services.seed(hiring, "draft-x", m)
+    assert saved and AppRecord.objects.filter(installation=hiring, space="draft-x").count() == sum(
+        len(rows) for rows in m["fixtures"].values())
+    with pytest.raises(ValueError, match="@nobody"):
+        services.seed(hiring, "draft-y", {**m, "fixtures": {"note": [{"application": "@nobody", "body": "x"}]}})

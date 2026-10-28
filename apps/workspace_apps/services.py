@@ -485,14 +485,31 @@ def rollback(inst: AppInstallation, *, number: int, user) -> AppVersion:
 # --- test copies ---------------------------------------------------------------------------
 
 
+def _aliases(value) -> set[str]:
+    if isinstance(value, str) and value.startswith("@"):
+        return {value[1:]}
+    if isinstance(value, dict):
+        return set().union(*(_aliases(x) for x in value.values())) if value else set()
+    return set()
+
+
 def seed(inst: AppInstallation, space: str, m: dict) -> dict:
-    """Write the manifest's sample records into `space`. Returns {alias: id}."""
+    """Write the manifest's sample records into `space`. Returns {alias: id}.
+
+    A row is written once every `@alias` it names exists, in as many passes as
+    that takes: the manifest is stored as jsonb, which does not keep the order
+    the template wrote its collections in (an offer may come before its opening)."""
     saved: dict[str, int] = {}
-    for coll, rows in (m.get("fixtures") or {}).items():
-        if coll not in m["collections"]:
-            continue
-        fields = m["collections"][coll]["fields"]
-        for row in rows:
+    pending = [(coll, row) for coll, rows in (m.get("fixtures") or {}).items() if coll in m["collections"]
+               for row in rows]
+    while pending:
+        later = []
+        for coll, row in pending:
+            fields = m["collections"][coll]["fields"]
+            needs = set().union(*(_aliases(v) for k, v in row.items() if not k.startswith("_") and k in fields))
+            if needs - set(saved):
+                later.append((coll, row))
+                continue
             data = {}
             for k, val in row.items():
                 if k.startswith("_") or k not in fields:
@@ -510,6 +527,10 @@ def seed(inst: AppInstallation, space: str, m: dict) -> dict:
                                            created_by_label="sample data")
             if row.get("_as"):
                 saved[row["_as"]] = rec.pk
+        if len(later) == len(pending):
+            missing = sorted(set().union(*(_aliases(v) for _c, r in later for v in r.values())) - set(saved))
+            raise ValueError(f"nothing saved as {', '.join('@' + a for a in missing)}")
+        pending = later
     return saved
 
 
