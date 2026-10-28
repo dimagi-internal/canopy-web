@@ -553,9 +553,12 @@ def test_a_due_rotation_mints_writes_overlaps_then_revokes(fleet, agent_login):
     assert first_raw != agent_login["raw"]
     first = PersonalToken.lookup(first_raw)
     assert first is not None and first.user_id == agent_login["login"].pk and first.expires_at is not None
-    # canopy-web cannot read the stored value, so a token it did not mint is left alone.
-    assert PersonalToken.objects.get(pk=agent_login["token"].pk).expires_at is None
+    # The first token, which the job did not mint, still ends with the overlap: it is
+    # the one most likely to have been copied about (canopy-web#2265).
+    stray = PersonalToken.objects.get(pk=agent_login["token"].pk)
+    assert dt.timedelta(hours=23) < stray.expires_at - timezone.now() <= dt.timedelta(hours=24)
     assert AgentPatRotation.objects.get().old_token_id is None and agent.pat_rotated_at is not None
+    assert "1 other long-lived token" in AgentPatRotation.objects.get().detail
     # Not due again yet.
     assert pat_rotation.tick()["rotated"] == 0
 
@@ -585,6 +588,29 @@ def test_rotation_never_revokes_a_token_that_is_not_the_agents(fleet, agent_logi
     assert row.old_token_id is None and row.revoke_after is None
     assert PersonalToken.lookup(fleet["pat"]) is not None
     assert PersonalToken.lookup(fleet["pat"]).expires_at != timezone.now() + pat_rotation.OVERLAP
+
+
+def test_rotation_leaves_turn_tokens_and_other_peoples_tokens(fleet, agent_login):
+    import uuid
+
+    from apps.canopy_sessions.models import Session
+    from apps.harness.models import Turn, TurnAgentToken
+
+    login = agent_login["login"]
+    chat = Session.objects.create(workspace=fleet["ws"], agent=fleet["agent"], created_by=fleet["user"])
+    turn = Turn.objects.create(chat_session=chat, prompt="q", initiator_user=fleet["user"],
+                               initiator_kind="user", idempotency_key=uuid.uuid4().hex)
+    runner = Runner.objects.create(name="box", workspace=fleet["ws"], owner=fleet["user"])
+    _, turn_tok = PersonalToken.create_for_user(user=login, label="turn x (turn-scoped)",
+                                                ttl=dt.timedelta(hours=2))
+    turn_end = turn_tok.expires_at
+    TurnAgentToken.objects.create(turn=turn, runner=runner, token=turn_tok)
+    _, long_tok = PersonalToken.create_for_user(user=login, label="cloud-ec2-1", ttl_days=0)
+    pat_rotation.rotate(fleet["agent"], trigger="manual", actor=fleet["user"])
+    assert PersonalToken.objects.get(pk=turn_tok.pk).expires_at == turn_end
+    assert PersonalToken.objects.get(pk=long_tok.pk).expires_at is not None
+    assert PersonalToken.lookup(fleet["pat"]).expires_at is None or \
+        PersonalToken.lookup(fleet["pat"]).expires_at > timezone.now() + dt.timedelta(days=2)
 
 
 def test_a_refused_rotation_is_recorded_and_backs_off(fleet, agent_login):
