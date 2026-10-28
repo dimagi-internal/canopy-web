@@ -501,7 +501,7 @@ function ChatPageInner({
           )}
         </div>
       </div>
-      <SessionAudienceLine audience={meta?.audience} className="px-4 pb-1" />
+      <SessionAudienceLine audience={meta?.audience} href={meta?.slack?.app_url || undefined} className="px-4 pb-1" />
       {meta?.sensitive && <PrivateConversationNote />}
       {meta?.sensitive && (
         <JoinRequests sessionId={id} actions={joinActions} live={liveJoinRequests}

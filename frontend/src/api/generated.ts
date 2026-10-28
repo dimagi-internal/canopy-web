@@ -39218,6 +39218,11 @@ export interface components {
              */
             readonly url: string;
             /**
+             * App Url
+             * @default
+             */
+            readonly app_url: string;
+            /**
              * Shared
              * @default false
              */

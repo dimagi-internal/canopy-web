@@ -62,6 +62,18 @@ def web_url(team: str, channel: str, thread_ts: str) -> str:
     return f"{url}/thread/{channel}-{thread_ts}" if thread_ts else url
 
 
+def app_url(team: str, channel: str, thread_ts: str) -> str:
+    """The `slack://` deep link to a channel or thread — opens the desktop app.
+
+    `slack://channel?team=&id=` is Slack's documented deep link; `message` and
+    `thread_ts` point it at the thread, and an app that ignores them still lands
+    in the channel."""
+    if not (team and channel):
+        return ""
+    url = f"slack://channel?team={team}&id={channel}"
+    return f"{url}&message={thread_ts}&thread_ts={thread_ts}" if thread_ts else url
+
+
 def location_of(session) -> dict | None:
     """`{team_id, channel_id, channel_name, thread_ts, permalink, is_dm}`, or None
     when the session holds no Slack thread. A pure read — no Slack call."""

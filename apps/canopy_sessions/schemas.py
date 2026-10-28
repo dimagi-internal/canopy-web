@@ -381,6 +381,8 @@ class SlackBindingOut(Schema):
     thread_ts: str = ""
     #: Opens the thread in Slack's web client; "" when canopy can't build one.
     url: str = ""
+    #: Opens the thread in the Slack desktop app (`slack://`); "" likewise.
+    app_url: str = ""
     #: True when the session was SHARED into the thread (bind), False for a
     #: thread Slack itself started.
     shared: bool = False

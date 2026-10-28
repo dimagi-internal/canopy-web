@@ -492,6 +492,9 @@ def test_the_session_payload_shows_its_thread(slack, linked, alice, repo_session
     slack_out = c.get(url).json()["slack"]
     assert slack_out["channel"] == "C1" and slack_out["shared"] is True
     assert slack_out["url"].endswith(f"/C1/thread/C1-{POSTED_TS}")
+    # The desktop app's own link, straight to the same thread.
+    assert slack_out["app_url"] == (
+        f"slack://channel?team={TEAM}&id=C1&message={POSTED_TS}&thread_ts={POSTED_TS}")
     _detach(alice, session_id=str(repo_session.id))
     assert c.get(url).json()["slack"] is None
 
