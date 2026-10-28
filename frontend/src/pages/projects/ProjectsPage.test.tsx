@@ -82,7 +82,7 @@ describe('ProjectsPage', () => {
     await waitFor(() => expect(api.listProjects).toHaveBeenLastCalledWith('', 'dimagi'))
     await screen.findByText('Beta')
     fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'target' } })
-    const names = screen.getAllByRole('link').map((a) => a.textContent)
+    const names = within(screen.getByRole('table')).getAllByRole('link').map((a) => a.textContent)
     expect(names).toEqual(['Alpha', 'Beta'])
     fireEvent.change(screen.getByLabelText('Filter projects'), { target: { value: 'bet' } })
     expect(screen.queryByText('Alpha')).toBeNull()

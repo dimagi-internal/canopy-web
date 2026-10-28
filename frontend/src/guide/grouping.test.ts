@@ -12,7 +12,7 @@ describe('guideGroups', () => {
   it('uses the nav group labels', () => {
     const labels = guideGroups().map((g) => g.label)
     expect(labels).toContain('Agents')
-    expect(labels).toContain('Work')
+    expect(labels).toContain('Projects')
   })
 
   it('never drops a surface, even one nothing claims', () => {

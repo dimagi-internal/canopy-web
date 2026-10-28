@@ -7,6 +7,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from 'canopy-ui/ui'
 import { useAuth } from '@/auth/AuthProvider'
@@ -18,7 +21,7 @@ import { canopyPresenceRules } from '@/presence/routes'
 import { CanopyWidget } from '@/widget/CanopyWidget'
 import { CommandPalette } from '@/components/work/CommandPalette'
 import { KeyboardHelp } from '@/components/work/KeyboardHelp'
-import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, isNavEntryActive, resolveNav, switchWorkspacePath, type ResolvedNavEntry } from './nav'
+import { ACCOUNT_ITEMS, HELP_ITEMS, activeHref, isNavEntryActive, menuSections, resolveNav, switchWorkspacePath, type ResolvedNavEntry, type ResolvedNavItem } from './nav'
 import { CanopyWordmark } from '@/brand/CanopyWordmark'
 import { useAppBarHidden } from './appBarStore'
 
@@ -260,6 +263,8 @@ const triggerClass = (active: boolean) =>
 // and links indented under it.
 const MOBILE_SECTION = 'flex flex-col gap-0.5 mt-2 border-t border-border pt-3 pb-1 [&>a]:pl-5'
 const MOBILE_SECTION_HEADER = 'px-3 pb-1 text-xs font-bold uppercase tracking-wider text-foreground'
+// A sub-menu (Projects ▸ Demos) on the phone: a quieter label, its links indented once more.
+const MOBILE_SUBSECTION_HEADER = 'pl-5 pr-3 pt-2 pb-1 text-xs font-semibold text-muted-foreground'
 
 function DesktopNavEntry({ entry, nav }: { entry: ResolvedNavEntry; nav: ResolvedNavEntry[] }) {
   const { pathname } = useLocation()
@@ -272,6 +277,16 @@ function DesktopNavEntry({ entry, nav }: { entry: ResolvedNavEntry; nav: Resolve
     )
   }
   const current = activeHref(nav, pathname)
+  const { items, groups } = menuSections(entry.items)
+  const menuItem = (item: ResolvedNavItem) => (
+    <DropdownMenuItem
+      key={item.href}
+      className={clsx('cursor-pointer', item.href === current && 'text-foreground font-medium')}
+      render={<Link to={item.href} />}
+    >
+      {item.label}
+    </DropdownMenuItem>
+  )
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className={triggerClass(active)}>
@@ -279,14 +294,16 @@ function DesktopNavEntry({ entry, nav }: { entry: ResolvedNavEntry; nav: Resolve
         <ChevronDown className="h-3.5 w-3.5 opacity-60" aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-44">
-        {entry.items.map((item) => (
-          <DropdownMenuItem
-            key={item.href}
-            className={clsx('cursor-pointer', item.href === current && 'text-foreground font-medium')}
-            render={<Link to={item.href} />}
-          >
-            {item.label}
-          </DropdownMenuItem>
+        {items.map(menuItem)}
+        {groups.map((group) => (
+          <DropdownMenuSub key={group.label}>
+            <DropdownMenuSubTrigger
+              className={clsx(group.items.some((i) => i.href === current) && 'text-foreground font-medium')}
+            >
+              {group.label}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="min-w-40">{group.items.map(menuItem)}</DropdownMenuSubContent>
+          </DropdownMenuSub>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
@@ -456,10 +473,20 @@ function AppShell() {
                     <div className={MOBILE_SECTION_HEADER}>
                       {entry.label}
                     </div>
-                    {entry.items.map((item) => (
+                    {menuSections(entry.items).items.map((item) => (
                       <Link key={item.href} to={item.href} className={navLinkClass(item.href, true)}>
                         {item.label}
                       </Link>
+                    ))}
+                    {menuSections(entry.items).groups.map((group) => (
+                      <div key={group.label} className="flex flex-col gap-0.5 [&>a]:pl-8">
+                        <div className={MOBILE_SUBSECTION_HEADER}>{group.label}</div>
+                        {group.items.map((item) => (
+                          <Link key={item.href} to={item.href} className={navLinkClass(item.href, true)}>
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 ),

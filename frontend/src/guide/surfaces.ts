@@ -591,7 +591,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/projects/:handle/kb',
-    home: '/w/:workspace/mcp',
+    home: '/w/:workspace/projects',
     title: 'Knowledge base',
     audience: 'Anyone in the workspace',
     what: "A workspace project's knowledge base: where its documents come from (a curator's crawler) and its version log — each version a whole file its steward agent built and published, with what it added, changed and removed, its size, who published it and which one is served now. Read-only: the steward publishes and rolls back from its own CLI.",
@@ -600,6 +600,7 @@ export const SURFACES: SurfaceDescriptor[] = [
   },
   {
     path: '/w/:workspace/mcp',
+    home: '/w/:workspace/projects',
     title: 'MCP servers',
     audience: 'Anyone in the workspace',
     what: 'The MCP servers you can add: every published workspace project serving its own tools (a knowledge base today), here and in the workspaces below this one that you belong to. Each shows what it is, who keeps it, when it was last published and its size, with a workspace label when it lives below. Nothing is added to a session for you: Add it shows the claude mcp add line and the URL to paste as a connector. Agents get the same list from the list_mcp_servers tool.',

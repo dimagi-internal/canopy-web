@@ -7,6 +7,7 @@ import {
   entryItems,
   isNavEntryActive,
   isNavItemActive,
+  menuSections,
   resolveNav,
   switchWorkspacePath,
   type ResolvedNavEntry,
@@ -16,12 +17,29 @@ const authed = { isAuthed: true, active: 'connect', role: 'owner' }
 const label = (e: ResolvedNavEntry) => (e.kind === 'link' ? e.item.label : e.label)
 
 describe('NAV', () => {
-  it('answers the five questions a person arrives with, plus Sessions', () => {
-    // Home: what needs me. Agents: what they are doing. Work: the tasks and
-    // projects. Demos: what the work produces. Workspace: who is in it and how
-    // it is set up.
+  it('answers the five questions a person arrives with', () => {
+    // Home: what needs me. Agents: what they are doing, and where you talk to
+    // them. Projects: the work and what it produces. Apps: the apps
+    // the workspace runs. Workspace: who is in it and how it is set up.
     expect(NAV.map((e) => (e.kind === 'link' ? e.item.label : e.label))).toEqual([
-      'Home', 'Sessions', 'Agents', 'Work', 'Demos', 'Workspace',
+      'Home', 'Agents', 'Projects', 'Apps', 'Workspace',
+    ])
+  })
+
+  it('files Demos as a sub-menu of Projects, after its own items', () => {
+    const projects = resolveNav(authed).find((e) => label(e) === 'Projects')!
+    const { items, groups } = menuSections(entryItems(projects))
+    expect(items.map((i) => i.label)).toEqual(['All projects', 'Tasks', 'Triage'])
+    expect(groups).toEqual([
+      {
+        label: 'Demos',
+        items: [
+          { href: '/w/connect/storyboards', label: 'Storyboards', group: 'Demos' },
+          { href: '/w/connect/walkthroughs', label: 'Walkthroughs', group: 'Demos' },
+          { href: '/w/connect/ddd', label: 'DDD runs', group: 'Demos' },
+          { href: '/w/connect/shareouts', label: 'Shareouts', group: 'Demos' },
+        ],
+      },
     ])
   })
 
@@ -59,9 +77,8 @@ describe('resolveNav', () => {
   it('resolves tenant items under the active workspace and leaves Home at root', () => {
     const nav = resolveNav(authed)
     expect(nav[0]).toEqual({ kind: 'link', item: { href: '/home', label: 'Home' } })
-    expect(nav[1]).toEqual({ kind: 'link', item: { href: '/w/connect/sessions', label: 'Sessions' } })
-    const work = nav.find((e) => label(e) === 'Work')!
-    expect(entryItems(work)[0]).toEqual({ href: '/w/connect/tasks', label: 'Tasks' })
+    const projects = nav.find((e) => label(e) === 'Projects')!
+    expect(entryItems(projects)[0]).toEqual({ href: '/w/connect/projects', label: 'All projects' })
   })
 
   it('omits tenant items before the workspace resolves, rather than linking to /w//…', () => {
@@ -101,19 +118,22 @@ describe('active entry', () => {
   it('marks exactly one entry for any route the header owns', () => {
     const expected: Record<string, string> = {
       '/home': 'Home',
-      '/w/connect/sessions/abc': 'Sessions',
+      '/w/connect/sessions/abc': 'Agents',
       '/w/connect/agents/hal/turns': 'Agents',
       '/w/connect/agents/new': 'Agents',
       '/w/connect/activity': 'Agents',
       '/w/connect/schedules': 'Agents',
       '/w/connect/huddles/4': 'Agents',
       '/w/connect/settings/topology/runners': 'Agents',
-      '/w/connect/projects': 'Work',
-      '/w/connect/tasks/CON-4': 'Work',
-      '/w/connect/triage': 'Work',
-      '/w/connect/ddd/onboarding': 'Demos',
-      '/w/connect/storyboards': 'Demos',
-      '/w/connect/shareouts/2026-09-01': 'Demos',
+      '/w/connect/projects': 'Projects',
+      '/w/connect/tasks/CON-4': 'Projects',
+      '/w/connect/triage': 'Projects',
+      '/w/connect/ddd/onboarding': 'Projects',
+      '/w/connect/storyboards': 'Projects',
+      '/w/connect/shareouts/2026-09-01': 'Projects',
+      '/w/connect/views/3': 'Workspace',
+      '/w/connect/apps': 'Apps',
+      '/w/connect/apps/hiring/customize': 'Apps',
       '/w/connect/settings': 'Workspace',
       '/w/connect/settings/slack': 'Workspace',
       '/w/connect/settings/members': 'Workspace',

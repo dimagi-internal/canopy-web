@@ -7,15 +7,18 @@
  *
  * The header answers the five questions a person arrives with, one entry each:
  *
- *   Home       — what needs me, and what changed (personal, every workspace)
- *   Agents ▾   — what the agents are doing, will do, and run on
- *   Work ▾     — the work: tasks, Triage, projects
- *   Demos ▾    — what the work produces (storyboards, walkthroughs, shareouts)
- *   Workspace ▾ — who is in it and how it is set up
+ *   Home        — what needs me, and what changed (personal, every workspace)
+ *   Agents ▾    — what the agents are doing, will do, and run on, and where you
+ *                 talk to them (Sessions)
+ *   Projects ▾  — the work: projects, tasks, Triage, and what it produces
+ *                 (the Demos ▸ sub-menu: storyboards, walkthroughs, shareouts).
+ *                 What a project makes — its views, its MCP server — is on
+ *                 the project's own page
+ *   Apps        — the apps the workspace runs, and the store to install more
+ *   Workspace ▾ — who is in it, how it is set up, and its own views
  *
- * Sessions sits beside Home as a plain link: it is where you talk to an agent, not
- * a set of pages to browse. Help (Guide, Get started, System) is not workspace
- * business and has its own `?` menu; personal pages are in the account menu.
+ * Help (Guide, Get started, System) is not workspace business and has its own
+ * `?` menu; personal pages are in the account menu.
  *
  * Links and menus are told apart by the chevron a menu carries. The menus are
  * what keeps the header inside a laptop's width: the flat row of 15 links it
@@ -36,6 +39,9 @@ export interface NavItem {
   /** Shown only to someone whose role in the active workspace allows this — a
    *  link that always lands on "only an admin can see this" is a dead end. */
   capability?: Capability
+  /** A sub-menu inside its menu (Projects ▸ Demos). Items sharing a group sit
+   *  together under it; the menu's own items come first. */
+  group?: string
 }
 
 /** One header entry: a plain link, or a menu of links. */
@@ -46,12 +52,13 @@ export type NavEntry =
 export const NAV: NavEntry[] = [
   // Personal, across every workspace you are in — see pages/home.
   { kind: 'link', item: { path: '/home', label: 'Home', tenant: false } },
-  { kind: 'link', item: { path: 'sessions', label: 'Sessions', tenant: true } },
   {
     kind: 'menu',
     label: 'Agents',
     items: [
       { path: 'agents', label: 'All agents', tenant: true },
+      // Where you talk to an agent: the workspace's live chats.
+      { path: 'sessions', label: 'Sessions', tenant: true },
       { path: 'agents/new', label: 'New agent', tenant: true, capability: 'agent.work' },
       // The fleet syncing as a team: what each agent is on, and what they agree to push.
       { path: 'huddles', label: 'Huddles', tenant: true },
@@ -65,30 +72,21 @@ export const NAV: NavEntry[] = [
   },
   {
     kind: 'menu',
-    label: 'Work',
+    label: 'Projects',
     items: [
+      { path: 'projects', label: 'All projects', tenant: true },
       { path: 'tasks', label: 'Tasks', tenant: true },
       { path: 'triage', label: 'Triage', tenant: true },
-      { path: 'projects', label: 'Projects', tenant: true },
-      // Generated screens over the workspace's work, each drawn in a sandbox.
-      { path: 'views', label: 'Views', tenant: true },
-      // Self-contained apps the workspace runs (an applicant tracker, …).
-      { path: 'apps', label: 'Apps', tenant: true },
-      // What projects serve to the whole workspace, to add by hand.
-      { path: 'mcp', label: 'Shared MCP servers', tenant: true },
-    ],
-  },
-  {
-    kind: 'menu',
-    label: 'Demos',
-    items: [
       // What the work produces for people to read and review.
-      { path: 'storyboards', label: 'Storyboards', tenant: true },
-      { path: 'walkthroughs', label: 'Walkthroughs', tenant: true },
-      { path: 'ddd', label: 'DDD runs', tenant: true },
-      { path: 'shareouts', label: 'Shareouts', tenant: true },
+      { path: 'storyboards', label: 'Storyboards', tenant: true, group: 'Demos' },
+      { path: 'walkthroughs', label: 'Walkthroughs', tenant: true, group: 'Demos' },
+      { path: 'ddd', label: 'DDD runs', tenant: true, group: 'Demos' },
+      { path: 'shareouts', label: 'Shareouts', tenant: true, group: 'Demos' },
     ],
   },
+  // Self-contained apps the workspace runs (an applicant tracker, …): what is
+  // installed, and the store of templates to install from, on one page.
+  { kind: 'link', item: { path: 'apps', label: 'Apps', tenant: true } },
   {
     kind: 'menu',
     label: 'Workspace',
@@ -98,6 +96,9 @@ export const NAV: NavEntry[] = [
       // Network are its tabs.
       { path: 'health', label: 'Health', tenant: true, capability: 'logs.read' },
       { path: 'timeline', label: 'Timeline', tenant: true },
+      // Generated screens, each drawn in a sandbox: the workspace's own first,
+      // then each project's (which also show on the project's page).
+      { path: 'views', label: 'Views', tenant: true },
       { path: 'settings', label: 'Settings', tenant: true },
     ],
   },
@@ -124,6 +125,7 @@ export const ACCOUNT_ITEMS: (NavItem & { desktopOnly?: boolean })[] = [
 export interface ResolvedNavItem {
   href: string
   label: string
+  group?: string
 }
 
 export type ResolvedNavEntry =
@@ -137,7 +139,24 @@ function resolveItem(
   if (!item.tenant) return [{ href: item.path, label: item.label }]
   if (!opts.active) return []
   if (item.capability && !roleAllows(opts.role, item.capability)) return []
-  return [{ href: scopedPath(opts.active, item.path ? `/${item.path}` : ''), label: item.label }]
+  const href = scopedPath(opts.active, item.path ? `/${item.path}` : '')
+  return [{ href, label: item.label, ...(item.group ? { group: item.group } : {}) }]
+}
+
+/** A menu's items split for display: its own items, then each sub-menu in the
+ *  order its first item appears. */
+export function menuSections(items: ResolvedNavItem[]): {
+  items: ResolvedNavItem[]
+  groups: { label: string; items: ResolvedNavItem[] }[]
+} {
+  const groups: { label: string; items: ResolvedNavItem[] }[] = []
+  for (const item of items) {
+    if (!item.group) continue
+    const g = groups.find((x) => x.label === item.group)
+    if (g) g.items.push(item)
+    else groups.push({ label: item.group, items: [item] })
+  }
+  return { items: items.filter((i) => !i.group), groups }
 }
 
 /**

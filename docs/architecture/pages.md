@@ -83,11 +83,14 @@ Every browser-facing address canopy-web serves. The SPA route table is
   Secrets lists the workspace's vaults and links here.
 
 - **The header** (`frontend/src/components/AppLayout/nav.ts`): **Home** and
-  **Chats** are links; **Agents** (All agents, New agent, Huddles, Schedules,
-  Turn log, Runners), **Work** (Tasks, Triage, Projects, Shared MCP servers),
-  **Demos** (Storyboards, Walkthroughs, DDD runs, Shareouts) and **Workspace**
-  (Members, Health, Timeline, Settings) are
-  menus, every entry scoped to the active workspace; Guide, Get started and
+  **Apps** (installed apps and the store, `/w/:workspace/apps`) are links;
+  **Agents** (All agents, Sessions, New agent, Huddles, Schedules, Turn log,
+  Runners), **Projects** (All projects, Tasks, Triage, and a **Demos**
+  sub-menu: Storyboards, Walkthroughs, DDD runs, Shareouts) and **Workspace**
+  (Members, Health, Timeline, Views, Settings) are menus; a project's views and
+  MCP server are on its own page, and the MCP list is linked from Projects;
+  every menu entry is scoped to the active workspace; a sub-menu is a `group` on its
+  items; Guide, Get started and
   System sit behind `?`; personal pages (account settings, `/people/me`,
   `/sessions`, `/supervisor`, `/ide`) in the account menu. The active entry is
   the longest matching href, so Runners (`settings/topology`) and not Settings
