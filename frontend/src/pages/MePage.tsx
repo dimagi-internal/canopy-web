@@ -1,31 +1,74 @@
 import type { JSX } from 'react'
-import { Link, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet } from 'react-router-dom'
+import { WorkbenchMain, WorkbenchNavItem, WorkbenchRail, WorkbenchShell, WorkbenchSubHeader } from 'canopy-ui'
 
-import { ObjectPage } from '@/components/objectPage/ObjectPage'
 import { useAuth } from '@/auth/AuthProvider'
+import { useMemoryVisible } from '@/auth/memoryRollout'
 import { useWorkspace } from '@/workspace/WorkspaceProvider'
 import { scopedPath } from '@/lib/scopedLinks'
 
 /**
  * Your own page: one frame over the pages that are about YOU — who you are and
  * where you are a member (Profile), what agents know about you (Memory), and
- * your account (Settings). The Memory and Settings tabs keep the addresses they
- * have always had (/people/me, /settings), so every link already handed out
- * still lands, now inside this frame.
+ * your account (Settings, itself tabbed). The same shape as an agent's page:
+ * who it is and its sections down a left rail, a section's own tabs across the
+ * top. Memory and Settings keep the addresses they have always had
+ * (/people/me, /settings), so every link already handed out still lands.
  */
-export const ME_TABS = [
-  { to: '/me', label: 'Profile', end: true },
-  { to: '/people/me', label: 'Memory' },
-  { to: '/settings', label: 'Settings' },
-]
-
 export function MeLayout(): JSX.Element {
-  const auth = useAuth()
-  const name = auth.status === 'authenticated' ? auth.user.name : undefined
   return (
-    <ObjectPage title={name || 'You'} context="Your profile" tabsLabel="Your profile" tabs={ME_TABS} wide>
-      <Outlet />
-    </ObjectPage>
+    <WorkbenchShell>
+      <MeLeftNav />
+      <WorkbenchMain>
+        <Outlet />
+      </WorkbenchMain>
+    </WorkbenchShell>
+  )
+}
+
+function MeLeftNav(): JSX.Element {
+  const auth = useAuth()
+  const memoryVisible = useMemoryVisible()
+  const me = auth.status === 'authenticated' ? auth.user : null
+  const items = [
+    { to: '/me', label: 'Profile', end: true },
+    // Memory is shown only to the people it is on for (memoryRollout.ts).
+    ...(memoryVisible ? [{ to: '/people/me', label: 'Memory', end: false }] : []),
+    { to: '/settings', label: 'Settings', end: false },
+  ]
+
+  const header = (
+    <div className="flex items-start gap-3 px-4 py-4">
+      <Avatar me={me} size="h-10 w-10 text-sm" />
+      <div className="min-w-0">
+        <h2 className="truncate text-sm font-semibold leading-snug text-foreground">{me?.name || 'You'}</h2>
+        {me?.email && <div className="truncate text-[11px] text-muted-foreground">{me.email}</div>}
+      </div>
+    </div>
+  )
+
+  return (
+    <WorkbenchRail header={header}>
+      {/* Phone: a horizontal strip, as on an agent's page; a rail from md up. */}
+      <nav aria-label="Your profile" className="px-2 py-3">
+        <div className="flex gap-0.5 overflow-x-auto md:flex-col md:overflow-x-visible">
+          {items.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} className="shrink-0 md:shrink">
+              {({ isActive }) => <WorkbenchNavItem active={isActive}>{item.label}</WorkbenchNavItem>}
+            </NavLink>
+          ))}
+        </div>
+      </nav>
+    </WorkbenchRail>
+  )
+}
+
+function Avatar({ me, size }: { me: { name: string; email: string; avatar_url?: string | null } | null; size: string }) {
+  if (me?.avatar_url) return <img src={me.avatar_url} alt="" className={`${size} shrink-0 rounded-full`} />
+  return (
+    <span className={`flex ${size} shrink-0 items-center justify-center rounded-full bg-primary/10 font-semibold text-primary`}>
+      {(me?.name || me?.email || '?').charAt(0).toUpperCase()}
+    </span>
   )
 }
 
@@ -38,56 +81,43 @@ export function MeProfileTab(): JSX.Element | null {
   const me = auth.user
 
   return (
-    <div className="max-w-3xl space-y-6">
-      <section className="flex items-center gap-4 rounded-lg border border-border bg-card p-5">
-        {me.avatar_url ? (
-          <img src={me.avatar_url} alt="" className="h-14 w-14 rounded-full" />
-        ) : (
-          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-xl font-semibold text-primary">
-            {(me.name || me.email).charAt(0).toUpperCase()}
-          </span>
-        )}
-        <div className="min-w-0">
-          <div className="text-base font-semibold text-foreground">{me.name}</div>
-          <div className="text-[13px] text-muted-foreground">{me.email}</div>
-        </div>
-      </section>
+    <div className="max-w-4xl px-6 py-8">
+      <WorkbenchSubHeader title="Profile" />
 
       <section>
         <h2 className="mb-2 text-sm font-semibold text-foreground">Your workspaces</h2>
         {workspaces.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">You are not in a workspace yet.</p>
         ) : (
-          <ul className="divide-y divide-border rounded-lg border border-border">
-            {workspaces.map((w) => (
-              <li key={w.slug} className="flex items-center gap-3 px-4 py-3 text-[13px]">
-                <Link to={scopedPath(w.slug, '')} className="font-medium text-foreground hover:text-primary">
-                  {w.display_name || w.slug}
-                </Link>
-                <span className="text-muted-foreground capitalize">{w.role}</span>
-                {me.user_id != null && (
-                  <Link
-                    to={scopedPath(w.slug, `/members/${me.user_id}`)}
-                    className="ml-auto text-primary hover:underline"
-                  >
-                    How members see you →
-                  </Link>
-                )}
-              </li>
-            ))}
-          </ul>
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="border-b border-border text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                <th className="py-2 pr-4 font-medium">Workspace</th>
+                <th className="py-2 pr-4 font-medium">Your role</th>
+                <th className="py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {workspaces.map((w) => (
+                <tr key={w.slug} className="border-b border-border last:border-b-0">
+                  <td className="py-2 pr-4">
+                    <Link to={scopedPath(w.slug, '')} className="font-medium text-foreground hover:text-primary">
+                      {w.display_name || w.slug}
+                    </Link>
+                  </td>
+                  <td className="py-2 pr-4 capitalize text-muted-foreground">{w.role}</td>
+                  <td className="py-2 text-right">
+                    {me.user_id != null && (
+                      <Link to={scopedPath(w.slug, `/members/${me.user_id}`)} className="text-primary hover:underline">
+                        How members see you →
+                      </Link>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-2">
-        <Link to="/people/me" className="rounded-lg border border-border bg-card p-4 hover:border-primary/50">
-          <div className="text-sm font-semibold text-foreground">Memory</div>
-          <p className="mt-1 text-[13px] text-muted-foreground">What agents know about you, who can read it, and every change.</p>
-        </Link>
-        <Link to="/settings" className="rounded-lg border border-border bg-card p-4 hover:border-primary/50">
-          <div className="text-sm font-semibold text-foreground">Settings</div>
-          <p className="mt-1 text-[13px] text-muted-foreground">Your contact details, runners, tokens, connected apps and presence.</p>
-        </Link>
       </section>
     </div>
   )

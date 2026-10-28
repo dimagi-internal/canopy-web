@@ -51,7 +51,7 @@ export function SessionReviewersPanel() {
   if (!coach && others.length === 0) return null
   return (
     <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-      <h2 className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Who can review your sessions</h2>
+      <h2 className="text-sm font-semibold text-foreground">Who can review your sessions</h2>
       <p className="text-xs text-muted-foreground">
         An agent you let in reads the chats you start and the sessions on your own runners — never a
         private (sensitive) one — and changes nothing. Turning it on or off is on your memory audit.

@@ -299,14 +299,18 @@ export const routeTable: RouteObject[] = [
       // workspace's commands; an anonymous one sees just the wordmark.
       { path: '/get-started', element: <GetStartedPage /> },
       { path: '/sessions', element: <SessionsPage /> },
-      // Your own page: Profile, Memory and Settings as tabs of one frame. Memory
-      // and Settings keep their old addresses so every link handed out still lands.
+      // Your own page: Profile, Memory and Settings down one rail. Memory and
+      // Settings keep their old addresses so every link handed out still lands;
+      // Settings is tabs (`/settings/account`, …) and bare `/settings` opens the
+      // tab an old `#anchor` or `?device_key=` belongs to (accountSettingsTabs.ts).
       {
         element: <MeLayout />,
         children: [
           { path: '/me', element: <MeProfileTab /> },
           { path: '/people/me', element: <PeopleMePage /> },
-            ],
+          { path: '/settings', element: <SettingsPage /> },
+          { path: '/settings/:tab', element: <SettingsPage /> },
+        ],
       },
       { path: '/people/:personId/page', element: <PersonPageView /> },
       { path: '/hcp-clients', element: <HcpClientsPage /> },
@@ -317,7 +321,6 @@ export const routeTable: RouteObject[] = [
       { path: '/ide/:id', element: <LazySection><IdePage /></LazySection> },
       { path: '/schedules', element: <SchedulesPage /> },
       { path: '/activity', element: <ActivityPage /> },
-      { path: '/settings', element: <SettingsPage /> },
       { path: '/new-workspace', element: <FirstRunPage alwaysOfferForm /> },
       // Requests for access to Canopy itself (the public site's form) — they
       // name no workspace, so they live outside /w/:workspace.

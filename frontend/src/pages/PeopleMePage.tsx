@@ -143,7 +143,7 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   const canEdit = enabled && !readOnly
   if (!enabled && !me.memory_paused) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-8">
+      <div className="max-w-4xl px-6 py-8">
         <h1 className="text-2xl font-semibold text-foreground">Your memory</h1>
         <p className="mt-1 text-sm text-muted-foreground">Memory isn&apos;t available for you yet.</p>
       </div>
@@ -178,7 +178,7 @@ export function PeopleMePage({ viewing }: { viewing?: number } = {}) {
   )
 
   return (
-    <div className="mx-auto max-w-4xl space-y-10 px-4 py-8">
+    <div className="max-w-4xl space-y-10 px-6 py-8">
       {error && (
         <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />

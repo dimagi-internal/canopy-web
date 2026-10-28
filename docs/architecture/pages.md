@@ -607,26 +607,37 @@ Every browser-facing address canopy-web serves. The SPA route table is
 - **`/schedules`** — every recurring schedule across your workspaces,
   filterable by workspace/agent. Same `ScheduleCalendar` as the tenant route;
   edits reuse the agent rail's `ScheduleEditor`.
-- **`/settings`** — your account: runners you administer (each linking to
-  `/supervisor?tab=runners&runner=<id>`, where a box's Claude login and admins
-  live), Opted-in repos (every repo, or only the ones you tick — the rest stay plain
-  Claude Code, `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens on —
-  Supervisor or IDE, also settable from the app's right-click menu → Opens on; it loads `/runner-app/`, a bare view that redirects to the
-  choice, `RunnerAppPreference`), presence, GitHub, connected apps (OAuth MCP clients, disconnectable,
-  plus the MCP address and `claude mcp add` line), act-as-you permissions (each connected
-  site whose panel you sent from and confirmed with your passkey, letting an agent act as you there until a time — Stop
-  ends it, `/api/me/host-grants/`), personal access tokens, and
-  runner device keys (`#device-keys`, shown when you have any or arrive by a
-  box's `approve_url` with `?device_key=<id>`, which marks that row; approve /
-  revoke — Canopy Vault; approving one offers the vault-key grant for
-  zero-knowledge agents waiting on it), and your vault key
-  (`#vault-key`: set up with a PRF passkey or a passphrase + Secret Key with a
-  one-time Emergency Kit, add a passkey/passphrase, start a new one).
+- **`/me`, `/people/me`, `/settings`** — your own page, one frame (`MeLayout`):
+  who you are and Profile / Memory / Settings down a left rail, as on an
+  agent's page (Memory only for those it is on for). Profile lists your
+  workspaces and how members of each see you.
+- **`/settings/<tab>`** — your account, as tabs (`frontend/src/pages/accountSettingsTabs.ts`);
+  bare `/settings`, and every old `/settings#anchor` or `?device_key=` /
+  `?github=` link, forward to the tab holding it, keeping query and hash. An
+  agent asking to sign in as you shows above every tab.
+  - **Account** — contact details, presence, where your sessions are filed,
+    who may review them.
+  - **Security** — passkeys and your vault key (`#vault-key`: set up with a PRF
+    passkey or a passphrase + Secret Key with a one-time Emergency Kit),
+    recovery, runner device keys (`#device-keys`, `#your-runners`; a box's
+    `approve_url` lands with `?device_key=<id>`, which marks that row; approving
+    one offers the vault-key grant for zero-knowledge agents waiting on it), and
+    where each of your agents stands.
+  - **Agents acting for you** — credentials you delegated, act-as-you
+    permissions (each connected site whose panel you sent from and confirmed
+    with your passkey, until a time — Stop ends it, `/api/me/host-grants/`).
+  - **Runners** — runners you administer (each linking to its page, where a
+    box's Claude login and admins live), opted-in repos (`#canopy-projects`,
+    `ProjectOptIn`), Runner app (the page the Canopy Runner desktop window opens
+    on; it loads `/runner-app/`, which redirects to the choice,
+    `RunnerAppPreference`).
+  - **Connections** — GitHub, connected apps (OAuth MCP clients, disconnectable,
+    plus the MCP address and `claude mcp add` line), personal access tokens.
 - **`/sessions`** — your shared Claude Code transcripts (`/canopy:share-session`).
 - **`/system`** — capability catalog + Workflows view, read live from the
   canopy plugin.
 - **`/guide`** — the in-app guide, generated from `frontend/src/guide/surfaces.ts`.
-- **`/people/me`** — what agents know about you, and your agent-memory settings.
+- **`/people/me`** — what agents know about you, and your agent-memory settings (a section of `/me`).
 - **`/hcp-clients`** — the HCP service's client registry (superusers).
 - **`/beta-requests`** (+ `/:requestId`) — requests for access to Canopy from
   the public site; only their reviewer or a superuser sees them.

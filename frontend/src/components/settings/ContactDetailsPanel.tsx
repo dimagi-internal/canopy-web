@@ -34,7 +34,7 @@ export function ContactDetailsPanel(): JSX.Element {
 
   return (
     <div id="contact-details" className="rounded-xl border border-border bg-card p-5" data-testid="my-contact-details">
-      <h2 className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Contact details</h2>
+      <h2 className="text-sm font-semibold text-foreground">Contact details</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         Other ways to reach you, such as a work email or a phone. People and agents in any workspace you share can see
         them, and agents use them (for example, to invite your work email to a family calendar event). Only you can

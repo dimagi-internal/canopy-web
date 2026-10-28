@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { WorkbenchSubHeader } from 'canopy-ui'
+import { ObjectTabs } from '@/components/objectPage/ObjectTabs'
 import { listRunners, type RunnerOut } from '@/api/harness'
 import { listRunnerDeviceKeys, type RunnerDeviceKeyOut } from '@/api/deviceKeys'
 import { DeviceKeysTable } from '@/components/settings/DeviceKeysTable'
@@ -12,19 +14,122 @@ import { GitHubPanel } from '@/components/settings/GitHubPanel'
 import { ConnectedAppsPanel } from '@/components/settings/ConnectedAppsPanel'
 import { ActAsYouPanel } from '@/components/settings/ActAsYouPanel'
 import { DelegatedCredentialsPanel } from '@/components/settings/DelegatedCredentialsPanel'
-import { useMemoryVisible } from '@/auth/memoryRollout'
 import { SessionWorkspacePanel } from '@/components/settings/SessionWorkspacePanel'
 import { CanopyProjectsPanel } from '@/components/settings/CanopyProjectsPanel'
 import { RunnerAppPanel } from '@/components/settings/RunnerAppPanel'
 import { SessionReviewersPanel } from '@/components/settings/SessionReviewersPanel'
 import { AgentLoginRequestsPanel } from '@/components/settings/AgentLoginRequestsPanel'
 import { runnerHref } from '@/lib/scopedLinks'
+import {
+  ACCOUNT_SETTINGS_TABS,
+  isAccountSettingsTab,
+  tabForAddress,
+  type AccountSettingsTab,
+} from '@/pages/accountSettingsTabs'
 
+// YOUR ACCOUNT'S SETTINGS, behind tabs (`/settings/<tab>`), inside your own
+// page's frame (MeLayout: Profile, Memory, Settings down the rail).
+//
+// It was one long two-column page of fourteen cards; finding one meant reading
+// all of them. Each tab has its own address; old `/settings#anchor` and
+// `/settings?device_key=…` / `?github=…` links forward to the tab holding them
+// (accountSettingsTabs.ts), and the page scrolls to the anchor there.
+//
+//   Account               — contact details, presence, where sessions are filed, who reviews them
+//   Security              — passkeys, recovery, runners that may open secrets, your agents
+//   Agents acting for you — credentials you delegated, act-as-you permissions
+//   Runners               — runners you administer, the repos you use canopy in, the runner app
+//   Connections           — GitHub, MCP clients, personal access tokens
 export function SettingsPage() {
-  const memoryVisible = useMemoryVisible()
-  // Presence visibility. Defaults to visible (matches the backend default
-  // when no preference row exists yet) so the checkbox never flashes
-  // unchecked before the fetch resolves.
+  const { tab } = useParams()
+  const { hash, search, key } = useLocation()
+  const current: AccountSettingsTab | null = isAccountSettingsTab(tab) ? tab : null
+  const wanted = hash || search ? tabForAddress(hash, search) : null
+
+  // An anchor that lives on another tab (an in-page link, a held address) moves
+  // to that tab, keeping the anchor and the query.
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (current && wanted && wanted !== current) navigate(`/settings/${wanted}${search}${hash}`, { replace: true })
+  }, [current, wanted, search, hash, navigate])
+
+  // The router does not scroll to a hash by itself, and the target may render
+  // only after its own data loads — look for it for up to ~5s.
+  useEffect(() => {
+    if (!hash) return
+    const id = decodeURIComponent(hash.slice(1))
+    let tries = 0
+    const look = (): boolean => {
+      const el = document.getElementById(id)
+      el?.scrollIntoView?.({ block: 'start' })
+      return Boolean(el) || ++tries >= 50
+    }
+    if (look()) return
+    const timer = window.setInterval(() => {
+      if (look()) window.clearInterval(timer)
+    }, 100)
+    return () => window.clearInterval(timer)
+  }, [hash, key])
+
+  // Bare `/settings`, or a tab this page does not have: open the tab the old
+  // address belongs to, else Account.
+  if (!current) return <Navigate to={`/settings/${wanted ?? 'account'}${search}${hash}`} replace />
+
+  return (
+    <div className="max-w-4xl px-6 py-8">
+      <WorkbenchSubHeader title="Settings" />
+
+      <ObjectTabs
+        label="Your settings"
+        className="-mt-2 mb-6"
+        tabs={ACCOUNT_SETTINGS_TABS.map((t) => ({ to: `/settings/${t.tab}`, label: t.label }))}
+      />
+
+      {/* An agent asking to sign in as you waits on you whichever tab is open;
+          it renders nothing when none is. */}
+      <div className="mb-5 empty:hidden">
+        <AgentLoginRequestsPanel />
+      </div>
+
+      <div className="space-y-5">
+        {current === 'account' && (
+          <>
+            <ContactDetailsPanel />
+            <PresencePanel />
+            <SessionWorkspacePanel />
+            <SessionReviewersPanel />
+          </>
+        )}
+        {current === 'security' && <SecurityCard machines={<DeviceKeysPanel />} />}
+        {current === 'agents' && (
+          <>
+            <DelegatedCredentialsPanel />
+            <ActAsYouPanel />
+          </>
+        )}
+        {current === 'runners' && (
+          <>
+            <RunnersPanel />
+            <CanopyProjectsPanel />
+            <RunnerAppPanel />
+          </>
+        )}
+        {current === 'connections' && (
+          <>
+            <GitHubPanel />
+            <ConnectedAppsPanel />
+            <TokensPanel />
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Whether others see you on the page they are viewing. */
+function PresencePanel() {
+  // Defaults to visible (matches the backend default when no preference row
+  // exists yet) so the checkbox never flashes unchecked before the fetch resolves.
   const [showPresence, setShowPresence] = useState(true)
 
   useEffect(() => {
@@ -53,84 +158,32 @@ export function SettingsPage() {
     }
   }
 
-  // There is no "AI backend" here any more. canopy-web makes no model calls of
-  // its own — every turn runs on a runner, under THAT box's Claude login — so
-  // the old "Connect Claude Subscription" panel configured something nothing
-  // used. What a person does own is the runners they paired: RunnersPanel
-  // points at where their Claude logins live.
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5">
-      <div>
-        <h1 className="text-lg font-semibold text-foreground">Settings</h1>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Your account: your contact details, the runners you administer, the repos you use canopy in, presence, security, GitHub, connected apps, act-as-you permissions and access tokens.
-        </p>
-        {memoryVisible && (
-          <p className="mt-1 text-xs">
-            <Link to="/people/me/" className="text-primary underline-offset-2 hover:underline">
-              Your memory
-            </Link>
+    <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-foreground">Presence</h2>
+      <div className="flex items-start gap-3">
+        <input
+          id="presence-toggle"
+          type="checkbox"
+          checked={showPresence}
+          onChange={(e) => void togglePresence(e.target.checked)}
+          aria-describedby="presence-toggle-help"
+          className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-primary"
+        />
+        <div>
+          {/* The <label> holds ONLY the control's name — its content is
+              what screen readers announce as the checkbox's accessible
+              name. The help sentence lives in its own <p>, wired in via
+              aria-describedby instead of nesting inside the label, so the
+              accessible name stays "Show me as viewing" rather than the
+              whole two-sentence blob. */}
+          <label htmlFor="presence-toggle" className="block text-sm text-foreground-secondary cursor-pointer">
+            Show me as viewing
+          </label>
+          <p id="presence-toggle-help" className="text-xs text-muted-foreground">
+            When off, you can still see who else is viewing a page, but they cannot see you.
           </p>
-        )}
-      </div>
-
-      {/* Security first and full width; the rest flow into two columns on a
-          wide screen and stack on a narrow one. */}
-      <SecurityCard machines={<DeviceKeysPanel />} />
-
-      <AgentLoginRequestsPanel />
-
-      <div className="gap-5 lg:columns-2 [&>*]:mb-5 [&>*]:break-inside-avoid">
-      <ContactDetailsPanel />
-
-      <RunnersPanel />
-
-      <CanopyProjectsPanel />
-
-      <SessionWorkspacePanel />
-
-      <RunnerAppPanel />
-
-      {/* Presence */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-        <h2 className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Presence</h2>
-        <div className="flex items-start gap-3">
-          <input
-            id="presence-toggle"
-            type="checkbox"
-            checked={showPresence}
-            onChange={(e) => void togglePresence(e.target.checked)}
-            aria-describedby="presence-toggle-help"
-            className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-primary"
-          />
-          <div>
-            {/* The <label> holds ONLY the control's name — its content is
-                what screen readers announce as the checkbox's accessible
-                name. The help sentence lives in its own <p>, wired in via
-                aria-describedby instead of nesting inside the label, so the
-                accessible name stays "Show me as viewing" rather than the
-                whole two-sentence blob. */}
-            <label htmlFor="presence-toggle" className="block text-sm text-foreground-secondary cursor-pointer">
-              Show me as viewing
-            </label>
-            <p id="presence-toggle-help" className="text-xs text-muted-foreground">
-              When off, you can still see who else is viewing a page, but they cannot see you.
-            </p>
-          </div>
         </div>
-      </div>
-
-      <SessionReviewersPanel />
-
-      <GitHubPanel />
-
-      <ConnectedAppsPanel />
-
-      <DelegatedCredentialsPanel />
-
-      <ActAsYouPanel />
-
-      <TokensPanel />
       </div>
     </div>
   )

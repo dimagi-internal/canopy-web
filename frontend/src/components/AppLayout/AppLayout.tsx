@@ -360,6 +360,8 @@ function AppShell() {
     location.pathname.startsWith('/timeline') ||
     // The session IDE: a project tree beside the open chat, each scrolling itself.
     location.pathname.startsWith('/ide') ||
+    // Your own page (/me, /people/me, /settings/…): a rail beside the open section.
+    /^\/(me|people\/me|settings)(\/|$)/.test(location.pathname) ||
     // An individual Agent Workspace (/agents/<slug>) is a full-bleed workbench
     // like DDD; the bare /agents LIST stays in the standard container.
     /^\/agents\/[^/]+/.test(location.pathname) ||
