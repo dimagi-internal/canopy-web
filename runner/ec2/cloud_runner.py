@@ -1140,8 +1140,13 @@ def health_report() -> dict:
 # ── self-refresh ─────────────────────────────────────────────────────────────
 # A refresh is a restart: bootstrap runs once per service start (see
 # bootstrap_agent_fleet), and it is what updates the canopy plugin + CLI, Claude
-# Code and each agent's provisioning — so re-running it IS restarting. The
-# scoped sudoers rule the auto-updater uses already allows exactly this command.
+# Code and each agent's provisioning — so re-running it IS restarting. A box of
+# ONE runner restarts its unit through the scoped sudoers rule the auto-updater
+# uses. A runner sharing its machine (`RUNNER_INSTANCE`, `canopy-runner@<id>`)
+# has no sudo and cannot write /opt/canopy-runner: it exits non-zero instead and
+# its unit's `Restart=on-failure` starts it again. Before 2026-10-28 it tried the
+# sudo path, could not even write its marker, and a requested refresh sat
+# pending on an idle box with nothing on the runner page saying why.
 #
 # Two triggers: an operator's request (Runner.refresh_pending, read off the
 # heartbeat reply — durable, so a dropped socket costs a beat, not the request),
@@ -1154,8 +1159,17 @@ REFRESH_MAX_AGE_SECONDS = int(os.environ.get("REFRESH_MAX_AGE_SECONDS", str(24 *
 REFRESH_MIN_INTERVAL_SECONDS = int(os.environ.get("REFRESH_MIN_INTERVAL_SECONDS", "1800"))
 
 
+#: The exit status a runner sharing its machine leaves with to be restarted by
+#: its unit (`Restart=on-failure`); EX_TEMPFAIL, so journald reads as intended.
+REFRESH_EXIT_CODE = 75
+#: Set when this process is stopping so its unit restarts it (see `_exit_for_refresh`).
+_EXIT_FOR_REFRESH = False
+
+
 def _refresh_marker() -> pathlib.Path:
-    return pathlib.Path(RUNNER_HOME) / "last-self-refresh"
+    # The runner's own state dir: RUNNER_HOME on a box of one runner, the
+    # runner's home on a machine of several (where /opt/canopy-runner is root's).
+    return pathlib.Path(IN_FLIGHT_FILE).parent / "last-self-refresh"
 
 
 def _last_self_refresh() -> float:
@@ -1196,18 +1210,37 @@ def maybe_self_refresh(pending: bool, *, now: float | None = None) -> bool:
     if now - last < REFRESH_MIN_INTERVAL_SECONDS:
         return False
     try:
+        _refresh_marker().parent.mkdir(parents=True, exist_ok=True)
         _refresh_marker().write_text(str(now))
     except Exception as exc:  # noqa: BLE001
-        _log(f"self-refresh: cannot write {_refresh_marker()} ({exc}); not restarting without the loop guard")
-        return False
+        return _refresh_blocked(f"cannot write {_refresh_marker()} ({exc}); "
+                                "not restarting without the loop guard")
     _log(f"self-refresh: {reason}; restarting to re-run bootstrap")
+    if RUNNER_INSTANCE:
+        _exit_for_refresh()
+        return True
     try:
         subprocess.run(["sudo", "-n", "systemctl", "restart", "canopy-runner.service"],
                        capture_output=True, timeout=30, check=True)
     except Exception as exc:  # noqa: BLE001
-        _log(f"self-refresh: restart failed ({exc})")
-        return False
+        return _refresh_blocked(f"restart failed ({exc})")
     return True
+
+
+def _refresh_blocked(why: str) -> bool:
+    """A due refresh this box could not start: journald AND the `refresh` check,
+    which canopy-web shows on a pending refresh — never only a log line."""
+    _log(f"self-refresh: {why}")
+    _set_check("refresh", "fail", f"could not restart to refresh: {why}")
+    return False
+
+
+def _exit_for_refresh() -> None:
+    """Stop the claim loops; the process then exits REFRESH_EXIT_CODE and its
+    unit starts it again. Only ever called from the claiming thread while idle."""
+    global _stop, _EXIT_FOR_REFRESH
+    _EXIT_FOR_REFRESH = True
+    _stop = True
 
 
 #: Addresses canopy has left (it moved to canopy.dimagi.com on 2026-10-05).
@@ -12190,3 +12223,5 @@ if __name__ == "__main__":
     finally:
         if _stop:
             _finish_stop()
+    if _EXIT_FOR_REFRESH:
+        sys.exit(REFRESH_EXIT_CODE)
