@@ -1648,8 +1648,8 @@ def _stage_delegated_google(slug: str, *, now: float | None = None) -> list[str]
     longer delegated. The refresh token stays in this process and the canopy CLI's: the
     CLI (`cred google-token --runner --delegated`, this box's own token and device proof)
     refreshes it at Google and writes only the access token (0600). Returns the accounts."""
-    if slug and slug not in _AGENT_DELEGATED:
-        _turn_values(slug)
+    # Only what this box already opened (its resolve, `_turn_values`): staging never
+    # makes a resolve of its own.
     now = time.time() if now is None else now
     accounts = _delegated_google_accounts(slug)
     home = _delegated_google_home(slug)
@@ -3738,12 +3738,6 @@ def _agent_env(slug: str | None) -> dict:
     sf_home = _stage_salesforce(slug)
     if sf_home is not None:
         env["CHROME_SALES_HOME"] = str(sf_home)
-    # Google accounts people delegated to the agent: an access token each, staged for
-    # `canopy cred google-token --delegated <account>`; their names, never a value.
-    env.pop("CANOPY_DELEGATED_GOOGLE", None)
-    google_accounts = _stage_delegated_google(slug)
-    if google_accounts:
-        env["CANOPY_DELEGATED_GOOGLE"] = ",".join(google_accounts)
     # The agent's OWN gog home and keyring password (spec §6) — never another
     # agent's, never a box-wide one. {} on a box without a runner secret.
     env.update(gog_env(slug))
@@ -3788,6 +3782,13 @@ def _agent_env(slug: str | None) -> dict:
     # Over the agent's values too: a stale box-wide GOG_* in an old .env must not
     # replace the agent's own pair.
     env.update(gog_env(slug))
+    # Google accounts people delegated to the agent (opened by the resolve above): an
+    # access token each, staged for `canopy cred google-token --delegated <account>`;
+    # their names, never a value.
+    env.pop("CANOPY_DELEGATED_GOOGLE", None)
+    google_accounts = _stage_delegated_google(slug)
+    if google_accounts:
+        env["CANOPY_DELEGATED_GOOGLE"] = ",".join(google_accounts)
     # LAST, over the agent's own .env: a confined turn's profile is the runner's
     # decision, and nothing an agent provisions may switch it off.
     return {k: v for k, v in {**env, **extra}.items() if k not in withheld}
