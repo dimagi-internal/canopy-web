@@ -173,8 +173,18 @@ export default function WorkspaceAppStoreDetailPage() {
           {app.emails.length > 0 && (
             <section>
               <h2 className="font-semibold">Emails it can send</h2>
-              <ul className="mt-1 text-muted-foreground">{app.emails.map((e) => <li key={e}>{e}</li>)}</ul>
-              <p className="mt-1 text-xs text-muted-foreground">Only once the server's app email is switched on.</p>
+              <ul className="mt-1 space-y-1 text-muted-foreground">
+                {app.emails.map((e) => (
+                  <li key={e.name}>
+                    <span className="text-foreground">{e.name}</span>
+                    {e.to && <span className="text-xs"> · {e.to}</span>}
+                    {(e.optional || e.delayable) && (
+                      <span className="block text-xs">{[e.optional && 'can be switched off', e.delayable && 'can be held back'].filter(Boolean).join(', ')}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-xs text-muted-foreground">Worded by settings you can change. Sent only once the server's app email is switched on.</p>
             </section>
           )}
           <section>

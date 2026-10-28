@@ -81,6 +81,10 @@ class AppInstallation(models.Model):
     enabled = models.BooleanField(default=True)
     #: The app's PUBLIC pages and actions answer anonymous visitors. Off by default.
     public = models.BooleanField(default=False)
+    #: Setup steps (manifest `setup`) a maintainer ticked off by hand, by id.
+    setup_done = models.JSONField(default=list, blank=True)
+    #: A maintainer put the setup list away before finishing it.
+    setup_hidden = models.BooleanField(default=False)
     installed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
                                      related_name="+")
     installed_at = models.DateTimeField(auto_now_add=True)
@@ -118,6 +122,10 @@ class AppVersion(models.Model):
     published_at = models.DateTimeField(null=True, blank=True)
     #: The last scenario run on this version: {ok, ran_at, results: [...]}.
     checks = models.JSONField(default=dict, blank=True)
+    #: Agents a maintainer asked to work on THIS draft: they may read it, change
+    #: it, test it and run its checks — never publish, discard or roll back. The
+    #: draft closing ends it, so no grant outlives the work it was given for.
+    helpers = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="+")
 
     class Meta:
         ordering = ["-number"]

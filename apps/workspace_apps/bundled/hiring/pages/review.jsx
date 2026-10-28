@@ -14,6 +14,7 @@ function ago(iso) {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
   return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`
 }
+const DELAYS = [{ value: '0', label: 'Send now' }, { value: '24', label: 'Send tomorrow (in 24 hours)' }, { value: '72', label: 'Send in 3 days' }]
 const BUILT_IN = ['job', 'name', 'email', 'phone', 'location', 'country', 'region', 'linkedin', 'resume', 'resume_url',
   'cover_letter', 'source', 'source_tag', 'referrer', 'credited_to', 'stage', 'status', 'tags']
 
@@ -35,7 +36,7 @@ function View({ data, app, scope }) {
   const [decided, setDecided] = useState({}) // id -> what happened, this session
   const [skips, setSkips] = useState({}) // id -> how many times skipped
   const [rejecting, setRejecting] = useState(false)
-  const [rej, setRej] = useState({ reason: '', note: '', email: true, template: '', subject: '', body: '' })
+  const [rej, setRej] = useState({ reason: '', note: '', email: true, template: '', subject: '', body: '', delay: '0' })
   const [target, setTarget] = useState('')
   const [dupes, setDupes] = useState([])
   const [feedback, setFeedback] = useState('')
@@ -108,6 +109,7 @@ function View({ data, app, scope }) {
     const params = {}
     if (rej.subject) params.subject = rej.subject
     if (rej.body) params.body = rej.body
+    if (Number(rej.delay) > 0) params.delay_hours = Number(rej.delay)
     return app.act('reject_and_email', { record: cur.id, input, params })
   })
   const skip = () => { if (cur) setSkips((s) => ({ ...s, [cur.id]: (s[cur.id] || 0) + 1 })) }
@@ -240,6 +242,8 @@ function View({ data, app, scope }) {
                         options={[{ value: '', label: 'The app’s standard rejection email' }, ...templates.map((t) => ({ value: String(t.id), label: t.name }))]} />
                       {rej.template && <Input label="Subject" value={rej.subject} onChange={(subject) => setRej((r) => ({ ...r, subject }))} />}
                       {rej.template && <TextArea label="Email" rows={6} value={rej.body} onChange={(body) => setRej((r) => ({ ...r, body }))} />}
+                      <Select label="When" value={rej.delay} onChange={(delay) => setRej((r) => ({ ...r, delay }))} options={DELAYS} />
+                      {Number(rej.delay) > 0 && <div className="text-xs text-muted-foreground">Held back, and not sent if you move them back into the process first.</div>}
                       {cur.do_not_email && <div className="text-xs text-warning">This candidate is marked do-not-email: no email will go.</div>}
                     </>
                   )}

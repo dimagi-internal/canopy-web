@@ -27,7 +27,7 @@ def test_the_hiring_template_is_in_the_store_and_its_own_checks_pass(world, hiri
     store = _client(world["viewer"]).get("/api/workspace-app-store/dimagi/").json()
     assert [(a["key"], a["publisher"]) for a in store] == [("hiring", "canopy")]
     m = services.bundled_manifest("hiring")
-    assert {"review", "pipeline", "jobs", "job-setup", "candidate", "interviews", "kit", "approvals", "offers",
+    assert {"today", "review", "pipeline", "jobs", "job-setup", "candidate", "interviews", "kit", "approvals", "offers",
             "prospects", "refer", "templates", "reports", "self-id", "careers", "job", "pick-a-time",
             "your-offer"} == {p["slug"] for p in m["pages"]}
     admin = _client(world["admin"])

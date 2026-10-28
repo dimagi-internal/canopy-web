@@ -4,6 +4,7 @@ import { getInstalledApp, type InstalledApp } from '@/api/workspaceApps'
 import { useAuth } from '@/auth/AuthProvider'
 import { useScopedPath } from '@/lib/scopedLinks'
 import { AppFrame } from '@/workspaceApps/AppFrame'
+import { SetupList } from '@/workspaceApps/SetupList'
 import { useWorkspaceList } from '@/workspace/WorkspaceProvider'
 
 /**
@@ -95,6 +96,7 @@ export default function WorkspaceAppPage() {
           )}
         </nav>
       </header>
+      {app.may_maintain && !draft && <SetupList workspace={workspace} appKey={app.key} />}
       {!app.enabled && (
         <div className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">This app is switched off: only those who manage apps can open it.</div>
       )}

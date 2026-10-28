@@ -61,6 +61,13 @@ class StoreVersionOut(Schema):
     changelog: str
 
 
+class StoreEmailOut(Schema):
+    name: str
+    to: str
+    optional: bool
+    delayable: bool
+
+
 class StoreAppDetailOut(Schema):
     key: str
     name: str
@@ -74,7 +81,7 @@ class StoreAppDetailOut(Schema):
     settings: int
     retention: list[str]
     public_pages: list[str]
-    emails: list[str]
+    emails: list[StoreEmailOut]
     versions: list[StoreVersionOut]
     installed: bool
 
@@ -186,6 +193,45 @@ class LinkPageOut(Schema):
     data_model: dict[str, Any]
     settings: dict[str, Any]
     draft: bool
+
+
+class HelperOut(Schema):
+    """An agent the caller could ask to work on the app's draft."""
+    slug: str
+    name: str
+    #: The workspace the agent lives in — where the chat with it is held.
+    home: str
+    login: str
+    #: Its login is a member of the app's workspace, so it can reach the app.
+    reachable: bool
+    #: Already working on the open draft.
+    helping: bool
+
+
+class HelperIn(Schema):
+    agent: str
+
+
+class SetupStepOut(Schema):
+    id: str
+    title: str
+    body: str
+    go: str | None = None
+    manual: bool
+    done: bool
+
+
+class SetupOut(Schema):
+    steps: list[SetupStepOut]
+    hidden: bool
+
+
+class SetupIn(Schema):
+    #: Tick (or untick) a step done by hand.
+    step: str | None = None
+    done: bool = True
+    #: Put the whole list away, or bring it back.
+    hidden: bool | None = None
 
 
 class GrantIn(Schema):

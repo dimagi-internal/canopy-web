@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { listMyAgents } from '@/api/agents'
 import { createSession, sendMessage } from '@/api/chat'
 import {
+  addHelper,
+  listHelpers,
+  type AppHelper,
   retentionApply,
   retentionPreview,
   subjectExport,
@@ -268,9 +270,12 @@ function Privacy({ workspace, app }: { workspace: string; app: InstalledApp }) {
   )
 }
 
-async function ask(workspace: string, app: InstalledApp, text: string, agentSlug: string) {
-  const session = await createSession({ workspace, agentSlug, title: `Customize ${app.name}` })
-  const page = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/w/${encodeURIComponent(workspace)}/apps/${app.key}/customize`
+/** Let the agent onto the open draft, then open a chat with it where it lives (its
+ * home workspace, which need not be the app's) and hand it the request. */
+async function ask(workspace: string, app: InstalledApp, text: string, agent: AppHelper) {
+  await addHelper(workspace, app.key, agent.slug)
+  const session = await createSession({ workspace: agent.home, agentSlug: agent.slug, title: `Customize ${app.name}` })
+  const page = customizeUrl(workspace, app.key)
   await sendMessage(session.id, [
     `Please change the ${app.name} app in the "${workspace}" workspace for me. Here is what I want, in my words:`,
     '',
@@ -284,45 +289,101 @@ async function ask(workspace: string, app: InstalledApp, text: string, agentSlug
   return session
 }
 
+function customizeUrl(workspace: string, key: string) {
+  return `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/w/${encodeURIComponent(workspace)}/apps/${key}/customize`
+}
+
+const MCP_URL = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/api/mcp/`
+
 function AskAgent({ workspace, app, draftId, busy, onAsk }: {
-  workspace: string; app: InstalledApp; draftId: number | null; busy: boolean; onAsk: (text: string, agent: string) => void
+  workspace: string; app: InstalledApp; draftId: number | null; busy: boolean; onAsk: (text: string, agent: AppHelper) => void
 }) {
-  const [agents, setAgents] = useState<{ slug: string; name: string }[]>([])
+  const [helpers, setHelpers] = useState<AppHelper[] | null>(null)
   const [agent, setAgent] = useState('')
   const [text, setText] = useState('')
   useEffect(() => {
-    listMyAgents({ limit: 200 }).then((p) => {
-      const here = p.items.filter((a) => (a as { workspace?: string | null }).workspace === workspace)
-        .map((a) => ({ slug: a.slug, name: a.name }))
-      setAgents(here)
-      setAgent((cur) => cur || here[0]?.slug || '')
-    }, () => setAgents([]))
-  }, [workspace])
+    listHelpers(workspace, app.key).then((rows) => {
+      setHelpers(rows)
+      setAgent((cur) => cur || rows.find((h) => h.reachable)?.slug || '')
+    }, () => setHelpers([]))
+  }, [workspace, app.key])
+  const reachable = (helpers ?? []).filter((h) => h.reachable)
+  const outside = (helpers ?? []).filter((h) => !h.reachable)
+  const picked = reachable.find((h) => h.slug === agent)
   return (
     <div className="space-y-2">
       <label className="block text-sm font-medium" htmlFor="ask">Describe what you want, in your own words</label>
       <textarea id="ask" className={INPUT} rows={3} value={text} onChange={(e) => setText(e.target.value)}
         placeholder={`e.g. “Ask applicants whether they need visa sponsorship, and add a Phone screen stage before Interview.”`} />
       <div className="flex flex-wrap items-center gap-2">
-        {agents.length > 0 ? (
+        {reachable.length > 0 ? (
           <>
-            <select className="rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={agent} onChange={(e) => setAgent(e.target.value)}>
-              {agents.map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
+            <select aria-label="Agent to ask" className="rounded-md border border-border bg-background px-2 py-1.5 text-sm" value={agent} onChange={(e) => setAgent(e.target.value)}>
+              {reachable.map((a) => <option key={a.slug} value={a.slug}>{a.name}{a.home !== workspace ? ` (from ${a.home})` : ''}</option>)}
             </select>
-            <button type="button" className={PRIMARY} disabled={busy || !text.trim() || !agent}
-              onClick={() => { onAsk(text.trim(), agent); setText('') }}>
+            <button type="button" className={PRIMARY} disabled={busy || !text.trim() || !picked}
+              onClick={() => { if (picked) { onAsk(text.trim(), picked); setText('') } }}>
               {draftId ? 'Ask' : 'Start a draft and ask'}
             </button>
           </>
+        ) : helpers === null ? (
+          <span className="text-sm text-muted-foreground">Looking for agents you can ask…</span>
         ) : (
-          <span className="text-sm text-muted-foreground">No agent in this workspace to ask — use the forms below instead.</span>
+          <span className="text-sm text-muted-foreground">No agent can reach this workspace yet. Use your own Claude (below), or the forms.</span>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
-        The agent works in a chat you can follow, changes only this draft, and never publishes. It needs the app's maintainer
-        role{app.may_manage ? ' (give it one under Maintainers below)' : ''}.
-      </p>
+      {outside.length > 0 && reachable.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          {outside.slice(0, 3).map((h) => h.name).join(', ')}{outside.length > 3 ? ' and others' : ''} could help, but{' '}
+          {outside.length === 1 ? 'is' : 'are'} not a member of this workspace. A workspace admin adds{' '}
+          {outside.slice(0, 3).map((h) => h.login).join(', ')} as a member (a viewer is enough).
+        </p>
+      )}
+      {reachable.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          The agent works in a chat you can follow. It may change and test only this draft, for as long as the draft is open,
+          and never publishes: you try the test copy and publish it yourself.
+        </p>
+      )}
+      {helpers !== null && <OwnClaude workspace={workspace} app={app} open={reachable.length === 0} />}
     </div>
+  )
+}
+
+/** The other way in: the person's own Claude (or any MCP client), signed in as them
+ * to canopy's MCP server, where every route of this page is a tool. */
+function OwnClaude({ workspace, app, open }: { workspace: string; app: InstalledApp; open: boolean }) {
+  const [copied, setCopied] = useState('')
+  const prompt = [
+    `Change the ${app.name} app in my canopy workspace "${workspace}" (app key "${app.key}").`,
+    `First read its guide with get_workspace_app_guide. Start a draft with start_workspace_app_draft if none is open,`,
+    `add each change with add_workspace_app_change (put my words in "intent"), then run check_workspace_app_draft.`,
+    `Do not publish: I will try the test copy and publish at ${customizeUrl(workspace, app.key)}`,
+    ``,
+    `What I want: `,
+  ].join('\n')
+  async function copy(what: string, value: string) {
+    try { await navigator.clipboard.writeText(value); setCopied(what) } catch { setCopied('') }
+  }
+  return (
+    <details className="mt-4 rounded-md border border-border p-3 text-sm" open={open}>
+      <summary className="cursor-pointer font-medium">{open ? 'Use your own Claude' : 'Or use your own Claude'}</summary>
+      <ol className="mt-2 list-decimal space-y-2 pl-5 text-muted-foreground">
+        <li>
+          In Claude, add a custom connector with this address, and sign in to canopy when it asks:
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <code className="rounded bg-muted px-2 py-1 text-xs text-foreground">{MCP_URL}</code>
+            <button type="button" className="text-xs text-primary hover:underline" onClick={() => copy('url', MCP_URL)}>{copied === 'url' ? 'Copied' : 'Copy'}</button>
+          </div>
+        </li>
+        <li>
+          Start a chat with this, and finish the last line in your own words:
+          <pre className="mt-1 whitespace-pre-wrap rounded bg-muted p-2 text-xs text-foreground">{prompt}</pre>
+          <button type="button" className="text-xs text-primary hover:underline" onClick={() => copy('prompt', prompt)}>{copied === 'prompt' ? 'Copied' : 'Copy'}</button>
+        </li>
+        <li>Its changes appear in the draft here, like anyone else's. It acts as you, so it can do only what you can.</li>
+      </ol>
+    </details>
   )
 }
 
