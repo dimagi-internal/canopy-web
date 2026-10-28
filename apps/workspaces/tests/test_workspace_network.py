@@ -175,3 +175,26 @@ def test_facts_recorded_before_threads_were_named_get_them_from_the_turn(tree, t
     assert meta("s2")["thread"] == f"session:{traffic['shared'].pk}"
     assert meta("m1")["contact"] == traffic["contact"].pk
     assert meta("a1")["by_agent"] == "eva"
+
+
+def test_a_person_recorded_as_a_contact_is_drawn_as_that_person(tree, traffic):
+    # Staff (a dimagi member) asks connect's Hal from Slack: no member of connect, so
+    # connect records a contact, which is right for access; the network still draws
+    # staff, by the address their account has proven.
+    from allauth.account.models import EmailAddress
+
+    EmailAddress.objects.create(user=tree["staff"], email="staff@dimagi.com", verified=True)
+    staff_on_slack = Contact.objects.create(workspace=tree["connect"], source="slack",
+                                            email="Staff@dimagi.com", display_name="Staff")
+    _ask(tree["hal"], "k1", _initiator.for_contact(staff_on_slack, via="slack"), session=traffic["shared"])
+    # An address nobody has proven stays a contact.
+    stranger = Contact.objects.create(workspace=tree["connect"], source="slack", email="ceo@dimagi.com")
+    _ask(tree["hal"], "k2", _initiator.for_contact(stranger, via="slack"), session=traffic["shared"])
+
+    body = _network(tree["ceo"]).json()
+    ids = {n["id"] for n in body["nodes"]}
+    links = {(link["source"], link["target"]): link for link in body["links"]}
+    assert f"contact:{staff_on_slack.pk}" not in ids
+    assert links[(f"person:{tree['staff'].pk}", f"session:{traffic['shared'].pk}")]["turns"] == 2
+    assert f"contact:{stranger.pk}" in ids
+    assert body["totals"]["people"] == 3 and body["totals"]["contacts"] == 2
