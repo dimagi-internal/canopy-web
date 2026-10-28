@@ -939,3 +939,24 @@ def test_at_warn_root_records_where_the_space_is_for_the_runners(runners_box):
     runners_box.disk_pct.write_text("40")
     assert runners_box.run().returncode == 0
     assert not (runners_box.home / "disk-usage.json").exists()
+
+
+def test_a_box_already_on_the_new_code_moves_on_its_next_check(old_box):
+    # The install that brought the new names ran the updater from before the rename,
+    # so nothing moved then; the next check, with nothing to install, moves them.
+    sha = old_box.seed_repo(NEW_NAMES_RUNNER)
+    old_box.stamp(sha)
+    old_box.expect(sha)
+    (old_box.home / "cloud_runner.py").write_text(NEW_NAMES_RUNNER)
+    (old_box.etc / "runners.json").write_text((old_box.etc / "units.json").read_text())
+    out = old_box.run()
+    assert out.returncode == 0, out.stderr
+    assert _old_names_left(old_box) == []
+    assert "units" not in json.loads((old_box.etc / "runners.json").read_text())
+    # The service swap only: its runners keep running.
+    assert old_box.systemctl_log.read_text().splitlines() == [
+        "disable canopy-units.service", "daemon-reload", "enable canopy-runners.service"]
+    assert not old_box.restarted
+    assert len(old_box.as_runner_log.read_text().splitlines()) == 2
+    # And again: nothing left to move.
+    assert old_box.run().returncode == 0 and _old_names_left(old_box) == []
