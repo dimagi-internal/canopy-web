@@ -24,28 +24,12 @@ HEARTBEAT_ONLINE_WINDOW = dt.timedelta(seconds=90)
 
 #: The capability that says what a runner serves (`Runner.serves`).
 SERVES = "serves"
-# Old name, read until every runner reports the new one: remove in the follow-up.
-OLD_SERVES = "unit"
 
 
 def serves_of(capabilities) -> dict:
-    """What a capabilities dict says its runner serves: `capabilities["serves"]`, else
-    the old key a runner (or a row) from before the rename carries. {} for none."""
-    caps = capabilities or {}
-    said = caps.get(SERVES)
-    if not isinstance(said, dict) or not said:
-        said = caps.get(OLD_SERVES)  # Old name, read until every runner reports the new one: remove in the follow-up.
+    """What a capabilities dict says its runner serves: `capabilities["serves"]`. {} for none."""
+    said = (capabilities or {}).get(SERVES)
     return said if isinstance(said, dict) else {}
-
-
-def with_serves_key(capabilities: dict) -> dict:
-    """`capabilities` as canopy-web stores it: what a runner serves under `serves`,
-    never under the old key a runner from before the rename still sends."""
-    caps = dict(capabilities or {})
-    old = caps.pop(OLD_SERVES, None)  # Old name, read until every runner reports the new one: remove in the follow-up.
-    if isinstance(old, dict) and old and not caps.get(SERVES):
-        caps[SERVES] = old
-    return caps
 
 
 class Runner(models.Model):

@@ -19,10 +19,9 @@ RUNNERS = [
 ]
 
 
-def _invite(org, runners=RUNNERS, name=BOX, *, key="runners", **extra):
-    """`key`: what the list is sent as — "units" is how an up.sh from before the rename sends it."""
+def _invite(org, runners=RUNNERS, name=BOX, **extra):
     return _pat_client(org["pat"]).post(
-        INVITES, data={"name": name, "workspace": "connect", "role_arn": ROLE, key: runners, **extra},
+        INVITES, data={"name": name, "workspace": "connect", "role_arn": ROLE, "runners": runners, **extra},
         content_type="application/json")
 
 
@@ -30,10 +29,9 @@ def _approve(org, inv_id):
     assert org["browser"].post(f"{INVITES}{inv_id}/approve").status_code == 200
 
 
-def _pair_runners(runners: dict[str, dict], *, name=BOX, key="runners"):
-    """What canopy-pair sends: the box's name, ONE role proof, every runner's keys.
-    `key`: what the list is sent as — "units" is how a runner from before the rename sends it."""
-    body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), key: [
+def _pair_runners(runners: dict[str, dict], *, name=BOX):
+    """What canopy-pair sends: the box's name, ONE role proof, every runner's keys."""
+    body = {"name": name, "kind": "cloud", "proof": _proof(PAIR_HTU), "runners": [
         {"name": n, "public_jwk": k["public_jwk"], "ecdh_public_jwk": k.get("ecdh_public_jwk"),
          "ecdh_store": "kms-broker", "host": "ip-10-0-0-9", "capabilities": {"sessions": True}}
         for n, k in runners.items()]}

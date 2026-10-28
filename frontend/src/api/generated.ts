@@ -33211,13 +33211,6 @@ export interface components {
                 readonly [key: string]: string;
             };
             /**
-             * Units
-             * @default {}
-             */
-            readonly units: {
-                readonly [key: string]: string;
-            };
-            /**
              * Device Keys
              * @default {}
              */

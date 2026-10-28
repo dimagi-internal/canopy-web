@@ -44,10 +44,6 @@ import urllib.request
 
 SOCKET_PATH = os.environ.get("CANOPY_KMS_BROKER_SOCKET", "/run/canopy-kms/sock")
 RUNNERS_FILE = os.environ.get("CANOPY_RUNNERS_FILE", "/etc/canopy-runner/runners.json")
-#: Where runners.json was before the rename, and the list key it had then. Old name,
-#: read until every runner reports the new one: remove in the follow-up.
-OLD_RUNNERS_FILE = os.environ.get("CANOPY_UNITS_FILE", "/etc/canopy-runner/units.json")
-OLD_RUNNERS_KEY = "units"
 IMDS = (os.environ.get("CANOPY_AWS_IMDS_URL", "") or "http://169.254.169.254").rstrip("/")
 #: One request line, at most. A JWK is ~200 bytes.
 MAX_REQUEST = 16 * 1024
@@ -215,17 +211,12 @@ class Kms:
 
 def load_keys(path: str | None = None) -> dict[int, str]:
     """{uid: KMS key id} from runners.json — only runners with both."""
-    if path is None:
-        path = RUNNERS_FILE
-        if not os.path.exists(path) and os.path.exists(OLD_RUNNERS_FILE):
-            path = OLD_RUNNERS_FILE  # Old name, read until every runner reports the new one: remove in the follow-up.
     try:
-        doc = json.loads(open(path).read())
+        doc = json.loads(open(path or RUNNERS_FILE).read())
     except (OSError, ValueError):
         return {}
     out = {}
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    for runner in doc.get("runners") or doc.get(OLD_RUNNERS_KEY) or []:
+    for runner in doc.get("runners") or []:
         uid, key = runner.get("uid"), runner.get("kms_key")
         if isinstance(uid, int) and uid > 0 and key:
             out[uid] = str(key)

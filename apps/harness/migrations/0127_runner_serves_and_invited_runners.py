@@ -5,7 +5,7 @@
 The stored capability is copied, not moved: a server still running the previous
 code while this deploy rolls out reads the old key, and one of its writes would
 otherwise drop what the runner serves for good. The new code reads `serves` first
-and drops the old key on its next write; the follow-up removes what is left."""
+and drops the old key on its next write; 0128 removes what is left."""
 from django.db import migrations
 
 OLD, NEW = "unit", "serves"

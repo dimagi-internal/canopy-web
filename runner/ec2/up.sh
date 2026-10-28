@@ -230,13 +230,6 @@ else
     RUNNERS=$(stack_read "$STACK" "Stacks[0].Parameters[?ParameterKey=='Runners'].ParameterValue") \
       || die "could not read stack $STACK's Runners — nothing was changed"
     [[ "$RUNNERS" == "None" ]] && RUNNERS=""
-    if [[ -z "$RUNNERS" ]]; then
-      # A stack made before the rename names them Runners.
-      # Old name, read until every runner reports the new one: remove in the follow-up.
-      RUNNERS=$(stack_read "$STACK" "Stacks[0].Parameters[?ParameterKey=='RunnerUnits'].ParameterValue") \
-        || die "could not read stack $STACK's RunnerUnits — nothing was changed"
-      [[ "$RUNNERS" == "None" ]] && RUNNERS=""
-    fi
     [[ -n "$RUNNERS" ]] && echo ">> runners: the stack's own ($RUNNERS)"
   fi
 fi
@@ -288,10 +281,8 @@ EXTRA_RUNNER_IDS="$(printf '%s' "$RUNNERS_JSON" | NAME="$NAME" python3 -c 'impor
 # drop a slot only for --remove-runner. Without --runners every slot is kept as it is.
 # A failed read must stop the run: an empty answer would blank every slot and remove
 # the runners' keys' aliases. Only "the -ecdh stack does not exist yet" means "no slots".
-# Its slots were Unit<i> before the rename, and are Runner<i> once it is deployed again.
-# Old name, read until every runner reports the new one: remove in the follow-up.
 EXISTING_SLOTS="$(stack_read "${STACK}-ecdh" \
-  "Stacks[0].Parameters[?starts_with(ParameterKey, 'Runner') || starts_with(ParameterKey, 'Unit')].[ParameterKey,ParameterValue]" missing-ok)" \
+  "Stacks[0].Parameters[?starts_with(ParameterKey, 'Runner')].[ParameterKey,ParameterValue]" missing-ok)" \
   || die "could not read ${STACK}-ecdh's runner key slots — nothing was changed (a transient AWS error? re-run)"
 EXISTING_SLOTS="$(printf '%s' "$EXISTING_SLOTS" | tr '\t' '=')"
 RUNNER_SLOTS="$(EXISTING="$EXISTING_SLOTS" WANT="$EXTRA_RUNNER_IDS" GIVEN="${RUNNERS:+1}" REMOVE="$REMOVE_RUNNERS" python3 - <<'PY'
@@ -299,9 +290,6 @@ import os, sys
 existing = {}
 for line in os.environ["EXISTING"].split():
     key, _, value = line.partition("=")
-    # An -ecdh stack made before the rename names its slots Unit<i>.
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    key = "Runner" + key[len("Unit"):] if key.startswith("Unit") else key
     if key in {f"Runner{i}" for i in range(1, 5)} and value not in ("", "None"):
         existing[key] = value
 slots = {f"Runner{i}": existing.get(f"Runner{i}", "") for i in range(1, 5)}
@@ -593,9 +581,6 @@ if runners:
         if jwk:
             entry["ecdh_public_jwk"] = jwk
         body["runners"].append(entry)
-    # The same list as `units`, for a canopy-web from before the rename.
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    body["units"] = body["runners"]
 print(json.dumps(body))
 PY
 )
@@ -636,8 +621,7 @@ except Exception:
   if [[ -n "$RUNNERS" ]]; then
     python3 -c 'import json,sys
 doc = json.load(open(sys.argv[1]))
-# Old name, read until every runner reports the new one: remove in the follow-up.
-for r in (doc.get("runners") or doc.get("units") or []):
+for r in doc.get("runners") or []:
     print("    runner %s: %s" % (r.get("name"), r.get("runner_id") or "(not paired)"))' "$TMPC/inv-state.json" || true
   fi
 fi

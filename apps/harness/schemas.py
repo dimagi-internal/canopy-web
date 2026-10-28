@@ -2675,23 +2675,6 @@ RUNNER_NAME_PATTERN = r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$"
 
 RunnerInvitationStatus = Literal["pending", "approved", "consumed", "expired"]
 
-#: The key a machine's runners came under before they were `runners`.
-# Old name, read until every runner reports the new one: remove in the follow-up.
-OLD_RUNNERS_KEY = "units"
-
-
-def runners_from_old_key(data):
-    """A request body listing a machine's runners under the old key, as `runners`.
-    Old name, read until every runner reports the new one: remove in the follow-up."""
-    raw = getattr(data, "_obj", data)   # Ninja hands a validator its body wrapped
-    if isinstance(raw, dict) and OLD_RUNNERS_KEY in raw:
-        data = dict(raw)
-        old = data.pop(OLD_RUNNERS_KEY)
-        if not data.get("runners"):
-            data["runners"] = old
-    return data
-
-
 class InvitedRunnerIn(Schema):
     """One runner on the invited machine, named `name`, serving `workspace`'s tree
     (`kind` tree) or only agent `slug` (`kind` agent, an agent of `workspace`).
@@ -2719,12 +2702,6 @@ class RunnerInvitationIn(Schema):
     runners: list[InvitedRunnerIn] | None = Field(default=None, max_length=8)
     # Pair its runners directed-only: a test box (`up.sh --test`).
     directed: bool = False
-
-    @model_validator(mode="before")
-    @classmethod
-    def runners_under_old_key(cls, data):
-        # An `up.sh` from before the rename sends `units` (`runners_from_old_key`).
-        return runners_from_old_key(data)
 
 
 class InvitationRunnerOut(Schema):
@@ -2928,12 +2905,6 @@ class RunnerPairByRoleIn(Schema):
     #: is then the MACHINE's name, the one its invitation was made for).
     runners: list[PairingRunnerIn] | None = Field(default=None, max_length=8)
 
-    @model_validator(mode="before")
-    @classmethod
-    def runners_under_old_key(cls, data):
-        # A runner from before the rename sends `units` (`runners_from_old_key`).
-        return runners_from_old_key(data)
-
 
 class RunnerPairByRoleOut(Schema):
     """`paired` (a new runner), `reattached` (this role's existing runner — a
@@ -2944,19 +2915,9 @@ class RunnerPairByRoleOut(Schema):
     status: Literal["paired", "reattached", "waiting"]
     runner_id: uuid.UUID | None = None
     runners: dict[str, uuid.UUID] = {}
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    #: `runners` again, for a runner from before the rename.
-    units: dict[str, uuid.UUID] = {}
     #: Each runner's device key id, by runner name — what the box records so its
     #: proofs are sent (`canopy vault device --registered`).
     device_keys: dict[str, uuid.UUID] = {}
-
-    @model_validator(mode="after")
-    def runners_under_old_key_too(self):
-        # Old name, read until every runner reports the new one: remove in the follow-up.
-        if self.runners and not self.units:
-            self.units = dict(self.runners)
-        return self
 
 
 # ---- laptop pairing by browser (apps/harness/api_runner_pairings.py) ------------------

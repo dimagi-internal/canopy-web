@@ -571,7 +571,7 @@ def _nudge_updater(expected_sha: str, *, now: float | None = None) -> bool:
         return False
     if now - _last_update_nudge < UPDATE_NUDGE_MIN_SECONDS:
         return False
-    if env_or_old("CANOPY_RUNNER_INSTANCE").strip():
+    if os.environ.get("CANOPY_RUNNER_INSTANCE", "").strip():
         # A runner sharing its machine has no sudo: root's updater timer (30 min)
         # installs for every runner on it.
         return False
@@ -1987,62 +1987,20 @@ def start_aws_device_key_enrollment(runner_id: str) -> threading.Thread:
 # runner, under ONE approval). A box with no `CANOPY_RUNNER_INSTANCE` in its environment — a
 # laptop-shaped single box, or a box built before several runners — behaves exactly
 # as before.
-#
-# Every on-box name below was renamed from "unit" to runner words. A box keeps
-# what it wrote under the old names until `update_runner.sh` moves them
-# (`migrate_old_names`), so each is read under its new name first, then its old one.
 
-#: {new name: the name it had before the rename}, for the environment and box.env.
-# Old name, read until every runner reports the new one: remove in the follow-up.
-OLD_NAMES = {
-    "CANOPY_RUNNER_INSTANCE": "CANOPY_UNIT",
-    "CANOPY_SERVES_KIND": "CANOPY_UNIT_KIND",
-    "CANOPY_SERVES_AGENT": "CANOPY_UNIT_AGENT",
-    "CANOPY_RUNNER_ETC": "CANOPY_UNIT_ETC",
-    "CANOPY_RUNNER_HOME_ROOT": "CANOPY_UNIT_HOME_ROOT",
-    "RUNNERS": "RUNNER_UNITS",
-}
-#: The list key runners.json, egress.json and pair-by-role used before `runners`.
-# Old name, read until every runner reports the new one: remove in the follow-up.
-OLD_RUNNERS_KEY = "units"
-
-
-def env_or_old(name: str, default: str = "", env=None) -> str:
-    """`name` from `env` (the process environment, or a parsed env file), else the
-    name it had before the rename (`OLD_NAMES`), else `default`.
-    Old name, read until every runner reports the new one: remove in the follow-up."""
-    env = os.environ if env is None else env
-    value = env.get(name)
-    if value is None and name in OLD_NAMES:
-        value = env.get(OLD_NAMES[name])
-    return default if value is None else value
-
-
-def runners_of(doc: dict) -> list:
-    """The runner list in runners.json / egress.json / a pair-by-role reply's `runners`
-    — under the old key in a file or reply from before the rename.
-    Old name, read until every runner reports the new one: remove in the follow-up."""
-    doc = doc if isinstance(doc, dict) else {}
-    return doc.get("runners") or doc.get(OLD_RUNNERS_KEY) or []
-
-
-RUNNER_INSTANCE = env_or_old("CANOPY_RUNNER_INSTANCE").strip()
-SERVES_KIND = env_or_old("CANOPY_SERVES_KIND").strip()
-SERVES_AGENT = env_or_old("CANOPY_SERVES_AGENT").strip()
+RUNNER_INSTANCE = os.environ.get("CANOPY_RUNNER_INSTANCE", "").strip()
+SERVES_KIND = os.environ.get("CANOPY_SERVES_KIND", "").strip()
+SERVES_AGENT = os.environ.get("CANOPY_SERVES_AGENT", "").strip()
 if RUNNER_INSTANCE and SERVES_KIND == "agent" and SERVES_AGENT:
     # A self-restriction canopy-web also records from the approved invitation:
     # this runner runs only its agent (`routing.serves_refusal`).
     RUNNER_CAPS["serves"] = {"kind": "agent", "slug": SERVES_AGENT}
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    RUNNER_CAPS["unit"] = RUNNER_CAPS["serves"]
-RUNNER_ETC = pathlib.Path(env_or_old("CANOPY_RUNNER_ETC", "/etc/canopy-runner"))
+RUNNER_ETC = pathlib.Path(os.environ.get("CANOPY_RUNNER_ETC", "/etc/canopy-runner"))
 RUNNERS_FILE = RUNNER_ETC / "runners.json"
-# Old name, read until every runner reports the new one: remove in the follow-up.
-OLD_RUNNERS_FILE = RUNNER_ETC / "units.json"
 BOX_ENV_FILE = RUNNER_ETC / "box.env"
 KMS_BROKER_SOCKET = os.environ.get("CANOPY_KMS_BROKER_SOCKET", "/run/canopy-kms/sock")
 TURN_ENV_BASE = pathlib.Path(os.environ.get("CANOPY_TURN_ENV_BASE", "/run/canopy"))
-RUNNER_HOME_ROOT = env_or_old("CANOPY_RUNNER_HOME_ROOT", "/home")
+RUNNER_HOME_ROOT = os.environ.get("CANOPY_RUNNER_HOME_ROOT", "/home")
 IMDS_V4, IMDS_V6 = "169.254.169.254", "fd00:ec2::254"
 #: `cu-<id>` must fit Linux's 32-character user names.
 _INSTANCE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,27}$")
@@ -2469,7 +2427,7 @@ def apply_egress(box: dict, runners: list[dict], *, boot: bool, run=subprocess.r
         if _install_unit_file("canopy-egress.service", run=run, systemd=systemd):
             run(["systemctl", "daemon-reload"], capture_output=True)
         run(["systemctl", "enable", "--now", "--no-block", "canopy-egress.service"], capture_output=True)
-        if runners_of(old_config) != config["runners"]:
+        if old_config.get("runners") != config["runners"]:
             run(["systemctl", "restart", "--no-block", "canopy-egress.service"], capture_output=True)
     # Rules after the proxy is asked up, and before any restarted runner starts
     # sending: a runner just locked never has a moment open.
@@ -2488,7 +2446,7 @@ def apply_egress(box: dict, runners: list[dict], *, boot: bool, run=subprocess.r
 def egress_sync_main() -> int:
     """`cloud_runner.py --egress-sync` (root, canopy-egress-sync.timer, every minute)."""
     box = read_env_file(BOX_ENV_FILE)
-    runners = runners_of(load_runners())
+    runners = load_runners().get("runners") or []
     if not runners:
         return 0
     apply_egress(box, runners, boot=False)
@@ -2578,7 +2536,7 @@ def egress_proxy_main(config_file: pathlib.Path | None = None) -> int:
 
     async def serve():
         servers = []
-        for runner in runners_of(doc):
+        for runner in doc.get("runners") or []:
             allow = pathlib.Path(runner["allow_file"])
             servers.append(await asyncio.start_server(
                 lambda r, w, _allow=allow: _egress_handle(r, w, _allow), "127.0.0.1", int(runner["port"])))
@@ -2601,7 +2559,7 @@ def setup_runners(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
 
     etc = etc or RUNNER_ETC
     uid_of = uid_of or (lambda user: pwd.getpwnam(user))
-    runners = parse_runners(env_or_old("RUNNERS", "", box), workspace=box.get("RUNNER_WORKSPACE", ""),
+    runners = parse_runners(box.get("RUNNERS", ""), workspace=box.get("RUNNER_WORKSPACE", ""),
                             box=box.get("RUNNER_NAME", ""))
     _mkdir_owned(etc, uid=0, gid=0, mode=0o755, chown=chown)
     for runner in runners:
@@ -2640,14 +2598,7 @@ def setup_runners(box: dict, *, run=subprocess.run, chown=os.chown, uid_of=None,
 
 
 def load_runners(path: pathlib.Path | None = None) -> dict:
-    if path is None:
-        path = RUNNERS_FILE
-        if not path.exists() and OLD_RUNNERS_FILE.exists():
-            path = OLD_RUNNERS_FILE  # Old name, read until every runner reports the new one: remove in the follow-up.
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError):
-        return {}
+    return _read_json(path or RUNNERS_FILE)
 
 
 def _role_name() -> str:
@@ -2725,23 +2676,19 @@ def pair_runners_payload(box: str, runners: list[dict], keys: dict, proof: str,
             caps["sessions"] = True
         if runner["kind"] == "agent":
             caps["serves"] = {"kind": "agent", "slug": runner["slug"]}
-            # Old name, read until every runner reports the new one: remove in the follow-up.
-            caps["unit"] = caps["serves"]
         entry = {"name": runner["name"], "public_jwk": k["public_jwk"], "host": runner["name"],
                  "capabilities": caps}
         if k.get("ecdh_public_jwk"):
             entry["ecdh_public_jwk"], entry["ecdh_store"] = k["ecdh_public_jwk"], "kms-broker"
         out.append(entry)
-    # `units` too, for a server from before the rename.
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    return {"name": box, "kind": "cloud", "proof": proof, "runners": out, OLD_RUNNERS_KEY: out}
+    return {"name": box, "kind": "cloud", "proof": proof, "runners": out}
 
 
 def write_runner_states(runners: list[dict], reply: dict, keys: dict, *, run=subprocess.run,
                       chown=os.chown) -> None:
     """Each runner's state file (owned by its user), and canopy's record that its key is
     registered (`canopy vault device --registered`), so its DPoP proofs are sent."""
-    ids, key_ids = runners_of(reply) or {}, reply.get("device_keys") or {}
+    ids, key_ids = reply.get("runners") or {}, reply.get("device_keys") or {}
     for runner in runners:
         rid = ids.get(runner["name"])
         if not rid:
@@ -2762,7 +2709,7 @@ def pair_runners_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=
     already paired with the keys they hold are left alone; a replaced instance (new
     keys, same role and names) re-attaches and keeps its runner ids."""
     doc = load_runners()
-    runners = runners_of(doc)
+    runners = doc.get("runners") or []
     box = doc.get("box") or RUNNER_NAME
     if not runners:
         _log("pair-runners: no runners.json — run --setup-runners first")
@@ -2780,10 +2727,10 @@ def pair_runners_main(*, run=subprocess.run, post=None, sleep=time.sleep, chown=
             _log("pair-runners: no instance role (this must run as root on the EC2 box)")
             return 1
         status, reply = post(url, pair_runners_payload(box, runners, keys, aws_proof(url, creds=creds)))
-        if status in (200, 201) and isinstance(reply, dict) and runners_of(reply):
+        if status in (200, 201) and isinstance(reply, dict) and reply.get("runners"):
             write_runner_states(runners, reply, keys, run=run, chown=chown)
             _log(f"pair-runners: {'paired' if status == 201 else 're-attached'} "
-                 + ", ".join(f"{n}={r}" for n, r in runners_of(reply).items()))
+                 + ", ".join(f"{n}={r}" for n, r in reply["runners"].items()))
             return 0
         if status == 202:
             _log(f"pair-runners: waiting for the invitation for {box} to be approved")
@@ -2989,7 +2936,7 @@ def write_box_env_from_legacy(*, runners_spec: str, legacy: pathlib.Path | None 
         return read_env_file(out)
     old = read_env_file(legacy or RUNNER_HOME / "runner.env")
     box = {k: old[k] for k in BOX_ENV_KEYS if k in old}
-    box["RUNNERS"] = runners_spec or env_or_old("RUNNERS", "", old)
+    box["RUNNERS"] = runners_spec or old.get("RUNNERS", "")
     out.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
@@ -3008,7 +2955,7 @@ def install_runners(*, run=subprocess.run, systemd: pathlib.Path | None = None,
     runner.env's non-secret keys and `$RUNNERS`, and the legacy fetch-env that
     re-wrote runner.env's secrets on every start is replaced."""
     systemd = systemd or SYSTEMD_DIR
-    write_box_env_from_legacy(runners_spec=env_or_old("RUNNERS"))
+    write_box_env_from_legacy(runners_spec=os.environ.get("RUNNERS", ""))
     try:
         if "runner.env" in fetch_env.read_text() and "box.env" not in fetch_env.read_text():
             fetch_env.write_text(_IN_PLACE_FETCH_ENV)
@@ -3050,7 +2997,7 @@ def install_runners(*, run=subprocess.run, systemd: pathlib.Path | None = None,
     install_broker(run=run)
     run(["systemctl", "daemon-reload"], capture_output=True)
     run(["systemctl", "enable", "--now", "canopy-runners.service"], capture_output=True)
-    runners = runners_of(load_runners())
+    runners = load_runners().get("runners") or []
     services = [f"canopy-runner@{u['id']}.service" for u in runners]
     run(["systemctl", "enable", "--now", "canopy-kms-broker.service", "canopy-pair.service",
          "canopy-runner-update.timer", "canopy-egress-sync.timer", *services], capture_output=True)
@@ -3086,7 +3033,7 @@ def fleet_ready_main(*, run=subprocess.run, imds=None, boot_time=None) -> int:
     if not group or not hook or FLEET_READY_DONE.exists():
         return 0
     boot = _boot_time() if boot_time is None else boot_time
-    runners = runners_of(load_runners())
+    runners = load_runners().get("runners") or []
     if not runners:
         return 0
     for u in runners:
@@ -3279,9 +3226,7 @@ def secrets_off_disk() -> bool:
         _set_check("secrets", "warn", "RUNNER_SECRET_FILES=1: agent secrets are kept in "
                    "~/.<agent>/.env files on purpose")
         return False
-    if choice not in ("0", "false", "no") and not (RUNNER_INSTANCE or RUNNERS_FILE.exists()
-                                                        # Old name, read until every runner reports the new one: remove in the follow-up.
-                                                        or OLD_RUNNERS_FILE.exists()):
+    if choice not in ("0", "false", "no") and not (RUNNER_INSTANCE or RUNNERS_FILE.exists()):
         _set_check("secrets", "ok", "agent secrets are in ~/.<agent>/.env files (a box without "
                    "several runners; RUNNER_SECRET_FILES=0 moves them off disk)")
         return False
@@ -12185,13 +12130,6 @@ def _finish_stop(*, drain_seconds: float | None = None) -> None:
             _log(f"sensitive-data mode: could not forget kept conversations at shutdown ({exc})")
 
 
-#: The flags root's steps had before the rename: a box's installed systemd units call them
-#: until `update_runner.sh` rewrites those units (`migrate_old_names`).
-# Old name, read until every runner reports the new one: remove in the follow-up.
-OLD_FLAGS = {"--install-units": "--install-runners", "--setup-units": "--setup-runners",
-             "--pair-units": "--pair-runners"}
-
-
 def _runners_cli(argv: list[str]) -> int:
     """Root's box-wide steps for a machine of several runners (systemd runs them; see runner.cfn.yaml):
     `--install-runners` (the systemd units, once — cloud-init, or an operator moving a
@@ -12243,9 +12181,8 @@ if __name__ == "__main__":
             print("--fleet-ready runs as root", file=sys.stderr)
             sys.exit(2)
         sys.exit(fleet_ready_main())
-    _step = OLD_FLAGS.get(sys.argv[1], sys.argv[1]) if len(sys.argv) > 1 else ""
-    if _step in ("--install-runners", "--setup-runners", "--pair-runners"):
-        sys.exit(_runners_cli([_step, *sys.argv[2:]]))
+    if sys.argv[1:2] in (["--install-runners"], ["--setup-runners"], ["--pair-runners"]):
+        sys.exit(_runners_cli(sys.argv[1:]))
     signal.signal(signal.SIGTERM, _handle_stop)
     signal.signal(signal.SIGINT, _handle_stop)
     try:

@@ -94,17 +94,7 @@ BUSY_MAX_AGE=120
 # restart of every `canopy-runner@*`. The runner bytes in /opt/canopy-runner and
 # the clone in /opt/canopy-web are root's there, so no runner can rewrite the code
 # the others run.
-# A box not yet moved to the new names (`migrate_old_names`) has units.json beside where
-# runners.json goes, and its canopy-runner-update.service names that as UNITS_FILE.
-# Old name, read until every runner reports the new one: remove in the follow-up.
-if [ -z "${RUNNERS_FILE:-}" ] && [ -n "${UNITS_FILE:-}" ]; then
-  RUNNERS_FILE="$(dirname "$UNITS_FILE")/runners.json"
-fi
 RUNNERS_FILE="${RUNNERS_FILE:-/etc/canopy-runner/runners.json}"
-OLD_RUNNERS_FILE="$(dirname "$RUNNERS_FILE")/units.json"
-if [ ! -r "$RUNNERS_FILE" ] && [ -r "$OLD_RUNNERS_FILE" ]; then
-  RUNNERS_FILE="$OLD_RUNNERS_FILE"  # Old name, read until every runner reports the new one: remove in the follow-up.
-fi
 RUNNERS_MODE=0
 if [ -r "$RUNNERS_FILE" ]; then
   RUNNERS_MODE=1
@@ -113,8 +103,6 @@ if [ -r "$RUNNERS_FILE" ]; then
   [ -n "$RESTART_GIVEN" ] || RESTART_CMD="systemctl restart"
 fi
 SYSTEMCTL="${SYSTEMCTL:-systemctl}"
-SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
-FETCH_ENV="${FETCH_ENV:-/usr/local/bin/canopy-fetch-env}"
 # `runner_rows` -> "<id> <user> <home>" per runner, from runners.json.
 runner_rows() {
   python3 -c '
@@ -123,8 +111,7 @@ try:
     doc = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
-# Old name, read until every runner reports the new one: remove in the follow-up.
-for r in doc.get("runners") or doc.get("units") or []:
+for r in doc.get("runners") or []:
     if r.get("id") and r.get("user") and r.get("home"):
         print(r["id"], r["user"], r["home"])
 ' "$RUNNERS_FILE" 2>/dev/null
@@ -375,86 +362,12 @@ PY
   # several runners this runs as root and restarts every runner (and the broker) at once.
   # Such a box re-runs root's setup first (users, env files, the IMDS rule, the
   # egress lock and its sync timer), so what the new code sets up is in place before
-  # its runners start. Its runners Require it, so they restart with it. A box still
-  # on the names from before the rename moves to the new ones first (`migrate_old_names`).
+  # its runners start. Its runners Require it, so they restart with it.
   if [ "$RUNNERS_MODE" = "1" ]; then
-    migrate_old_names
-    local setup="canopy-runners.service"
-    if [ ! -f "$SYSTEMD_DIR/$setup" ] && [ -f "$SYSTEMD_DIR/canopy-units.service" ]; then
-      setup="canopy-units.service"  # Old name, read until every runner reports the new one: remove in the follow-up.
-    fi
-    $SYSTEMCTL restart "$setup" || log "$setup did not restart cleanly"
+    $SYSTEMCTL restart canopy-runners.service || log "canopy-runners.service did not restart cleanly"
   fi
   # shellcheck disable=SC2086 # SERVICE is one or more unit patterns
   $RESTART_CMD $SERVICE
-}
-
-# --- the names from before the rename ----------------------------------------
-#
-# A box of several runners was set up under the word "unit": /etc/canopy-runner/
-# units.json, `CANOPY_UNIT*` in each runner's env file, `RUNNER_UNITS` in box.env AND in
-# canopy-fetch-env (cloud-init's, which re-writes box.env on every start), and
-# canopy-units.service, whose units call `--setup-units` / `--pair-units` and pass the
-# updater `UNITS_FILE`. They move here, at an install, right before the restart that
-# install does anyway, and only once the INSTALLED runner reads the new names (it
-# reads the old ones too, so nothing breaks either way round). Idempotent: on a box
-# already moved, or one never set up the old way, it changes nothing.
-# Old name, read until every runner reports the new one: remove in the follow-up.
-migrate_old_names() {
-  [ "$RUNNERS_MODE" = "1" ] || return 0
-  grep -qF -- '--setup-runners' "$TARGET" 2>/dev/null || return 0
-  local etc old new f
-  etc="$(dirname "$RUNNERS_FILE")"
-  old="$etc/units.json"
-  new="$etc/runners.json"
-  if [ -f "$old" ]; then
-    if [ -e "$new" ]; then rm -f "$old"; else mv "$old" "$new"; fi
-    log "moved $old to $new"
-  fi
-  [ -r "$new" ] && RUNNERS_FILE="$new"
-  # Its list key too: {"units": [...]} becomes {"runners": [...]}.
-  if [ -f "$new" ] && grep -q '"units"' "$new"; then
-    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d.setdefault("runners", d.pop("units")); json.dump(d, open(p, "w"))' "$new" \
-      && log "renamed the list key in $new"
-  fi
-  # The comment an in-place move left at the top of canopy-fetch-env.
-  if [ -f "$FETCH_ENV" ] && grep -q -- '--install-units' "$FETCH_ENV"; then
-    sed -i.old-names -E -e 's/--install-units/--install-runners/g' \
-      -e 's/moved to isolation$/moved to several/' -e 's/^# units in place:/# runners in place:/' -e 's/A box of units reads its/Such a machine reads its/' "$FETCH_ENV" \
-      && rm -f "$FETCH_ENV.old-names"
-  fi
-  for f in "$etc"/*.env "$FETCH_ENV"; do
-    [ -f "$f" ] || continue
-    grep -qE '^[[:space:]]*(CANOPY_UNIT|CANOPY_UNIT_KIND|CANOPY_UNIT_AGENT|CANOPY_UNIT_ETC|CANOPY_UNIT_HOME_ROOT|RUNNER_UNITS)=' "$f" || continue
-    sed -i.old-names -E \
-      -e 's/^([[:space:]]*)CANOPY_UNIT=/\1CANOPY_RUNNER_INSTANCE=/' \
-      -e 's/^([[:space:]]*)CANOPY_UNIT_KIND=/\1CANOPY_SERVES_KIND=/' \
-      -e 's/^([[:space:]]*)CANOPY_UNIT_AGENT=/\1CANOPY_SERVES_AGENT=/' \
-      -e 's/^([[:space:]]*)CANOPY_UNIT_ETC=/\1CANOPY_RUNNER_ETC=/' \
-      -e 's/^([[:space:]]*)CANOPY_UNIT_HOME_ROOT=/\1CANOPY_RUNNER_HOME_ROOT=/' \
-      -e 's/^([[:space:]]*)RUNNER_UNITS=/\1RUNNERS=/' "$f" \
-      && rm -f "$f.old-names" && log "renamed the old variable names in $f"
-  done
-  [ -f "$SYSTEMD_DIR/canopy-units.service" ] || return 0
-  for f in "$SYSTEMD_DIR"/canopy-*.service; do
-    [ -f "$f" ] || continue
-    sed -i.old-names -E \
-      -e 's/canopy-units\.service/canopy-runners.service/g' \
-      -e 's/--setup-units/--setup-runners/g; s/--pair-units/--pair-runners/g; s/--install-units/--install-runners/g' \
-      -e 's#UNITS_FILE=([^[:space:]]*/)units\.json#RUNNERS_FILE=\1runners.json#' \
-      -e "s/^Description=Canopy egress proxy: the only way out for an isolation unit when/Description=Canopy egress proxy: the only way out for a runner when/" \
-      -e "s/^Description=Canopy KMS broker: each unit's zero-knowledge ECDH key, for that unit only/Description=Canopy KMS broker: each runner's zero-knowledge ECDH key, for that runner only/" \
-      -e "s/^Description=Canopy pairing: every isolation unit on this box, one approval/Description=Canopy pairing: every runner on this machine, one approval/" \
-      -e "s/^Description=Canopy cloud runner auto-update \(every isolation unit\)/Description=Canopy cloud runner auto-update (every runner on this machine)/" \
-      -e "s/^Description=Canopy runner, isolation unit %i/Description=Canopy runner for %i/" \
-      -e "s/^Description=Canopy isolation units: /Description=Canopy runners: /" "$f" \
-      && rm -f "$f.old-names"
-  done
-  $SYSTEMCTL disable canopy-units.service >/dev/null 2>&1 || true
-  mv "$SYSTEMD_DIR/canopy-units.service" "$SYSTEMD_DIR/canopy-runners.service"
-  $SYSTEMCTL daemon-reload || log "daemon-reload failed after renaming canopy-units.service"
-  $SYSTEMCTL enable canopy-runners.service >/dev/null 2>&1 || log "could not enable canopy-runners.service"
-  log "canopy-units.service is canopy-runners.service now"
 }
 
 install_broker_from_git() {  # <ref> — the runners' KMS broker, beside the runner it serves
@@ -757,10 +670,6 @@ r="$(tr -d "[:space:]" < "$HOME/.canopy-runner/turn-env-root" 2>/dev/null)"
 [ -n "$r" ] && export CANOPY_TURN_ENV_ROOT="$r"
 exec bash "$0" --credentials-only'
 if [ "$RUNNERS_MODE" = "1" ]; then
-  # A box that already runs code reading the new names but was never moved to them (the
-  # install that brought that code ran the updater from before the rename) moves here,
-  # on its next check: no restart needed, its runners read either name.
-  migrate_old_names
   # Each runner refreshes as ITSELF — its user, its env file, its own runner token —
   # from its own runner clone. Root never runs an agent's prepare.
   if [ "$V" = "busy" ]; then

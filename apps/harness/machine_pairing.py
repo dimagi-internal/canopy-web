@@ -37,7 +37,7 @@ from apps.workspaces import permissions as perms
 
 from . import aws_iam_proof, device_keys
 from .api_device_keys import ECDH_STORES
-from .models import SERVES, Runner, RunnerAccessToken, RunnerDeviceKey, RunnerInvitation, with_serves_key
+from .models import SERVES, Runner, RunnerAccessToken, RunnerDeviceKey, RunnerInvitation
 
 #: Where such a runner's ECDH key lives: the machine's root-only KMS broker (canopy's
 #: `kms-broker` store). Display only, like every `ecdh_store`.
@@ -218,7 +218,7 @@ def pair_runners(request: HttpRequest, payload, role_arn: str, *, refuse, out_cl
                     caps[SERVES] = prior
                 Runner.objects.filter(pk=runner.pk).update(
                     host=u.host or runner.host, machine_id=machine,
-                    capabilities={**with_serves_key(runner.capabilities), **caps})
+                    capabilities={**runner.capabilities, **caps})
             if invitation is not None:
                 invited = {x["name"]: x for x in invited_runners(invitation)}
                 now = timezone.now()

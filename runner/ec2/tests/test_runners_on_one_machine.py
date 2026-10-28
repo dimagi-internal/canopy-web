@@ -90,20 +90,6 @@ def test_an_agent_runner_declares_what_it_serves(load_cloud_runner, monkeypatch)
     monkeypatch.setenv("CANOPY_SERVES_AGENT", "eva")
     cr = load_cloud_runner()
     assert cr.RUNNER_CAPS["serves"] == {"kind": "agent", "slug": "eva"}
-    # The same under the old key, for a canopy-web from before the rename (remove in the follow-up).
-    assert cr.RUNNER_CAPS["unit"] == cr.RUNNER_CAPS["serves"]
-
-
-def test_a_runner_still_reads_the_environment_it_was_given_before_the_rename(load_cloud_runner, monkeypatch):
-    """Its env file says CANOPY_UNIT* until update_runner.sh moves it (remove in the follow-up)."""
-    for new in ("CANOPY_RUNNER_INSTANCE", "CANOPY_SERVES_KIND", "CANOPY_SERVES_AGENT"):
-        monkeypatch.delenv(new, raising=False)
-    monkeypatch.setenv("CANOPY_UNIT", "agent-eva")
-    monkeypatch.setenv("CANOPY_UNIT_KIND", "agent")
-    monkeypatch.setenv("CANOPY_UNIT_AGENT", "eva")
-    cr = load_cloud_runner()
-    assert cr.RUNNER_INSTANCE == "agent-eva"
-    assert cr.RUNNER_CAPS["serves"] == {"kind": "agent", "slug": "eva"}
 
 
 # ---- root's setup -----------------------------------------------------------------
@@ -217,10 +203,8 @@ def test_the_pair_runners_payload_is_one_proof_and_every_runner(cloud_runner):
     first, second, third = body["runners"]
     assert first["public_jwk"] == _jwk(0) and first["ecdh_store"] == "kms-broker"
     assert "ecdh_public_jwk" not in second
-    assert third["capabilities"] == {"sessions": True, "serves": {"kind": "agent", "slug": "eva"},
-                                     "unit": {"kind": "agent", "slug": "eva"}}
-    # The list again under the old key, for a canopy-web from before the rename (remove in the follow-up).
-    assert body["units"] == body["runners"]
+    assert third["capabilities"] == {"sessions": True, "serves": {"kind": "agent", "slug": "eva"}}
+    assert set(body) == {"name", "kind", "proof", "runners"}
 
 
 @pytest.fixture
@@ -293,42 +277,6 @@ def test_a_replaced_instance_pairs_again_with_its_new_keys(cloud_runner, paired_
     assert cloud_runner.pair_runners_main(run=paired_box.run, post=lambda u, b: (sent.append(b), (200, reply))[1],
                                         sleep=lambda s: None, chown=paired_box.host.chown) == 0
     assert len(sent) == 1
-
-
-# ---- the names from before the rename (remove in the follow-up) -----------------------
-
-def test_a_canopy_web_from_before_the_rename_answers_under_units(cloud_runner, paired_box):
-    reply = {"status": "paired", "units": {u["name"]: f"rid-{u['id']}" for u in paired_box.runners}}
-    assert cloud_runner.pair_runners_main(run=paired_box.run, post=lambda u, b: (201, reply),
-                                          sleep=lambda s: None, chown=paired_box.host.chown) == 0
-    for runner in paired_box.runners:
-        state = json.loads((pathlib.Path(runner["home"]) / ".canopy-cloud-runner.json").read_text())
-        assert state["runner_id"] == f"rid-{runner['id']}"
-
-
-def test_a_box_not_yet_moved_reads_units_json_and_runner_units(cloud_runner, host, monkeypatch):
-    """Until update_runner.sh moves it, a box has units.json (its list under `units`) and
-    box.env's RUNNER_UNITS — the runner reads both."""
-    runners = _setup(cloud_runner, host, {**{k: v for k, v in BOX.items() if k != "RUNNERS"},
-                                          "RUNNER_UNITS": "tree:dimagi,agent:eva"})
-    assert [r["id"] for r in runners] == ["dimagi", "agent-eva"]
-    doc = json.loads((host.etc / "runners.json").read_text())
-    (host.etc / "runners.json").unlink()
-    (host.etc / "units.json").write_text(json.dumps({**doc, "units": doc.pop("runners")}))
-    monkeypatch.setattr(cloud_runner, "RUNNERS_FILE", host.etc / "runners.json")
-    monkeypatch.setattr(cloud_runner, "OLD_RUNNERS_FILE", host.etc / "units.json")
-    assert [r["id"] for r in cloud_runner.runners_of(cloud_runner.load_runners())] == ["dimagi", "agent-eva"]
-    assert cloud_runner.env_or_old("RUNNERS", "", {"RUNNER_UNITS": "tree:x"}) == "tree:x"
-    assert cloud_runner.env_or_old("RUNNERS", "", {"RUNNERS": "tree:y", "RUNNER_UNITS": "tree:x"}) == "tree:y"
-
-
-def test_root_still_answers_to_the_flags_its_systemd_units_were_given(cloud_runner):
-    """A box's installed canopy-units.service / canopy-pair.service call `--setup-units` /
-    `--pair-units` until update_runner.sh rewrites them."""
-    assert cloud_runner.OLD_FLAGS == {"--install-units": "--install-runners", "--setup-units": "--setup-runners",
-                                      "--pair-units": "--pair-runners"}
-    src = pathlib.Path(cloud_runner.__file__).read_text()
-    assert "_step = OLD_FLAGS.get(sys.argv[1], sys.argv[1])" in src
 
 
 # ---- adopting the live box (Review Focus 1) ------------------------------------------
