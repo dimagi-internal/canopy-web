@@ -65,9 +65,9 @@ CATALOG: tuple[Model, ...] = (
     Model("saved_views", "/views/", "Saved task views (the viewer's own and the shared ones)."),
     Model("checkins", "/checkins/", "Project check-ins."),
     # Agents
-    Model("my_delegated_credentials", "/me/delegated-credentials/",
-          "The VIEWER's own accounts delegated to agents (agent, provider, account, in_force) — never "
-          "the value. Lets a page say whether the viewer has connected, e.g. their Gmail to an agent."),
+    Model("my_connected_accounts", "/me/connected-accounts/",
+          "The VIEWER's own accounts that agents can use: agent, provider, account, in_force — "
+          "nothing about the credential. Lets a page say whether they connected, e.g. Gmail to Bailey."),
     Model("agents", "/agent-roster/", "Every agent in the workspace, with what it is doing."),
     Model("agent", "/agents/{slug}/", "One agent, with counts."),
     Model("agent_turns", "/agents/{slug}/turns/", "An agent's recent turns.", ("limit",)),

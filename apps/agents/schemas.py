@@ -2162,6 +2162,18 @@ class MyDelegatedCredentialOut(StrictModel):
     updated_at: dt.datetime | None = None
 
 
+class MyConnectedAccountOut(StrictModel):
+    """Which of your own accounts an agent can use — the account and nothing about the
+    credential (no machines, checks or value). What a page shows as "Connected"."""
+
+    agent: str
+    provider: str = ""
+    #: The external account: an email for Google, a login for GitHub.
+    account: str = ""
+    #: You are still one of the agent's admins, so turns use it.
+    in_force: bool = True
+
+
 class DelegatedWaitingOut(StrictModel):
     """A machine that runs the agent and may hold a delegated credential, but it was not
     sealed to it yet: a machine that holds it re-seals it (`…/vault/delegated/{name}`)."""

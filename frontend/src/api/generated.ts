@@ -1882,6 +1882,28 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/me/connected-accounts/": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Which of my own accounts agents can use
+         * @description The accounts you connected to agents — agent, provider, account, in force — and
+         *     nothing else about the credential. Safe to show on a page (a dynamic view reads it
+         *     to say "Connected"); the full record is GET /me/delegated-credentials/.
+         */
+        readonly get: operations["list_my_connected_accounts"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/me/delegated-credentials/{credential_id}": {
         readonly parameters: {
             readonly query?: never;
@@ -19752,6 +19774,30 @@ export interface components {
             readonly in_force: boolean;
             /** Updated At */
             readonly updated_at?: string | null;
+        };
+        /**
+         * MyConnectedAccountOut
+         * @description Which of your own accounts an agent can use — the account and nothing about the
+         *     credential (no machines, checks or value). What a page shows as "Connected".
+         */
+        readonly MyConnectedAccountOut: {
+            /** Agent */
+            readonly agent: string;
+            /**
+             * Provider
+             * @default
+             */
+            readonly provider: string;
+            /**
+             * Account
+             * @default
+             */
+            readonly account: string;
+            /**
+             * In Force
+             * @default true
+             */
+            readonly in_force: boolean;
         };
         /** ContactAgentOut */
         readonly ContactAgentOut: {
@@ -45156,6 +45202,26 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": readonly components["schemas"]["MyDelegatedCredentialOut"][];
+                };
+            };
+        };
+    };
+    readonly list_my_connected_accounts: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": readonly components["schemas"]["MyConnectedAccountOut"][];
                 };
             };
         };
