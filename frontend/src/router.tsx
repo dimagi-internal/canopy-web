@@ -90,6 +90,11 @@ const lazySection: typeof lazy = (load) => lazy(lazyRoute(load))
 // the active section's bundle is pulled in.
 const DynamicViewsPage = lazySection(() => import('./pages/DynamicViewsPage'))
 const DynamicViewPage = lazySection(() => import('./pages/DynamicViewPage'))
+const WorkspaceAppsPage = lazySection(() => import('./pages/WorkspaceAppsPage'))
+const WorkspaceAppPage = lazySection(() => import('./pages/WorkspaceAppPage'))
+const WorkspaceAppCustomizePage = lazySection(() => import('./pages/WorkspaceAppCustomizePage'))
+const PublicAppPage = lazySection(() => import('./pages/PublicAppPage'))
+const LinkAppPage = lazySection(() => import('./pages/LinkAppPage'))
 const NewAgentPage = lazySection(() =>
   import('./pages/agents/NewAgentPage').then((m) => ({ default: m.NewAgentPage })),
 )
@@ -396,6 +401,10 @@ export const routeTable: RouteObject[] = [
       // AI-generated screens over the workspace's data, each drawn in a sandbox.
       { path: '/w/:workspace/views', element: <LazySection><DynamicViewsPage /></LazySection> },
       { path: '/w/:workspace/views/:id', element: <LazySection><DynamicViewPage /></LazySection> },
+      // Self-contained apps the workspace runs (apps/workspace_apps), drawn in the same sandbox.
+      { path: '/w/:workspace/apps', element: <LazySection><WorkspaceAppsPage /></LazySection> },
+      { path: '/w/:workspace/apps/:appKey/customize', element: <LazySection><WorkspaceAppCustomizePage /></LazySection> },
+      { path: '/w/:workspace/apps/:appKey/:page?', element: <LazySection><WorkspaceAppPage /></LazySection> },
       { path: '/w/:workspace/agents', element: <AgentsPage /> },
       // Static, so it outranks `agents/:slug`; the server reserves the slug `new`.
       { path: '/w/:workspace/agents/new', element: <LazySection><NewAgentPage /></LazySection> },
@@ -578,6 +587,10 @@ export const routeTable: RouteObject[] = [
       // One narrative, scene by scene, for an outsider. `?b=<board>` carries the
       // storyboard whose token gates it — the narrative itself has no token.
       { path: '/w/:workspace/narrative/:slug', element: <NarrativeReviewPage /> },
+      // A workspace app's PUBLIC pages (e.g. a careers page) — anyone, no login.
+      // The public-apps API 404s unless the app is switched on AND made public.
+      { path: '/w/:workspace/app/:appKey/l/:token', element: <LazySection><LinkAppPage /></LazySection> },
+      { path: '/w/:workspace/app/:appKey/:page?', element: <LazySection><PublicAppPage /></LazySection> },
       // The public explainer — anyone, no login. Mounted here (not AppLayout)
       // for the same reason as its siblings above.
       { path: '/about', element: <AboutPage /> },

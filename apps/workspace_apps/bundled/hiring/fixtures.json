@@ -1,0 +1,60 @@
+{
+  "job": [
+    {"_as": "job_eng", "title": "Senior Software Engineer (sample)", "department": "Engineering", "office": "Cambridge", "location": "Cambridge, MA", "country": "United States", "workplace": "Hybrid", "status": "open", "opened_on": "2026-09-01", "requisition_id": "ENG-101", "pay_min": 140000, "pay_max": 175000, "pay_currency": "USD", "pay_period": "YEAR", "hiring_manager": "maria.manager@example.org", "recruiter": "rita.recruiter@example.org", "hiring_team": "ivan.interviewer@example.org, ana.interviewer@example.org", "description": "A sample job for testing. Build and ship features across our Django + React stack."},
+    {"_as": "job_pm", "title": "Product Manager (sample)", "department": "Product", "office": "Remote", "location": "Remote", "country": "Kenya, India, South Africa", "workplace": "Remote", "status": "open", "opened_on": "2026-09-15", "requisition_id": "PROD-7", "pay_min": 3000, "pay_max": 4200, "pay_currency": "USD", "pay_period": "MONTH", "hiring_manager": "maria.manager@example.org", "description": "A sample job for testing."},
+    {"_as": "job_closed", "title": "Data Analyst (sample, closed)", "department": "Data", "location": "Remote", "status": "closed", "close_reason": "Hired", "opened_on": "2026-06-01", "closed_on": "2026-08-20", "pay_min": 70000, "pay_max": 90000, "description": "A closed sample job."},
+    {"_as": "job_draft", "title": "Head of Partnerships (sample draft)", "department": "Partnerships", "status": "draft", "description": "A draft sample job.", "pay_min": 150000, "pay_max": 190000},
+    {"_as": "job_confidential", "title": "Chief Financial Officer (sample, confidential)", "department": "Finance", "status": "open", "confidential": true, "description": "A confidential sample job.", "pay_min": 220000, "pay_max": 260000},
+    {"_as": "job_template", "title": "Template: Software Engineer", "department": "Engineering", "status": "draft", "is_template": true, "description": "Start engineering jobs from this template: it carries the interview plan."}
+  ],
+  "opening": [
+    {"_as": "open_eng_1", "job": "@job_eng", "opening_id": "ENG-101-1", "status": "open", "opened_on": "2026-09-01"},
+    {"_as": "open_pm_1", "job": "@job_pm", "opening_id": "PROD-7-1", "status": "open", "opened_on": "2026-09-15"}
+  ],
+  "pool": [
+    {"_as": "pool_eng", "name": "Future engineers (sample)", "description": "Strong engineers we'd like to talk to again."}
+  ],
+  "application": [
+    {"_as": "cand_new", "job": "@job_eng", "name": "Sam Sample", "email": "sam.sample@example.org", "stage": "Applied", "status": "active", "region": "US", "country": "United States", "source": "Careers page", "applied_on": "2026-10-20", "cover_letter": "A sample application."},
+    {"_as": "cand_new2", "job": "@job_eng", "name": "Lena Placeholder", "email": "lena.placeholder@example.org", "stage": "Applied", "status": "active", "region": "EU/UK", "country": "Germany", "source": "LinkedIn", "applied_on": "2026-10-21"},
+    {"_as": "cand_screen", "job": "@job_eng", "name": "Ria Example", "email": "ria.example@example.org", "stage": "Screen", "status": "active", "region": "India", "country": "India", "source": "Referral", "referrer": "rita.recruiter@example.org", "applied_on": "2026-10-02"},
+    {"_as": "cand_interview", "job": "@job_eng", "name": "Tomás Test", "email": "tomas.test@example.org", "stage": "Interview", "status": "active", "region": "US", "source": "LinkedIn", "applied_on": "2026-09-20"},
+    {"_as": "cand_offer", "job": "@job_pm", "name": "Noor Demo", "email": "noor.demo@example.org", "stage": "Offer", "status": "active", "region": "Kenya", "country": "Kenya", "source": "Careers page", "applied_on": "2026-09-18"},
+    {"_as": "cand_rejected", "job": "@job_closed", "name": "Old Reject", "email": "old.reject@example.org", "stage": "Rejected", "status": "rejected", "region": "EU/UK", "rejection_reason": "Skills mismatch", "applied_on": "2026-06-10", "rejected_on": "2026-06-20"},
+    {"_as": "cand_prospect", "name": "Pat Prospect", "email": "pat.prospect@example.org", "kind": "prospect", "pool": "@pool_eng", "status": "active", "stage": "Applied", "source": "Sourced", "consent_pool": true}
+  ],
+  "stage_change": [
+    {"application": "@cand_screen", "job": "@job_eng", "to_stage": "Applied", "day": "2026-10-02", "at": "2026-10-02T10:00:00+00:00"},
+    {"application": "@cand_screen", "job": "@job_eng", "to_stage": "Screen", "day": "2026-10-06", "at": "2026-10-06T10:00:00+00:00"},
+    {"application": "@cand_interview", "job": "@job_eng", "to_stage": "Applied", "day": "2026-09-20", "at": "2026-09-20T10:00:00+00:00"},
+    {"application": "@cand_interview", "job": "@job_eng", "to_stage": "Screen", "day": "2026-09-25", "at": "2026-09-25T10:00:00+00:00"},
+    {"application": "@cand_interview", "job": "@job_eng", "to_stage": "Interview", "day": "2026-10-01", "at": "2026-10-01T10:00:00+00:00"},
+    {"application": "@cand_offer", "job": "@job_pm", "to_stage": "Applied", "day": "2026-09-18", "at": "2026-09-18T10:00:00+00:00"},
+    {"application": "@cand_offer", "job": "@job_pm", "to_stage": "Offer", "day": "2026-10-12", "at": "2026-10-12T10:00:00+00:00"}
+  ],
+  "interview_step": [
+    {"_as": "step_screen", "job": "@job_eng", "position": 1, "name": "Recruiter screen", "stage": "Screen", "duration": 30, "prep": "Check motivation, location and work authorization, and pay expectations against the posted range.", "questions": "What drew you to Dimagi?\nWhat are you looking for in your next role?", "attributes": "Motivation\nCommunication"},
+    {"_as": "step_tech", "job": "@job_eng", "position": 2, "name": "Technical interview", "stage": "Interview", "duration": 60, "interviewers": "ivan.interviewer@example.org", "prep": "Work through a small design problem together.", "questions": "Walk me through a system you designed.\nHow do you test a change before shipping it?", "attributes": "Problem solving\nCode quality\nCollaboration"},
+    {"job": "@job_template", "position": 1, "name": "Recruiter screen", "stage": "Screen", "duration": 30, "attributes": "Motivation\nCommunication"},
+    {"job": "@job_template", "position": 2, "name": "Technical interview", "stage": "Interview", "duration": 60, "attributes": "Problem solving\nCode quality\nCollaboration"}
+  ],
+  "interview": [
+    {"_as": "int_tech", "application": "@cand_interview", "job": "@job_eng", "step": "@step_tech", "kind": "Technical", "date": "2026-11-03", "time": "14:00", "duration": 60, "interviewers": "ivan.interviewer@example.org", "status": "Scheduled", "meeting_link": "https://meet.google.com/sample-link"},
+    {"_as": "int_requested", "application": "@cand_screen", "job": "@job_eng", "step": "@step_screen", "kind": "Phone screen", "duration": 30, "slot_options": "2026-11-04 10:00\n2026-11-04 15:00\n2026-11-05 11:30", "interviewers": "rita.recruiter@example.org", "status": "Requested"}
+  ],
+  "scorecard": [
+    {"application": "@cand_interview", "interview": "@int_tech", "interviewer": "ivan.interviewer@example.org", "rating": "Yes", "attribute_ratings": "Problem solving: Yes\nCode quality: Strong yes\nCollaboration: Mixed", "key_takeaways": "Clear thinker; would like a second opinion on collaboration."}
+  ],
+  "offer": [
+    {"_as": "offer_noor", "application": "@cand_offer", "job": "@job_pm", "opening": "@open_pm_1", "title": "Product Manager", "start_date": "2026-12-01", "salary": 3800, "currency": "USD", "pay_period": "month", "employment_type": "Through an employer of record", "status": "draft", "recruiter": "rita.recruiter@example.org"}
+  ],
+  "approval": [
+    {"_as": "first_job_approval", "kind": "Job", "job": "@job_draft", "approver": "cfo.approver@example.org", "status": "pending"},
+    {"_as": "offer_approval", "kind": "Offer", "job": "@job_pm", "offer": "@offer_noor", "approver": "maria.manager@example.org", "status": "pending"}
+  ],
+  "email_template": [
+    {"name": "Rejection after screen", "kind": "Rejection", "subject": "Your application for {{job.title}}", "body": "Hi {{name}},\n\nThank you for speaking with us about {{job.title}}. We've decided to move forward with other candidates whose experience more closely matches what we need right now.\n\nThe {{settings.company_name}} hiring team"},
+    {"name": "Rejection before interview", "kind": "Rejection", "subject": "Your application for {{job.title}}", "body": "Hi {{name}},\n\nThank you for applying for {{job.title}}. We won't be moving forward with your application this time, but we appreciate your interest in {{settings.company_name}}.\n\nThe {{settings.company_name}} hiring team"}
+  ],
+  "referral": []
+}

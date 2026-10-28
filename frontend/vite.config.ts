@@ -268,6 +268,9 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // The repo's bundled workspace apps (pages are JSX the server serves) are read
+    // by src/workspaceApps/bundledPages.test.tsx through Vite; '.' keeps the default.
+    fs: { allow: ['.', path.resolve(__dirname, '../apps/workspace_apps/bundled')] },
     proxy: {
       '/api': API_ORIGIN,
       // WebSocket control channels (realtime supervisor/turn tails, chat). Without

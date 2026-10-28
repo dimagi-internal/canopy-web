@@ -6,13 +6,17 @@ import {
   CHANNEL,
   isMessage,
   type AgentTaskStatus,
+  type AppContext,
+  type AppOp,
   type FrameMessage,
   type HostMessage,
   type ReadRequest,
   type ViewScope,
 } from '../protocol'
-import { compile, type ViewComponent } from './compile'
-import { NavigateContext } from './kit'
+import { compile, compileFill, type ViewComponent } from './compile'
+import { AppKitContext, NavigateContext, setFillCompiler, type AppApi, type FieldSpec } from './kit'
+
+setFillCompiler(compileFill as Parameters<typeof setFillCompiler>[0])
 
 /**
  * Entry point of the frame a dynamic view runs in (`/dynamic-views/frame/`,
@@ -82,6 +86,40 @@ const canopy = {
   },
 }
 
+/** The `app` prop of a workspace app's page: its context plus the only calls it
+ * can make, each a message the page answers by the app's own rules. */
+function appApi(ctx: AppContext): AppApi {
+  const call = (request: AppOp) => ask((id) => ({ channel: CHANNEL, type: 'app', id, request }))
+  const model = ctx.dataModel as Record<string, { label?: string; fields?: Record<string, FieldSpec> }>
+  const field = (collection: string, name: string): FieldSpec | undefined => model[collection]?.fields?.[name]
+  return {
+    ...ctx,
+    query: (collection, opts = {}) => call({ op: 'query', collection, ...opts }) as Promise<Record<string, unknown>[]>,
+    act: (action, opts = {}) => call({ op: 'act', action, ...opts }) as Promise<Record<string, unknown>>,
+    bulk: (action, opts) => call({ op: 'bulk', action, ...opts }) as Promise<{ done: number[]; failed: { id: number; error: string }[] }>,
+    link: (link, record) => call({ op: 'link', link, record }) as Promise<{ url: string; days: number }>,
+    history: (record) => call({ op: 'history', record }) as Promise<Record<string, unknown>[]>,
+    async upload(collection, name, file) {
+      const bytes = await file.arrayBuffer()
+      return call({ op: 'upload', collection, field: name, name: file.name, type: file.type, bytes }) as Promise<{ id: number; name: string }>
+    },
+    openFile: (id) => void call({ op: 'open_file', id }),
+    go(page, params = {}) {
+      const p = Object.fromEntries(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]))
+      toHost({ channel: CHANNEL, type: 'go', page, params: p })
+    },
+    refresh: canopy.refresh,
+    field,
+    fieldLabel: (collection, name) => field(collection, name)?.label ?? name,
+    options(collection, name) {
+      const f = field(collection, name)
+      const hidden = new Set(f?.hidden_options ?? [])
+      return (f?.options ?? []).filter((o) => !hidden.has(o)).map((o) => ({ value: o, label: f?.option_labels?.[o] ?? o }))
+    },
+    optionLabel: (collection, name, value) => field(collection, name)?.option_labels?.[String(value)] ?? String(value ?? ''),
+  }
+}
+
 class Boundary extends Component<{ children: ReactNode; resetKey: unknown }, { error: Error | null }> {
   state = { error: null as Error | null }
   static getDerivedStateFromError(error: Error) {
@@ -111,7 +149,7 @@ function Failure({ title, message }: { title: string; message: string }) {
 type State =
   | { kind: 'waiting' }
   | { kind: 'failed'; message: string }
-  | { kind: 'ready'; View: ViewComponent; data: Record<string, unknown>; scope: ViewScope; code: string }
+  | { kind: 'ready'; View: ViewComponent; data: Record<string, unknown>; scope: ViewScope; code: string; api: AppApi | null }
 
 function App() {
   const [state, setState] = useState<State>({ kind: 'waiting' })
@@ -127,7 +165,7 @@ function App() {
         document.documentElement.classList.toggle('dark', msg.theme === 'dark')
         try {
           const View = compile(msg.code)
-          setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code })
+          setState({ kind: 'ready', View, data: msg.data ?? {}, scope: msg.scope, code: msg.code, api: msg.app ? appApi(msg.app) : null })
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e)
           toHost({ channel: CHANNEL, type: 'error', message })
@@ -156,11 +194,13 @@ function App() {
 
   if (state.kind === 'waiting') return null
   if (state.kind === 'failed') return <Failure title="This view could not be compiled" message={state.message} />
-  const { View, data, scope, code } = state
+  const { View, data, scope, code, api } = state
   return (
     <NavigateContext.Provider value={canopy.navigate}>
       <Boundary resetKey={code}>
-        <View data={data} scope={scope} canopy={canopy} />
+        <AppKitContext.Provider value={api}>
+          <View data={data} scope={scope} canopy={canopy} app={api ?? undefined} />
+        </AppKitContext.Provider>
       </Boundary>
     </NavigateContext.Provider>
   )

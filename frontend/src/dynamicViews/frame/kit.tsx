@@ -4,7 +4,7 @@
  * chart. Named in the authoring guide (apps/dynamic_views/guide.py); keep the two
  * in step.
  */
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { Component, createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 
 type Tone = 'default' | 'success' | 'warning' | 'destructive'
 
@@ -183,4 +183,405 @@ export function Stack({ gap = 3, children }: { gap?: number; children?: ReactNod
   return <div className={`flex flex-col ${GAPS[gap] ?? GAPS[3]}`}>{children}</div>
 }
 
-export const KIT = { Card, Stat, Badge, Table, BarChart, Link, Empty, Loading, Grid, Stack }
+// --- form controls: what an app page (apps/workspace_apps) writes with. Each takes
+// `value` and calls `onChange` with the new VALUE, not the event, so a page's code
+// stays one line per field.
+
+const CONTROL = 'w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground'
+
+/** `hideLabel`: the label is for screen readers only (a control in a table row
+ * whose column already says what it is) — it must still have one. */
+function Labelled({ label, hideLabel, children }: { label?: ReactNode; hideLabel?: boolean; children: ReactNode }) {
+  if (!label) return <>{children}</>
+  return (
+    <label className="block text-sm">
+      <span className={hideLabel ? 'sr-only' : 'mb-1 block font-medium text-foreground'}>{label}</span>
+      {children}
+    </label>
+  )
+}
+
+const FormContext = createContext<(() => void) | null>(null)
+
+/**
+ * A form for the sandbox. A real <form> never submits here — the frame is
+ * sandboxed WITHOUT `allow-forms`, so the browser drops the submit event — so this
+ * is a <div> that does the two things a form does: on a `type="submit"` Button,
+ * or Enter in a one-line field, it checks every field's own validity
+ * (`required`, `type="email"`, …), shows the browser's message on the first bad
+ * one, and otherwise calls `onSubmit()`.
+ */
+export function Form({ onSubmit, children }: { onSubmit: () => void; children?: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const submit = useCallback(() => {
+    const fields = ref.current?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select') ?? []
+    for (const f of Array.from(fields)) {
+      if (!f.checkValidity()) {
+        f.reportValidity()
+        return
+      }
+    }
+    onSubmit()
+  }, [onSubmit])
+  return (
+    <FormContext.Provider value={submit}>
+      <div ref={ref} role="form" onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') {
+          e.preventDefault()
+          submit()
+        }
+      }}>
+        {children}
+      </div>
+    </FormContext.Provider>
+  )
+}
+
+const BUTTON_TONE: Record<string, string> = {
+  default: 'border border-border bg-card text-foreground hover:bg-muted',
+  primary: 'border border-primary bg-primary text-primary-foreground hover:opacity-75',
+  destructive: 'border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20',
+}
+
+/** `confirm`: ask first, inline. The frame has no allow-modals, so `window.confirm`
+ * returns false without showing anything — a button guarded by it never acts. */
+export function Button({ tone = 'default', size = 'md', type = 'button', disabled, onClick, confirm, children }: {
+  tone?: 'default' | 'primary' | 'destructive'
+  size?: 'sm' | 'md'
+  type?: 'button' | 'submit'
+  disabled?: boolean
+  onClick?: () => void
+  confirm?: ReactNode
+  children?: ReactNode
+}) {
+  const pad = size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1.5 text-sm'
+  const formSubmit = useContext(FormContext)
+  const [asking, setAsking] = useState(false)
+  const cls = (t: string) => `rounded-md font-medium ${pad} ${BUTTON_TONE[t] ?? BUTTON_TONE.default}`
+  if (confirm && asking) {
+    return (
+      <span role="alertdialog" aria-label="Confirm" className="inline-flex flex-wrap items-center gap-2 rounded-md border bg-muted px-2 py-1 text-sm">
+        <span>{confirm}</span>
+        <button type="button" autoFocus className={cls(tone === 'default' ? 'primary' : tone)}
+          onClick={() => { setAsking(false); (type === 'submit' && formSubmit ? formSubmit : onClick)?.() }}>Yes</button>
+        <button type="button" className={cls('default')} onClick={() => setAsking(false)}>Cancel</button>
+      </span>
+    )
+  }
+  if (confirm) {
+    return (
+      <button type="button" disabled={disabled} onClick={() => setAsking(true)}
+        className={`${cls(tone)} ${disabled ? 'opacity-50' : ''}`}>
+        {children}
+      </button>
+    )
+  }
+  return (
+    <button type="button" disabled={disabled} onClick={type === 'submit' && formSubmit ? formSubmit : onClick}
+      className={`rounded-md font-medium ${pad} ${BUTTON_TONE[tone] ?? BUTTON_TONE.default} ${disabled ? 'opacity-50' : ''}`}>
+      {children}
+    </button>
+  )
+}
+
+export function Input({ label, value, onChange, type = 'text', placeholder, required }: {
+  label?: ReactNode
+  value?: string
+  onChange?: (value: string) => void
+  type?: 'text' | 'email' | 'url' | 'number' | 'date' | 'tel'
+  placeholder?: string
+  required?: boolean
+}) {
+  return (
+    <Labelled label={label}>
+      <input className={CONTROL} type={type} value={value ?? ''} placeholder={placeholder} required={required}
+        onChange={(e) => onChange?.(e.target.value)} />
+    </Labelled>
+  )
+}
+
+export function TextArea({ label, value, onChange, rows = 4, placeholder, required }: {
+  label?: ReactNode
+  value?: string
+  onChange?: (value: string) => void
+  rows?: number
+  placeholder?: string
+  required?: boolean
+}) {
+  return (
+    <Labelled label={label}>
+      <textarea className={CONTROL} rows={rows} value={value ?? ''} placeholder={placeholder} required={required}
+        onChange={(e) => onChange?.(e.target.value)} />
+    </Labelled>
+  )
+}
+
+export function Select({ label, hideLabel, value, onChange, options }: {
+  label?: ReactNode
+  hideLabel?: boolean
+  value?: string
+  onChange?: (value: string) => void
+  /** Plain strings, or {value, label}. */
+  options: (string | { value: string; label: ReactNode })[]
+}) {
+  return (
+    <Labelled label={label} hideLabel={hideLabel}>
+      <select className={CONTROL} value={value ?? ''} onChange={(e) => onChange?.(e.target.value)}>
+        {options.map((o) => {
+          const opt = typeof o === 'string' ? { value: o, label: o } : o
+          return <option key={opt.value} value={opt.value}>{opt.label}</option>
+        })}
+      </select>
+    </Labelled>
+  )
+}
+
+// --- app-aware components: a workspace app's page draws the fields and slot
+// contents a workspace added after the page was written, without knowing them.
+
+export interface FieldSpec {
+  type: string
+  label?: string
+  help?: string
+  required?: boolean
+  hidden?: boolean
+  options?: string[]
+  option_labels?: Record<string, string>
+  hidden_options?: string[]
+  collection?: string
+  accept?: string[]
+  max_mb?: number
+  origin?: string
+}
+
+type Opts = { where?: Record<string, unknown>; order?: string; limit?: number }
+
+/** The `app` prop (frame/main.tsx `appApi`), also reachable by the kit below. */
+export interface AppApi {
+  key: string
+  name: string
+  page: string
+  params: Record<string, string>
+  roles: string[]
+  public: boolean
+  draft: boolean
+  dataModel: Record<string, unknown>
+  settings: Record<string, unknown>
+  fills: Record<string, { key: string; code: string }[]>
+  query: (collection: string, opts?: Opts) => Promise<Record<string, unknown>[]>
+  act: (action: string, opts?: { record?: number | null; input?: Record<string, unknown>; params?: Record<string, unknown> }) => Promise<Record<string, unknown>>
+  bulk: (action: string, opts: { records: number[]; input?: Record<string, unknown>; params?: Record<string, unknown> }) => Promise<{ done: number[]; failed: { id: number; error: string }[] }>
+  link: (link: string, record: number) => Promise<{ url: string; days: number }>
+  history: (record: number) => Promise<Record<string, unknown>[]>
+  upload: (collection: string, field: string, file: File) => Promise<{ id: number; name: string }>
+  openFile: (id: number) => void
+  go: (page: string, params?: Record<string, unknown>) => void
+  refresh: () => void
+  field: (collection: string, name: string) => FieldSpec | undefined
+  fieldLabel: (collection: string, name: string) => string
+  options: (collection: string, name: string) => { value: string; label: string }[]
+  optionLabel: (collection: string, name: string, value: unknown) => string
+}
+
+export const AppKitContext = createContext<AppApi | null>(null)
+
+function useApp(component: string): AppApi {
+  const app = useContext(AppKitContext)
+  if (!app) throw new Error(`<${component}> works only on a workspace app's page`)
+  return app
+}
+
+export function FileInput({ label, collection, field, value, onChange }: {
+  label?: ReactNode
+  collection: string
+  field: string
+  value?: { id: number; name: string } | null
+  onChange?: (value: { id: number; name: string } | null) => void
+}) {
+  const app = useApp('FileInput')
+  const spec = app.field(collection, field)
+  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null })
+  return (
+    <Labelled label={label ?? spec?.label ?? field}>
+      {value ? (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="truncate">{value.name}</span>
+          <Button size="sm" onClick={() => onChange?.(null)}>Remove</Button>
+        </div>
+      ) : (
+        <input className={CONTROL} type="file" accept={(spec?.accept ?? []).join(',')} disabled={state.busy}
+          onChange={async (e) => {
+            const file = e.target.files?.[0]
+            if (!file) return
+            setState({ busy: true, error: null })
+            try {
+              onChange?.(await app.upload(collection, field, file))
+              setState({ busy: false, error: null })
+            } catch (err) {
+              setState({ busy: false, error: err instanceof Error ? err.message : String(err) })
+            }
+          }} />
+      )}
+      {state.busy && <span className="mt-1 block text-xs text-muted-foreground">Uploading…</span>}
+      {state.error && <span className="mt-1 block text-xs text-destructive">{state.error}</span>}
+    </Labelled>
+  )
+}
+
+/** One input for any field, from its declaration. */
+export function FieldInput({ collection, name, value, onChange }: {
+  collection: string
+  name: string
+  value: unknown
+  onChange: (value: unknown) => void
+}) {
+  const app = useApp('FieldInput')
+  const f = app.field(collection, name)
+  if (!f || f.hidden) return null
+  const label = <>{f.label ?? name}{f.help && <span className="block text-xs font-normal text-muted-foreground">{f.help}</span>}</>
+  const text = value == null ? '' : String(value)
+  switch (f.type) {
+    case 'longtext':
+      return <TextArea label={label} required={f.required} value={text} onChange={onChange} />
+    case 'bool':
+      return (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
+          <span className="font-medium">{f.label ?? name}</span>
+        </label>
+      )
+    case 'enum':
+      return <Select label={label} value={text} onChange={onChange}
+        options={[{ value: '', label: 'Choose…' }, ...app.options(collection, name)]} />
+    case 'file':
+      return <FileInput label={label} collection={collection} field={name}
+        value={value as { id: number; name: string } | null} onChange={onChange} />
+    case 'number':
+      return <Input label={label} type="number" required={f.required} value={text}
+        onChange={(v) => onChange(v === '' ? null : Number(v))} />
+    case 'email': case 'url': case 'date':
+      return <Input label={label} type={f.type} required={f.required} value={text} onChange={onChange} />
+    case 'ref':
+      return null // a ref is chosen by the page that knows what it points at
+    default:
+      return <Input label={label} required={f.required} value={text} onChange={onChange} />
+  }
+}
+
+/**
+ * Inputs for an action's fields — by default only the ones the WORKSPACE added
+ * (`origin: workspace`), so a template page shows a question it was never
+ * written for. `exclude` drops fields the page draws itself.
+ */
+export function FieldInputs({ collection, action, values, onChange, only = 'extensions', exclude = [] }: {
+  collection: string
+  action: string
+  values: Record<string, unknown>
+  onChange: (values: Record<string, unknown>) => void
+  only?: 'extensions' | 'all'
+  exclude?: string[]
+}) {
+  const app = useApp('FieldInputs')
+  const actions = (app.dataModel as { _actions?: Record<string, { input: string[] }> })._actions ?? {}
+  const names = (actions[action]?.input ?? []).filter((n) => !exclude.includes(n)
+    && (only === 'all' || app.field(collection, n)?.origin === 'workspace'))
+  if (names.length === 0) return null
+  return (
+    <Stack gap={3}>
+      {names.map((n) => (
+        <FieldInput key={n} collection={collection} name={n} value={values[n]}
+          onChange={(v) => onChange({ ...values, [n]: v })} />
+      ))}
+    </Stack>
+  )
+}
+
+function shown(f: FieldSpec | undefined, v: unknown, app: AppApi, collection: string, name: string): ReactNode {
+  if (v == null || v === '') return null
+  if (f?.type === 'bool') return v ? 'Yes' : 'No'
+  if (f?.type === 'enum') return app.optionLabel(collection, name, v)
+  if (f?.type === 'url') return <a href={String(v)}>{String(v)}</a>
+  if (f?.type === 'file') return <Button size="sm" onClick={() => app.openFile(Number(v))}>Open file</Button>
+  return String(v)
+}
+
+/** A record's fields as a list — by default only the ones the workspace added. */
+export function FieldValues({ collection, record, only = 'extensions', exclude = [] }: {
+  collection: string
+  record: Record<string, unknown> | null | undefined
+  only?: 'extensions' | 'all'
+  exclude?: string[]
+}) {
+  const app = useApp('FieldValues')
+  const fields = ((app.dataModel as Record<string, { fields?: Record<string, FieldSpec> }>)[collection]?.fields) ?? {}
+  const rows = Object.entries(fields)
+    .filter(([n, f]) => !f.hidden && !exclude.includes(n) && (only === 'all' || f.origin === 'workspace')
+      && record && record[n] != null && record[n] !== '')
+  if (!record || rows.length === 0) return null
+  return (
+    <dl className="mt-3 grid gap-x-4 gap-y-1 text-sm" style={{ gridTemplateColumns: 'max-content 1fr' }}>
+      {rows.map(([n, f]) => (
+        <div key={n} className="contents">
+          <dt className="text-muted-foreground">{f.label ?? n}</dt>
+          <dd>{shown(f, record[n], app, collection, n)}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+type FillComponent = (props: Record<string, unknown>) => ReactNode
+let fillCompiler: ((code: string) => FillComponent) | null = null
+/** main.tsx registers the compiler (compile.ts imports this kit, so not the reverse). */
+export function setFillCompiler(fn: (code: string) => FillComponent) {
+  fillCompiler = fn
+}
+
+class FillBoundary extends Component<{ children: ReactNode; name: string }, { error: string | null }> {
+  state = { error: null as string | null }
+  static getDerivedStateFromError(error: Error) {
+    return { error: error.message }
+  }
+  render() {
+    if (this.state.error) {
+      return <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+        “{this.props.name}” could not be drawn: {this.state.error}</div>
+    }
+    return this.props.children
+  }
+}
+
+/**
+ * Where the WORKSPACE's own components go on a template page. The template
+ * declares the slot; the workspace fills it (overlay `fill_slot`); the page keeps
+ * receiving template updates. Each fill draws in its own boundary, so a broken
+ * one never takes the page down. Its props are the slot's, plus `app`.
+ */
+export function Slot({ name, ...props }: { name: string } & Record<string, unknown>) {
+  const app = useApp('Slot')
+  const fills = app.fills?.[name]
+  const compiled = useMemo(() => (fills ?? []).map((f) => {
+    try {
+      return { key: f.key, Fill: fillCompiler ? fillCompiler(f.code) : null, error: null as string | null }
+    } catch (e) {
+      return { key: f.key, Fill: null, error: e instanceof Error ? e.message : String(e) }
+    }
+  }), [fills])
+  if (compiled.length === 0) return null
+  return (
+    <div className="my-2 flex flex-col gap-2" data-slot={name}>
+      {compiled.map(({ key, Fill, error }) => (
+        <FillBoundary key={key} name={key}>
+          {Fill ? <Fill {...props} app={app} /> : (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">“{key}” could not be compiled: {error}</div>
+          )}
+        </FillBoundary>
+      ))}
+    </div>
+  )
+}
+
+export const KIT = {
+  Card, Stat, Badge, Table, BarChart, Link, Empty, Loading, Grid, Stack, Form, Button, Input, TextArea, Select,
+  FileInput, FieldInput, FieldInputs, FieldValues, Slot,
+}

@@ -72,6 +72,8 @@ export const NAV: NavEntry[] = [
       { path: 'projects', label: 'Projects', tenant: true },
       // Generated screens over the workspace's work, each drawn in a sandbox.
       { path: 'views', label: 'Views', tenant: true },
+      // Self-contained apps the workspace runs (an applicant tracker, …).
+      { path: 'apps', label: 'Apps', tenant: true },
       // What projects serve to the whole workspace, to add by hand.
       { path: 'mcp', label: 'Shared MCP servers', tenant: true },
     ],

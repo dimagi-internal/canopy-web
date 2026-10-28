@@ -31,15 +31,20 @@ export function transpile(code: string): string {
   }).code
 }
 
-export function compile(code: string): ViewComponent {
+export function compile(code: string, name: 'View' | 'Fill' = 'View'): ViewComponent {
   const js = transpile(code)
   const names = ['React', ...Object.keys(HOOKS), ...Object.keys(KIT)]
   const values = [React, ...Object.values(HOOKS), ...Object.values(KIT)]
-  const body = `"use strict";\n${js}\n;return typeof View === "undefined" ? undefined : View;`
+  const body = `"use strict";\n${js}\n;return typeof ${name} === "undefined" ? undefined : ${name};`
   const factory = new Function(...names, body) as (...args: unknown[]) => unknown
   const View = factory(...values)
   if (typeof View !== 'function') {
-    throw new Error('the code does not define `function View(props)`')
+    throw new Error(`the code does not define \`function ${name}(props)\``)
   }
   return View as ViewComponent
+}
+
+/** A workspace's slot fill (`function Fill(props)`), for the kit's <Slot>. */
+export function compileFill(code: string): ViewComponent {
+  return compile(code, 'Fill')
 }
