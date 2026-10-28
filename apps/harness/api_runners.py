@@ -65,7 +65,6 @@ from .models import (
     RunnerSlashCommands,
     Turn,
     WorkspaceRunnerOrder,
-    with_serves_key,
 )
 from .runner_requirements import is_sensitive_data_box
 from .schemas import (
@@ -1432,7 +1431,7 @@ def update_runner_capabilities(request: HttpRequest, runner_id: uuid.UUID, paylo
             # carries the same numbers per agent CLI (`clis.reported` prefers it).
             raise HttpError(422, f"`{key}` is reported by the runner on every heartbeat, "
                                  "not set by hand.")
-    caps = with_serves_key(payload.capabilities)
+    caps = dict(payload.capabilities)
     for key in reported:
         if runner.capabilities.get(key) is not None:
             caps[key] = runner.capabilities[key]

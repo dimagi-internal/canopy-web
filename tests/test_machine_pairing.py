@@ -273,7 +273,6 @@ def test_the_live_single_runner_box_is_adopted_keeping_its_id_bindings_and_wraps
     assert [m.to for m in mail.outbox] == [["jj@dimagi.com"]] and "new key" in mail.outbox[0].subject
     assert res.json() == {"status": "reattached", "runner_id": str(live_box["runner"].pk),
                           "runners": {"cloud-ec2-2": str(live_box["runner"].pk)},
-                          "units": {"cloud-ec2-2": str(live_box["runner"].pk)},
                           "device_keys": {"cloud-ec2-2": str(live_box["key"].pk)}}
     key = RunnerDeviceKey.objects.get()
     assert key.pk == live_box["key"].pk and key.runner_id == live_box["runner"].pk
@@ -474,79 +473,3 @@ def test_an_ordinary_invitation_pairs_a_box_that_takes_routed_work(two_trees):
     res = _pair_runners(_keys([BOX]))
     assert not Runner.objects.get(pk=res.json()["runners"][BOX]).directed_only()
 
-
-# ---- the names from before the rename still work (remove in the follow-up) -------------
-#
-# A machine's runners were `units`, and what a runner serves was `capabilities["unit"]`.
-# The server and the runners do not update at the same moment, so each side reads both
-# names until every runner reports the new ones.
-
-def test_an_invitation_and_a_pairing_sent_under_the_old_key_still_pair(two_trees):
-    inv = _invite(two_trees, key="units")
-    assert inv.status_code == 201, inv.content
-    assert [r["name"] for r in inv.json()["runners"]] == [r["name"] for r in RUNNERS]
-    _approve(two_trees, inv.json()["id"])
-    res = _pair_runners(_keys([r["name"] for r in RUNNERS]), key="units")
-    assert res.status_code == 201, res.content
-    body = res.json()
-    # A runner from before the rename reads `units` off the reply: it gets both.
-    assert set(body["runners"]) == {r["name"] for r in RUNNERS} and body["units"] == body["runners"]
-    assert Runner.objects.get(pk=body["runners"][f"{BOX}-agent-eva"]).serves() == {"kind": "agent", "slug": "eva"}
-
-
-def test_a_runner_declaring_under_the_old_key_is_stored_under_the_new_one(two_trees):
-    from apps.harness.models import RunnerAccessToken
-
-    _approve(two_trees, _invite(two_trees).json()["id"])
-    rid = _pair_runners(_keys([r["name"] for r in RUNNERS])).json()["runners"][f"{BOX}-agent-eva"]
-    raw, _ = RunnerAccessToken.mint(RunnerDeviceKey.objects.get(runner_id=rid))
-    sent = {"sessions": True, "unit": {"kind": "agent", "slug": "eva"}}
-    res = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").patch(
-        f"/api/harness/runners/{rid}", data={"capabilities": sent}, content_type="application/json")
-    assert res.status_code == 200, res.content
-    caps = Runner.objects.get(pk=rid).capabilities
-    assert caps["serves"] == {"kind": "agent", "slug": "eva"} and "unit" not in caps
-
-
-def test_a_row_still_carrying_the_old_key_keeps_what_it_serves(two_trees):
-    """A row written before the rename (or by a server still on the old code) says
-    what it serves under `unit`: it is read, kept through a write, and moved to `serves`."""
-    from apps.harness import routing
-    from apps.harness.models import RunnerAccessToken
-
-    _approve(two_trees, _invite(two_trees).json()["id"])
-    rid = _pair_runners(_keys([r["name"] for r in RUNNERS])).json()["runners"][f"{BOX}-agent-eva"]
-    caps = dict(Runner.objects.get(pk=rid).capabilities)
-    caps["unit"] = caps.pop("serves")
-    Runner.objects.filter(pk=rid).update(capabilities=caps)
-    runner = Runner.objects.get(pk=rid)
-    assert runner.serves() == {"kind": "agent", "slug": "eva"}
-    assert routing.serves_refusal(runner, "ada") and not routing.serves_refusal(runner, "eva")
-    tree = Runner.objects.get(name=BOX)
-    assert routing.serves_refusal(tree, "eva") == f"eva has its own runner on this machine ({BOX}-agent-eva)"
-
-    raw, _ = RunnerAccessToken.mint(RunnerDeviceKey.objects.get(runner_id=rid))
-    res = Client(HTTP_AUTHORIZATION=f"Bearer {raw}").patch(
-        f"/api/harness/runners/{rid}", data={"capabilities": {"serves": {}, "unit": None}},
-        content_type="application/json")
-    assert res.status_code == 200, res.content
-    caps = Runner.objects.get(pk=rid).capabilities
-    assert caps["serves"] == {"kind": "agent", "slug": "eva"} and "unit" not in caps
-
-
-def test_the_migration_copies_the_old_key_and_keeps_it_for_a_server_mid_deploy(two_trees):
-    import importlib
-
-    from django.apps import apps as registry
-
-    migration = importlib.import_module("apps.harness.migrations.0127_runner_serves_and_invited_runners")
-    old = Runner.objects.create(name="old-row", kind=Runner.CLOUD, owner=two_trees["user"],
-                                workspace=two_trees["ws"], capabilities={"unit": {"kind": "tree", "root": "connect"}})
-    new = Runner.objects.create(name="new-row", kind=Runner.CLOUD, owner=two_trees["user"],
-                                workspace=two_trees["ws"], capabilities={"serves": {"kind": "agent", "slug": "eva"}})
-    migration.copy_serves(registry, None)
-    old.refresh_from_db()
-    new.refresh_from_db()
-    assert old.capabilities == {"unit": {"kind": "tree", "root": "connect"},
-                                "serves": {"kind": "tree", "root": "connect"}}
-    assert new.capabilities == {"serves": {"kind": "agent", "slug": "eva"}}

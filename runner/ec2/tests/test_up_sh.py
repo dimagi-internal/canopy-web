@@ -146,13 +146,13 @@ elif "describe-stacks" in a and "starts_with(ParameterKey" in arg("--query"):
         print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
         sys.exit(254)
     print(cfg["ecdh_slots"].replace(" ", chr(10)).replace("=", chr(9)))
+elif "describe-stacks" in a and "ParameterKey=='RunnerUnits'" in arg("--query"):
+    print(cfg["old_stack_runners"] or "None")
 elif "describe-stacks" in a and "ParameterKey=='Runners'" in arg("--query"):
     if cfg.get("runners_read") == "throttled":
         print("An error occurred (Throttling): Rate exceeded", file=sys.stderr)
         sys.exit(254)
     print(cfg["stack_runners"] or "None")
-elif "describe-stacks" in a and "ParameterKey=='RunnerUnits'" in arg("--query"):
-    print(cfg["old_stack_runners"] or "None")
 elif "describe-stacks" in a and "CanopyTokenSecret" in arg("--query"):
     print(cfg["pat_secret"])
 elif "describe-stacks" in a and "EcdhKeyArn" in arg("--query"):
@@ -469,8 +469,7 @@ def test_up_runners_invites_every_runner_in_one_invitation(tmp_path, canopy):
         ("cloud-ec2-test", "dimagi", "tree", ""), ("cloud-ec2-test-connect", "connect", "tree", ""),
         ("cloud-ec2-test-agent-eva", "dimagi", "agent", "eva")]
     assert all("ecdh_public_jwk" in u for u in body["runners"])
-    # The same list under the old key, for a canopy-web from before the rename.
-    assert body["units"] == body["runners"]
+    assert "units" not in body
     # Every runner's workspace passed the invitation's gates before AWS was touched.
     assert {"dimagi", "connect"} <= set(canopy.handler.checked)
 
@@ -551,8 +550,7 @@ def test_dropping_a_runner_needs_remove_runner(tmp_path, canopy):
 @pytest.mark.parametrize("named", ["stack_runners", "old_stack_runners"])
 def test_a_plain_rerun_keeps_the_stacks_runners(tmp_path, canopy, named):
     """`old_stack_runners`: a stack made before the rename names them RunnerUnits, and
-    its -ecdh stack's slots Unit<i>: both are read, and deployed under the new names.
-    (Remove the old-name case in the follow-up.)"""
+    its -ecdh stack's slots Unit<i>: both are read, and deployed under the new names."""
     slot = "Runner1" if named == "stack_runners" else "Unit1"
     state = _fake(tmp_path, stack_status="UPDATE_COMPLETE", change_set=SG_ONLY, stack_workspace="connect",
                   **{named: "tree:connect,agent:eva@connect"}, ecdh_slots=f"{slot}=agent-eva")

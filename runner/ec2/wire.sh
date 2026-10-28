@@ -276,9 +276,7 @@ if not isinstance(d, dict) or d.get("name") != os.environ["BOX"]:
     print("unknown -")
 else:
     # A machine of several runners: this one, by its name, from the one invitation.
-    # Old name, read until every runner reports the new one: remove in the follow-up.
-    listed = d.get("runners") or d.get("units") or []
-    runners = {r.get("name"): r.get("runner_id") for r in listed}
+    runners = {r.get("name"): r.get("runner_id") for r in d.get("runners") or []}
     rid = runners.get(os.environ["NAME"]) if runners else d.get("runner_id")
     print(d.get("status") or "unknown", rid or "-")
 PY
