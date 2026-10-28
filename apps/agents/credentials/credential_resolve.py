@@ -27,6 +27,7 @@ from apps.harness.models import Runner
 
 from .. import mailbox, services
 from . import accounts, licenses, vault_alerts, vault_members, workspace_vaults, zk
+from .pat_rotation import CANOPY_PAT_REF
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,9 @@ RESOLVE_SECRET_EXTRAS = ("op_sa_token",)
 #: secrets from 1Password; an agent whose secrets live in the canopy-web vault serves
 #: them value by value, as `values`.
 LICENSE_WITHHELD_EXTRAS = ("op_sa_token",)
-LICENSE_WITHHELD_REFS = frozenset({"canopy-pat", "canopy-web-pat"})
+#: `CANOPY_PAT_REF` is the name the agent's login is actually stored under (minted, rotated);
+#: the two kebab names are older spellings some vaults still carry.
+LICENSE_WITHHELD_REFS = frozenset({CANOPY_PAT_REF, "canopy-pat", "canopy-web-pat"})
 
 BEARER_REQUIRED = "bearer_required"
 NO_ACCESS = "no_access"
