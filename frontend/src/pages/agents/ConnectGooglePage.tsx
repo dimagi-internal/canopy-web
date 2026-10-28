@@ -8,15 +8,51 @@ import { followMint, mintOutcome, type MintOutcome } from '@/pages/agents/google
 // delegate to it (`google-delegated-<account>`, apps/agents/credentials/google_mint.py).
 // The sign-in finishes on one of the agent's runners, which seals the token to the
 // machines that may hold a credential of theirs: canopy never holds it, and nobody can
-// read it — this person included. A page links here with `?services=gmail`.
+// read it — this person included. A page links here with `?services=gmail` (only
+// those services are offered) and may pass `?return=<canopy path>` to be sent back to
+// once the account is connected.
 
 export const DELEGATED_SERVICES = ['gmail', 'calendar', 'drive', 'docs', 'sheets'] as const
 const LABEL: Record<string, string> = {
-  gmail: 'Gmail (read, label and send)',
+  gmail: 'Gmail',
   calendar: 'Calendar',
   drive: 'Drive',
   docs: 'Docs',
   sheets: 'Sheets',
+}
+
+/** What each service lets the agent do, said plainly under its box. */
+const WHAT: Record<string, string> = {
+  gmail: 'Read, label, archive and report spam. Google’s Gmail permission also allows sending; whether the agent ever sends is up to its own rules.',
+}
+
+const RETURN_KEY = 'canopy.connect-google.return'
+
+/** A canopy path to go back to after connecting — never another site. */
+export function safeReturn(path: string | null | undefined): string | null {
+  if (!path || !path.startsWith('/') || path.startsWith('//') || path.startsWith('/api/')) return null
+  return path
+}
+
+function rememberReturn(slug: string, path: string | null) {
+  try {
+    if (path) sessionStorage.setItem(`${RETURN_KEY}:${slug}`, path)
+  } catch {
+    // Storage blocked: the person just won't get the "back" link.
+  }
+}
+
+function recallReturn(slug: string): string | null {
+  try {
+    return safeReturn(sessionStorage.getItem(`${RETURN_KEY}:${slug}`))
+  } catch {
+    return null
+  }
+}
+
+/** The agent's name as people say it: `bailey` → `Bailey`. */
+export function agentName(slug: string): string {
+  return slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : slug
 }
 
 export function servicesFrom(param: string | null): string[] {
@@ -34,7 +70,7 @@ export function delegationOutcome(
     case 'ok':
       return {
         tone: 'ok',
-        text: `Connected. ${ctx.account || 'Your account'} is delegated to ${ctx.slug}: only the machines that run it can open it, and nobody can read it in canopy — you included. Withdraw it any time from your settings.`,
+        text: `Connected. ${ctx.slug} can now use ${ctx.account || 'your account'} when you ask it to. Disconnect any time from your settings.`,
         link: { href: '/settings', label: 'Your delegated credentials' },
       }
     case 'pending':
@@ -62,6 +98,15 @@ export function ConnectGooglePage() {
   const [params] = useSearchParams()
   const [account, setAccount] = useState(params.get('account') ?? '')
   const [services, setServices] = useState<string[]>(() => servicesFrom(params.get('services')))
+  // Asked for specific services (`?services=gmail`): offer only those, not every Google app.
+  const [offered] = useState<readonly string[]>(() => (params.get('services') ? servicesFrom(params.get('services')) : DELEGATED_SERVICES))
+  const name = agentName(slug)
+  // Where to send them back once connected: `?return=` on the way in, kept across Google's round trip.
+  const [backTo] = useState<string | null>(() => {
+    const given = safeReturn(params.get('return'))
+    if (given) rememberReturn(slug, given)
+    return given ?? recallReturn(slug)
+  })
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -92,7 +137,7 @@ export function ConnectGooglePage() {
 
   const status = finished ? finished.outcome || (finished.status === 'done' ? 'ok' : 'expired') : params.get('google')
   const outcome = delegationOutcome(status, {
-    slug,
+    slug: name,
     account: finished?.account ?? params.get('account'),
     expected: finished?.expected_account,
   })
@@ -128,13 +173,18 @@ export function ConnectGooglePage() {
   return (
     <div className="max-w-xl space-y-4 p-4" data-testid="connect-google">
       <div>
-        <h1 className="text-base font-semibold text-foreground">Connect your Google account to {slug}</h1>
+        <h1 className="text-base font-semibold text-foreground">Connect your Google account to {name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {slug} will use your own Google account on its runner, on your behalf. The sign-in finishes on a cloud
-          runner that runs {slug}, which seals the token so that only the machines that run it can open it. Canopy
-          never holds it, and nobody can read it — you included. Withdraw it any time from{' '}
-          <Link to="/settings" className="text-primary hover:underline">your settings</Link>.
+          {name} uses it only for work you ask it to do. Nobody can read your sign-in, you included, and you can
+          disconnect any time in <Link to="/settings" className="text-primary hover:underline">your settings</Link>.
         </p>
+        <details className="mt-1 text-xs text-muted-foreground">
+          <summary className="cursor-pointer">How is it kept safe?</summary>
+          <p className="mt-1">
+            You sign in to Google yourself. The sign-in finishes on a machine that runs {name}, which locks it so that
+            only the machines that run {name} can open it. Canopy never holds it.
+          </p>
+        </details>
       </div>
       {outcome && (
         <p
@@ -147,6 +197,13 @@ export function ConnectGooglePage() {
               {' '}
               <Link to={outcome.link.href} className="font-medium text-primary hover:underline">{outcome.link.label}</Link>
             </>
+          )}
+          {outcome.tone === 'ok' && status === 'ok' && backTo && (
+            <span className="mt-2 block">
+              <Link to={backTo} className="inline-block rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground" data-testid="connect-google-back">
+                Go back to where you were
+              </Link>
+            </span>
           )}
         </p>
       )}
@@ -163,12 +220,15 @@ export function ConnectGooglePage() {
           />
         </label>
         <fieldset className="text-sm text-foreground">
-          <legend className="mb-1">What {slug} may use</legend>
-          {DELEGATED_SERVICES.map((s) => (
-            <label key={s} className="mr-4 inline-flex items-center gap-1 text-muted-foreground">
-              <input type="checkbox" checked={services.includes(s)} onChange={() => toggle(s)} />
-              {LABEL[s]}
-            </label>
+          <legend className="mb-1">What {name} may use</legend>
+          {offered.map((s) => (
+            <div key={s} className="mr-4 inline-block">
+              <label className="inline-flex items-center gap-1 text-muted-foreground">
+                <input type="checkbox" checked={services.includes(s)} onChange={() => toggle(s)} />
+                {LABEL[s]}
+              </label>
+              {WHAT[s] && offered.length === 1 && <p className="mt-0.5 text-xs text-muted-foreground">{WHAT[s]}</p>}
+            </div>
           ))}
         </fieldset>
         <button
@@ -176,7 +236,7 @@ export function ConnectGooglePage() {
           disabled={busy || !account.trim() || services.length === 0}
           className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
         >
-          {busy ? 'Connecting…' : 'Connect'}
+          {busy ? 'Connecting…' : 'Connect with Google'}
         </button>
         {progress && !error && <p className="text-xs text-muted-foreground">{progress}</p>}
         {error && <p className="text-sm text-destructive" data-testid="connect-google-error">{error}</p>}
