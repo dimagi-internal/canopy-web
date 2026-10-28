@@ -9,7 +9,7 @@ import uuid
 from django.db import transaction
 from django.db.models import Q
 
-from . import staleness
+from . import lifecycle, staleness
 from .models import Session
 
 
@@ -270,6 +270,8 @@ def close_session(*, session: Session) -> str:
         binding.close_error = ""
         binding.close_error_at = None
         binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+        # Who asked, now: the box's report that retires the row names only the box.
+        lifecycle.record(lifecycle.CLOSE_REQUESTED, session, runner=str(binding.runner_id))
         from apps.realtime import groups
 
         groups.publish(groups.runner_group(binding.runner_id), {
@@ -284,7 +286,8 @@ def close_session(*, session: Session) -> str:
 
     cancel_session_turns(session)
     session.status = Session.ARCHIVED
-    session.save(update_fields=["status", "updated_at"])
+    with lifecycle.acting(closing=True):
+        session.save(update_fields=["status", "updated_at"])
     # The REPORTED branch announces itself when the runner's report retires the
     # row; this one never gets a report, so it says so here.
     from apps.harness.session_sync import fire_sessions_closed
@@ -318,6 +321,8 @@ def close_agent_sessions(agent) -> dict[str, int]:
             binding.close_error = ""
             binding.close_error_at = None
             binding.save(update_fields=["close_requested", "close_error", "close_error_at"])
+            lifecycle.record(lifecycle.CLOSE_REQUESTED, session, runner=str(binding.runner_id),
+                             reason="agent deleted")
             outcome = "queued"
         counts[outcome] = counts.get(outcome, 0) + 1
     return counts

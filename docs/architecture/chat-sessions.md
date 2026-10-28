@@ -288,6 +288,51 @@ ignored files never travel), optionally the Claude transcript. ≤ 24 MB packed.
 - Code: `apps/canopy_sessions/staleness.py`. Spec:
   `docs/superpowers/specs/2026-07-24-directed-runner-routing-design.md`.
 
+## A session's lifecycle is in the event log
+
+"What happened to session X?" is answerable from the workspace's event log alone
+(`GET /api/events/?kind=session.`, admin+): every transition that starts or stops a
+session, or changes who can see it or where it is listed, is ONE `Event` row
+(`source` `canopy_sessions.lifecycle`, blank `key` so nothing coalesces). Code:
+`apps/canopy_sessions/lifecycle.py`; tests: `tests/test_session_lifecycle_events.py`.
+
+| Kind | When | Where it is written |
+|---|---|---|
+| `session.created` | a Session row is born, by any path (REST, Slack, email, panel, dispatch, runner report, a successor or fork) | observed on the row (`post_save`) |
+| `session.close_requested` | a close relayed to the box holding it (`/close`, a runner admin's `/sessions/{id}/close`, an agent being deleted) | `control.close_session` / `close_agent_sessions` |
+| `session.closed` | archived because it ended: closed from canopy (no box to ask), archived in emdash, or gone from two complete reports | `control.close_session` (observed, `acting(closing=True)`); `session_sync.replace_reported_sessions` (`record_many`) |
+| `session.archived` / `session.unarchived` | `/archive` / `/unarchive`, a contact's archive, a successor taking its binding, `staleness.archive_stale_sessions`; reported open again | observed; staleness (`record_many`) |
+| `session.deleted` | the row deleted (a ghost pruned by `/reset`, any other delete) | observed (`post_delete`) |
+| `session.moved` | filed in another workspace — written to BOTH workspaces | observed (`filing.move`); `filing.rehome_agent_sessions` (`record_many`) |
+| `session.slack_bound` / `slack_detached` / `slack_rebound` | its `metadata.slack_thread` set, removed or replaced (share-with-bind, detach, new thread, the front door) | observed |
+| `session.participant_added` / `_removed` / `_role_changed` | a `SessionParticipant` row; one going with its session is the deletion, not a removal | observed on the participant row |
+| `session.sharing_changed` | a person's project sharing (`ProjectSessionShare`) or a coach's review grant — `session` blank, it covers many | `sharing.set_shared`, `contacts.session_reviewers` |
+| `session.sensitivity_changed` | it became sensitive | `services.add_runner_requirements` |
+| `session.reset` / `session.forked` / `session.transferred` | rows re-derived; a fork made (`fork` = the new id); moved to another runner (`change.runner`) | `services.reset_session`, `placement.fork_session`, `placement.transfer_session` |
+
+Payload — ids only, never a title, prompt, message or page: `session`, `workspace`,
+`agent`, `origin`, `channel` (`web`/`runner`/`slack`/`panel`), `actor` (`{kind: user,
+user_id, email}`, `{kind: agent, agent, user_id}` for an agent's own login,
+`{kind: runner, runner, runner_name}`, `{kind: contact}`, `{kind: system}`), `turn`
+(the turn behind it: an `acting(turn=…)` block, else the caller token's or the parent
+headers'), `via` (`mcp` + `mcp_tool`, or the credential type), `change` (`field`,
+`before`, `after`) and `reason`. A sensitive conversation's event keeps only its id,
+workspace, actor, turn and the transition (`lifecycle._redact`).
+
+**The rule for new code:** a `save()` of `status`, `workspace` or `metadata` is
+observed for free; a queryset `update()` of those columns is not, so it calls
+`lifecycle.record_many` beside it. A site that knows more than the row (who asked,
+the turn, that an archive is a close) wraps the write in `lifecycle.acting(...)`.
+
+**Why a session leaves `/ide`.** The IDE lists `GET /api/me/sessions/?state=active`
+(`staleness.active`): `status == active` and still observed. It drops out when the row
+is ARCHIVED (a `session.closed` / `session.archived` event), when its workspace moves
+outside your organisations (`session.moved`), when you lose your read (a
+`session.participant_removed`, a Slack audience change, `session.sharing_changed`), or
+— the one transition with no event, because it is derived on every read and never
+written — when no runner has reported it within `SESSION_LIVE_WINDOW`
+(`staleness.unseen_q`); a later report brings it straight back.
+
 ## Subagents on an `Agent` row
 
 - A subagent writes only to `<transcript-stem>/subagents/agent-<id>.jsonl` (plus an `agent-<id>.meta.json` naming the parent's `Agent` call as `toolUseId`), never to the session transcript, so the chat sees one `Agent` row — and a background agent's result returns the moment it is launched.

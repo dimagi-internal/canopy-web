@@ -107,3 +107,49 @@ def _status_sweep(sender, runner, **kwargs):
         import logging
 
         logging.getLogger(__name__).exception("turn-status sweep failed")
+
+
+# --- lifecycle events ----------------------------------------------------------
+#
+# Every session transition a save makes — created, closed/archived/unarchived,
+# moved, Slack bound/detached, sensitivity — and every participant row added,
+# re-roled or removed is one `session.*` event in the workspace's log
+# (`lifecycle.py`). Observed on the rows, so no save path has to remember.
+
+from django.db.models.signals import post_init  # noqa: E402
+
+from . import lifecycle  # noqa: E402
+
+
+@receiver(post_init, sender="canopy_sessions.Session", dispatch_uid="session_lifecycle_snapshot")
+def _session_lifecycle_snapshot(sender, instance, **kwargs):
+    instance._lifecycle_snapshot = lifecycle.snapshot(instance)
+
+
+@receiver(post_save, sender="canopy_sessions.Session", dispatch_uid="session_lifecycle_saved")
+def _session_lifecycle_saved(sender, instance, created=False, raw=False, update_fields=None, **kwargs):
+    if raw:
+        return
+    lifecycle.observe_saved(instance, created=created, update_fields=update_fields)
+
+
+@receiver(post_delete, sender="canopy_sessions.Session", dispatch_uid="session_lifecycle_deleted")
+def _session_lifecycle_deleted(sender, instance, origin=None, **kwargs):
+    lifecycle.observe_deleted(instance)
+
+
+@receiver(post_init, sender="canopy_sessions.SessionParticipant", dispatch_uid="participant_lifecycle_snapshot")
+def _participant_lifecycle_snapshot(sender, instance, **kwargs):
+    instance._lifecycle_role = lifecycle.participant_snapshot(instance)
+
+
+@receiver(post_save, sender="canopy_sessions.SessionParticipant", dispatch_uid="participant_lifecycle_saved")
+def _participant_lifecycle_saved(sender, instance, created=False, raw=False, update_fields=None, **kwargs):
+    if raw:
+        return
+    lifecycle.observe_participant(instance, created=created, update_fields=update_fields)
+
+
+@receiver(post_delete, sender="canopy_sessions.SessionParticipant", dispatch_uid="participant_lifecycle_deleted")
+def _participant_lifecycle_deleted(sender, instance, origin=None, **kwargs):
+    lifecycle.observe_participant(instance, deleted=True, origin=origin)

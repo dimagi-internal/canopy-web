@@ -21,6 +21,7 @@ from apps.harness.models import Turn
 
 from . import activity as session_activity
 from . import attach, authorship, services, transcript_read
+from . import lifecycle
 from .models import Message, RunnerBinding, Session
 from .transcript_noise import is_system_noise, scrub_nul
 
@@ -268,7 +269,8 @@ def _move_binding_to_successor(old, binding, *, transcript_id: str = "", success
     # `provenance.inherit_requirements`; a reused one is told here).
     services.add_runner_requirements(successor, rr.requirements_of_session(old))
     old.status = Session.ARCHIVED
-    old.save(update_fields=["metadata", "status", "updated_at"])
+    with lifecycle.acting(reason=f"its runner task now belongs to session {successor.pk}"):
+        old.save(update_fields=["metadata", "status", "updated_at"])
     binding.session = successor
     binding.transcript_id = transcript_id
     binding.index_offset = 0

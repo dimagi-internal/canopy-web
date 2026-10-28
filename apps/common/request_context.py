@@ -109,6 +109,13 @@ def credential_of(request: HttpRequest) -> dict | None:
     return None
 
 
+def _user_id(request: HttpRequest):
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        return user.pk
+    return None
+
+
 def parent_from_headers(request: HttpRequest) -> dict:
     out = {}
     for key, header in PARENT_HEADERS.items():
@@ -126,6 +133,9 @@ def from_request(request: HttpRequest, *, request_id_value: str | None = None) -
         "user_agent": _meta(request, "User-Agent"),
         "client": _meta(request, CLIENT_HEADER),
         "credential": credential_of(request),
+        # Who the credential authenticated, so a record made deep in a service
+        # (`canopy_sessions.lifecycle`) can name them without a request in hand.
+        "user_id": _user_id(request),
         "via_mcp": bool(getattr(request, "via_mcp", False)),
         "mcp_tool": clean(getattr(request, "mcp_tool", "") or ""),
         "parent": parent_from_headers(request),

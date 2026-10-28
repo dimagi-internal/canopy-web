@@ -19,6 +19,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.agents.models import Agent
+from apps.canopy_sessions import lifecycle
 from apps.canopy_sessions.models import SessionReviewGrant
 from apps.workspaces import access_requests
 
@@ -39,6 +40,7 @@ def grant(person: Person, agent, *, user) -> SessionReviewGrant:
         if current is not None:
             return current
         row = SessionReviewGrant.objects.create(user=user, agent=agent)
+        _sharing_changed(user, agent, granted=True)
         hcp.audit(person, "sessionReviewer.granted", actor=hcp.user_actor(user),
                   purpose=f"let {agent.name or agent.slug} review your sessions, read-only")
     return row
@@ -49,9 +51,18 @@ def revoke(person: Person, agent, *, user) -> bool:
     with transaction.atomic():
         n = live(user).filter(agent=agent).update(revoked_at=timezone.now())
         if n:
+            _sharing_changed(user, agent, granted=False)
             hcp.audit(person, "sessionReviewer.revoked", actor=hcp.user_actor(user),
                       purpose=f"stop {agent.name or agent.slug} reviewing your sessions")
     return bool(n)
+
+
+def _sharing_changed(user, agent, *, granted: bool) -> None:
+    """A coach's read of a person's sessions began or ended: one event in the agent's
+    workspace (`canopy_sessions.lifecycle`)."""
+    lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=agent.workspace_id,
+                     change={"field": "review_grant", "user_id": user.pk, "agent": agent.slug,
+                             "before": not granted, "after": granted})
 
 
 def granted_to(agent) -> list[SessionReviewGrant]:

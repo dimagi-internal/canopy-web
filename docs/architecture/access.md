@@ -888,6 +888,13 @@ The email and Slack rows describe the doors those channels open (participant row
 written when a person is on the thread or in the channel); the session ACL itself
 only honours the rows.
 
+**Every change to who can see a session is an event.** A participant row added,
+re-roled or removed, a Slack thread bound or detached, a move between workspaces, a
+person's project sharing or a coach's grant, and a session becoming sensitive each
+write one `session.*` event to the workspace's log, ids only, naming who did it and
+under which turn — so an admin can say what happened to a session without reading it
+(`chat-sessions.md` § A session's lifecycle is in the event log).
+
 ## Who is in a session
 
 A session is visible to the people who were in the conversation where it happened, plus

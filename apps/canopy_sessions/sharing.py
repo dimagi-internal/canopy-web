@@ -21,6 +21,7 @@ from apps.agents.models import AgentProject, ProjectParticipant
 from apps.harness.models import ProjectOptIn, Runner
 from apps.workspaces import services as wsvc
 
+from . import lifecycle
 from .models import ProjectSessionShare
 
 
@@ -67,8 +68,13 @@ def set_shared(user, project, shared: bool) -> bool:
     checked the project is in one of the person's workspaces."""
     with transaction.atomic():
         current = live(user).filter(project=project).first()
+        changed = (shared and current is None) or (not shared and current is not None)
         if shared and current is None:
             ProjectSessionShare.objects.create(user=user, project=project)
         elif not shared and current is not None:
             live(user).filter(project=project).update(revoked_at=timezone.now())
+        if changed:
+            lifecycle.record(lifecycle.SHARING_CHANGED, None, by=user, workspace_id=project.workspace_id,
+                             change={"field": "project_share", "user_id": user.pk, "project": project.pk,
+                                     "before": not shared, "after": shared})
     return shared

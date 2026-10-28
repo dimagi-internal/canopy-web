@@ -55,6 +55,7 @@ from apps.workspaces import permissions as perms
 from apps.workspaces import services as wsvc
 from apps.workspaces.models import Workspace
 
+from . import lifecycle
 from .models import Session, SessionParticipant, SessionWorkspacePreference
 
 logger = logging.getLogger(__name__)
@@ -237,9 +238,17 @@ def rehome_agent_sessions(sessions, target: Workspace, *, apply: bool) -> tuple[
     if not apply:
         return sessions.count(), participants.count()
     sources = set(sessions.values_list("workspace_id", flat=True))
+    leaving = list(sessions.values_list("pk", "workspace_id"))
     dropped_users = set(participants.values_list("user_id", flat=True))
     dropped = participants.delete()[0]
     moved = sessions.update(workspace=target)
+    # An update() the rows never see: each move said here, in both tenants.
+    for source in sources:
+        ids = [pk for pk, ws in leaving if ws == source]
+        change = {"field": "workspace", "before": source, "after": target.slug}
+        lifecycle.record_many(lifecycle.MOVED, ids, change=change, workspace_id=source,
+                              reason="its agent moved workspace")
+        lifecycle.record_many(lifecycle.MOVED, ids, change=change, reason="its agent moved workspace")
     for source in sources:
         lost = (wsvc.member_user_ids(source) | dropped_users) - target_members
         transaction.on_commit(lambda lost=lost, source=source: _recheck_sockets(lost, source))
