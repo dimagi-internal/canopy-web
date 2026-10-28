@@ -9352,6 +9352,92 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/embed/sign-offs/{sign_off_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * A sign-off request, in the site's frame
+         * @description What the site that framed canopy asks you to approve, for its frame to show.
+         *     404 unless that site asked it and you may decide it.
+         */
+        readonly get: operations["get_framed_sign_off"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/sign-offs/{sign_off_id}/approve/begin": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Start approving a site's sign-off request with my passkey, in its frame
+         * @description Options for navigator.credentials.get(), to approve this request with one of your
+         *     passkeys in canopy's frame. 409 `closed` when it was decided already or expired, 409
+         *     `no_passkey` when you have none registered.
+         */
+        readonly post: operations["begin_framed_approval"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/sign-offs/{sign_off_id}/approve/finish": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Approve a site's sign-off request with my passkey, in its frame
+         * @description Verify the passkey assertion and approve. The site reads the signed approval
+         *     itself (`GET /api/sites/sign-offs/{id}`); the frame is told only the new state.
+         *     400 when the assertion fails, 409 `closed` when it was decided already or expired.
+         */
+        readonly post: operations["finish_framed_approval"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/embed/sign-offs/{sign_off_id}/decline": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Decline a site's sign-off request, in its frame
+         * @description Decline; the site is told when it next reads the request. 409 `closed` when it
+         *     was decided already or expired.
+         */
+        readonly post: operations["decline_framed_sign_off"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/timeline/": {
         readonly parameters: {
             readonly query?: never;
@@ -55368,6 +55454,98 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["SignOffDecidedOut"];
+                };
+            };
+        };
+    };
+    readonly get_framed_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffOut"];
+                };
+            };
+        };
+    };
+    readonly begin_framed_approval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["PasskeyOptionsOut"];
+                };
+            };
+        };
+    };
+    readonly finish_framed_approval: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["PasskeyAssertIn"];
+            };
+        };
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffOut"];
+                };
+            };
+        };
+    };
+    readonly decline_framed_sign_off: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly sign_off_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description OK */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SignOffOut"];
                 };
             };
         };

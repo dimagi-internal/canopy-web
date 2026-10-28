@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 
 import '../index.css'
 import { EmbedApp } from './EmbedApp'
+import { SignOffFrame } from './SignOffFrame'
 import { createHostLink, type EmbedBootstrap } from './hostLink'
 import { applyFrameTheme } from './theme'
 
@@ -45,5 +46,10 @@ if (!mount) {
   // panel exactly as it always was.
   link.waitForInit().then((init) => applyFrameTheme(init.theme)).catch(() => undefined)
   link.onThemeChanged((theme) => applyFrameTheme(theme))
-  createRoot(mount).render(<EmbedApp link={link} app={bootstrap.app} />)
+  // `/embed/sign-off` (canopy.signOff): one site sign-off, no chat.
+  createRoot(mount).render(
+    bootstrap.view === 'sign-off' && bootstrap.sign_off
+      ? <SignOffFrame link={link} app={bootstrap.app} signOffId={bootstrap.sign_off} />
+      : <EmbedApp link={link} app={bootstrap.app} />,
+  )
 }

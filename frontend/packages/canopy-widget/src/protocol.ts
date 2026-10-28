@@ -78,6 +78,18 @@ export type FrameMessage =
    *  the panel went back to its start screen (`null`). A POINTER, never content —
    *  see `PanelSession`. */
   | { source: typeof SOURCE; type: 'session'; session: PanelSession | null }
+  /** A sign-off frame (`canopy.signOff`): the person decided. The state only — the
+   *  signed approval never reaches the page; the site's server reads it from canopy. */
+  | { source: typeof SOURCE; type: 'sign-off'; id: string; state: SignOffState }
+
+/** How a sign-off frame ended: decided in it (`approved`, `declined`), found
+ *  already over (`expired`), or put away undecided (`closed`). */
+export type SignOffState = 'approved' | 'declined' | 'expired' | 'closed'
+
+/** A canopy site sign-off id, as the site's server got it from canopy. */
+export function isSignOffId(value: unknown): value is string {
+  return typeof value === 'string' && /^so_[A-Za-z0-9_-]{8,64}$/.test(value)
+}
 
 /**
  * The conversation the panel has open, as the frame reports it to the host page.
@@ -169,7 +181,7 @@ export function isFrameMessage(data: unknown): data is FrameMessage {
   return [
     'ready', 'token-request', 'context-request', 'action-request', 'invalidate', 'close', 'unavailable',
     'resize', 'expand', 'snap',
-    'session',
+    'session', 'sign-off',
   ].includes(m.type)
 }
 

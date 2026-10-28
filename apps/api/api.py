@@ -264,6 +264,7 @@ from apps.contacts.member_profile_api import router as member_profile_router  # 
 from apps.host_grants.api import sites_router  # noqa: E402
 from apps.host_grants.sign_offs_api import router as sign_offs_router  # noqa: E402
 from apps.host_grants.sign_offs_api import sites_router as site_sign_offs_router  # noqa: E402
+from apps.host_grants.sign_offs_api import embed_router as embed_sign_offs_router  # noqa: E402
 from apps.host_grants.grants_api import embed_grant_router  # noqa: E402
 from apps.host_grants.grants_api import me_router as host_grants_me_router  # noqa: E402
 from apps.agents.api_delegated import me_router as delegated_me_router  # noqa: E402
@@ -400,6 +401,7 @@ api.add_router("/workspaces", member_profile_router)  # one member's page, by th
 api.add_router("/sites", sites_router)
 api.add_router("/sites/sign-offs", site_sign_offs_router)
 api.add_router("/sign-offs", sign_offs_router)
+api.add_router("/embed/sign-offs", embed_sign_offs_router)  # the same, decided in the site's frame
 api.add_router("/timeline", timeline_router)
 api.add_router("/system", system_router)
 api.add_router("/share", session_share_router)

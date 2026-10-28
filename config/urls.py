@@ -13,7 +13,7 @@ from apps.slack import views as slack_views
 from apps.slack import views_auth as slack_auth
 from apps.tokens.cli_authorize_views import cli_authorize as views_cli_authorize
 from apps.github_connect.views import github_connect_callback, github_connect_start
-from apps.embedding.views_embed import embed_chat, embed_widget_js
+from apps.embedding.views_embed import embed_chat, embed_sign_off, embed_widget_js
 from apps.contacts import hcp_oauth_views
 from apps.oauth_server import views as views_mcp_oauth
 from apps.host_grants import views_oauth
@@ -86,6 +86,8 @@ urlpatterns = [
     # apps/embedding/views_embed.py for why the exemption is safe. Declared before
     # the SPA catch-all, whose negative lookahead does not exclude `embed/`.
     path("embed/chat", embed_chat, name="embed-chat"),
+    # The same shell on one site sign-off (canopy.signOff in the widget).
+    path("embed/sign-off", embed_sign_off, name="embed-sign-off"),
     # The loader a host names in its <script> tag. Served from the frontend
     # build like index.html is, not via staticfiles — this is the one URL third
     # parties hard-code, so it must not move with a static prefix.

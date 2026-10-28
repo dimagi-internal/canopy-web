@@ -37,6 +37,7 @@ function fakeLink(overrides: Partial<HostLink> = {}): HostLink {
     reportSession: () => undefined,
     invalidate: () => undefined,
     requestClose: () => undefined,
+    reportSignOff: () => undefined,
     reportUnavailable: () => undefined,
     requestHeight: () => undefined,
     requestExpand: () => undefined,

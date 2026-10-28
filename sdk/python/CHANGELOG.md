@@ -2,6 +2,22 @@
 
 The import name is `canopy_sdk` and does not change with the distribution name.
 
+## 0.26.0 — 2026-10-28
+
+**Site sign-offs on the site's own page: approve with a passkey without leaving it.**
+
+- `{% canopy_sign_off asked.id then=collect_url %}` (`{% load canopy_host %}`): opens
+  canopy's passkey dialog over the page (the widget's `canopy.signOff`, framed by canopy
+  at `/embed/sign-off`; no launcher, no chat). When the person decides, the browser POSTs
+  `sign_off` and `state` to `then`, where the host reads and checks the approval itself
+  with `sign_offs.status` + `sign_offs.verify`; the page is never given the approval.
+  Put away undecided, the page stays, and any `data-canopy-sign-off-open` element reopens
+  it. With no id it only defines `window.canopySignOff(id) -> Promise<{id, state}>`.
+- `canopy_sdk.django.pages.sign_off_context`: what the tag renders. The frame mints its
+  token at the panel's own endpoint (`TOKEN_URL`), with no page and so no page scopes.
+- Needs a canopy with `/embed/sign-off` and `/api/embed/sign-offs/`; on an older one
+  the dialog fails to load, and `approve_url` (the full-page trip) still works.
+
 ## 0.25.0 — 2026-10-27
 
 **Agent tasks: call a canopy agent inline and get a schema-validated result back.**

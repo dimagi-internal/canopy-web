@@ -32,6 +32,7 @@ import {
   isSessionId,
   type ActionSpec,
   type PanelSession,
+  type SignOffState,
 } from '../../packages/canopy-widget/src/protocol'
 
 export type { ActionSpec, PanelSession }
@@ -40,6 +41,10 @@ export interface EmbedBootstrap {
   app: string
   /** Origins permitted to frame (and therefore to talk to) this frame. */
   origins: string[]
+  /** `sign-off`: the frame is one site sign-off (`/embed/sign-off`), not the chat. */
+  view?: string
+  /** That sign-off's id, from the server's shell. */
+  sign_off?: string
 }
 
 export interface HostInit {
@@ -106,6 +111,8 @@ export interface HostLink {
   invalidate(resource: string): void
   /** Ask the host to close the panel (our own close button). */
   requestClose(): void
+  /** A sign-off frame: the person decided (or it was already over). */
+  reportSignOff(id: string, state: SignOffState): void
   /** Tell the host there is nothing here for this visitor: it removes the launcher. */
   reportUnavailable(): void
   /** Ask for a panel height, in the modes where the host owns it. */
@@ -361,6 +368,7 @@ export function createHostLink(bootstrap: EmbedBootstrap): HostLink {
     },
     invalidate: (resource: string) => send({ type: 'invalidate', resource }),
     requestClose: () => send({ type: 'close' }),
+    reportSignOff: (id, state) => send({ type: 'sign-off', id, state }),
     reportUnavailable: () => send({ type: 'unavailable' }),
     requestHeight: (px) => send({ type: 'resize', height: px }),
     requestExpand: (next) => send({ type: 'expand', expanded: next }),

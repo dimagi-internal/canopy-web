@@ -310,3 +310,99 @@ def test_an_open_request_waits_on_its_approvers_home(w):
     assert [r.target for r in rows] == [{"sign_off": body["id"]}]
     Req.user = w["member"]
     assert [r for r in gather(Req(), slugs={"connect"}) if r.kind == "sign_off"] == []
+
+
+# --- deciding on the site's own page, in canopy's frame (canopy.signOff) ---------------
+
+
+def _frame_token(w, user, app=None) -> str:
+    from apps.tokens.models import DelegatedToken
+
+    raw, _ = DelegatedToken.issue(app=app or w["app"], user=user, ttl_seconds=600)
+    return raw
+
+
+def _framed(raw, path, *, post=False, body=None):
+    client = Client(HTTP_AUTHORIZATION=f"Bearer {raw}")
+    url = f"/api/embed/sign-offs/{path}"
+    if not post:
+        return client.get(url)
+    return client.post(url, data=json.dumps(body or {}), content_type="application/json")
+
+
+def test_the_person_approves_in_the_sites_frame_with_their_passkey(w):
+    from tests.fixtures.passkey_confirm import give_passkey
+
+    body = _asked(w, "mo@dimagi.com")
+    auth = give_passkey(w["member"])
+    raw = _frame_token(w, w["member"])
+
+    shown = _framed(raw, body["id"])
+    assert shown.status_code == 200 and shown.json()["action_title"] == "Create a full-access labs MCP token"
+
+    begun = _framed(raw, f"{body['id']}/approve/begin", post=True)
+    assert begun.status_code == 200, begun.content
+    done = _framed(raw, f"{body['id']}/approve/finish", post=True,
+                   body={"credential": auth.get(begun.json()["options"])})
+    assert done.status_code == 200, done.content
+    assert done.json()["state"] == "approved"
+    # The frame is told the state; the site reads the approval itself, and believes it.
+    assert "approval" not in done.json() and "redirect_url" not in done.json()
+    approval = _poll(w, body["id"]).json()["approval"]
+    assert _verify(approval).approver_email == "mo@dimagi.com"
+
+
+def test_the_frame_cannot_approve_without_the_passkey(w):
+    from tests.fixtures.passkey_confirm import give_passkey
+
+    body = _asked(w, "mo@dimagi.com")
+    give_passkey(w["member"])
+    raw = _frame_token(w, w["member"])
+    _framed(raw, f"{body['id']}/approve/begin", post=True)
+    forged = _framed(raw, f"{body['id']}/approve/finish", post=True,
+                     body={"credential": {"id": "nope", "rawId": "nope", "type": "public-key", "response": {}}})
+    assert forged.status_code == 400
+    assert SiteSignOff.objects.get(pk=body["id"]).state == SiteSignOff.OPEN
+
+
+def test_the_frame_declines(w):
+    body = _asked(w, "mo@dimagi.com")
+    raw = _frame_token(w, w["member"])
+    assert _framed(raw, f"{body['id']}/decline", post=True).json()["state"] == "declined"
+    assert _poll(w, body["id"]).json()["state"] == "declined"
+
+
+def test_only_the_person_and_only_the_asking_sites_frame_see_it(w):
+    body = _asked(w, "mo@dimagi.com")
+    # Someone else's token on the same site's page.
+    assert _framed(_frame_token(w, w["owner"]), body["id"]).status_code == 404
+    # The right person, through another site's frame.
+    other = AppCredential.create_credential(name="other-site", created_by=w["owner"], workspace=w["ws"])
+    assert _framed(_frame_token(w, w["member"], app=other), body["id"]).status_code == 404
+    assert _framed(_frame_token(w, w["member"], app=other), f"{body['id']}/decline", post=True).status_code == 404
+
+
+def test_a_personal_token_is_not_a_frame(w):
+    from apps.tokens.models import PersonalToken
+
+    body = _asked(w, "mo@dimagi.com")
+    raw, _row = PersonalToken.create_for_user(user=w["member"], label="script")
+    assert _framed(raw, body["id"]).status_code == 403
+    assert _framed(raw, f"{body['id']}/decline", post=True).status_code == 403
+    assert SiteSignOff.objects.get(pk=body["id"]).state == SiteSignOff.OPEN
+
+
+def test_a_closed_request_cannot_be_begun_in_the_frame(w):
+    body = _asked(w, "mo@dimagi.com")
+    raw = _frame_token(w, w["member"])
+    _framed(raw, f"{body['id']}/decline", post=True)
+    assert _framed(raw, f"{body['id']}/approve/begin", post=True).status_code == 409
+
+
+def test_the_sign_off_shell_is_framed_only_by_the_site(w):
+    body = _asked(w, "mo@dimagi.com")
+    response = Client().get(f"/embed/sign-off?app={SITE}&sign_off={body['id']}")
+    assert response.status_code == 200
+    assert response["Content-Security-Policy"] == "frame-ancestors https://labs.example.org"
+    assert f'"sign_off": "{body["id"]}"' in response.content.decode()
+    assert Client().get(f"/embed/sign-off?app={SITE}&sign_off=../etc").status_code == 404

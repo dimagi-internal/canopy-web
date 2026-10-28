@@ -163,3 +163,24 @@ def panel_options(ctx: dict) -> dict:
         "stateByteBudget": STATE_BYTE_BUDGET,
         "maxVisibleIds": MAX_VISIBLE_IDS,
     }
+
+
+def sign_off_context(request=None, *, sign_off: str = "", then: str = "") -> dict:
+    """What ``canopy_host/sign_off.html`` needs (``{% canopy_sign_off %}``), or a dict
+    that renders nothing but a refusing ``canopySignOff``.
+
+    The frame mints its token at the same endpoint as the panel, with no page: a
+    sign-off is not a conversation, so it never carries a page's scopes."""
+    if not conf.is_configured():
+        return {"ready": False}
+    cfg = conf.raw()
+    options = {
+        "baseUrl": str(cfg.get("CANOPY_BASE_URL", "")).rstrip("/"),
+        "app": cfg.get("APP_NAME", ""),
+        "agent": conf.agent_slug(),
+        "tokenUrl": _token_url(""),
+    }
+    theme = conf.panel_options().get("theme")
+    if theme:
+        options["theme"] = theme
+    return {"ready": True, "options": options, "sign_off": sign_off, "then": then}

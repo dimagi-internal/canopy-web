@@ -202,6 +202,32 @@ def test_nothing_renders_when_unconfigured(user):
     assert "widget.js" not in client.get("/marketplace/network/").content.decode()
 
 
+def _rendered_json(body: str, element_id: str):
+    start = body.index(f'<script id="{element_id}" type="application/json">')
+    start = body.index(">", start) + 1
+    return json.loads(body[start:body.index("</script>", start)])
+
+
+def test_a_sign_off_renders_the_frame_options_and_where_to_report(host, user):
+    client = Client()
+    client.force_login(user)
+    body = client.get("/sign-off/").content.decode()
+    options = _rendered_json(body, "canopy-sign-off-options")
+    assert options["app"] == conf.raw()["APP_NAME"] and options["baseUrl"]
+    # The panel's own mint, with no page: a sign-off never carries a page's scopes.
+    assert options["tokenUrl"] == "/canopy/panel-token/"
+    assert _rendered_json(body, "canopy-sign-off-id") == "so_abcdefghijklmnop"
+    assert _rendered_json(body, "canopy-sign-off-then") == "/labs/collect/"
+    assert f'{options["baseUrl"]}/embed/widget.js' in body and "window.canopy.signOff" in body
+
+
+def test_a_sign_off_unconfigured_only_refuses(user):
+    client = Client()
+    client.force_login(user)
+    body = client.get("/sign-off/").content.decode()
+    assert "widget.js" not in body and "canopy is not configured here" in body
+
+
 def test_the_panel_token_endpoint_turns_the_page_token_into_scopes(host, user):
     client = Client()
     client.force_login(user)

@@ -40,6 +40,7 @@
  */
 
 import { createChrome, type Chrome, type DisplayMode } from './chrome'
+import { mintToken as mintAtHost } from './mint'
 import { normalizeTheme, type SafeTheme, type WidgetTheme } from './theme'
 import {
   MAX_ASK_CHARS,
@@ -48,13 +49,15 @@ import {
   isSessionId,
   originOf,
   panelSessionOf,
-  readCookie,
   type ActionSpec,
   type HostMessage,
   type PanelSession,
 } from './protocol'
 
 export type { DisplayMode } from './chrome'
+export { signOff } from './signOff'
+export type { SignOffOptions, SignOffOutcome } from './signOff'
+export type { SignOffState } from './protocol'
 export type { ActionSpec, PanelSession } from './protocol'
 export type { ThemeMode, WidgetTheme } from './theme'
 
@@ -251,11 +254,6 @@ export interface CanopyWidget {
   destroy(): void
 }
 
-interface TokenResponse {
-  token: string
-  expires_at?: string
-}
-
 export function init(options: CanopyWidgetOptions): CanopyWidget {
   const mode = options.mode ?? 'overlay'
   const pageOrigin =
@@ -330,49 +328,10 @@ export function init(options: CanopyWidgetOptions): CanopyWidget {
     chrome.iframe.contentWindow?.postMessage(message, canopyOrigin)
   }
 
-  /** Mint a token at the host. `grant` asks for an act-as-you permission with it —
-   *  only ever because the frame says the person has sent a message in the panel. */
-  async function mintToken(grant = false): Promise<{ token: string; expires_at: string }> {
-    const url = typeof options.tokenUrl === 'function' ? options.tokenUrl() : options.tokenUrl
-    const response = await fetch(url, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...csrfHeader() },
-      body: grant ? '{"grant":true}' : '{}',
-    })
-    if (!response.ok) {
-      throw new Error(`token endpoint returned ${response.status}`)
-    }
-    const body = (await response.json()) as TokenResponse
-    if (!body?.token) throw new Error('token endpoint returned no token')
-    return { token: body.token, expires_at: typeof body.expires_at === 'string' ? body.expires_at : '' }
-  }
-
-  /** The host's CSRF token, if it has one. Read rather than required, so a host
-   *  with a different scheme (or none, for a `@csrf_exempt` mint) is not forced
-   *  into ours.
-   *
-   *  `csrfToken` is consulted first and wins, because a host that passes it has
-   *  said the cookie is not readable — falling back to the cookie there would
-   *  send nothing while looking like it tried. It is read on every mint, not
-   *  captured once, so a rotated token (Django rotates on login) is picked up.
-   *  A throwing provider is treated as "no token" rather than being allowed to
-   *  break the mint: the 403 that follows names the real problem, an exception
-   *  here would not. */
-  function csrfHeader(): Record<string, string> {
-    const supplied = options.csrfToken
-    if (supplied !== undefined) {
-      let token: string | null | undefined
-      try {
-        token = typeof supplied === 'function' ? supplied() : supplied
-      } catch {
-        token = null
-      }
-      return token ? { 'X-CSRFToken': token } : {}
-    }
-    if (typeof document === 'undefined') return {}
-    const token = readCookie(document.cookie, options.csrfCookieName || 'csrftoken')
-    return token ? { 'X-CSRFToken': token } : {}
+  /** Mint a token at the host (`mint.ts`). `grant` asks for an act-as-you permission
+   *  with it — only ever because the frame says the person has sent a message. */
+  function mintToken(grant = false): Promise<{ token: string; expires_at: string }> {
+    return mintAtHost(options, grant)
   }
 
   async function onMessage(event: MessageEvent): Promise<void> {

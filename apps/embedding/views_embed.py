@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import http.cookies
 import json
+import re
 import secrets
 from functools import lru_cache
 from pathlib import Path
@@ -131,7 +132,7 @@ _SHELL = """<!doctype html>
   // Injected by the SERVER, which is the only party that can be trusted to say
   // which origins may talk to this frame — the host is the one being
   // authenticated, so a list it supplied would authenticate nothing.
-  window.CANOPY_EMBED = {{ app: {app}, origins: {origins} }};
+  window.CANOPY_EMBED = {bootstrap};
 </script>
 {script}
 </body>
@@ -188,9 +189,32 @@ def set_frame_cookie(response: HttpResponse, prefix: str) -> None:
     dict.__setitem__(response.cookies, FRAME_COOKIE, morsel)
 
 
+#: A site sign-off's id, as `apps.tokens.models.SiteSignOff` makes it.
+_SIGN_OFF_ID = re.compile(r"^so_[A-Za-z0-9_-]{8,64}$")
+
+
 @require_GET
 @xframe_options_exempt
 def embed_chat(request: HttpRequest) -> HttpResponse:
+    """Serve the widget shell for a registered app, framed only by its origins."""
+    return _shell(request, {})
+
+
+@require_GET
+@xframe_options_exempt
+def embed_sign_off(request: HttpRequest) -> HttpResponse:
+    """The same shell, opened on ONE site sign-off (`?sign_off=so_…`) instead of the
+    chat: what `canopy.signOff` in the widget frames, so the person approves with their
+    passkey on the site's own page. Framed only by the site's origins, like the chat;
+    the request itself is read with the frame's token, and only the site that asked it
+    may show it (`sign_offs_api._framed`)."""
+    sign_off = (request.GET.get("sign_off") or "").strip()
+    if not _SIGN_OFF_ID.match(sign_off):
+        raise Http404("embed/sign-off requires ?sign_off=")
+    return _shell(request, {"view": "sign-off", "sign_off": sign_off})
+
+
+def _shell(request: HttpRequest, view: dict) -> HttpResponse:
     """Serve the widget shell for a registered app, framed only by its origins.
 
     Every refusal is a 404 rather than a 403, because there is nothing here
@@ -244,9 +268,9 @@ def embed_chat(request: HttpRequest) -> HttpResponse:
             auto_script=_AUTO_THEME if mode == "auto" else "",
             # json.dumps, not an f-string: these values land inside a <script>
             # block, and an app name or origin containing a quote would
-            # otherwise end the string and inject.
-            app=json.dumps(name),
-            origins=json.dumps(origins),
+            # otherwise end the string and inject; `<` escaped so none can
+            # close the block either.
+            bootstrap=json.dumps({"app": name, "origins": origins, **view}).replace("<", "\\u003c"),
             css="\n".join(
                 f'<link rel="stylesheet" href="{prefix}/{href}">' for href in css
             ),
