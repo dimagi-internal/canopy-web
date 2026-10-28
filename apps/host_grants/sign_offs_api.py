@@ -72,7 +72,7 @@ class SignOffCreatedOut(Schema):
     approvers: str
 
 
-@sites_router.post("/", auth=None, response={201: SignOffCreatedOut},
+@sites_router.post("", auth=None, response={201: SignOffCreatedOut},
                    summary="A connected site asks a person to approve one action, signed")
 @gate("host", kind="request")  # auth=None; a request signed by the site's own registered key IS the credential
 def create_site_sign_off(request: HttpRequest):
