@@ -48,6 +48,7 @@ PUBLIC_PATH_PREFIXES = (
     "/embed/",
     "/api/auth/contact-token",   # auth=None — self-enforces by verifying a signed assertion
     "/api/sites/agents",         # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/api.py)
+    "/api/sites/sign-offs",      # auth=None — self-enforces: a request signed by the site's own registered key (apps/host_grants/sign_offs_api.py); the approver's /api/sign-offs/ stays behind login
     "/api/runner-sessions/",     # auth=None — self-enforces: an approved device key's proof (apps/harness/api_runner_sessions.py)
     "/api/harness/runners/pair-by-role",  # auth=None — self-enforces: the box's instance-role proof + an invitation its creator approved behind a passkey (apps/harness/api_runner_invitations.py)
     "/api/harness/runners/box-egress",  # auth=None — self-enforces: the box's instance-role proof; returns only that machine's runners' egress lock (apps/harness/api_box_egress.py)

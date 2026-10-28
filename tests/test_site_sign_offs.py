@@ -19,7 +19,7 @@ from canopy_sdk.keys import generate_private_key, public_pem
 from canopy_sdk.stores import MemoryCache
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import Client
+from django.test import Client, override_settings
 from django.utils import timezone
 
 from apps.agents.models import Agent, AgentAdmin
@@ -119,6 +119,15 @@ def test_a_members_own_request_is_theirs_and_lasts_fifteen_minutes(w):
     row = SiteSignOff.objects.get(pk=body["id"])
     assert row.subject == "mo@dimagi.com"
     assert timedelta(minutes=14) < row.expires_at - timezone.now() <= timedelta(minutes=15)
+
+
+@override_settings(REQUIRE_AUTH=True)
+def test_a_site_reaches_its_doors_with_no_login_and_a_person_does_not(w):
+    # The site's request is its own credential, so the login gate must let it through
+    # (test settings turn that gate off, which hid this until labs called it).
+    body = _asked(w, "mo@dimagi.com")
+    assert _poll(w, body["id"]).status_code == 200
+    assert Client().get(f"/api/sign-offs/{body['id']}").status_code == 401
 
 
 def test_an_agents_request_goes_to_its_admins_and_lasts_a_day(w):
