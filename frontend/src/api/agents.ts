@@ -633,6 +633,30 @@ export async function getGoogleMint(slug: string, id: string): Promise<GoogleMin
   return unwrap(res, 'getGoogleMint')
 }
 
+/** Start connecting YOUR OWN Google account to an agent, as a credential you delegate
+ *  to it (`google-delegated-<account>`). Finished on one of the agent's runners like
+ *  `startGoogleMint`: poll `getGoogleDelegation` until `authorize_url` is set, then
+ *  navigate to it. 403 `not_an_admin` unless you are one of the agent's admins; 409
+ *  `no_mint_runner` when no runner that may hold a credential of yours is online. */
+export async function startGoogleDelegation(
+  slug: string,
+  account: string,
+  services: string[] = ['gmail'],
+): Promise<GoogleMintOut> {
+  const res = await apiV2.POST('/api/agents/{slug}/google/delegate', {
+    params: { path: { slug } },
+    body: { account, services },
+  })
+  return unwrap(res, 'startGoogleDelegation')
+}
+
+export async function getGoogleDelegation(slug: string, id: string): Promise<GoogleMintOut> {
+  const res = await apiV2.GET('/api/agents/{slug}/google/delegate/{mint_id}', {
+    params: { path: { slug, mint_id: id } },
+  })
+  return unwrap(res, 'getGoogleDelegation')
+}
+
 export async function getAgentVault(slug: string) {
   const res = await apiV2.GET('/api/agents/{slug}/vault', { params: { path: { slug } } })
   return unwrap(res, 'getAgentVault')

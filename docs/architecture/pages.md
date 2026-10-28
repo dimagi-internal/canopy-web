@@ -221,6 +221,15 @@ Every browser-facing address canopy-web serves. The SPA route table is
     from `agent.email` when that is a Google mailbox (else
     `?google=wrong-account&account=<x>&expected=<y>`, nothing stored); a
     `zk-no-recipients` result links to `/settings#vault-key`.
+  - **Connect your Google account** (`connect/google`, `?services=gmail,calendar`
+    preselects, `?account=` prefills) — one of the agent's admins connects their
+    OWN Google account (a personal Gmail) for the agent to use on their behalf:
+    they name the account, choose the services, press Connect, sign in at Google
+    and come back here (`?google=<status>&mint=<id>`, followed to its end). The
+    runner seals it as a credential they delegate (`google-delegated-<account>`,
+    `POST|GET /api/agents/{slug}/google/delegate`, `vault.md` § Connect your own
+    Google account); it is listed and withdrawn at `/settings` → Your credentials
+    delegated to agents. A non-admin is refused 403 `not_an_admin`.
   - The setup checklist (`apps/agents/setup.py`, `GET …/setup`) on Settings: a
     zero-knowledge agent's vault step comes before its mailbox, and is todo
     while nobody can open the vault. When no runner can take the agent, the

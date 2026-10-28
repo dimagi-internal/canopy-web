@@ -30,8 +30,8 @@ describe('guideGroups', () => {
     // section would land in Agents and this group would be empty.
     const rail = guideGroups().find((g) => g.label === 'Agent workspace')
     // Projects, one project, a contributor page, Tasks, Turns, Huddles, Schedules,
-    // Mail, Skills, skill history, Capabilities, Settings.
-    expect(rail?.surfaces.length).toBe(12)
+    // Mail, Skills, skill history, Capabilities, Settings, Connect your Google account.
+    expect(rail?.surfaces.length).toBe(13)
     const fleet = guideGroups().find((g) => g.label === 'Agents')
     expect(fleet?.surfaces.map((s) => s.path)).toContain('/w/:workspace/agents')
     expect(fleet?.surfaces.map((s) => s.path)).not.toContain('/w/:workspace/agents/:slug/tasks')

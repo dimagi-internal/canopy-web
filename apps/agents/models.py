@@ -517,7 +517,7 @@ class VaultEntryAccount(models.Model):
     AGENT = "agent"
     DELEGATED = "delegated"
     ACCOUNT_CHOICES = [(AGENT, "The agent's own"), (DELEGATED, "Delegated by a person")]
-    PROVIDERS = ("github", "salesforce", "anthropic", "other")
+    PROVIDERS = ("github", "google", "salesforce", "anthropic", "other")
 
     account = models.CharField(max_length=16, choices=ACCOUNT_CHOICES, default=AGENT)
     #: The person whose account it is. Required when delegated.
@@ -1073,6 +1073,15 @@ class AgentGoogleMint(models.Model):
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
                                      blank=True, related_name="+")
     status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=REQUESTED)
+    #: A person connecting THEIR OWN Google account to the agent (a delegated credential,
+    #: `credentials/accounts.py`), not the agent's own login. Null for the agent's own.
+    delegated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True,
+                                     blank=True, related_name="+")
+    #: The account the consent must come from — for a delegated sign-in, the one the
+    #: person named up front; "" = the agent's own rule (`google_oauth.expected_account`).
+    expected_account = models.CharField(max_length=254, blank=True, default="")
+    #: gog's service names a delegated sign-in asks for (`google_oauth.delegated_scopes`).
+    services = models.JSONField(default=list, blank=True)
     #: How it ended, in the words the settings page reads (`?google=`): ok, denied,
     #: exchange-failed, no-refresh-token, no-email, wrong-account, no-client,
     #: zk-no-recipients, expired, interrupted.

@@ -7,12 +7,19 @@ import {
 
 const REVOKE: Record<string, string> = {
   github: 'https://github.com/settings/personal-access-tokens',
+  google: 'https://myaccount.google.com/connections',
+}
+
+const PROVIDER: Record<string, string> = { github: 'GitHub', google: 'Google' }
+
+function providerName(provider: string): string {
+  return PROVIDER[provider] ?? provider
 }
 
 function account(row: MyDelegatedCredential): string {
   const id = row.identity as { login?: string; username?: string; email?: string }
   const who = id.login ? `@${id.login}` : id.username || id.email || ''
-  const provider = row.provider === 'github' ? 'GitHub' : row.provider
+  const provider = providerName(row.provider)
   return who ? `${provider} as ${who}` : provider
 }
 
@@ -88,7 +95,7 @@ export function DelegatedCredentialsPanel() {
                   </button>
                   {REVOKE[r.provider] && (
                     <a href={REVOKE[r.provider]} target="_blank" rel="noreferrer" className="ml-2 text-primary hover:underline">
-                      Revoke at {r.provider === 'github' ? 'GitHub' : r.provider}
+                      Revoke at {providerName(r.provider)}
                     </a>
                   )}
                 </td>

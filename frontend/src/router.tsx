@@ -102,6 +102,9 @@ const AgentProjectPage = lazySection(() =>
 const ContributorPage = lazySection(() =>
   import('./pages/agents/ContributorPage').then((m) => ({ default: m.ContributorPage })),
 )
+const ConnectGooglePage = lazySection(() =>
+  import('./pages/agents/ConnectGooglePage').then((m) => ({ default: m.ConnectGooglePage })),
+)
 const AgentTasksSection = lazySection(() =>
   import('./pages/agents/AgentTasksSection').then((m) => ({ default: m.AgentTasksSection })),
 )
@@ -492,6 +495,9 @@ export const routeTable: RouteObject[] = [
           // Credentials lives in Settings now. Old links (and bookmarks) keep
           // working and keep their query, e.g. `?google=ok`.
           { path: 'credentials', element: <CredentialsRedirect /> },
+          // A person connects their OWN Google account to the agent (a delegated
+          // credential); pages link here with `?services=gmail`.
+          { path: 'connect/google', element: <LazySection><ConnectGooglePage /></LazySection> },
           {
             // Skills and their history are one subject, two views.
             path: 'skills',

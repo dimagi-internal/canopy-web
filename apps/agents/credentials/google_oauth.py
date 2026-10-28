@@ -77,6 +77,41 @@ FLEET_SCOPES: tuple[str, ...] = _BASE_SCOPES + _DECLARED_BEYOND_THE_FLEET
 _GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail"
 
 
+# A person's OWN account, delegated to an agent (`google_mint.start_delegated`): ask for
+# only what they chose, by gog's service names, never the fleet union above — it is
+# someone's personal inbox, and every line on the consent screen is theirs to read.
+_IDENTITY_SCOPES: tuple[str, ...] = ("openid", "email", "https://www.googleapis.com/auth/userinfo.email")
+DELEGATED_SERVICE_SCOPES: dict[str, tuple[str, ...]] = {
+    "gmail": ("https://www.googleapis.com/auth/gmail.modify",),
+    "calendar": ("https://www.googleapis.com/auth/calendar",),
+    "drive": ("https://www.googleapis.com/auth/drive",),
+    "docs": ("https://www.googleapis.com/auth/documents",),
+    "sheets": ("https://www.googleapis.com/auth/spreadsheets",),
+}
+DEFAULT_DELEGATED_SERVICES: tuple[str, ...] = ("gmail",)
+
+
+def delegated_services(services) -> list[str]:
+    """The services a delegated sign-in asks for, de-duplicated and in a fixed order;
+    ValueError naming any this flow does not offer. None or empty = gmail."""
+    wanted = [str(s).strip().lower() for s in (services or []) if str(s).strip()] or list(
+        DEFAULT_DELEGATED_SERVICES)
+    unknown = sorted(set(wanted) - set(DELEGATED_SERVICE_SCOPES))
+    if unknown:
+        raise ValueError(f"unknown Google service(s): {', '.join(unknown)} — choose from "
+                         f"{', '.join(DELEGATED_SERVICE_SCOPES)}")
+    return [s for s in DELEGATED_SERVICE_SCOPES if s in wanted]
+
+
+def delegated_scopes(services) -> tuple[str, ...]:
+    """The scopes for `delegated_services(services)`, with the identity scopes the runner
+    needs to learn which account consented."""
+    out = list(_IDENTITY_SCOPES)
+    for s in delegated_services(services):
+        out.extend(DELEGATED_SERVICE_SCOPES[s])
+    return tuple(out)
+
+
 def mailbox_kind(agent) -> str:
     """"google" when `agent.email` is a Google mailbox the runner reads with gog,
     "hosted" when canopy runs its mail (apps/mail, SES), "none" without one.

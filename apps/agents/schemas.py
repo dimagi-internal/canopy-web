@@ -1908,9 +1908,20 @@ class GoogleMintOut(StrictModel):
     account: str = ""
     #: The account the agent must sign in as ("" = any).
     expected_account: str = ""
+    #: A person connecting their OWN account (a delegated credential), not the agent's.
+    delegated: bool = False
     detail: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class GoogleDelegateIn(StrictModel):
+    """Connect YOUR OWN Google account to an agent, as a credential you delegate to it."""
+
+    #: The Google account you will sign in as (you@gmail.com); the consent must match it.
+    account: str = Field(min_length=3, max_length=200)
+    #: gog's service names to grant: gmail (default), calendar, drive, docs, sheets.
+    services: list[str] = Field(default_factory=lambda: ["gmail"], max_length=8)
 
 
 class SenderTrustIn(StrictModel):
