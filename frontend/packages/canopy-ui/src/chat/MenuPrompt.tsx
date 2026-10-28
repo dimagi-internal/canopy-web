@@ -147,15 +147,24 @@ function AnswerForm({
   };
 
   return (
-    <div className="mt-2 flex flex-col gap-3">
+    // Compact on purpose: a 3-question ask with described options stacked
+    // full-width ran past the viewport and shoved the composer off it. The
+    // descriptions stay (see above — they are the decision); what goes is the
+    // air around them, and on a wide pane the options sit side by side. Capped
+    // and scrolled so Send is never further than the bottom of the banner.
+    <div className="mt-1.5 flex max-h-[60vh] flex-col gap-2.5 overflow-y-auto">
       {questions.map((q) => (
         <div key={q.index}>
-          <div className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
-            {q.header || `Question ${q.index + 1}`}
-            {q.multi_select ? " · pick any" : ""}
+          <div className="text-[13px] leading-snug text-foreground">
+            <span className="mr-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {q.header || `Question ${q.index + 1}`}
+              {q.multi_select ? " · pick any" : ""}
+            </span>
+            {q.question}
           </div>
-          <div className="mt-0.5 text-[13px] text-foreground">{q.question}</div>
-          <div className="mt-1.5 flex flex-col gap-1">
+          <div
+            className={`mt-1 grid gap-1 ${q.options.length <= 4 ? "sm:grid-cols-2" : ""}`}
+          >
             {q.options.map((option) => {
               const on = (picks[q.index] ?? []).includes(option.number);
               return (
@@ -165,19 +174,19 @@ function AnswerForm({
                   disabled={busy}
                   aria-pressed={on}
                   onClick={() => toggle(q, option.number)}
-                  className={`flex items-start gap-2 rounded border px-2.5 py-2 text-left disabled:opacity-50 ${
+                  className={`flex items-start gap-1.5 rounded border px-2 py-1.5 text-left disabled:opacity-50 ${
                     on ? "border-warning bg-warning/10" : "border-input bg-card hover:bg-muted"
                   }`}
                 >
-                  <span aria-hidden className="mt-[1px] shrink-0 text-[13px]">
+                  <span aria-hidden className="shrink-0 text-[12px] leading-snug">
                     {on ? (q.multi_select ? "☑" : "◉") : q.multi_select ? "☐" : "○"}
                   </span>
                   <span>
-                    <span className="block text-[13px] font-medium text-foreground">
+                    <span className="block text-[12.5px] font-medium leading-snug text-foreground">
                       {option.label}
                     </span>
                     {option.description ? (
-                      <span className="mt-0.5 block text-[12px] leading-snug text-muted-foreground">
+                      <span className="block text-[11.5px] leading-snug text-muted-foreground">
                         {option.description}
                       </span>
                     ) : null}
@@ -196,7 +205,7 @@ function AnswerForm({
               disabled={busy}
               onChange={(e) => write(q, e.target.value)}
               placeholder="…or type your own answer"
-              className="mt-0.5 rounded border border-input bg-card px-2.5 py-2 text-[13px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
+              className="col-span-full rounded border border-input bg-card px-2 py-1 text-[12.5px] text-foreground placeholder:text-muted-foreground disabled:opacity-50"
             />
           </div>
         </div>
